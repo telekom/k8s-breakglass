@@ -12,10 +12,6 @@ import (
 	rest "k8s.io/client-go/rest"
 )
 
-var (
-	universalDeserializer = serializer.NewCodecFactory(runtime.NewScheme()).UniversalDeserializer()
-)
-
 type ServerParameters struct {
 	port     int    // webhook server port
 	certFile string // path to the x509 certificate
@@ -23,6 +19,10 @@ type ServerParameters struct {
 }
 
 var parameters ServerParameters
+
+var (
+	universalDeserializer = serializer.NewCodecFactory(runtime.NewScheme()).UniversalDeserializer()
+)
 
 var config *rest.Config
 var clientSet *kubernetes.Clientset
