@@ -2,14 +2,17 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes"
 	rest "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type ServerParameters struct {
@@ -34,12 +37,25 @@ func main() {
 	flag.StringVar(&parameters.keyFile, "tlsKeyFile", "/etc/breakglass/certs/tls.key", "File containing the x509 private key to --tlsCertFile.")
 	flag.Parse()
 
-	// get access to service account token
-	c, err := rest.InClusterConfig()
-	if err != nil {
-		panic(err.Error())
+	kubeconfig := os.Getenv("KUBECONFIG")
+
+	if kubeconfig == "" {
+		// get access to service account token
+		c, err := rest.InClusterConfig()
+		if err != nil {
+			panic(err.Error())
+		}
+		config = c
+	} else {
+		// get access to cluster using kubeconfig file
+		fmt.Println("kubeconfig path: " + kubeconfig)
+
+		c, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			panic(err.Error())
+		}
+		config = c
 	}
-	config = c
 
 	// get the kubernetes client
 	cs, err := kubernetes.NewForConfig(config)
