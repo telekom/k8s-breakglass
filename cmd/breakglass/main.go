@@ -2,14 +2,18 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes"
 	rest "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type ServerParameters struct {
@@ -34,12 +38,25 @@ func main() {
 	flag.StringVar(&parameters.keyFile, "tlsKeyFile", "/etc/breakglass/certs/tls.key", "File containing the x509 private key to --tlsCertFile.")
 	flag.Parse()
 
-	// get access to service account token
-	c, err := rest.InClusterConfig()
-	if err != nil {
-		panic(err.Error())
+	kubeconfig := os.Getenv("KUBECONFIG")
+
+	if kubeconfig == "" {
+		// get access to service account token
+		c, err := rest.InClusterConfig()
+		if err != nil {
+			panic(err.Error())
+		}
+		config = c
+	} else {
+		// get access to cluster using kubeconfig file
+		fmt.Println("kubeconfig path: " + kubeconfig)
+
+		c, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			panic(err.Error())
+		}
+		config = c
 	}
-	config = c
 
 	// get the kubernetes client
 	cs, err := kubernetes.NewForConfig(config)
@@ -48,11 +65,29 @@ func main() {
 	}
 	clientSet = cs
 
-	http.HandleFunc("/mutate", HandleMutate)
+	http.HandleFunc("/authorize", HandleAuthorize)
 	log.Fatal(http.ListenAndServeTLS(":"+strconv.Itoa(parameters.port), parameters.certFile, parameters.keyFile, nil))
 
 }
 
-func HandleMutate(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("test"))
+func HandleAuthorize(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Unable to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	//stdout will be visible in pod logs
+	fmt.Println(string(body))
+
+	w.Header().Set("Content-Type", "application/json")
+	response := `{
+		"apiVersion": "authorization.k8s.io/v1",
+		"kind": "SubjectAccessReview",
+		"status": {
+		  "allowed": true
+		}
+	}`
+	w.Write([]byte(response))
 }
