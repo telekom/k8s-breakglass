@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -70,9 +71,19 @@ func main() {
 }
 
 func HandleAuthorize(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Unable to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	//stdout will be visible in pod logs
+	fmt.Println(string(body))
+
 	w.Header().Set("Content-Type", "application/json")
 	response := `{
-		"apiVersion": "authorization.k8s.io/v1beta1",
+		"apiVersion": "authorization.k8s.io/v1",
 		"kind": "SubjectAccessReview",
 		"status": {
 		  "allowed": true
