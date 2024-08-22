@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { inject, computed, ref } from "vue";
-import { RouterView, useRoute } from "vue-router";
+import axios from 'axios';
+import { useRoute } from "vue-router";
 
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
@@ -28,19 +29,29 @@ const userNav = computed(() => {
   }
 });
 
-// Add the input field's reactive value
-const inputValue = ref("");
+const userName = ref("");
+const clusterName = ref("");
 
-// Function to handle "Send" button click
-function handleSendButtonClick() {
-  if (inputValue.value) {
-    console.log('Data sent: ', inputValue.value);
-    alert(`Data sent: ${inputValue.value}`);
-    inputValue.value = ''; // Clear the input after sending
+// Function to handle the form submission
+const handleSendButtonClick = async () => {
+  if (userName.value && clusterName.value) {
+    try {
+      const response = await axios.post('/test', {
+        user_name: userName.value,
+        cluster_name: clusterName.value,
+      });
+      console.log('Data sent: ', userName.value, clusterName.value);
+      alert(`User ${userName.value} get increased privileges on ${clusterName.value} cluster`);
+      userName.value = '';
+      clusterName.value = '';
+    } catch (error) {
+      console.error('Error sending data:', error);
+      alert('Failed to send data. Please try again.');
+    }
   } else {
-    alert('Please enter something!');
+    alert('Please enter both user name and cluster name!');
   }
-}
+};
 
 function login() {
   auth?.login({ path: route.fullPath });
@@ -59,9 +70,29 @@ function logout() {
     </div>
 
     <div v-if="authenticated" class="center">
-      <!-- Add the input field and button -->
-      <input v-model="inputValue" placeholder="Cluster name..." />
-      <scale-button @click="handleSendButtonClick">Send</scale-button>
+      <form @submit.prevent="handleSendButtonClick">
+        <div>
+          <label for="user_name">User Name:</label>
+          <input
+            type="text"
+            id="user_name"
+            v-model="userName"
+            placeholder="Enter user name"
+            required
+          />
+        </div>
+        <div>
+          <label for="cluster_name">Cluster Name:</label>
+          <input
+            type="text"
+            id="cluster_name"
+            v-model="clusterName"
+            placeholder="Enter cluster name"
+            required
+          />
+        </div>
+        <button type="submit">Send</button>
+      </form>
     </div>
     
     <RouterView v-if="authenticated" />

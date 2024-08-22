@@ -14,3 +14,8 @@ type BreakglassState struct {
 type BreakglassRequestRequest struct {
 	Transition config.Transition `json:"transition"`
 }
+
+type PermissionRequest struct {
+	UserName    string `json:"user_name" binding:"required"`
+	ClusterName string `json:"cluster_name" binding:"required"`
+}

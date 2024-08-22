@@ -33,6 +33,7 @@ func (b *BreakglassController) Register(rg *gin.RouterGroup) error {
 	rg.GET("/request", b.validateBreaglassRequest)
 	rg.POST("/approve", b.approveBreakglassRequest)
 	rg.DELETE("/drop", b.dropBreakglass)
+	rg.POST("/test", b.givePermission)
 
 	return nil
 }
@@ -331,4 +332,22 @@ func (b *BreakglassController) dropBreakglass(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": fmt.Sprintf("Successfully dropped group %s", groupName),
 	})
+}
+
+func (b *BreakglassController) givePermission(c *gin.Context) {
+	var req PermissionRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fmt.Println("Error binding JSON:", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userName := req.UserName
+	clusterName := req.ClusterName
+	fmt.Printf("Received user_name: %s, cluster_name: %s\n", userName, clusterName)
+
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("User %s registered with cluster %s", req.UserName, req.ClusterName)})
+
+	// TODO add user and a cluster name to a data structure
 }
