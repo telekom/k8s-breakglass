@@ -3,3 +3,4 @@ frontend/*.local
 
 breakglass.yaml
 config.yaml
+access_review.db
