@@ -5,10 +5,10 @@ import { useRoute } from "vue-router";
 
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
-
 const auth = inject(AuthKey);
 const user = useUser();
 const authenticated = computed(() => user.value && !user.value?.expired);
+// const breakglassService = new BreakglassService(auth!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
 const route = useRoute();
 
@@ -36,12 +36,22 @@ const clusterName = ref("");
 const handleSendButtonClick = async () => {
   if (userName.value && clusterName.value) {
     try {
-      const response = await axios.post('/test', {
+      // const bearer = `Bearer ${await auth.getAccessToken()}`;
+      const bearer = 'foo'
+      const response = await axios.post('/api/breakglass/test', {
         user_name: userName.value,
         cluster_name: clusterName.value,
+      }, {
+        headers: {
+          "Authorization": bearer
+        },
       });
       console.log('Data sent: ', userName.value, clusterName.value);
+      console.log(bearer)
       alert(`User ${userName.value} get increased privileges on ${clusterName.value} cluster`);
+      // response.then((response) => {
+      //   console.log(response)
+      // })
       userName.value = '';
       clusterName.value = '';
     } catch (error) {
@@ -64,7 +74,7 @@ function logout() {
 
 <template>
   <scale-app-shell claim-lang="de" logo-title="Das SCHIFF Breakglass" logo-href="/" :userNavigation="userNav">
-    <h1 style="text-align: center">Das SCHIFF Breakglass</h1>
+    <h1 style="text-align: center">Das SCHIFF Breakglass 1</h1>
     <div v-if="!authenticated" class="center">
       <scale-button @click="login">Log In</scale-button>
     </div>
@@ -73,28 +83,16 @@ function logout() {
       <form @submit.prevent="handleSendButtonClick">
         <div>
           <label for="user_name">User Name:</label>
-          <input
-            type="text"
-            id="user_name"
-            v-model="userName"
-            placeholder="Enter user name"
-            required
-          />
+          <input type="text" id="user_name" v-model="userName" placeholder="Enter user name" required />
         </div>
         <div>
           <label for="cluster_name">Cluster Name:</label>
-          <input
-            type="text"
-            id="cluster_name"
-            v-model="clusterName"
-            placeholder="Enter cluster name"
-            required
-          />
+          <input type="text" id="cluster_name" v-model="clusterName" placeholder="Enter cluster name" required />
         </div>
         <button type="submit">Send</button>
       </form>
     </div>
-    
+
     <RouterView v-if="authenticated" />
   </scale-app-shell>
 </template>

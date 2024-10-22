@@ -1,51 +1,56 @@
 <script setup lang="ts">
-import BreakglassCard from "@/components/BreakglassCard.vue";
+import ClusterAccessCard from "@/components/ClusterAccessCard.vue";
 import { inject, onMounted, reactive } from "vue";
 import { AuthKey } from "@/keys";
-import BreakglassService from "@/services/breakglass";
-import type { Breakglass } from "@/model/breakglass";
+import ClusterAccessService from "@/services/cluster_access";
+import type { ClusterAccessReview } from "@/model/cluster_access";
 import useCurrentTime from "@/util/currentTime";
 import { computed } from "@vue/reactivity";
 
 const auth = inject(AuthKey);
-const breakglassService = new BreakglassService(auth!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+const clusterAccessService = new ClusterAccessService(auth!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
 const time = useCurrentTime();
 
 const state = reactive({
-  breakglasses: new Array<Breakglass>(),
+  reviews: new Array<ClusterAccessReview>(),
   loading: true,
   refreshing: false,
   search: "",
 });
 
 onMounted(async () => {
-  state.breakglasses = await breakglassService.getBreakglasses();
-  console.log(state.breakglasses);
-  console.log(state.breakglasses.length);
+  state.reviews = await clusterAccessService.getClusterAccessReviews();
+  console.log(state.reviews);
+  console.log(state.reviews.length);
   state.loading = false;
 });
 
 async function refresh() {
   state.refreshing = true;
-  state.breakglasses = await breakglassService.getBreakglasses();
+  // state.reviews = await clusterAccessService.getClusterAccessReviews();
   state.refreshing = false;
 }
 
 const filteredBreakglasses = computed(() => {
   if (state.search === "") {
-    return state.breakglasses;
+    return state.reviews;
   }
-  return state.breakglasses.filter((bg) => bg.to?.includes(state.search) || bg.from?.includes(state.search));
+    console.log('foo');
+    return state.reviews;
+  // return state.reviews.filter((bg) => bg.to?.includes(state.search) || bg.from?.includes(state.search));
 });
 
-function onRequest(bg: Breakglass) {
-  breakglassService.requestBreakglass(bg);
+function onRequest(car: ClusterAccessReview) {
+  // clusterAccessService.requestBreakglass(car);
+  // clusterAccessService.getClusterAccessReviews();
 }
 
-async function onDrop(bg: Breakglass) {
-  await breakglassService.dropBreakglass(bg);
-  state.breakglasses = await breakglassService.getBreakglasses();
+async function onDrop(car: ClusterAccessReview) {
+  // await clusterAccessService.dropBreakglass(car);
+  // state.reviews = await clusterAccessService.getClusterAccessReviews();
+  // state.reviews = await clusterAccessService.getBreakglasses();
 }
+
 </script>
 
 <template>
@@ -53,7 +58,7 @@ async function onDrop(bg: Breakglass) {
     <div v-if="state.loading" class="loading">
       <scale-loading-spinner size="large" />
     </div>
-    <div v-else-if="state.breakglasses.length > 0">
+    <div v-else-if="state.reviews.length > 0">
       <div class="search">
         <scale-text-field
           label="Search"
@@ -69,12 +74,11 @@ async function onDrop(bg: Breakglass) {
         </div>
       </div>
       <div class="breakglass-list">
-        <BreakglassCard
+        <ClusterAccessCard
           v-for="bg in filteredBreakglasses"
-          :key="bg.from + bg.to"
+          :key="bg.id"
           class="card"
-          :breakglass="bg"
-          :time="time"
+          :review="bg"
           @request="
             () => {
               onRequest(bg);
@@ -86,7 +90,7 @@ async function onDrop(bg: Breakglass) {
             }
           "
         >
-        </BreakglassCard>
+        </ClusterAccessCard>
       </div>
     </div>
     <div v-else class="not-found">No requestable Breakglass groups found.</div>

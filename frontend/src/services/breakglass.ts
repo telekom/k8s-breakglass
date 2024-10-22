@@ -63,6 +63,13 @@ export default class BreakglassService {
     });
   }
 
+  public async testButton(user_name: string, cluster_name: string): Promise<AxiosResponse> {
+    return this.client.post("/test", {
+        user_name: user_name,
+        cluster_name: cluster_name,
+    });
+  }
+
   public async dropBreakglass(breakglass: Breakglass): Promise<AxiosResponse> {
     return this.client.delete("/drop", {
       params: {

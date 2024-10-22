@@ -1,6 +1,7 @@
 import ApproveView from "@/views/ApproveView.vue";
+import BreakglassView from "@/views/BreakglassView.vue";
+import WebhookAccessView from "@/views/WebhookAccessView.vue";
 import { createRouter, createWebHistory } from "vue-router";
-import BreakglassView from "../views/BreakglassView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -14,6 +15,11 @@ const router = createRouter({
       path: "/approve",
       name: "approve",
       component: ApproveView,
+    },
+    {
+      path: "/cluster_access",
+      name: "cluster_access",
+      component: WebhookAccessView,
     },
   ],
 });
