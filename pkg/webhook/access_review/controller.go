@@ -1,6 +1,8 @@
 package accessreview
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
 	"go.uber.org/zap"
@@ -30,5 +32,17 @@ func (b ClusterAccessReviewController) Handlers() []gin.HandlerFunc {
 func (wc ClusterAccessReviewController) handleGetReviews(c *gin.Context) {
 	// Will return list of actual reviews or since some time passed by user and other parameters like status etc
 	reviews, _ := wc.manager.GetAccessReviews()
-	c.JSON(200, reviews)
+	c.JSON(http.StatusOK, reviews)
+}
+
+func NewClusterAccessReviewController(log *zap.SugaredLogger,
+	cfg config.Config, manager *AccessReviewDB,
+) *ClusterAccessReviewController {
+	controller := &ClusterAccessReviewController{
+		log:     log,
+		config:  cfg,
+		manager: manager,
+	}
+
+	return controller
 }

@@ -15,12 +15,12 @@ const (
 )
 
 type AccessReview struct {
-	ID       uint
-	Cluster  string
-	Subject  authorization.SubjectAccessReviewSpec
-	Status   AccessReviewStatus
-	Until    time.Time
-	Duration time.Duration
+	ID       uint                                  `json:"id,omitempty"`
+	Cluster  string                                `json:"cluster,omitempty"`
+	Subject  authorization.SubjectAccessReviewSpec `json:"subject,omitempty"`
+	Status   AccessReviewStatus                    `json:"status,omitempty"`
+	Until    time.Time                             `json:"until,omitempty"`
+	Duration time.Duration                         `json:"duration,omitempty"`
 }
 
 func NewAccessReview(cluster string, subject authorization.SubjectAccessReviewSpec,

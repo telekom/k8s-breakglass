@@ -97,7 +97,7 @@ func (c AccessReviewDB) GetClusterReviews(cluster string) ([]AccessReview, error
 	return c.getAccessReviewsQuery(query, cluster)
 }
 
-func (c AccessReviewDB) GetUserClusterReviews(cluster, user string) ([]AccessReview, error) {
+func (c AccessReviewDB) GetClusterUserReviews(cluster, user string) ([]AccessReview, error) {
 	query := `SELECT * FROM access_reviews WHERE cluster=? AND json_extract(subject, '$.User')=?`
 	return c.getAccessReviewsQuery(query, cluster, user)
 }

@@ -140,9 +140,9 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 func (wc WebhookController) GetSubjectReviews(
 	cluster string, s authorization.SubjectAccessReviewSpec,
 ) ([]accessreview.AccessReview, error) {
-	reviews, err := wc.db.GetClusterReviews(cluster)
+	reviews, err := wc.db.GetClusterUserReviews(cluster, s.User)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed get cluster subject reviews")
+		return nil, errors.Wrapf(err, "failed get cluster %q subject reviews for user %q", cluster, s.User)
 	}
 
 	outReviews := []accessreview.AccessReview{}

@@ -42,6 +42,7 @@ func main() {
 	err = server.RegisterAll([]api.APIController{
 		breakglass.NewBreakglassController(log, config, auth.Middleware()),
 		webhook.NewWebhookController(log, config, &reviewDB),
+		accessreview.NewClusterAccessReviewController(log, config, &reviewDB),
 	})
 	if err != nil {
 		log.Fatalf("Error registering breakglass controllers: %v", err)
