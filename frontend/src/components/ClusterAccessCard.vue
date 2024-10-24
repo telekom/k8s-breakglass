@@ -11,13 +11,15 @@ const humanizeConfig: humanizeDuration.Options = {
 
 const props = defineProps<{
   review: ClusterAccessReview;
+  time: number
 }>();
 
-const emit = defineEmits(["request", "drop"]);
+const emit = defineEmits(["accept", "reject"]);
+
+const active = computed(() =>  Date.parse(props.review.until) - props.time > 0)
 
 // const active = computed(() => props.review.expiry > 0);
 // const lastRequested = ref(0);
-// const recentlyRequested = () => lastRequested.value + 600_000 > Date.now();
 
 // const expiryHumanized = computed(() => {
 //   if (!active.value) {
@@ -31,34 +33,48 @@ const emit = defineEmits(["request", "drop"]);
 //   return humanizeDuration(props.review.duration * 1000, humanizeConfig);
 // });
 
-// const buttonText = computed(() => {
-//   if (active.value) {
-//     return "Already Active";
-//   } else {
-//     if (recentlyRequested()) {
-//       return "Already requested";
-//     } else {
-//       return "Request";
-//     }
-//   }
-// });
+const accepted = computed(() => props.review.status == "Accepted")
 
-function request() {
-  emit("request");
-  // lastRequested.value = Date.now();
+const buttonText = computed(() => {
+  switch (props.review.status ){
+    case 'Pending':
+    case 'Rejected':
+      return "Approve";
+    case 'Accepted':
+      return "Already accepted";
+  }
+});
+
+function accept() {
+  emit("accept");
+}
+
+function reject() {
+  emit("reject");
 }
 </script>
 
 <template>
-  <scale-card>
+  <scale-card :aria-disabled="active">
+    <h2 class="to">
+       {{ review.cluster }}
+    </h2>
     <span>
-      <br> {{review.id}} <br/>
-      <br> {{review.cluster}} <br/>
-      <br> {{review.duration}} <br/>
-      <br> {{review.until}} <br/>
-      <br> {{review.status}} <br/>
-      <br> {{review.subject}} <br/>
+      <br> Review ID: '{{review.id}}' <br/>
+      <br> Cluster Name: '{{review.cluster}}' <br/>
+      <br> Duration: {{review.duration}} <br/>
+      <br>Until: {{review.until}} <br/>
+      <br> Status: {{review.status}} <br/>
+      <br> Resource Info: <br> <br>
+      User: '{{review.subject.User}}' <br/>
+      Resource: '{{review.subject.ResourceAttributes.Resource}}' <br/>
+      Method: '{{review.subject.ResourceAttributes.Verb}}' <br/>
+      Namespace: '{{review.subject.ResourceAttributes.Namespace}}' <br/>
     </span>
+    <p class="actions">
+      <scale-button v-if="!accepted" @click="accept">{{ buttonText }} </scale-button>
+      <scale-button variant="secondary" @click="reject">Reject</scale-button>
+    </p>
   </scale-card>
 </template>
 

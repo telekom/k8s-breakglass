@@ -27,6 +27,14 @@ export default class ClusterAccessService {
     return reviews.data
   }
 
+  public async approveReview(review: ClusterAccessReview) {
+    return await this.client.post("/accept/"+review.id)
+  }
+
+  public async rejectReview(review: ClusterAccessReview) {
+    return await this.client.post("/reject/"+review.id)
+  }
+
   // public async getBreakglasses(): Promise<Breakglass[]> {
   //   const available = await this.getAvailableBreakglass();
   //   const active = await this.getActiveBreakglass();

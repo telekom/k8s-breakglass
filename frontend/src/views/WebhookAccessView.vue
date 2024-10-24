@@ -31,7 +31,7 @@ async function refresh() {
   state.refreshing = false;
 }
 
-const filteredBreakglasses = computed(() => {
+const filteredReviews = computed(() => {
   if (state.search === "") {
     return state.reviews;
   }
@@ -40,15 +40,15 @@ const filteredBreakglasses = computed(() => {
   // return state.reviews.filter((bg) => bg.to?.includes(state.search) || bg.from?.includes(state.search));
 });
 
-function onRequest(car: ClusterAccessReview) {
-  // clusterAccessService.requestBreakglass(car);
-  // clusterAccessService.getClusterAccessReviews();
+async function onAccept(car: ClusterAccessReview) {
+  console.log("ON Accept")
+  clusterAccessService.approveReview(car);
+  state.reviews = await clusterAccessService.getClusterAccessReviews();
 }
 
-async function onDrop(car: ClusterAccessReview) {
-  // await clusterAccessService.dropBreakglass(car);
-  // state.reviews = await clusterAccessService.getClusterAccessReviews();
-  // state.reviews = await clusterAccessService.getBreakglasses();
+async function onReject(car: ClusterAccessReview) {
+  clusterAccessService.rejectReview(car);
+  state.reviews = await clusterAccessService.getClusterAccessReviews();
 }
 
 </script>
@@ -73,27 +73,28 @@ async function onDrop(car: ClusterAccessReview) {
           </scale-button>
         </div>
       </div>
-      <div class="breakglass-list">
+      <div class="cluster-access-list">
         <ClusterAccessCard
-          v-for="bg in filteredBreakglasses"
-          :key="bg.id"
+          v-for="rev in filteredReviews"
+          :key="rev.id"
           class="card"
-          :review="bg"
-          @request="
+          :review="rev"
+          :time="time"
+          @accept="
             () => {
-              onRequest(bg);
+              onAccept(rev);
             }
           "
-          @drop="
+          @reject="
             () => {
-              onDrop(bg);
+              onReject(rev);
             }
           "
         >
         </ClusterAccessCard>
       </div>
     </div>
-    <div v-else class="not-found">No requestable Breakglass groups found.</div>
+    <div v-else class="not-found">No cluster requests found.</div>
   </main>
 </template>
 
@@ -124,7 +125,7 @@ main {
   width: 48px;
 }
 
-.breakglass-list {
+.cluster-access-list {
   display: flex;
   gap: 2rem;
   flex-wrap: wrap;
