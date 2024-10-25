@@ -11,9 +11,10 @@ import (
 )
 
 type ClusterAccessReviewController struct {
-	log     *zap.SugaredLogger
-	config  config.Config
-	manager *AccessReviewDB
+	log        *zap.SugaredLogger
+	config     config.Config
+	manager    *AccessReviewDB
+	middleware gin.HandlerFunc
 }
 
 func (ClusterAccessReviewController) BasePath() string {
@@ -28,7 +29,7 @@ func (wc *ClusterAccessReviewController) Register(rg *gin.RouterGroup) error {
 }
 
 func (b ClusterAccessReviewController) Handlers() []gin.HandlerFunc {
-	return []gin.HandlerFunc{}
+	return []gin.HandlerFunc{b.middleware}
 }
 
 func (wc ClusterAccessReviewController) handleGetReviews(c *gin.Context) {
@@ -68,12 +69,15 @@ func (wc ClusterAccessReviewController) handleStatusChange(c *gin.Context, newSt
 }
 
 func NewClusterAccessReviewController(log *zap.SugaredLogger,
-	cfg config.Config, manager *AccessReviewDB,
+	cfg config.Config,
+	manager *AccessReviewDB,
+	middleware gin.HandlerFunc,
 ) *ClusterAccessReviewController {
 	controller := &ClusterAccessReviewController{
-		log:     log,
-		config:  cfg,
-		manager: manager,
+		log:        log,
+		config:     cfg,
+		manager:    manager,
+		middleware: middleware,
 	}
 
 	return controller
