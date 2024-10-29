@@ -6,19 +6,19 @@ import (
 	"k8s.io/kubernetes/pkg/apis/authorization"
 )
 
-type AccessReviewStatus string
+type AccessReviewApplicationStatus string
 
 const (
-	StatusPending  AccessReviewStatus = "Pending"
-	StatusAccepted AccessReviewStatus = "Accepted"
-	StatusRejected AccessReviewStatus = "Rejected"
+	StatusPending  AccessReviewApplicationStatus = "Pending"
+	StatusAccepted AccessReviewApplicationStatus = "Accepted"
+	StatusRejected AccessReviewApplicationStatus = "Rejected"
 )
 
 type AccessReview struct {
 	ID       uint                                  `json:"id,omitempty"`
 	Cluster  string                                `json:"cluster,omitempty"`
 	Subject  authorization.SubjectAccessReviewSpec `json:"subject,omitempty"`
-	Status   AccessReviewStatus                    `json:"status,omitempty"`
+	Status   AccessReviewApplicationStatus         `json:"application_status,omitempty"`
 	Until    time.Time                             `json:"until,omitempty"`
 	Duration time.Duration                         `json:"duration,omitempty"`
 }

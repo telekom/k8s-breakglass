@@ -112,7 +112,7 @@ func (c AccessReviewDB) GetClusterUserReviews(cluster, user string) ([]AccessRev
 	return c.getAccessReviewsQuery(query, cluster, user)
 }
 
-func (c AccessReviewDB) UpdateReviewStatus(id uint, status AccessReviewStatus) error {
+func (c AccessReviewDB) UpdateReviewStatus(id uint, status AccessReviewApplicationStatus) error {
 	query := `UPDATE access_reviews SET status=? WHERE id=?`
 	if _, err := c.readWriteDB.Exec(query, status, id); err != nil {
 		return errors.Wrap(err, "failed to update access review status")

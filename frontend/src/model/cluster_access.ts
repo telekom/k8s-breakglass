@@ -4,6 +4,6 @@ export interface ClusterAccessReview {
   subject: any;
   duration: number;
   until: string;
-  status: string;
+  application_status: string;
 }
 

@@ -33,10 +33,10 @@ const active = computed(() =>  Date.parse(props.review.until) - props.time > 0)
 //   return humanizeDuration(props.review.duration * 1000, humanizeConfig);
 // });
 
-const accepted = computed(() => props.review.status == "Accepted")
+const accepted = computed(() => props.review.application_status == "Accepted")
 
 const buttonText = computed(() => {
-  switch (props.review.status ){
+  switch (props.review.application_status ){
     case 'Pending':
     case 'Rejected':
       return "Approve";
@@ -64,7 +64,7 @@ function reject() {
       <br> Cluster Name: '{{review.cluster}}' <br/>
       <br> Duration: {{review.duration}} <br/>
       <br>Until: {{review.until}} <br/>
-      <br> Status: {{review.status}} <br/>
+      <br> Status: {{review.application_status}} <br/>
       <br> Resource Info: <br> <br>
       User: '{{review.subject.User}}' <br/>
       Resource: '{{review.subject.ResourceAttributes.Resource}}' <br/>

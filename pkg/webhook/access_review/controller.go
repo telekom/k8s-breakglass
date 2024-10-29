@@ -51,7 +51,7 @@ func (wc ClusterAccessReviewController) handleReject(c *gin.Context) {
 	wc.handleStatusChange(c, StatusRejected)
 }
 
-func (wc ClusterAccessReviewController) handleStatusChange(c *gin.Context, newStatus AccessReviewStatus) {
+func (wc ClusterAccessReviewController) handleStatusChange(c *gin.Context, newStatus AccessReviewApplicationStatus) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		log.Printf("Error getting id from request %v", err)
