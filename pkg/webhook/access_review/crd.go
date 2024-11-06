@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/webhook/access_review/api/v1alpha1"
 	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/webhook/access_review/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -51,6 +52,22 @@ func (c CRDManager) GetAccessReviews() ([]v1alpha1.ClusterAccessReview, error) {
 	defer cancel()
 	carls := v1alpha1.ClusterAccessReviewList{}
 	if err := c.List(ctx, &carls); err != nil {
+		return nil, fmt.Errorf(": %w", err)
+	}
+
+	return carls.Items, nil
+}
+
+func (c CRDManager) GetClusterUserReviews(cluster, user string) ([]v1alpha1.ClusterAccessReview, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
+	defer cancel()
+	carls := v1alpha1.ClusterAccessReviewList{}
+	selector, err := labels.Parse("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create selector: %w", err)
+	}
+
+	if err := c.List(ctx, &carls, &client.ListOptions{LabelSelector: selector}); err != nil {
 		return nil, fmt.Errorf(": %w", err)
 	}
 

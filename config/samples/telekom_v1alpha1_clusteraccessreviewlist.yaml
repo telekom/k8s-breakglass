@@ -1,0 +1,55 @@
+apiVersion: telekom.breakglass.de/v1alpha1
+kind: ClusterAccessReviewList
+items:
+  - metadata:
+      name: clusteraccessreview-sample-1
+    spec:
+      application_status: Pending
+      cluster: kind
+      duration: "10s"
+      id: 1
+      until: '2017-07-21T17:32:28Z'
+      subject:
+        namespace: default
+        resource: services
+        username: foobar
+        verb: create
+  - metadata:
+      name: clusteraccessreview-sample-2
+    spec:
+      application_status: Accepted
+      cluster: kind
+      duration: "24h"
+      id: 2
+      until: '2017-07-21T17:32:28Z'
+      subject:
+        namespace: kube-system
+        resource: services
+        username: tester
+        verb: create
+  - metadata:
+      name: clusteraccessreview-sample-3
+    spec:
+      application_status: Rejected
+      cluster: kind
+      duration: "20m"
+      id: 3
+      until: '2017-07-21T17:32:28Z'
+      subject:
+        namespace: default
+        resource: pods
+        username: unknown
+        verb: create
+  - metadata:
+      name: clusteraccessreview-sample-4
+    spec:
+      application_status: Approved
+      cluster: master
+      duration: "20m"
+      id: 4
+      until: '2017-07-21T17:32:28Z'
+      subject:
+        namespace: default
+        resource: pods
+        username: unknown
+        verb: create

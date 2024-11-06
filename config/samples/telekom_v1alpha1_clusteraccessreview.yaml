@@ -1,0 +1,21 @@
+apiVersion: telekom.breakglass.de/v1alpha1
+kind: ClusterAccessReview
+metadata:
+  labels:
+    app.kubernetes.io/name: scaffoldcrd
+    app.kubernetes.io/managed-by: kustomize
+  name: clusteraccessreview-sample
+spec:
+  application_status: Pending
+  cluster: kind
+  duration: "10s"
+  id: 1
+  until: '2017-07-21T17:32:28Z'
+  subject:
+    namespace: default
+    resource: services
+    username: foobar
+    verb: create
+
+
+

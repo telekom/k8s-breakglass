@@ -20,9 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // ClusterAccessReviewSpec defines the desired state of ClusterAccessReview.
 type ClusterAccessReviewSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -61,6 +58,14 @@ type ClusterAccessReviewStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:selectablefield:JSONPath=`.spec.id`
+// +kubebuilder:selectablefield:JSONPath=`.spec.cluster`
+// +kubebuilder:selectablefield:JSONPath=`.spec.application_status`
+// +kubebuilder:selectablefield:JSONPath=`.spec.until`
+// +kubebuilder:selectablefield:JSONPath=`.spec.subject.namespace`
+// +kubebuilder:selectablefield:JSONPath=`.spec.subject.verb`
+// +kubebuilder:selectablefield:JSONPath=`.spec.subject.resource`
+// +kubebuilder:selectablefield:JSONPath=`.spec.subject.username`
 
 // ClusterAccessReview is the Schema for the clusteraccessreviews API.
 type ClusterAccessReview struct {

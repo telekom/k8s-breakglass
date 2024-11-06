@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package v1alpha1 contains API Schema definitions for the telekom v1alpha1 API group.
 // +kubebuilder:object:generate=true
-// +groupName=telekom.my.domain
+// +groupName=telekom.breakglass.de
 package v1alpha1
 
 import (
