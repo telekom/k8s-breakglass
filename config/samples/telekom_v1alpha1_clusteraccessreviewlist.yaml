@@ -53,3 +53,16 @@ items:
         resource: pods
         username: unknown
         verb: create
+  - metadata:
+      name: clusteraccessreview-sample-5
+    spec:
+      application_status: Pending
+      cluster: kind
+      duration: "20m"
+      id: 5
+      until: '2024-11-06T17:32:28Z'
+      subject:
+        namespace: default
+        resource: services
+        username: unknown
+        verb: create

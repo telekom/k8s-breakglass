@@ -46,11 +46,18 @@ func main() {
 		return
 	}
 
-	ars, err := crdManager.GetAccessReviews()
+	ars, err := crdManager.GetClusterUserReviews("kind", "unknown")
 	if err != nil {
 		log.Fatalf("Error getting reviews from access review CRD manager: %v", err)
 		return
 	}
+
+	ar, err := crdManager.GetClusterAccessReviewsByID(2)
+	if err != nil {
+		log.Fatalf("Error getting reviews from access review with id 2 from CRD manager: %v", err)
+		return
+	}
+	fmt.Println("Ar with ID 2 :=", ar[0].Spec)
 
 	for id, ar := range ars {
 		fmt.Println("Current ar", id, " SPEC:=", ar.Spec)
