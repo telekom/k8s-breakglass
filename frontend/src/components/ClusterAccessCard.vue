@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import humanizeDuration from "humanize-duration";
 import { computed, ref } from "vue";
 
 import type { ClusterAccessReview } from "@/model/cluster_access";
@@ -16,7 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits(["accept", "reject"]);
 
-const active = computed(() =>  Date.parse(props.review.until) - props.time > 0)
+const active = computed(() =>  Date.parse(props.review.spec.until) - props.time > 0)
 
 // const active = computed(() => props.review.expiry > 0);
 // const lastRequested = ref(0);
@@ -33,10 +32,10 @@ const active = computed(() =>  Date.parse(props.review.until) - props.time > 0)
 //   return humanizeDuration(props.review.duration * 1000, humanizeConfig);
 // });
 
-const accepted = computed(() => props.review.application_status == "Accepted")
+const accepted = computed(() => props.review.spec.application_status == "Accepted")
 
 const buttonText = computed(() => {
-  switch (props.review.application_status ){
+  switch (props.review.spec.application_status ){
     case 'Pending':
     case 'Rejected':
       return "Approve";
@@ -57,19 +56,19 @@ function reject() {
 <template>
   <scale-card :aria-disabled="active">
     <h2 class="to">
-       {{ review.cluster }}
+       {{ review.spec.cluster }}
     </h2>
     <span>
-      <br> Review ID: '{{review.id}}' <br/>
-      <br> Cluster Name: '{{review.cluster}}' <br/>
-      <br> Duration: {{review.duration}} <br/>
-      <br>Until: {{review.until}} <br/>
-      <br> Status: {{review.application_status}} <br/>
+      <!-- <br> Review ID: '{{review.id}}' <br/> -->
+      <br> Cluster Name: '{{review.spec.cluster}}' <br/>
+      <br> Duration: {{review.spec.duration}} <br/>
+      <br>Until: {{review.spec.until}} <br/>
+      <br> Status: {{review.spec.application_status}} <br/>
       <br> Resource Info: <br> <br>
-      User: '{{review.subject.User}}' <br/>
-      Resource: '{{review.subject.ResourceAttributes.Resource}}' <br/>
-      Method: '{{review.subject.ResourceAttributes.Verb}}' <br/>
-      Namespace: '{{review.subject.ResourceAttributes.Namespace}}' <br/>
+      User: '{{review.spec.subject.username}}' <br/>
+      Resource: '{{review.spec.subject.resource}}' <br/>
+      Method: '{{review.spec.subject.verb}}' <br/>
+      Namespace: '{{review.spec.subject.namespace}}' <br/>
     </span>
     <p class="actions">
       <scale-button v-if="!accepted" @click="accept">{{ buttonText }} </scale-button>
