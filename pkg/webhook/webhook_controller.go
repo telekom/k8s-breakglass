@@ -60,26 +60,6 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		return
 	}
 
-	// Probably this type of message will be send via email.
-	fmt.Println("----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-	fmt.Printf(`User %q (uid=%q) would like to access cluster %q groups are %q
-    Requested operation %q %q version %q for namespace %q and group %q. Extra info: %#v
-    NonResource: %#v
-    `,
-		sar.Spec.User,
-		sar.Spec.UID,
-		cluster,
-		sar.Spec.Groups,
-		sar.Spec.ResourceAttributes.Verb,
-		sar.Spec.ResourceAttributes.Resource,
-		sar.Spec.ResourceAttributes.Version,
-		sar.Spec.ResourceAttributes.Namespace,
-		sar.Spec.ResourceAttributes.Group,
-		sar.Spec.Extra,
-		sar.Spec.NonResourceAttributes,
-	)
-	fmt.Println("\n--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
-
 	car := v1alpha1.NewClusterAccessReview(cluster, v1alpha1.ClusterAccessReviewSubject{
 		Username:  sar.Spec.User,
 		Namespace: sar.Spec.ResourceAttributes.Namespace,
@@ -95,9 +75,6 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, "Failed to extract review information")
 		return
 	}
-
-	fmt.Println("Subject reviews:=", reviews)
-	fmt.Println("Subject reviews:=", len(reviews))
 
 	if len(reviews) == 0 {
 		reason = "Access added to be reviewed by administrator."

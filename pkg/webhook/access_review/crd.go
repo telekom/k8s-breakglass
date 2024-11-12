@@ -3,6 +3,8 @@ package accessreview
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -20,6 +22,7 @@ import (
 
 type CRDManager struct {
 	client.Client
+	writeMutex *sync.Mutex
 }
 
 var (
@@ -45,7 +48,7 @@ func NewCRDManager() (CRDManager, error) {
 		return CRDManager{}, errors.Wrap(err, "failed to create new client")
 	}
 
-	return CRDManager{c}, nil
+	return CRDManager{c, new(sync.Mutex)}, nil
 }
 
 func (c CRDManager) AddAccessReview(car v1alpha1.ClusterAccessReview) error {
@@ -57,6 +60,8 @@ func (c CRDManager) AddAccessReview(car v1alpha1.ClusterAccessReview) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
 	defer cancel()
+	c.writeMutex.Lock()
+	defer c.writeMutex.Unlock()
 	if err := c.Create(ctx, &car); err != nil {
 		return errors.Wrap(err, "failed to create new cluster access review")
 	}
@@ -101,6 +106,8 @@ func (c CRDManager) GetClusterAccessReviewsByUID(uid types.UID) (v1alpha1.Cluste
 func (c CRDManager) DeleteReviewByName(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
 	defer cancel()
+	c.writeMutex.Lock()
+	defer c.writeMutex.Unlock()
 	if err := c.Delete(ctx, &v1alpha1.ClusterAccessReview{ObjectMeta: metav1.ObjectMeta{Name: name}}); err != nil {
 		return errors.Wrap(err, "failed to delete cluster access review")
 	}
@@ -131,12 +138,41 @@ func (c CRDManager) UpdateReviewStatusByName(resourceName string, status v1alpha
 		ObjectMeta: metav1.ObjectMeta{Name: resourceName},
 		Spec:       v1alpha1.ClusterAccessReviewSpec{Status: status},
 	}
+	c.writeMutex.Lock()
+	defer c.writeMutex.Unlock()
 	if err := c.Update(ctx, &toUpdate); err != nil {
 		return errors.Wrapf(err, "failed to update review with name %q", resourceName)
 	}
 	return nil
 }
 
-func (c CRDManager) DeleteReviewsOlderThan(time time.Time) error {
+func (c CRDManager) DeleteReviewsOlderThan(t time.Time) error {
+	currentReviews, err := c.GetReviews()
+	if err != nil {
+		return errors.Wrap(err, "failed to list reviews for older deletion")
+	}
+	doNotDelete := []string{}
+	selectorOp := "metadata.name!="
+	for _, review := range currentReviews {
+		if t.Before(review.Spec.Until.Time) {
+			doNotDelete = append(doNotDelete, selectorOp+review.Name)
+		}
+	}
+	selectorString := strings.Join(doNotDelete, ",")
+	fs, err := fields.ParseSelector(selectorString)
+	if err != nil {
+		return fmt.Errorf("delete failed to create field selector: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
+	defer cancel()
+	c.writeMutex.Lock()
+	defer c.writeMutex.Unlock()
+	if err := c.DeleteAllOf(ctx, &v1alpha1.ClusterAccessReview{},
+		&client.DeleteAllOfOptions{
+			ListOptions: client.ListOptions{FieldSelector: fs},
+		}); err != nil {
+		return errors.Wrapf(err, "failed to delete all of reviews with selector %s", selectorString)
+	}
+
 	return nil
 }
