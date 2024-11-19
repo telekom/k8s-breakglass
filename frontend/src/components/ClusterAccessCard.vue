@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import humanizeDuration from "humanize-duration";
 
 import type { ClusterAccessReview } from "@/model/cluster_access";
 
@@ -15,23 +16,7 @@ const props = defineProps<{
 
 const emit = defineEmits(["accept", "reject"]);
 
-const active = computed(() =>  Date.parse(props.review.until) - props.time > 0)
-
-// const active = computed(() => props.review.expiry > 0);
-// const lastRequested = ref(0);
-
-// const expiryHumanized = computed(() => {
-//   if (!active.value) {
-//     return "";
-//   }
-//   const duration: number = props.time - props.review.expiry * 1000;
-//   return humanizeDuration(duration, humanizeConfig);
-// });
-
-// const durationHumanized = computed(() => {
-//   return humanizeDuration(props.review.duration * 1000, humanizeConfig);
-// });
-
+const active = computed(() => Date.parse(props.review.until) - props.time > 0)
 const accepted = computed(() => props.review.application_status == "accepted")
 
 function accept() {
@@ -41,27 +26,41 @@ function accept() {
 function reject() {
   emit("reject");
 }
+
+const expiryHumanized = computed(() => {
+  if (!active.value) {
+    return "already expired";
+  }
+  const until = Date.parse(props.review.until)
+  const duration = until - props.time
+  return humanizeDuration(duration, humanizeConfig);
+});
+
 </script>
 
 <template>
   <scale-card :aria-disabled="active">
     <h2 class="to">
-       {{ review.cluster }}
+      {{ review.cluster }}
     </h2>
     <span>
-      <br> Name: '{{review.name}}' <br/>
-      <br> UID: '{{review.uid}}' <br/>
-      <br> Cluster Name: '{{review.cluster}}' <br/>
-      <br> Duration: {{review.duration}} <br/>
-      <br>Until: {{review.until}} <br/>
-      <br> Status: {{review.application_status}} <br/>
+      <br> Name: '{{ review.name }}' <br />
+      <br> UID: '{{ review.uid }}' <br />
+      <br> Cluster Name: '{{ review.cluster }}' <br />
+      <br> Duration: {{ review.duration }} <br />
+      <br>Until: {{ review.until }} <br />
+      <br> Status: {{ review.application_status }} <br />
       <br> Resource Info: <br> <br>
-      User: '{{review.subject.username}}' <br/>
-      Resource: '{{review.subject.resource}}' <br/>
-      Method: '{{review.subject.verb}}' <br/>
-      Namespace: '{{review.subject.namespace}}' <br/>
+      User: '{{ review.subject.username }}' <br />
+      Resource: '{{ review.subject.resource }}' <br />
+      Method: '{{ review.subject.verb }}' <br />
+      Namespace: '{{ review.subject.namespace }}' <br />
     </span>
-    <p class="actions">
+    <p class="expiry">
+      Expires in<br />
+      <b>{{ expiryHumanized }}</b>
+    </p>
+    <p v-if="active" class="actions">
       <scale-button v-if="!accepted" @click="accept">Accept </scale-button>
       <scale-button variant="secondary" @click="reject">Reject</scale-button>
     </p>
