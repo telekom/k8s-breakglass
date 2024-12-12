@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -60,6 +61,27 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		return
 	}
 
+	// TODO: Implement getting local groups assigned to user
+	// groups := wc.GetUserClusterGroups(sar.Spec.User, cluster)
+	// Sample group that allows service creation
+	groups := []string{"breakglass-service-create"}
+
+	can, err := accessreview.CanUserDo(sar, groups)
+	fmt.Println("CAN-I:=", can, err)
+	if can {
+		response := SubjectAccessReviewResponse{
+			ApiVersion: sar.APIVersion,
+			Kind:       sar.Kind,
+			Status: SubjectAccessReviewResponseStatus{
+				Allowed: true,
+			},
+		}
+
+		c.JSON(http.StatusOK, &response)
+		return
+	}
+	// TODO: If not allowed deny and add group request link as a reason.
+
 	car := v1alpha1.NewClusterAccessReview(cluster, v1alpha1.ClusterAccessReviewSubject{
 		Username:  sar.Spec.User,
 		Namespace: sar.Spec.ResourceAttributes.Namespace,
@@ -77,6 +99,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	}
 
 	if len(reviews) == 0 {
+		// todo: reason should be only a link to create request
 		reason = "Access added to be reviewed by administrator."
 		if err := wc.manager.AddAccessReview(ctx, car); err != nil {
 			log.Printf("Error adding access review to database: %v", err)
