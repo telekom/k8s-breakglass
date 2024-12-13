@@ -51,9 +51,12 @@ type Server struct {
 	TLSKeyFile    string `yaml:"tlsKeyFile"`
 	BaseURL       string `yaml:"baseURL"`
 }
+
 type ClusterAccess struct {
-	DBPath string `yaml:"dbPath"`
+	FrontendPage  string   `yaml:"frontentPage"`
+	ClusterGroups []string `yaml:"clusterGroups"`
 }
+
 type Config struct {
 	Server                 Server
 	PossibleTransitions    []Transition
@@ -83,6 +86,12 @@ func Load() (Config, error) {
 		return config, fmt.Errorf("error unmarshaling YAML %s: %v", configPath, err)
 	}
 	return config, nil
+}
+
+func (c *Config) Defaults() {
+	if c.ClusterAccess.FrontendPage == "" {
+		c.ClusterAccess.FrontendPage = "http://localhost:5173/"
+	}
 }
 
 func (a Transition) Equal(b Transition) bool {

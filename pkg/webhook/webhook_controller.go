@@ -61,79 +61,30 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement getting local groups assigned to user
-	// groups := wc.GetUserClusterGroups(sar.Spec.User, cluster)
-	// Sample group that allows service creation
-	groups := []string{"breakglass-service-create"}
-
-	can, err := accessreview.CanUserDo(sar, groups)
-	fmt.Println("CAN-I:=", can, err)
-	if can {
-		response := SubjectAccessReviewResponse{
-			ApiVersion: sar.APIVersion,
-			Kind:       sar.Kind,
-			Status: SubjectAccessReviewResponseStatus{
-				Allowed: true,
-			},
-		}
-
-		c.JSON(http.StatusOK, &response)
+	groups, err := wc.getUserGroupsForCluster(ctx, sar.Spec.User, cluster)
+	if err != nil {
+		log.Println("error while getting user groups", err)
+		c.Status(http.StatusInternalServerError)
 		return
 	}
-	// TODO: If not allowed deny and add group request link as a reason.
 
-	car := v1alpha1.NewClusterAccessReview(cluster, v1alpha1.ClusterAccessReviewSubject{
-		Username:  sar.Spec.User,
-		Namespace: sar.Spec.ResourceAttributes.Namespace,
-		Resource:  sar.Spec.ResourceAttributes.Resource,
-		Verb:      sar.Spec.ResourceAttributes.Verb,
-	}, defaultReviewRequestTimeout)
+	can, err := accessreview.CanUserDo(sar, groups)
+	if err != nil {
+		log.Println("error while checking RBAC permissions", err)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 
 	allowed := false
 	reason := ""
-	reviews, err := wc.GetSubjectReviews(ctx, cluster, sar.Spec)
-	if err != nil {
-		log.Printf("Error getting access review from database: %v", err)
-		c.JSON(http.StatusInternalServerError, "Failed to extract review information")
-		return
+
+	if can {
+		allowed = true
+	} else {
+		reason = fmt.Sprintf("Please request proper group assignment at https://%s/request?cluster=%s", wc.config.ClusterAccess.FrontendPage, cluster)
 	}
 
-	if len(reviews) == 0 {
-		// todo: reason should be only a link to create request
-		reason = "Access added to be reviewed by administrator."
-		if err := wc.manager.AddAccessReview(ctx, car); err != nil {
-			log.Printf("Error adding access review to database: %v", err)
-			c.JSON(http.StatusInternalServerError, "Failed to process review request")
-			return
-		}
-	} else {
-		for _, review := range reviews {
-			switch review.Spec.Status {
-			case v1alpha1.StatusAccepted:
-				allowed = true
-				// TODO: Do actually we want to delete such review?
-				// This will give access for only very short amount of time (by default it is 5minutes)
-				// https://kubernetes.io/docs/reference/config-api/apiserver-config.v1beta1/
-				// Probably we want to simply extend time on update.
-				if err := wc.manager.DeleteReviewByName(ctx, review.GetName()); err != nil {
-					log.Printf("Error deleting access review from db: %v", err)
-					c.JSON(http.StatusInternalServerError, "Failed to process review request")
-				}
-			case v1alpha1.StatusPending:
-				allowed = false
-				reason = "Access pending to be reviewed by administrator."
-			case v1alpha1.StatusRejected:
-				allowed = false
-				reason = "Access already once rejected. New request will be created."
-				// TODO: Do we want some logic to only allow that after some timeout
-				// especially if rejected more than once
-				if err := wc.manager.UpdateReviewStatusByName(ctx, review.GetName(), v1alpha1.StatusPending); err != nil {
-					log.Printf("Error updating access review status: %v", err)
-					c.JSON(http.StatusInternalServerError, "Failed to process review request")
-				}
-			}
-		}
-	}
+	// TODO: If not allowed deny and add group request link as a reason.
 
 	response := SubjectAccessReviewResponse{
 		ApiVersion: sar.APIVersion,
@@ -145,6 +96,15 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, &response)
+}
+
+func (wc *WebhookController) getUserGroupsForCluster(ctx context.Context,
+	username string,
+	clustername string,
+) ([]string, error) {
+	groups := []string{"breakglass-service-create"}
+
+	return groups, nil
 }
 
 func (wc WebhookController) GetSubjectReviews(
