@@ -74,24 +74,11 @@ function logout() {
 
 <template>
   <scale-app-shell claim-lang="de" logo-title="Das SCHIFF Breakglass" logo-href="/" :userNavigation="userNav">
-    <h1 style="text-align: center">Das SCHIFF Breakglass 1</h1>
+    <h1 style="text-align: center">Das SCHIFF Breakglass</h1>
     <div v-if="!authenticated" class="center">
       <scale-button @click="login">Log In</scale-button>
     </div>
 
-    <div v-if="authenticated" class="center">
-      <form @submit.prevent="handleSendButtonClick">
-        <div>
-          <label for="user_name">User Name:</label>
-          <input type="text" id="user_name" v-model="userName" placeholder="Enter user name" required />
-        </div>
-        <div>
-          <label for="cluster_name">Cluster Name:</label>
-          <input type="text" id="cluster_name" v-model="clusterName" placeholder="Enter cluster name" required />
-        </div>
-        <button type="submit">Send</button>
-      </form>
-    </div>
 
     <RouterView v-if="authenticated" />
   </scale-app-shell>

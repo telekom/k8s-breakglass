@@ -1,6 +1,8 @@
 import ApproveView from "@/views/ApproveView.vue";
 import BreakglassView from "@/views/BreakglassView.vue";
 import WebhookAccessView from "@/views/WebhookAccessView.vue";
+import BreaglassSessionRequestView from "@/views/BreakglassSessionRequest.vue";
+
 import { createRouter, createWebHistory } from "vue-router";
 
 const router = createRouter({
@@ -20,6 +22,11 @@ const router = createRouter({
       path: "/cluster_access",
       name: "cluster_access",
       component: WebhookAccessView,
+    },
+    {
+      path: "/breakglassSession/request",
+      name: "breakglassSessionRequest",
+      component: BreaglassSessionRequestView,
     },
   ],
 });

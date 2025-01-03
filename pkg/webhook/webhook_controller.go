@@ -60,7 +60,8 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		return
 	}
 
-	groups, err := wc.getUserGroupsForCluster(ctx, sar.Spec.User, cluster)
+	username := sar.Spec.User
+	groups, err := wc.getUserGroupsForCluster(ctx, username, cluster)
 	if err != nil {
 		log.Println("error while getting user groups", err)
 		c.Status(http.StatusInternalServerError)
@@ -80,7 +81,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	if can {
 		allowed = true
 	} else {
-		reason = fmt.Sprintf("please request proper group assignment at %s/request?cluster=%s", wc.config.ClusterAccess.FrontendPage, cluster)
+		reason = fmt.Sprintf("please request proper group assignment at %s/breakglassSession/request?cluster=%s&username=%s", wc.config.ClusterAccess.FrontendPage, cluster, username)
 	}
 
 	response := SubjectAccessReviewResponse{

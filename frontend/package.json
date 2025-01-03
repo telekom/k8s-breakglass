@@ -13,6 +13,7 @@
     "axios": "^0.27.2",
     "humanize-duration": "^3.27.2",
     "jose": "^4.9.3",
+    "node": "^23.5.0",
     "oidc-client-ts": "^2.0.5",
     "pinia": "^2.0.13",
     "vue": "^3.2.33",
