@@ -10,29 +10,25 @@
   },
   "dependencies": {
     "@telekom/scale-components": "^3.0.0-beta.108",
-    "axios": "^0.27.2",
-    "humanize-duration": "^3.27.2",
-    "jose": "^4.9.3",
-    "oidc-client-ts": "^2.0.5",
-    "pinia": "^2.0.13",
-    "vue": "^3.2.33",
-    "vue-router": "^4.0.14"
+    "axios": "^1.7.9",
+    "humanize-duration": "^3.32.1",
+    "jose": "^5.9.6",
+    "oidc-client-ts": "^3.1.0",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "@rollup/plugin-dynamic-import-vars": "^1.4.3",
-    "@rushstack/eslint-patch": "^1.1.0",
-    "@types/humanize-duration": "^3.27.1",
-    "@types/node": "^16.11.27",
-    "@vitejs/plugin-legacy": "^2.0.0",
-    "@vitejs/plugin-vue": "^3.0.1",
-    "@vue/eslint-config-prettier": "^7.0.0",
-    "@vue/eslint-config-typescript": "^10.0.0",
-    "@vue/tsconfig": "^0.1.3",
-    "eslint": "^8.5.0",
-    "eslint-plugin-vue": "^8.2.0",
-    "prettier": "^2.5.1",
-    "typescript": "~4.6.3",
-    "vite": "^3.0.2",
-    "vue-tsc": "^0.34.7"
+    "@rollup/plugin-dynamic-import-vars": "^2.1.5",
+    "@types/humanize-duration": "^3.27.4",
+    "@types/node": "^22.10.5",
+    "@vitejs/plugin-legacy": "^6.0.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/tsconfig": "^0.7.0",
+    "@tsconfig/node22": "^22.0.0",
+    "prettier": "^3.4.2",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
+    "vue-tsc": "^2.2.0"
   }
 }
