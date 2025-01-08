@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, computed, ref } from "vue";
+import { inject, computed, ref, onMounted } from "vue";
 
 import { useRoute } from "vue-router";
 import { AuthKey } from "@/keys";
@@ -40,11 +40,38 @@ const handleSendButtonClick = async () => {
   // }
 };
 
+onMounted(() => {
+  console.log(`the component is now mounted.`)
+  fooFn()
+})
+const fooFn = () => {
+  const dataGrid = document.querySelector('#default-example');
+  dataGrid.fields = [
+    {
+      type: 'text',
+      label: '',
+    },
+    {
+      type: 'text',
+      label: '',
+      editable: true,
+    },
+  ];
+  dataGrid.rows = [
+    ['Username', ''],
+    ['Cluster name', ''],
+    ['Cluster group', ''],
+  ];
+}
+// fooFn()
+
 </script>
 
 <template>
   <main>
+    <scale-card class="centered">
     <div v-if="authenticated" class="center">
+        <p>Request for group assignment</p>
       <form @submit.prevent="handleSendButtonClick">
         <div>
           <label for="user_name">Username: </label>
@@ -63,11 +90,31 @@ const handleSendButtonClick = async () => {
         <scale-button type="submit">Send</scale-button>
       </form>
     </div>
+    </scale-card>
+
+    <br/><br/><br/>
+    <div>
+      <scale-data-grid heading="Request for group assignment (does not work)" id="default-example" hide-menu>
+      <scale-button type="submit">Send</scale-button>
+      </scale-data-grid>
+    </div>
+
   </main>
 </template>
 
 <style scoped>
 .center {
   text-align: center;
+}
+
+scale-data-grid {
+  display: block;
+  margin: 0 auto;
+  max-width: 600px;
+}
+scale-card {
+  display: block;
+  margin: 0 auto;
+  max-width: 500px;
 }
 </style>
