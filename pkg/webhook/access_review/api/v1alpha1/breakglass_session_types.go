@@ -93,6 +93,7 @@ type BreakglassSessionStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:selectablefield:JSONPath=`.spec.cluster`
 // +kubebuilder:selectablefield:JSONPath=`.spec.username`
+// +kubebuilder:selectablefield:JSONPath=`.spec.group`
 // +kubebuilder:selectablefield:JSONPath=`.status.expired`
 // +kubebuilder:selectablefield:JSONPath=`.status.approved`
 // +kubebuilder:selectablefield:JSONPath=`.status.idleTimeoutReached`

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/webhook/access_review/api/v1alpha1"
+	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/webhook/access_review/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,6 +29,7 @@ func (BreakglassSessionController) BasePath() string {
 
 func (wc *BreakglassSessionController) Register(rg *gin.RouterGroup) error {
 	rg.GET("/", wc.handleGetBreakglassSessions)
+	rg.GET("/status", wc.handleGetBreakglassSessions)
 	rg.POST("/request", wc.handleRequestBreakglassSession)
 
 	return nil
@@ -43,15 +45,58 @@ type ClusterAccessReviewResponse struct {
 	UID  types.UID `json:"uid,omitempty"`
 }
 
-func (wc BreakglassSessionController) handleGetBreakglassSessions(c *gin.Context) {
-	accesses, err := wc.manager.GetAllBreakglassSessions(c.Request.Context())
-	if err != nil {
-		log.Printf("Error getting access reviews %v", err)
-		c.JSON(http.StatusInternalServerError, "Failed to extract cluster group access information")
+func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Context) {
+	type BreakglassSessionStatusResponse struct {
+		UID              string `json:"uuid,omitempty"`
+		AlreadyRequested bool   `json:"already_requested,omitempty"`
+	}
+	status := BreakglassSessionStatusResponse{}
+	user := c.Param("username")
+	cluster := c.Param("clustername")
+	group := c.Param("groupname")
+
+	if cluster == "" || user == "" || group == "" {
+		c.Status(http.StatusBadRequest)
 		return
 	}
 
-	c.JSON(http.StatusOK, accesses)
+	sessions, err := wc.manager.GetBreakglassSessionsWithSelector(c.Request.Context(),
+		SessionSelector(user, cluster, group))
+	if err != nil {
+		log.Printf("Error getting breakglass sessions %v", err)
+		c.JSON(http.StatusInternalServerError, "failed to extract cluster group access information")
+		return
+	}
+	if len(sessions) > 0 {
+		status.UID = string(sessions[0].UID)
+		status.AlreadyRequested = true
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+func (wc BreakglassSessionController) handleGetBreakglassSessions(c *gin.Context) {
+	user := c.Param("username")
+	cluster := c.Param("clustername")
+	group := c.Param("groupname")
+	selector := SessionSelector(user, cluster, group)
+
+	var sessions []telekomv1alpha1.BreakglassSession
+	var err error
+
+	if selector != "" {
+		sessions, err = wc.manager.GetBreakglassSessionsWithSelector(c.Request.Context(),
+			selector)
+	} else {
+		sessions, err = wc.manager.GetAllBreakglassSessions(c.Request.Context())
+	}
+	if err != nil {
+		log.Printf("Error getting breakglass sessions %v", err)
+		c.JSON(http.StatusInternalServerError, "failed to extract cluster group access information")
+		return
+	}
+
+	c.JSON(http.StatusOK, sessions)
 }
 
 func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Context) {
@@ -60,6 +105,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		Username     string `json:"username,omitempty"`
 		Clustergroup string `json:"clustergroup,omitempty"`
 	}
+
 	request := BreakglassSessionRequest{}
 	err := json.NewDecoder(c.Request.Body).Decode(&request)
 	if err != nil {
@@ -67,14 +113,28 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		c.Status(http.StatusUnprocessableEntity)
 		return
 	}
-	fmt.Println("REQUESTED:=", request)
+	if request.Clustername == "" || request.Username == "" || request.Clustergroup == "" {
+		c.JSON(http.StatusUnprocessableEntity, "missing input request data")
+		return
+	}
 
-	// TODO: Approvers should be taken from config or some resource
+	sessions, err := wc.manager.GetBreakglassSessionsWithSelector(c.Request.Context(),
+		SessionSelector(request.Username, request.Clustername, request.Clustergroup))
+	if err != nil {
+		log.Printf("Error getting breakglass sessions %v", err)
+		c.JSON(http.StatusInternalServerError, "failed to extract cluster group access information")
+		return
+	}
+	if len(sessions) > 0 {
+		c.JSON(http.StatusOK, "already requested")
+		return
+	}
+
 	bs := v1alpha1.NewBreakglassSession(
 		request.Clustername,
 		request.Username,
 		request.Clustergroup,
-		[]string{"approver1@telekom.de"})
+		[]string{"approver1@telekom.de"}) // TODO: Approvers should be taken from config or some resource
 
 	bs.Name = fmt.Sprintf("%s-%s-%s", request.Clustername, request.Username, request.Clustergroup)
 	if err := wc.manager.AddBreakglassSession(c.Request.Context(), bs); err != nil {
@@ -104,7 +164,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	c.JSON(http.StatusOK, request)
+	c.JSON(http.StatusCreated, request)
 }
 
 func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {

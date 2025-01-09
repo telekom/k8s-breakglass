@@ -132,6 +132,7 @@ spec:
     selectableFields:
     - jsonPath: .spec.cluster
     - jsonPath: .spec.username
+    - jsonPath: .spec.group
     - jsonPath: .status.expired
     - jsonPath: .status.approved
     - jsonPath: .status.idleTimeoutReached

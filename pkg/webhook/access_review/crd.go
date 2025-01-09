@@ -3,6 +3,7 @@ package accessreview
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -43,6 +44,20 @@ func NewCRDManager() (CRDManager, error) {
 	}
 
 	return CRDManager{c, new(sync.Mutex)}, nil
+}
+
+func SessionSelector(username, cluster, group string) string {
+	selectors := []string{}
+	if username != "" {
+		selectors = append(selectors, "spec.username=%s")
+	}
+	if cluster != "" {
+		selectors = append(selectors, "spec.cluster=%s")
+	}
+	if group != "" {
+		selectors = append(selectors, "spec.=%s")
+	}
+	return strings.Join(selectors, ",")
 }
 
 // Get all stored GetClusterGroupAccess

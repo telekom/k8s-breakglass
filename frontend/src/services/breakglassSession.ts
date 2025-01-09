@@ -4,6 +4,7 @@ import axios, { type AxiosResponse, AxiosHeaders } from "axios";
 import type AuthService from "@/services/auth";
 import type { ClusterAccessReview } from "@/model/cluster_access";
 import type { BreakglassSessionRequest } from "@/model/breakglassSession";
+import cluster from "cluster";
 
 export default class BreakglassSessionService {
   private client = axios.create({
@@ -27,17 +28,27 @@ export default class BreakglassSessionService {
     return await this.client.post("/request", request)
   }
 
+  public async checkSessionStatus(request: BreakglassSessionRequest) {
+    return await this.client.get("/status", {
+      params: {
+        username: request.username,
+        clustername: request.clustername,
+        groupname: request.clustergroup,
+      }
+    })
+  }
+
   public async getClusterAccessReviews(): Promise<ClusterAccessReview[]> {
     const reviews = await this.client.get<ClusterAccessReview[]>("/reviews")
     return reviews.data
   }
 
   public async approveReview(review: ClusterAccessReview) {
-    return await this.client.post("/accept/"+review.name)
+    return await this.client.post("/accept/" + review.name)
   }
 
   public async rejectReview(review: ClusterAccessReview) {
-    return await this.client.post("/reject/"+review.name)
+    return await this.client.post("/reject/" + review.name)
   }
 
   // public async getBreakglasses(): Promise<Breakglass[]> {

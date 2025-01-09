@@ -31,13 +31,7 @@ const handleSendButtonClick = async () => {
 
   const response = await breakglassSession.requestSession(sessionRequest)
   console.log(response)
-  // try {
-  //   console.log('Data sent: ', userName.value, clusterName.value);
-  //   alert(`User ${userName.value} requested group ${clusterGroup.value} on cluster ${clusterName.value}`);
-  // } catch (error) {
-  //   console.error('Error sending data:', error);
-  //   alert('Failed to send data. Please try again.');
-  // }
+  // TODO: Update some status fields based on response 
 };
 
 onMounted(() => {
