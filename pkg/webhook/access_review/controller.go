@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,11 +17,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const MonthDuration = time.Hour * 24 * 30
+
 type BreakglassSessionController struct {
-	log        *zap.SugaredLogger
-	config     config.Config
-	manager    *CRDManager
-	middleware gin.HandlerFunc
+	log              *zap.SugaredLogger
+	config           config.Config
+	manager          *CRDManager
+	middleware       gin.HandlerFunc
+	identityProvider IdentityProvider
 }
 
 func (BreakglassSessionController) BasePath() string {
@@ -130,6 +134,12 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
+	identity, err := wc.identityProvider.GetIdentity(c)
+	if err != nil {
+		log.Printf("Error getting user identity: %v", err)
+		return
+	}
+
 	bs := v1alpha1.NewBreakglassSession(
 		request.Clustername,
 		request.Username,
@@ -150,14 +160,20 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	const MonthDuration = time.Hour * 24 * 30
 	bs.Status = v1alpha1.BreakglassSessionStatus{
 		Expired:            false,
-		Approved:           true,
+		Approved:           false,
 		IdleTimeoutReached: false,
 		CreatedAt:          metav1.Now(),
 		StoreUntil:         metav1.NewTime(time.Now().Add(MonthDuration)),
 	}
+
+	// If user is approver he can automatically create approved request for himself or some user
+	if slices.Contains(bs.Spec.Approvers, identity) {
+		bs.Status.Approved = true
+		bs.Status.ApprovedAt = metav1.Now()
+	}
+
 	if err := wc.manager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		log.Println("error while updating breakglass session", err)
 		c.Status(http.StatusInternalServerError)
@@ -195,11 +211,15 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	manager *CRDManager,
 	middleware gin.HandlerFunc,
 ) *BreakglassSessionController {
+	// TODO: Probably a switch based on config
+	ip := KeycloakIdentityProvider{}
+
 	controller := &BreakglassSessionController{
-		log:        log,
-		config:     cfg,
-		manager:    manager,
-		middleware: middleware,
+		log:              log,
+		config:           cfg,
+		manager:          manager,
+		middleware:       middleware,
+		identityProvider: ip,
 	}
 
 	return controller
