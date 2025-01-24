@@ -34,12 +34,16 @@
         <span>{{ .SubjectEmail }}</span>
       </p>
       <p>
-        is requesting
+        is requesting breakglass cluster session
       </p>
       <p>
-        <span style="font-size: 1.2rem;">{{ .RequestedCluster }}</span>
-        <span style="font-size: 1.2rem;">{{ .RequestedUsername }}</span>
-        <span style="font-size: 1.2rem;">{{ .RequestedGroup }}</span>
+         <span style="font-size: 1.2rem;">Cluster: {{ .RequestedCluster }}</span>
+      </p>
+      <p>
+        <span style="font-size: 1.2rem;">Username: {{ .RequestedUsername }}</span>
+      </p>
+      <p>
+        <span style="font-size: 1.2rem;">Group: {{ .RequestedGroup }}</span>
       </p>
       <p>
         <a class="btn" href="{{ .URL }}">Review</a>
