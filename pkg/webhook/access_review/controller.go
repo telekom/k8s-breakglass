@@ -99,7 +99,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	identity, err := wc.identityProvider.GetIdentityEmail(c)
+	userEmail, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		wc.log.Error("Error getting user identity", zap.Error(err))
 		return
@@ -136,7 +136,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 
 	// If user is approver he can automatically create approved request for himself or some user
-	if slices.Contains(bs.Spec.Approvers, identity) {
+	if slices.Contains(bs.Spec.Approvers, userEmail) {
 		bs.Status.Approved = true
 		bs.Status.ApprovedAt = metav1.Now()
 	}
@@ -147,7 +147,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	if err := wc.sendOnRequestEmail(bs); err != nil {
+	if err := wc.sendOnRequestEmail(bs, userEmail); err != nil {
 		wc.log.Error("Error while sending breakglass session request notification email", zap.Error(err))
 		c.Status(http.StatusInternalServerError)
 	}
@@ -155,14 +155,32 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	c.JSON(http.StatusCreated, request)
 }
 
-func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession) error {
+func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession, requestEmail string) error {
+	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.Username, bs.Spec.Group)
+	approvers := bs.Spec.Approvers
+
 	if bs.Status.Approved {
-		fmt.Println("Sending notification that request was already approved....")
+		fmt.Println("Sending notification that request was already approved....", subject)
 	} else {
-		fmt.Println("Sending request to approvers ")
+		body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
+			SubjectEmail:      requestEmail,
+			SubjectFullName:   "keycloak user",
+			RequestedCluster:  bs.Spec.Cluster,
+			RequestedUsername: bs.Spec.Username,
+			RequestedGroup:    bs.Spec.Group,
+		})
+		if err != nil {
+			wc.log.Errorf("failed to render email template: %v", err)
+			return err
+		}
+
+		if err := wc.mail.Send(approvers, subject, body); err != nil {
+			wc.log.Errorf("failed to send request email: %v", err)
+			return err
+		}
+		fmt.Println("Sending request to approvers...", subject)
 	}
-	// subject := fmt.Sprintf("%s is requesting %s", requestor.Name, request.Transition.To)
-	// wc.mail.Send(approvers)
+
 	return nil
 }
 
@@ -194,7 +212,7 @@ func (wc BreakglassSessionController) getApprovers() []string {
 }
 
 func (wc BreakglassSessionController) isPerformedByBreakglassAdmin(c *gin.Context) bool {
-	identity, err := wc.identityProvider.GetIdentityEmail(c)
+	identity, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		wc.log.Error("Error getting user identity", zap.Error(err))
 		return false

@@ -7,13 +7,13 @@ import (
 )
 
 type IdentityProvider interface {
-	GetIdentityEmail(*gin.Context) (string, error)
-	// GetIdentity(*gin.Context) (string, error)
+	GetEmail(*gin.Context) (string, error)
+	GetIdentity(*gin.Context) string
 }
 
 type KeycloakIdentityProvider struct{}
 
-func (kip KeycloakIdentityProvider) GetIdentityEmail(c *gin.Context) (email string, err error) {
+func (kip KeycloakIdentityProvider) GetEmail(c *gin.Context) (email string, err error) {
 	email = c.GetString("email")
 
 	if email == "" {
