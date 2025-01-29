@@ -33,16 +33,19 @@ type RequestBreakglassSessionMailParams struct {
 }
 
 var (
-	requestTemplate           = template.New("request")
-	approvedTempate           = template.New("approved")
-	breakglassSessionTemplate = template.New("breakglassSessionRequest")
+	requestTemplate                = template.New("request")
+	approvedTempate                = template.New("approved")
+	breakglassSessionTemplate      = template.New("breakglassSessionRequest")
+	breakglassNotificationTemplate = template.New("breakglassSessionNotification")
 
 	//go:embed templates/request.html
 	requestTemplateRaw string
 	//go:embed templates/approved.html
 	approvedTemplateRaw string
 	//go:embed templates/breakglassSessionRequest.html
-	breakglassSessionTemplateRaw string
+	breakglassSessionReqTemplateRaw string
+	//go:embed templates/breakglassSessionNotification.html
+	breakglassSessionNotifiTemplateRaw string
 )
 
 func init() {
@@ -52,7 +55,10 @@ func init() {
 	if _, err := approvedTempate.Parse(approvedTemplateRaw); err != nil {
 		panic(err)
 	}
-	if _, err := breakglassSessionTemplate.Parse(breakglassSessionTemplateRaw); err != nil {
+	if _, err := breakglassSessionTemplate.Parse(breakglassSessionReqTemplateRaw); err != nil {
+		panic(err)
+	}
+	if _, err := breakglassNotificationTemplate.Parse(breakglassSessionNotifiTemplateRaw); err != nil {
 		panic(err)
 	}
 }
@@ -72,5 +78,9 @@ func RenderApproved(p ApprovedMailParams) (string, error) {
 }
 
 func RenderBreakglassSessionRequest(p RequestBreakglassSessionMailParams) (string, error) {
+	return render(breakglassSessionTemplate, p)
+}
+
+func RenderBreakglassSessionNotification(p RequestBreakglassSessionMailParams) (string, error) {
 	return render(breakglassSessionTemplate, p)
 }

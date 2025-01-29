@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+  <style>
+    body {
+      font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
+      text-align: center;
+    }
+
+    table {
+      font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    table td:nth-child(1) {
+      text-align: right;
+    }
+
+    table td:nth-child(2) {
+      text-align: left;
+    }
+
+    .card {
+      box-shadow: rgba(0, 0, 0, 0.1) 0px 8px 32px 0px, rgba(0, 0, 0, 0.1) 0px 4px 8px 0px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 12px;
+      margin: 20px auto;
+      padding: 10px;
+      max-width: 500px;
+    }
+
+    .btn {
+      background-color: #e20074;
+      border-radius: 8px;
+      padding: 12px 24px 10px;
+      line-height: 22.4px;
+      display: inline-block;
+      color: white;
+      text-decoration: none;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Das SCHIFF Breakglass</h1>
+  <div class="card">
+    <p>
+      <span style="font-size: 1.2rem; font-weight: bold;">{{ .SubjectFullName }}</span>
+      <br>
+      <span>{{ .SubjectEmail }}</span>
+    </p>
+    <p>
+      request was accepted by {{ .Approver }}
+    <table>
+      <tr>
+        <td>Cluster:</td>
+        <td> <span style="font-size: 1.2rem;">{{ .RequestedCluster }}</span></td>
+      </tr>
+      <tr>
+        <td>Username:</td>
+        <td><span style="font-size: 1.2rem;">{{ .RequestedUsername }}</span></td>
+      </tr>
+      <tr>
+        <td>Group:</td>
+        <td><span style="font-size: 1.2rem;">{{ .RequestedGroup }}</span></td>
+      </tr>
+    </table>
+    <p>
+      <a class="btn" href="{{ .URL }}">More information</a>
+    </p>
+  </div>
+</body>
+
+</html>

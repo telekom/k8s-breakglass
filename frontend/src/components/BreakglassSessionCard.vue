@@ -2,22 +2,20 @@
 import { computed, ref } from "vue";
 import humanizeDuration from "humanize-duration";
 
-import type { ClusterAccessReview } from "@/model/cluster_access";
-
 const humanizeConfig: humanizeDuration.Options = {
   round: true,
   largest: 2,
 };
 
 const props = defineProps<{
-  review: any;
+  breakglass: any;
   time: number
 }>();
 
 const emit = defineEmits(["accept", "reject"]);
 
-const active = computed(() => Date.parse(props.review.until) - props.time > 0)
-const accepted = computed(() => props.review.application_status == "accepted")
+const active = true //;computed(() => Date.parse(props.breakglassSession.until) - props.time > 0)
+const accepted = computed(() => props.breakglass.application_status == "accepted")
 
 function accept() {
   emit("accept");
@@ -28,11 +26,12 @@ function reject() {
 }
 
 const expiryHumanized = computed(() => {
-  if (!active.value) {
-    return "already expired";
-  }
-  const until = Date.parse(props.review.until)
-  const duration = until - props.time
+  // if (!active.value) {
+  //   return "already expired";
+  // }
+  // const until = Date.parse(props.breakglassSession.until)
+  // const duration = until - props.time
+  const duration = 0
   return humanizeDuration(duration, humanizeConfig);
 });
 
@@ -41,20 +40,16 @@ const expiryHumanized = computed(() => {
 <template>
   <scale-card :aria-disabled="active">
     <h2 class="to">
-      {{ review.cluster }}
+      {{ breakglass.spec.group }}
     </h2>
     <span>
-      <br> Name: '{{ review.name }}' <br />
-      <br> UID: '{{ review.uid }}' <br />
-      <br> Cluster Name: '{{ review.cluster }}' <br />
-      <br> Duration: {{ review.duration }} <br />
-      <br>Until: {{ review.until }} <br />
-      <br> Status: {{ review.application_status }} <br />
+      <br> Name: '{{ breakglass.metadata.name }}' <br />
+      <br> UID: '{{ breakglass.metadata.uid }}' <br />
+      <br> Cluster Name: '{{ breakglass.spec.cluster }}' <br />
+      <br>Expiration: {{ breakglass.spec.expirationTimeout }} <br />
       <br> Resource Info: <br> <br>
-      User: '{{ review.subject.username }}' <br />
-      Resource: '{{ review.subject.resource }}' <br />
-      Method: '{{ review.subject.verb }}' <br />
-      Namespace: '{{ review.subject.namespace }}' <br />
+      User: '{{ breakglass.spec.username }}' <br />
+      Group: '{{ breakglass.spec.group }}' <br />
     </span>
     <p class="expiry">
       Expires in<br />

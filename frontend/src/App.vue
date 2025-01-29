@@ -7,7 +7,6 @@ import { useUser } from "@/services/auth";
 const auth = inject(AuthKey);
 const user = useUser();
 const authenticated = computed(() => user.value && !user.value?.expired);
-// const breakglassService = new BreakglassService(auth!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
 
 const route = useRoute();
 

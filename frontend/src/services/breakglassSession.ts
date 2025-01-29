@@ -28,7 +28,7 @@ export default class BreakglassSessionService {
     return await this.client.post("/request", request)
   }
 
-  public async getSessionStatus(request: BreakglassSessionRequest):Promise<any[]> {
+  public async getSessionStatus(request: BreakglassSessionRequest) {
     return await this.client.get("/status", {
       params: {
         username: request.username,

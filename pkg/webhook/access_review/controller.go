@@ -42,10 +42,10 @@ func (b BreakglassSessionController) Handlers() []gin.HandlerFunc {
 }
 
 func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Context) {
-	user := c.Param("username")
-	cluster := c.Param("clustername")
-	group := c.Param("groupname")
-	uname := c.Param("uname")
+	user := c.Query("username")
+	cluster := c.Query("clustername")
+	group := c.Query("groupname")
+	uname := c.Query("uname")
 
 	if cluster == "" && user == "" && group == "" && uname == "" {
 		c.Status(http.StatusBadRequest)
@@ -160,28 +160,27 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.Username, bs.Spec.Group)
 	approvers := bs.Spec.Approvers
 
-	if bs.Status.Approved {
-		fmt.Println("Sending notification that request was already approved....", subject)
-	} else {
-		body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
-			SubjectEmail:      requestEmail,
-			SubjectFullName:   requestUsername,
-			RequestedCluster:  bs.Spec.Cluster,
-			RequestedUsername: bs.Spec.Username,
-			RequestedGroup:    bs.Spec.Group,
-			URL:               fmt.Sprintf("%s/breakglassSession/review?name=%s", wc.config.ClusterAccess.FrontendPage, bs.Name),
-		})
-		if err != nil {
-			wc.log.Errorf("failed to render email template: %v", err)
-			return err
-		}
-
-		if err := wc.mail.Send(approvers, subject, body); err != nil {
-			wc.log.Errorf("failed to send request email: %v", err)
-			return err
-		}
-		fmt.Println("Sending request to approvers...", subject)
+	// TODO: In case user is an admin and get instantly approved request we coudl send notification only
+	// if bs.Status.Approved {
+	// } else {
+	body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
+		SubjectEmail:      requestEmail,
+		SubjectFullName:   requestUsername,
+		RequestedCluster:  bs.Spec.Cluster,
+		RequestedUsername: bs.Spec.Username,
+		RequestedGroup:    bs.Spec.Group,
+		URL:               fmt.Sprintf("%s/breakglassSession/review?name=%s", wc.config.ClusterAccess.FrontendPage, bs.Name),
+	})
+	if err != nil {
+		wc.log.Errorf("failed to render email template: %v", err)
+		return err
 	}
+
+	if err := wc.mail.Send(approvers, subject, body); err != nil {
+		wc.log.Errorf("failed to send request email: %v", err)
+		return err
+	}
+	// }
 
 	return nil
 }
