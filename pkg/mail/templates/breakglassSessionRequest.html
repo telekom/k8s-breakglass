@@ -41,32 +41,47 @@
       color: white;
       text-decoration: none;
     }
+
+    .box {
+      background: white;
+      font-size: 20px;
+      padding: 10px;
+      border: 1px solid lightgray;
+      margin-left: 80px;
+      margin-right: 80px;
+      margin-bottom: 10px;
+      margin-top: 10px;
+    }
   </style>
 </head>
 
 <body>
   <h1>Das SCHIFF Breakglass</h1>
   <div class="card">
-    <p>
-      <span style="font-size: 1.2rem; font-weight: bold;">{{ .SubjectFullName }}</span>
-      <br>
-      <span>{{ .SubjectEmail }}</span>
-    </p>
+    <div class="box">
+      <p>
+        <span style="font-size: 1.2rem; font-weight: bold;">{{ .SubjectFullName }}</span>
+        <br>
+        <span>{{ .SubjectEmail }}</span>
+      </p>
+    </div>
     <p>
       is requesting breakglass cluster session
     <table>
-      <tr>
-        <td>Cluster:</td>
-        <td> <span style="font-size: 1.2rem;">{{ .RequestedCluster }}</span></td>
-      </tr>
-      <tr>
-        <td>Username:</td>
-        <td><span style="font-size: 1.2rem;">{{ .RequestedUsername }}</span></td>
-      </tr>
-      <tr>
-        <td>Group:</td>
-        <td><span style="font-size: 1.2rem;">{{ .RequestedGroup }}</span></td>
-      </tr>
+      <tbody>
+        <tr>
+          <td>Cluster:</td>
+          <td> <span style="font-size: 1.2rem;">{{ .RequestedCluster }}</span></td>
+        </tr>
+        <tr>
+          <td>Username:</td>
+          <td><span style="font-size: 1.2rem;">{{ .RequestedUsername }}</span></td>
+        </tr>
+        <tr>
+          <td>Group:</td>
+          <td><span style="font-size: 1.2rem;">{{ .RequestedGroup }}</span></td>
+        </tr>
+      </tbody>
     </table>
     <p>
       <a class="btn" href="{{ .URL }}">Review</a>

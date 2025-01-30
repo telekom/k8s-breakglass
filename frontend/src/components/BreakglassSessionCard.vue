@@ -39,18 +39,26 @@ const expiryHumanized = computed(() => {
 
 <template>
   <scale-card :aria-disabled="active">
-    <h2 class="to">
-      {{ breakglass.spec.group }}
-    </h2>
     <span>
-      <br> Name: '{{ breakglass.metadata.name }}' <br />
-      <br> UID: '{{ breakglass.metadata.uid }}' <br />
-      <br> Cluster Name: '{{ breakglass.spec.cluster }}' <br />
-      <br>Expiration: {{ breakglass.spec.expirationTimeout }} <br />
-      <br> Resource Info: <br> <br>
-      User: '{{ breakglass.spec.username }}' <br />
-      Group: '{{ breakglass.spec.group }}' <br />
+      <p>
+        Group: <b>{{ breakglass.spec.group }}</b>
+      </p>
+
+      <p>
+       Username: <b>{{ breakglass.spec.username }}</b>
+      </p>
+
+      <p>
+       Cluster name: <b>{{ breakglass.spec.cluster }}</b>
+      </p>
+
+      <p>
+        <b>Approvers:</b> <br>
+        <small v-for="approver in  breakglass.spec.approvers"> {{ approver }}<br> </small>
+      </p>
+
     </span>
+
     <p class="expiry">
       Expires in<br />
       <b>{{ expiryHumanized }}</b>
