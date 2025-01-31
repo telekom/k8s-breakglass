@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import humanizeDuration from "humanize-duration";
 
 const humanizeConfig: humanizeDuration.Options = {
@@ -63,10 +63,12 @@ const expiryHumanized = computed(() => {
       Expires in<br />
       <b>{{ expiryHumanized }}</b>
     </p>
+
     <p v-if="active" class="actions">
       <scale-button v-if="!accepted" @click="accept">Accept </scale-button>
       <scale-button variant="secondary" @click="reject">Reject</scale-button>
     </p>
+
   </scale-card>
 </template>
 

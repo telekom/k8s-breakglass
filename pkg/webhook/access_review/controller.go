@@ -33,6 +33,8 @@ func (BreakglassSessionController) BasePath() string {
 func (wc *BreakglassSessionController) Register(rg *gin.RouterGroup) error {
 	rg.GET("/status", wc.handleGetBreakglassSessionStatus)
 	rg.POST("/request", wc.handleRequestBreakglassSession)
+	rg.POST("/approve/:uname", wc.handleApproveBreakglassSession)
+	rg.POST("/reject/:uname", wc.handleRejectBreakglassSession)
 
 	return nil
 }
@@ -154,6 +156,14 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 
 	c.JSON(http.StatusCreated, request)
+}
+
+func (wc BreakglassSessionController) handleApproveBreakglassSession(c *gin.Context) {
+	fmt.Println("approving breakglass session")
+}
+
+func (wc BreakglassSessionController) handleRejectBreakglassSession(c *gin.Context) {
+	fmt.Println("approving breakglass session")
 }
 
 func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession, requestEmail, requestUsername string) error {

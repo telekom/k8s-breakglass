@@ -15,6 +15,9 @@ const service = new BreakglassSessionService(auth!);
 const time = useCurrentTime();
 
 const resourceName = ref(route.query.name?.toString() || "");
+const clusterName = ref(route.query.cluster?.toString() || "");
+const userName = ref(route.query.username?.toString() || "");
+const groupName = ref(route.query.group?.toString() || "");
 
 const state = reactive({
   breakglasses: new Array(),
@@ -25,8 +28,12 @@ const state = reactive({
 });
 
 onMounted(async () => {
-  // const params: BreakglassSessionRequest = { uname: resourceName.value }
-  await service.getSessionStatus({ uname: resourceName.value }).then(response => {
+  await service.getSessionStatus({
+    uname: resourceName.value,
+    clustername: clusterName.value,
+    username: userName.value,
+    clustergroup: groupName.value
+  }).then(response => {
     console.log("response:=", response)
     switch (response.status) {
       case 200:
@@ -58,7 +65,7 @@ function onRequest(bg: any) {
   // breakglassService.requestBreakglass(bg);
 }
 
-async function onDrop(bg: any) {
+async function onReject(bg: any) {
   console.log("DROPING BG", bg)
   // await breakglassService.dropBreakglass(bg);
   // state.breakglasses = await breakglassService.getBreakglasses();
@@ -74,23 +81,12 @@ async function onDrop(bg: any) {
       </div>
 
       <div class="breakglass-list">
-        <BreakglassSessionCard
-          v-for="bg in filteredBreakglasses"
-          :key="bg.from + bg.to"
+        <BreakglassSessionCard v-for="bg in filteredBreakglasses"
           class="card"
           :breakglass="bg"
           :time="time"
-          @request="
-            () => {
-              onRequest(bg);
-            }
-          "
-          @drop="
-            () => {
-              onDrop(bg);
-            }
-          "
-        >
+          @accept="() => {onRequest(bg);}"
+          @reject="() => {onReject(bg);}">
         </BreakglassSessionCard>
       </div>
     </div>
