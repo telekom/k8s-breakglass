@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -15,8 +14,6 @@ import (
 	"go.uber.org/zap"
 	"k8s.io/kubernetes/pkg/apis/authorization"
 )
-
-const defaultReviewRequestTimeout = 5 * time.Minute
 
 type SubjectAccessReviewResponseStatus struct {
 	Allowed bool   `json:"allowed"`

@@ -70,6 +70,7 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			return
 		}
 
+		// NOTE: for future a token will contain a list of groups that user has
 		user_id := claims["sub"]
 		email := claims["email"]
 		username := claims["preferred_username"]

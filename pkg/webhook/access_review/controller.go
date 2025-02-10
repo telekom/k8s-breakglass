@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
+	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/mail"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/webhook/access_review/api/v1alpha1"
-	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/webhook/access_review/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -52,11 +52,6 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 	cluster := c.Query("clustername")
 	group := c.Query("groupname")
 	uname := c.Query("uname")
-
-	if cluster == "" && user == "" && group == "" && uname == "" {
-		c.Status(http.StatusBadRequest)
-		return
-	}
 
 	if !wc.isPerformedByBreakglassAdmin(c) {
 		c.Status(http.StatusUnauthorized)
