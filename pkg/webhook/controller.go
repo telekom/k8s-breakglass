@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	breakglass "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
-	accessreview "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/webhook/access_review"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/kubernetes/pkg/apis/authorization"
@@ -30,7 +30,7 @@ type SubjectAccessReviewResponse struct {
 type WebhookController struct {
 	log     *zap.SugaredLogger
 	config  config.Config
-	manager *accessreview.CRDManager
+	manager *breakglass.CRDManager
 }
 
 func (WebhookController) BasePath() string {
@@ -69,7 +69,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	// NOTE: If we want to know specific group that allowed user to perform the operation we would
 	// need to iterate over groups (sessions) and note the first that is ok. Then we could update its
 	// last used parameters and idle value.
-	can, err := accessreview.CanUserDo(sar, groups)
+	can, err := breakglass.CanUserDo(sar, groups)
 	if err != nil {
 		log.Println("error while checking RBAC permissions", err)
 		c.Status(http.StatusInternalServerError)
@@ -123,32 +123,12 @@ func (wc *WebhookController) getUserGroupsForCluster(ctx context.Context,
 	return groups, nil
 }
 
-// func (wc WebhookController) cleanupOldReviewRequests() {
-// 	cleanupRefreshTime := 1 * time.Minute
-// 	cleanup := func() {
-// 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-// 		defer cancel()
-// 		if err := wc.manager.DeleteReviewsOlderThan(ctx, time.Now()); err != nil {
-// 			wc.log.Errorf("Failed to delete old requests %v", err)
-// 		}
-// 	}
-//
-// 	for {
-// 		wc.log.Info("Running cleanup task")
-// 		cleanup()
-// 		wc.log.Info("Finished cleanup task")
-// 		time.Sleep(cleanupRefreshTime)
-// 	}
-// }
-
-func NewWebhookController(log *zap.SugaredLogger, cfg config.Config, manager *accessreview.CRDManager) *WebhookController {
+func NewWebhookController(log *zap.SugaredLogger, cfg config.Config, manager *breakglass.CRDManager) *WebhookController {
 	controller := &WebhookController{
 		log:     log,
 		config:  cfg,
 		manager: manager,
 	}
-
-	// go controller.cleanupOldReviewRequests()
 
 	return controller
 }
