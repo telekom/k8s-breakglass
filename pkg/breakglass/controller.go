@@ -294,12 +294,12 @@ func (wc BreakglassSessionController) markClenaupExpiredSession(ctx context.Cont
 	now := time.Now()
 	deletionLabel := map[string]string{"deletion": "true"}
 	for _, ses := range sessions {
-		if now.Before(ses.Status.StoreUntil.Time) {
+		if now.After(ses.Status.StoreUntil.Time) {
 			ses.SetLabels(deletionLabel)
 			if err := wc.manager.UpdateBreakglassSession(ctx, ses); err != nil {
 				wc.log.Error("error failed to set label", zap.Error(err))
 			}
-		} else if now.Before(ses.Status.ValidUntil.Time) {
+		} else if now.After(ses.Status.ValidUntil.Time) {
 			ses.Status.Expired = true
 			if err := wc.manager.UpdateBreakglassSessionStatus(ctx, ses); err != nil {
 				wc.log.Error("error while updating breakglass session", zap.Error(err))
