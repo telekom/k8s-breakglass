@@ -16,15 +16,6 @@ type EscalationManager struct {
 	writeMutex *sync.Mutex
 }
 
-// var scheme = runtime.NewScheme()
-//
-// func init() {
-// 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-//
-// 	utilruntime.Must(telekomv1alpha1.AddToScheme(scheme))
-// 	// +kubebuilder:scaffold:scheme
-// }
-
 // Get all stored GetClusterGroupAccess
 func (c EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	escal := v1alpha1.BreakglassEscalationList{}
