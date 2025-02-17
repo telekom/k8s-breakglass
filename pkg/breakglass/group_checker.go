@@ -19,7 +19,8 @@ import (
 )
 
 // Checks if operations defined in access review could be performed if user belongs to given groups on a given cluster.
-func CanGroupsDo(groups []string,
+func CanGroupsDo(ctx context.Context,
+	groups []string,
 	sar authorization.SubjectAccessReview,
 	clustername string,
 ) (bool, error) {
@@ -53,7 +54,7 @@ func CanGroupsDo(groups []string,
 		},
 	}
 
-	response, err := authClient.SelfSubjectAccessReviews().Create(context.TODO(), &v1Sar, metav1.CreateOptions{})
+	response, err := authClient.SelfSubjectAccessReviews().Create(ctx, &v1Sar, metav1.CreateOptions{})
 	if err != nil {
 		return false, err
 	}
@@ -62,7 +63,7 @@ func CanGroupsDo(groups []string,
 }
 
 // Returns users groups assigned in cluster by duplicating kubectl auth whoami logic.
-func GetUserGroups(username, clustername string) ([]string, error) {
+func GetUserGroups(ctx context.Context, username, clustername string) ([]string, error) {
 	cfg, err := config.GetConfigWithContext(clustername)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get config")

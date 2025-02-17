@@ -93,7 +93,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	rbacGroups, err := GetUserGroups(request.Username, request.Clustername)
+	ctx := c.Request.Context()
+	rbacGroups, err := GetUserGroups(ctx, request.Username, request.Clustername)
 	if err != nil {
 		wc.log.Error("Error getting user rbac groups for cluster", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, "failed to extract cluster group access information")
@@ -101,7 +102,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	// TODO: based on assigned groups we need to prepare possible transition list
 	fmt.Println("rbac groups:=", rbacGroups)
 
-	ses, err := wc.getBreakglassSession(c.Request.Context(),
+	ses, err := wc.getBreakglassSession(ctx,
 		request.Username, request.Clustername, request.Clustergroup)
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
@@ -130,13 +131,13 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		approvers)
 
 	bs.GenerateName = fmt.Sprintf("%s-%s-%s-", request.Clustername, request.Username, request.Clustergroup)
-	if err := wc.manager.AddBreakglassSession(c.Request.Context(), bs); err != nil {
+	if err := wc.manager.AddBreakglassSession(ctx, bs); err != nil {
 		wc.log.Error("error while adding breakglass session", zap.Error(err))
 		c.Status(http.StatusInternalServerError)
 		return
 	}
 
-	bs, err = wc.getBreakglassSession(c.Request.Context(), request.Username, request.Clustername, request.Clustergroup)
+	bs, err = wc.getBreakglassSession(ctx, request.Username, request.Clustername, request.Clustergroup)
 	if err != nil && !errors.Is(err, ErrSessionNotFound) {
 		wc.log.Error("error while getting breakglass session", zap.Error(err))
 		c.Status(http.StatusInternalServerError)
@@ -157,7 +158,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		bs.Status.ApprovedAt = metav1.Now()
 	}
 
-	if err := wc.manager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
+	if err := wc.manager.UpdateBreakglassSessionStatus(ctx, bs); err != nil {
 		wc.log.Error("error while updating breakglass session", zap.Error(err))
 		c.Status(http.StatusInternalServerError)
 		return
