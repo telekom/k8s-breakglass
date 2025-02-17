@@ -3,58 +3,27 @@ package breakglass
 import (
 	"context"
 	"fmt"
-	"io"
 
 	"github.com/pkg/errors"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authenticationv1alpha1 "k8s.io/api/authentication/v1alpha1"
 	authenticationv1beta1 "k8s.io/api/authentication/v1beta1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/cli-runtime/pkg/printers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/kubectl/pkg/cmd/auth"
-	"k8s.io/kubectl/pkg/util/term"
 	"k8s.io/kubernetes/pkg/apis/authorization"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
-type KAuthManager struct {
-	clustername string
-}
-
-func NewKAuthManager(clustername string) KAuthManager {
-	return KAuthManager{clustername: clustername}
-}
-
-// Checks if operations defined in access review could be performed if user belongs to given groups.
-// FIXME: This call has to be based on cluster name to get proper kubeconfig context
-// TODO: This calls should probably include context.Context for timeouts and cancellation
-func CanUserDo(sar authorization.SubjectAccessReview, groups []string) (bool, error) {
-	o := auth.CanIOptions{
-		Verb: sar.Spec.ResourceAttributes.Verb,
-		Resource: schema.GroupVersionResource{
-			Version:  sar.Spec.ResourceAttributes.Version,
-			Resource: sar.Spec.ResourceAttributes.Resource,
-		},
-		ResourceName: sar.Spec.ResourceAttributes.Resource,
-		Namespace:    sar.Spec.ResourceAttributes.Namespace,
-	}
-	o.ErrOut = io.Discard
-	// could be saved to buffer and displayed as debug or some reason information
-	o.Out = io.Discard
-
-	o.WarningPrinter = printers.NewWarningPrinter(o.ErrOut, printers.WarningPrinterOptions{Color: term.AllowsColorOutput(o.ErrOut)})
-	if err := o.Validate(); err != nil {
-		return false, errors.Wrap(err, "failed to create validate CanIOptions")
-	}
-
-	// TODO: Probably this default config might be not enough as we need
-	// to specify cluster.
-	cfg, err := config.GetConfig()
+// Checks if operations defined in access review could be performed if user belongs to given groups on a given cluster.
+func CanGroupsDo(groups []string,
+	sar authorization.SubjectAccessReview,
+	clustername string,
+) (bool, error) {
+	cfg, err := config.GetConfigWithContext(clustername)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to get config")
 	}
@@ -69,18 +38,30 @@ func CanUserDo(sar authorization.SubjectAccessReview, groups []string) (bool, er
 		return false, errors.Wrap(err, "failed to create client")
 	}
 
-	o.AuthClient = client.AuthorizationV1()
+	authClient := client.AuthorizationV1()
 
-	ret, err := o.RunAccessCheck()
-	if err != nil {
-		return false, errors.Wrap(err, "failed to run access check")
+	v1Sar := authorizationv1.SelfSubjectAccessReview{
+		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace:   sar.Spec.ResourceAttributes.Namespace,
+				Verb:        sar.Spec.ResourceAttributes.Verb,
+				Group:       sar.Spec.ResourceAttributes.Group,
+				Resource:    sar.Spec.ResourceAttributes.Resource,
+				Subresource: sar.Spec.ResourceAttributes.Subresource,
+				Name:        sar.Spec.ResourceAttributes.Resource,
+			},
+		},
 	}
 
-	return ret, nil
+	response, err := authClient.SelfSubjectAccessReviews().Create(context.TODO(), &v1Sar, metav1.CreateOptions{})
+	if err != nil {
+		return false, err
+	}
+
+	return response.Status.Allowed, nil
 }
 
 // Returns users groups assigned in cluster by duplicating kubectl auth whoami logic.
-// FIXME: This call has to be based on cluster name to get proper kubeconfig context
 func GetUserGroups(username, clustername string) ([]string, error) {
 	cfg, err := config.GetConfigWithContext(clustername)
 	if err != nil {
