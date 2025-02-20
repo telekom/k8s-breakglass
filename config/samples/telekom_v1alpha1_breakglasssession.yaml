@@ -7,4 +7,3 @@ spec:
   cluster: kind
   username: tester
   group: breakglass-service-create
-  approvers: ["bazko@telekom.de"]
