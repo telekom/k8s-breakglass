@@ -60,22 +60,65 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 	cluster := c.Query("clustername")
 	group := c.Query("groupname")
 	uname := c.Query("uname")
+	ctx := c.Request.Context()
 
-	sessions, err := wc.sessionManager.GetBreakglassSessionsWithSelectorString(c.Request.Context(),
+	userID, err := wc.identityProvider.GetEmail(c)
+	if err != nil {
+		wc.log.Error("Error getting user identity", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, "failed to extract current user id")
+	}
+
+	sessions, err := wc.sessionManager.GetBreakglassSessionsWithSelectorString(ctx,
 		SessionSelector(uname, user, cluster, group))
 	if err != nil {
 		wc.log.Error("Error getting breakglass sessions", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, "failed to extract cluster group access information")
+		c.JSON(http.StatusInternalServerError, "failed to extract breakglass session information")
 		return
 	}
 
-	// TODO: We need to filter session based on requestor
-	if len(sessions) != 0 && !wc.isSessionApprover(c, sessions[0]) {
-		c.Status(http.StatusUnauthorized)
-		return
+	sessionsPerCluster := make(map[string][]telekomv1alpha1.BreakglassSession)
+	for _, ses := range sessions {
+		if _, has := sessionsPerCluster[ses.Spec.Cluster]; !has {
+			sessionsPerCluster[ses.Spec.Cluster] = []telekomv1alpha1.BreakglassSession{}
+		}
+		sessionsPerCluster[ses.Spec.Cluster] = append(sessionsPerCluster[ses.Spec.Cluster], ses)
 	}
 
-	c.JSON(http.StatusOK, sessions)
+	displayable := []v1alpha1.BreakglassSession{}
+
+	for clusterName, sessions := range sessionsPerCluster {
+		escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, clusterName)
+		if err != nil {
+			wc.log.Error("Error getting breakglass escalations", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, "failed to extract breakglass escalation information")
+			return
+		}
+
+		userGroups, err := GetUserGroups(ctx, ClusterUserGroup{Clustername: clusterName, Username: userID})
+		if err != nil {
+			wc.log.Error("Error getting users groups", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, "failed to extract user group information")
+			return
+		}
+		userCluserGroups := map[string]any{}
+		for _, g := range userGroups {
+			userCluserGroups[g] = struct{}{}
+		}
+
+		// TODO: Refactor this is too complex and shouldn't use intersect probably will be wrapped as some kind of filtering
+		// function / struct.
+		for _, ses := range sessions {
+			for _, esc := range escalations {
+				if slices.Contains(esc.Spec.Approvers.Users, userID) {
+					displayable = append(displayable, ses)
+				} else if intersects(userCluserGroups, esc.Spec.Approvers.Groups) {
+					displayable = append(displayable, ses)
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, displayable)
 }
 
 func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Context) {

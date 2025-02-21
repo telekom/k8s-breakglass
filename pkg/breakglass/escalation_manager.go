@@ -39,6 +39,14 @@ func (em EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Con
 	return ess.Items, nil
 }
 
+func (em EscalationManager) GetClusterBreakglassEscalations(ctx context.Context,
+	cluster string,
+) ([]telekomv1alpha1.BreakglassEscalation, error) {
+	return em.GetBreakglassEscalationsWithSelector(ctx, fields.SelectorFromSet(fields.Set{
+		"spec.cluster": cluster,
+	}))
+}
+
 func (em EscalationManager) GetClusterUserBreakglassEscalations(ctx context.Context,
 	cug ClusterUserGroup,
 ) ([]telekomv1alpha1.BreakglassEscalation, error) {
