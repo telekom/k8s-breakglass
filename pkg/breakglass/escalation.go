@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/pkg/errors"
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	"golang.org/x/exp/slices"
 )
@@ -31,6 +32,34 @@ func FilterForUserPossibleEscalations(ctx context.Context,
 	return possible, nil
 }
 
+func FilterSessionsForUserApprovable(ctx context.Context,
+	userInfo ClusterUserGroup,
+	escalations []telekomv1alpha1.BreakglassEscalation,
+	sessions []telekomv1alpha1.BreakglassSession,
+) ([]telekomv1alpha1.BreakglassSession, error) {
+	userGroups, err := GetUserGroups(ctx, userInfo)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get user rbac cluster groups")
+	}
+	userCluserGroups := map[string]any{}
+	for _, g := range userGroups {
+		userCluserGroups[g] = struct{}{}
+	}
+
+	displayable := []v1alpha1.BreakglassSession{}
+
+	for _, ses := range sessions {
+		for _, esc := range escalations {
+			if slices.Contains(esc.Spec.Approvers.Users, userInfo.Username) {
+				displayable = append(displayable, ses)
+			} else if intersects(userCluserGroups, esc.Spec.Approvers.Groups) {
+				displayable = append(displayable, ses)
+			}
+		}
+	}
+	return displayable, nil
+}
+
 func FilterForUserApprovableEscalations(ctx context.Context,
 	escalations []telekomv1alpha1.BreakglassEscalation,
 	cug ClusterUserGroup,
@@ -56,23 +85,6 @@ func FilterForUserApprovableEscalations(ctx context.Context,
 
 	return approvable, nil
 }
-
-// func FilterSessionsForUserApprovable(ctx context.Context,
-// 	sessions []telekomv1alpha1.BreakglassSession,
-// 	escalations []telekomv1alpha1.BreakglassEscalation,
-// 	cug ClusterUserGroup,
-// ) ([]telekomv1alpha1.BreakglassSession, error) {
-// 	userGroups, err := GetUserGroups(ctx, cug)
-// 	if err != nil {
-// 		return nil, errors.Wrap(err, "failed to get user groups")
-// 	}
-// 	for _, es := range escalations {
-//     if slices.Contains(es.Spec.Approvers.Groups,
-//     // if es.Spec.Approvers.Groups
-// 	}
-// 	fmt.Println(userGroups)
-// 	return nil, nil
-// }
 
 func intersects(amap map[string]any, b []string) bool {
 	for _, v := range b {

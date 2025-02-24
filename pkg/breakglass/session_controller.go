@@ -94,28 +94,16 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 			return
 		}
 
-		userGroups, err := GetUserGroups(ctx, ClusterUserGroup{Clustername: clusterName, Username: userID})
+		sessions, err := FilterSessionsForUserApprovable(ctx,
+			ClusterUserGroup{Clustername: clusterName, Username: userID},
+			escalations, sessions)
 		if err != nil {
-			wc.log.Error("Error getting users groups", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, "failed to extract user group information")
+			wc.log.Error("Error fitlering for user approvable", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, "failed to extract user breakglass information")
 			return
 		}
-		userCluserGroups := map[string]any{}
-		for _, g := range userGroups {
-			userCluserGroups[g] = struct{}{}
-		}
 
-		// TODO: Refactor this is too complex and shouldn't use intersect probably will be wrapped as some kind of filtering
-		// function / struct.
-		for _, ses := range sessions {
-			for _, esc := range escalations {
-				if slices.Contains(esc.Spec.Approvers.Users, userID) {
-					displayable = append(displayable, ses)
-				} else if intersects(userCluserGroups, esc.Spec.Approvers.Groups) {
-					displayable = append(displayable, ses)
-				}
-			}
-		}
+		displayable = append(displayable, sessions...)
 	}
 
 	c.JSON(http.StatusOK, displayable)
