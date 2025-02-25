@@ -48,6 +48,7 @@ func main() {
 
 	err = server.RegisterAll([]api.APIController{
 		breakglass.NewBreakglassSessionController(log, config, &sessionManager, &escalationManager, auth.Middleware()),
+		breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware()),
 		webhook.NewWebhookController(log, config, &sessionManager),
 	})
 	if err != nil {
