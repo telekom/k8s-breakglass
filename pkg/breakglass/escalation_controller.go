@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +34,12 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, escalations)
+	escalationSpec := make([]v1alpha1.BreakglassEscalationSpec, 0, len(escalations))
+	for _, esc := range escalations {
+		escalationSpec = append(escalationSpec, esc.Spec)
+	}
+
+	c.JSON(http.StatusOK, escalationSpec)
 }
 
 func (BreakglassEscalationController) BasePath() string {

@@ -52,8 +52,10 @@ func FilterSessionsForUserApprovable(ctx context.Context,
 		for _, esc := range escalations {
 			if slices.Contains(esc.Spec.Approvers.Users, userInfo.Username) {
 				displayable = append(displayable, ses)
+				break
 			} else if intersects(userCluserGroups, esc.Spec.Approvers.Groups) {
 				displayable = append(displayable, ses)
+				break
 			}
 		}
 	}
