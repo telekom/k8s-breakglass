@@ -97,7 +97,7 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 		sessions, err := EscalationFiltering{
 			FilterUserData:   ClusterUserGroup{Clustername: clusterName, Username: userID},
 			UserGroupExtract: GetUserGroups,
-		}.FilterSessionsForUserApprovable(ctx, escalations, sessions)
+		}.FilterSessionsForUserApprovable(ctx, sessions, escalations)
 		if err != nil {
 			wc.log.Error("Error fitlering for user approvable", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, "failed to extract user breakglass information")

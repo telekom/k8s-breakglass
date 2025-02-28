@@ -9,12 +9,19 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// EscalationFiltering filters given breakglass escalations and sessions based on user their definition
+// compared with user assigned groups.
+// User assigned groups are extracted using injected function which probably corresponds to `kubectl auth whoami`.
 type EscalationFiltering struct {
 	FilterUserData   ClusterUserGroup
 	UserGroupExtract func(context.Context, ClusterUserGroup) ([]string, error)
 }
 
-func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Context, escalations []telekomv1alpha1.BreakglassEscalation) ([]telekomv1alpha1.BreakglassEscalation, error) {
+// FilterForUserPossibleEscalations filters provided escalations for those that are available based on user assigned
+// extractable groups.
+func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Context,
+	escalations []telekomv1alpha1.BreakglassEscalation,
+) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	userGroups, err := ef.UserGroupExtract(ctx, ef.FilterUserData)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get user groups")
@@ -24,9 +31,15 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 		groups[group] = struct{}{}
 	}
 
+	isEscalationForUser := func(esc telekomv1alpha1.BreakglassEscalation) bool {
+		return esc.Spec.Cluster == ef.FilterUserData.Clustername &&
+			esc.Spec.Username == ef.FilterUserData.Username
+	}
+
 	possible := make([]telekomv1alpha1.BreakglassEscalation, 0, len(escalations))
 	for _, esc := range escalations {
-		if intersects(groups, esc.Spec.AllowedGroups) {
+		if isEscalationForUser(esc) &&
+			intersects(groups, esc.Spec.AllowedGroups) {
 			possible = append(possible, esc)
 		}
 	}
@@ -34,9 +47,11 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 	return possible, nil
 }
 
+// FilterSessionsForUserApprovable filters sessions for the ones that filter user
+// could approve, based on provided escalations joined with user extracted groups.
 func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Context,
-	escalations []telekomv1alpha1.BreakglassEscalation,
 	sessions []telekomv1alpha1.BreakglassSession,
+	escalations []telekomv1alpha1.BreakglassEscalation,
 ) ([]telekomv1alpha1.BreakglassSession, error) {
 	userGroups, err := ef.UserGroupExtract(ctx, ef.FilterUserData)
 	if err != nil {
@@ -61,62 +76,6 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 		}
 	}
 	return displayable, nil
-}
-
-func FilterSessionsForUserApprovable(ctx context.Context,
-	userInfo ClusterUserGroup,
-	escalations []telekomv1alpha1.BreakglassEscalation,
-	sessions []telekomv1alpha1.BreakglassSession,
-) ([]telekomv1alpha1.BreakglassSession, error) {
-	userGroups, err := GetUserGroups(ctx, userInfo)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get user rbac cluster groups")
-	}
-	userCluserGroups := map[string]any{}
-	for _, g := range userGroups {
-		userCluserGroups[g] = struct{}{}
-	}
-
-	displayable := []v1alpha1.BreakglassSession{}
-
-	for _, ses := range sessions {
-		for _, esc := range escalations {
-			if slices.Contains(esc.Spec.Approvers.Users, userInfo.Username) {
-				displayable = append(displayable, ses)
-				break
-			} else if intersects(userCluserGroups, esc.Spec.Approvers.Groups) {
-				displayable = append(displayable, ses)
-				break
-			}
-		}
-	}
-	return displayable, nil
-}
-
-func FilterForUserApprovableEscalations(ctx context.Context,
-	escalations []telekomv1alpha1.BreakglassEscalation,
-	cug ClusterUserGroup,
-) ([]telekomv1alpha1.BreakglassEscalation, error) {
-	userGroups, err := GetUserGroups(ctx, cug)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get user groups")
-	}
-	groups := make(map[string]any, len(userGroups))
-	for _, group := range userGroups {
-		groups[group] = struct{}{}
-	}
-
-	approvable := make([]telekomv1alpha1.BreakglassEscalation, 0, len(escalations))
-	for _, esc := range escalations {
-		if slices.Contains(esc.Spec.Approvers.Users, cug.Username) {
-			approvable = append(approvable, esc)
-		}
-		if intersects(groups, esc.Spec.Approvers.Groups) {
-			approvable = append(approvable, esc)
-		}
-	}
-
-	return approvable, nil
 }
 
 func intersects(amap map[string]any, b []string) bool {
