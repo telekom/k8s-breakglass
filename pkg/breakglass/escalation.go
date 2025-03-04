@@ -66,6 +66,10 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 
 	for _, ses := range sessions {
 		for _, esc := range escalations {
+			if ses.Spec.Group != esc.Spec.EscalatedGroup {
+				continue
+			}
+
 			if slices.Contains(esc.Spec.Approvers.Users, ef.FilterUserData.Username) {
 				displayable = append(displayable, ses)
 				break
