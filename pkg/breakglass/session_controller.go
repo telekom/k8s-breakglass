@@ -62,11 +62,8 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 	uname := c.Query("uname")
 	ctx := c.Request.Context()
 
-	userID, err := wc.identityProvider.GetEmail(c)
-	if err != nil {
-		wc.log.Error("Error getting user identity", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, "failed to extract current user id")
-	}
+	// TODO: To decide if we want to treat email or username as main identity
+	userName, _ := wc.identityProvider.GetEmail(c)
 
 	sessions, err := wc.sessionManager.GetBreakglassSessionsWithSelectorString(ctx,
 		SessionSelector(uname, user, cluster, group))
@@ -95,7 +92,7 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 		}
 
 		sessions, err := EscalationFiltering{
-			FilterUserData:   ClusterUserGroup{Clustername: clusterName, Username: userID},
+			FilterUserData:   ClusterUserGroup{Clustername: clusterName, Username: userName},
 			UserGroupExtract: GetUserGroups,
 		}.FilterSessionsForUserApprovable(ctx, sessions, escalations)
 		if err != nil {
@@ -397,25 +394,19 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 		return false
 	}
 
-	userGroups, err := GetUserGroups(ctx, approverID)
+	sessions, err := EscalationFiltering{
+		FilterUserData:   approverID,
+		UserGroupExtract: GetUserGroups,
+	}.FilterSessionsForUserApprovable(
+		ctx,
+		[]telekomv1alpha1.BreakglassSession{session},
+		escalations)
 	if err != nil {
-		wc.log.Error("Error getting approver groups", zap.Error(err))
+		wc.log.Error("Error filtering for approver sessions", zap.Error(err))
 		return false
 	}
-	groupsMap := map[string]any{}
-	for _, g := range userGroups {
-		groupsMap[g] = struct{}{}
-	}
 
-	for _, esc := range escalations {
-		if slices.Contains(esc.Spec.Approvers.Users, approverID.Username) {
-			return true
-		} else if intersects(groupsMap, esc.Spec.Approvers.Groups) {
-			return true
-		}
-	}
-
-	return false
+	return len(sessions) == 1
 }
 
 func NewBreakglassSessionController(log *zap.SugaredLogger,

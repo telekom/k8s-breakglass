@@ -175,6 +175,7 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 		ExpectedOutputSessionsGroups []string
 		ErrExpected                  bool
 	}{
+		// Case 1 - check for filtering based on approver name and belonging group
 		{
 			TestName: "User and group based session filter",
 			Filter: breakglass.EscalationFiltering{
@@ -255,6 +256,48 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 				},
 			},
 			ExpectedOutputSessionsGroups: []string{"escalation1", "escalation2"},
+		},
+		// Case 2 - make sure no escalations does not return all sessions
+		{
+			TestName: "Empty escalations return no session",
+			Filter: breakglass.EscalationFiltering{
+				FilterUserData: SampleApproverData,
+				UserGroupExtract: func(context.Context, breakglass.ClusterUserGroup) ([]string, error) {
+					return []string{"admins1"}, nil
+				},
+			},
+			Escalations: []v1alpha1.BreakglassEscalation{},
+			InputSessions: []v1alpha1.BreakglassSession{
+				{
+					Spec: v1alpha1.BreakglassSessionSpec{
+						Cluster:  SampleApproverData.Clustername,
+						Username: SampleUserData.Username,
+						Group:    "escalation1",
+					},
+				},
+				{
+					Spec: v1alpha1.BreakglassSessionSpec{
+						Cluster:  SampleApproverData.Clustername,
+						Username: SampleUserData.Username,
+						Group:    "escalation10",
+					},
+				},
+				{
+					Spec: v1alpha1.BreakglassSessionSpec{
+						Cluster:  SampleApproverData.Clustername,
+						Username: SampleUserData.Username,
+						Group:    "escalation2",
+					},
+				},
+				{
+					Spec: v1alpha1.BreakglassSessionSpec{
+						Cluster:  SampleApproverData.Clustername,
+						Username: SampleUserData.Username,
+						Group:    "escalation3",
+					},
+				},
+			},
+			ExpectedOutputSessionsGroups: []string{},
 		},
 	}
 
