@@ -66,7 +66,8 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 
 	for _, ses := range sessions {
 		for _, esc := range escalations {
-			if ses.Spec.Group != esc.Spec.EscalatedGroup {
+			if ses.Spec.Group != esc.Spec.EscalatedGroup ||
+				ses.Spec.Cluster != esc.Spec.Cluster {
 				continue
 			}
 
