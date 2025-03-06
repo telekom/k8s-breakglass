@@ -5,5 +5,5 @@ metadata:
   name: kind-tester-breakglass-service-create-1 
 spec:
   cluster: kind
-  username: tester
+  username: tester@mail.com
   group: breakglass-service-create

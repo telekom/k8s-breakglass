@@ -281,7 +281,11 @@ func (wc BreakglassSessionController) handleRejectBreakglassSession(c *gin.Conte
 		})
 }
 
-func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession, requestEmail, requestUsername string, approvers []string) error {
+func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession,
+	requestEmail,
+	requestUsername string,
+	approvers []string,
+) error {
 	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.Username, bs.Spec.Group)
 
 	if bs.Status.Approved {

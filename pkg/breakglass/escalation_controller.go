@@ -21,13 +21,14 @@ func (ec *BreakglassEscalationController) Register(rg *gin.RouterGroup) error {
 }
 
 func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
-	username := ec.identityProvider.GetUsername(c)
-	if username == "" {
+	email, err := ec.identityProvider.GetEmail(c)
+	if err != nil {
+		ec.log.Error("failed to get email identity", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, "failed to extract user identity")
 		return
 	}
 
-	escalations, err := ec.manager.GetUserBreakglassEscalations(c.Request.Context(), username)
+	escalations, err := ec.manager.GetUserBreakglassEscalations(c.Request.Context(), email)
 	if err != nil {
 		ec.log.Error("Error getting user identity email", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, "failed to extract user escalations")
