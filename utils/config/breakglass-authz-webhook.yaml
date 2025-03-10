@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Config
+clusters:
+  - name: breakglass
+    cluster:
+      server: http://172.19.0.1:8081/api/breakglass/webhook/authorize/kind
+      insecure-skip-tls-verify: true
+      # server: https://localhost:30771/authorize
+
+users:
+  - name: kube-apiserver
+    user:
+      client-certificate: /files/client.crt
+      client-key: /files/client.key
+
+current-context: webhook
+contexts:
+  - context:
+      cluster: breakglass
+      user: kube-apiserver
+    name: webhook

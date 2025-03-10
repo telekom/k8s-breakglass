@@ -1,0 +1,24 @@
+apiVersion: apiserver.config.k8s.io/v1beta1
+kind: AuthorizationConfiguration
+authorizers:
+  - type: Node
+    name: node
+  - type: RBAC
+    name: rbac
+  - type: Webhook
+    name: breakglass
+    webhook:
+      unauthorizedTTL: 30s
+      timeout: 3s
+      subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
+      failurePolicy: Deny
+      connectionInfo:
+        type: KubeConfigFile
+        kubeConfigFile: /files/breakglass-authz-webhook.yaml
+      matchConditions:
+      - expression: "'system:authenticated' in request.groups"
+      - expression: "!request.user.startsWith('system:')"
+      - expression: has(request.resourceAttributes)
+      - expression: "!request.user.startsWith('kubernetes')"
+
