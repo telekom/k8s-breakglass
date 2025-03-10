@@ -82,7 +82,8 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	if can {
 		allowed = true
 	} else {
-		reason = fmt.Sprintf("please request proper group assignment at %s/breakglassSession/request?cluster=%s&username=%s", wc.config.ClusterAccess.FrontendPage, cluster, username)
+		reason = fmt.Sprintf("please request proper group assignment at %s/breakglassSession/request?cluster=%s",
+			wc.config.ClusterAccess.FrontendPage, cluster)
 	}
 
 	response := SubjectAccessReviewResponse{

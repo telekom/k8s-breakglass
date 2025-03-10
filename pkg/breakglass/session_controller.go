@@ -179,7 +179,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		request.Username,
 		request.Groupname)
 
-	bs.GenerateName = fmt.Sprintf("%s-%s-%s-", request.Clustername, request.Username, request.Groupname)
+	bs.GenerateName = fmt.Sprintf("%s-%s-", request.Clustername, request.Groupname)
 	if err := wc.sessionManager.AddBreakglassSession(ctx, bs); err != nil {
 		wc.log.Error("error while adding breakglass session", zap.Error(err))
 		c.Status(http.StatusInternalServerError)

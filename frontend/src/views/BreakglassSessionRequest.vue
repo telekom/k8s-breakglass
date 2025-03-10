@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, computed, ref, onMounted, reactive, triggerRef } from "vue";
+import { inject, computed, ref, onMounted } from "vue";
 
 import { useRoute } from "vue-router";
 import { AuthKey } from "@/keys";
@@ -8,8 +8,6 @@ import BreakglassSessionService from "@/services/breakglassSession";
 import BreakglassEscalationService from "@/services/breakglassEscalation";
 import type { BreakglassSessionRequest } from "@/model/breakglassSession";
 import type { BreakglassEscalationSpec } from "@/model/escalation";
-import cluster from "cluster";
-import type { AxiosRequestHeaders } from "axios";
 
 const auth = inject(AuthKey);
 const sessionService = new BreakglassSessionService(auth!);
@@ -18,15 +16,14 @@ const route = useRoute()
 const user = useUser();
 const authenticated = computed(() => user.value && !user.value?.expired);
 
-const userName = ref(route.query.username || "");
+const userName = computed(() => user.value?.profile.email);
 const clusterName = ref(route.query.cluster || "");
-const clusterGroup = ref(route.query.group || "breakglass-create-all");
+const clusterGroup = ref("");
 const alreadyRequested = ref(false);
 const requestStatusMessage = ref("");
 const loading = ref(true);
 const escalations = ref(Array<BreakglassEscalationSpec>());
 
-const hasUsername = route.query.username ? true : false
 const hasCluster = route.query.cluster ? true : false
 
 // Function to handle the form submission
@@ -79,12 +76,15 @@ onMounted(async () => {
     if (response.status == 200) {
       const resp = response.data as Array<BreakglassEscalationSpec>
       escalations.value = resp.filter(spec => spec.cluster === clusterName.value)
+      if (escalations.value.length > 0){
+        clusterGroup.value = escalations.value[0].escalatedGroup
+      }
     } else {
-      console.log("resp", response)
       requestStatusMessage.value = "Failed to gather escalation information."
     }
   }).catch((errResp) => {
-    console.log("eror", errResp)
+    console.log("error", errResp)
+    requestStatusMessage.value = "Failed to gather escalation information."
   })
   loading.value = false;
 })
@@ -102,8 +102,7 @@ onMounted(async () => {
         <form @submit.prevent="handleSendButtonClick">
           <div>
             <label for="user_name">Username:</label>
-            <input type="text" id="user_name" v-model="userName" :disabled="hasUsername" placeholder="Enter user name"
-              required />
+            <input type="text" id="user_name" v-model="userName" disabled=true placeholder="Enter user name" required />
           </div>
           <div>
             <label for="cluster_name">Cluster name:</label>
@@ -118,7 +117,8 @@ onMounted(async () => {
           </div>
 
           <div>
-            <scale-button type="submit" :disabled="alreadyRequested" size="small">Send</scale-button>
+            <scale-button type="submit" :disabled="alreadyRequested || escalations.length == 0"
+              size="small">Send</scale-button>
           </div>
 
           <p v-if="requestStatusMessage !== ''">{{ requestStatusMessage }}</p>
