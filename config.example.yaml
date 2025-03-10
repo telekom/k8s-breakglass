@@ -3,20 +3,6 @@ server:
   tlsCertFile: /some/file.crt
   tlsKeyFile: /some/file.key
   baseURL: http://breakglass.example.telekom.de
-globalBreakglassGroups:
-- schiff-onboarding
-possibletransitions:
-- from: schiff-admin
-  to: schiff-poweruser
-  duration: 7200
-  selfApproval: true
-  approvalGroups: [schiff-admin]
-- from: schiff-admin
-  to: schiff-super-emergency
-  duration: 7200
-  selfApproval: true
-  approvalGroups: [schiff-admin, schiff-poweruser]
-  globalBreakglassExcluded: true
 keycloak:
   url: http://127.0.0.1:8080
   clientID: breakglass
@@ -26,6 +12,7 @@ keycloak:
 frontend:
   oidcAuthority: http://127.0.0.1:8080/realms/master
   oidcClientID: breakglass-ui
+  baseURL: http://localhost:5173
 mail:
   host: 127.0.0.1
   port: 1025

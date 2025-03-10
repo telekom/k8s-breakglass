@@ -25,7 +25,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error loading config for breakglass controller: %v", err)
 	}
-	config.Defaults()
 
 	if debug {
 		log.Infof("%#v", config)
