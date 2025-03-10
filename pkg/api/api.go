@@ -82,9 +82,9 @@ func (s *Server) RegisterAll(controllers []APIController) error {
 
 func (s *Server) Listen() {
 	if s.config.Server.TLSCertFile != "" && s.config.Server.TLSKeyFile != "" {
-		s.gin.RunTLS(s.config.Server.ListenAddress, s.config.Server.TLSCertFile, s.config.Server.TLSKeyFile)
+		_ = s.gin.RunTLS(s.config.Server.ListenAddress, s.config.Server.TLSCertFile, s.config.Server.TLSKeyFile)
 	}
-	s.gin.Run(s.config.Server.ListenAddress)
+	_ = s.gin.Run(s.config.Server.ListenAddress)
 }
 
 type FrontendConfig struct {

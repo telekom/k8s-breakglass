@@ -314,6 +314,7 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 	return nil
 }
 
+// nolint:unused // might use later
 func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 	sessions, err := wc.sessionManager.GetAllBreakglassSessions(c.Request.Context())
 	if err != nil {
