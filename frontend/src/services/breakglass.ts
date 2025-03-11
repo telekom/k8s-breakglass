@@ -1,4 +1,4 @@
-import axios, { type AxiosResponse } from "axios";
+import axios, { type AxiosRequestHeaders, type AxiosResponse } from "axios";
 
 import type AuthService from "@/services/auth";
 import type { ActiveBreakglass, AvailableBreakglass, Breakglass } from "@/model/breakglass";
@@ -14,7 +14,7 @@ export default class BreakglassService {
 
     this.client.interceptors.request.use(async (req) => {
       if (!req.headers) {
-        req.headers = {};
+        req.headers = {} as AxiosRequestHeaders;
       }
       req.headers["Authorization"] = `Bearer ${await this.auth.getAccessToken()}`;
       return req;

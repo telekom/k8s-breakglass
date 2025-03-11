@@ -1,6 +1,4 @@
-import ApproveView from "@/views/ApproveView.vue";
 import BreakglassView from "@/views/BreakglassView.vue";
-import WebhookAccessView from "@/views/WebhookAccessView.vue";
 import BreaglassSessionRequestView from "@/views/BreakglassSessionRequest.vue";
 import BreaglassSessionReviewView from "@/views/BreakglassSessionReview.vue";
 
@@ -13,16 +11,6 @@ const router = createRouter({
       path: "/",
       name: "home",
       component: BreakglassView,
-    },
-    {
-      path: "/approve",
-      name: "approve",
-      component: ApproveView,
-    },
-    {
-      path: "/cluster_access",
-      name: "cluster_access",
-      component: WebhookAccessView,
     },
     {
       path: "/breakglassSession/request",
