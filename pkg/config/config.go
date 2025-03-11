@@ -43,12 +43,17 @@ type Server struct {
 	BaseURL       string `yaml:"baseURL"`
 }
 
+type Kubernetes struct {
+	Context string `yaml:"context"`
+}
+
 type Config struct {
 	Server        Server
 	Keycloak      Keycloak
 	BreakglassJWT JWT
 	Mail          Mail
 	Frontend      Frontend
+	Kubernetes    Kubernetes
 }
 
 func Load() (Config, error) {

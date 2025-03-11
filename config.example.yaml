@@ -22,3 +22,5 @@ breakglassjwt:
   jwtpublickey:
   expiry: 1800
   issuer: breakglass-ref
+kubernetes:
+  context: "" # kubectl config context if empty default will be used

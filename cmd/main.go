@@ -33,13 +33,13 @@ func main() {
 	auth := api.NewAuth(log, config)
 	server := api.NewServer(log.Desugar(), config, debug, auth)
 
-	// TODO: This kubeconfig context should be configurable in config yaml
-	sessionManager, err := breakglass.NewSessionManager("")
+	kubeContext := config.Kubernetes.Context
+	sessionManager, err := breakglass.NewSessionManager(kubeContext)
 	if err != nil {
 		log.Fatalf("Error creating breakglass session manager: %v", err)
 		return
 	}
-	escalationManager, err := breakglass.NewEscalationManager("")
+	escalationManager, err := breakglass.NewEscalationManager(kubeContext)
 	if err != nil {
 		log.Fatalf("Error creating breakglass escalation manager: %v", err)
 		return

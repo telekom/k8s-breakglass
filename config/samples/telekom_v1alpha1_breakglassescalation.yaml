@@ -5,7 +5,7 @@ metadata:
   name: kind-sample
 spec:
   cluster: kind
-  username: tester
+  username: tester@mail.com
   allowedGroups: ["system:authenticated"]
   escalatedGroup: "breakglass-create-all"
   approvers:
