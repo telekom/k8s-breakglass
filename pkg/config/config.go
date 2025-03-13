@@ -18,13 +18,6 @@ type Frontend struct {
 	BaseURL       string `yaml:"baseURL"`
 }
 
-type JWT struct {
-	JWTPrivateKey string
-	JWTPublicKey  string
-	Expiry        int64
-	Issuer        string
-}
-
 type Mail struct {
 	Host               string
 	Port               int
@@ -47,7 +40,6 @@ type Kubernetes struct {
 type Config struct {
 	Server              Server
 	AuthorizationServer AuthorizationServer `yaml:"authorizationServer"`
-	BreakglassJWT       JWT
 	Mail                Mail
 	Frontend            Frontend
 	Kubernetes          Kubernetes
