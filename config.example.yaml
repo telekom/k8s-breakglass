@@ -3,12 +3,9 @@ server:
   tlsCertFile: /some/file.crt # optional
   tlsKeyFile: /some/file.key # optional for https
   baseURL: http://breakglass.example.telekom.de
-keycloak:
+authorizationserver:
   url: http://127.0.0.1:8080
-  clientID: breakglass
-  clientSecret:
-  loginrealm: master
-  managedrealm: master
+  jwksEndpoint: "realms/master/protocol/openid-connect/certs" # sample for keycloak
 frontend:
   oidcAuthority: http://127.0.0.1:8080/realms/master
   oidcClientID: breakglass-ui

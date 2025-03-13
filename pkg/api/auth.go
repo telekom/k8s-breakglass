@@ -30,7 +30,7 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 		},
 	}
 
-	url := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/certs", cfg.Keycloak.Url, cfg.Keycloak.ManagedRealm)
+	url := fmt.Sprintf("%s/%s", cfg.AuthorizationServer.URL, cfg.AuthorizationServer.JWKSEndpoint)
 
 	jwks, err := keyfunc.Get(url, options)
 	if err != nil {

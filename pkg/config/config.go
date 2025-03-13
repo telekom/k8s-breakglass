@@ -7,12 +7,9 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type Keycloak struct {
-	Url          string
-	ClientID     string `yaml:"clientID"`
-	ClientSecret string `yaml:"clientSecret"`
-	LoginRealm   string
-	ManagedRealm string
+type AuthorizationServer struct {
+	URL          string `yaml:"url"`
+	JWKSEndpoint string `yaml:"jwksEndpoint"`
 }
 
 type Frontend struct {
@@ -48,12 +45,12 @@ type Kubernetes struct {
 }
 
 type Config struct {
-	Server        Server
-	Keycloak      Keycloak
-	BreakglassJWT JWT
-	Mail          Mail
-	Frontend      Frontend
-	Kubernetes    Kubernetes
+	Server              Server
+	AuthorizationServer AuthorizationServer `yaml:"authorizationServer"`
+	BreakglassJWT       JWT
+	Mail                Mail
+	Frontend            Frontend
+	Kubernetes          Kubernetes
 }
 
 func Load() (Config, error) {
