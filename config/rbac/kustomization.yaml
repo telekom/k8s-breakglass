@@ -1,0 +1,6 @@
+resources:
+- service_account.yaml
+- breakglassescalation_role.yaml
+- breakglasssession_role.yaml
+- breakglassescalation_role_binding.yaml
+- breakglasssession_role_binding.yaml
