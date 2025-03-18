@@ -1,3 +1,6 @@
+# Image URL to use all building/pushing image targets
+IMG ?= breakglass:latest
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -65,13 +68,32 @@ ifndef ignore-not-found
   ignore-not-found = false
 endif
 
-.PHONY: deploy
-deploy: manifests ## Deploy crd definitions to cluster specified in ~/.kube/config.
-	$(KUBECTL) apply -f config/crd/bases/
+.PHONY: install
+install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
+
+.PHONY: uninstall
+uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
+.PHONY: deploy # manifests
+deploy: kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+	cd config/deployment && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
-undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f config/crd/bases/
+undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
+.PHONY: deploy_dev # deploy dev environment with predefined config, service and dev keycloak
+deploy_dev: kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+	cd config/deployment && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build config/dev | $(KUBECTL) apply -f -
+
+.PHONY: undeploy_dev
+undeploy_dev: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUSTOMIZE) build config/dev | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
 
 .PHONY: samples
 samples: 

@@ -38,32 +38,8 @@ spec:
         - mountPath: /config/
           name: config
           readOnly: true
-      serviceAccountName: breakglass-manager
+      serviceAccountName: manager
       volumes:
       - name: config
         configMap:
           name: config
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: config
-  namespace: system
-data:
-  config.yaml: |
-    server:
-      listenAddress: 0.0.0.0:8081
-      baseURL: http://localhost:5173
-    authorizationServer:
-      url: http://keycloak:8080
-      jwksEndpoint: "realms/master/protocol/openid-connect/certs" 
-    frontend:
-      oidcAuthority: http://172.19.0.2:30333/realms/master
-      oidcClientID: breakglass-ui
-      baseURL: http://localhost:5173
-    mail:
-      host: 172.18.0.2
-      port: 1025
-      insecureSkipVerify: true
-    kubernetes:
-      context: ""
