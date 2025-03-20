@@ -81,7 +81,7 @@ func NewEscalationManager(contextName string) (EscalationManager, error) {
 	}
 
 	c, err := client.New(cfg, client.Options{
-		Scheme: scheme,
+		Scheme: Scheme,
 	})
 	if err != nil {
 		return EscalationManager{}, errors.Wrap(err, "failed to create new client")

@@ -31,6 +31,7 @@ type WebhookController struct {
 	log        *zap.SugaredLogger
 	config     config.Config
 	sesManager *breakglass.SessionManager
+	canDoFn    breakglass.CanGroupsDoFunction
 }
 
 func (WebhookController) BasePath() string {
@@ -69,7 +70,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	// NOTE: If we want to know specific group that allowed user to perform the operation we would
 	// need to iterate over groups (sessions) and note the first that is ok. Then we could update its
 	// last used parameters and idle value.
-	can, err := breakglass.CanGroupsDo(ctx, groups, sar, cluster)
+	can, err := wc.canDoFn(ctx, groups, sar, cluster)
 	if err != nil {
 		log.Println("error while checking RBAC permissions", err)
 		c.Status(http.StatusInternalServerError)
@@ -129,6 +130,7 @@ func NewWebhookController(log *zap.SugaredLogger, cfg config.Config, manager *br
 		log:        log,
 		config:     cfg,
 		sesManager: manager,
+		canDoFn:    breakglass.CanGroupsDo,
 	}
 
 	return controller

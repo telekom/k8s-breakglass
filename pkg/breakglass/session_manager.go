@@ -16,9 +16,6 @@ import (
 // SessionManager is kubernetes client based object for managing CRUD operation on BreakglassSession custom resource.
 type SessionManager struct {
 	client.Client
-
-	// TODO: it might make sense to add resource name based mutex using sync.map and sync.mutex, but probably will be
-	// handled ok by kubebuilder
 }
 
 var ErrAccessNotFound = errors.New("access not found")
@@ -30,7 +27,7 @@ func NewSessionManager(contextName string) (SessionManager, error) {
 	}
 
 	c, err := client.New(cfg, client.Options{
-		Scheme: scheme,
+		Scheme: Scheme,
 	})
 	if err != nil {
 		return SessionManager{}, errors.Wrap(err, "failed to create new client")

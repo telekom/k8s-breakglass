@@ -18,6 +18,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
+type CanGroupsDoFunction func(ctx context.Context,
+	groups []string,
+	sar authorization.SubjectAccessReview,
+	clustername string) (bool, error)
+
 // Checks if operations defined in access review could be performed if user belongs to given groups on a given cluster.
 func CanGroupsDo(ctx context.Context,
 	groups []string,

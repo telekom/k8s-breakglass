@@ -7,11 +7,11 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 )
 
-var scheme = runtime.NewScheme()
+var Scheme = runtime.NewScheme()
 
 func init() {
-	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clientgoscheme.AddToScheme(Scheme))
 
-	utilruntime.Must(telekomv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(telekomv1alpha1.AddToScheme(Scheme))
 	// +kubebuilder:scaffold:scheme
 }
