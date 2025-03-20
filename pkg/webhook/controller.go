@@ -51,7 +51,18 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	cluster := c.Param("cluster_name")
 	ctx := c.Request.Context()
 
+	if cluster == "" {
+		c.JSON(http.StatusBadRequest, "no cluster name provided")
+		return
+	}
+	if c.Request.Body == nil {
+		log.Println("empty body provided to handleAuthorize")
+		c.JSON(http.StatusBadRequest, "no body was provided")
+		return
+	}
+
 	sar := authorization.SubjectAccessReview{}
+
 	err := json.NewDecoder(c.Request.Body).Decode(&sar)
 	if err != nil {
 		log.Println("error while decoding body:", err)
