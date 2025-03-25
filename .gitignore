@@ -3,5 +3,5 @@ frontend/*.local
 bin/
 
 breakglass.yaml
-config.yaml
+./config.yaml
 Session.vim

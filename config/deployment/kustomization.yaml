@@ -6,3 +6,6 @@ images:
 - name: breakglass
   newName: breakglass
   newTag: latest
+- name: controller
+  newName: breakglass
+  newTag: latest

@@ -19,6 +19,11 @@ resources:
 - ../rbac
 - ../deployment
 
+configMapGenerator:
+- name: config
+  files:
+  - ./config.yaml
+
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
 # Uncomment the following replacements to add the cert-manager CA injection annotations
 #replacements:
