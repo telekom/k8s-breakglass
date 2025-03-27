@@ -30,7 +30,6 @@ type Server struct {
 	ListenAddress string `yaml:"listenAddress"`
 	TLSCertFile   string `yaml:"tlsCertFile"`
 	TLSKeyFile    string `yaml:"tlsKeyFile"`
-	BaseURL       string `yaml:"baseURL"`
 }
 
 type Kubernetes struct {

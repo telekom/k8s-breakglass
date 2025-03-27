@@ -10,14 +10,13 @@ server:
   listenAddress: :8080
   tlsCertFile: /some/file.crt # optional
   tlsKeyFile: /some/file.key # optional for https
-  baseURL: http://breakglass.example.telekom.de
 authorizationserver:
   url: http://127.0.0.1:8080
   jwksEndpoint: "realms/master/protocol/openid-connect/certs" # sample for keycloak
 frontend:
   oidcAuthority: http://127.0.0.1:8080/realms/master
   oidcClientID: breakglass-ui
-  baseURL: http://localhost:5173
+  baseURL: http://localhost:8080
 mail:
   host: 127.0.0.1
   port: 1025
@@ -28,12 +27,12 @@ kubernetes:
 ```
 See `config.example.yaml` for reference.
 
-## Building 
+## Building Docker image
 To build docker image:
 ```bash
 docker build -t breakglass .
 ```
-## Deployment
+## Kubernetes Deployment
 To deploy `CRD`, `RBAC` and application as `Deployment` configure `./config/default/config.yaml` with proper cluster
 related configuration and run:
 ```bash

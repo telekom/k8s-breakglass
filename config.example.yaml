@@ -2,7 +2,6 @@ server:
   listenAddress: :8080
   tlsCertFile: /some/file.crt # optional
   tlsKeyFile: /some/file.key # optional for https
-  baseURL: http://breakglass.example.telekom.de
 authorizationserver:
   url: http://127.0.0.1:8080
   jwksEndpoint: "realms/master/protocol/openid-connect/certs" # sample for keycloak

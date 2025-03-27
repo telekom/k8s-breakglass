@@ -94,6 +94,9 @@ deploy_dev: kustomize ## Deploy controller to the K8s cluster specified in ~/.ku
 undeploy_dev: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/dev | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
+.PHONY: build_frontend
+build_frontent:
+	cd frontend && npm i && npm run build
 
 .PHONY: samples
 samples: 

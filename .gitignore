@@ -1,5 +1,6 @@
 # ignore vite local env files
 frontend/*.local
+frontend/tsconfig.tsbuildinfo
 bin/
 
 breakglass.yaml

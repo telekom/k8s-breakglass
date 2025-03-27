@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: system
+  labels:
+    app: mailhog
+  name: mailhog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mailhog
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: mailhog
+    spec:
+      containers:
+      - image: 
+        name: mailhog/mailhog:latest
+        resources: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: mailhog
+  name: mailhog
+  namespace: system
+spec:
+  ipFamilyPolicy: SingleStack
+  ports:
+  - port: 8025
+    protocol: TCP
+    targetPort: 8025
+  - port: 1025
+    protocol: TCP
+    targetPort: 1025
+  selector:
+    app: mailhog
+  sessionAffinity: None
+  type: ClusterIP

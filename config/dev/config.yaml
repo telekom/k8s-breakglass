@@ -1,6 +1,5 @@
 server:
   listenAddress: 0.0.0.0:8081
-  baseURL: http://localhost:5173
 authorizationServer:
   url: http://breakglass-dev-keycloak:8080
   jwksEndpoint: "realms/master/protocol/openid-connect/certs" # sample for keycloak
@@ -9,7 +8,7 @@ frontend:
   oidcClientID: breakglass-ui
   baseURL: http://localhost:5173
 mail:
-  host: 172.18.0.2
+  host: mailhog
   port: 1025
   insecureSkipVerify: true
 kubernetes:
