@@ -10,7 +10,7 @@ frontend:
   oidcClientID: breakglass-ui
   baseURL: http://https://breakglass-dev:30081
 mail:
-  host: mailhog
+  host: breakglass-dev-mailhog
   port: 1025
   insecureSkipVerify: true
 kubernetes:
