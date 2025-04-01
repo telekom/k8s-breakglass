@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
-	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/mail"
 	"go.uber.org/zap"
@@ -36,6 +35,7 @@ type BreakglassSessionController struct {
 	middleware        gin.HandlerFunc
 	identityProvider  IdentityProvider
 	mail              mail.Sender
+	getUserGroups     GetUserGroupsFunction
 }
 
 func (BreakglassSessionController) BasePath() string {
@@ -73,10 +73,10 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 		return
 	}
 
-	sessionsPerCluster := make(map[string][]telekomv1alpha1.BreakglassSession)
+	sessionsPerCluster := make(map[string][]v1alpha1.BreakglassSession)
 	for _, ses := range sessions {
 		if _, has := sessionsPerCluster[ses.Spec.Cluster]; !has {
-			sessionsPerCluster[ses.Spec.Cluster] = []telekomv1alpha1.BreakglassSession{}
+			sessionsPerCluster[ses.Spec.Cluster] = []v1alpha1.BreakglassSession{}
 		}
 		sessionsPerCluster[ses.Spec.Cluster] = append(sessionsPerCluster[ses.Spec.Cluster], ses)
 	}
@@ -93,7 +93,7 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 
 		sessions, err := EscalationFiltering{
 			FilterUserData:   ClusterUserGroup{Clustername: clusterName, Username: userName},
-			UserGroupExtract: GetUserGroups,
+			UserGroupExtract: wc.getUserGroups,
 		}.FilterSessionsForUserApprovable(ctx, sessions, escalations)
 		if err != nil {
 			wc.log.Error("Error fitlering for user approvable", zap.Error(err))
@@ -132,7 +132,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	possibleEscals, err := EscalationFiltering{
 		FilterUserData:   cug,
-		UserGroupExtract: GetUserGroups,
+		UserGroupExtract: wc.getUserGroups,
 	}.FilterForUserPossibleEscalations(ctx, escalations)
 	if err != nil {
 		wc.log.Error("Error getting breakglass escalation groups", zap.Error(err))
@@ -215,7 +215,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	c.JSON(http.StatusCreated, request)
 }
 
-func (wc BreakglassSessionController) updateStatus(c *gin.Context, statusFn func(*telekomv1alpha1.BreakglassSession)) {
+func (wc BreakglassSessionController) updateStatus(c *gin.Context, statusFn func(*v1alpha1.BreakglassSession)) {
 	uname := c.Param("uname")
 
 	bs, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), uname)
@@ -245,7 +245,7 @@ func (wc BreakglassSessionController) getBreakglassSession(ctx context.Context,
 	username,
 	clustername,
 	group string,
-) (telekomv1alpha1.BreakglassSession, error) {
+) (v1alpha1.BreakglassSession, error) {
 	selector := fields.SelectorFromSet(
 		fields.Set{
 			"spec.cluster":  clustername,
@@ -255,17 +255,17 @@ func (wc BreakglassSessionController) getBreakglassSession(ctx context.Context,
 	)
 	sessions, err := wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
 	if err != nil {
-		return telekomv1alpha1.BreakglassSession{}, errors.Wrap(err, "failed to list sessions")
+		return v1alpha1.BreakglassSession{}, errors.Wrap(err, "failed to list sessions")
 	}
 	if len(sessions) == 0 {
-		return telekomv1alpha1.BreakglassSession{}, ErrSessionNotFound
+		return v1alpha1.BreakglassSession{}, ErrSessionNotFound
 	}
 	return sessions[0], nil
 }
 
 func (wc BreakglassSessionController) handleApproveBreakglassSession(c *gin.Context) {
 	wc.updateStatus(c,
-		func(bs *telekomv1alpha1.BreakglassSession) {
+		func(bs *v1alpha1.BreakglassSession) {
 			bs.Status.Approved = true
 			bs.Status.ApprovedAt = metav1.Now()
 			bs.Status.ValidUntil = metav1.NewTime(bs.Status.ApprovedAt.Add(WeekDuration))
@@ -274,7 +274,7 @@ func (wc BreakglassSessionController) handleApproveBreakglassSession(c *gin.Cont
 
 func (wc BreakglassSessionController) handleRejectBreakglassSession(c *gin.Context) {
 	wc.updateStatus(c,
-		func(bs *telekomv1alpha1.BreakglassSession) {
+		func(bs *v1alpha1.BreakglassSession) {
 			bs.Status.Approved = false
 			bs.Status.ApprovedAt = metav1.Time{}
 			bs.Status.ValidUntil = metav1.Time{}
@@ -331,7 +331,7 @@ func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 	c.JSON(http.StatusOK, clusters)
 }
 
-func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session telekomv1alpha1.BreakglassSession) bool {
+func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session v1alpha1.BreakglassSession) bool {
 	email, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		wc.log.Error("Error getting user identity", zap.Error(err))
@@ -357,10 +357,10 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 
 	sessions, err := EscalationFiltering{
 		FilterUserData:   approverID,
-		UserGroupExtract: GetUserGroups,
+		UserGroupExtract: wc.getUserGroups,
 	}.FilterSessionsForUserApprovable(
 		ctx,
-		[]telekomv1alpha1.BreakglassSession{session},
+		[]v1alpha1.BreakglassSession{session},
 		escalations)
 	if err != nil {
 		wc.log.Error("Error filtering for approver sessions", zap.Error(err))
@@ -387,6 +387,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		middleware:        middleware,
 		identityProvider:  ip,
 		mail:              mail.NewSender(cfg),
+		getUserGroups:     GetUserGroups,
 	}
 
 	return controller

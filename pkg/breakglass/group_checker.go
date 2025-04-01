@@ -23,6 +23,8 @@ type CanGroupsDoFunction func(ctx context.Context,
 	sar authorization.SubjectAccessReview,
 	clustername string) (bool, error)
 
+type GetUserGroupsFunction func(ctx context.Context, cug ClusterUserGroup) ([]string, error)
+
 // Checks if operations defined in access review could be performed if user belongs to given groups on a given cluster.
 func CanGroupsDo(ctx context.Context,
 	groups []string,
