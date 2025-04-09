@@ -9,11 +9,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
+	authorizationv1 "k8s.io/api/authorization/v1"
+	"k8s.io/apimachinery/pkg/fields"
+
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
-	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/kubernetes/pkg/apis/authorization"
 )
 
 const denyReasonMessage = "please request proper group assignment at %s/request?cluster=%s"
@@ -53,7 +54,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	cluster := c.Param("cluster_name")
 	ctx := c.Request.Context()
 
-	sar := authorization.SubjectAccessReview{}
+	sar := authorizationv1.SubjectAccessReview{}
 
 	err := json.NewDecoder(c.Request.Body).Decode(&sar)
 	if err != nil {
