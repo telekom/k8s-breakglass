@@ -39,61 +39,116 @@ spec:
           metadata:
             type: object
           spec:
-            description: BreakglassSessionSpec defines the desired state of BreakglassSession.
+            description: |-
+              BreakglassSessionSpec defines the desired state of BreakglassSession.
+              todo: make all of this immutable (probably using CEL)
             properties:
-              cluster:
-                description: The cluster for which a breakglass session is managed.
-                type: string
-              expirationTimeout:
+              MaxValidFor:
                 default: 1h
-                description: Max time until session becomes expired.
+                description: maxValidFor is the maximum amount of time the session
+                  will be active for after it is approved.
                 type: string
-              group:
-                description: The requested RBAC group.
+              cluster:
+                description: cluster is the name of the cluster the session is valid
+                  for.
                 type: string
-              historyTimeout:
-                default: 1m
-                description: Timeout value after which sesssion should be removed
-                  and no longer kept for logs / audit.
+              grantedGroup:
+                description: grantedGroup is the group granted by the session.
                 type: string
               idleTimeout:
                 default: 1h
                 description: Max time a session can sit idle without being used by
                   user after approved.
                 type: string
-              username:
-                description: The name user of a user that requested for breakglass
-                  group session.
+              retainFor:
+                default: 1m
+                description: retainFor is the amount of time to wait before removing
+                  the session object after it was expired.
+                type: string
+              user:
+                description: username is the name of the user the session is valid
+                  for.
                 type: string
             required:
             - cluster
-            - group
-            - username
+            - grantedGroup
+            - user
             type: object
           status:
             description: BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
             properties:
-              approved:
-                description: Defines if session is approved by one of the approvers.
-                type: boolean
               approvedAt:
-                description: Last approval time.
+                description: |-
+                  approvedAt is the time when the session was approved.
+                  todo: make immutable
                 format: date-time
                 type: string
-              createdAt:
-                description: Creation time.
+              conditions:
+                description: |-
+                  conditions is an array of current observed BreakglassSession conditions.
+                  todo: implement 'Active' and 'Expired' conditions.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              expiresAt:
+                description: |-
+                  expiresAt is the time when the session will expire.
+                  This value is set based on spec.expiresAfter when the session is approved.
+                  todo: make immutable
                 format: date-time
                 type: string
-              expired:
-                description: |-
-                  Defines if session is expired by either being denied by approvers
-                  or reached expiration timeout.
-                type: boolean
-              idleTimeoutReached:
-                description: |-
-                  Not implemented
-                  Defines if session reached idle timeout.
-                type: boolean
               idleUntil:
                 description: |-
                   NOT IMPLEMENTED https://github.com/telekom/das-schiff-breakglass/issues/8
@@ -106,19 +161,15 @@ spec:
                   Last time session was used for breakglass session based authorization.
                 format: date-time
                 type: string
-              storeUntil:
-                description: Time until session object should be removed.
-                format: date-time
-                type: string
-              validUntil:
-                description: Time until approval is expired, rbac group can no longer
-                  be used by user.
+              retainedUntil:
+                description: |-
+                  retainedUntil is the time when the session object will be removed from the cluster.
+                  This value is set based on spec.retainFor when the session is approved.
+                  todo: make immutable
                 format: date-time
                 type: string
             required:
-            - approved
-            - expired
-            - idleTimeoutReached
+            - conditions
             type: object
         required:
         - spec
@@ -126,10 +177,9 @@ spec:
     selectableFields:
     - jsonPath: .spec.cluster
     - jsonPath: .spec.username
-    - jsonPath: .spec.group
-    - jsonPath: .status.expired
-    - jsonPath: .status.approved
-    - jsonPath: .status.idleTimeoutReached
+    - jsonPath: .spec.grantedGroup
+    - jsonPath: .status.expiredAfter
+    - jsonPath: .status.approvedAt
     served: true
     storage: true
     subresources:

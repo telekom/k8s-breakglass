@@ -18,30 +18,50 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-type (
-	// BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
-	BreakglassEscalationSpec struct {
-		// +required
-		Cluster string `json:"cluster,omitempty"`
-		// +required
-		Username string `json:"username,omitempty"`
-		// +required
-		AllowedGroups []string `json:"allowedGroups,omitempty"`
-		// +required
-		EscalatedGroup string `json:"escalatedGroup,omitempty"`
-		// +required
-		Approvers BreakglassEscalationApprovers `json:"approvers,omitempty"`
-	}
+// BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
+type BreakglassEscalationSpec struct {
+	// allowed specifies who is allowed to use this escalation.
+	Allowed BreakglassEscalationAllowed `json:"allowed"`
+	// approvers specifies who is allowed to approve this escalation.
+	Approvers BreakglassEscalationApprovers `json:"approvers,omitempty"`
+	// escalatedGroup is the group to be granted by this escalation.
+	EscalatedGroup string `json:"escalatedGroup,omitempty"`
 
-	// BreakglassEscalationApprovers
-	BreakglassEscalationApprovers struct {
-		Users  []string `json:"users,omitempty"`
-		Groups []string `json:"groups,omitempty"`
-	}
+	// maxValidFor is the maximum amount of time a session for this escalation will be active for after it is approved.
+	// +default="1h"
+	MaxValidFor string `json:"MaxValidFor,omitempty"`
+	// retainFor is the amount of time to wait before removing a session for this escalation after it expired
+	// +optional
+	RetainFor string `json:"retainFor,omitempty"`
+	// idleTimeout is the maximum amount of time a session for this escalation can sit idle without being used.
+	// +default="1h"
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+}
 
-	// BreakglassEscalationStatus defines the observed state of BreakglassEscalation.
-	BreakglassEscalationStatus struct{}
-)
+// BreakglassEscalationAllowed defines who is allowed to use an escalation.
+// todo: consider how to handle both users and groups being specified - should probably be logical 'or'
+type BreakglassEscalationAllowed struct {
+	// clusters is a list of clusters this escalation can be used for.
+	// todo: implement globbing (or regex?) support
+	Clusters []string `json:"clusters,omitempty"`
+	// users is a list of users this escalation can be used by.
+	// todo: implement globbing (or regex?) support
+	Users []string `json:"users,omitempty"`
+	// groups is a list of groups this escalation can be used by.
+	// todo: implement globbing (or regex?) support
+	Groups []string `json:"groups,omitempty"`
+}
+
+// BreakglassEscalationApprovers
+type BreakglassEscalationApprovers struct {
+	// users that are allowed to approve a session for this escalation
+	Users []string `json:"users,omitempty"`
+	// groups that are allowed to approve a session for this escalation
+	Groups []string `json:"groups,omitempty"`
+}
+
+// BreakglassEscalationStatus defines the observed state of BreakglassEscalation.
+type BreakglassEscalationStatus struct{}
 
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:object:root=true
