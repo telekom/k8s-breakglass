@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.4
-  name: breakglassescalations.telekom.breakglass.de
+  name: breakglassescalations.breakglass.t-caas.telekom.com
 spec:
-  group: telekom.breakglass.de
+  group: breakglass.t-caas.telekom.com
   names:
     kind: BreakglassEscalation
     listKind: BreakglassEscalationList

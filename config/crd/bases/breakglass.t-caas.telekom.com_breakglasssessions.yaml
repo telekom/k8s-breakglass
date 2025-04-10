@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.4
-  name: breakglasssessions.telekom.breakglass.de
+  name: breakglasssessions.breakglass.t-caas.telekom.com
 spec:
-  group: telekom.breakglass.de
+  group: breakglass.t-caas.telekom.com
   names:
     kind: BreakglassSession
     listKind: BreakglassSessionList

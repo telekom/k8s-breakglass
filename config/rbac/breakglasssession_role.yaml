@@ -4,7 +4,7 @@ metadata:
   name: session-manager-role
 rules:
 - apiGroups:
-  - telekom.breakglass.de
+  - breakglass.t-caas.telekom.com
   resources:
   - breakglasssessions
   verbs:
@@ -17,7 +17,7 @@ rules:
   - watch
   - deletecollection
 - apiGroups:
-  - telekom.breakglass.de
+  - breakglass.t-caas.telekom.com
   resources:
   - breakglasssessions/status
   verbs:
