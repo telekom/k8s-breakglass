@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@telekom/scale-components": "^3.0.0-beta.108",
+    "@telekom/scale-components-neutral": "^3.0.0-beta.155",
+    "@telekom/scale-components-vue-neutral": "^3.0.0-beta.56",
     "axios": "^1.7.9",
     "humanize-duration": "^3.32.1",
     "jose": "^5.9.6",
@@ -20,12 +22,12 @@
   },
   "devDependencies": {
     "@rollup/plugin-dynamic-import-vars": "^2.1.5",
+    "@tsconfig/node22": "^22.0.0",
     "@types/humanize-duration": "^3.27.4",
     "@types/node": "^22.10.5",
     "@vitejs/plugin-legacy": "^6.0.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/tsconfig": "^0.7.0",
-    "@tsconfig/node22": "^22.0.0",
     "prettier": "^3.4.2",
     "typescript": "~5.7.2",
     "vite": "^6.0.7",
