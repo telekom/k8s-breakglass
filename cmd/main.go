@@ -45,10 +45,12 @@ func main() {
 		return
 	}
 
+	whctrl := webhook.NewWebhookController(log, config, &sessionManager, &escalationManager)
+
 	err = server.RegisterAll([]api.APIController{
 		breakglass.NewBreakglassSessionController(log, config, &sessionManager, &escalationManager, auth.Middleware()),
 		breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware()),
-		webhook.NewWebhookController(log, config, &sessionManager),
+		&whctrl,
 	})
 	if err != nil {
 		log.Fatalf("Error registering breakglass controllers: %v", err)
