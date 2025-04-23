@@ -38,15 +38,19 @@ function logout() {
 </script>
 
 <template>
-  <scale-app-shell claim-lang="de" logo-title="Das SCHIFF Breakglass" logo-href="/" :userNavigation="userNav">
+  <main>
+  <scale-telekom-app-shell claim-lang="de">
+    <scale-telekom-header-data-back-compat v-if="authenticated" :userNavigation="userNav" logo-title="Das SCHIFF
+        Breakglass" logo-href="/" />
+
     <h1 style="text-align: center">Das SCHIFF Breakglass</h1>
     <div v-if="!authenticated" class="center">
       <scale-button @click="login">Log In</scale-button>
     </div>
 
-
     <RouterView v-if="authenticated" />
-  </scale-app-shell>
+  </scale-telekom-app-shell>
+  </main>
 </template>
 
 <style>
