@@ -18,12 +18,14 @@ const userNav = computed(() => {
         shortName: user.value?.profile.email,
         name: user.value?.profile.name,
         email: user.value?.profile.email,
+        badge: true,
       },
       { type: "divider" },
       { type: "button", name: "Logout", id: "logout", onClick: logout, variant: "secondary" },
     ];
   } else {
-    return [{}];
+    return [{ type: "button", name: "Login", id: "login", onClick: login, variant: "secondary" }];
+
   }
 });
 
@@ -38,15 +40,19 @@ function logout() {
 </script>
 
 <template>
-  <scale-app-shell claim-lang="de" logo-title="Das SCHIFF Breakglass" logo-href="/" :userNavigation="userNav">
-    <h1 style="text-align: center">Das SCHIFF Breakglass</h1>
-    <div v-if="!authenticated" class="center">
-      <scale-button @click="login">Log In</scale-button>
-    </div>
+  <main>
+    <scale-telekom-app-shell claim-lang="de">
+      <scale-telekom-header-data-back-compat :userNavigation="userNav" logo-title="Das SCHIFF
+        Breakglass" logo-href="/" />
 
+      <h1 style="text-align: center">Das SCHIFF Breakglass</h1>
+      <div v-if="!authenticated" class="center">
+        <scale-button @click="login">Log In</scale-button>
+      </div>
 
-    <RouterView v-if="authenticated" />
-  </scale-app-shell>
+      <RouterView v-if="authenticated" />
+    </scale-telekom-app-shell>
+  </main>
 </template>
 
 <style>
