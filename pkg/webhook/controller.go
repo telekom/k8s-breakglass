@@ -65,7 +65,6 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 	username := sar.Spec.User
 	groups, err := wc.getUserGroupsForCluster(ctx, username, cluster)
-	fmt.Println("has err", err)
 	if err != nil {
 		log.Println("error while getting user groups", err)
 		c.Status(http.StatusInternalServerError)
@@ -110,11 +109,8 @@ func (wc *WebhookController) getUserGroupsForCluster(ctx context.Context,
 ) ([]string, error) {
 	selector := fields.SelectorFromSet(
 		fields.Set{
-			"spec.cluster":              clustername,
-			"spec.username":             username,
-			"status.expired":            "false",
-			"status.approved":           "true",
-			"status.idleTimeoutReached": "false",
+			"spec.cluster":  clustername,
+			"spec.username": username,
 		},
 	)
 	sessions, err := wc.sesManager.GetBreakglassSessionsWithSelector(ctx, selector)
@@ -124,7 +120,9 @@ func (wc *WebhookController) getUserGroupsForCluster(ctx context.Context,
 
 	groups := make([]string, 0, len(sessions))
 	for _, session := range sessions {
-		groups = append(groups, session.Spec.Group)
+		if breakglass.IsSessionValid(session) {
+			groups = append(groups, session.Spec.GrantedGroup)
+		}
 	}
 
 	return groups, nil

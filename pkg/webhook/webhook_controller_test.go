@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"go.uber.org/zap"
 	authorization "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -52,59 +50,52 @@ const (
 )
 
 var sessionIndexFunctions = map[string]client.IndexerFunc{
-	"status.expired": func(o client.Object) []string {
-		return []string{strconv.FormatBool(o.(*v1alpha1.BreakglassSession).Status.Expired)}
-	},
-	"status.approved": func(o client.Object) []string {
-		return []string{strconv.FormatBool(o.(*v1alpha1.BreakglassSession).Status.Approved)}
-	},
-	"status.idleTimeoutReached": func(o client.Object) []string {
-		return []string{strconv.FormatBool(o.(*v1alpha1.BreakglassSession).Status.IdleTimeoutReached)}
-	},
 	"spec.username": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.Username}
+		return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
 	},
 	"spec.cluster": func(o client.Object) []string {
 		return []string{o.(*v1alpha1.BreakglassSession).Spec.Cluster}
 	},
+	"spec.grantedGroup": func(o client.Object) []string {
+		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
+	},
+}
+
+func newBreakglassSession(cluster, username, group string) v1alpha1.BreakglassSession {
+	return v1alpha1.BreakglassSession{
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:      cluster,
+			User:         username,
+			GrantedGroup: group,
+		},
+		Status: v1alpha1.BreakglassSessionStatus{},
+	}
 }
 
 func TestHandleAuthorize(t *testing.T) {
-	ses := v1alpha1.NewBreakglassSession("test", "test", "test")
+	ses := newBreakglassSession("test", "test", "test")
 	ses.Name = fmt.Sprintf("%s-%s-a1", testGroupData.Clustername, testGroupData.Groupname)
 	ses.Status = v1alpha1.BreakglassSessionStatus{
-		Expired:            false,
-		Approved:           false,
-		IdleTimeoutReached: false,
-		CreatedAt:          metav1.Now(),
-		StoreUntil:         metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
+		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.DefaultRetainForDuration)),
 	}
 
-	ses2 := v1alpha1.NewBreakglassSession("test2", "test2", "test2")
+	ses2 := newBreakglassSession("test2", "test2", "test2")
 	ses2.Name = fmt.Sprintf("%s-%s-a2", testGroupData.Clustername, testGroupData.Groupname)
 	ses2.Status = v1alpha1.BreakglassSessionStatus{
-		Expired:            false,
-		Approved:           false,
-		IdleTimeoutReached: false,
-		CreatedAt:          metav1.Now(),
-		StoreUntil:         metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
+		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.DefaultRetainForDuration)),
 	}
 
-	ses3 := v1alpha1.NewBreakglassSession("testError", "testError", "testError")
+	ses3 := newBreakglassSession("testError", "testError", "testError")
 	ses3.Name = fmt.Sprintf("%s-%s-a3", testGroupData.Clustername, testGroupData.Groupname)
 	ses3.Status = v1alpha1.BreakglassSessionStatus{
-		Expired:            false,
-		Approved:           false,
-		IdleTimeoutReached: false,
-		CreatedAt:          metav1.Now(),
-		StoreUntil:         metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
+		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.DefaultRetainForDuration)),
 	}
 
 	listIntercept := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 		fs := opts[0].(*client.ListOptions).FieldSelector
 		for _, req := range fs.Requirements() {
 			if req.Value == "testError" {
-				return errors.New("failed to list breakglass sessions")
+				return errors.New("| DO NOT WORRY TEST ONLY ERROR | failed to list breakglass sessions")
 			}
 		}
 		return nil
@@ -130,7 +121,7 @@ func TestHandleAuthorize(t *testing.T) {
 	_ = contoller.Register(engine.Group("api"))
 
 	sar := authorization.SubjectAccessReview{
-		TypeMeta: v1.TypeMeta{
+		TypeMeta: metav1.TypeMeta{
 			Kind:       "SubjectAccessReview",
 			APIVersion: "authorization.k8s.io/v1",
 		},
@@ -192,7 +183,7 @@ func TestHandleAuthorize(t *testing.T) {
 			CanDoFunction: breakglass.CanGroupsDoFunction(func(context.Context, []string,
 				authorization.SubjectAccessReview, string,
 			) (bool, error) {
-				return false, errors.New("failed to check groups")
+				return false, errors.New("| DO NOT WORRY TEST ONLY ERROR | - failed to check groups")
 			}),
 			InReview:    &sar,
 			ShouldAllow: false,
