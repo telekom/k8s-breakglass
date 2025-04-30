@@ -1,4 +1,4 @@
-apiVersion: telekom.breakglass.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation 
 metadata:
   labels:

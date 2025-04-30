@@ -50,7 +50,7 @@ const (
 )
 
 var sessionIndexFunctions = map[string]client.IndexerFunc{
-	"spec.username": func(o client.Object) []string {
+	"spec.user": func(o client.Object) []string {
 		return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
 	},
 	"spec.cluster": func(o client.Object) []string {

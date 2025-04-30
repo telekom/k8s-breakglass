@@ -2,8 +2,8 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-- bases/telekom.breakglass.de_breakglassescalations.yaml
-- bases/telekom.breakglass.de_breakglasssessions.yaml
+- bases/breakglass.t-caas.telekom.com_breakglassescalations.yaml
+- bases/breakglass.t-caas.telekom.com_breakglasssessions.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

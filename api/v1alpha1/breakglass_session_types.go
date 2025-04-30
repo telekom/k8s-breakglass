@@ -88,8 +88,6 @@ type BreakglassSessionStatus struct {
 // +kubebuilder:selectablefield:JSONPath=`.spec.cluster`
 // +kubebuilder:selectablefield:JSONPath=`.spec.user`
 // +kubebuilder:selectablefield:JSONPath=`.spec.grantedGroup`
-// +kubebuilder:selectablefield:JSONPath=`.status.expiresAt`
-// +kubebuilder:selectablefield:JSONPath=`.status.approvedAt`
 
 // BreakglassSession is the Schema for the breakglasssessions API.
 // Session unique identifier is a triple - cluster name, username, RBAC group.
