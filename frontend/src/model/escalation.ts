@@ -3,10 +3,17 @@ export interface BreakglassEscalationSpec {
   username: string;
   escalatedGroup: string;
   allowedGroups: Array<string>;
-  approvers: Array<BreakglassEscalationApprovers>;
+  allowed: BreakglassEscalationAllowed;
+  approvers: BreakglassEscalationApprovers;
 }
 
 interface BreakglassEscalationApprovers {
   users: Array<string>;
   groups: Array<string>;
+}
+
+interface BreakglassEscalationAllowed {
+  clusters: Array<string>;
+  groups: Array<string>;
+  users: Array<string>;
 }

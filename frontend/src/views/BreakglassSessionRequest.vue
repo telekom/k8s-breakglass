@@ -17,7 +17,7 @@ const user = useUser();
 const authenticated = computed(() => user.value && !user.value?.expired);
 
 const userName = computed(() => user.value?.profile.email);
-const clusterName = ref(route.query.cluster || "");
+const clusterName = ref(route.query.cluster?.toString() || "");
 const clusterGroup = ref("");
 const alreadyRequested = ref(false);
 const requestStatusMessage = ref("");
@@ -73,9 +73,12 @@ onMounted(async () => {
   loading.value = true;
 
   await escalationService.getEscalations().then(response => {
+    console.log('test')
     if (response.status == 200) {
       const resp = response.data as Array<BreakglassEscalationSpec>
-      escalations.value = resp.filter(spec => spec.cluster === clusterName.value)
+      console.log("resp", resp)
+      escalations.value = resp.filter(spec => spec.allowed.clusters.indexOf(clusterName.value) != -1 )
+      console.log("value", escalations.value)
       if (escalations.value.length > 0){
         clusterGroup.value = escalations.value[0].escalatedGroup
       }
@@ -111,7 +114,7 @@ onMounted(async () => {
           </div>
           <div style="margin-bottom: 5px;">
             <label for="cluser_group">Cluster group:</label>
-            <select type="text" id="" v-model="clusterGroup" v-on:input="onInput">
+            <select id="" v-model="clusterGroup" v-on:input="onInput">
               <option v-for="escalation in escalations">{{ escalation.escalatedGroup }}</option>
             </select>
           </div>

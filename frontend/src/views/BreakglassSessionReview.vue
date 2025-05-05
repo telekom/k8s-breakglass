@@ -39,10 +39,7 @@ async function getActiveBreakglasses() {
       case 200:
         state.getBreakglassesMsg = ""
         state.breakglasses = response.data.filter(
-          (breakglass: any) =>
-            (breakglass.status.expired == false &&
-            breakglass.status.idleTimeoutReached == false));
-        console.log(response.data)
+          (breakglass: any) => true);
         break
     }
   }).catch(errResponse => {

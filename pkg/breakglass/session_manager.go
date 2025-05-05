@@ -43,13 +43,13 @@ func SessionSelector(uname, username, cluster, group string) string {
 	}
 
 	if username != "" {
-		selectors = append(selectors, fmt.Sprintf("spec.username=%s", username))
+		selectors = append(selectors, fmt.Sprintf("spec.user=%s", username))
 	}
 	if cluster != "" {
 		selectors = append(selectors, fmt.Sprintf("spec.cluster=%s", cluster))
 	}
 	if group != "" {
-		selectors = append(selectors, fmt.Sprintf("spec.group=%s", group))
+		selectors = append(selectors, fmt.Sprintf("spec.grantedGroup=%s", group))
 	}
 
 	return strings.Join(selectors, ",")
@@ -80,7 +80,7 @@ func (c SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 	cluster string,
 	user string,
 ) ([]v1alpha1.BreakglassSession, error) {
-	selector := fmt.Sprintf("spec.cluster=%s,spec.username=%s",
+	selector := fmt.Sprintf("spec.cluster=%s,spec.user=%s",
 		cluster,
 		user)
 	return c.GetBreakglassSessionsWithSelectorString(ctx, selector)

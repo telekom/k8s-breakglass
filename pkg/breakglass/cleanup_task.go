@@ -35,16 +35,10 @@ func (routine CleanupRoutine) markClenaupExpiredSession(ctx context.Context) {
 	now := time.Now()
 	deletionLabel := map[string]string{"deletion": "true"}
 	for _, ses := range sessions {
-		if now.After(ses.Status.StoreUntil.Time) {
+		if now.After(ses.Status.RetainedUntil.Time) {
 			ses.SetLabels(deletionLabel)
 			if err := routine.Manager.UpdateBreakglassSession(ctx, ses); err != nil {
 				routine.Log.Error("error failed to set label", zap.Error(err))
-			}
-		} else if !ses.Status.ValidUntil.Time.IsZero() && now.After(ses.Status.ValidUntil.Time) {
-			ses.Status.Expired = true
-			if err := routine.Manager.UpdateBreakglassSessionStatus(ctx, ses); err != nil {
-				routine.Log.Error("error while updating breakglass session", zap.Error(err))
-				continue
 			}
 		}
 	}

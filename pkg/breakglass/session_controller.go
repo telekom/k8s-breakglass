@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	MonthDuration = time.Hour * 24 * 30
-	WeekDuration  = time.Hour * 24 * 7
+	MonthDuration            = time.Hour * 24 * 30
+	WeekDuration             = time.Hour * 24 * 7
+	DefaultValidForDuration  = time.Hour
+	DefaultRetainForDuration = MonthDuration
 )
 
 var ErrSessionNotFound error = errors.New("session not found")
@@ -74,6 +76,7 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 	} else {
 		sessions, err = wc.sessionManager.GetAllBreakglassSessions(ctx)
 	}
+	fmt.Println("has sessions", sessions)
 
 	if err != nil {
 		wc.log.Error("Error getting breakglass sessions", zap.Error(err))
@@ -90,6 +93,7 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 	}
 
 	displayable := []v1alpha1.BreakglassSession{}
+	fmt.Println("per_cluster:=", sessionsPerCluster)
 
 	for clusterName, sessions := range sessionsPerCluster {
 		escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, clusterName)
@@ -99,6 +103,7 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 			return
 		}
 
+		fmt.Println("has escalations", escalations)
 		sessions, err := EscalationFiltering{
 			FilterUserData:   ClusterUserGroup{Clustername: clusterName, Username: userName},
 			UserGroupExtract: wc.getUserGroupsFn,
@@ -162,7 +167,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	ses, err := wc.getBreakglassSession(ctx,
+	_, err = wc.getBreakglassSession(ctx,
 		request.Username, request.Clustername, request.Groupname)
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
@@ -170,7 +175,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			c.JSON(http.StatusInternalServerError, "failed to extract breakglass session information")
 			return
 		}
-	} else if !ses.Status.Expired {
+	} else { // TODO: Change to else if with proper condition when created
 		c.JSON(http.StatusOK, "already requested")
 		return
 	}
@@ -183,10 +188,17 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 	username := wc.identityProvider.GetUsername(c)
 
-	bs := v1alpha1.NewBreakglassSession(
-		request.Clustername,
-		request.Username,
-		request.Groupname)
+	// bs := v1alpha1.NewBreakglassSession(
+	// 	request.Clustername,
+	// 	request.Username,
+	// 	request.Groupname)
+	bs := v1alpha1.BreakglassSession{
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:      request.Clustername,
+			User:         request.Username,
+			GrantedGroup: request.Groupname,
+		},
+	}
 
 	bs.GenerateName = fmt.Sprintf("%s-%s-", request.Clustername, request.Groupname)
 	if err := wc.sessionManager.AddBreakglassSession(ctx, bs); err != nil {
@@ -203,11 +215,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 
 	bs.Status = v1alpha1.BreakglassSessionStatus{
-		Expired:            false,
-		Approved:           false,
-		IdleTimeoutReached: false,
-		CreatedAt:          metav1.Now(),
-		StoreUntil:         metav1.NewTime(time.Now().Add(MonthDuration)),
+		RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+		// TODO: Implement condition when created
+		Conditions: []metav1.Condition{},
 	}
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(ctx, bs); err != nil {
@@ -257,9 +267,9 @@ func (wc BreakglassSessionController) getBreakglassSession(ctx context.Context,
 ) (v1alpha1.BreakglassSession, error) {
 	selector := fields.SelectorFromSet(
 		fields.Set{
-			"spec.cluster":  clustername,
-			"spec.username": username,
-			"spec.group":    group,
+			"spec.cluster":      clustername,
+			"spec.user":         username,
+			"spec.grantedGroup": group,
 		},
 	)
 	sessions, err := wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
@@ -275,18 +285,16 @@ func (wc BreakglassSessionController) getBreakglassSession(ctx context.Context,
 func (wc BreakglassSessionController) handleApproveBreakglassSession(c *gin.Context) {
 	wc.updateStatus(c,
 		func(bs *v1alpha1.BreakglassSession) {
-			bs.Status.Approved = true
 			bs.Status.ApprovedAt = metav1.Now()
-			bs.Status.ValidUntil = metav1.NewTime(bs.Status.ApprovedAt.Add(WeekDuration))
+			bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(DefaultValidForDuration))
 		})
 }
 
 func (wc BreakglassSessionController) handleRejectBreakglassSession(c *gin.Context) {
 	wc.updateStatus(c,
 		func(bs *v1alpha1.BreakglassSession) {
-			bs.Status.Approved = false
 			bs.Status.ApprovedAt = metav1.Time{}
-			bs.Status.ValidUntil = metav1.Time{}
+			bs.Status.ExpiresAt = metav1.Time{}
 		})
 }
 
@@ -295,9 +303,9 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 	requestUsername string,
 	approvers []string,
 ) error {
-	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.Username, bs.Spec.Group)
+	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.User, bs.Spec.GrantedGroup)
 
-	if bs.Status.Approved {
+	if IsSessionValid(bs) {
 		// TODO: In case user is an admin and get instantly approved request we coudl send notification only
 		wc.log.Info("sending notification...")
 	} else {
@@ -305,8 +313,8 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 			SubjectEmail:      requestEmail,
 			SubjectFullName:   requestUsername,
 			RequestedCluster:  bs.Spec.Cluster,
-			RequestedUsername: bs.Spec.Username,
-			RequestedGroup:    bs.Spec.Group,
+			RequestedUsername: bs.Spec.User,
+			RequestedGroup:    bs.Spec.GrantedGroup,
 			URL:               fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
 		})
 		if err != nil {
@@ -355,9 +363,9 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 	escalations, err := wc.escalationManager.GetClusterUserGroupBreakglassEscalation(
 		ctx,
 		ClusterUserGroup{
-			Username:    session.Spec.Username,
+			Username:    session.Spec.User,
 			Clustername: session.Spec.Cluster,
-			Groupname:   session.Spec.Group,
+			Groupname:   session.Spec.GrantedGroup,
 		})
 	if err != nil {
 		wc.log.Error("Error getting user escalations", zap.Error(err))
@@ -377,6 +385,18 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 	}
 
 	return len(sessions) == 1
+}
+
+func IsSessionRetained(session v1alpha1.BreakglassSession) bool {
+	return time.Now().After(session.Status.RetainedUntil.Time)
+}
+
+func IsSessionExpired(session v1alpha1.BreakglassSession) bool {
+	return session.Status.ExpiresAt.After(time.Now()) || session.Status.ApprovedAt.IsZero()
+}
+
+func IsSessionValid(session v1alpha1.BreakglassSession) bool {
+	return !IsSessionExpired(session)
 }
 
 func NewBreakglassSessionController(log *zap.SugaredLogger,

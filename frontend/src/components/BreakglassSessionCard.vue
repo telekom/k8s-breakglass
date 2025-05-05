@@ -41,11 +41,11 @@ const expiryHumanized = computed(() => {
   <scale-card :aria-disabled="active">
     <span>
       <p>
-        Group: <b>{{ breakglass.spec.group }}</b>
+        Group: <b>{{ breakglass.spec.grantedGroup }}</b>
       </p>
 
       <p>
-        Username: <b>{{ breakglass.spec.username }}</b>
+        Username: <b>{{ breakglass.spec.user }}</b>
       </p>
 
       <p>

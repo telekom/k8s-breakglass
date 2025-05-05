@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,36 +34,14 @@ func (s *FakeMailSender) Send(receivers []string, subject, body string) error {
 }
 
 var sessionIndexFunctions = map[string]client.IndexerFunc{
-	"status.expired": func(o client.Object) []string {
-		return []string{strconv.FormatBool(o.(*v1alpha1.BreakglassSession).Status.Expired)}
-	},
-	"status.approved": func(o client.Object) []string {
-		return []string{strconv.FormatBool(o.(*v1alpha1.BreakglassSession).Status.Approved)}
-	},
-	"status.idleTimeoutReached": func(o client.Object) []string {
-		return []string{strconv.FormatBool(o.(*v1alpha1.BreakglassSession).Status.IdleTimeoutReached)}
-	},
-	"spec.username": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.Username}
+	"spec.user": func(o client.Object) []string {
+		return []string{o.(*v1alpha1.BreakglassSession).Spec.User}
 	},
 	"spec.cluster": func(o client.Object) []string {
 		return []string{o.(*v1alpha1.BreakglassSession).Spec.Cluster}
 	},
-	"spec.group": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassSession).Spec.Group}
-	},
-}
-
-var escalationIndexFunctions = map[string]client.IndexerFunc{
-	"spec.cluster": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassEscalation).Spec.Cluster}
-	},
-
-	"spec.username": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassEscalation).Spec.Username}
-	},
-	"spec.escalatedGroup": func(o client.Object) []string {
-		return []string{o.(*v1alpha1.BreakglassEscalation).Spec.EscalatedGroup}
+	"spec.grantedGroup": func(o client.Object) []string {
+		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
 }
 
@@ -73,17 +50,17 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
 	}
-	for index, fn := range escalationIndexFunctions {
-		builder.WithIndex(&v1alpha1.BreakglassEscalation{}, index, fn)
-	}
+
 	builder.WithObjects(&v1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "tester-allow-create-all",
 		},
 		Spec: v1alpha1.BreakglassEscalationSpec{
-			Cluster:        "test",
-			Username:       "tester@telekom.de",
-			AllowedGroups:  []string{"system:authenticated"},
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Users:    []string{"tester@telekom.de"},
+				Groups:   []string{"system:authenticated"},
+			},
 			EscalatedGroup: "breakglass-create-all",
 			Approvers: v1alpha1.BreakglassEscalationApprovers{
 				Users: []string{"approver@telekom.de"},
@@ -170,10 +147,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	}
 
 	ses := getSession()
-	if stat := ses.Status.CreatedAt; stat.Day() != time.Now().Day() {
-		t.Fatalf("Incorrect session creation date day status %#v", stat)
-	}
-	if stat := ses.Status.StoreUntil; stat.Day() != time.Now().Add(MonthDuration).Day() {
+	if stat := ses.Status.RetainedUntil; stat.Day() != time.Now().Add(MonthDuration).Day() {
 		t.Fatalf("Incorrect session store until date day status %#v", stat)
 	}
 
@@ -190,7 +164,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 
 	// check if session status is approved
 	ses = getSession()
-	if !ses.Status.Approved {
+	if ses.Status.ApprovedAt.Day() != time.Now().Day() {
 		t.Fatalf("Expected session to be approved, but it is not.")
 	}
 
@@ -207,7 +181,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 
 	// check if session status is back to rejected
 	ses = getSession()
-	if ses.Status.Approved {
+	if !ses.Status.ApprovedAt.IsZero() {
 		t.Fatalf("Expected session to be rejected, but it is not.")
 	}
 }

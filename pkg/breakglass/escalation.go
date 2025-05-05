@@ -32,14 +32,14 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 	}
 
 	isEscalationForUser := func(esc telekomv1alpha1.BreakglassEscalation) bool {
-		return esc.Spec.Cluster == ef.FilterUserData.Clustername &&
-			esc.Spec.Username == ef.FilterUserData.Username
+		return slices.Contains(esc.Spec.Allowed.Clusters, ef.FilterUserData.Clustername) &&
+			slices.Contains(esc.Spec.Allowed.Users, ef.FilterUserData.Username)
 	}
 
 	possible := make([]telekomv1alpha1.BreakglassEscalation, 0, len(escalations))
 	for _, esc := range escalations {
 		if isEscalationForUser(esc) &&
-			intersects(groups, esc.Spec.AllowedGroups) {
+			intersects(groups, esc.Spec.Allowed.Groups) {
 			possible = append(possible, esc)
 		}
 	}
@@ -66,8 +66,8 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 
 	for _, ses := range sessions {
 		for _, esc := range escalations {
-			if ses.Spec.Group != esc.Spec.EscalatedGroup ||
-				ses.Spec.Cluster != esc.Spec.Cluster {
+			if ses.Spec.GrantedGroup != esc.Spec.EscalatedGroup ||
+				!slices.Contains(esc.Spec.Allowed.Clusters, ses.Spec.Cluster) {
 				continue
 			}
 
