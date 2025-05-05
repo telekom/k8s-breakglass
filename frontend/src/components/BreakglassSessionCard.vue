@@ -14,9 +14,10 @@ const props = defineProps<{
 
 const emit = defineEmits(["accept", "reject"]);
 
-const active = computed(() => props.breakglass.status.validUntil === null  ||
-  Date.parse(props.breakglass.status.validUntil) - props.time > 0)
-const approved = computed(() => props.breakglass.status.approved)
+const retained = computed(() => props.breakglass.status.retainedUntil !== null  &&
+  Date.parse(props.breakglass.status.retainedUntil) - props.time > 0)
+const approved = computed(() => props.breakglass.status.expiresAt !== null &&
+  Date.parse(props.breakglass.status.expiresAt) - props.time > 0)
 
 function accept() {
   emit("accept");
@@ -27,10 +28,10 @@ function reject() {
 }
 
 const expiryHumanized = computed(() => {
-  if (!active) {
+  if (!retained) {
     return "already expired";
   }
-  const until = Date.parse(props.breakglass.status.validUntil)
+  const until = Date.parse(props.breakglass.status.expiresAt)
   const duration = until - props.time
   return humanizeDuration(duration, humanizeConfig);
 });
@@ -38,7 +39,7 @@ const expiryHumanized = computed(() => {
 </script>
 
 <template>
-  <scale-card :aria-disabled="active">
+  <scale-card :aria-disabled="retained">
     <span>
       <p>
         Group: <b>{{ breakglass.spec.grantedGroup }}</b>
@@ -58,7 +59,7 @@ const expiryHumanized = computed(() => {
       <b>{{ expiryHumanized }}</b>
     </p>
 
-    <p v-if="active" class="actions">
+    <p v-if="retained" class="actions">
       <scale-button v-if="!approved" @click="accept">Accept </scale-button>
       <scale-button v-if="approved" variant="secondary" @click="reject">Reject</scale-button>
     </p>

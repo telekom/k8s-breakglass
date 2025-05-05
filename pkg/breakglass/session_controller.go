@@ -76,7 +76,6 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 	} else {
 		sessions, err = wc.sessionManager.GetAllBreakglassSessions(ctx)
 	}
-	fmt.Println("has sessions", sessions)
 
 	if err != nil {
 		wc.log.Error("Error getting breakglass sessions", zap.Error(err))
@@ -93,7 +92,6 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 	}
 
 	displayable := []v1alpha1.BreakglassSession{}
-	fmt.Println("per_cluster:=", sessionsPerCluster)
 
 	for clusterName, sessions := range sessionsPerCluster {
 		escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, clusterName)
@@ -103,7 +101,6 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 			return
 		}
 
-		fmt.Println("has escalations", escalations)
 		sessions, err := EscalationFiltering{
 			FilterUserData:   ClusterUserGroup{Clustername: clusterName, Username: userName},
 			UserGroupExtract: wc.getUserGroupsFn,
@@ -392,7 +389,7 @@ func IsSessionRetained(session v1alpha1.BreakglassSession) bool {
 }
 
 func IsSessionExpired(session v1alpha1.BreakglassSession) bool {
-	return session.Status.ExpiresAt.After(time.Now()) || session.Status.ApprovedAt.IsZero()
+	return time.Now().After(session.Status.ExpiresAt.Time) || session.Status.ApprovedAt.IsZero()
 }
 
 func IsSessionValid(session v1alpha1.BreakglassSession) bool {

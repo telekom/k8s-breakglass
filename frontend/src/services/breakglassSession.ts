@@ -44,7 +44,6 @@ export default class BreakglassSessionService {
   }
 
   public async approveReview(review: BreakglassSessionRequest) {
-    console.log(review.uname)
     return await this.client.post("/approve/" + review.uname)
   }
 

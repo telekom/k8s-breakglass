@@ -21,7 +21,6 @@ const state = reactive({
 onMounted(async () => {
   state.breakglasses = await breakglassService.getBreakglasses();
   console.log(state.breakglasses);
-  console.log(state.breakglasses.length);
   state.loading = false;
 });
 

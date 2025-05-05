@@ -73,12 +73,9 @@ onMounted(async () => {
   loading.value = true;
 
   await escalationService.getEscalations().then(response => {
-    console.log('test')
     if (response.status == 200) {
       const resp = response.data as Array<BreakglassEscalationSpec>
-      console.log("resp", resp)
       escalations.value = resp.filter(spec => spec.allowed.clusters.indexOf(clusterName.value) != -1 )
-      console.log("value", escalations.value)
       if (escalations.value.length > 0){
         clusterGroup.value = escalations.value[0].escalatedGroup
       }

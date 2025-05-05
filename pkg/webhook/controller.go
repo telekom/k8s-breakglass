@@ -31,10 +31,11 @@ type SubjectAccessReviewResponse struct {
 }
 
 type WebhookController struct {
-	log        *zap.SugaredLogger
-	config     config.Config
-	sesManager *breakglass.SessionManager
-	canDoFn    breakglass.CanGroupsDoFunction
+	log          *zap.SugaredLogger
+	config       config.Config
+	sesManager   *breakglass.SessionManager
+	escalManager *breakglass.EscalationManager
+	canDoFn      breakglass.CanGroupsDoFunction
 }
 
 func (WebhookController) BasePath() string {
@@ -87,8 +88,21 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	if can {
 		allowed = true
 	} else {
-		reason = fmt.Sprintf(denyReasonMessage,
-			wc.config.Frontend.BaseURL, cluster)
+		escals, err := wc.escalManager.GetClusterUserBreakglassEscalations(ctx,
+			breakglass.ClusterUserGroup{
+				Clustername: cluster,
+				Username:    username,
+			})
+		if err != nil {
+			log.Println("error while getting user escalations", err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+
+		if len(escals) > 0 {
+			reason = fmt.Sprintf(denyReasonMessage,
+				wc.config.Frontend.BaseURL, cluster)
+		}
 	}
 
 	response := SubjectAccessReviewResponse{
@@ -128,12 +142,17 @@ func (wc *WebhookController) getUserGroupsForCluster(ctx context.Context,
 	return groups, nil
 }
 
-func NewWebhookController(log *zap.SugaredLogger, cfg config.Config, manager *breakglass.SessionManager) *WebhookController {
+func NewWebhookController(log *zap.SugaredLogger,
+	cfg config.Config,
+	sesManager *breakglass.SessionManager,
+	escalManager *breakglass.EscalationManager,
+) *WebhookController {
 	controller := &WebhookController{
-		log:        log,
-		config:     cfg,
-		sesManager: manager,
-		canDoFn:    breakglass.CanGroupsDo,
+		log:          log,
+		config:       cfg,
+		sesManager:   sesManager,
+		escalManager: escalManager,
+		canDoFn:      breakglass.CanGroupsDo,
 	}
 
 	return controller

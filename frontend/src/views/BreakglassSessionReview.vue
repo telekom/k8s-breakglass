@@ -38,8 +38,9 @@ async function getActiveBreakglasses() {
     switch (response.status) {
       case 200:
         state.getBreakglassesMsg = ""
-        state.breakglasses = response.data.filter(
-          (breakglass: any) => true);
+        state.breakglasses = response.data
+        // state.breakglasses = response.data.filter(
+        //   (breakglass: any) => true);
         break
     }
   }).catch(errResponse => {
@@ -59,6 +60,7 @@ const filteredBreakglasses = computed(() => {
   if (state.search === "") {
     return state.breakglasses;
   }
+  return state.breakglasses;
   // return state.breakglasses.filter((bg) => true);
 });
 

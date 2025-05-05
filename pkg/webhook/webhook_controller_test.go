@@ -23,10 +23,27 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-var testGroupData breakglass.ClusterUserGroup = breakglass.ClusterUserGroup{
+var testGroupData = breakglass.ClusterUserGroup{
 	Clustername: "telekom.tenat1",
 	Username:    "anon@deutsche.telekom.de",
 	Groupname:   "breakglass-create-all",
+}
+
+var sar = authorization.SubjectAccessReview{
+	TypeMeta: metav1.TypeMeta{
+		Kind:       "SubjectAccessReview",
+		APIVersion: "authorization.k8s.io/v1",
+	},
+	Spec: authorization.SubjectAccessReviewSpec{
+		User:   testGroupData.Username,
+		Groups: []string{"system:authenticated"},
+		ResourceAttributes: &authorization.ResourceAttributes{
+			Namespace: "test",
+			Verb:      "get",
+			Version:   "v1",
+			Resource:  "pods",
+		},
+	},
 }
 
 var (
@@ -44,9 +61,10 @@ var (
 )
 
 const (
-	testFrontURL   string = "https://test.breakglass.front.com"
-	errGotRejected string = "Wrong review response got rejected even though should be allowed"
-	errGotAllowed  string = "Wrong review response got allowed even though should be rejected"
+	testFrontURL              string = "https://test.breakglass.front.com"
+	errGotRejected            string = "Wrong review response got rejected even though should be allowed"
+	errGotAllowed             string = "Wrong review response got allowed even though should be rejected"
+	clusterNameWithEscalation        = "testEscalation"
 )
 
 var sessionIndexFunctions = map[string]client.IndexerFunc{
@@ -61,81 +79,85 @@ var sessionIndexFunctions = map[string]client.IndexerFunc{
 	},
 }
 
-func newBreakglassSession(cluster, username, group string) v1alpha1.BreakglassSession {
+func NewBreakglassSession(user, cluster, group string) v1alpha1.BreakglassSession {
 	return v1alpha1.BreakglassSession{
 		Spec: v1alpha1.BreakglassSessionSpec{
+			User:         user,
 			Cluster:      cluster,
-			User:         username,
 			GrantedGroup: group,
 		},
-		Status: v1alpha1.BreakglassSessionStatus{},
 	}
 }
 
-func TestHandleAuthorize(t *testing.T) {
-	ses := newBreakglassSession("test", "test", "test")
+func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
+	ses := NewBreakglassSession("test", "test", "test")
 	ses.Name = fmt.Sprintf("%s-%s-a1", testGroupData.Clustername, testGroupData.Groupname)
 	ses.Status = v1alpha1.BreakglassSessionStatus{
-		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.DefaultRetainForDuration)),
+		Conditions: []metav1.Condition{},
 	}
 
-	ses2 := newBreakglassSession("test2", "test2", "test2")
+	ses2 := NewBreakglassSession("test2", "test2", "test2")
 	ses2.Name = fmt.Sprintf("%s-%s-a2", testGroupData.Clustername, testGroupData.Groupname)
 	ses2.Status = v1alpha1.BreakglassSessionStatus{
-		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.DefaultRetainForDuration)),
+		Conditions:    []metav1.Condition{},
+		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
 	}
 
-	ses3 := newBreakglassSession("testError", "testError", "testError")
+	ses3 := NewBreakglassSession("testError", "testError", "testError")
 	ses3.Name = fmt.Sprintf("%s-%s-a3", testGroupData.Clustername, testGroupData.Groupname)
 	ses3.Status = v1alpha1.BreakglassSessionStatus{
-		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.DefaultRetainForDuration)),
+		Conditions:    []metav1.Condition{},
+		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
 	}
 
-	listIntercept := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-		fs := opts[0].(*client.ListOptions).FieldSelector
-		for _, req := range fs.Requirements() {
-			if req.Value == "testError" {
-				return errors.New("| DO NOT WORRY TEST ONLY ERROR | failed to list breakglass sessions")
-			}
-		}
-		return nil
-	}}
-
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).
-		WithObjects(&ses, &ses2).WithInterceptorFuncs(listIntercept)
+		WithObjects(&ses, &ses2, &ses3, &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "tester-allow-create-all",
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterNameWithEscalation},
+					Users:    []string{testGroupData.Username},
+					Groups:   []string{"system:authenticated"},
+				},
+				EscalatedGroup: "breakglass-create-all",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@telekom.de"},
+				},
+			},
+		})
+	if interceptFuncs != nil {
+		builder.WithInterceptorFuncs(*interceptFuncs)
+	}
 
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&ses, index, fn)
 	}
+
+	cli := builder.Build()
 	sesmanager := breakglass.SessionManager{
-		Client: builder.Build(),
+		Client: cli,
+	}
+	escmanager := breakglass.EscalationManager{
+		Client: cli,
 	}
 
 	logger, _ := zap.NewDevelopment()
-	contoller := NewWebhookController(logger.Sugar(), config.Config{
-		Frontend: config.Frontend{BaseURL: testFrontURL},
-	}, &sesmanager)
+	contoller := NewWebhookController(logger.Sugar(),
+		config.Config{
+			Frontend: config.Frontend{BaseURL: testFrontURL},
+		}, &sesmanager,
+		&escmanager)
 	contoller.canDoFn = alwaysCanDo
+
+	return contoller
+}
+
+func TestHandleAuthorize(t *testing.T) {
+	contoller := SetupController(nil)
 	engine := gin.New()
-
-	_ = contoller.Register(engine.Group("api"))
-
-	sar := authorization.SubjectAccessReview{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "SubjectAccessReview",
-			APIVersion: "authorization.k8s.io/v1",
-		},
-		Spec: authorization.SubjectAccessReviewSpec{
-			User:   testGroupData.Username,
-			Groups: []string{"system:authenticated"},
-			ResourceAttributes: &authorization.ResourceAttributes{
-				Namespace: "test",
-				Verb:      "get",
-				Version:   "v1",
-				Resource:  "pods",
-			},
-		},
-	}
+	_ = contoller.Register(engine.Group(""))
 
 	allowRejectCases := []struct {
 		TestName           string
@@ -146,7 +168,7 @@ func TestHandleAuthorize(t *testing.T) {
 		Clustername        string
 	}{
 		{
-			TestName:           "Test simple always allow",
+			TestName:           "Simple always allow",
 			CanDoFunction:      alwaysCanDo,
 			ShouldAllow:        true,
 			ExpectedStatusCode: http.StatusOK,
@@ -154,7 +176,7 @@ func TestHandleAuthorize(t *testing.T) {
 			Clustername:        testGroupData.Clustername,
 		},
 		{
-			TestName:           "Test simple always reject",
+			TestName:           "Simple always reject",
 			CanDoFunction:      alwaysCanNotDo,
 			ShouldAllow:        false,
 			ExpectedStatusCode: http.StatusOK,
@@ -162,7 +184,7 @@ func TestHandleAuthorize(t *testing.T) {
 			Clustername:        testGroupData.Clustername,
 		},
 		{
-			TestName:           "Test empty cluster",
+			TestName:           "Empty cluster",
 			ExpectedStatusCode: http.StatusNotFound,
 			CanDoFunction:      alwaysCanNotDo,
 			InReview:           &sar,
@@ -170,7 +192,7 @@ func TestHandleAuthorize(t *testing.T) {
 			Clustername:        "",
 		},
 		{
-			TestName:           "Test empty body",
+			TestName:           "Empty body",
 			ExpectedStatusCode: http.StatusUnprocessableEntity,
 			CanDoFunction:      alwaysCanNotDo,
 			ShouldAllow:        false,
@@ -178,24 +200,16 @@ func TestHandleAuthorize(t *testing.T) {
 			Clustername:        testGroupData.Clustername,
 		},
 		{
-			TestName:           "Test can do function error",
+			TestName:           "Can do function error",
 			ExpectedStatusCode: http.StatusInternalServerError,
 			CanDoFunction: breakglass.CanGroupsDoFunction(func(context.Context, []string,
 				authorization.SubjectAccessReview, string,
 			) (bool, error) {
-				return false, errors.New("| DO NOT WORRY TEST ONLY ERROR | - failed to check groups")
+				return false, errors.New("IGNORE test error for can do function")
 			}),
 			InReview:    &sar,
 			ShouldAllow: false,
 			Clustername: testGroupData.Clustername,
-		},
-		{
-			TestName:           "Test manager error",
-			ExpectedStatusCode: http.StatusInternalServerError,
-			CanDoFunction:      alwaysCanDo,
-			ShouldAllow:        false,
-			InReview:           &sar,
-			Clustername:        "testError",
 		},
 	}
 
@@ -208,7 +222,7 @@ func TestHandleAuthorize(t *testing.T) {
 				inBytes, _ = json.Marshal(*testCase.InReview)
 			}
 
-			req, _ := http.NewRequest("POST", "/api/authorize/"+testCase.Clustername, bytes.NewReader(inBytes))
+			req, _ := http.NewRequest("POST", "/authorize/"+testCase.Clustername, bytes.NewReader(inBytes))
 			w := httptest.NewRecorder()
 			engine.ServeHTTP(w, req)
 			response := w.Result()
@@ -221,7 +235,6 @@ func TestHandleAuthorize(t *testing.T) {
 			}
 
 			respReview := SubjectAccessReviewResponse{}
-
 			err := json.NewDecoder(response.Body).Decode(&respReview)
 			if err != nil {
 				t.Fatalf("Failed to decode response body %v", err)
@@ -229,11 +242,72 @@ func TestHandleAuthorize(t *testing.T) {
 			if respReview.Status.Allowed != testCase.ShouldAllow {
 				t.Fatalf("Expected status allowed to be %t", testCase.ShouldAllow)
 			}
-
-			reason := fmt.Sprintf(denyReasonMessage, contoller.config.Frontend.BaseURL, testCase.Clustername)
-			if !respReview.Status.Allowed && respReview.Status.Reason != reason {
-				t.Fatalf("Incorrect status reason got %q, expected: %q", respReview.Status.Reason, reason)
-			}
 		})
+	}
+}
+
+// Checks if reason has link to frontend url in case there exists escalation (the single escalation used is defined in
+// setup function.
+func TestStatusReasons(t *testing.T) {
+	contoller := SetupController(nil)
+	contoller.canDoFn = alwaysCanNotDo
+	expReason := fmt.Sprintf(denyReasonMessage, contoller.config.Frontend.BaseURL, clusterNameWithEscalation)
+	engine := gin.New()
+	_ = contoller.Register(engine.Group(""))
+	var inBytes []byte
+	inBytes, _ = json.Marshal(sar)
+
+	req, _ := http.NewRequest("POST", "/authorize/"+clusterNameWithEscalation, bytes.NewReader(inBytes))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	response := w.Result()
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("Expected %d http status code, but got %d (%q) instead", http.StatusOK, response.StatusCode, response.Status)
+	}
+	respReview := SubjectAccessReviewResponse{}
+	err := json.NewDecoder(response.Body).Decode(&respReview)
+	if err != nil {
+		t.Fatalf("Failed to decode response body %v", err)
+	}
+
+	if respReview.Status.Allowed {
+		t.Fatalf("Expected status allowed to be false")
+	}
+	if outReson := respReview.Status.Reason; outReson != expReason {
+		t.Fatalf("Expected %s reason, but got %s instead", expReason, outReson)
+	}
+}
+
+// Tests if we get status interal server error if listing sessions or escalations returns error
+func TestManagerError(t *testing.T) {
+	errorClusterName := "testError"
+	listIntercept := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if len(opts) == 0 {
+			return nil
+		}
+
+		fs := opts[0].(*client.ListOptions).FieldSelector
+		for _, req := range fs.Requirements() {
+			if req.Value == errorClusterName {
+				return errors.New("IGNORE manager unit test error")
+			}
+		}
+		return nil
+	}}
+	contoller := SetupController(&listIntercept)
+	contoller.canDoFn = alwaysCanDo
+	engine := gin.New()
+	_ = contoller.Register(engine.Group(""))
+	var inBytes []byte
+	inBytes, _ = json.Marshal(sar)
+
+	req, _ := http.NewRequest("POST", "/authorize/"+errorClusterName, bytes.NewReader(inBytes))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	response := w.Result()
+
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("Expected %d http status code, but got %d (%q) instead", http.StatusInternalServerError, response.StatusCode, response.Status)
 	}
 }
