@@ -20,8 +20,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type BreakglassSessionCondition string
+
+const (
+	SessionConditionIdle     BreakglassSessionCondition = "Idle"
+	SessionConditionApproved BreakglassSessionCondition = "Approved"
+	SessionConditionRejected BreakglassSessionCondition = "Rejected"
+)
+
 // BreakglassSessionSpec defines the desired state of BreakglassSession.
-// todo: make all of this immutable (probably using CEL)
 type BreakglassSessionSpec struct {
 	// cluster is the name of the cluster the session is valid for.
 	// +required
@@ -57,19 +64,16 @@ type BreakglassSessionStatus struct {
 	Conditions []metav1.Condition `json:"conditions"`
 
 	// approvedAt is the time when the session was approved.
-	// todo: make immutable
 	// +omitempty
 	ApprovedAt metav1.Time `json:"approvedAt,omitempty"`
 
 	// ExpiresAt is the time when the session will expire.
 	// This value is set based on spec.MaxValidFor when the session is approved.
-	// todo: make immutable
 	// +omitempty
 	ExpiresAt metav1.Time `json:"expiresAt,omitempty"`
 
 	// retainedUntil is the time when the session object will be removed from the cluster.
 	// This value is set based on spec.retainFor when the session is approved.
-	// todo: make immutable
 	// +omitempty
 	RetainedUntil metav1.Time `json:"retainedUntil,omitempty"`
 
@@ -96,6 +100,7 @@ type BreakglassSession struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// +required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="session spec is immutable"
 	Spec   BreakglassSessionSpec   `json:"spec"`
 	Status BreakglassSessionStatus `json:"status,omitempty"`
 }

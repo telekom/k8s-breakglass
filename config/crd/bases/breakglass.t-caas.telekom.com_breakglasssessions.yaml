@@ -39,9 +39,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              BreakglassSessionSpec defines the desired state of BreakglassSession.
-              todo: make all of this immutable (probably using CEL)
+            description: BreakglassSessionSpec defines the desired state of BreakglassSession.
             properties:
               cluster:
                 description: cluster is the name of the cluster the session is valid
@@ -73,13 +71,14 @@ spec:
             - grantedGroup
             - user
             type: object
+            x-kubernetes-validations:
+            - message: session spec is immutable
+              rule: self == oldSelf
           status:
             description: BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
             properties:
               approvedAt:
-                description: |-
-                  approvedAt is the time when the session was approved.
-                  todo: make immutable
+                description: approvedAt is the time when the session was approved.
                 format: date-time
                 type: string
               conditions:
@@ -145,7 +144,6 @@ spec:
                 description: |-
                   ExpiresAt is the time when the session will expire.
                   This value is set based on spec.MaxValidFor when the session is approved.
-                  todo: make immutable
                 format: date-time
                 type: string
               idleUntil:
@@ -164,7 +162,6 @@ spec:
                 description: |-
                   retainedUntil is the time when the session object will be removed from the cluster.
                   This value is set based on spec.retainFor when the session is approved.
-                  todo: make immutable
                 format: date-time
                 type: string
             required:
