@@ -33,7 +33,8 @@ async function getActiveBreakglasses() {
     uname: resourceName.value,
     clustername: clusterName.value,
     username: userName.value,
-    clustergroup: groupName.value
+    clustergroup: groupName.value,
+    activeOnly: true
   }).then(response => {
     switch (response.status) {
       case 200:

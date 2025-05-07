@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -13,6 +14,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/fields"
 
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
 )
@@ -121,6 +123,12 @@ func (wc *WebhookController) getUserGroupsForCluster(ctx context.Context,
 	username string,
 	clustername string,
 ) ([]string, error) {
+	IsSessionStillApproved := func(session v1alpha1.BreakglassSession) bool {
+		return !breakglass.IsSessionRetained(session) &&
+			!session.Status.ExpiresAt.IsZero() &&
+			session.Status.ExpiresAt.After(time.Now()) &&
+			session.Status.RejectedAt.IsZero()
+	}
 	selector := fields.SelectorFromSet(
 		fields.Set{
 			"spec.cluster": clustername,
@@ -134,7 +142,7 @@ func (wc *WebhookController) getUserGroupsForCluster(ctx context.Context,
 
 	groups := make([]string, 0, len(sessions))
 	for _, session := range sessions {
-		if breakglass.IsSessionValid(session) {
+		if IsSessionStillApproved(session) {
 			groups = append(groups, session.Spec.GrantedGroup)
 		}
 	}

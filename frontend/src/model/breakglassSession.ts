@@ -3,6 +3,7 @@ export interface BreakglassSessionRequest {
   username?: string;
   clustergroup?: string;
   uname?: string;
+  activeOnly?: boolean;
 }
 
 export interface BreakglassSessionResponse {

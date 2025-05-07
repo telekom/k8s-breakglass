@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -62,6 +63,17 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 	cluster := c.Query("clustername")
 	group := c.Query("groupname")
 	uname := c.Query("uname")
+	active := c.Query("activeOnly")
+	var activeOnly bool
+	var err error
+	if active != "" {
+		activeOnly, err = strconv.ParseBool(c.Query("activeOnly"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, "failed to parse activeOnly query parameter")
+			return
+		}
+	}
+
 	ctx := c.Request.Context()
 
 	// TODO: To decide if we want to treat email or username as main identity
@@ -69,7 +81,6 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 
 	selector := SessionSelector(uname, user, cluster, group)
 	var sessions []v1alpha1.BreakglassSession
-	var err error
 	if selector != "" {
 		sessions, err = wc.sessionManager.GetBreakglassSessionsWithSelectorString(ctx,
 			selector)
@@ -111,7 +122,15 @@ func (wc BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Co
 			return
 		}
 
-		displayable = append(displayable, sessions...)
+		if activeOnly {
+			for _, ses := range sessions {
+				if IsSessionActive(ses) {
+					displayable = append(displayable, ses)
+				}
+			}
+		} else {
+			displayable = append(displayable, sessions...)
+		}
 	}
 
 	c.JSON(http.StatusOK, displayable)
@@ -164,7 +183,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	_, err = wc.getBreakglassSession(ctx,
+	ses, err := wc.getActiveBreakglassSession(ctx,
 		request.Username, request.Clustername, request.Groupname)
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
@@ -172,7 +191,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			c.JSON(http.StatusInternalServerError, "failed to extract breakglass session information")
 			return
 		}
-	} else { // TODO: Change to else if with proper condition when created
+	} else if IsSessionActive(ses) {
 		c.JSON(http.StatusOK, "already requested")
 		return
 	}
@@ -185,10 +204,6 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 	username := wc.identityProvider.GetUsername(c)
 
-	// bs := v1alpha1.NewBreakglassSession(
-	// 	request.Clustername,
-	// 	request.Username,
-	// 	request.Groupname)
 	bs := v1alpha1.BreakglassSession{
 		Spec: v1alpha1.BreakglassSessionSpec{
 			Cluster:      request.Clustername,
@@ -204,7 +219,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	bs, err = wc.getBreakglassSession(ctx, request.Username, request.Clustername, request.Groupname)
+	bs, err = wc.getActiveBreakglassSession(ctx, request.Username, request.Clustername, request.Groupname)
 	if err != nil && !errors.Is(err, ErrSessionNotFound) {
 		wc.log.Error("error while getting breakglass session", zap.Error(err))
 		c.Status(http.StatusInternalServerError)
@@ -213,8 +228,13 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	bs.Status = v1alpha1.BreakglassSessionStatus{
 		RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
-		// TODO: Implement condition when created
-		Conditions: []metav1.Condition{},
+		Conditions: []metav1.Condition{{
+			Type:               string(v1alpha1.SessionConditionTypeIdle),
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.Now(),
+			Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
+			Message:            fmt.Sprintf("User %q requested session.", username),
+		}},
 	}
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(ctx, bs); err != nil {
@@ -231,7 +251,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	c.JSON(http.StatusCreated, request)
 }
 
-func (wc BreakglassSessionController) updateStatus(c *gin.Context, statusFn func(*v1alpha1.BreakglassSession)) {
+func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondition v1alpha1.BreakglassSessionConditionType) {
 	uname := c.Param("uname")
 
 	bs, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), uname)
@@ -246,7 +266,41 @@ func (wc BreakglassSessionController) updateStatus(c *gin.Context, statusFn func
 		return
 	}
 
-	statusFn(&bs)
+	var lastCondition metav1.Condition
+	if l := len(bs.Status.Conditions); l > 0 {
+		lastCondition = bs.Status.Conditions[l-1]
+	}
+
+	if lastCondition.Type == string(sesCondition) {
+		c.JSON(http.StatusOK, bs)
+	}
+
+	switch sesCondition {
+	case v1alpha1.SessionConditionTypeApproved:
+		bs.Status.ApprovedAt = metav1.Now()
+		bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(time.Hour))
+	case v1alpha1.SessionConditionTypeRejected:
+		bs.Status.ApprovedAt = metav1.Time{}
+		bs.Status.ExpiresAt = metav1.Time{}
+		bs.Status.RejectedAt = metav1.Now()
+	case v1alpha1.SessionConditionTypeIdle:
+		wc.log.Error("error setting session status to idle which should be only initial state")
+		c.Status(http.StatusInternalServerError)
+		return
+	default:
+		wc.log.Error("unknown session condition type", zap.String("type", string(sesCondition)))
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+
+	username, _ := wc.identityProvider.GetEmail(c)
+	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
+		Type:               string(sesCondition),
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
+		Message:            fmt.Sprintf("User %q set session to %s", username, sesCondition),
+	})
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		wc.log.Error("error while updating breakglass session", zap.Error(err))
@@ -257,7 +311,7 @@ func (wc BreakglassSessionController) updateStatus(c *gin.Context, statusFn func
 	c.JSON(http.StatusOK, bs)
 }
 
-func (wc BreakglassSessionController) getBreakglassSession(ctx context.Context,
+func (wc BreakglassSessionController) getActiveBreakglassSession(ctx context.Context,
 	username,
 	clustername,
 	group string,
@@ -273,26 +327,36 @@ func (wc BreakglassSessionController) getBreakglassSession(ctx context.Context,
 	if err != nil {
 		return v1alpha1.BreakglassSession{}, errors.Wrap(err, "failed to list sessions")
 	}
-	if len(sessions) == 0 {
-		return v1alpha1.BreakglassSession{}, ErrSessionNotFound
+
+	validSessions := make([]v1alpha1.BreakglassSession, 0, len(sessions))
+	for _, ses := range sessions {
+		if !IsSessionActive(ses) {
+			continue
+		}
+
+		validSessions = append(validSessions, ses)
 	}
-	return sessions[0], nil
+
+	if len(validSessions) == 0 {
+		return v1alpha1.BreakglassSession{}, ErrSessionNotFound
+	} else if len(validSessions) > 1 {
+		wc.log.Error("there is more than single active breakglass session it should not happen",
+			zap.Int("num_sessions", len(validSessions)),
+			zap.String("user_data", fmt.Sprintf("%#v", ClusterUserGroup{
+				Clustername: clustername,
+				Username:    username,
+				Groupname:   group,
+			})))
+	}
+	return validSessions[0], nil
 }
 
 func (wc BreakglassSessionController) handleApproveBreakglassSession(c *gin.Context) {
-	wc.updateStatus(c,
-		func(bs *v1alpha1.BreakglassSession) {
-			bs.Status.ApprovedAt = metav1.Now()
-			bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(DefaultValidForDuration))
-		})
+	wc.setSessionStatus(c, v1alpha1.SessionConditionTypeApproved)
 }
 
 func (wc BreakglassSessionController) handleRejectBreakglassSession(c *gin.Context) {
-	wc.updateStatus(c,
-		func(bs *v1alpha1.BreakglassSession) {
-			bs.Status.ApprovedAt = metav1.Time{}
-			bs.Status.ExpiresAt = metav1.Time{}
-		})
+	wc.setSessionStatus(c, v1alpha1.SessionConditionTypeRejected)
 }
 
 func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession,
@@ -302,27 +366,22 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 ) error {
 	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.User, bs.Spec.GrantedGroup)
 
-	if IsSessionValid(bs) {
-		// TODO: In case user is an admin and get instantly approved request we coudl send notification only
-		wc.log.Info("sending notification...")
-	} else {
-		body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
-			SubjectEmail:      requestEmail,
-			SubjectFullName:   requestUsername,
-			RequestedCluster:  bs.Spec.Cluster,
-			RequestedUsername: bs.Spec.User,
-			RequestedGroup:    bs.Spec.GrantedGroup,
-			URL:               fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
-		})
-		if err != nil {
-			wc.log.Errorf("failed to render email template: %v", err)
-			return err
-		}
+	body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
+		SubjectEmail:      requestEmail,
+		SubjectFullName:   requestUsername,
+		RequestedCluster:  bs.Spec.Cluster,
+		RequestedUsername: bs.Spec.User,
+		RequestedGroup:    bs.Spec.GrantedGroup,
+		URL:               fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
+	})
+	if err != nil {
+		wc.log.Errorf("failed to render email template: %v", err)
+		return err
+	}
 
-		if err := wc.mail.Send(approvers, subject, body); err != nil {
-			wc.log.Errorf("failed to send request email: %v", err)
-			return err
-		}
+	if err := wc.mail.Send(approvers, subject, body); err != nil {
+		wc.log.Errorf("failed to send request email: %v", err)
+		return err
 	}
 
 	return nil
@@ -388,12 +447,19 @@ func IsSessionRetained(session v1alpha1.BreakglassSession) bool {
 	return time.Now().After(session.Status.RetainedUntil.Time)
 }
 
+// Session can be expired if it was previously approved
 func IsSessionExpired(session v1alpha1.BreakglassSession) bool {
-	return time.Now().After(session.Status.ExpiresAt.Time) || session.Status.ApprovedAt.IsZero()
+	return !session.Status.ExpiresAt.Time.IsZero() && time.Now().After(session.Status.ExpiresAt.Time)
 }
 
 func IsSessionValid(session v1alpha1.BreakglassSession) bool {
 	return !IsSessionExpired(session)
+	// session.Status.ExpiresAt.Time.IsZero() || time.Now().After(session.Status.ExpiresAt.Time)
+}
+
+// IsSessionActive returns if session can be approved or was already approved
+func IsSessionActive(session v1alpha1.BreakglassSession) bool {
+	return IsSessionValid(session) && session.Status.RejectedAt.IsZero()
 }
 
 func NewBreakglassSessionController(log *zap.SugaredLogger,

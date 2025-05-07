@@ -34,6 +34,7 @@ export default class BreakglassSessionService {
         clustername: request.clustername,
         groupname: request.clustergroup,
         uname: request.uname,
+        activeOnly: request.activeOnly
       }
     })
   }

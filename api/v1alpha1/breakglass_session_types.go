@@ -20,12 +20,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type BreakglassSessionCondition string
+type (
+	BreakglassSessionConditionType   string
+	BreakglassSessionConditionReason string
+)
 
 const (
-	SessionConditionIdle     BreakglassSessionCondition = "Idle"
-	SessionConditionApproved BreakglassSessionCondition = "Approved"
-	SessionConditionRejected BreakglassSessionCondition = "Rejected"
+	SessionConditionTypeIdle     BreakglassSessionConditionType = "Idle"
+	SessionConditionTypeApproved BreakglassSessionConditionType = "Approved"
+	SessionConditionTypeRejected BreakglassSessionConditionType = "Rejected"
+
+	SessionConditionReasonEditedByApprover BreakglassSessionConditionReason = "EditedByApprover"
 )
 
 // BreakglassSessionSpec defines the desired state of BreakglassSession.
@@ -66,6 +71,10 @@ type BreakglassSessionStatus struct {
 	// approvedAt is the time when the session was approved.
 	// +omitempty
 	ApprovedAt metav1.Time `json:"approvedAt,omitempty"`
+
+	// rejectedAt is the time when the session was rejected.
+	// +omitempty
+	RejectedAt metav1.Time `json:"rejectedAt,omitempty"`
 
 	// ExpiresAt is the time when the session will expire.
 	// This value is set based on spec.MaxValidFor when the session is approved.

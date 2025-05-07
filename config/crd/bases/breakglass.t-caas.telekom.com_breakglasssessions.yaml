@@ -158,6 +158,10 @@ spec:
                   Last time session was used for breakglass session based authorization.
                 format: date-time
                 type: string
+              rejectedAt:
+                description: rejectedAt is the time when the session was rejected.
+                format: date-time
+                type: string
               retainedUntil:
                 description: |-
                   retainedUntil is the time when the session object will be removed from the cluster.

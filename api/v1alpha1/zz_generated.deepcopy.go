@@ -246,6 +246,7 @@ func (in *BreakglassSessionStatus) DeepCopyInto(out *BreakglassSessionStatus) {
 		}
 	}
 	in.ApprovedAt.DeepCopyInto(&out.ApprovedAt)
+	in.RejectedAt.DeepCopyInto(&out.RejectedAt)
 	in.ExpiresAt.DeepCopyInto(&out.ExpiresAt)
 	in.RetainedUntil.DeepCopyInto(&out.RetainedUntil)
 	in.IdleUntil.DeepCopyInto(&out.IdleUntil)
