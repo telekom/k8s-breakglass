@@ -45,8 +45,6 @@ func main() {
 		return
 	}
 
-	whctrl := webhook.NewWebhookController(log, config, &sessionManager, &escalationManager)
-
 	err = server.RegisterAll([]api.APIController{
 		breakglass.NewBreakglassSessionController(log, config, &sessionManager, &escalationManager, auth.Middleware()),
 		breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware()),
