@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/pkg/errors"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	"golang.org/x/exp/slices"
 )
@@ -62,7 +61,7 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 		userCluserGroups[g] = struct{}{}
 	}
 
-	displayable := []v1alpha1.BreakglassSession{}
+	displayable := []telekomv1alpha1.BreakglassSession{}
 
 	for _, ses := range sessions {
 		for _, esc := range escalations {

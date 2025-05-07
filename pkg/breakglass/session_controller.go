@@ -227,7 +227,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 
 	bs.Status = v1alpha1.BreakglassSessionStatus{
-		RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+		RetainedUntil: metav1.NewTime(time.Now().Add(DefaultRetainForDuration)),
 		Conditions: []metav1.Condition{{
 			Type:               string(v1alpha1.SessionConditionTypeIdle),
 			Status:             metav1.ConditionTrue,
@@ -278,7 +278,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	switch sesCondition {
 	case v1alpha1.SessionConditionTypeApproved:
 		bs.Status.ApprovedAt = metav1.Now()
-		bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(time.Hour))
+		bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(DefaultValidForDuration))
 	case v1alpha1.SessionConditionTypeRejected:
 		bs.Status.ApprovedAt = metav1.Time{}
 		bs.Status.ExpiresAt = metav1.Time{}

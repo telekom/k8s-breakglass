@@ -155,13 +155,11 @@ func NewWebhookController(log *zap.SugaredLogger,
 	sesManager *breakglass.SessionManager,
 	escalManager *breakglass.EscalationManager,
 ) *WebhookController {
-	controller := &WebhookController{
+	return &WebhookController{
 		log:          log,
 		config:       cfg,
 		sesManager:   sesManager,
 		escalManager: escalManager,
 		canDoFn:      breakglass.CanGroupsDo,
 	}
-
-	return controller
 }

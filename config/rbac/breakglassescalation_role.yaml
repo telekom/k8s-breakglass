@@ -4,7 +4,7 @@ metadata:
   name: escalation-manager-role
 rules:
 - apiGroups:
-  - telekom.breakglass.de
+  - breakglass.t-caas.telekom.com
   resources:
   - breakglassescalations
   verbs:

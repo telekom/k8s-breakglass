@@ -1,0 +1,9 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassSession 
+metadata:
+  labels:
+  name: kind-tester-breakglass-service-create-1 
+spec:
+  cluster: kind
+  username: tester@mail.com
+  group: breakglass-service-create
