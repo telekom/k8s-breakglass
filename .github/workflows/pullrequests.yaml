@@ -1,0 +1,48 @@
+name: pullrequests
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  golangci:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.24
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6.5.0
+        with:
+          version: v1.64.6
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.24
+      - name: Run Tests
+        run: make test
+
+  validate-generated:
+    name: validate generated files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.24
+      - name: run code generators
+        run: make generate
+      - name: run manifest generators
+        run: make manifests
+      - name: ensure no files changed
+        run: git diff --exit-code || (echo "Generated files are out of sync. Please run 'make generate manifests' and commit the updated files."; exit 1)
