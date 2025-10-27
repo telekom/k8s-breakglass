@@ -97,7 +97,7 @@ jobs:
         env:
           CHART_PKG: /tmp/chartpkg
           ARTIFACTORY_URL: artifactory.devops.telekom.de
-          ARTIFACTORY_REPO: cit-t-caas-oci/charts
+          ARTIFACTORY_REPO: cit-t-caas-oci/charts/t-caas
         run: |
           set -e
           export HELM_EXPERIMENTAL_OCI=1
