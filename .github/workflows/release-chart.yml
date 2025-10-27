@@ -61,8 +61,8 @@ jobs:
         run: |
           set -e
           export HELM_EXPERIMENTAL_OCI=1
-          # Perform a non-interactive registry login with helm (uses --password-stdin)
-          echo "${{ secrets.AF_TOKEN }}" | helm registry login ${ARTIFACTORY_URL} --username "${{ secrets.AF_USER }}" --password-stdin
+          # Note: we rely on a prior non-interactive docker login step to authenticate
+          # against Artifactory so `helm push` can reuse the credential store.
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
             CHART_VERSION=$(helm show chart "$f" | yq e '.version' -)
@@ -70,6 +70,13 @@ jobs:
             # push using the already authenticated registry session (no interactive prompt)
             helm push "$f" "oci://${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}"
           done
+
+      - name: Log in to Artifactory (OCI)
+        uses: docker/login-action@v3
+        with:
+          registry: artifactory.devops.telekom.de
+          username: ${{ secrets.AF_USER }}
+          password: ${{ secrets.AF_TOKEN }}
 
       - name: Output published chart refs
         run: |
