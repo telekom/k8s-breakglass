@@ -61,13 +61,14 @@ jobs:
         run: |
           set -e
           export HELM_EXPERIMENTAL_OCI=1
+          # Perform a non-interactive registry login with helm (uses --password-stdin)
+          echo "${{ secrets.AF_TOKEN }}" | helm registry login ${ARTIFACTORY_URL} --username "${{ secrets.AF_USER }}" --password-stdin
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
             CHART_VERSION=$(helm show chart "$f" | yq e '.version' -)
             echo "Pushing $f -> ${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${CHART_NAME}:${CHART_VERSION}"
-            # login via helm push (uses docker login underneath for OCI)
-            echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
-            helm push "$f" "oci://${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}" --username ${{ secrets.AF_USER }} --password ${{ secrets.AF_TOKEN }}
+            # push using the already authenticated registry session (no interactive prompt)
+            helm push "$f" "oci://${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}"
           done
 
       - name: Output published chart refs
