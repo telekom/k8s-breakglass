@@ -1,6 +1,88 @@
-body {
+:root{
+  /* sensible defaults to make the app look clean across environments */
+  --app-max-width: 1100px;
+}
+
+html, body {
   margin: 0;
   padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  line-height: 1.4;
   background-color: var(--telekom-color-background-canvas);
   color: var(--telekom-color-text-and-icon-standard);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* App container used to constrain content and provide consistent padding */
+.app-container {
+  max-width: var(--app-max-width);
+  margin: 0 auto;
+  padding: 0 1rem 2rem;
+}
+
+/* Navigation improvements */
+.main-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1rem 1.5rem;
+  margin: 1.5rem 0 2.5rem 0;
+}
+.main-nav a {
+  color: #0070b8;
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 1.05rem;
+  transition: color 0.15s ease-in-out;
+}
+.main-nav a.router-link-exact-active {
+  color: #d9006c;
+  text-decoration: underline;
+}
+
+/* Visible focus ring for keyboard users */
+a:focus, button:focus, .main-nav a:focus {
+  outline: 3px solid #ffd54f;
+  outline-offset: 3px;
+}
+
+/* Skip link for accessibility - hidden until focused */
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+  width: auto;
+  height: auto;
+  padding: 0.5rem 0.75rem;
+  background: white;
+  color: black;
+  z-index: 1000;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+
+/* Small utility */
+.center { text-align: center; }
+
+/* Ensure secondary variant buttons are high-contrast across the app */
+scale-button[variant="secondary"], .scale-button[variant="secondary"] {
+  background: #374151 !important; /* dark gray */
+  color: #ffffff !important;
+  border: 1px solid #374151 !important;
+  box-shadow: none !important;
+}
+scale-button[variant="secondary"]:hover, .scale-button[variant="secondary"]:hover {
+  background: #2d3748 !important;
 }

@@ -10,6 +10,9 @@ import (
 type AuthorizationServer struct {
 	URL          string `yaml:"url"`
 	JWKSEndpoint string `yaml:"jwksEndpoint"`
+	// CertificateAuthority contains a PEM encoded CA certificate to validate the
+	// TLS certificate presented by the authorization server (optional).
+	CertificateAuthority string `yaml:"certificateAuthority"`
 }
 
 type Frontend struct {
@@ -33,7 +36,27 @@ type Server struct {
 }
 
 type Kubernetes struct {
-	Context string `yaml:"context"`
+	Context      string   `yaml:"context"`
+	OIDCPrefixes []string `yaml:"oidcPrefixes"`
+}
+
+// Keycloak holds optional configuration for read-only group membership sync.
+// Only minimal (view) permissions should be granted to the configured client.
+type Keycloak struct {
+	// BaseURL of the Keycloak server, e.g. https://keycloak.example.com
+	BaseURL string `yaml:"baseURL"`
+	// Realm to query, e.g. master or custom realm name
+	Realm string `yaml:"realm"`
+	// ClientID used for client_credentials flow (should have view-users/view-groups only)
+	ClientID string `yaml:"clientID"`
+	// ClientSecret for the above client (omit if using public client w/ other flow)
+	ClientSecret string `yaml:"clientSecret"`
+	// CacheTTL duration string (e.g. 5m, 1h); default 10m if empty
+	CacheTTL string `yaml:"cacheTTL"`
+	// RequestTimeout duration string (default 10s)
+	RequestTimeout string `yaml:"requestTimeout"`
+	// Disable set to true to turn off sync even if values present
+	Disable bool `yaml:"disable"`
 }
 
 type Config struct {
@@ -42,6 +65,7 @@ type Config struct {
 	Mail                Mail
 	Frontend            Frontend
 	Kubernetes          Kubernetes
+	Keycloak            Keycloak
 }
 
 func Load() (Config, error) {

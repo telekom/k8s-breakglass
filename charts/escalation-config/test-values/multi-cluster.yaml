@@ -1,0 +1,47 @@
+# Multi-cluster test values: multiple escalations and clusters
+cluster:
+  tenant: multi-tenant
+  clusterID: breakglass-hub
+  environment: staging
+  kubeconfigSecretRef:
+    name: hub-kubeconfig
+    namespace: kube-system
+  blockSelfApproval: false
+  allowedApproverDomains:
+    - example.com
+
+escalations:
+  - allowed:
+      clusters:
+        - breakglass-hub
+        - breakglass-hub-2
+      groups:
+        - ops
+        - backend-team
+    escalatedGroup: emergency-response
+    approvers:
+      groups:
+        - ops
+        - senior-ops
+    requestReason:
+      mandatory: true
+      description: "Emergency operations access for critical fixes"
+    maxValidFor: "1h"
+    retainFor: "72h"
+    idleTimeout: "30m"
+
+  - allowed:
+      clusters:
+        - breakglass-hub
+      groups:
+        - read-only
+    escalatedGroup: read-only
+    approvers:
+      groups:
+        - read-only
+    requestReason:
+      mandatory: false
+      description: "Read-only access for auditors"
+    maxValidFor: "8h"
+    retainFor: "24h"
+    idleTimeout: "1h"

@@ -2,12 +2,12 @@
   path: /spec/template/spec/initContainers
   value:
   - name: wait-for-keycloak
-    image: radial/busyboxplus:curl
+    image: curlimages/curl:8.4.0
     args:
-    - /bin/sh
-    - -c
-    - >
-      set -x;
-      while [ $(curl -sw '%{http_code}' "http://breakglass-dev-keycloak:8080/realms/master/protocol/openid-connect/certs" -o /dev/null) -ne 200 ]; do
-        sleep 5;
-      done
+      - /bin/sh
+      - -c
+      - >
+        set -x;
+        while [ $(curl -sw '%{http_code}' "https://breakglass-dev-keycloak:8443/realms/master/protocol/openid-connect/certs" -o /dev/null --insecure) -ne 200 ]; do
+          sleep 5;
+        done

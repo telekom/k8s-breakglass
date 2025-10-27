@@ -15,3 +15,6 @@ mail:
   insecureSkipVerify: false
 kubernetes:
   context: "" # kubectl config context if empty default will be used
+  oidcPrefixes: # List of prefixes to strip from user groups for cluster matching
+    - "keycloak:"
+    - "oidc:"

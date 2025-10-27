@@ -1,0 +1,54 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: e2e-deny-pods-get-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  rules:
+    - verbs: ["get"]
+      apiGroups: [""]
+      resources: ["pods"]
+      namespaces: ["default"]
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: e2e-deny-secrets-all-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  rules:
+    - verbs: ["*"]
+      apiGroups: [""]
+      resources: ["secrets"]
+      namespaces: ["kube-system", "default"]
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: e2e-deny-emergency-admin-secrets-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  rules:
+    - verbs: ["delete", "create"]
+      apiGroups: [""]
+      resources: ["secrets"]
+      namespaces: ["kube-system"]
+  appliesTo:
+    clusters: ["breakglass-hub"]
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: e2e-deny-pv-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  rules:
+    - verbs: ["*"]
+      apiGroups: [""]  
+      resources: ["persistentvolumes"]
+  appliesTo:
+    tenants: ["tenant-a"]

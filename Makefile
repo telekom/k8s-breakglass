@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= breakglass:latest
+IMG ?= harbor.das-schiff.telekom.de/schiff-dev/breakglass-2:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -44,11 +44,11 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
-	$(GOLANGCI_LINT) run
+	$(GOLANGCI_LINT) run --timeout=5m
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
-	$(GOLANGCI_LINT) run --fix
+	$(GOLANGCI_LINT) run --fix --timeout=5m
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -62,6 +62,16 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet ## Run tests.
 	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+.PHONY: e2e
+e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deployed (no tests).
+	# Run the single-cluster setup script which builds and loads images into kind
+	# and deploys the controller, keycloak and mailhog. It writes hub kubeconfig to
+	# e2e/kind-setup-single-hub-kubeconfig.yaml (repo-local) and exposes services for local use.
+	bash e2e/kind-setup-single.sh
+
+.PHONY: docker-build
+docker-build: ## Build docker image with controller.
+	docker build -t ${IMG} .
 ##@ Deployment
 
 ifndef ignore-not-found

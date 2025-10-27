@@ -1,0 +1,14 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: {{ default .Values.cluster.clusterID .Values.cluster.clusterID | trunc 63 | trimSuffix "-" }}
+spec:
+  clusterID: {{ .Values.cluster.clusterID }}
+  tenant: {{ .Values.cluster.tenant }}
+  environment: {{ .Values.cluster.environment }}
+  kubeconfigSecretRef:
+    name: {{ .Values.cluster.kubeconfigSecretRef.name }}
+    namespace: {{ .Values.cluster.kubeconfigSecretRef.namespace }}
+  blockSelfApproval: {{ default false .Values.cluster.blockSelfApproval }}
+  allowedApproverDomains:
+{{ toYaml .Values.cluster.allowedApproverDomains | indent 4 }}

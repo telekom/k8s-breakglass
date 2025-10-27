@@ -2,10 +2,12 @@
 import { inject, computed, ref, onMounted } from "vue";
 
 import { useRoute } from "vue-router";
+import { pushSuccess } from "@/services/toast";
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
 import BreakglassSessionService from "@/services/breakglassSession";
 import BreakglassEscalationService from "@/services/breakglassEscalation";
+import { handleAxiosError } from "@/services/logger";
 import type { BreakglassSessionRequest } from "@/model/breakglassSession";
 import type { BreakglassEscalationSpec } from "@/model/escalation";
 
@@ -31,35 +33,28 @@ const handleSendButtonClick = async () => {
   loading.value = true;
 
   const sessionRequest = {
-    clustername: clusterName.value,
-    username: userName.value,
-    clustergroup: clusterGroup.value
+    cluster: clusterName.value,
+    user: userName.value,
+    group: clusterGroup.value,
   } as BreakglassSessionRequest
 
-  await sessionService.requestSession(sessionRequest).then(response => {
-    switch (response.status) {
-      case 200:
-        alreadyRequested.value = true
-        requestStatusMessage.value = "Request already created"
-        break
-      case 201:
-        alreadyRequested.value = true
-        requestStatusMessage.value = "Successfully created request"
-        break
-      default:
-        requestStatusMessage.value = "Failed to create breakglass session, please try again later"
+  try {
+    const response = await sessionService.requestSession(sessionRequest);
+    if (response.status === 200 || response.status === 201) {
+      alreadyRequested.value = true;
+      requestStatusMessage.value = response.status === 200 ? 'Request already created' : 'Successfully created request';
+      pushSuccess('Breakglass session request created successfully!');
+    } else {
+      requestStatusMessage.value = 'Failed to create breakglass session, please try again later';
     }
-  }).catch(
-    errResp => {
-      switch (errResp.status) {
-        case 401:
-          requestStatusMessage.value = "No transition defined for requested group."
-          break
-        default:
-          requestStatusMessage.value = "Failed to create breakglass session, please try again later"
-      }
+  } catch (errResp: any) {
+    if (errResp?.response?.status === 401 || errResp?.status === 401) {
+      requestStatusMessage.value = 'No transition defined for requested group.';
+    } else {
+      requestStatusMessage.value = 'Failed to create breakglass session, please try again later';
     }
-  )
+    handleAxiosError('BreakglassSessionRequest.handleSendButtonClick', errResp, 'Failed to create breakglass session');
+  }
 
   loading.value = false;
 };
@@ -71,23 +66,23 @@ const onInput = () => {
 
 onMounted(async () => {
   loading.value = true;
-
-  await escalationService.getEscalations().then(response => {
+  try {
+    const response = await escalationService.getEscalations();
     if (response.status == 200) {
-      const resp = response.data as Array<BreakglassEscalationSpec>
-      escalations.value = resp.filter(spec => spec.allowed.clusters.indexOf(clusterName.value) != -1 )
-      if (escalations.value.length > 0){
-        clusterGroup.value = escalations.value[0].escalatedGroup
+      const resp = response.data as Array<BreakglassEscalationSpec>;
+      escalations.value = resp.filter((spec) => spec.allowed.clusters.indexOf(clusterName.value) != -1);
+      if (escalations.value.length > 0) {
+        clusterGroup.value = escalations.value[0].escalatedGroup;
       }
     } else {
-      requestStatusMessage.value = "Failed to gather escalation information."
+      requestStatusMessage.value = 'Failed to gather escalation information.';
     }
-  }).catch((errResp) => {
-    console.log("error", errResp)
-    requestStatusMessage.value = "Failed to gather escalation information."
-  })
+  } catch (errResp: any) {
+    requestStatusMessage.value = 'Failed to gather escalation information.';
+    handleAxiosError('BreakglassSessionRequest.onMounted', errResp, 'Failed to gather escalation information');
+  }
   loading.value = false;
-})
+});
 
 </script>
 
@@ -101,17 +96,17 @@ onMounted(async () => {
         <p>Request for group assignment</p>
         <form @submit.prevent="handleSendButtonClick">
           <div>
-            <label for="user_name">Username:</label>
-            <input type="text" id="user_name" v-model="userName" disabled=true placeholder="Enter user name" required />
+            <label for="user">User:</label>
+            <input type="text" id="user" v-model="userName" disabled=true placeholder="Enter user" required />
           </div>
           <div>
-            <label for="cluster_name">Cluster name:</label>
-            <input type="text" id="cluster_name" v-model="clusterName" :disabled="hasCluster"
-              placeholder="Enter cluster name" required />
+            <label for="cluster">Cluster:</label>
+            <input type="text" id="cluster" v-model="clusterName" :disabled="hasCluster"
+              placeholder="Enter cluster" required />
           </div>
           <div style="margin-bottom: 5px;">
-            <label for="cluser_group">Cluster group:</label>
-            <select id="" v-model="clusterGroup" v-on:input="onInput">
+            <label for="cluster_group">Group:</label>
+            <select id="cluster_group" v-model="clusterGroup" v-on:input="onInput">
               <option v-for="escalation in escalations">{{ escalation.escalatedGroup }}</option>
             </select>
           </div>

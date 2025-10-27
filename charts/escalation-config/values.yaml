@@ -1,0 +1,28 @@
+cluster:
+  clusterID: tenant-b-virtual-test
+  tenant: tenant-b
+  environment: development
+  kubeconfigSecretRef:
+    name: tenant-b-admin
+    namespace: default
+  blockSelfApproval: false
+  allowedApproverDomains: []
+
+escalations: []
+  # - name: sample-escalation
+  #   allowed:
+  #     clusters:
+  #       - breakglass-hub
+  #     groups:
+  #       - dev
+  #       - senior-ops
+  #   escalatedGroup: breakglass-create-all
+  #   approvers:
+  #     groups:
+  #       - senior-ops
+  #   requestReason:
+  #     mandatory: true
+  #     description: "Please provide a short justification or ticket ID"
+  #   maxValidFor: 1h
+  #   retainFor: 24h
+  #   idleTimeout: 30m

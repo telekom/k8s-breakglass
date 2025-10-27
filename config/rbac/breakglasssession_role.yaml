@@ -24,3 +24,35 @@ rules:
   - get
   - update
   - create
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - clusterconfigs
+  - clusterconfigs/status
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - denypolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - breakglassescalations/status
+  verbs:
+  - get
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update

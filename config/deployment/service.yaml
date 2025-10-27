@@ -7,11 +7,9 @@ metadata:
   namespace: system
 spec:
   ports:
-  - name: 8081-8081
+  - name: http
     port: 8081
     protocol: TCP
-    targetPort: 8081
-    nodePort: 30081
   selector:
     app: breakglass
-  type: NodePort
+  type: ClusterIP

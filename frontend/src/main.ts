@@ -32,7 +32,9 @@ getConfig().then((config) => {
           router.replace("/");
         })
         .catch(function (error) {
-          console.error(error);
+          // Log and surface a friendly message
+          // eslint-disable-next-line no-console
+          console.error('[AuthCallback]', error);
         });
     }
   });

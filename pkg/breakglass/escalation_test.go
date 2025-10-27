@@ -7,6 +7,7 @@ import (
 
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
+	"go.uber.org/zap"
 )
 
 const (
@@ -19,13 +20,14 @@ var (
 	SampleUserData = breakglass.ClusterUserGroup{
 		Username:    "test",
 		Clustername: SampleCluster,
-		Groupname:   "testgroup",
+		GroupName:   "testgroup",
 	}
 	SampleApproverData = breakglass.ClusterUserGroup{
 		Username:    "approver",
 		Clustername: SampleCluster,
-		Groupname:   "testgroup",
+		GroupName:   "testgroup",
 	}
+	testLogger = zap.NewNop().Sugar() // No-op logger for tests
 )
 
 func extractGroups(context.Context, breakglass.ClusterUserGroup) ([]string, error) {
@@ -33,6 +35,27 @@ func extractGroups(context.Context, breakglass.ClusterUserGroup) ([]string, erro
 }
 
 func TestFilterForUserPossibleEscalations(t *testing.T) {
+	// TestFilterForUserPossibleEscalations
+	//
+	// Purpose:
+	//   Verifies that EscalationFiltering.FilterForUserPossibleEscalations returns
+	//   only those escalations that are applicable for the provided user context.
+	//
+	// Reasoning:
+	//   The system must present only eligible escalation targets to a user based
+	//   on their cluster membership and token groups. This test covers simple
+	//   positive cases, selection from multiple escalations, and an extraction error
+	//   path to ensure error propagation.
+	//
+	// Flow pattern:
+	//   - For each test case a Filter object is prepared with a fake group-extractor
+	//     and sample user data.
+	//   - A slice of escalation objects describes allowed clusters/groups and
+	//     escalated groups.
+	//   - Call FilterForUserPossibleEscalations and assert:
+	//       * function returns expected escalations in order/quantity
+	//       * errors occur when group extraction fails
+	//
 	testCases := []struct {
 		TestName             string
 		Filter               breakglass.EscalationFiltering
@@ -44,6 +67,7 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 		{
 			TestName: "Single escalation",
 			Filter: breakglass.EscalationFiltering{
+				Log:              testLogger,
 				FilterUserData:   SampleUserData,
 				UserGroupExtract: extractGroups,
 			},
@@ -52,7 +76,6 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				{Spec: v1alpha1.BreakglassEscalationSpec{
 					Allowed: v1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
-						Users:    []string{SampleUserData.Username},
 						Groups:   []string{SampleBaseGroup},
 					},
 					EscalatedGroup: SampleEscalationGroup,
@@ -61,20 +84,20 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				{Spec: v1alpha1.BreakglassEscalationSpec{
 					Allowed: v1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
-						Users:    []string{"other_user"},
 						Groups:   []string{SampleBaseGroup},
 					},
 					EscalatedGroup: SampleEscalationGroup,
 					Approvers:      v1alpha1.BreakglassEscalationApprovers{},
 				}},
 			},
-			ExpectedOutputGroups: []string{SampleEscalationGroup},
+			ExpectedOutputGroups: []string{SampleEscalationGroup, SampleEscalationGroup},
 			ErrExpected:          false,
 		},
 		// case 2 multiple out escalations
 		{
 			TestName: "Multiple escalation",
 			Filter: breakglass.EscalationFiltering{
+				Log:            testLogger,
 				FilterUserData: SampleUserData,
 				UserGroupExtract: func(context.Context, breakglass.ClusterUserGroup) ([]string, error) {
 					return []string{"other_group"}, nil
@@ -85,7 +108,6 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				{Spec: v1alpha1.BreakglassEscalationSpec{
 					Allowed: v1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
-						Users:    []string{SampleUserData.Username},
 						Groups:   []string{SampleBaseGroup, "other_group"},
 					},
 					EscalatedGroup: SampleEscalationGroup,
@@ -94,7 +116,6 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				{Spec: v1alpha1.BreakglassEscalationSpec{
 					Allowed: v1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
-						Users:    []string{SampleUserData.Username},
 						Groups:   []string{"other_group"},
 					},
 					EscalatedGroup: "escalation_2",
@@ -103,7 +124,6 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				{Spec: v1alpha1.BreakglassEscalationSpec{
 					Allowed: v1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
-						Users:    []string{SampleUserData.Username},
 						Groups:   []string{"third_group"},
 					},
 					EscalatedGroup: SampleEscalationGroup,
@@ -112,7 +132,6 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				{Spec: v1alpha1.BreakglassEscalationSpec{
 					Allowed: v1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
-						Users:    []string{SampleUserData.Username},
 						Groups:   []string{"other_group", "yet_another"},
 					},
 					EscalatedGroup: "escalation_3",
@@ -126,6 +145,7 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 		{
 			TestName: "GrantedGroup extract error",
 			Filter: breakglass.EscalationFiltering{
+				Log:            testLogger,
 				FilterUserData: SampleUserData,
 				UserGroupExtract: func(context.Context, breakglass.ClusterUserGroup) ([]string, error) {
 					return []string{}, fmt.Errorf("failed to extract group")
@@ -136,7 +156,6 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 				{Spec: v1alpha1.BreakglassEscalationSpec{
 					Allowed: v1alpha1.BreakglassEscalationAllowed{
 						Clusters: []string{SampleUserData.Clustername},
-						Users:    []string{SampleUserData.Username},
 						Groups:   []string{SampleBaseGroup},
 					},
 					EscalatedGroup: SampleEscalationGroup,
@@ -181,6 +200,28 @@ func TestFilterForUserPossibleEscalations(t *testing.T) {
 }
 
 func TestFilterSessionsForUserApprovable(t *testing.T) {
+	// TestFilterSessionsForUserApprovable
+	//
+	// Purpose:
+	//   Ensures EscalationFiltering.FilterSessionsForUserApprovable filters an input
+	//   list of BreakglassSession objects down to sessions that the current user
+	//   may approve (either by username or by membership in approver groups).
+	//
+	// Reasoning:
+	//   Approvers may be specified directly (users) or via groups. The controller
+	//   must match sessions against escalations and the approver identity to
+	//   surface only approvable sessions. The test covers:
+	//     - direct user-based approval
+	//     - group-based approval
+	//     - empty escalation list returns nothing
+	//
+	// Flow pattern:
+	//   - Construct a Filter with a get-groups function returning test groups.
+	//   - Create escalation specs mapping groups to escalated groups and approvers.
+	//   - Create sessions with various granted groups and cluster values.
+	//   - Call FilterSessionsForUserApprovable and assert the returned sessions
+	//     contain exactly the expected GrantedGroup names and count.
+	//
 	testCases := []struct {
 		TestName                     string
 		Filter                       breakglass.EscalationFiltering
@@ -193,6 +234,7 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 		{
 			TestName: "User and group based session filter",
 			Filter: breakglass.EscalationFiltering{
+				Log:            testLogger,
 				FilterUserData: SampleApproverData,
 				UserGroupExtract: func(context.Context, breakglass.ClusterUserGroup) ([]string, error) {
 					return []string{"admins1"}, nil
@@ -204,7 +246,6 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 					Spec: v1alpha1.BreakglassEscalationSpec{
 						Allowed: v1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{SampleUserData.Clustername},
-							Users:    []string{SampleUserData.Username},
 							Groups:   []string{"test_group"},
 						},
 						EscalatedGroup: "escalation1",
@@ -219,7 +260,6 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 					Spec: v1alpha1.BreakglassEscalationSpec{
 						Allowed: v1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{SampleUserData.Clustername},
-							Users:    []string{SampleUserData.Username},
 							Groups:   []string{"test_group2"},
 						},
 						EscalatedGroup: "escalation2",
@@ -234,7 +274,6 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 					Spec: v1alpha1.BreakglassEscalationSpec{
 						Allowed: v1alpha1.BreakglassEscalationAllowed{
 							Clusters: []string{SampleApproverData.Clustername},
-							Users:    []string{SampleUserData.Username},
 							Groups:   []string{"test_group3"},
 						},
 						EscalatedGroup: "escalation3",
@@ -281,6 +320,7 @@ func TestFilterSessionsForUserApprovable(t *testing.T) {
 		{
 			TestName: "Empty escalations return no session",
 			Filter: breakglass.EscalationFiltering{
+				Log:            testLogger,
 				FilterUserData: SampleApproverData,
 				UserGroupExtract: func(context.Context, breakglass.ClusterUserGroup) ([]string, error) {
 					return []string{"admins1"}, nil

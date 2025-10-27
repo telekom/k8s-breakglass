@@ -23,14 +23,23 @@ import (
 type (
 	BreakglassSessionConditionType   string
 	BreakglassSessionConditionReason string
+	BreakglassSessionState           string
 )
 
 const (
-	SessionConditionTypeIdle     BreakglassSessionConditionType = "Idle"
-	SessionConditionTypeApproved BreakglassSessionConditionType = "Approved"
-	SessionConditionTypeRejected BreakglassSessionConditionType = "Rejected"
-
+	SessionConditionTypeIdle               BreakglassSessionConditionType   = "Idle"
+	SessionConditionTypeApproved           BreakglassSessionConditionType   = "Approved"
+	SessionConditionTypeRejected           BreakglassSessionConditionType   = "Rejected"
+	SessionConditionTypeExpired            BreakglassSessionConditionType   = "Expired"
+	SessionConditionTypeCanceled           BreakglassSessionConditionType   = "Canceled"
 	SessionConditionReasonEditedByApprover BreakglassSessionConditionReason = "EditedByApprover"
+
+	SessionStatePending   BreakglassSessionState = "Pending"
+	SessionStateApproved  BreakglassSessionState = "Approved"
+	SessionStateRejected  BreakglassSessionState = "Rejected"
+	SessionStateExpired   BreakglassSessionState = "Expired"
+	SessionStateWithdrawn BreakglassSessionState = "Withdrawn"
+	SessionStateTimeout   BreakglassSessionState = "ApprovalTimeout"
 )
 
 // BreakglassSessionSpec defines the desired state of BreakglassSession.
@@ -58,6 +67,19 @@ type BreakglassSessionSpec struct {
 	// retainFor is the amount of time to wait before removing the session object after it was expired.
 	// +default="720h"
 	RetainFor string `json:"retainFor,omitempty"`
+
+	// clusterConfigRef references the ClusterConfig object associated with this session (if different from spec.cluster parsing result).
+	// +optional
+	ClusterConfigRef string `json:"clusterConfigRef,omitempty"`
+
+	// denyPolicyRefs are names of DenyPolicy objects bound to this session.
+	// +optional
+	DenyPolicyRefs []string `json:"denyPolicyRefs,omitempty"`
+
+	// requestReason stores the free-text reason supplied by the requester when creating the session.
+	// This field is optional and may be populated depending on escalation configuration.
+	// +optional
+	RequestReason string `json:"requestReason,omitempty"`
 }
 
 // BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
@@ -81,6 +103,10 @@ type BreakglassSessionStatus struct {
 	// +omitempty
 	ExpiresAt metav1.Time `json:"expiresAt,omitempty"`
 
+	// TimeoutAt is the time when the session approval times out if not approved.
+	// This value is set when the session is created and only applies while pending approval.
+	TimeoutAt metav1.Time `json:"timeoutAt,omitempty"`
+
 	// retainedUntil is the time when the session object will be removed from the cluster.
 	// This value is set based on spec.retainFor when the session is approved.
 	// +omitempty
@@ -93,10 +119,33 @@ type BreakglassSessionStatus struct {
 	// NOT IMPLEMENTED https://github.com/telekom/das-schiff-breakglass/issues/8
 	// Last time session was used for breakglass session based authorization.
 	LastUsed metav1.Time `json:"lastUsed,omitempty"`
+
+	// State represents the current state of the Breakglass session.
+	// +optional
+	State BreakglassSessionState `json:"state,omitempty"`
+
+	// approver is the identity (email) of the last approver who changed the session state.
+	// +optional
+	Approver string `json:"approver,omitempty"`
+
+	// approvers is a list of identities (emails) who have approved this session.
+	// This is useful when multiple approvers are involved.
+	// +optional
+	Approvers []string `json:"approvers,omitempty"`
+
+	// approvalReason stores the free-text reason supplied by the approver when approving/rejecting the session.
+	// +optional
+	ApprovalReason string `json:"approvalReason,omitempty"`
 }
 
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:resource:scope=Cluster,shortName=bgs
 // +kubebuilder:object:root=true
+// +kubebuilder:printcolumn:name="State",type=string,JSONPath=".status.state",description="The current state of the session"
+// +kubebuilder:printcolumn:name="User",type=string,JSONPath=".spec.user",description="The user associated with the session"
+// +kubebuilder:printcolumn:name="Cluster",type=string,JSONPath=".spec.cluster",description="The cluster associated with the session"
+// +kubebuilder:printcolumn:name="Expires At",type=string,JSONPath=".status.expiresAt",description="The expiration time of the session"
+// +kubebuilder:printcolumn:name="Retained Until",type=string,JSONPath=".status.retainedUntil",description="When the session object will be removed"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the session"
 // +kubebuilder:subresource:status
 // +kubebuilder:selectablefield:JSONPath=`.spec.cluster`
 // +kubebuilder:selectablefield:JSONPath=`.spec.user`
@@ -112,6 +161,9 @@ type BreakglassSession struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="session spec is immutable"
 	Spec   BreakglassSessionSpec   `json:"spec"`
 	Status BreakglassSessionStatus `json:"status,omitempty"`
+
+	// OwnerReferences allows linking this session to its escalation
+	OwnerReferences []metav1.OwnerReference `json:"ownerReferences,omitempty"`
 }
 
 // +kubebuilder:object:root=true

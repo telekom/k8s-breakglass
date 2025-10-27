@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 type IdentityProvider interface {
@@ -16,17 +17,23 @@ type KeycloakIdentityProvider struct{}
 
 func (kip KeycloakIdentityProvider) GetEmail(c *gin.Context) (email string, err error) {
 	email = c.GetString("email")
-
 	if email == "" {
+		zap.S().Warn("Keycloak provider failed to retrieve email identity from context")
 		err = errors.New("keycloak provider failed to retrieve email identity")
+	} else {
+		zap.S().Debugw("Keycloak provider retrieved email", "email", email)
 	}
 	return
 }
 
 func (kip KeycloakIdentityProvider) GetIdentity(c *gin.Context) string {
-	return c.GetString("user_id")
+	id := c.GetString("user_id")
+	zap.S().Debugw("Keycloak provider retrieved user_id", "user_id", id)
+	return id
 }
 
 func (kip KeycloakIdentityProvider) GetUsername(c *gin.Context) string {
-	return c.GetString("username")
+	username := c.GetString("username")
+	zap.S().Debugw("Keycloak provider retrieved username", "username", username)
+	return username
 }

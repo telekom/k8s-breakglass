@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: system
+  namespace: breakglass-dev-system
   labels:
     app: mailhog
   name: mailhog
@@ -18,9 +18,18 @@ spec:
         app: mailhog
     spec:
       containers:
-      - image: mailhog/mailhog:latest 
-        name: mailhog
-        resources: {}
+      - name: mailhog
+        image: mailhog/mailhog:v1.0.1
+        ports:
+        - containerPort: 1025
+        - containerPort: 8025
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
 ---
 apiVersion: v1
 kind: Service
@@ -28,20 +37,19 @@ metadata:
   labels:
     app: mailhog
   name: mailhog
-  namespace: system
+  namespace: breakglass-dev-system
 spec:
   ipFamilyPolicy: SingleStack
   ports:
   - port: 8025
     protocol: TCP
     targetPort: 8025
-    name: 8025-8025
-    nodePort: 30084
+    name: http
   - port: 1025
     protocol: TCP
     targetPort: 1025
-    name: 1025-1025
+    name: smtp
   selector:
     app: mailhog
   sessionAffinity: None
-  type: NodePort
+  type: ClusterIP

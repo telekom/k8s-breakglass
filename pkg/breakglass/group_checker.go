@@ -3,21 +3,26 @@ package breakglass
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authenticationv1alpha1 "k8s.io/api/authentication/v1alpha1"
 	authenticationv1beta1 "k8s.io/api/authentication/v1beta1"
 	authorizationv1 "k8s.io/api/authorization/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+
+	pkgconfig "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
 )
 
 type CanGroupsDoFunction func(ctx context.Context,
+	rc *rest.Config,
 	groups []string,
 	sar authorizationv1.SubjectAccessReview,
 	clustername string) (bool, error)
@@ -25,103 +30,173 @@ type CanGroupsDoFunction func(ctx context.Context,
 type GetUserGroupsFunction func(ctx context.Context, cug ClusterUserGroup) ([]string, error)
 
 // Checks if operations defined in access review could be performed if user belongs to given groups on a given cluster.
+func getConfigForClusterName(name string) (*rest.Config, error) {
+	// try direct context name first
+	cfg, err := config.GetConfigWithContext(name)
+	if err == nil {
+		zap.S().Debugw("Loaded rest.Config for cluster context", "cluster", name, "context", name)
+		return cfg, nil
+	}
+	kindCtx := fmt.Sprintf("kind-%s", name)
+	if kindCfg, kerr := config.GetConfigWithContext(kindCtx); kerr == nil {
+		zap.S().Debugw("Loaded rest.Config via kind- fallback", "cluster", name, "context", kindCtx)
+		return kindCfg, nil
+	}
+	zap.S().Warnw("Failed to load rest.Config for cluster", "cluster", name, "error", err.Error())
+	return nil, err
+}
+
+// CanGroupsDo impersonates given groups against provided rest.Config (target cluster kubeconfig), not the hub.
 func CanGroupsDo(ctx context.Context,
+	rc *rest.Config,
 	groups []string,
 	sar authorizationv1.SubjectAccessReview,
 	clustername string,
 ) (bool, error) {
-	cfg, err := config.GetConfigWithContext(clustername)
-	if err != nil {
-		return false, errors.Wrap(err, "failed to get config")
+	if rc == nil {
+		return false, errors.New("rest config is nil")
 	}
-
-	cfg.Impersonate = rest.ImpersonationConfig{
-		UserName: "system:auth-checker",
-		Groups:   groups,
-	}
-
+	zap.S().Debugw("Checking if groups can perform SAR operation", "groups", groups, "cluster", clustername)
+	// Copy to avoid mutating shared config
+	cfg := rest.CopyConfig(rc)
+	cfg.Impersonate = rest.ImpersonationConfig{UserName: "system:auth-checker", Groups: groups}
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
+		zap.S().Errorw("Failed to create client for CanGroupsDo", "error", err.Error())
 		return false, errors.Wrap(err, "failed to create client")
 	}
-
-	authClient := client.AuthorizationV1()
-
-	v1Sar := authorizationv1.SelfSubjectAccessReview{
-		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-			ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Namespace:   sar.Spec.ResourceAttributes.Namespace,
-				Verb:        sar.Spec.ResourceAttributes.Verb,
-				Group:       sar.Spec.ResourceAttributes.Group,
-				Resource:    sar.Spec.ResourceAttributes.Resource,
-				Subresource: sar.Spec.ResourceAttributes.Subresource,
-				Name:        sar.Spec.ResourceAttributes.Resource,
-			},
-		},
+	if sar.Spec.ResourceAttributes == nil {
+		return false, errors.New("sar spec.resourceAttributes is nil")
 	}
+	v1Sar := authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: sar.Spec.ResourceAttributes.Namespace, Verb: sar.Spec.ResourceAttributes.Verb, Group: sar.Spec.ResourceAttributes.Group, Resource: sar.Spec.ResourceAttributes.Resource, Subresource: sar.Spec.ResourceAttributes.Subresource, Name: sar.Spec.ResourceAttributes.Resource}}}
+	response, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &v1Sar, metav1.CreateOptions{})
+	if err != nil {
+		zap.S().Errorw("Failed to create SelfSubjectAccessReview", "error", err.Error())
+		return false, err
+	}
+	zap.S().Infow("SelfSubjectAccessReview result", "allowed", response.Status.Allowed)
+	return response.Status.Allowed, nil
+}
 
-	response, err := authClient.SelfSubjectAccessReviews().Create(ctx, &v1Sar, metav1.CreateOptions{})
+// Legacy wrapper kept for compatibility (uses local context); prefer CanGroupsDo with explicit rest.Config.
+func CanGroupsDoLegacy(ctx context.Context, groups []string, sar authorizationv1.SubjectAccessReview, clustername string) (bool, error) {
+	rc, err := getConfigForClusterName(clustername)
 	if err != nil {
 		return false, err
 	}
+	return CanGroupsDo(ctx, rc, groups, sar, clustername)
+}
 
-	return response.Status.Allowed, nil
+// stripOIDCPrefixes removes configured OIDC prefixes from user groups to allow matching with cluster groups
+func stripOIDCPrefixes(groups []string, oidcPrefixes []string) []string {
+	if len(oidcPrefixes) == 0 {
+		zap.S().Debug("No OIDC prefixes configured, returning groups unchanged")
+		return groups
+	}
+
+	var strippedGroups []string
+	zap.S().Debugw("Stripping OIDC prefixes from groups", "originalGroups", groups, "prefixes", oidcPrefixes)
+
+	for _, group := range groups {
+		strippedGroup := group
+		for _, prefix := range oidcPrefixes {
+			if strings.HasPrefix(group, prefix) {
+				strippedGroup = strings.TrimPrefix(group, prefix)
+				zap.S().Debugw("Stripped OIDC prefix from group", "originalGroup", group, "prefix", prefix, "strippedGroup", strippedGroup)
+				break
+			}
+		}
+		strippedGroups = append(strippedGroups, strippedGroup)
+	}
+
+	// Ensure we return an empty slice instead of nil for consistency
+	if strippedGroups == nil {
+		strippedGroups = []string{}
+	}
+
+	zap.S().Debugw("OIDC prefix stripping complete", "originalGroups", groups, "strippedGroups", strippedGroups)
+	return strippedGroups
 }
 
 // Returns users groups assigned in cluster by duplicating kubectl auth whoami logic.
 func GetUserGroups(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
-	cfg, err := config.GetConfigWithContext(cug.Clustername)
+	zap.S().Debugw("Getting user groups for cluster user group", "cluster", cug.Clustername, "username", cug.Username)
+
+	// Load config to get OIDC prefixes
+	cfg, err := pkgconfig.Load()
 	if err != nil {
+		zap.S().Errorw("Failed to load config for OIDC prefixes", "error", err.Error())
+		// Continue without OIDC prefix stripping if config loading fails
+	}
+
+	kubeCfg, err := getConfigForClusterName(cug.Clustername)
+	if err != nil {
+		zap.S().Errorw("GetUserGroups: rest.Config load failed", "cluster", cug.Clustername, "error", err.Error())
 		return nil, errors.Wrap(err, "failed to get config")
 	}
 
-	cfg.Impersonate = rest.ImpersonationConfig{
+	kubeCfg.Impersonate = rest.ImpersonationConfig{
 		UserName: cug.Username,
 	}
 
-	client, err := kubernetes.NewForConfig(cfg)
+	client, err := kubernetes.NewForConfig(kubeCfg)
 	if err != nil {
+		zap.S().Errorw("GetUserGroups: client construction failed", "cluster", cug.Clustername, "error", err.Error())
 		return nil, errors.Wrap(err, "failed to create client")
 	}
 
 	var res runtime.Object
-
 	res, err = client.AuthenticationV1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
 
-	if err != nil && apierrors.IsNotFound(err) {
-		// Fallback to Beta API if Beta is not enabled
-		res, err = client.AuthenticationV1beta1().
-			SelfSubjectReviews().
-			Create(context.TODO(), &authenticationv1beta1.SelfSubjectReview{}, metav1.CreateOptions{})
-		if err != nil && apierrors.IsNotFound(err) {
-			// Fallback to Alpha API if Beta is not enabled
-			res, err = client.AuthenticationV1alpha1().
-				SelfSubjectReviews().
-				Create(context.TODO(), &authenticationv1alpha1.SelfSubjectReview{}, metav1.CreateOptions{})
+	if err != nil && k8serrors.IsNotFound(err) {
+		zap.S().Warn("Falling back to Beta API for SelfSubjectReview")
+		res, err = client.AuthenticationV1beta1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1beta1.SelfSubjectReview{}, metav1.CreateOptions{})
+		if err != nil && k8serrors.IsNotFound(err) {
+			zap.S().Warn("Falling back to Alpha API for SelfSubjectReview")
+			res, err = client.AuthenticationV1alpha1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1alpha1.SelfSubjectReview{}, metav1.CreateOptions{})
 		}
 	}
 
 	if err != nil {
+		zap.S().Errorw("Failed to get user's subject review", "error", err.Error())
 		return nil, errors.Wrap(err, "failed to get users subject review")
 	}
 
 	ui, err := getUserInfo(res)
 	if err != nil {
+		zap.S().Errorw("Failed to get user info from response", "error", err.Error())
 		return nil, errors.Wrap(err, "failed to get user info from response")
 	}
 
-	return ui.Groups, nil
+	// Apply OIDC prefix stripping if config was loaded successfully
+	originalGroups := ui.Groups
+	finalGroups := originalGroups
+	if len(cfg.Kubernetes.OIDCPrefixes) > 0 {
+		finalGroups = stripOIDCPrefixes(originalGroups, cfg.Kubernetes.OIDCPrefixes)
+		zap.S().Infow("Applied OIDC prefix stripping", "originalGroups", originalGroups, "finalGroups", finalGroups, "oidcPrefixes", cfg.Kubernetes.OIDCPrefixes)
+	} else {
+		zap.S().Debug("No OIDC prefixes configured, using original groups")
+	}
+
+	// Removed BREAKGLASS_E2E_ASSUME_GROUPS fallback to ensure real cluster auth is always required.
+
+	zap.S().Infow("GetUserGroups complete", "cluster", cug.Clustername, "username", cug.Username, "groups", finalGroups, "count", len(finalGroups))
+	return finalGroups, nil
 }
 
 func getUserInfo(obj runtime.Object) (authenticationv1.UserInfo, error) {
 	switch val := obj.(type) {
 	case *authenticationv1alpha1.SelfSubjectReview:
+		zap.S().Debug("Parsing user info from v1alpha1.SelfSubjectReview")
 		return val.Status.UserInfo, nil
 	case *authenticationv1beta1.SelfSubjectReview:
+		zap.S().Debug("Parsing user info from v1beta1.SelfSubjectReview")
 		return val.Status.UserInfo, nil
 	case *authenticationv1.SelfSubjectReview:
+		zap.S().Debug("Parsing user info from v1.SelfSubjectReview")
 		return val.Status.UserInfo, nil
 	default:
+		zap.S().Errorw("Unexpected response type for user info extraction", "type", fmt.Sprintf("%T", obj))
 		return authenticationv1.UserInfo{}, fmt.Errorf("unexpected response type %T, expected SelfSubjectReview", obj)
 	}
 }

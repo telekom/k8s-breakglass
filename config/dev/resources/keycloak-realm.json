@@ -1,0 +1,612 @@
+{
+  "realm": "breakglass-e2e",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "breakglass-ui",
+      "publicClient": true,
+      "redirectUris": [
+        "http://localhost:28081/*",
+        "*"
+      ],
+      "webOrigins": [
+        "http://localhost:28081",
+        "*"
+      ],
+      "attributes": {
+        "access.token.lifespan": "300",
+        "client.session.idle.timeout": "300",
+        "client.session.max.lifespan": "3600"
+      },
+      "adminUrl": "http://localhost:28081",
+      "baseUrl": "http://localhost:28081",
+      "defaultClientScopes": [
+        "web-origins",
+        "role_list",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone"
+      ],
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "kubernetes",
+      "name": "Kube ApiServer Realm",
+      "description": "A Kubernets OIDC Client ID",
+      "rootUrl": "",
+      "adminUrl": "",
+      "baseUrl": "",
+      "surrogateAuthRequired": false,
+      "enabled": true,
+      "alwaysDisplayInConsole": false,
+      "clientAuthenticatorType": "client-secret",
+      "redirectUris": [
+        "urn:ietf:wg:oauth:2.0:oob",
+        "http://localhost:18000",
+        "http://localhost:8000"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "notBefore": 0,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": true,
+      "frontchannelLogout": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "saml.force.post.binding": "false",
+        "saml.multivalued.roles": "false",
+        "post.logout.redirect.uris": "+",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "backchannel.logout.revoke.offline.tokens": "false",
+        "saml.server.signature.keyinfo.ext": "false",
+        "use.refresh.tokens": "true",
+        "oidc.ciba.grant.enabled": "false",
+        "backchannel.logout.session.required": "false",
+        "client_credentials.use_refresh_token": "false",
+        "saml.client.signature": "false",
+        "require.pushed.authorization.requests": "false",
+        "saml.assertion.signature": "false",
+        "id.token.as.detached.signature": "false",
+        "saml.encrypt": "false",
+        "login_theme": "keycloak",
+        "saml.server.signature": "false",
+        "exclude.session.state.from.auth.response": "false",
+        "saml.artifact.binding": "false",
+        "saml_force_name_id_format": "false",
+        "tls.client.certificate.bound.access.tokens": "false",
+        "saml.authnstatement": "false",
+        "display.on.consent.screen": "false",
+        "saml.onetimeuse.condition": "false"
+      },
+      "authenticationFlowBindingOverrides": {},
+      "fullScopeAllowed": true,
+      "nodeReRegistrationTimeout": -1,
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "userinfo.token.claim": "true",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups"
+          }
+        },
+        {
+          "name": "Client Host",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientHost",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "clientHost",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "Client ID",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientId",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "clientId",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "Client IP Address",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientAddress",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "clientAddress",
+            "jsonType.label": "String"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "profile",
+        "groups",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "access": {
+        "view": true,
+        "configure": true,
+        "manage": true
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "test-user",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "test-user@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "test-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dev",
+        "ops",
+        "requester"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "test-user"
+        ]
+      }
+    },
+    {
+      "username": "approver-user",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "approver@example.org",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "senior-ops",
+        "approval-notes"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "approver-user"
+        ]
+      }
+    },
+    {
+      "username": "approver-internal",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "approver-internal-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "senior-ops",
+        "breakglass"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "approver-internal"
+        ]
+      }
+    },
+    {
+      "username": "dev-user-alpha",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "dev-alpha@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-alpha-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dev",
+        "frontend-team",
+        "devs-a"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "dev-user-alpha"
+        ]
+      }
+    },
+    {
+      "username": "dev-user-beta",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "dev-beta@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-beta-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dev",
+        "backend-team",
+        "database-team",
+        "devs-b"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "dev-user-beta"
+        ]
+      }
+    },
+    {
+      "username": "ops-user-gamma",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "ops-gamma@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ops-gamma-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "ops",
+        "monitoring-team",
+        "ops-a"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "ops-user-gamma"
+        ]
+      }
+    },
+    {
+      "username": "senior-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "senior-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "senior-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "senior-ops",
+        "emergency-response"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "senior-approver"
+        ]
+      }
+    },
+    {
+      "username": "tenant-b-user",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "tenant-b-user@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "tenant-b-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dev",
+        "tenant-b-team",
+        "devs-b"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "tenant-b-user"
+        ]
+      }
+    },
+    {
+      "username": "limited-user",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "limited-user@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "limited-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "read-only"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "limited-user"
+        ]
+      }
+    },
+    {
+      "username": "lead-dev",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "lead-dev@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "lead-dev-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dev",
+        "tenant-b-team"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "lead-dev"
+        ]
+      }
+    },
+    {
+      "username": "infra-lead",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "infra-lead@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "infra-lead-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "ops",
+        "senior-ops",
+        "ops-b"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "infra-lead"
+        ]
+      }
+    },
+    {
+      "username": "security-lead",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "security-lead@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "security-lead-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "emergency-response",
+        "senior-ops"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "security-lead"
+        ]
+      }
+    },
+    {
+      "username": "security-audit",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "security-audit@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "security-audit-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "read-only"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "security-audit"
+        ]
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "dev"
+    },
+    {
+      "name": "ops"
+    },
+    {
+      "name": "approver"
+    },
+    {
+      "name": "requester"
+    },
+    {
+      "name": "approval-notes"
+    },
+    {
+      "name": "breakglass"
+    },
+    {
+      "name": "senior-ops"
+    },
+    {
+      "name": "frontend-team"
+    },
+    {
+      "name": "backend-team"
+    },
+    {
+      "name": "database-team"
+    },
+    {
+      "name": "monitoring-team"
+    },
+    {
+      "name": "emergency-response"
+    },
+    {
+      "name": "tenant-b-team"
+    },
+    {
+      "name": "read-only"
+    },
+    {
+      "name": "devs-a"
+    },
+    {
+      "name": "devs-b"
+    },
+    {
+      "name": "ops-a"
+    },
+    {
+      "name": "ops-b"
+    },
+    {
+      "name": "cross-team"
+    },
+    {
+      "name": "qa-b"
+    }
+  ]
+}

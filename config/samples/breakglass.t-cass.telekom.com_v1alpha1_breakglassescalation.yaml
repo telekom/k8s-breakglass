@@ -4,10 +4,34 @@ metadata:
   labels:
   name: kind-sample
 spec:
-  escalatedGroup: "breakglass-create-all"
+  escalatedGroup: "cluster-admin"
   allowed:
-    clusters: ["kind"]
-    users: ["tester@mail.com"]
-    groups: ["system:authenticated"]
+    clusters: ["t-caas-1.tst.dtmd11"]
+    groups: 
+      - oidc:dttcaas-platform_poweruser
+      - oidc:dttcaas-platform-protected
+      - dttcaas-platform_poweruser
+      - dttcaas-platform-protected
   approvers:
-    users: ["admin@mail.com"]
+    users: 
+    - "maximilian.rink@telekom.de"
+    - "marcel.fest@telekom.de"
+
+  # Example: require a request reason from the requester
+  requestReason:
+    mandatory: true
+    description: "Please provide the related ticket ID"
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation 
+metadata:
+  labels:
+  name: kind-sample-2
+spec:
+  escalatedGroup: "dttcaas-platform-protected"
+  allowed:
+    clusters: ["t-caas-1.tst.dtmd11"]
+    groups: ["oidc:dttcaas-platform-protected"]
+  approvers:
+    users: 
+    - "maximilian.rink@telekom.de"

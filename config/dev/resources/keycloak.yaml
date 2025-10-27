@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: system
+  namespace: breakglass-dev-system
   labels:
     app: keycloak
   name: keycloak
@@ -18,25 +18,59 @@ spec:
         app: keycloak
     spec:
       containers:
-      - image: quay.io/keycloak/keycloak:18.0.2
-        imagePullPolicy: "Never"
-        name: keycloak
-        args: ["start-dev --https-certificate-file=/certs/ca.crt --https-certificate-key-file=/certs/ca.key"]
+      - name: keycloak
+        image: quay.io/keycloak/keycloak:23.0.0
+        # Use dev mode for faster startup while still serving HTTPS
+        args: ["start-dev", "--https-port=8443", "--http-enabled=true", "--hostname-strict=false", "--hostname-strict-https=false", "--import-realm"]
         env:
         - name: KEYCLOAK_ADMIN
           value: admin
         - name: KEYCLOAK_ADMIN_PASSWORD
           value: admin
+        - name: KC_HTTPS_CERTIFICATE_FILE
+          value: /etc/x509/https/tls.crt
+        - name: KC_HTTPS_CERTIFICATE_KEY_FILE
+          value: /etc/x509/https/tls.key
+        # Enable HTTP access logging and more verbose console logs so we can inspect requests during e2e
+        - name: QUARKUS_HTTP_ACCESS_LOG_ENABLED
+          value: "true"
+        - name: QUARKUS_HTTP_ACCESS_LOG_FORMAT
+          value: "%h %l %u %t \"%r\" %s %b %D"
+        - name: QUARKUS_LOG_CONSOLE_LEVEL
+          value: DEBUG
+        ports:
+        - containerPort: 8443
+          name: https
+        - containerPort: 8080
+          name: http
         volumeMounts:
-        - mountPath: /certs/
-          name: certs
-          readOnly: true
-        resources: {}
+        - name: https-certs
+          mountPath: /etc/x509/https
+        - name: realm
+          mountPath: /opt/keycloak/data/import
+        readinessProbe:
+          httpGet:
+            path: /realms/master
+            port: 8443
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 200m
+            memory: 256Mi
       volumes:
-      - configMap:
-          defaultMode: 420
-          name: certs
-        name: certs
+      - name: realm
+        configMap:
+          name: keycloak-realm
+      - name: https-certs
+        secret:
+          secretName: keycloak-tls
 ---
 apiVersion: v1
 kind: Service
@@ -44,7 +78,7 @@ metadata:
   labels:
     app: keycloak
   name: keycloak
-  namespace: system
+  namespace: breakglass-dev-system
 spec:
   ports:
   - name: 8443-8443

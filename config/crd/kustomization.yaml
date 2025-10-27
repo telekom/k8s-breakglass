@@ -4,6 +4,8 @@
 resources:
 - bases/breakglass.t-caas.telekom.com_breakglassescalations.yaml
 - bases/breakglass.t-caas.telekom.com_breakglasssessions.yaml
+- bases/breakglass.t-caas.telekom.com_clusterconfigs.yaml
+- bases/breakglass.t-caas.telekom.com_denypolicies.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

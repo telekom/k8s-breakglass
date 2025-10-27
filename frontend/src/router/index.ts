@@ -1,6 +1,10 @@
+import MyOutstandingRequests from "@/views/MyOutstandingRequests.vue";
+
 import BreakglassView from "@/views/BreakglassView.vue";
-import BreaglassSessionRequestView from "@/views/BreakglassSessionRequest.vue";
 import BreaglassSessionReviewView from "@/views/BreakglassSessionReview.vue";
+import PendingApprovalsView from "@/views/PendingApprovalsView.vue";
+import PreviousSessionsMine from "@/views/PreviousSessionsMine.vue";
+import PreviousSessionsApproved from "@/views/PreviousSessionsApproved.vue";
 
 import { createRouter, createWebHistory } from "vue-router";
 
@@ -13,14 +17,29 @@ const router = createRouter({
       component: BreakglassView,
     },
     {
-      path: "/request",
-      name: "breakglassSessionRequest",
-      component: BreaglassSessionRequestView,
-    },
-    {
-      path: "/review",
+      path: "/sessions/review",
       name: "breakglassSessionReview",
       component: BreaglassSessionReviewView,
+    },
+    {
+      path: "/approvals/pending",
+      name: "pendingApprovals",
+      component: PendingApprovalsView,
+    },
+    {
+      path: "/requests/mine",
+      name: "myOutstandingRequests",
+      component: MyOutstandingRequests,
+    },
+    {
+      path: "/sessions/mine",
+      name: "mySessions",
+      component: PreviousSessionsMine,
+    },
+    {
+      path: "/sessions/approved",
+      name: "sessionsApproved",
+      component: PreviousSessionsApproved,
     },
   ],
 });

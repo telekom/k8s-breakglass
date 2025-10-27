@@ -19,17 +19,21 @@ spec:
         app: breakglass
     spec:
       containers:
-      - image: breakglass:latest
-        imagePullPolicy: "Never"
-        name: breakglass
-        resources: {}
-        env:
-        - name: BREAKGLASS_CONFIG_PATH
-          value: /config/config.yaml
-        volumeMounts:
-        - mountPath: /config/
-          name: config
-          readOnly: true
+        - image: breakglass:e2e
+          imagePullPolicy: "Always"
+          name: breakglass
+          resources: {}
+          env:
+            - name: BREAKGLASS_CONFIG_PATH
+              value: /config/config.yaml
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - mountPath: /config/
+              name: config
+              readOnly: true
       serviceAccountName: manager
       volumes:
       - name: config

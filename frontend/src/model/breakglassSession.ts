@@ -1,14 +1,16 @@
 export interface BreakglassSessionRequest {
-  clustername?: string;
-  username?: string;
-  clustergroup?: string;
-  uname?: string;
+  cluster?: string;
+  user?: string;
+  group?: string;
+  name?: string;
   activeOnly?: boolean;
+  mine?: boolean;
+  approver?: boolean;
 }
 
 export interface BreakglassSessionResponse {
-  clustername?: string;
-  username?: string;
-  clustergroup?: string;
-  uname?: string;
+  cluster?: string;
+  user?: string;
+  group?: string;
+  name?: string;
 }

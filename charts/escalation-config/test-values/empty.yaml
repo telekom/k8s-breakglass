@@ -1,0 +1,12 @@
+# Empty test values: no escalations
+cluster:
+  tenant: empty-tenant
+  clusterID: empty-cluster
+  environment: testing
+  kubeconfigSecretRef:
+    name: empty-kubeconfig
+    namespace: default
+  blockSelfApproval: false
+  allowedApproverDomains: []
+
+escalations: []

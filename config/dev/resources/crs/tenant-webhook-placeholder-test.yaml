@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: breakglass-authn-authz-notes-test
+  namespace: kube-system
+  labels:
+    breakglass.dev/test-resource: "true"
+data:
+  README: |
+    This tenant kind cluster does not mutate the kube-apiserver static pod.
+    Illustrative kube-apiserver flags (not applied here):
+      --oidc-issuer-url=https://keycloak.keycloak.svc.cluster.local:8443/realms/breakglass-e2e
+      --oidc-client-id=breakglass-ui
+      --oidc-username-claim=email
+      --oidc-groups-claim=groups
+      --authorization-config=/etc/kubernetes/authorization-config.yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: breakglass-webhook-kubeconfig-test
+  namespace: kube-system
+type: Opaque
+stringData:
+  # REPLACE_ME: paste kubeconfig YAML here if you must; recommended approach is to
+  # create the webhook kubeconfig at runtime via the setup script so it contains
+  # valid credentials and endpoints.
+  kubeconfig: |
+    # REPLACE_ME: kubeconfig YAML

@@ -36,6 +36,35 @@ type BreakglassEscalationSpec struct {
 	// idleTimeout is the maximum amount of time a session for this escalation can sit idle without being used.
 	// +default="1h"
 	IdleTimeout string `json:"idleTimeout,omitempty"`
+
+	// clusterConfigRefs lists ClusterConfig object names this escalation applies to (alternative to allowed.clusters).
+	// +optional
+	ClusterConfigRefs []string `json:"clusterConfigRefs,omitempty"`
+
+	// denyPolicyRefs (optional) attach default deny policies to any session created via this escalation.
+	// +optional
+	DenyPolicyRefs []string `json:"denyPolicyRefs,omitempty"`
+
+	// requestReason configures an optional free-text reason the requester must or may provide
+	// when creating a session for this escalation. If omitted, no reason is requested.
+	// +optional
+	RequestReason *ReasonConfig `json:"requestReason,omitempty"`
+
+	// approvalReason configures an optional free-text reason the approver must or may provide
+	// when approving/rejecting a session for this escalation. If omitted, no approver reason is requested.
+	// +optional
+	ApprovalReason *ReasonConfig `json:"approvalReason,omitempty"`
+}
+
+// ReasonConfig configures an optional free-text reason field shown to requesters and approvers.
+type ReasonConfig struct {
+	// mandatory indicates whether the field is required (true) or optional (false).
+	// +optional
+	Mandatory bool `json:"mandatory,omitempty"`
+
+	// description describes what to enter in the reason field (e.g. "CASM TicketID").
+	// +optional
+	Description string `json:"description,omitempty"`
 }
 
 // BreakglassEscalationAllowed defines who is allowed to use an escalation.
@@ -44,9 +73,6 @@ type BreakglassEscalationAllowed struct {
 	// clusters is a list of clusters this escalation can be used for.
 	// todo: implement globbing (or regex?) support
 	Clusters []string `json:"clusters,omitempty"`
-	// users is a list of users this escalation can be used by.
-	// todo: implement globbing (or regex?) support
-	Users []string `json:"users,omitempty"`
 	// groups is a list of groups this escalation can be used by.
 	// todo: implement globbing (or regex?) support
 	Groups []string `json:"groups,omitempty"`
@@ -61,9 +87,26 @@ type BreakglassEscalationApprovers struct {
 }
 
 // BreakglassEscalationStatus defines the observed state of BreakglassEscalation.
-type BreakglassEscalationStatus struct{}
+type BreakglassEscalationStatus struct {
+	// approverGroupMembers caches expanded members for each approver group for notification purposes.
+	// key: group name, value: list of user emails/usernames resolved from the IdP.
+	// +optional
+	ApproverGroupMembers map[string][]string `json:"approverGroupMembers,omitempty"`
 
-// +kubebuilder:resource:scope=Cluster
+	// Counters for tracking requests and approvals
+	RequestCount  int `json:"requestCount,omitempty"`
+	ApprovalCount int `json:"approvalCount,omitempty"`
+
+	// Status of group resolution
+	GroupResolutionStatus map[string]string `json:"groupResolutionStatus,omitempty"`
+}
+
+// +kubebuilder:resource:scope=Cluster,shortName=bge
+// +kubebuilder:printcolumn:name="Clusters",type=string,JSONPath=".spec.allowed.clusters",description="Clusters this escalation applies to"
+// +kubebuilder:printcolumn:name="Groups",type=string,JSONPath=".spec.allowed.groups",description="Groups allowed to request this escalation"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the escalation"
+// +kubebuilder:printcolumn:name="Requests",type=integer,JSONPath=".status.requestCount",description="Number of requests for this escalation"
+// +kubebuilder:printcolumn:name="Approvals",type=integer,JSONPath=".status.approvalCount",description="Number of approvals for this escalation"
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 type BreakglassEscalation struct {

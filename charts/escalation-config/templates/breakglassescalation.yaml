@@ -1,0 +1,24 @@
+{{- $root := .Values -}}
+{{- range $i, $esc := .Values.escalations }}
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: {{ default (printf "escalation-%d" $i) $esc.name | trunc 63 | trimSuffix "-" }}
+spec:
+  allowed:
+    clusters:
+{{ toYaml $esc.allowed.clusters | indent 6 }}
+    groups:
+{{ toYaml $esc.allowed.groups | indent 6 }}
+  escalatedGroup: {{ $esc.escalatedGroup }}
+  approvers:
+    groups:
+{{ toYaml $esc.approvers.groups | indent 6 }}
+  requestReason:
+    mandatory: {{ default false $esc.requestReason.mandatory }}
+    description: {{ quote $esc.requestReason.description }}
+  maxValidFor: {{ $esc.maxValidFor | default "1h" }}
+  retainFor: {{ $esc.retainFor | default "24h" }}
+  idleTimeout: {{ $esc.idleTimeout | default "1h" }}
+---
+{{- end }}

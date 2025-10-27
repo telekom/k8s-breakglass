@@ -11,3 +11,25 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - clusterconfigs
+  - clusterconfigs/status
+  verbs:
+  - get
+  - list
+  - watch
+  - patch
+  - update
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - denypolicies
+  - denypolicies/status
+  verbs:
+  - get
+  - list
+  - watch
+  - patch
+  - update

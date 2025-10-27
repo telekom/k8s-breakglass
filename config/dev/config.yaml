@@ -1,17 +1,22 @@
 server:
   listenAddress: 0.0.0.0:8081
-  tlsCertFile: /certs/ca.crt # optional
-  tlsKeyFile: /certs/ca.key # optional for https
+  # TLS disabled for dev; manager will serve HTTP on port 8081
 authorizationServer:
-  url: http://breakglass-dev-keycloak:8080
-  jwksEndpoint: "realms/master/protocol/openid-connect/certs" # sample for keycloak
+  # Use the kustomize rendered Keycloak service name and dev namespace (kustomize adds namePrefix 'breakglass-dev-')
+  # Prefer the HTTPS endpoint inside cluster
+  url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
+  jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
 frontend:
-  oidcAuthority: https://breakglass-dev:30083/realms/master
+  # For local development we use localhost port-forwards for browser flows (HTTPS forwarded port)
+  oidcAuthority: https://localhost:8443/realms/breakglass-e2e
   oidcClientID: breakglass-ui
-  baseURL: https://breakglass-dev:30081
+  baseURL: http://localhost:8081
 mail:
-  host: breakglass-dev-mailhog
+  # Rendered MailHog service in dev overlay
+  host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
   port: 1025
   insecureSkipVerify: true
 kubernetes:
   context: ""
+  oidcPrefixes:
+    - "keycloak:"

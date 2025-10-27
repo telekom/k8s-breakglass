@@ -13,3 +13,5 @@ mail:
   insecureSkipVerify: true
 kubernetes:
   context: ""
+  oidcPrefixes: 
+  - "oidc:"

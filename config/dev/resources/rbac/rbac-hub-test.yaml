@@ -1,0 +1,69 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: session-manager-role-test
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: ["breakglass.t-caas.telekom.com"]
+  resources: ["breakglasssessions"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch", "deletecollection"]
+- apiGroups: ["breakglass.t-caas.telekom.com"]
+  resources: ["breakglasssessions/status"]
+  verbs: ["get", "update", "create"]
+- apiGroups: ["breakglass.t-caas.telekom.com"]
+  resources: ["breakglassescalations", "breakglassescalations/status"]
+  verbs: ["get", "list", "watch", "update"]
+- apiGroups: ["breakglass.t-caas.telekom.com"]
+  resources: ["clusterconfigs", "clusterconfigs/status"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["breakglass.t-caas.telekom.com"]
+  resources: ["denypolicies"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["users", "groups"]
+  verbs: ["impersonate"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: secrets-reader-role-test
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: manager-secrets-reader-rolebinding-test
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: secrets-reader-role-test
+subjects:
+- kind: ServiceAccount
+  name: manager
+  namespace: system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: manager-session-rolebinding-test
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: session-manager-role-test
+subjects:
+- kind: ServiceAccount
+  name: manager
+  namespace: system

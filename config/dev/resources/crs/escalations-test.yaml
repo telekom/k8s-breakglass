@@ -1,0 +1,139 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: e2e-escalation-create-all-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - dev
+      - senior-ops
+  escalatedGroup: breakglass-create-all
+  approvers:
+    groups:
+      - senior-ops
+  requestReason:
+    mandatory: true
+    description: "Please provide a short justification or ticket ID"
+  maxValidFor: 1h
+  retainFor: 24h
+  idleTimeout: 30m
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: e2e-escalation-pods-admin-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ops
+      - monitoring-team
+      - senior-ops
+  escalatedGroup: breakglass-pods-admin
+  approvers:
+    groups:
+      - senior-ops
+      - monitoring-team
+  maxValidFor: 2h
+  retainFor: 48h
+  idleTimeout: 45m
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: e2e-escalation-emergency-admin-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+      - breakglass-hub-2
+    groups:
+      - emergency-response
+      - ops
+  escalatedGroup: breakglass-emergency-admin
+  approvers:
+    groups:
+      - emergency-response
+      - senior-ops
+  maxValidFor: 1h
+  retainFor: 7d
+  idleTimeout: 30m
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: e2e-escalation-tenant-b-dev-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub-2
+    groups:
+      - dev
+      - tenant-b-team
+      - senior-ops
+  escalatedGroup: breakglass-tenant-b-dev
+  approvers:
+    groups:
+      - tenant-b-team
+  maxValidFor: 4h
+  retainFor: 24h
+  idleTimeout: 2h
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: e2e-escalation-read-only-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+      - breakglass-hub-2
+    groups:
+      - read-only
+  escalatedGroup: breakglass-read-only
+  approvers:
+    users:
+      - security-audit@example.com
+    groups:
+      - read-only
+  maxValidFor: 8h
+  retainFor: 72h
+  idleTimeout: 4h
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: e2e-escalation-multi-cluster-ops-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+      - breakglass-hub-2
+    groups:
+      - ops
+      - backend-team
+      - database-team
+  escalatedGroup: breakglass-multi-cluster-ops
+  approvers:
+    groups:
+      - backend-team
+      - database-team
+      - senior-ops
+  maxValidFor: 3h
+  retainFor: 48h
+  idleTimeout: 1h

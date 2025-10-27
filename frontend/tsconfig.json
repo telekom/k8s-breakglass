@@ -3,20 +3,34 @@
   "include": [
     "env.d.ts",
     "src/**/*",
-    "src/**/*.vue"
+    "src/**/*.vue",
+    "src/**/*.test.ts",
+    "src/components/AutoLogoutWarning.vue",
+    "src/services/auth.ts",
+    "src/keys.ts"
   ],
   "compilerOptions": {
+    "module": "ESNext", // Use ESNext module syntax
+    "target": "ESNext", // Target ESNext for compatibility
     "baseUrl": ".",
     "paths": {
       "@/*": [
         "./src/*"
       ]
     },
-    "composite": true
+    "composite": true,
+    "lib": ["DOM", "ES2019"],
+    "esModuleInterop": true,
+    "types": ["jest"], // Add Jest types
+    "verbatimModuleSyntax": false // Disable strict module syntax
   },
   "references": [
     {
       "path": "./tsconfig.node.json"
     }
+  ]
+  ,
+  "exclude": [
+    "tests"
   ]
 }

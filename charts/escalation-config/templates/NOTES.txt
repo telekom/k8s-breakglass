@@ -1,0 +1,12 @@
+Breakglass escalation-config chart
+
+This chart renders one or more BreakglassEscalation CRs and a ClusterConfig CR using values from `values.yaml`.
+
+To render templates locally:
+
+  helm template escalation-config ./charts/escalation-config
+
+To install to a cluster:
+
+  helm install escalation-config ./charts/escalation-config --namespace breakglass --create-namespace
+

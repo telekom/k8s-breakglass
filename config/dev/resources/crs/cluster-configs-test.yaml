@@ -1,0 +1,37 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: tenant-a-config-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  clusterID: breakglass-hub
+  tenant: tenant-a
+  environment: development
+  kubeconfigSecretRef:
+    name: tenant-a-admin
+    namespace: default
+  blockSelfApproval: false # Set to true to block self-approval
+  allowedApproverDomains:
+    - telekom.de
+    - t-systems.com
+  # This cluster exists as a kind cluster
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: tenant-b-config-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  clusterID: tenant-b-virtual-test
+  tenant: tenant-b
+  environment: development
+  kubeconfigSecretRef:
+    name: tenant-b-admin
+    namespace: default
+  blockSelfApproval: false
+  allowedApproverDomains:
+    - telekom.de
+    - t-systems.com
+  # This is a virtual cluster for testing UI flows - exists only in breakglass config
