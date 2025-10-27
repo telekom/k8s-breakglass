@@ -58,6 +58,26 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Tag and push image to Artifactory OCI
+        if: env.REGISTRY == 'ghcr.io'
+        env:
+          ARTIFACTORY_URL: artifactory.devops.telekom.de
+          ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas
+        run: |
+          set -e
+          # docker CLI login using environment secrets
+          echo "Logging in to Artifactory OCI at ${ARTIFACTORY_URL}"
+          echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
+          # Retrieve tag list from docker metadata output and push each tag with Artifactory repo prefix
+          IMAGE=${{ env.IMAGE_NAME }}
+          # meta.tags contains comma separated tags from docker/metadata-action; we will push the main tag (ref_name)
+          TAG=${{ github.ref_name }}
+          ART_IMG=${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}:${TAG}
+          echo "Tagging ${REGISTRY}/${IMAGE}:${TAG} -> ${ART_IMG}"
+          docker pull ${REGISTRY}/${IMAGE}:${TAG} || true
+          docker tag ${REGISTRY}/${IMAGE}:${TAG} ${ART_IMG}
+          docker push ${ART_IMG}
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@v0.17.6
         with:

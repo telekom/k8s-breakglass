@@ -53,6 +53,23 @@ jobs:
             helm push "$f" "oci://${OCI_REG}" --username ${{ github.actor }} --password ${{ secrets.GITHUB_TOKEN }}
           done
 
+      - name: Push chart to Artifactory (OCI)
+        env:
+          CHART_PKG: /tmp/chartpkg
+          ARTIFACTORY_URL: artifactory.devops.telekom.de
+          ARTIFACTORY_REPO: cit-t-caas-oci/charts
+        run: |
+          set -e
+          export HELM_EXPERIMENTAL_OCI=1
+          for f in ${CHART_PKG}/*.tgz; do
+            CHART_NAME=$(basename "$f" .tgz)
+            CHART_VERSION=$(helm show chart "$f" | yq e '.version' -)
+            echo "Pushing $f -> ${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${CHART_NAME}:${CHART_VERSION}"
+            # login via helm push (uses docker login underneath for OCI)
+            echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
+            helm push "$f" "oci://${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}" --username ${{ secrets.AF_USER }} --password ${{ secrets.AF_TOKEN }}
+          done
+
       - name: Output published chart refs
         run: |
           ls -la /tmp/chartpkg || true
