@@ -68,15 +68,38 @@ jobs:
           # docker CLI login using environment secrets
           echo "Logging in to Artifactory OCI at ${ARTIFACTORY_URL}"
           echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
+          echo "Docker login status: $(docker info --format '{{json .}}' 2>/dev/null || echo 'docker info not available')"
+          # Diagnose Artifactory repo accessibility
+          REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
+          echo "Checking Artifactory storage API for repo key: ${REPO_KEY}"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}" ) || true
+          echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "Warning: Artifactory repo ${REPO_KEY} not accessible (HTTP ${HTTP_STATUS}). Ensure AF_USER/AF_TOKEN are valid and have deploy permissions."
+          fi
           # Retrieve tag list from docker metadata output and push each tag with Artifactory repo prefix
           IMAGE=${{ env.IMAGE_NAME }}
           # meta.tags contains comma separated tags from docker/metadata-action; we will push the main tag (ref_name)
           TAG=${{ github.ref_name }}
           ART_IMG=${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}:${TAG}
           echo "Tagging ${REGISTRY}/${IMAGE}:${TAG} -> ${ART_IMG}"
+          set -x
           docker pull ${REGISTRY}/${IMAGE}:${TAG} || true
           docker tag ${REGISTRY}/${IMAGE}:${TAG} ${ART_IMG}
-          docker push ${ART_IMG}
+          docker push ${ART_IMG} || (echo "docker push failed"; exit 1)
+          set +x
+          # Small wait for Artifactory to index
+          sleep 3
+          # Check whether the pushed image path exists in Artifactory storage (best-effort)
+          CHECK_PATH=$(echo "${ARTIFACTORY_REPO}/${IMAGE}" | sed 's@//*@/@g')
+          echo "Checking storage for path: ${CHECK_PATH}"
+          HTTP_STATUS_AFTER=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${CHECK_PATH}?list" ) || true
+          echo "Artifactory storage API HTTP status for pushed path: ${HTTP_STATUS_AFTER}"
+          if [ "${HTTP_STATUS_AFTER}" = "200" ]; then
+            echo "Artifact path appears present in Artifactory."
+          else
+            echo "Artifact path not found or not accessible (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
+          fi
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@v0.17.6
         with:

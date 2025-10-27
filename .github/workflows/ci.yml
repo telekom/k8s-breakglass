@@ -135,3 +135,49 @@ jobs:
           name: sbom
           path: sbom-${{ github.sha }}.json
 
+      - name: Push image to Artifactory (OCI)
+        if: ${{ github.event_name != 'pull_request' && steps.build.outputs.digest != '' }}
+        env:
+          ARTIFACTORY_URL: artifactory.devops.telekom.de
+          ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+        run: |
+          set -e
+          echo "Preparing to push image to Artifactory"
+          # login to artifactory non-interactively
+          echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
+          # check access to repo
+          REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}" ) || true
+          echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "Warning: Artifactory repo ${REPO_KEY} not accessible (HTTP ${HTTP_STATUS}). The push may fail due to permissions."
+          fi
+
+          # pull the exact image by digest from the registry (GHCR)
+          DIGEST=${{ steps.build.outputs.digest }}
+          echo "Pulling image ${REGISTRY}/${IMAGE}@${DIGEST}"
+          docker pull "${REGISTRY}/${IMAGE}@${DIGEST}"
+
+          # tag using the git sha as tag to Artifactory
+          ART_TAG=${GITHUB_SHA}
+          ART_IMG=${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}:${ART_TAG}
+          echo "Tagging -> ${ART_IMG}"
+          docker tag "${REGISTRY}/${IMAGE}@${DIGEST}" "${ART_IMG}"
+
+          set -x
+          docker push "${ART_IMG}"
+          set +x
+
+          # give Artifactory a short moment to index
+          sleep 3
+          CHECK_PATH=$(echo "${ARTIFACTORY_REPO}/${IMAGE}" | sed 's@//*@/@g')
+          HTTP_STATUS_AFTER=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${CHECK_PATH}?list" ) || true
+          echo "Artifactory storage API HTTP status for pushed path: ${HTTP_STATUS_AFTER}"
+          if [ "${HTTP_STATUS_AFTER}" = "200" ]; then
+            echo "Artifact path appears present in Artifactory."
+          else
+            echo "Artifact path not found or not accessible (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
+          fi
+
