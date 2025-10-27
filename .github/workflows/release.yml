@@ -60,7 +60,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Tag and push image to Artifactory OCI
-        if: env.REGISTRY == 'ghcr.io'
         env:
           ARTIFACTORY_URL: artifactory.devops.telekom.de
           ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas

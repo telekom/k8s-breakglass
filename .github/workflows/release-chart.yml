@@ -53,6 +53,46 @@ jobs:
             helm push "$f" "oci://${OCI_REG}" --username ${{ github.actor }} --password ${{ secrets.GITHUB_TOKEN }}
           done
 
+      - name: Log in to Artifactory (OCI) - docker
+        uses: docker/login-action@v3
+        with:
+          registry: artifactory.devops.telekom.de
+          username: ${{ secrets.AF_USER }}
+          password: ${{ secrets.AF_TOKEN }}
+
+      - name: Log in to Artifactory (OCI) - helm (non-interactive)
+        env:
+          ARTIFACTORY_URL: artifactory.devops.telekom.de
+        run: |
+          set -e
+          # ensure helm will use OCI support
+          export HELM_EXPERIMENTAL_OCI=1
+          # perform a non-interactive helm registry login using password-stdin
+          echo "${{ secrets.AF_TOKEN }}" | helm registry login -u "${{ secrets.AF_USER }}" --password-stdin "${ARTIFACTORY_URL}"
+
+      - name: Diagnose Artifactory permissions
+        env:
+          ARTIFACTORY_URL: artifactory.devops.telekom.de
+          ARTIFACTORY_REPO: cit-t-caas-oci/charts
+          AF_USER: ${{ secrets.AF_USER }}
+          AF_TOKEN: ${{ secrets.AF_TOKEN }}
+        run: |
+          set -e
+          # artifactory repo key is the first path segment
+          REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
+          echo "Checking Artifactory storage API for repo key: ${REPO_KEY}"
+          # Query Artifactory storage API to check access (requires auth)
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${AF_USER}:${AF_TOKEN}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}") || true
+          echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "Warning: unable to access Artifactory repo ${REPO_KEY}. Received HTTP ${HTTP_STATUS}. Ensure AF_USER/AF_TOKEN are valid and have deploy permissions to the repo '${REPO_KEY}'."
+            # show authenticated registry login info from docker (best-effort)
+            echo "Docker login status (docker info may not show registry auth):"
+            docker --version || true
+          else
+            echo "Artifactory storage API reachable for repo ${REPO_KEY}. Continuing to push."
+          fi
+
       - name: Push chart to Artifactory (OCI)
         env:
           CHART_PKG: /tmp/chartpkg
@@ -61,22 +101,12 @@ jobs:
         run: |
           set -e
           export HELM_EXPERIMENTAL_OCI=1
-          # Note: we rely on a prior non-interactive docker login step to authenticate
-          # against Artifactory so `helm push` can reuse the credential store.
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
             CHART_VERSION=$(helm show chart "$f" | yq e '.version' -)
             echo "Pushing $f -> ${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${CHART_NAME}:${CHART_VERSION}"
-            # push using the already authenticated registry session (no interactive prompt)
             helm push "$f" "oci://${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}"
           done
-
-      - name: Log in to Artifactory (OCI)
-        uses: docker/login-action@v3
-        with:
-          registry: artifactory.devops.telekom.de
-          username: ${{ secrets.AF_USER }}
-          password: ${{ secrets.AF_TOKEN }}
 
       - name: Output published chart refs
         run: |
