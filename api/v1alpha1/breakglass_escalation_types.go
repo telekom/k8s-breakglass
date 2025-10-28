@@ -54,6 +54,16 @@ type BreakglassEscalationSpec struct {
 	// when approving/rejecting a session for this escalation. If omitted, no approver reason is requested.
 	// +optional
 	ApprovalReason *ReasonConfig `json:"approvalReason,omitempty"`
+
+	// allowedApproverDomains can restrict approvers to specific email domains for this escalation.
+	// If omitted, cluster-level defaults are used.
+	// +optional
+	AllowedApproverDomains []string `json:"allowedApproverDomains,omitempty"`
+
+	// blockSelfApproval, if set to true, will prevent the session requester from approving their own session for this escalation.
+	// If omitted (nil), the cluster-level setting will be used.
+	// +optional
+	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
 }
 
 // ReasonConfig configures an optional free-text reason field shown to requesters and approvers.

@@ -14,6 +14,15 @@ spec:
   approvers:
     groups:
 {{ toYaml $esc.approvers.groups | indent 6 }}
+  # Optional: restrict approver email domains for this escalation
+  {{- if $esc.allowedApproverDomains }}
+  allowedApproverDomains:
+{{ toYaml $esc.allowedApproverDomains | indent 4 }}
+  {{- end }}
+  # Optional: block self-approval for this escalation (true/false)
+  {{- if hasKey $esc "blockSelfApproval" }}
+  blockSelfApproval: {{ $esc.blockSelfApproval }}
+  {{- end }}
   requestReason:
     mandatory: {{ default false $esc.requestReason.mandatory }}
     description: {{ quote $esc.requestReason.description }}

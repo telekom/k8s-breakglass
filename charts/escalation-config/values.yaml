@@ -20,6 +20,10 @@ escalations: []
   #   approvers:
   #     groups:
   #       - senior-ops
+  #   # Per-escalation optional fields:
+  #   allowedApproverDomains:
+  #     - example.org
+  #   blockSelfApproval: true
   #   requestReason:
   #     mandatory: true
   #     description: "Please provide a short justification or ticket ID"

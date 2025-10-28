@@ -79,6 +79,13 @@ spec:
                       type: string
                     type: array
                 type: object
+              allowedApproverDomains:
+                description: |-
+                  allowedApproverDomains can restrict approvers to specific email domains for this escalation.
+                  If omitted, cluster-level defaults are used.
+                items:
+                  type: string
+                type: array
               approvalReason:
                 description: |-
                   approvalReason configures an optional free-text reason the approver must or may provide
@@ -109,6 +116,11 @@ spec:
                       type: string
                     type: array
                 type: object
+              blockSelfApproval:
+                description: |-
+                  blockSelfApproval, if set to true, will prevent the session requester from approving their own session for this escalation.
+                  If omitted (nil), the cluster-level setting will be used.
+                type: boolean
               clusterConfigRefs:
                 description: clusterConfigRefs lists ClusterConfig object names this
                   escalation applies to (alternative to allowed.clusters).

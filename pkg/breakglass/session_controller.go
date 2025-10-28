@@ -1049,26 +1049,8 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 	}
 	wc.log.Infow("[DEBUG] Approver groups", "email", email, "groups", approverGroups)
 
-	// Enforce blockSelfApproval: approver cannot be the session user
-	if blockSelfApproval && email == session.Spec.User {
-		wc.log.Warnw("Self-approval is blocked for this cluster", "approver", email, "sessionUser", session.Spec.User)
-		return false
-	}
-
-	// Enforce allowedApproverDomains: approver email must match allowed domains
-	if len(allowedApproverDomains) > 0 {
-		allowed := false
-		for _, domain := range allowedApproverDomains {
-			if strings.HasSuffix(strings.ToLower(email), "@"+strings.ToLower(domain)) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			wc.log.Warnw("Approver email does not match allowed domains", "approver", email, "allowedDomains", allowedApproverDomains)
-			return false
-		}
-	}
+	// Note: escalation-level overrides for allowed domains and blockSelfApproval
+	// are applied per-escalation below while evaluating matching escalations.
 
 	escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, session.Spec.Cluster)
 	if err != nil {
@@ -1083,6 +1065,39 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 			continue
 		}
 		wc.log.Infow("[DEBUG] Escalation approvers", "escalation", esc.Name, "users", esc.Spec.Approvers.Users, "groups", esc.Spec.Approvers.Groups)
+		// Determine effective blockSelfApproval and allowed domains for this escalation
+		effectiveBlockSelf := blockSelfApproval
+		if esc.Spec.BlockSelfApproval != nil {
+			effectiveBlockSelf = *esc.Spec.BlockSelfApproval
+		}
+		effectiveAllowedDomains := allowedApproverDomains
+		if len(esc.Spec.AllowedApproverDomains) > 0 {
+			effectiveAllowedDomains = esc.Spec.AllowedApproverDomains
+		}
+
+		// Enforce blockSelfApproval for this escalation: approver cannot be the session user
+		if effectiveBlockSelf && email == session.Spec.User {
+			wc.log.Debugw("Self-approval blocked by escalation/cluster setting", "escalation", esc.Name, "approver", email)
+			// This escalation disallows self-approval; continue checking next escalation
+			continue
+		}
+
+		// Enforce allowedApproverDomains for this escalation: if configured, require approver to match
+		if len(effectiveAllowedDomains) > 0 {
+			allowed := false
+			for _, domain := range effectiveAllowedDomains {
+				if strings.HasSuffix(strings.ToLower(email), "@"+strings.ToLower(domain)) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				wc.log.Warnw("Approver email does not match allowed domains for escalation", "escalation", esc.Name, "approver", email, "allowedDomains", effectiveAllowedDomains)
+				// Not allowed for this escalation; continue to next
+				continue
+			}
+		}
+
 		// Direct user approver
 		if slices.Contains(esc.Spec.Approvers.Users, email) {
 			wc.log.Debugw("User is session approver (direct user)", "session", session.Name, "escalation", esc.Name, "user", email)

@@ -406,6 +406,153 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	}
 }
 
+// Test that an escalation-level BlockSelfApproval override blocks self-approval even when cluster allows it
+func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	// escalation sets BlockSelfApproval=true
+	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-block-override"},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed:           v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup:    "g-block",
+			Approvers:         v1alpha1.BreakglassEscalationApprovers{Users: []string{"self@example.com"}},
+			BlockSelfApproval: ptrBool(true),
+		},
+	})
+
+	// cluster config allows self approval (false)
+	builder.WithObjects(&v1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "c"},
+		Spec:       v1alpha1.ClusterConfigSpec{BlockSelfApproval: false},
+	})
+
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		// middleware to set identity as self@example.com
+		c.Set("email", "self@example.com")
+		c.Set("username", "Self")
+		c.Next()
+	}, nil, cli)
+
+	// avoid hitting real kubeconfig contexts in unit tests by stubbing group lookup
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated", "breakglass-standard-user"}, nil
+	}
+
+	// create a pending session where requester == approver candidate
+	// create via API to get proper flow
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	reqData := BreakglassSessionRequest{Clustername: "c", Username: "self@example.com", GroupName: "g-block"}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("expected created, got %d", w.Result().StatusCode)
+	}
+
+	// Now try to approve as the same user -> should NOT be allowed
+	// The POST response contains the created session object; decode it to get the name
+	created := v1alpha1.BreakglassSession{}
+	_ = json.NewDecoder(w.Result().Body).Decode(&created)
+	name := created.Name
+
+	// Approve request
+	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode == http.StatusOK {
+		t.Fatalf("expected approval to be blocked, but got OK")
+	}
+}
+
+// Test that escalation-level AllowedApproverDomains restricts approvers even when cluster allows broader domains
+func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	// escalation restricts approver domains to example.org
+	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-domain-override"},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed:                v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"c2"}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup:         "g-domain",
+			Approvers:              v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.org"}},
+			AllowedApproverDomains: []string{"example.org"},
+		},
+	})
+
+	// cluster allows example.com
+	builder.WithObjects(&v1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "c2"},
+		Spec:       v1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"example.com"}},
+	})
+
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
+		// default identity middleware for request creation
+		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/breakglassSessions" {
+			c.Set("email", "requester@ex.com")
+			c.Set("username", "Requester")
+		} else {
+			// approver identity (example.com domain) -> should be denied by escalation
+			c.Set("email", "approver@example.com")
+			c.Set("username", "Approver")
+		}
+		c.Next()
+	}, nil, cli)
+
+	// stub out group lookup to avoid kubeconfig parsing in unit tests
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated", "breakglass-standard-user"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	// create a session
+	reqData := BreakglassSessionRequest{Clustername: "c2", Username: "requester@ex.com", GroupName: "g-domain"}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("expected created, got %d", w.Result().StatusCode)
+	}
+
+	// The POST response contains the created session object; decode it to get the name
+	created := v1alpha1.BreakglassSession{}
+	_ = json.NewDecoder(w.Result().Body).Decode(&created)
+	name := created.Name
+
+	// Attempt approval by approver@example.com (example.com) -> escalation restricts to example.org and should deny
+	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode == http.StatusOK {
+		t.Fatalf("expected approval to be denied by escalation domain restriction, but got OK")
+	}
+}
+
+// helper to get *bool
+func ptrBool(b bool) *bool { return &b }
+
 // TestFilterBreakglassSessionsByUser
 //
 // Purpose:
