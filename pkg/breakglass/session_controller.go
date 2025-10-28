@@ -87,6 +87,65 @@ func (wc BreakglassSessionController) validateSessionRequest(request BreakglassS
 	return nil
 }
 
+// toRFC1123Subdomain converts a string to a Kubernetes RFC1123 subdomain compatible value.
+// It lowercases the string, replaces invalid characters with '-', collapses multiple
+// separators and ensures the result starts and ends with an alphanumeric character.
+// If the input cannot produce a valid name, returns "x" as a fallback.
+func toRFC1123Subdomain(s string) string {
+	if s == "" {
+		return "x"
+	}
+	// Lowercase
+	s = strings.ToLower(s)
+
+	// Replace any character that is not a-z, 0-9, '-' or '.' with '-'
+	// Also collapse runs of invalid chars into a single '-'
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
+			b.WriteRune(r)
+			prevDash = false
+		} else {
+			if !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	out := b.String()
+	// Trim leading/trailing non-alphanumeric (dash or dot) characters
+	out = strings.TrimLeft(out, "-.")
+	out = strings.TrimRight(out, "-.")
+
+	// Collapse multiple dots or dashes into single ones
+	out = strings.ReplaceAll(out, "..", ".")
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+
+	// Ensure starts and ends with alphanumeric; if not, fallback to 'x'
+	if out == "" {
+		return "x"
+	}
+	// If first/last char is not alnum, strip until alnum or return x
+	// First
+	for len(out) > 0 && !isAlnum(rune(out[0])) {
+		out = out[1:]
+	}
+	for len(out) > 0 && !isAlnum(rune(out[len(out)-1])) {
+		out = out[:len(out)-1]
+	}
+	if out == "" {
+		return "x"
+	}
+	return out
+}
+
+func isAlnum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+}
+
 func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Context) {
 	// Get correlation ID for consistent logging
 	// request-scoped logger (includes cid, method, path)
@@ -270,7 +329,10 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	bs := v1alpha1.BreakglassSession{Spec: spec}
 
-	bs.GenerateName = fmt.Sprintf("%s-%s-", request.Clustername, request.GroupName)
+	// Generate RFC1123-safe name parts for cluster and group
+	safeCluster := toRFC1123Subdomain(request.Clustername)
+	safeGroup := toRFC1123Subdomain(request.GroupName)
+	bs.GenerateName = fmt.Sprintf("%s-%s-", safeCluster, safeGroup)
 	if err := wc.sessionManager.AddBreakglassSession(ctx, bs); err != nil {
 		reqLog.Errorw("error while adding breakglass session", "error", err)
 		c.Status(http.StatusInternalServerError)
