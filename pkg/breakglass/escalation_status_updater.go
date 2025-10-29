@@ -303,12 +303,26 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				members, err := u.Resolver.Members(ctx, g)
 				if err != nil {
 					log.Warnw("Failed resolving group members", "group", g, "escalation", esc.Name, "error", err)
+					// record resolution error in status
+					if updated.Status.GroupResolutionStatus == nil {
+						updated.Status.GroupResolutionStatus = map[string]string{}
+					}
+					updated.Status.GroupResolutionStatus[g] = err.Error()
 					continue
 				}
 				norm = normalizeMembers(members)
 				log.Infow("Resolved approver group members", "group", g, "escalation", esc.Name, "count", len(norm))
+				// mark group resolution ok in status
+				if updated.Status.GroupResolutionStatus == nil {
+					updated.Status.GroupResolutionStatus = map[string]string{}
+				}
+				updated.Status.GroupResolutionStatus[g] = "ok"
 			} else {
 				log.Warnw("No group member resolver configured; skipping group resolution", "group", g, "escalation", esc.Name)
+				if updated.Status.GroupResolutionStatus == nil {
+					updated.Status.GroupResolutionStatus = map[string]string{}
+				}
+				updated.Status.GroupResolutionStatus[g] = "disabled"
 				continue
 			}
 			if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {

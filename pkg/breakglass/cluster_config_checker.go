@@ -135,7 +135,9 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 		if err := CheckClusterReachable(restCfg); err != nil {
 			msg := "cluster unreachable: " + err.Error()
 			lg.Warnw(msg, "cluster", cc.Name)
-			ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning)
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning); err2 != nil {
+				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
 			continue
 		}
