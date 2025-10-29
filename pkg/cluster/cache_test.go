@@ -62,7 +62,7 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	kubeYAML := mustBuildKubeconfigYAML("https://127.0.0.1:6443")
 
 	cc := telekomv1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "my-cluster"},
+		ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
 			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
 		},
@@ -94,7 +94,7 @@ func TestGetRESTConfig_MissingSecretKey(t *testing.T) {
 	// secret contains default key, but ClusterConfig points to a different key
 	kubeYAML := mustBuildKubeconfigYAML("https://example.com:6443")
 	cc := telekomv1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "c2"},
+		ObjectMeta: metav1.ObjectMeta{Name: "c2", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
 			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "kube-secret-2", Namespace: "default", Key: "nonexistent"},
 		},
@@ -118,27 +118,26 @@ func TestGet_CachingAndNotFound(t *testing.T) {
 	_ = telekomv1alpha1.AddToScheme(scheme)
 
 	cc := telekomv1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "c1"},
+		ObjectMeta: metav1.ObjectMeta{Name: "c1", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
 			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
 	}
-
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc).Build()
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	first, err := provider.Get(ctx, "c1")
+	first, err := provider.GetInNamespace(ctx, "default", "c1")
 	assert.NoError(t, err)
 	assert.Equal(t, "c1", first.Name)
 
-	second, err2 := provider.Get(ctx, "c1")
+	second, err2 := provider.GetInNamespace(ctx, "default", "c1")
 	assert.NoError(t, err2)
 	// Should return the same cached pointer
 	assert.Same(t, first, second)
 
 	// Non-existent cluster should return an error
-	_, err3 := provider.Get(ctx, "does-not-exist")
+	_, err3 := provider.GetInNamespace(ctx, "default", "does-not-exist")
 	assert.Error(t, err3)
 }
 
@@ -148,7 +147,7 @@ func TestInvalidate_ClearsCache(t *testing.T) {
 	_ = telekomv1alpha1.AddToScheme(scheme)
 
 	cc := telekomv1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "ci1"},
+		ObjectMeta: metav1.ObjectMeta{Name: "ci1", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
 			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
@@ -158,16 +157,16 @@ func TestInvalidate_ClearsCache(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	first, err := provider.Get(ctx, "ci1")
+	first, err := provider.GetInNamespace(ctx, "default", "ci1")
 	assert.NoError(t, err)
 	// cache hit
-	second, err2 := provider.Get(ctx, "ci1")
+	second, err2 := provider.GetInNamespace(ctx, "default", "ci1")
 	assert.NoError(t, err2)
 	assert.Same(t, first, second)
 
 	// Invalidate and ensure subsequent Get produces a different pointer
 	provider.Invalidate("ci1")
-	third, err3 := provider.Get(ctx, "ci1")
+	third, err3 := provider.GetInNamespace(ctx, "default", "ci1")
 	assert.NoError(t, err3)
 	if first == third {
 		t.Fatalf("expected different pointer after Invalidate, got same")

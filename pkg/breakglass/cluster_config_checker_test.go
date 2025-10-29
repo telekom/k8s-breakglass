@@ -20,7 +20,7 @@ import (
 func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 	// Setup: ClusterConfig referencing a secret that doesn't exist
 	cc := &telekomv1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "default"},
 		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "missing", Namespace: "default"}},
 	}
 	cl := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc).Build()
@@ -37,7 +37,7 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 func TestClusterConfigChecker_MissingKey(t *testing.T) {
 	// secret exists but missing key 'value'
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "default"}, Data: map[string][]byte{"other": []byte("x")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-b"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s1", Namespace: "default"}}}
+	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s1", Namespace: "default"}}}
 	cl := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc, sec).Build()
 	fakeRecorder := record.NewFakeRecorder(10)
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
@@ -50,7 +50,7 @@ func TestClusterConfigChecker_MissingKey(t *testing.T) {
 func TestClusterConfigChecker_ParseFail(t *testing.T) {
 	// secret contains key but invalid kubeconfig
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s2", Namespace: "default"}, Data: map[string][]byte{"value": []byte("not-a-kubeconfig")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-c"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s2", Namespace: "default"}}}
+	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-c", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s2", Namespace: "default"}}}
 	cl := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc, sec).Build()
 	fakeRecorder := record.NewFakeRecorder(10)
 	// stub RestConfigFromKubeConfig to return error
@@ -67,7 +67,7 @@ func TestClusterConfigChecker_ParseFail(t *testing.T) {
 func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	// secret contains key and parse OK, but cluster unreachable
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s3", Namespace: "default"}, Data: map[string][]byte{"value": []byte("fake-kubeconfig")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-d"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s3", Namespace: "default"}}}
+	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-d", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s3", Namespace: "default"}}}
 	cl := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc, sec).Build()
 	fakeRecorder := record.NewFakeRecorder(10)
 	// stub RestConfigFromKubeConfig to return non-nil config

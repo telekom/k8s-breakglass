@@ -15,7 +15,7 @@ func TestGetClusterConfigByName(t *testing.T) {
 
 	t.Run("found", func(t *testing.T) {
 		cc := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster"},
+			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "default"},
 		}
 		cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc).Build()
 		mgr := NewClusterConfigManager(cli)

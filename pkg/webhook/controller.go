@@ -91,6 +91,17 @@ type WebhookController struct {
 	denyEval     *policy.Evaluator
 }
 
+// getClusterConfigAcrossNamespaces performs a ClusterConfig lookup across all namespaces
+// by delegating to the ClientProvider legacy behavior (empty namespace). The Webhook
+// controller does not have an escalation namespace context, so callers should use this
+// helper when they need the provider to search across namespaces.
+func (wc *WebhookController) getClusterConfigAcrossNamespaces(ctx context.Context, name string) (*v1alpha1.ClusterConfig, error) {
+	if wc.ccProvider == nil {
+		return nil, fmt.Errorf("cluster client provider not configured")
+	}
+	return wc.ccProvider.GetAcrossAllNamespaces(ctx, name)
+}
+
 func (WebhookController) BasePath() string {
 	return "breakglass/webhook"
 }
@@ -488,7 +499,7 @@ func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, usern
 	// best-effort tenant lookup
 	tenant := ""
 	if wc.ccProvider != nil {
-		if cfg, err := wc.ccProvider.Get(ctx, clustername); err == nil && cfg != nil {
+		if cfg, err := wc.getClusterConfigAcrossNamespaces(ctx, clustername); err == nil && cfg != nil {
 			tenant = cfg.Spec.Tenant
 		}
 	}

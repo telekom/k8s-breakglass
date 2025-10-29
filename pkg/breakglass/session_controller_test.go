@@ -426,7 +426,7 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 
 	// cluster config allows self approval (false)
 	builder.WithObjects(&v1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "c"},
+		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "default"},
 		Spec:       v1alpha1.ClusterConfigSpec{BlockSelfApproval: false},
 	})
 
@@ -496,7 +496,7 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 
 	// cluster allows example.com
 	builder.WithObjects(&v1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "c2"},
+		ObjectMeta: metav1.ObjectMeta{Name: "c2", Namespace: "default"},
 		Spec:       v1alpha1.ClusterConfigSpec{AllowedApproverDomains: []string{"example.com"}},
 	})
 
@@ -547,6 +547,80 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode == http.StatusOK {
 		t.Fatalf("expected approval to be denied by escalation domain restriction, but got OK")
+	}
+}
+
+// Test that a BreakglassSession created via the controller is stored in the
+// same namespace as the matched BreakglassEscalation when a match exists.
+func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	// Escalation lives in namespace "escns" and allows cluster "test"
+	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "esc-namespace-test",
+			Namespace: "escns",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "g1",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			// set requester identity for POST
+			c.Set("email", "req@example.com")
+			c.Set("username", "Req")
+			c.Next()
+		}, nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	ctrl.mail = &FakeMailSender{}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	// create session request which should match the escalation in "escns"
+	reqData := BreakglassSessionRequest{
+		Clustername: "test",
+		Username:    "req@example.com",
+		GroupName:   "g1",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusCreated {
+		t.Fatalf("expected created, got %d", w.Result().StatusCode)
+	}
+
+	// confirm the created BreakglassSession was persisted into the escalation namespace
+	list := &v1alpha1.BreakglassSessionList{}
+	if err := cli.List(context.Background(), list); err != nil {
+		t.Fatalf("failed to list sessions: %v", err)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(list.Items))
+	}
+	if list.Items[0].Namespace != "escns" {
+		t.Fatalf("expected session namespace to be 'escns', got %q", list.Items[0].Namespace)
 	}
 }
 

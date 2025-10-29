@@ -20,11 +20,29 @@ func NewClusterConfigManager(c client.Client) *ClusterConfigManager {
 
 // GetClusterConfigByName fetches the ClusterConfig CR by metadata.name (which is usually the cluster name/ID)
 func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
-	var cc telekomv1alpha1.ClusterConfig
-	err := ccm.client.Get(ctx, client.ObjectKey{Name: name}, &cc)
-	if err != nil {
-		zap.S().Errorw("Failed to get ClusterConfig by name", "name", name, "error", err.Error())
-		return nil, fmt.Errorf("failed to get ClusterConfig by name %q: %w", name, err)
+	// ClusterConfig is now namespaced. Try to find a ClusterConfig with the
+	// given metadata.name across all namespaces by listing them and matching
+	// by Name. This keeps call sites unchanged that only provide a name.
+	list := telekomv1alpha1.ClusterConfigList{}
+	if err := ccm.client.List(ctx, &list); err != nil {
+		zap.S().Errorw("Failed to list ClusterConfig resources", "error", err.Error())
+		return nil, fmt.Errorf("failed to list ClusterConfig resources: %w", err)
 	}
-	return &cc, nil
+	for i := range list.Items {
+		if list.Items[i].Name == name {
+			// return a pointer to the matched item
+			return &list.Items[i], nil
+		}
+	}
+	return nil, fmt.Errorf("failed to get ClusterConfig by name %q: not found", name)
+}
+
+// GetClusterConfigInNamespace fetches the ClusterConfig resource by name within the provided namespace.
+// This avoids cross-namespace listing when the caller knows the escalation or resource namespace.
+func (ccm *ClusterConfigManager) GetClusterConfigInNamespace(ctx context.Context, namespace, name string) (*telekomv1alpha1.ClusterConfig, error) {
+	got := &telekomv1alpha1.ClusterConfig{}
+	if err := ccm.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, got); err != nil {
+		return nil, err
+	}
+	return got, nil
 }

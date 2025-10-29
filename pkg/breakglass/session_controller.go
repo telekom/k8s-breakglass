@@ -328,6 +328,10 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 
 	bs := v1alpha1.BreakglassSession{Spec: spec}
+	// Ensure session is created in the same namespace as the matched escalation
+	if matchedEsc != nil {
+		bs.Namespace = matchedEsc.Namespace
+	}
 
 	// Generate RFC1123-safe name parts for cluster and group
 	safeCluster := toRFC1123Subdomain(request.Clustername)
@@ -1033,19 +1037,12 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 	ctx := c.Request.Context()
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
 
-	// Load ClusterConfig for this cluster using the ClusterConfigManager
-	var blockSelfApproval bool
-	var allowedApproverDomains []string
-	if wc.clusterConfigManager != nil {
-		ctx := c.Request.Context()
-		clusterConfig, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, session.Spec.Cluster)
-		if err != nil {
-			wc.log.Warnw("Could not fetch ClusterConfig for cluster, using defaults", "cluster", session.Spec.Cluster, "error", err)
-		} else if clusterConfig != nil {
-			blockSelfApproval = clusterConfig.Spec.BlockSelfApproval
-			allowedApproverDomains = clusterConfig.Spec.AllowedApproverDomains
-		}
-	}
+	// Base defaults for escalation evaluation. Per-escalation overrides will be applied below.
+	var baseBlockSelfApproval bool
+	var baseAllowedApproverDomains []string
+	// Note: To simplify lookup we assume ClusterConfig for an escalation lives in the same namespace
+	// as the BreakglassEscalation. Therefore we will fetch ClusterConfig per-escalation using the
+	// escalation's namespace below. Keep base values empty (defaults) here.
 
 	// Gather approver groups (prefer token groups to avoid cluster SSR dependency)
 	approverGroups, gerr := wc.getUserGroupsFn(ctx, approverID)
@@ -1077,11 +1074,24 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 		}
 		wc.log.Debugw("Escalation approvers", "escalation", esc.Name, "users", esc.Spec.Approvers.Users, "groups", esc.Spec.Approvers.Groups)
 		// Determine effective blockSelfApproval and allowed domains for this escalation
-		effectiveBlockSelf := blockSelfApproval
+		// Start with base defaults, then overlay ClusterConfig (if present in escalation's namespace),
+		// and finally apply per-escalation overrides.
+		effectiveBlockSelf := baseBlockSelfApproval
+		effectiveAllowedDomains := baseAllowedApproverDomains
+		if wc.clusterConfigManager != nil {
+			// Try to fetch a ClusterConfig with the name matching the session.Spec.Cluster within the
+			// escalation's namespace. We assume ClusterConfig objects for escalations are colocated.
+			if cc, cerr := wc.clusterConfigManager.GetClusterConfigInNamespace(c.Request.Context(), esc.Namespace, session.Spec.Cluster); cerr == nil && cc != nil {
+				effectiveBlockSelf = cc.Spec.BlockSelfApproval
+				effectiveAllowedDomains = cc.Spec.AllowedApproverDomains
+			} else if cerr != nil {
+				wc.log.Debugw("No ClusterConfig found in escalation namespace, continuing with defaults", "cluster", session.Spec.Cluster, "namespace", esc.Namespace, "error", cerr)
+			}
+		}
+		// Apply explicit escalation-level overrides
 		if esc.Spec.BlockSelfApproval != nil {
 			effectiveBlockSelf = *esc.Spec.BlockSelfApproval
 		}
-		effectiveAllowedDomains := allowedApproverDomains
 		if len(esc.Spec.AllowedApproverDomains) > 0 {
 			effectiveAllowedDomains = esc.Spec.AllowedApproverDomains
 		}

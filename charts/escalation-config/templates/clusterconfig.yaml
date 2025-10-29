@@ -2,6 +2,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
   name: {{ default .Values.cluster.clusterID .Values.cluster.clusterID | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
 spec:
   clusterID: {{ .Values.cluster.clusterID }}
   tenant: {{ .Values.cluster.tenant }}

@@ -14,7 +14,7 @@ spec:
     shortNames:
     - bge
     singular: breakglassescalation
-  scope: Cluster
+  scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - description: Clusters this escalation applies to

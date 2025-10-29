@@ -69,7 +69,7 @@ type ClusterConfigStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster,shortName=ccfg
+// +kubebuilder:resource:scope=Namespaced,shortName=ccfg
 // +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="ClusterID",type=string,JSONPath=`.spec.clusterID`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`

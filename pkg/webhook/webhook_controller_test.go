@@ -146,7 +146,7 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 	// Provide a minimal ClusterConfig + Secret for testGroupData.Clustername so controller can fetch rest.Config
 	// The kubeconfig data itself isn't used by canDoFn (stubbed), but presence prevents warning path.
 	_ = cli.Create(context.Background(), &v1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: testGroupData.Clustername},
+		ObjectMeta: metav1.ObjectMeta{Name: testGroupData.Clustername, Namespace: "default"},
 		Spec:       v1alpha1.ClusterConfigSpec{KubeconfigSecretRef: v1alpha1.SecretKeyReference{Name: "ccfg-secret", Namespace: "default"}},
 	})
 	// Kubeconfig secret placeholder built via typed clientcmd API
@@ -458,7 +458,7 @@ func TestMissingRestConfigFallback(t *testing.T) {
 	// Replace client provider with one that always errors for GetRESTConfig / Get
 	controller.ccProvider = cluster.NewClientProvider(controller.escalManager.Client, controller.log)
 	// Delete existing ClusterConfig so provider.GetRESTConfig will fail authorization/lookup.
-	cfg := &v1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: testGroupData.Clustername}}
+	cfg := &v1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: testGroupData.Clustername, Namespace: "default"}}
 	_ = controller.escalManager.Delete(context.Background(), cfg)
 
 	engine := gin.New()

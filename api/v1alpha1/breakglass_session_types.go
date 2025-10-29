@@ -138,7 +138,7 @@ type BreakglassSessionStatus struct {
 	ApprovalReason string `json:"approvalReason,omitempty"`
 }
 
-// +kubebuilder:resource:scope=Cluster,shortName=bgs
+// +kubebuilder:resource:scope=Namespaced,shortName=bgs
 // +kubebuilder:object:root=true
 // +kubebuilder:printcolumn:name="State",type=string,JSONPath=".status.state",description="The current state of the session"
 // +kubebuilder:printcolumn:name="User",type=string,JSONPath=".spec.user",description="The user associated with the session"

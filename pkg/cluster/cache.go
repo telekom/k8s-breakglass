@@ -29,22 +29,62 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 }
 
 // Get returns cached ClusterConfig or fetches it (metadata only usage for now).
-func (p *ClientProvider) Get(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
+func cacheKey(namespace, name string) string {
+	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+// Get returns a ClusterConfig. If namespace is the empty string the method
+// will list across all namespaces and match by metadata.name (backwards
+// compatible behavior). Callers that know the namespace should pass it to
+// avoid the cross-namespace list.
+func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
+	key := cacheKey("", name)
 	p.mu.RLock()
-	cfg, ok := p.data[name]
+	cfg, ok := p.data[key]
 	p.mu.RUnlock()
 	if ok {
 		return cfg, nil
 	}
 
-	cc := telekomv1alpha1.ClusterConfig{}
-	if err := p.k8s.Get(ctx, types.NamespacedName{Name: name}, &cc); err != nil {
-		return nil, fmt.Errorf("fetch clusterconfig %s: %w", name, err)
+	// Namespace not provided: preserve legacy behavior and list across namespaces
+	list := telekomv1alpha1.ClusterConfigList{}
+	if err := p.k8s.List(ctx, &list); err != nil {
+		return nil, fmt.Errorf("list clusterconfigs: %w", err)
 	}
+	for _, item := range list.Items {
+		if item.Name == name {
+			// copy loop variable before taking address
+			cp := item
+			p.mu.Lock()
+			p.data[cacheKey(cp.Namespace, cp.Name)] = &cp
+			p.mu.Unlock()
+			return &cp, nil
+		}
+	}
+	return nil, fmt.Errorf("clusterconfig %s not found", name)
+}
+
+// GetInNamespace fetches a ClusterConfig by metadata.name within the provided namespace.
+// This avoids any implicit namespace assumptions; callers that know the namespace
+// should use this method. It caches the result keyed by the logical cluster name.
+func (p *ClientProvider) GetInNamespace(ctx context.Context, namespace, name string) (*telekomv1alpha1.ClusterConfig, error) {
+	key := cacheKey(namespace, name)
+	p.mu.RLock()
+	cfg, ok := p.data[key]
+	p.mu.RUnlock()
+	if ok {
+		return cfg, nil
+	}
+
+	got := telekomv1alpha1.ClusterConfig{}
+	if err := p.k8s.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &got); err != nil {
+		return nil, fmt.Errorf("get clusterconfig %s/%s: %w", namespace, name, err)
+	}
+	cp := got
 	p.mu.Lock()
-	p.data[name] = &cc
+	p.data[key] = &cp
 	p.mu.Unlock()
-	return &cc, nil
+	return &cp, nil
 }
 
 // GetRESTConfig returns a rest.Config built from the referenced kubeconfig secret, caching it.
@@ -55,7 +95,8 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	if ok {
 		return rc, nil
 	}
-	cc, err := p.Get(ctx, name)
+	// Legacy Get behavior lists across namespaces when namespace is empty.
+	cc, err := p.GetAcrossAllNamespaces(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +137,13 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 // Invalidate removes an entry (called by informer/controller update hooks later).
 func (p *ClientProvider) Invalidate(name string) {
 	p.mu.Lock()
-	delete(p.data, name)
+	// Remove any cached clusterconfig entries matching the logical name across namespaces
+	for k := range p.data {
+		if strings.HasSuffix(k, "/"+name) || k == name {
+			delete(p.data, k)
+		}
+	}
+	// Rest configs are still keyed by logical name
 	delete(p.rest, name)
 	p.mu.Unlock()
 }

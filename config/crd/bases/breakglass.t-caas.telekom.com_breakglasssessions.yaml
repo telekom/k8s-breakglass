@@ -14,7 +14,7 @@ spec:
     shortNames:
     - bgs
     singular: breakglasssession
-  scope: Cluster
+  scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - description: The current state of the session

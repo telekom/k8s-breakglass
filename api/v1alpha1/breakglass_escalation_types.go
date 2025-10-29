@@ -111,7 +111,7 @@ type BreakglassEscalationStatus struct {
 	GroupResolutionStatus map[string]string `json:"groupResolutionStatus,omitempty"`
 }
 
-// +kubebuilder:resource:scope=Cluster,shortName=bge
+// +kubebuilder:resource:scope=Namespaced,shortName=bge
 // +kubebuilder:printcolumn:name="Clusters",type=string,JSONPath=".spec.allowed.clusters",description="Clusters this escalation applies to"
 // +kubebuilder:printcolumn:name="Groups",type=string,JSONPath=".spec.allowed.groups",description="Groups allowed to request this escalation"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the escalation"

@@ -4,6 +4,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: {{ default (printf "escalation-%d" $i) $esc.name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
 spec:
   allowed:
     clusters:
