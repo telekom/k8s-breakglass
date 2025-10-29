@@ -330,7 +330,30 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	bs := v1alpha1.BreakglassSession{Spec: spec}
 	// Ensure session is created in the same namespace as the matched escalation
 	if matchedEsc != nil {
+		reqLog.Debugw("Matched escalation found during session creation; attaching ownerRef",
+			"escalationName", matchedEsc.Name, "escalationUID", matchedEsc.UID, "escalationNamespace", matchedEsc.Namespace)
 		bs.Namespace = matchedEsc.Namespace
+		// Attach owner reference so the session can be linked back to its escalation
+		// This allows other components (webhook/controller) to resolve the escalation
+		// via the session's OwnerReferences.
+		bs.OwnerReferences = []metav1.OwnerReference{{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassEscalation",
+			Name:       matchedEsc.Name,
+			UID:        matchedEsc.UID,
+			// Controller and BlockOwnerDeletion are optional; set Controller=true for clarity.
+			Controller: func() *bool { b := true; return &b }(),
+		}}
+		reqLog.Debugw("OwnerReference prepared for session create", "ownerRefs", bs.OwnerReferences)
+	} else {
+		reqLog.Debugw("No matching escalation found during session creation; no ownerRef will be attached", "requestedGroup", request.GroupName, "cluster", request.Clustername)
+	}
+
+	// If no escalation was matched, reject creation: sessions must be tied to an escalation
+	if matchedEsc == nil {
+		reqLog.Warnw("Refusing to create session without matched escalation", "user", request.Username, "cluster", request.Clustername, "group", request.GroupName)
+		c.JSON(http.StatusUnauthorized, "no escalation found for requested group")
+		return
 	}
 
 	// Generate RFC1123-safe name parts for cluster and group
