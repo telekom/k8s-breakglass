@@ -125,6 +125,7 @@ func NewBreakglassEscalationController(log *zap.SugaredLogger,
 	manager *EscalationManager,
 	middleware gin.HandlerFunc,
 ) *BreakglassEscalationController {
+
 	log.Debug("Initializing BreakglassEscalationController with Keycloak identity provider")
 
 	identityProvider := KeycloakIdentityProvider{}

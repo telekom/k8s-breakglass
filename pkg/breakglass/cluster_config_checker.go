@@ -29,6 +29,8 @@ type ClusterConfigChecker struct {
 const ClusterConfigCheckInterval = 10 * time.Minute
 
 func (ccc ClusterConfigChecker) Start(ctx context.Context) {
+	// Ensure we always have a logger to avoid nil deref
+	lg := ccc.Log
 	interval := ccc.Interval
 	if interval == 0 {
 		interval = ClusterConfigCheckInterval
@@ -38,14 +40,14 @@ func (ccc ClusterConfigChecker) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			ccc.Log.Info("ClusterConfigChecker stopping (context canceled)")
+			lg.Info("ClusterConfigChecker stopping (context canceled)")
 			return
 		default:
 		}
 		ccc.runOnce(ctx)
 		select {
 		case <-ctx.Done():
-			ccc.Log.Info("ClusterConfigChecker stopping (context canceled)")
+			lg.Info("ClusterConfigChecker stopping (context canceled)")
 			return
 		case <-ticker.C:
 		}
@@ -54,9 +56,7 @@ func (ccc ClusterConfigChecker) Start(ctx context.Context) {
 
 func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 	lg := ccc.Log
-	if lg == nil {
-		lg = zap.NewNop().Sugar()
-	}
+
 	lg.Debug("Running ClusterConfig validation check")
 	list := telekomv1alpha1.ClusterConfigList{}
 	if err := ccc.Client.List(ctx, &list); err != nil {
@@ -153,9 +153,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string) error {
 	// nil-safe logger
 	lg := ccc.Log
-	if lg == nil {
-		lg = zap.NewNop().Sugar()
-	}
+
 	// update status
 	now := metav1.Now()
 	cc.Status.Phase = phase
@@ -163,19 +161,27 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 	cc.Status.LastCheckTime = now
 	// persist status: try full Update first (fake client often requires this), fallback to status update
 	if err := ccc.Client.Update(ctx, cc); err != nil {
+		lg.Warnw("ClusterConfig full Update failed; attempting Status().Update", "cluster", cc.Name, "error", err)
 		if err2 := ccc.Client.Status().Update(ctx, cc); err2 != nil {
-			lg.Warnw("failed to update ClusterConfig status", "cluster", cc.Name, "error", err2)
+			lg.Warnw("failed to update ClusterConfig status via Status().Update", "cluster", cc.Name, "error", err2)
 			// return the underlying status update error to caller
 			return err2
 		}
+		lg.Debugw("ClusterConfig status updated via Status().Update", "cluster", cc.Name)
+	} else {
+		lg.Debugw("ClusterConfig full Update succeeded", "cluster", cc.Name)
 	}
 	// emit event if recorder present
 	if ccc.Recorder != nil {
 		if eventType == corev1.EventTypeNormal {
+			lg.Debugw("Emitting Normal event for ClusterConfig", "cluster", cc.Name, "message", message)
 			ccc.Recorder.Event(cc, eventType, "ClusterConfigValidationSucceeded", message)
 		} else {
+			lg.Debugw("Emitting Warning event for ClusterConfig", "cluster", cc.Name, "message", message)
 			ccc.Recorder.Event(cc, eventType, "ClusterConfigValidationFailed", message)
 		}
+	} else {
+		lg.Warnw("No Event recorder configured; skipping Kubernetes Event emission", "cluster", cc.Name)
 	}
 	return nil
 }

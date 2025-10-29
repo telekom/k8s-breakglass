@@ -1161,6 +1161,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	},
 	clusterConfigClient client.Client,
 ) *BreakglassSessionController {
+
 	ip := KeycloakIdentityProvider{}
 
 	ctrl := &BreakglassSessionController{

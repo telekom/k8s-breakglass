@@ -99,7 +99,7 @@ func main() {
 	if podNs == "" {
 		podNs = "default"
 	}
-	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: podNs}
+	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: podNs, Logger: log}
 
 	// Determine interval from config (fallback to 10m)
 	interval := 10 * time.Minute

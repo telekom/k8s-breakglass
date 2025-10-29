@@ -64,9 +64,13 @@ func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, messa
 		Type:           eventtype,
 	}
 	// best-effort write; surface errors to optional logger so operators can diagnose
-	if _, err := r.Clientset.CoreV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{}); err != nil {
+	if created, err := r.Clientset.CoreV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{}); err != nil {
 		if r.Logger != nil {
-			r.Logger.Warnw("failed to create kubernetes Event", "namespace", ns, "object", metaObj.GetName(), "error", err)
+			r.Logger.Warnw("failed to create kubernetes Event", "namespace", ns, "object", metaObj.GetName(), "reason", reason, "message", message, "error", err)
+		}
+	} else {
+		if r.Logger != nil {
+			r.Logger.Debugw("kubernetes Event created", "namespace", ns, "name", created.GetName(), "reason", reason, "message", message)
 		}
 	}
 }

@@ -260,7 +260,10 @@ type EscalationStatusUpdater struct {
 }
 
 func (u EscalationStatusUpdater) Start(ctx context.Context) {
-	log := u.Log.With("component", "EscalationStatusUpdater")
+	// ensure logger present
+	log := u.Log
+
+	log = log.With("component", "EscalationStatusUpdater")
 	if u.Interval <= 0 {
 		u.Interval = 5 * time.Minute
 	}
