@@ -15,3 +15,5 @@ kubernetes:
   context: ""
   oidcPrefixes: 
   - "oidc:"
+  # Interval for periodic ClusterConfig validation. Example: "10m"
+  clusterConfigCheckInterval: "10m"

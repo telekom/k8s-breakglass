@@ -4,12 +4,16 @@ import (
 	"context"
 	"flag"
 	stdlog "log"
+	"os"
 	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
 	"github.com/go-logr/zapr"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/api"
@@ -85,6 +89,30 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go breakglass.EscalationStatusUpdater{Log: log, K8sClient: escalationManager.Client, Resolver: escalationManager.Resolver, Interval: 10 * time.Minute}.Start(ctx)
+	// Event recorder for emitting Kubernetes events (persisted to API server)
+	cfg := ctrl.GetConfigOrDie()
+	kubeClientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		log.Fatalf("failed to create kubernetes clientset for event recorder: %v", err)
+	}
+	podNs := os.Getenv("POD_NAMESPACE")
+	if podNs == "" {
+		podNs = "default"
+	}
+	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: podNs}
+
+	// Determine interval from config (fallback to 10m)
+	interval := 10 * time.Minute
+	if config.Kubernetes.ClusterConfigCheckInterval != "" {
+		if d, err := time.ParseDuration(config.Kubernetes.ClusterConfigCheckInterval); err == nil {
+			interval = d
+		} else {
+			log.Warnw("Invalid clusterConfigCheckInterval in config; using default 10m", "value", config.Kubernetes.ClusterConfigCheckInterval, "error", err)
+		}
+	}
+
+	// ClusterConfig checker: validates that referenced kubeconfig secrets contain the expected key
+	go breakglass.ClusterConfigChecker{Log: log, Client: escalationManager.Client, Recorder: recorder, Interval: interval}.Start(ctx)
 
 	server.Listen()
 }

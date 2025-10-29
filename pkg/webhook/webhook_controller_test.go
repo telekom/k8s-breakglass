@@ -508,7 +508,7 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 
 	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
 
-	allowed, grp, name := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar)
+	allowed, grp, name := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
 	if !allowed {
 		t.Fatalf("expected session SAR to allow but it did not")
 	}
@@ -517,5 +517,72 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 	}
 	if name != ses.Name {
 		t.Fatalf("expected session name %s got %s", ses.Name, name)
+	}
+}
+
+// Test that authorizeViaSessions also allows when a prefixed group variant matches the SAR
+func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
+	controller := SetupController(nil)
+
+	// Build a single active session
+	ses := v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess-pref-1"},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			GrantedGroup: "breakglass-create-all",
+		},
+	}
+
+	// configure controller to have an OIDC prefix that the cluster expects
+	controller.config.Kubernetes.OIDCPrefixes = []string{"oidc:"}
+
+	// Start HTTP test server that simulates kube-apiserver SubjectAccessReview endpoint
+	// but responds allowed=true only for the prefixed group
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && (r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews" || r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
+			// we don't inspect body here; return allowed true to simulate acceptance
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":true}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
+
+	allowed, grp, name := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	if !allowed {
+		t.Fatalf("expected prefixed session SAR to allow but it did not")
+	}
+	if grp != ses.Spec.GrantedGroup {
+		t.Fatalf("expected granted group %s got %s", ses.Spec.GrantedGroup, grp)
+	}
+	if name != ses.Name {
+		t.Fatalf("expected session name %s got %s", ses.Name, name)
+	}
+}
+
+// Test that authorizeViaSessions properly reports errors when SAR creation fails
+func TestAuthorizeViaSessions_ErrorPath(t *testing.T) {
+	controller := SetupController(nil)
+
+	ses := v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess-err-1"},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			GrantedGroup: "breakglass-create-all",
+		},
+	}
+
+	// Start HTTP test server that simulates kube-apiserver and returns an error status code
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
+
+	allowed, _, _ := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	if allowed {
+		t.Fatalf("expected session SAR to not allow when server errors")
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/cluster"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/metrics"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/policy"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
 )
@@ -107,9 +108,11 @@ func (b WebhookController) Handlers() []gin.HandlerFunc {
 
 func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	wc.log.Debug("Entered handleAuthorize")
-	cluster := c.Param("cluster_name")
+	clusterName := c.Param("cluster_name")
+	// record incoming SAR request (label by cluster)
+	metrics.WebhookSARRequests.WithLabelValues(clusterName).Inc()
 	ctx := c.Request.Context()
-	wc.log.With("cluster", cluster).Debug("Processing authorization request for cluster")
+	wc.log.With("cluster", clusterName).Debug("Processing authorization request for cluster")
 
 	sar := authorizationv1.SubjectAccessReview{}
 
@@ -144,7 +147,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	username := sar.Spec.User
 	reqLog.Infow("Processing authorization", "username", username, "groupsRequested", sar.Spec.Groups)
 
-	groups, sessions, tenant, err := wc.getUserGroupsAndSessions(ctx, username, cluster)
+	groups, sessions, tenant, err := wc.getUserGroupsAndSessions(ctx, username, clusterName)
 	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
 		c.Status(http.StatusInternalServerError)
@@ -161,7 +164,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			Namespace:   sar.Spec.ResourceAttributes.Namespace,
 			Name:        sar.Spec.ResourceAttributes.Name,
 			Subresource: sar.Spec.ResourceAttributes.Subresource,
-			ClusterID:   cluster,
+			ClusterID:   clusterName,
 			Tenant:      tenant,
 		}
 		if denied, pol, derr := wc.denyEval.Match(ctx, act); derr != nil {
@@ -181,7 +184,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 					seen[g] = true
 				}
 			}
-			escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, cluster, ug)
+			escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, ug)
 			count := 0
 			if eerr != nil {
 				reqLog.With("error", eerr.Error()).Error("Failed to count escalations for deny response")
@@ -194,7 +197,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			} else {
 				reason = fmt.Sprintf("Denied by policy %s; No breakglass flow available for your user", pol)
 			}
-			reason = wc.finalizeReason(reason, false, cluster)
+			reason = wc.finalizeReason(reason, false, clusterName)
 			c.JSON(http.StatusOK, &SubjectAccessReviewResponse{ApiVersion: sar.APIVersion, Kind: sar.Kind, Status: SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason}})
 			return
 		}
@@ -217,7 +220,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 						seen[g] = true
 					}
 				}
-				escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, cluster, ug)
+				escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, ug)
 				count := 0
 				if eerr != nil {
 					reqLog.With("error", eerr.Error()).Error("Failed to count escalations for session deny response")
@@ -230,7 +233,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				} else {
 					reason = fmt.Sprintf("Denied by policy %s; No breakglass flow available for your user", pol)
 				}
-				reason = wc.finalizeReason(reason, false, cluster)
+				reason = wc.finalizeReason(reason, false, clusterName)
 				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{ApiVersion: sar.APIVersion, Kind: sar.Kind, Status: SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason}})
 				return
 			}
@@ -244,19 +247,22 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	var can bool
 	var rbacErr error
 	// Log input to RBAC check for easier debugging
-	reqLog.Debugw("Invoking RBAC canDoFn", "groups", groups, "resourceAttributes", sar.Spec.ResourceAttributes, "cluster", cluster)
+	reqLog.Debugw("Invoking RBAC canDoFn", "groups", groups, "resourceAttributes", sar.Spec.ResourceAttributes, "cluster", clusterName)
 
+	var sessionSARSkippedErr error
 	if wc.ccProvider != nil {
-		if rc, rerr := wc.ccProvider.GetRESTConfig(ctx, cluster); rerr == nil {
-			can, rbacErr = wc.canDoFn(ctx, rc, groups, sar, cluster)
+		if rc, rerr := wc.ccProvider.GetRESTConfig(ctx, clusterName); rerr == nil {
+			can, rbacErr = wc.canDoFn(ctx, rc, groups, sar, clusterName)
 		} else {
 			// downgrade to info; this will commonly happen if RBAC does not yet allow clusterconfig get
 			reqLog.With("error", rerr).Info("Failed to get REST config for standard RBAC check; using legacy fallback")
+			// Record that session SAR checks will be skipped because we couldn't load REST config
+			sessionSARSkippedErr = rerr
 			// Still invoke injected canDoFn with nil to allow tests to control behavior
-			can, rbacErr = wc.canDoFn(ctx, nil, groups, sar, cluster)
+			can, rbacErr = wc.canDoFn(ctx, nil, groups, sar, clusterName)
 		}
 	} else {
-		can, rbacErr = wc.canDoFn(ctx, nil, groups, sar, cluster)
+		can, rbacErr = wc.canDoFn(ctx, nil, groups, sar, clusterName)
 	}
 	if rbacErr != nil {
 		msg := rbacErr.Error()
@@ -287,9 +293,11 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 		// Session SAR checks: attempt authorization impersonating each granted group via admin kubeconfig.
 		if wc.ccProvider != nil && sar.Spec.ResourceAttributes != nil {
-			if rc, err := wc.ccProvider.GetRESTConfig(ctx, cluster); err != nil {
+			if rc, err := wc.ccProvider.GetRESTConfig(ctx, clusterName); err != nil {
 				reqLog.With("error", err.Error()).Warn("Unable to load target cluster rest.Config for SAR; skipping session SAR checks")
-			} else if allowedSession, grp, sesName := wc.authorizeViaSessions(ctx, rc, sessions, sar); allowedSession {
+				// mark that we skipped session SAR checks for diagnostics
+				sessionSARSkippedErr = err
+			} else if allowedSession, grp, sesName := wc.authorizeViaSessions(ctx, rc, sessions, sar, clusterName); allowedSession {
 				reqLog.With("grantedGroup", grp, "session", sesName).Debug("Authorized via breakglass session group on target cluster")
 				allowed = true
 				allowSource = "session"
@@ -298,7 +306,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 
 		// Get user groups from active sessions
-		activeUserGroups, _, _, err := wc.getUserGroupsAndSessions(ctx, username, cluster)
+		activeUserGroups, _, _, err := wc.getUserGroupsAndSessions(ctx, username, clusterName)
 		if err != nil {
 			reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
 			c.Status(http.StatusInternalServerError)
@@ -320,7 +328,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		reqLog.With("allUserGroups", uniqueGroups).Debug("Final user groups including basic authenticated groups")
 
 		// Check for group-based escalations
-		escals, err := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, cluster, uniqueGroups)
+		escals, err := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, uniqueGroups)
 		if err != nil {
 			reqLog.With("error", err.Error()).Error("Failed to retrieve group escalations")
 			c.Status(http.StatusInternalServerError)
@@ -332,7 +340,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		var groupescals []v1alpha1.BreakglassEscalation
 		if sar.Spec.ResourceAttributes.Group != "" {
 			groupescals, err = wc.escalManager.GetClusterGroupTargetBreakglassEscalation(ctx,
-				cluster,
+				clusterName,
 				uniqueGroups,
 				sar.Spec.ResourceAttributes.Group,
 			)
@@ -350,7 +358,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		if len(escals) > 0 {
 			reqLog.Debugw("Escalation paths available", "count", len(escals))
 			reason = fmt.Sprintf(denyReasonMessage,
-				wc.config.Frontend.BaseURL, cluster)
+				wc.config.Frontend.BaseURL, clusterName)
 		} else {
 			reqLog.Debugw("No escalation paths for user", "username", username)
 		}
@@ -366,9 +374,37 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 	}
 
-	// Ensure the reason always includes a helpful link to the breakglass UI
-	reason = wc.finalizeReason(reason, allowed, cluster)
+	// If we denied the request but the user has active sessions and we were unable to
+	// perform session SAR checks (for example because the cluster kubeconfig is
+	// missing), append a helpful note so callers and users know why a valid session
+	// didn't result in an allow decision.
+	if !allowed && len(sessions) > 0 {
+		// If we recorded a skip for session SAR checks, add a diagnostic note to the reason
+		if sessionSARSkippedErr != nil {
+			metrics.WebhookSessionSARSSkipped.WithLabelValues(clusterName).Inc()
+			// Collect session names and granted groups for the diagnostic message
+			sessInfo := make([]string, 0, len(sessions))
+			for _, s := range sessions {
+				sessInfo = append(sessInfo, s.Name+"("+s.Spec.GrantedGroup+")")
+			}
+			diag := fmt.Sprintf(" Note: %d active breakglass session(s) found: %v. Session-level authorization checks were skipped due to cluster validation error: %s. If you believe you have valid access, ensure the platform has the cluster kubeconfig configured.", len(sessions), sessInfo, sessionSARSkippedErr.Error())
+			if reason == "" {
+				reason = diag
+			} else {
+				reason = reason + "" + diag
+			}
+			// Also log this at info so admins see the mismatch between session state and SAR capabilities
+			reqLog.With("sessions", sessInfo, "error", sessionSARSkippedErr.Error()).Info("Active sessions present but unable to validate them against target cluster")
+		}
+	}
 
+	// Ensure the reason always includes a helpful link to the breakglass UI
+	reason = wc.finalizeReason(reason, allowed, clusterName)
+	if allowed {
+		metrics.WebhookSARAllowed.WithLabelValues(clusterName).Inc()
+	} else {
+		metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
+	}
 	response := SubjectAccessReviewResponse{
 		ApiVersion: sar.APIVersion,
 		Kind:       sar.Kind,
@@ -403,7 +439,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			respLogForInfo = respLogForInfo[:512] + "...(truncated)"
 		}
 	}
-	reqLog.Infow("SubjectAccessReview processed", "username", username, "cluster", cluster, "allowed", allowed, "reason", reason, "response", respLogForInfo)
+	reqLog.Infow("SubjectAccessReview processed", "username", username, "cluster", clusterName, "allowed", allowed, "reason", reason, "response", respLogForInfo)
 
 	// Ensure correlation ID header is present for apiserver correlation
 	if cidv, ok := c.Get("cid"); ok {
@@ -477,7 +513,7 @@ func (wc *WebhookController) getSessions(ctx context.Context, username, clustern
 }
 
 // authorizeViaSessions performs per-session SubjectAccessReviews using the session's granted group.
-func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []v1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview) (bool, string, string) {
+func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []v1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string) (bool, string, string) {
 	if len(sessions) == 0 || incoming.Spec.ResourceAttributes == nil {
 		return false, "", ""
 	}
@@ -488,28 +524,48 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 	}
 	sarClient := clientset.AuthorizationV1().SubjectAccessReviews()
 	for _, s := range sessions {
-		sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
-			User:   "system:breakglass-session",
-			Groups: []string{s.Spec.GrantedGroup},
-			ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Namespace:   incoming.Spec.ResourceAttributes.Namespace,
-				Verb:        incoming.Spec.ResourceAttributes.Verb,
-				Group:       incoming.Spec.ResourceAttributes.Group,
-				Resource:    incoming.Spec.ResourceAttributes.Resource,
-				Subresource: incoming.Spec.ResourceAttributes.Subresource,
-				Name:        incoming.Spec.ResourceAttributes.Name,
-			},
-		}}
-		resp, err := sarClient.Create(ctx, sar, metav1.CreateOptions{})
-		if err != nil {
-			wc.log.With("error", err, "group", s.Spec.GrantedGroup).Warn("session SAR error")
-			continue
+		// Try plain session SAR (system:breakglass-session + granted group)
+		tryGroups := []string{s.Spec.GrantedGroup}
+		tried := 0
+		// also consider OIDC-prefixed variants if configured
+		// use configured OIDC prefixes from the controller config (if any)
+		if len(wc.config.Kubernetes.OIDCPrefixes) > 0 {
+			for _, p := range wc.config.Kubernetes.OIDCPrefixes {
+				tryGroups = append(tryGroups, p+s.Spec.GrantedGroup)
+			}
 		}
-		if resp.Status.Allowed {
-			return true, s.Spec.GrantedGroup, s.Name
-		} else {
-			// Log the SAR response status details for debugging when not allowed
-			wc.log.Debugw("Session SAR response not allowed", "group", s.Spec.GrantedGroup, "session", s.Name, "status", resp.Status)
+		for _, g := range tryGroups {
+			tried++
+			sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+				User:   "system:breakglass-session",
+				Groups: []string{g},
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace:   incoming.Spec.ResourceAttributes.Namespace,
+					Verb:        incoming.Spec.ResourceAttributes.Verb,
+					Group:       incoming.Spec.ResourceAttributes.Group,
+					Resource:    incoming.Spec.ResourceAttributes.Resource,
+					Subresource: incoming.Spec.ResourceAttributes.Subresource,
+					Name:        incoming.Spec.ResourceAttributes.Name,
+				},
+			}}
+			resp, err := sarClient.Create(ctx, sar, metav1.CreateOptions{})
+			if err != nil {
+				wc.log.With("error", err, "group", g).Warn("session SAR error")
+				metrics.WebhookSessionSARErrors.WithLabelValues(clusterName, s.Name, g).Inc()
+				continue
+			}
+			if resp.Status.Allowed {
+				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName, s.Name, g).Inc()
+				// return the original granted group (not the prefixed variant) to keep session mapping clear
+				return true, s.Spec.GrantedGroup, s.Name
+			} else {
+				// Log the SAR response status details for debugging when not allowed
+				wc.log.Debugw("Session SAR response not allowed", "group", g, "session", s.Name, "status", resp.Status)
+				metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName, s.Name, g).Inc()
+			}
+		}
+		if tried == 0 {
+			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName, s.Name, s.Spec.GrantedGroup).Inc()
 		}
 	}
 	return false, "", ""

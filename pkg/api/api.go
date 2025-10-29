@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/metrics"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
 	"go.uber.org/zap"
 )
@@ -144,6 +145,14 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// This allows the browser to fetch .well-known/openid-configuration and jwks via the
 	// server origin (avoiding the need to trust the Keycloak cert in the browser).
 	engine.GET("api/oidc/authority/*proxyPath", s.handleOIDCProxy)
+
+	// Prometheus metrics endpoint (under /api/metrics)
+	engine.GET("/api/metrics", func(c *gin.Context) {
+		metricsHandler := func(w http.ResponseWriter, r *http.Request) {
+			metrics.MetricsHandler().ServeHTTP(w, r)
+		}
+		metricsHandler(c.Writer, c.Request)
+	})
 
 	engine.GET("api/config", s.getConfig)
 

@@ -38,6 +38,9 @@ type Server struct {
 type Kubernetes struct {
 	Context      string   `yaml:"context"`
 	OIDCPrefixes []string `yaml:"oidcPrefixes"`
+	// ClusterConfigCheckInterval controls how often ClusterConfig resources are validated (e.g. "10m").
+	// +optional
+	ClusterConfigCheckInterval string `yaml:"clusterConfigCheckInterval"`
 }
 
 // Keycloak holds optional configuration for read-only group membership sync.

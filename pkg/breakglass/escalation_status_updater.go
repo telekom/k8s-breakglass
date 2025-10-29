@@ -1,10 +1,12 @@
 package breakglass
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -110,12 +112,17 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		return []string{}, nil
 	}
 
+	// Acquire client credentials token
+	startToken := time.Now()
 	token, err := k.clientCredsToken(ctx)
 	if err != nil {
 		if log != nil {
-			log.Warnw("Failed to obtain Keycloak token", "group", group, "error", err)
+			log.Warnw("Failed to obtain Keycloak token", "group", group, "error", err, "took", time.Since(startToken).String())
 		}
 		return nil, err
+	}
+	if log != nil {
+		log.Debugw("Obtained Keycloak token (redacted)", "group", group, "took", time.Since(startToken).String())
 	}
 
 	// 1. Find group ID by name
@@ -125,6 +132,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if log != nil {
 		log.Debugw("Keycloak groups search request", "url", gURL, "group", group)
 	}
+	gStart := time.Now()
 	resp, err := k.client.Do(req)
 	if err != nil {
 		if log != nil {
@@ -133,15 +141,23 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		return nil, err
 	}
 	defer resp.Body.Close()
+	// Read body for improved diagnostics
+	gBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
 		if log != nil {
-			log.Warnw("Keycloak groups search returned non-200 status", "status", resp.StatusCode, "url", gURL, "group", group)
+			log.Warnw("Keycloak groups search returned non-200 status", "status", resp.StatusCode, "url", gURL, "group", group, "took", time.Since(gStart).String(), "body", string(bytes.TrimSpace(gBody)))
 		}
 		return nil, fmt.Errorf("keycloak groups search status %d", resp.StatusCode)
 	}
 	var groups []struct{ ID, Name string }
-	if err := json.NewDecoder(resp.Body).Decode(&groups); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(gBody)).Decode(&groups); err != nil {
+		if log != nil {
+			log.Debugw("Failed to decode Keycloak groups response", "error", err, "group", group, "body", string(bytes.TrimSpace(gBody)))
+		}
 		return nil, err
+	}
+	if log != nil {
+		log.Debugw("Keycloak groups search returned", "group", group, "count", len(groups), "took", time.Since(gStart).String())
 	}
 	var groupID string
 	for _, g := range groups {
@@ -152,7 +168,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 	if groupID == "" {
 		if log != nil {
-			log.Debugw("Keycloak group not found by name", "group", group)
+			log.Debugw("Keycloak group not found by name", "group", group, "returnedGroups", groups)
 		}
 		k.cache.set(group, []string{})
 		return []string{}, nil
@@ -165,6 +181,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if log != nil {
 		log.Debugw("Keycloak group members request", "url", mURL, "group", group, "groupID", groupID)
 	}
+	mStart := time.Now()
 	mresp, err := k.client.Do(mreq)
 	if err != nil {
 		if log != nil {
@@ -173,14 +190,18 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		return nil, err
 	}
 	defer mresp.Body.Close()
+	mBody, _ := io.ReadAll(mresp.Body)
 	if mresp.StatusCode != 200 {
 		if log != nil {
-			log.Warnw("Keycloak members returned non-200 status", "status", mresp.StatusCode, "url", mURL, "group", group)
+			log.Warnw("Keycloak members returned non-200 status", "status", mresp.StatusCode, "url", mURL, "group", group, "took", time.Since(mStart).String(), "body", string(bytes.TrimSpace(mBody)))
 		}
 		return nil, fmt.Errorf("keycloak members status %d", mresp.StatusCode)
 	}
 	var membersRaw []struct{ Username, Email string }
-	if err := json.NewDecoder(mresp.Body).Decode(&membersRaw); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(mBody)).Decode(&membersRaw); err != nil {
+		if log != nil {
+			log.Debugw("Failed to decode Keycloak members response", "error", err, "group", group, "body", string(bytes.TrimSpace(mBody)))
+		}
 		return nil, err
 	}
 	out := make([]string, 0, len(membersRaw))
