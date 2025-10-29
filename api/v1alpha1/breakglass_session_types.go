@@ -136,6 +136,10 @@ type BreakglassSessionStatus struct {
 	// approvalReason stores the free-text reason supplied by the approver when approving/rejecting the session.
 	// +optional
 	ApprovalReason string `json:"approvalReason,omitempty"`
+	// reasonEnded stores a short reason for why the session ended or entered a terminal state.
+	// Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
+	// +optional
+	ReasonEnded string `json:"reasonEnded,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Namespaced,shortName=bgs

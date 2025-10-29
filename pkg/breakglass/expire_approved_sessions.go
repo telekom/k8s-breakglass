@@ -25,6 +25,8 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 				Reason:             "ExpiredByTime",
 				Message:            "Session expired because its ExpiresAt has been reached.",
 			})
+			// set short reason for UI consumption
+			ses.Status.ReasonEnded = "timeExpired"
 			// Try to persist the status change. Use UpdateBreakglassSession which works with fake client
 			if err := wc.sessionManager.UpdateBreakglassSession(context.Background(), ses); err != nil {
 				wc.log.Errorw("failed to update expired session", "session", ses.Name, "error", err)

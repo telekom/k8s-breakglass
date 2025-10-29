@@ -90,7 +90,7 @@ function reasonEndedLabel(s: any): string {
           <td>{{ s.name }}</td>
           <td>{{ s.cluster }}</td>
           <td>{{ s.group }}</td>
-          <td>{{ (s.spec && (s.spec.user || s.spec.requester)) || s.user || '-' }}</td>
+          <td>{{ (s.spec && (s.spec.user || s.spec.requester)) || s.user || s.requester || '-' }}</td>
           <td>{{ formatDate(startedForDisplay(s)) }}</td>
           <td>{{ formatDate(endedForDisplay(s)) }}</td>
           <td>{{ s.spec && s.spec.requestReason ? s.spec.requestReason : '-' }}</td>

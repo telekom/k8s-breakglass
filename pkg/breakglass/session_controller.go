@@ -581,6 +581,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		bs.Status.TimeoutAt = metav1.Time{}
 		bs.Status.RejectedAt = metav1.Now()
 		bs.Status.State = v1alpha1.SessionStateRejected
+		bs.Status.ReasonEnded = "rejected"
 		// record approver (rejector)
 		rejectorEmail, _ := wc.identityProvider.GetEmail(c)
 		if rejectorEmail != "" {
@@ -838,6 +839,8 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	bs.Status.ExpiresAt = metav1.Time{}
 	bs.Status.RejectedAt = metav1.Now()
 	bs.Status.State = v1alpha1.SessionStateWithdrawn
+	// short reason for UI
+	bs.Status.ReasonEnded = "withdrawn"
 	// clear approver info for withdrawn sessions
 	bs.Status.Approver = ""
 	bs.Status.Approvers = nil
@@ -893,6 +896,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 			Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
 			Message:            "Session dropped by owner",
 		})
+		bs.Status.ReasonEnded = "dropped"
 	} else {
 		// Pending or other state -> behave like withdraw
 		bs.Status.ApprovedAt = metav1.Time{}
@@ -908,6 +912,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 			Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
 			Message:            "Session dropped by owner",
 		})
+		bs.Status.ReasonEnded = "withdrawn"
 	}
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
@@ -970,6 +975,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 		Reason:             string(v1alpha1.SessionConditionReasonEditedByApprover),
 		Message:            "Session canceled by approver",
 	})
+	bs.Status.ReasonEnded = "canceled"
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		wc.log.Error("error while updating breakglass session", zap.Error(err))

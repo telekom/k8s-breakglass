@@ -310,11 +310,13 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				reqLog.With("error", err.Error()).Warn("Unable to load target cluster rest.Config for SAR; skipping session SAR checks")
 				// mark that we skipped session SAR checks for diagnostics
 				sessionSARSkippedErr = err
-			} else if allowedSession, grp, sesName := wc.authorizeViaSessions(ctx, rc, sessions, sar, clusterName, reqLog); allowedSession {
-				reqLog.With("grantedGroup", grp, "session", sesName).Debug("Authorized via breakglass session group on target cluster")
+			} else if allowedSession, grp, sesName, impersonated := wc.authorizeViaSessions(ctx, rc, sessions, sar, clusterName, reqLog); allowedSession {
+				reqLog.With("grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated).Debug("Authorized via breakglass session group on target cluster")
 				allowed = true
 				allowSource = "session"
-				allowDetail = fmt.Sprintf("group=%s session=%s", grp, sesName)
+				allowDetail = fmt.Sprintf("group=%s session=%s impersonated=%s", grp, sesName, impersonated)
+				// Emit a single correlated info log showing the final accepted impersonated group for observability
+				reqLog.Infow("Final accepted impersonated group", "username", username, "cluster", clusterName, "grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
 			}
 		}
 
@@ -527,13 +529,13 @@ func (wc *WebhookController) getSessions(ctx context.Context, username, clustern
 }
 
 // authorizeViaSessions performs per-session SubjectAccessReviews using the session's granted group.
-func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []v1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string) {
+func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []v1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string, string) {
 	var logger *zap.SugaredLogger
 	if len(reqLog) > 0 {
 		logger = reqLog[0]
 	}
 	if len(sessions) == 0 || incoming.Spec.ResourceAttributes == nil {
-		return false, "", ""
+		return false, "", "", ""
 	}
 	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {
@@ -542,18 +544,20 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		} else if wc.log != nil {
 			wc.log.With("error", err).Error("failed creating clientset for session SAR")
 		}
-		return false, "", ""
+		return false, "", "", ""
 	}
 	sarClient := clientset.AuthorizationV1().SubjectAccessReviews()
 	for _, s := range sessions {
 		// Try plain session SAR (system:breakglass-session + granted group)
 		tryGroups := []string{s.Spec.GrantedGroup}
 		tried := 0
-		// Instead of trying all configured OIDC prefixes, detect which exact
-		// prefix (if any) was used in the incoming SAR for the escalation's
-		// allowed groups (.spec.allowed.groups) and only try that one. This
-		// avoids unnecessary impersonation attempts.
-		matchedPrefix := ""
+		// Instead of trying all configured OIDC prefixes blindly, detect
+		// which prefixes could apply by examining incoming groups and the
+		// escalation's allowed groups. Collect ALL candidate prefixes and
+		// try all deduplicated outcomes. This covers cases where multiple
+		// incoming groups use different prefixes (for example multiple
+		// identity providers) and we must try each possibility.
+		matchedPrefixes := make([]string, 0)
 		var allowedGroupsToCheck []string
 		// Try to resolve escalation attached to the session via OwnerReferences
 		if len(s.OwnerReferences) > 0 && wc.escalManager != nil {
@@ -595,16 +599,27 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			} else if wc.log != nil {
 				wc.log.Debugw("Beginning OIDC prefix detection", "incomingGroups", incoming.Spec.Groups, "allowedGroupsToCheck", allowedGroupsToCheck, "oidcPrefixes", wc.config.Kubernetes.OIDCPrefixes)
 			}
+			// Build a set of candidate prefixes by checking each incoming
+			// group against each allowed group. When an incoming group
+			// either equals an allowed group (no prefix) or has a
+			// prefix + allowedGroup, note the prefix. We intentionally
+			// collect all matches so we can try all plausible
+			// impersonation groups.
+			prefSeen := make(map[string]bool)
 			for _, ig := range incoming.Spec.Groups {
 				for _, allowed := range allowedGroupsToCheck {
 					if ig == allowed {
-						matchedPrefix = ""
-						if logger != nil {
-							logger.Debugw("Incoming group exactly matches allowed group; no prefix", "incomingGroup", ig, "allowedGroup", allowed, "session", s.Name)
-						} else if wc.log != nil {
-							wc.log.Debugw("Incoming group exactly matches allowed group; no prefix", "incomingGroup", ig, "allowedGroup", allowed, "session", s.Name)
+						// exact match -> also try the plain granted group
+						if !prefSeen[""] {
+							matchedPrefixes = append(matchedPrefixes, "")
+							prefSeen[""] = true
 						}
-						break
+						if logger != nil {
+							logger.Debugw("Incoming group exactly matches allowed group; will try plain group", "incomingGroup", ig, "allowedGroup", allowed, "session", s.Name)
+						} else if wc.log != nil {
+							wc.log.Debugw("Incoming group exactly matches allowed group; will try plain group", "incomingGroup", ig, "allowedGroup", allowed, "session", s.Name)
+						}
+						continue
 					}
 					if strings.HasSuffix(ig, allowed) {
 						candidate := ig[:len(ig)-len(allowed)]
@@ -613,34 +628,56 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 						} else if wc.log != nil {
 							wc.log.Debugw("Found suffix match candidate for allowed group", "incomingGroup", ig, "allowedGroup", allowed, "candidate", candidate, "session", s.Name)
 						}
+						// Compare candidate against configured OIDC prefixes
 						for _, p := range wc.config.Kubernetes.OIDCPrefixes {
 							if candidate == p {
-								matchedPrefix = p
-								if logger != nil {
-									logger.Debugw("Matched OIDC prefix", "prefix", p, "candidate", candidate, "incomingGroup", ig, "session", s.Name)
-								} else if wc.log != nil {
-									wc.log.Debugw("Matched OIDC prefix", "prefix", p, "candidate", candidate, "incomingGroup", ig, "session", s.Name)
+								if !prefSeen[p] {
+									matchedPrefixes = append(matchedPrefixes, p)
+									prefSeen[p] = true
 								}
-								break
+								if logger != nil {
+									logger.Debugw("Matched OIDC prefix candidate", "prefix", p, "candidate", candidate, "incomingGroup", ig, "session", s.Name)
+								} else if wc.log != nil {
+									wc.log.Debugw("Matched OIDC prefix candidate", "prefix", p, "candidate", candidate, "incomingGroup", ig, "session", s.Name)
+								}
 							}
-						}
-						if matchedPrefix != "" {
-							break
 						}
 					}
 				}
-				if matchedPrefix != "" {
-					break
+			}
+			// If we found any prefixes, append all prefixed variants to tryGroups
+			if len(matchedPrefixes) > 0 {
+				// ensure deterministic order by iterating matchedPrefixes
+				for _, p := range matchedPrefixes {
+					if p == "" {
+						// plain granted group already present in tryGroups; skip
+						continue
+					}
+					prefGroup := p + s.Spec.GrantedGroup
+					tryGroups = append(tryGroups, prefGroup)
+					if logger != nil {
+						logger.Debugw("Appending prefixed group to tryGroups", "prefixedGroup", prefGroup, "prefix", p, "session", s.Name)
+					} else if wc.log != nil {
+						wc.log.Debugw("Appending prefixed group to tryGroups", "prefixedGroup", prefGroup, "prefix", p, "session", s.Name)
+					}
 				}
 			}
-		}
-		if matchedPrefix != "" {
-			tryGroups = append(tryGroups, matchedPrefix+s.Spec.GrantedGroup)
+			// Log summary of prefix detection and dedupe tryGroups to avoid redundant SAR attempts
 			if logger != nil {
-				logger.Debugw("Appending prefixed group to tryGroups", "prefixedGroup", matchedPrefix+s.Spec.GrantedGroup, "session", s.Name)
+				logger.Debugw("OIDC prefix detection summary", "matchedPrefixes", matchedPrefixes, "tryGroupsBeforeDedupe", tryGroups, "session", s.Name)
 			} else if wc.log != nil {
-				wc.log.Debugw("Appending prefixed group to tryGroups", "prefixedGroup", matchedPrefix+s.Spec.GrantedGroup, "session", s.Name)
+				wc.log.Debugw("OIDC prefix detection summary", "matchedPrefixes", matchedPrefixes, "tryGroupsBeforeDedupe", tryGroups, "session", s.Name)
 			}
+			// Deduplicate tryGroups while preserving order
+			seenTry := make(map[string]bool)
+			deduped := make([]string, 0, len(tryGroups))
+			for _, tg := range tryGroups {
+				if !seenTry[tg] {
+					deduped = append(deduped, tg)
+					seenTry[tg] = true
+				}
+			}
+			tryGroups = deduped
 		}
 		if logger != nil {
 			logger.Debugw("Attempting session SARs for tryGroups", "tryGroups", tryGroups, "session", s.Name)
@@ -688,7 +725,8 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			if resp.Status.Allowed {
 				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName, s.Name, g).Inc()
 				// return the original granted group (not the prefixed variant) to keep session mapping clear
-				return true, s.Spec.GrantedGroup, s.Name
+				// also return the actual impersonated group we used that succeeded
+				return true, s.Spec.GrantedGroup, s.Name, g
 			} else {
 				// Log the SAR response status details for debugging when not allowed
 				if logger != nil {
@@ -703,5 +741,5 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName, s.Name, s.Spec.GrantedGroup).Inc()
 		}
 	}
-	return false, "", ""
+	return false, "", "", ""
 }

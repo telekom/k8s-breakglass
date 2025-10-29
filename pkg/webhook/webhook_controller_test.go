@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
@@ -508,7 +510,7 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 
 	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
 
-	allowed, grp, name := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	allowed, grp, name, impersonated := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
 	if !allowed {
 		t.Fatalf("expected session SAR to allow but it did not")
 	}
@@ -517,6 +519,9 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 	}
 	if name != ses.Name {
 		t.Fatalf("expected session name %s got %s", ses.Name, name)
+	}
+	if impersonated != grp {
+		t.Fatalf("expected impersonated group to equal granted group %s got %s", grp, impersonated)
 	}
 }
 
@@ -539,9 +544,19 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 	// but responds allowed=true only for the prefixed group
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && (r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews" || r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
-			// we don't inspect body here; return allowed true to simulate acceptance
+			// inspect raw body and allow if it contains the prefixed group string
+			bodyBytes, _ := io.ReadAll(r.Body)
+			bodyStr := string(bodyBytes)
+			allow := false
+			if strings.Contains(bodyStr, "oidc:breakglass-create-all") || strings.Contains(bodyStr, "\"groups\":\"breakglass-create-all\"") || strings.Contains(bodyStr, "\"groups\":[\"breakglass-create-all\"") {
+				allow = true
+			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":true}}`)
+			if allow {
+				_, _ = io.WriteString(w, `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":true}}`)
+			} else {
+				_, _ = io.WriteString(w, `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":false}}`)
+			}
 			return
 		}
 		http.NotFound(w, r)
@@ -550,7 +565,11 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 
 	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
 
-	allowed, grp, name := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	// craft an incoming SAR that includes the prefixed incoming group to trigger detection
+	prefSAR := sar
+	prefSAR.Spec.Groups = []string{"oidc:breakglass-create-all"}
+
+	allowed, grp, name, impersonated := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, prefSAR, "test-cluster")
 	if !allowed {
 		t.Fatalf("expected prefixed session SAR to allow but it did not")
 	}
@@ -559,6 +578,9 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 	}
 	if name != ses.Name {
 		t.Fatalf("expected session name %s got %s", ses.Name, name)
+	}
+	if impersonated != "oidc:breakglass-create-all" {
+		t.Fatalf("expected impersonated group to be oidc:breakglass-create-all but got %s", impersonated)
 	}
 }
 
@@ -581,7 +603,7 @@ func TestAuthorizeViaSessions_ErrorPath(t *testing.T) {
 
 	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
 
-	allowed, _, _ := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	allowed, _, _, _ := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
 	if allowed {
 		t.Fatalf("expected session SAR to not allow when server errors")
 	}

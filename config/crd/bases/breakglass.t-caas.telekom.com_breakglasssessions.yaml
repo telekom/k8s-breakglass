@@ -264,6 +264,11 @@ spec:
                   Last time session was used for breakglass session based authorization.
                 format: date-time
                 type: string
+              reasonEnded:
+                description: |-
+                  reasonEnded stores a short reason for why the session ended or entered a terminal state.
+                  Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
+                type: string
               rejectedAt:
                 description: rejectedAt is the time when the session was rejected.
                 format: date-time

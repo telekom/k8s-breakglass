@@ -97,6 +97,7 @@ const approverSessions = computed(() =>
           <th>Name</th>
           <th>Cluster</th>
           <th>Group</th>
+          <th>Request reason</th>
           <th>User</th>
           <th>Approved by</th>
           <th>Started</th>
@@ -111,6 +112,7 @@ const approverSessions = computed(() =>
           <td>{{ s.name }}</td>
           <td>{{ s.cluster }}</td>
           <td>{{ s.group }}</td>
+          <td>{{ s.spec && s.spec.requestReason ? s.spec.requestReason : '-' }}</td>
           <td>{{ (s.spec && (s.spec.user || s.spec.requester)) || '-' }}</td>
           <td>{{ s.status && (s.status.approver || (s.status.approvers && s.status.approvers.length ? s.status.approvers[s.status.approvers.length-1] : null)) || '-' }}</td>
           <td>{{ formatDate(startedForDisplay(s)) }}</td>
