@@ -548,22 +548,10 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 	}
 	sarClient := clientset.AuthorizationV1().SubjectAccessReviews()
 	for _, s := range sessions {
-		// Try plain session SAR (system:breakglass-session + granted group)
-		tryGroups := []string{s.Spec.GrantedGroup}
-		tried := 0
-		// Instead of trying all configured OIDC prefixes blindly, detect
-		// which prefixes could apply by examining incoming groups and the
-		// escalation's allowed groups. Collect ALL candidate prefixes and
-		// try all deduplicated outcomes. This covers cases where multiple
-		// incoming groups use different prefixes (for example multiple
-		// identity providers) and we must try each possibility.
-		matchedPrefixes := make([]string, 0)
 		var allowedGroupsToCheck []string
-		// Try to resolve escalation attached to the session via OwnerReferences
+		// Resolve escalation via OwnerReferences first
 		if len(s.OwnerReferences) > 0 && wc.escalManager != nil {
-			// Prefer owner reference that likely points to the BreakglassEscalation
 			for _, or := range s.OwnerReferences {
-				// Lookup escalation by name using the manager's filter helper
 				escs, eerr := wc.escalManager.GetBreakglassEscalationsWithFilter(ctx, func(be v1alpha1.BreakglassEscalation) bool {
 					return be.Name == or.Name
 				})
@@ -573,7 +561,6 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 					} else if wc.log != nil {
 						wc.log.With("error", eerr, "ownerRef", or).Debug("failed to lookup escalation for session ownerRef")
 					}
-					// don't break; try next ownerRef if present
 					continue
 				}
 				if len(escs) > 0 {
@@ -582,10 +569,11 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 				}
 			}
 		}
-		// If no escalation found or escalation had no allowed groups, fall back
-		// to using the session's granted group for prefix detection (preserves
-		// previous behavior in edge cases).
+
 		if len(allowedGroupsToCheck) == 0 {
+			// Fallback: when no escalation allowed groups are available, try
+			// the plain granted group so sessions without explicit escalation
+			// ownerRefs still enable standard session-based SAR checks.
 			allowedGroupsToCheck = []string{s.Spec.GrantedGroup}
 			if logger != nil {
 				logger.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "grantedGroup", s.Spec.GrantedGroup)
@@ -593,99 +581,56 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 				wc.log.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "grantedGroup", s.Spec.GrantedGroup)
 			}
 		}
-		if incoming.Spec.Groups != nil && len(wc.config.Kubernetes.OIDCPrefixes) > 0 {
-			if logger != nil {
-				logger.Debugw("Beginning OIDC prefix detection", "incomingGroups", incoming.Spec.Groups, "allowedGroupsToCheck", allowedGroupsToCheck, "oidcPrefixes", wc.config.Kubernetes.OIDCPrefixes)
-			} else if wc.log != nil {
-				wc.log.Debugw("Beginning OIDC prefix detection", "incomingGroups", incoming.Spec.Groups, "allowedGroupsToCheck", allowedGroupsToCheck, "oidcPrefixes", wc.config.Kubernetes.OIDCPrefixes)
-			}
-			// Build a set of candidate prefixes by checking each incoming
-			// group against each allowed group. When an incoming group
-			// either equals an allowed group (no prefix) or has a
-			// prefix + allowedGroup, note the prefix. We intentionally
-			// collect all matches so we can try all plausible
-			// impersonation groups.
-			prefSeen := make(map[string]bool)
+
+		prefixes := wc.config.Kubernetes.OIDCPrefixes
+		// Find a primary prefix by matching incoming groups to allowed groups
+		var primaryPrefix string
+		if incoming.Spec.Groups != nil && len(prefixes) > 0 {
 			for _, ig := range incoming.Spec.Groups {
 				for _, allowed := range allowedGroupsToCheck {
-					if ig == allowed {
-						// exact match -> also try the plain granted group
-						if !prefSeen[""] {
-							matchedPrefixes = append(matchedPrefixes, "")
-							prefSeen[""] = true
+					for _, p := range prefixes {
+						if strings.HasPrefix(ig, p) && strings.HasSuffix(ig, allowed) {
+							primaryPrefix = p
+							break
 						}
-						if logger != nil {
-							logger.Debugw("Incoming group exactly matches allowed group; will try plain group", "incomingGroup", ig, "allowedGroup", allowed, "session", s.Name)
-						} else if wc.log != nil {
-							wc.log.Debugw("Incoming group exactly matches allowed group; will try plain group", "incomingGroup", ig, "allowedGroup", allowed, "session", s.Name)
-						}
-						continue
 					}
-					if strings.HasSuffix(ig, allowed) {
-						candidate := ig[:len(ig)-len(allowed)]
-						if logger != nil {
-							logger.Debugw("Found suffix match candidate for allowed group", "incomingGroup", ig, "allowedGroup", allowed, "candidate", candidate, "session", s.Name)
-						} else if wc.log != nil {
-							wc.log.Debugw("Found suffix match candidate for allowed group", "incomingGroup", ig, "allowedGroup", allowed, "candidate", candidate, "session", s.Name)
-						}
-						// Compare candidate against configured OIDC prefixes
-						for _, p := range wc.config.Kubernetes.OIDCPrefixes {
-							if candidate == p {
-								if !prefSeen[p] {
-									matchedPrefixes = append(matchedPrefixes, p)
-									prefSeen[p] = true
-								}
-								if logger != nil {
-									logger.Debugw("Matched OIDC prefix candidate", "prefix", p, "candidate", candidate, "incomingGroup", ig, "session", s.Name)
-								} else if wc.log != nil {
-									wc.log.Debugw("Matched OIDC prefix candidate", "prefix", p, "candidate", candidate, "incomingGroup", ig, "session", s.Name)
-								}
-							}
-						}
+					if primaryPrefix != "" {
+						break
 					}
 				}
-			}
-			// If we found any prefixes, append all prefixed variants to tryGroups
-			if len(matchedPrefixes) > 0 {
-				// ensure deterministic order by iterating matchedPrefixes
-				for _, p := range matchedPrefixes {
-					if p == "" {
-						// plain granted group already present in tryGroups; skip
-						continue
-					}
-					prefGroup := p + s.Spec.GrantedGroup
-					tryGroups = append(tryGroups, prefGroup)
-					if logger != nil {
-						logger.Debugw("Appending prefixed group to tryGroups", "prefixedGroup", prefGroup, "prefix", p, "session", s.Name)
-					} else if wc.log != nil {
-						wc.log.Debugw("Appending prefixed group to tryGroups", "prefixedGroup", prefGroup, "prefix", p, "session", s.Name)
-					}
+				if primaryPrefix != "" {
+					break
 				}
 			}
-			// Log summary of prefix detection and dedupe tryGroups to avoid redundant SAR attempts
-			if logger != nil {
-				logger.Debugw("OIDC prefix detection summary", "matchedPrefixes", matchedPrefixes, "tryGroupsBeforeDedupe", tryGroups, "session", s.Name)
-			} else if wc.log != nil {
-				wc.log.Debugw("OIDC prefix detection summary", "matchedPrefixes", matchedPrefixes, "tryGroupsBeforeDedupe", tryGroups, "session", s.Name)
-			}
-			// Deduplicate tryGroups while preserving order
-			seenTry := make(map[string]bool)
-			deduped := make([]string, 0, len(tryGroups))
-			for _, tg := range tryGroups {
-				if !seenTry[tg] {
-					deduped = append(deduped, tg)
-					seenTry[tg] = true
-				}
-			}
-			tryGroups = deduped
 		}
+
+		// Build ordered list of impersonation groups to try. We include the plain
+		// granted group as a baseline. If a primary prefix is detected, try it
+		// first, then the plain group, then remaining prefixes. Otherwise try
+		// plain group first followed by configured prefixes.
+		groupsToTry := make([]string, 0, len(prefixes)+1)
+		if primaryPrefix != "" {
+			groupsToTry = append(groupsToTry, primaryPrefix+s.Spec.GrantedGroup)
+			groupsToTry = append(groupsToTry, s.Spec.GrantedGroup)
+			for _, p := range prefixes {
+				if p != primaryPrefix {
+					groupsToTry = append(groupsToTry, p+s.Spec.GrantedGroup)
+				}
+			}
+		} else {
+			groupsToTry = append(groupsToTry, s.Spec.GrantedGroup)
+			for _, p := range prefixes {
+				groupsToTry = append(groupsToTry, p+s.Spec.GrantedGroup)
+			}
+		}
+
 		if logger != nil {
-			logger.Debugw("Attempting session SARs for tryGroups", "tryGroups", tryGroups, "session", s.Name)
+			logger.Debugw("Impersonation groups to try", "groupsToTry", groupsToTry, "session", s.Name)
 		} else if wc.log != nil {
-			wc.log.Debugw("Attempting session SARs for tryGroups", "tryGroups", tryGroups, "session", s.Name)
+			wc.log.Debugw("Impersonation groups to try", "groupsToTry", groupsToTry, "session", s.Name)
 		}
-		for _, g := range tryGroups {
-			tried++
+
+		for _, g := range groupsToTry {
 			sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   "system:breakglass-session",
 				Groups: []string{g},
@@ -722,23 +667,11 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 					wc.log.Debugw("Session SAR response", "group", g, "session", s.Name, "allowed", resp.Status.Allowed, "reason", resp.Status.Reason)
 				}
 			}
-			if resp.Status.Allowed {
+			if resp != nil && resp.Status.Allowed {
 				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName, s.Name, g).Inc()
-				// return the original granted group (not the prefixed variant) to keep session mapping clear
-				// also return the actual impersonated group we used that succeeded
 				return true, s.Spec.GrantedGroup, s.Name, g
-			} else {
-				// Log the SAR response status details for debugging when not allowed
-				if logger != nil {
-					logger.Debugw("Session SAR response not allowed", "group", g, "session", s.Name, "status", resp.Status)
-				} else if wc.log != nil {
-					wc.log.Debugw("Session SAR response not allowed", "group", g, "session", s.Name, "status", resp.Status)
-				}
-				metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName, s.Name, g).Inc()
 			}
-		}
-		if tried == 0 {
-			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName, s.Name, s.Spec.GrantedGroup).Inc()
+			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName, s.Name, g).Inc()
 		}
 	}
 	return false, "", "", ""
