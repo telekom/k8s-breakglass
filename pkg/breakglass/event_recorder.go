@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
+
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
 )
 
 // K8sEventRecorder implements record.EventRecorder but writes Events via the provided clientset.
@@ -76,11 +78,15 @@ func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, messa
 	// best-effort write; surface errors to optional logger so operators can diagnose
 	if created, err := r.Clientset.CoreV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{}); err != nil {
 		if r.Logger != nil {
-			r.Logger.Warnw("failed to create kubernetes Event", "namespace", ns, "object", metaObj.GetName(), "reason", reason, "message", message, "error", err)
+			// include namespace information for the involved object
+			fields := system.NamespacedFields(metaObj.GetName(), ns)
+			r.Logger.Warnw("failed to create kubernetes Event", append(fields, "reason", reason, "message", message, "error", err)...)
 		}
 	} else {
 		if r.Logger != nil {
-			r.Logger.Debugw("kubernetes Event created", "namespace", ns, "name", created.GetName(), "reason", reason, "message", message)
+			// created is namespaced where Namespace == ns
+			fields := system.NamespacedFields(created.GetName(), created.GetNamespace())
+			r.Logger.Debugw("kubernetes Event created", append(fields, "reason", reason, "message", message)...)
 		}
 	}
 }

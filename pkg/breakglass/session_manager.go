@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/fields"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -73,13 +74,13 @@ func (c SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]v1alpha
 
 // Get all stored GetClusterGroupAccess
 func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name string) (v1alpha1.BreakglassSession, error) {
-	zap.S().Debugw("Fetching BreakglassSession by name", "name", name)
+	zap.S().Debugw("Fetching BreakglassSession by name", system.NamespacedFields(name, "")...)
 	bs := v1alpha1.BreakglassSession{}
 	if err := c.Get(ctx, client.ObjectKey{Name: name}, &bs); err != nil {
-		zap.S().Errorw("Failed to get BreakglassSession by name", "name", name, "error", err.Error())
+		zap.S().Errorw("Failed to get BreakglassSession by name", append(system.NamespacedFields(name, ""), "error", err.Error())...)
 		return bs, errors.Wrap(err, "failed to get BreakglassSession by name")
 	}
-	zap.S().Infow("Fetched BreakglassSession by name", "name", name)
+	zap.S().Infow("Fetched BreakglassSession by name", system.NamespacedFields(name, "")...)
 	return bs, nil
 }
 
@@ -133,32 +134,32 @@ func (c SessionManager) GetBreakglassSessionsWithSelector(ctx context.Context,
 
 // Add new breakglass session.
 func (c SessionManager) AddBreakglassSession(ctx context.Context, bs v1alpha1.BreakglassSession) error {
-	zap.S().Infow("Adding new BreakglassSession", "name", bs.Name, "user", bs.Spec.User, "cluster", bs.Spec.Cluster)
+	zap.S().Infow("Adding new BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "user", bs.Spec.User, "cluster", bs.Spec.Cluster)...)
 	if err := c.Create(ctx, &bs); err != nil {
-		zap.S().Errorw("Failed to create new BreakglassSession", "name", bs.Name, "error", err.Error())
+		zap.S().Errorw("Failed to create new BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
 		return errors.Wrap(err, "failed to create new BreakglassSession")
 	}
-	zap.S().Info("BreakglassSession created successfully", "name", bs.Name)
+	zap.S().Infow("BreakglassSession created successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	return nil
 }
 
 // Update breakglass session.
 func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs v1alpha1.BreakglassSession) error {
-	zap.S().Infow("Updating BreakglassSession", "name", bs.Name)
+	zap.S().Infow("Updating BreakglassSession", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	if err := c.Update(ctx, &bs); err != nil {
-		zap.S().Errorw("Failed to update BreakglassSession", "name", bs.Name, "error", err.Error())
+		zap.S().Errorw("Failed to update BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
 		return errors.Wrapf(err, "failed to update new BreakglassSession")
 	}
-	zap.S().Info("BreakglassSession updated successfully", "name", bs.Name)
+	zap.S().Infow("BreakglassSession updated successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	return nil
 }
 
 func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1alpha1.BreakglassSession) error {
-	zap.S().Infow("Updating BreakglassSession status", "name", bs.Name)
+	zap.S().Infow("Updating BreakglassSession status", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	if err := c.Status().Update(ctx, &bs); err != nil {
-		zap.S().Errorw("Failed to update BreakglassSession status", "name", bs.Name, "error", err.Error())
+		zap.S().Errorw("Failed to update BreakglassSession status", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
 		return errors.Wrapf(err, "failed to update new BreakglassSession")
 	}
-	zap.S().Info("BreakglassSession status updated successfully", "name", bs.Name)
+	zap.S().Infow("BreakglassSession status updated successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	return nil
 }

@@ -48,3 +48,13 @@ func EnrichReqLoggerWithAuth(c *gin.Context, reqLogger *zap.SugaredLogger) *zap.
 	}
 	return reqLogger
 }
+
+// NamespacedFields returns a variadic slice of key/value pairs suitable for passing
+// to SugaredLogger.With or Infow/Errorw calls. If namespace is empty it will only
+// include the "name" key; otherwise it includes both "name" and "namespace".
+func NamespacedFields(name, namespace string) []interface{} {
+	if namespace == "" {
+		return []interface{}{"name", name}
+	}
+	return []interface{}{"name", name, "namespace", namespace}
+}

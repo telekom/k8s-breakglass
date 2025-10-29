@@ -795,10 +795,10 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 // handleGetBreakglassSessionByName handles GET /breakglassSessions/:name and returns a single session
 func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.Context) {
 	sessionName := c.Param("name")
-	wc.log.Debugw("Handling GET /breakglassSessions/:name", "name", sessionName)
+	wc.log.Debugw("Handling GET /breakglassSessions/:name", system.NamespacedFields(sessionName, "")...)
 	ses, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
-		wc.log.Debugw("Get by name: session not found", "name", sessionName, "error", err)
+		wc.log.Debugw("Get by name: session not found", append(system.NamespacedFields(sessionName, ""), "error", err)...)
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}

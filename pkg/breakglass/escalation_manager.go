@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
+	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/fields"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,10 +48,10 @@ func (em EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Conte
 	output := make([]telekomv1alpha1.BreakglassEscalation, 0, len(ess.Items))
 	for _, it := range ess.Items {
 		if filter(it) {
-			zap.S().Debugw("Escalation matched filter", "name", it.Name, "namespace", it.Namespace)
+			zap.S().Debugw("Escalation matched filter", system.NamespacedFields(it.Name, it.Namespace)...)
 			output = append(output, it)
 		} else {
-			zap.S().Debugw("Escalation did not match filter", "name", it.Name, "namespace", it.Namespace)
+			zap.S().Debugw("Escalation did not match filter", system.NamespacedFields(it.Name, it.Namespace)...)
 		}
 	}
 
@@ -93,15 +94,15 @@ func (em EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 		matched := false
 		for _, group := range groups {
 			if slices.Contains(allowedGroups, group) {
-				zap.S().Debugw("Escalation matches user group", "escalation", be.Name, "matchingGroup", group, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)
+				zap.S().Debugw("Escalation matches user group", append(system.NamespacedFields(be.Name, ""), "matchingGroup", group, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)...)
 				matched = true
 				break
 			} else {
-				zap.S().Debugw("Group not in allowed list", "escalation", be.Name, "candidateGroup", group, "normalizedAllowedGroups", allowedGroups)
+				zap.S().Debugw("Group not in allowed list", append(system.NamespacedFields(be.Name, ""), "candidateGroup", group, "normalizedAllowedGroups", allowedGroups)...)
 			}
 		}
 		if !matched {
-			zap.S().Debugw("Escalation does not match any user groups", "escalation", be.Name, "userGroups", groups, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)
+			zap.S().Debugw("Escalation does not match any user groups", append(system.NamespacedFields(be.Name, ""), "userGroups", groups, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)...)
 		}
 		return matched
 	})
