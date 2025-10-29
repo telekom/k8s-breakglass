@@ -44,7 +44,7 @@ func (ccc ClusterConfigChecker) Start(ctx context.Context) {
 			return
 		default:
 		}
-		ccc.runOnce(ctx)
+		ccc.runOnce(ctx, lg)
 		select {
 		case <-ctx.Done():
 			lg.Info("ClusterConfigChecker stopping (context canceled)")
@@ -54,8 +54,7 @@ func (ccc ClusterConfigChecker) Start(ctx context.Context) {
 	}
 }
 
-func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
-	lg := ccc.Log
+func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogger) {
 
 	lg.Debug("Running ClusterConfig validation check")
 	list := telekomv1alpha1.ClusterConfigList{}
@@ -87,7 +86,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 				"secretNamespace", ref.Namespace,
 				"error", err)
 			// update status and emit event
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
@@ -106,7 +105,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 				"secret", ref.Name,
 				"secretNamespace", ref.Namespace,
 				"secretCreation", sec.CreationTimestamp.Time.Format(time.RFC3339))
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
@@ -125,7 +124,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 		if err != nil {
 			msg := "kubeconfig parse failed: " + err.Error()
 			lg.Warnw(msg, "cluster", cc.Name)
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
@@ -135,7 +134,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 		if err := CheckClusterReachable(restCfg); err != nil {
 			msg := "cluster unreachable: " + err.Error()
 			lg.Warnw(msg, "cluster", cc.Name)
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
@@ -143,16 +142,14 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 		}
 
 		// Success: update status Ready and emit Normal event
-		if err2 := ccc.setStatusAndEvent(ctx, &cc, "Ready", "Kubeconfig validated and cluster reachable", corev1.EventTypeNormal); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, &cc, "Ready", "Kubeconfig validated and cluster reachable", corev1.EventTypeNormal, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 	}
 	lg.Debug("ClusterConfig validation check completed")
 }
 
-func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string) error {
-	// nil-safe logger
-	lg := ccc.Log
+func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
 
 	// update status
 	now := metav1.Now()

@@ -30,28 +30,53 @@ func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, messa
 	if !ok {
 		return
 	}
-	// Always emit events into the configured recorder namespace; fall back to object's namespace then default
-	ns := r.Namespace
-	if ns == "" {
+	// Determine controller (recorder) namespace.
+	// Prefer the POD_NAMESPACE environment variable when present (set by many
+	// deployment systems). Fall back to the recorder's configured Namespace and
+	// lastly try the in-cluster serviceaccount namespace file.
+	controllerNS := os.Getenv("POD_NAMESPACE")
+	if controllerNS == "" {
+		controllerNS = r.Namespace
+	}
+	if controllerNS == "" {
 		// try reading namespace from pod serviceaccount file (in-cluster default)
 		data, _ := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 		if len(data) > 0 {
-			ns = strings.TrimSpace(string(data))
-		}
-		if ns == "" {
-			ns = metaObj.GetNamespace()
-			if ns == "" {
-				ns = "default"
-			}
+			controllerNS = strings.TrimSpace(string(data))
 		}
 	}
+
+	// Decide event namespace: prefer controller namespace when available.
+	// If no controller namespace configured, fall back to the object's namespace
+	// (for namespaced objects). If both are empty, use "default".
+	ns := controllerNS
+	if ns == "" {
+		ns = metaObj.GetNamespace()
+		if ns == "" {
+			ns = "default"
+		}
+	}
+
+	// Ensure involved object's namespace is set. For cluster-scoped objects the
+	// object's namespace will be empty — in that case set it to the controller
+	// namespace (so involvedObject.namespace equals the Event namespace).
+	involvedNS := metaObj.GetNamespace()
+	if involvedNS == "" {
+		// prefer controller namespace if available, otherwise the event namespace
+		if controllerNS != "" {
+			involvedNS = controllerNS
+		} else {
+			involvedNS = ns
+		}
+	}
+
 	ev := &corev1.Event{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: metaObj.GetName() + "-",
 			Namespace:    ns,
 		},
 		InvolvedObject: corev1.ObjectReference{
-			Namespace: metaObj.GetNamespace(),
+			Namespace: involvedNS,
 			Name:      metaObj.GetName(),
 			UID:       metaObj.GetUID(),
 		},

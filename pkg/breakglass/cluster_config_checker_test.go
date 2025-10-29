@@ -27,7 +27,7 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 	fakeRecorder := record.NewFakeRecorder(10)
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	// run once
-	checker.runOnce(context.Background())
+	checker.runOnce(context.Background(), checker.Log)
 	// read updated CC from client
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
@@ -41,7 +41,7 @@ func TestClusterConfigChecker_MissingKey(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc, sec).Build()
 	fakeRecorder := record.NewFakeRecorder(10)
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
-	checker.runOnce(context.Background())
+	checker.runOnce(context.Background(), checker.Log)
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	require.Equal(t, "Failed", got.Status.Phase)
@@ -58,7 +58,7 @@ func TestClusterConfigChecker_ParseFail(t *testing.T) {
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return nil, errors.New("parse error") }
 	defer func() { RestConfigFromKubeConfig = old }()
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
-	checker.runOnce(context.Background())
+	checker.runOnce(context.Background(), checker.Log)
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	require.Equal(t, "Failed", got.Status.Phase)
@@ -79,7 +79,7 @@ func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	CheckClusterReachable = func(cfg *rest.Config) error { return errors.New("timeout") }
 	defer func() { CheckClusterReachable = oldCheck }()
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
-	checker.runOnce(context.Background())
+	checker.runOnce(context.Background(), checker.Log)
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
 	require.Equal(t, "Failed", got.Status.Phase)
