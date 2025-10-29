@@ -583,19 +583,44 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		// previous behavior in edge cases).
 		if len(allowedGroupsToCheck) == 0 {
 			allowedGroupsToCheck = []string{s.Spec.GrantedGroup}
+			if logger != nil {
+				logger.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "grantedGroup", s.Spec.GrantedGroup)
+			} else if wc.log != nil {
+				wc.log.Debugw("No escalation allowed groups found; falling back to session granted group for prefix detection", "session", s.Name, "grantedGroup", s.Spec.GrantedGroup)
+			}
 		}
 		if incoming.Spec.Groups != nil && len(wc.config.Kubernetes.OIDCPrefixes) > 0 {
+			if logger != nil {
+				logger.Debugw("Beginning OIDC prefix detection", "incomingGroups", incoming.Spec.Groups, "allowedGroupsToCheck", allowedGroupsToCheck, "oidcPrefixes", wc.config.Kubernetes.OIDCPrefixes)
+			} else if wc.log != nil {
+				wc.log.Debugw("Beginning OIDC prefix detection", "incomingGroups", incoming.Spec.Groups, "allowedGroupsToCheck", allowedGroupsToCheck, "oidcPrefixes", wc.config.Kubernetes.OIDCPrefixes)
+			}
 			for _, ig := range incoming.Spec.Groups {
 				for _, allowed := range allowedGroupsToCheck {
 					if ig == allowed {
 						matchedPrefix = ""
+						if logger != nil {
+							logger.Debugw("Incoming group exactly matches allowed group; no prefix", "incomingGroup", ig, "allowedGroup", allowed, "session", s.Name)
+						} else if wc.log != nil {
+							wc.log.Debugw("Incoming group exactly matches allowed group; no prefix", "incomingGroup", ig, "allowedGroup", allowed, "session", s.Name)
+						}
 						break
 					}
 					if strings.HasSuffix(ig, allowed) {
 						candidate := ig[:len(ig)-len(allowed)]
+						if logger != nil {
+							logger.Debugw("Found suffix match candidate for allowed group", "incomingGroup", ig, "allowedGroup", allowed, "candidate", candidate, "session", s.Name)
+						} else if wc.log != nil {
+							wc.log.Debugw("Found suffix match candidate for allowed group", "incomingGroup", ig, "allowedGroup", allowed, "candidate", candidate, "session", s.Name)
+						}
 						for _, p := range wc.config.Kubernetes.OIDCPrefixes {
 							if candidate == p {
 								matchedPrefix = p
+								if logger != nil {
+									logger.Debugw("Matched OIDC prefix", "prefix", p, "candidate", candidate, "incomingGroup", ig, "session", s.Name)
+								} else if wc.log != nil {
+									wc.log.Debugw("Matched OIDC prefix", "prefix", p, "candidate", candidate, "incomingGroup", ig, "session", s.Name)
+								}
 								break
 							}
 						}
@@ -611,6 +636,16 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		}
 		if matchedPrefix != "" {
 			tryGroups = append(tryGroups, matchedPrefix+s.Spec.GrantedGroup)
+			if logger != nil {
+				logger.Debugw("Appending prefixed group to tryGroups", "prefixedGroup", matchedPrefix+s.Spec.GrantedGroup, "session", s.Name)
+			} else if wc.log != nil {
+				wc.log.Debugw("Appending prefixed group to tryGroups", "prefixedGroup", matchedPrefix+s.Spec.GrantedGroup, "session", s.Name)
+			}
+		}
+		if logger != nil {
+			logger.Debugw("Attempting session SARs for tryGroups", "tryGroups", tryGroups, "session", s.Name)
+		} else if wc.log != nil {
+			wc.log.Debugw("Attempting session SARs for tryGroups", "tryGroups", tryGroups, "session", s.Name)
 		}
 		for _, g := range tryGroups {
 			tried++
@@ -626,15 +661,29 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 					Name:        incoming.Spec.ResourceAttributes.Name,
 				},
 			}}
+			if logger != nil {
+				logger.Debugw("Creating SubjectAccessReview for session impersonation", "group", g, "session", s.Name)
+			} else if wc.log != nil {
+				wc.log.Debugw("Creating SubjectAccessReview for session impersonation", "group", g, "session", s.Name)
+			}
 			resp, err := sarClient.Create(ctx, sar, metav1.CreateOptions{})
 			if err != nil {
 				if logger != nil {
 					logger.With("error", err, "group", g).Warn("session SAR error")
+					logger.Debugw("Failed SAR create error details", "error", err, "sarSpec", sar.Spec)
 				} else if wc.log != nil {
 					wc.log.With("error", err, "group", g).Warn("session SAR error")
+					wc.log.Debugw("Failed SAR create error details", "error", err, "sarSpec", sar.Spec)
 				}
 				metrics.WebhookSessionSARErrors.WithLabelValues(clusterName, s.Name, g).Inc()
 				continue
+			}
+			if resp != nil {
+				if logger != nil {
+					logger.Debugw("Session SAR response", "group", g, "session", s.Name, "allowed", resp.Status.Allowed, "reason", resp.Status.Reason)
+				} else if wc.log != nil {
+					wc.log.Debugw("Session SAR response", "group", g, "session", s.Name, "allowed", resp.Status.Allowed, "reason", resp.Status.Reason)
+				}
 			}
 			if resp.Status.Allowed {
 				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName, s.Name, g).Inc()
