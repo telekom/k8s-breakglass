@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
@@ -24,7 +25,7 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 	}
 	cl := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc).Build()
 	fakeRecorder := record.NewFakeRecorder(10)
-	checker := ClusterConfigChecker{Log: nil, Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	// run once
 	checker.runOnce(context.Background())
 	// read updated CC from client
@@ -39,7 +40,7 @@ func TestClusterConfigChecker_MissingKey(t *testing.T) {
 	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-b"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s1", Namespace: "default"}}}
 	cl := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc, sec).Build()
 	fakeRecorder := record.NewFakeRecorder(10)
-	checker := ClusterConfigChecker{Log: nil, Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background())
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
@@ -56,7 +57,7 @@ func TestClusterConfigChecker_ParseFail(t *testing.T) {
 	old := RestConfigFromKubeConfig
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return nil, errors.New("parse error") }
 	defer func() { RestConfigFromKubeConfig = old }()
-	checker := ClusterConfigChecker{Log: nil, Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background())
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
@@ -77,7 +78,7 @@ func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	oldCheck := CheckClusterReachable
 	CheckClusterReachable = func(cfg *rest.Config) error { return errors.New("timeout") }
 	defer func() { CheckClusterReachable = oldCheck }()
-	checker := ClusterConfigChecker{Log: nil, Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background())
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
