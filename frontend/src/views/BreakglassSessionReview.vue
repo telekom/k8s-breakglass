@@ -133,6 +133,19 @@ async function onDrop(bg: SessionCR) {
     handleAxiosError('BreakglassSessionReview.onDrop', errResponse, 'Failed to drop session');
   }
 }
+
+async function onCancel(bg: SessionCR) {
+  try {
+    // For approvers cancelling active sessions, call drop endpoint (server treats approver cancel as drop)
+    const response = await service.cancelSession({ name: bg.metadata?.name || bg.name || '' });
+    if (response.status === 200) await getActiveBreakglasses();
+  } catch (errResponse: any) {
+    if (errResponse?.response?.status === 401 || errResponse?.status === 401) {
+      state.getBreakglassesMsg = "You are not authorized to display requested resources";
+    }
+    handleAxiosError('BreakglassSessionReview.onCancel', errResponse, 'Failed to cancel session');
+  }
+}
 </script>
 
 
@@ -151,7 +164,7 @@ async function onDrop(bg: SessionCR) {
       <div v-else class="breakglass-list">
         <BreakglassSessionCard v-for="bg in filteredBreakglasses" class="card" :breakglass="bg" :time="time"
           :currentUserEmail="currentUserEmail"
-          @accept="() => { onAccept(bg); }" @reject="() => { onReject(bg); }" @drop="() => { onDrop(bg); }">
+          @accept="() => { onAccept(bg); }" @reject="() => { onReject(bg); }" @drop="() => { onDrop(bg); }" @cancel="() => { onCancel(bg); }">
         </BreakglassSessionCard>
       </div>
     </div>

@@ -14,7 +14,7 @@ const props = defineProps<{
   currentUserEmail?: string;
 }>();
 
-const emit = defineEmits(["accept", "reject", "drop"]);
+const emit = defineEmits(["accept", "reject", "drop", "cancel"]);
 
 const retained = computed(() => props.breakglass.status.retainedUntil !== null  &&
   Date.parse(props.breakglass.status.retainedUntil) - props.time > 0)
@@ -26,7 +26,16 @@ function accept() {
 }
 
 function reject() {
-  // Emit 'drop' when owner withdraw action expected, otherwise emit 'reject'
+  // For approved sessions: owner -> drop, others -> cancel
+  if (approved.value) {
+    if (ownerAction.value === 'withdraw') {
+      emit('drop');
+    } else {
+      emit('cancel');
+    }
+    return;
+  }
+  // Non-approved/pending: Emit 'drop' when owner withdraw action expected, otherwise emit 'reject'
   if (ownerAction.value === 'withdraw') {
     emit('drop');
     return;
@@ -89,7 +98,12 @@ const ownerAction = computed(() => {
 });
 
 // computed label for the reject/withdraw button to avoid template ref confusion
-const ownerActionLabel = computed(() => ownerAction.value === 'withdraw' ? 'Drop' : 'Reject');
+const ownerActionLabel = computed(() => {
+  if (approved.value) {
+    return ownerAction.value === 'withdraw' ? 'Drop' : 'Cancel';
+  }
+  return ownerAction.value === 'withdraw' ? 'Drop' : 'Reject';
+});
 
 </script>
 
@@ -112,6 +126,9 @@ const ownerActionLabel = computed(() => ownerAction.value === 'withdraw' ? 'Drop
       <p v-if="requestedAt">
         <b>Requested at:</b> {{ requestedAt }}
       </p>
+      <p v-if="props.breakglass.spec && props.breakglass.spec.requestReason">
+        <b>Request reason:</b> {{ props.breakglass.spec.requestReason }}
+      </p>
       <p v-if="approvedAt">
         <b>Approved at:</b> {{ approvedAt }}
       </p>
@@ -120,6 +137,9 @@ const ownerActionLabel = computed(() => ownerAction.value === 'withdraw' ? 'Drop
       </p>
       <p v-if="approver">
         <b>Approved by:</b> {{ approver }}
+      </p>
+      <p v-if="props.breakglass.status && props.breakglass.status.approvalReason">
+        <b>Approval reason:</b> {{ props.breakglass.status.approvalReason }}
       </p>
       <p v-else-if="props.breakglass.status && props.breakglass.status.approvers && props.breakglass.status.approvers.length">
         <b>Approvers:</b> {{ props.breakglass.status.approvers.join(', ') }}

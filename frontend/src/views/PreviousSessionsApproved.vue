@@ -97,8 +97,11 @@ const approverSessions = computed(() =>
           <th>Name</th>
           <th>Cluster</th>
           <th>Group</th>
+          <th>User</th>
+          <th>Approved by</th>
           <th>Started</th>
           <th>Ended</th>
+          <th>Approval reason</th>
           <th>Reason Ended</th>
           <th>Status</th>
         </tr>
@@ -108,8 +111,11 @@ const approverSessions = computed(() =>
           <td>{{ s.name }}</td>
           <td>{{ s.cluster }}</td>
           <td>{{ s.group }}</td>
+          <td>{{ (s.spec && (s.spec.user || s.spec.requester)) || '-' }}</td>
+          <td>{{ s.status && (s.status.approver || (s.status.approvers && s.status.approvers.length ? s.status.approvers[s.status.approvers.length-1] : null)) || '-' }}</td>
           <td>{{ formatDate(startedForDisplay(s)) }}</td>
           <td>{{ formatDate(endedForDisplay(s)) }}</td>
+          <td>{{ s.status && s.status.approvalReason ? s.status.approvalReason : '-' }}</td>
           <td>{{ reasonEndedLabel(s) }}</td>
           <td>{{ s.state }}</td>
         </tr>

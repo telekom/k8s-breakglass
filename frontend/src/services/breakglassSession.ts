@@ -133,4 +133,15 @@ export default class BreakglassSessionService {
       throw e;
     }
   }
+
+  public async cancelSession(review: BreakglassSessionRequest) {
+    // RESTful: POST /breakglassSessions/:name/cancel (approver cancels running session)
+    if (!review.name) throw new Error('Missing session name for cancel');
+    try {
+      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/cancel`, {});
+    } catch (e) {
+      handleAxiosError('BreakglassSessionService.cancelSession', e, 'Failed to cancel session');
+      throw e;
+    }
+  }
 }
