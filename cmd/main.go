@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
+	v1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/api"
@@ -113,6 +114,38 @@ func main() {
 
 	// ClusterConfig checker: validates that referenced kubeconfig secrets contain the expected key
 	go breakglass.ClusterConfigChecker{Log: log, Client: escalationManager.Client, Recorder: recorder, Interval: interval}.Start(ctx)
+
+	// Optionally start a controller-runtime manager to register webhooks (non-blocking).
+	// Control via ENABLE_WEBHOOK_MANAGER env var (default: true).
+	enableMgr := os.Getenv("ENABLE_WEBHOOK_MANAGER")
+	if enableMgr == "" || enableMgr == "true" {
+		go func() {
+			mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{})
+			if merr != nil {
+				log.Warnw("Failed to start controller-runtime manager; webhooks will not be registered", "error", merr)
+				return
+			}
+			// Register BreakglassSession, BreakglassEscalation and ClusterConfig webhooks with manager
+			if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup BreakglassSession webhook with manager", "error", err)
+				return
+			}
+			if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup BreakglassEscalation webhook with manager", "error", err)
+				return
+			}
+			if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup ClusterConfig webhook with manager", "error", err)
+				return
+			}
+			// Start manager (blocks) but we run it in a goroutine so it doesn't prevent the API server
+			if err := mgr.Start(ctx); err != nil {
+				log.Warnw("controller-runtime manager exited", "error", err)
+			}
+		}()
+	} else {
+		log.Infow("Webhook manager disabled via ENABLE_WEBHOOK_MANAGER", "value", enableMgr)
+	}
 
 	server.Listen()
 }

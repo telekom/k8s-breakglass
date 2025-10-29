@@ -17,7 +17,18 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
+	"fmt"
+	"reflect"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type (
@@ -168,6 +179,97 @@ type BreakglassSession struct {
 
 	// OwnerReferences allows linking this session to its escalation
 	OwnerReferences []metav1.OwnerReference `json:"ownerReferences,omitempty"`
+}
+
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglasssessions,verbs=create;update,versions=v1alpha1,name=vbreakglasssession.kb.io,admissionReviewVersions={v1,v1beta1}
+
+// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
+func (bs *BreakglassSession) ValidateCreate() error {
+	var allErrs field.ErrorList
+	// basic validations
+	if bs.Spec.Cluster == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("cluster"), "cluster is required"))
+	}
+	if bs.Spec.User == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("user"), "user is required"))
+	}
+	if bs.Spec.GrantedGroup == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("grantedGroup"), "grantedGroup is required"))
+	}
+	if len(allErrs) == 0 {
+		// global name uniqueness: prefer cache-backed listing
+		if webhookCache != nil {
+			var list BreakglassSessionList
+			if err := webhookCache.List(context.Background(), &list); err == nil {
+				for _, item := range list.Items {
+					if item.Name == bs.Name && item.Namespace != bs.Namespace {
+						msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+						allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+						break
+					}
+				}
+			}
+		} else if webhookClient != nil {
+			var list BreakglassSessionList
+			if err := webhookClient.List(context.Background(), &list, &client.ListOptions{}); err == nil {
+				for _, item := range list.Items {
+					if item.Name == bs.Name && item.Namespace != bs.Namespace {
+						msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+						allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+						break
+					}
+				}
+			}
+		}
+		if len(allErrs) == 0 {
+			return nil
+		}
+	}
+	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, bs.Name, allErrs)
+}
+
+// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
+func (bs *BreakglassSession) ValidateUpdate(old runtime.Object) error {
+	var allErrs field.ErrorList
+	// Enforce immutability of Spec (kubebuilder marker also exists), ensure spec == old.spec
+	if oldBs, ok := old.(*BreakglassSession); ok {
+		if !reflect.DeepEqual(bs.Spec, oldBs.Spec) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), bs.Spec, "spec is immutable"))
+		}
+	}
+	// global name uniqueness check on update as well
+	if webhookClient != nil {
+		var list BreakglassSessionList
+		if err := webhookClient.List(context.Background(), &list, &client.ListOptions{}); err == nil {
+			for _, item := range list.Items {
+				if item.Name == bs.Name && item.Namespace != bs.Namespace {
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), "name must be unique cluster-wide"))
+					break
+				}
+			}
+		}
+	}
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, bs.Name, allErrs)
+}
+
+// ValidateDelete implements webhook.Validator so a webhook will be registered for the type
+func (bs *BreakglassSession) ValidateDelete() error {
+	// no-op; allow deletes
+	return nil
+}
+
+// SetupWebhookWithManager registers the webhooks with the controller manager
+func (bs *BreakglassSession) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	webhookClient = mgr.GetClient()
+	if c := mgr.GetCache(); c != nil {
+		webhookCache = c
+	}
+	return ctrl.NewWebhookManagedBy(mgr).
+		For(bs).
+		Complete()
 }
 
 // +kubebuilder:object:root=true

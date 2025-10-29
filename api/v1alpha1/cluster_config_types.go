@@ -1,6 +1,17 @@
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	"context"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
 
 // ClusterConfigSpec defines metadata and secret reference for a managed tenant cluster.
 // This enables the hub (breakglass) instance to perform authorization checks (SAR) on the target cluster.
@@ -79,6 +90,95 @@ type ClusterConfig struct {
 
 	Spec   ClusterConfigSpec   `json:"spec"`
 	Status ClusterConfigStatus `json:"status,omitempty"`
+}
+
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-clusterconfig,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=clusterconfigs,verbs=create;update,versions=v1alpha1,name=vclusterconfig.kb.io,admissionReviewVersions={v1,v1beta1}
+
+// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
+func (cc *ClusterConfig) ValidateCreate() error {
+	var allErrs field.ErrorList
+	if cc.Spec.KubeconfigSecretRef.Name == "" || cc.Spec.KubeconfigSecretRef.Namespace == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("kubeconfigSecretRef"), "kubeconfigSecretRef name and namespace are required"))
+	}
+	// global name uniqueness across namespaces - prefer cache-backed listing
+	if webhookCache != nil {
+		var list ClusterConfigList
+		if err := webhookCache.List(context.Background(), &list); err == nil {
+			for _, item := range list.Items {
+				if item.Name == cc.Name && item.Namespace != cc.Namespace {
+					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					break
+				}
+			}
+		}
+	} else if webhookClient != nil {
+		var list ClusterConfigList
+		if err := webhookClient.List(context.Background(), &list, &client.ListOptions{}); err == nil {
+			for _, item := range list.Items {
+				if item.Name == cc.Name && item.Namespace != cc.Namespace {
+					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					break
+				}
+			}
+		}
+	}
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, cc.Name, allErrs)
+}
+
+// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
+func (cc *ClusterConfig) ValidateUpdate(old runtime.Object) error {
+	var allErrs field.ErrorList
+	// no immutability enforcement for ClusterConfig
+	// still ensure the name is unique across the cluster
+	if webhookCache != nil {
+		var list ClusterConfigList
+		if err := webhookCache.List(context.Background(), &list); err == nil {
+			for _, item := range list.Items {
+				if item.Name == cc.Name && item.Namespace != cc.Namespace {
+					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					break
+				}
+			}
+		}
+	} else if webhookClient != nil {
+		var list ClusterConfigList
+		if err := webhookClient.List(context.Background(), &list, &client.ListOptions{}); err == nil {
+			for _, item := range list.Items {
+				if item.Name == cc.Name && item.Namespace != cc.Namespace {
+					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					break
+				}
+			}
+		}
+	}
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, cc.Name, allErrs)
+}
+
+// ValidateDelete implements webhook.Validator so a webhook will be registered for the type
+func (cc *ClusterConfig) ValidateDelete() error {
+	// allow deletes
+	return nil
+}
+
+// SetupWebhookWithManager registers webhooks for ClusterConfig
+func (cc *ClusterConfig) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	webhookClient = mgr.GetClient()
+	if c := mgr.GetCache(); c != nil {
+		webhookCache = c
+	}
+	return ctrl.NewWebhookManagedBy(mgr).
+		For(cc).
+		Complete()
 }
 
 // +kubebuilder:object:root=true

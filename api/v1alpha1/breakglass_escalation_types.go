@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,7 +16,17 @@ limitations under the License.
 
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	"context"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	ctrl "sigs.k8s.io/controller-runtime"
+)
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
 type BreakglassEscalationSpec struct {
@@ -66,7 +76,6 @@ type BreakglassEscalationSpec struct {
 	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
 }
 
-// ReasonConfig configures an optional free-text reason field shown to requesters and approvers.
 type ReasonConfig struct {
 	// mandatory indicates whether the field is required (true) or optional (false).
 	// +optional
@@ -128,15 +137,95 @@ type BreakglassEscalation struct {
 	Status BreakglassEscalationStatus `json:"status,omitempty"`
 }
 
-// +kubebuilder:object:root=true
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglassescalation,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglassescalations,verbs=create;update,versions=v1alpha1,name=vbreakglassescalation.kb.io,admissionReviewVersions={v1,v1beta1}
 
-// BreakglassEscalationList contains a list of BreakglassEscalation.
+// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
+func (be *BreakglassEscalation) ValidateCreate() error {
+	var allErrs field.ErrorList
+	if be.Spec.EscalatedGroup == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("escalatedGroup"), "escalatedGroup is required"))
+	}
+
+	// global name uniqueness: prefer cache-backed listing
+	if webhookCache != nil {
+		var list BreakglassEscalationList
+		if err := webhookCache.List(context.Background(), &list); err == nil {
+			for _, item := range list.Items {
+				if item.Name == be.Name && item.Namespace != be.Namespace {
+					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					break
+				}
+			}
+		}
+	} else if webhookClient != nil {
+		var list BreakglassEscalationList
+		if err := webhookClient.List(context.Background(), &list); err == nil {
+			for _, item := range list.Items {
+				if item.Name == be.Name && item.Namespace != be.Namespace {
+					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					break
+				}
+			}
+		}
+	}
+
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, be.Name, allErrs)
+}
+
+func (be *BreakglassEscalation) ValidateUpdate(old runtime.Object) error {
+	var allErrs field.ErrorList
+	// no immutability enforced
+	if webhookCache != nil {
+		var list BreakglassEscalationList
+		if err := webhookCache.List(context.Background(), &list); err == nil {
+			for _, item := range list.Items {
+				if item.Name == be.Name && item.Namespace != be.Namespace {
+					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					break
+				}
+			}
+		}
+	} else if webhookClient != nil {
+		var list BreakglassEscalationList
+		if err := webhookClient.List(context.Background(), &list); err == nil {
+			for _, item := range list.Items {
+				if item.Name == be.Name && item.Namespace != be.Namespace {
+					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
+					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					break
+				}
+			}
+		}
+	}
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, be.Name, allErrs)
+}
+
+func (be *BreakglassEscalation) ValidateDelete() error { return nil }
+
+func (be *BreakglassEscalation) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	webhookClient = mgr.GetClient()
+	if c := mgr.GetCache(); c != nil {
+		webhookCache = c
+	}
+	return ctrl.NewWebhookManagedBy(mgr).
+		For(be).
+		Complete()
+}
+
+// +kubebuilder:object:root=true
 type BreakglassEscalationList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []BreakglassEscalation `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&BreakglassEscalation{}, &BreakglassEscalationList{})
-}
+func init() { SchemeBuilder.Register(&BreakglassEscalation{}, &BreakglassEscalationList{}) }
