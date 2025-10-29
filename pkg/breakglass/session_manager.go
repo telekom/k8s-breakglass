@@ -74,14 +74,54 @@ func (c SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]v1alpha
 
 // Get all stored GetClusterGroupAccess
 func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name string) (v1alpha1.BreakglassSession, error) {
-	zap.S().Debugw("Fetching BreakglassSession by name", system.NamespacedFields(name, "")...)
+	// Try direct GET first (works when object namespace is part of the object stored locally)
+	zap.S().Debugw("Fetching BreakglassSession by name (direct GET)", system.NamespacedFields(name, "")...)
 	bs := v1alpha1.BreakglassSession{}
-	if err := c.Get(ctx, client.ObjectKey{Name: name}, &bs); err != nil {
-		zap.S().Errorw("Failed to get BreakglassSession by name", append(system.NamespacedFields(name, ""), "error", err.Error())...)
-		return bs, errors.Wrap(err, "failed to get BreakglassSession by name")
+
+	// controller-runtime client requires a namespace when a name is provided in ObjectKey.
+	// If the object was created with a namespace, a direct Get with empty namespace will fail.
+	// In that case, fall back to listing sessions across all namespaces using a field selector on metadata.name.
+	if err := c.Get(ctx, client.ObjectKey{Name: name}, &bs); err == nil {
+		zap.S().Infow("Fetched BreakglassSession by name (direct GET)", system.NamespacedFields(name, bs.Namespace)...)
+		return bs, nil
+	} else {
+		zap.S().Debugw("Direct GET failed; falling back to list across namespaces", "name", name, "error", err.Error())
 	}
-	zap.S().Infow("Fetched BreakglassSession by name", system.NamespacedFields(name, "")...)
-	return bs, nil
+
+	// Fallback: list across namespaces using a metadata.name field selector
+	selector := fmt.Sprintf("metadata.name=%s", name)
+	fs, ferr := fields.ParseSelector(selector)
+	if ferr != nil {
+		zap.S().Errorw("Failed to parse field selector for fallback lookup", "selector", selector, "error", ferr.Error())
+		return bs, errors.Wrapf(ferr, "failed to create field selector %q", selector)
+	}
+
+	bsl := v1alpha1.BreakglassSessionList{}
+	if err := c.List(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
+		zap.S().Errorw("Failed to list BreakglassSessionList for fallback lookup", "selector", selector, "error", err.Error())
+		return bs, errors.Wrap(err, "failed to list BreakglassSessionList for fallback lookup")
+	}
+
+	if len(bsl.Items) == 0 {
+		zap.S().Errorw("BreakglassSession not found by name across namespaces", "name", name)
+		return bs, errors.Wrapf(errors.New("not found"), "failed to get BreakglassSession by name: %s", name)
+	}
+
+	if len(bsl.Items) > 1 {
+		// Ambiguous: multiple sessions with same name exist in different namespaces.
+		namespaces := make([]string, 0, len(bsl.Items))
+		for _, it := range bsl.Items {
+			namespaces = append(namespaces, it.Namespace)
+		}
+		msg := fmt.Sprintf("multiple BreakglassSessions with name %q found in namespaces: %s", name, strings.Join(namespaces, ","))
+		zap.S().Errorw("Ambiguous BreakglassSession name across namespaces", "name", name, "namespaces", namespaces)
+		return bs, errors.Errorf(msg)
+	}
+
+	// Single match: return it
+	found := bsl.Items[0]
+	zap.S().Infow("Fetched BreakglassSession by name (fallback list)", system.NamespacedFields(found.Name, found.Namespace)...)
+	return found, nil
 }
 
 // Get GetClusterGroupAccess by cluster name.
