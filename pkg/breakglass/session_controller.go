@@ -401,18 +401,29 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	} else {
 		// Trigger a group sync before sending email (but still send based on current status)
 		if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
-			go func() {
+			// Capture the request-scoped logger (which contains cid) so background logs
+			// emitted during group sync include the same correlation id.
+			goroutineLog := reqLog.With("cluster", bs.Spec.Cluster)
+			go func(log *zap.SugaredLogger) {
 				ctx := context.Background()
 				// Run a sync for all approver groups in the escalation(s) for this request
 				escalations, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, bs.Spec.Cluster, []string{})
-				if err == nil {
-					for _, esc := range escalations {
-						for _, g := range esc.Spec.Approvers.Groups {
-							_, _ = wc.escalationManager.Resolver.Members(ctx, g)
+				if err != nil {
+					log.Warnw("Failed to list escalations for group sync", "error", err)
+					return
+				}
+				for _, esc := range escalations {
+					for _, g := range esc.Spec.Approvers.Groups {
+						log.Debugw("Triggering group member sync", "escalation", esc.Name, "group", g)
+						members, merr := wc.escalationManager.Resolver.Members(ctx, g)
+						if merr != nil {
+							log.Warnw("Group member resolution failed", "group", g, "escalation", esc.Name, "error", merr)
+							continue
 						}
+						log.Infow("Resolved group members for sync", "group", g, "escalation", esc.Name, "count", len(members))
 					}
 				}
-			}()
+			}(goroutineLog)
 		}
 		if err := wc.sendOnRequestEmail(bs, useremail, username, approvers); err != nil {
 			// Do not fail the request if email cannot be sent (e.g. mail server not running in e2e).
@@ -1018,7 +1029,7 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 		wc.log.Error("Error getting user identity", zap.Error(err))
 		return false
 	}
-	wc.log.Infow("[DEBUG] Approver identity", "email", email)
+	wc.log.Debug("Approver identity", "email", email)
 	ctx := c.Request.Context()
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
 
@@ -1047,7 +1058,7 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 		wc.log.Errorw("[E2E-DEBUG] Approver group error", "error", gerr)
 		return false
 	}
-	wc.log.Infow("[DEBUG] Approver groups", "email", email, "groups", approverGroups)
+	wc.log.Debugw("Approver groups", "email", email, "groups", approverGroups)
 
 	// Note: escalation-level overrides for allowed domains and blockSelfApproval
 	// are applied per-escalation below while evaluating matching escalations.
@@ -1064,7 +1075,7 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 		if esc.Spec.EscalatedGroup != session.Spec.GrantedGroup {
 			continue
 		}
-		wc.log.Infow("[DEBUG] Escalation approvers", "escalation", esc.Name, "users", esc.Spec.Approvers.Users, "groups", esc.Spec.Approvers.Groups)
+		wc.log.Debugw("Escalation approvers", "escalation", esc.Name, "users", esc.Spec.Approvers.Users, "groups", esc.Spec.Approvers.Groups)
 		// Determine effective blockSelfApproval and allowed domains for this escalation
 		effectiveBlockSelf := blockSelfApproval
 		if esc.Spec.BlockSelfApproval != nil {

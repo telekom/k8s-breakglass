@@ -70,11 +70,24 @@ func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.Keycloak)
 }
 
 func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string) ([]string, error) {
-	if k == nil || k.cfg.Disable || k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
+	if k == nil {
+		return nil, nil
+	}
+	log := k.log
+	if k.cfg.Disable || k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
+		if log != nil {
+			log.Debugw("Keycloak resolver disabled or missing configuration; skipping group lookup", "group", group, "disabled", k.cfg.Disable)
+		}
 		return nil, nil // gracefully skip when not configured
 	}
 	if v, ok := k.cache.get(group); ok {
+		if log != nil {
+			log.Debugw("Keycloak cache hit for group", "group", group, "membersCount", len(v))
+		}
 		return v, nil
+	}
+	if log != nil {
+		log.Debugw("Keycloak cache miss for group; will perform lookup", "group", group)
 	}
 	// Support simplified public client mode (no clientSecret) for e2e tests: embed known static groups.
 	if k.cfg.ClientSecret == "" {
@@ -83,16 +96,25 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 			"emergency-response": {"senior-approver@example.com", "security-lead@example.com"},
 		}
 		if members, ok := static[group]; ok {
+			if log != nil {
+				log.Debugw("Using static keycloak mapping for group", "group", group, "membersCount", len(members))
+			}
 			k.cache.set(group, members)
 			return members, nil
 		}
 		// Fallback: no members known for this group.
+		if log != nil {
+			log.Debugw("No static mapping found for group; returning empty members", "group", group)
+		}
 		k.cache.set(group, []string{})
 		return []string{}, nil
 	}
 
 	token, err := k.clientCredsToken(ctx)
 	if err != nil {
+		if log != nil {
+			log.Warnw("Failed to obtain Keycloak token", "group", group, "error", err)
+		}
 		return nil, err
 	}
 
@@ -100,12 +122,21 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	gURL := fmt.Sprintf("%s/realms/%s/groups?search=%s", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.QueryEscape(group))
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, gURL, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	if log != nil {
+		log.Debugw("Keycloak groups search request", "url", gURL, "group", group)
+	}
 	resp, err := k.client.Do(req)
 	if err != nil {
+		if log != nil {
+			log.Warnw("Keycloak groups search HTTP error", "url", gURL, "group", group, "error", err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if log != nil {
+			log.Warnw("Keycloak groups search returned non-200 status", "status", resp.StatusCode, "url", gURL, "group", group)
+		}
 		return nil, fmt.Errorf("keycloak groups search status %d", resp.StatusCode)
 	}
 	var groups []struct{ ID, Name string }
@@ -120,6 +151,9 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		}
 	}
 	if groupID == "" {
+		if log != nil {
+			log.Debugw("Keycloak group not found by name", "group", group)
+		}
 		k.cache.set(group, []string{})
 		return []string{}, nil
 	}
@@ -128,12 +162,21 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	mURL := fmt.Sprintf("%s/realms/%s/groups/%s/members", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
 	mreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, mURL, nil)
 	mreq.Header.Set("Authorization", "Bearer "+token)
+	if log != nil {
+		log.Debugw("Keycloak group members request", "url", mURL, "group", group, "groupID", groupID)
+	}
 	mresp, err := k.client.Do(mreq)
 	if err != nil {
+		if log != nil {
+			log.Warnw("Keycloak members HTTP error", "url", mURL, "group", group, "error", err)
+		}
 		return nil, err
 	}
 	defer mresp.Body.Close()
 	if mresp.StatusCode != 200 {
+		if log != nil {
+			log.Warnw("Keycloak members returned non-200 status", "status", mresp.StatusCode, "url", mURL, "group", group)
+		}
 		return nil, fmt.Errorf("keycloak members status %d", mresp.StatusCode)
 	}
 	var membersRaw []struct{ Username, Email string }
@@ -149,6 +192,9 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		}
 	}
 	out = normalizeMembers(out)
+	if log != nil {
+		log.Infow("Resolved keycloak group members", "group", group, "resolvedCount", len(out))
+	}
 	k.cache.set(group, out)
 	return out, nil
 }
@@ -230,12 +276,20 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		}
 		changed := false
 		for _, g := range groups {
-			members, err := u.Resolver.Members(ctx, g)
-			if err != nil {
-				log.Warnw("Failed resolving group members", "group", g, "escalation", esc.Name, "error", err)
+			var norm []string
+			if u.Resolver != nil {
+				log.Debugw("Resolving approver group members", "group", g, "escalation", esc.Name)
+				members, err := u.Resolver.Members(ctx, g)
+				if err != nil {
+					log.Warnw("Failed resolving group members", "group", g, "escalation", esc.Name, "error", err)
+					continue
+				}
+				norm = normalizeMembers(members)
+				log.Infow("Resolved approver group members", "group", g, "escalation", esc.Name, "count", len(norm))
+			} else {
+				log.Warnw("No group member resolver configured; skipping group resolution", "group", g, "escalation", esc.Name)
 				continue
 			}
-			norm := normalizeMembers(members)
 			if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
 				updated.Status.ApproverGroupMembers[g] = norm
 				changed = true
