@@ -16,6 +16,7 @@ import (
 
 	v1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/api"
 	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
@@ -126,6 +127,31 @@ func main() {
 				return
 			}
 			// Register BreakglassSession, BreakglassEscalation and ClusterConfig webhooks with manager
+			// Also register field indices to support efficient cache-based lookups by controller-runtime clients.
+			// Index fields: spec.cluster, spec.user, spec.grantedGroup
+			idx := mgr.GetFieldIndexer()
+			if idx != nil {
+				if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.cluster", func(rawObj client.Object) []string {
+					bs := rawObj.(*v1alpha1.BreakglassSession)
+					return []string{bs.Spec.Cluster}
+				}); err != nil {
+					log.Warnw("Failed to index BreakglassSession.spec.cluster", "error", err)
+				}
+				if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.user", func(rawObj client.Object) []string {
+					bs := rawObj.(*v1alpha1.BreakglassSession)
+					return []string{bs.Spec.User}
+				}); err != nil {
+					log.Warnw("Failed to index BreakglassSession.spec.user", "error", err)
+				}
+				if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.grantedGroup", func(rawObj client.Object) []string {
+					bs := rawObj.(*v1alpha1.BreakglassSession)
+					return []string{bs.Spec.GrantedGroup}
+				}); err != nil {
+					log.Warnw("Failed to index BreakglassSession.spec.grantedGroup", "error", err)
+				}
+			}
+
+			// Register webhooks
 			if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
 				log.Warnw("Failed to setup BreakglassSession webhook with manager", "error", err)
 				return

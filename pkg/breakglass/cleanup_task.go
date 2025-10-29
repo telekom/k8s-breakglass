@@ -49,13 +49,33 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 	for _, ses := range sessions {
 		routine.Log.Debugw("Checking session for expiration", system.NamespacedFields(ses.Name, ses.Namespace)...)
 		routine.Log.Debugw("Checking session retainedUntil", "retainedUntil", ses.Status.RetainedUntil.Time)
-		if now.After(ses.Status.RetainedUntil.Time) {
+		// Delete sessions that are past their retained-until timestamp
+		if !ses.Status.RetainedUntil.IsZero() && now.After(ses.Status.RetainedUntil.Time) {
 			if err := routine.Manager.Delete(ctx, &ses); err != nil {
 				routine.Log.Errorw("error deleting expired breakglass session", append(system.NamespacedFields(ses.Name, ses.Namespace), "error", err)...)
 				continue
 			}
 			deletedCount++
 			routine.Log.Debugw("Deleted expired breakglass session", system.NamespacedFields(ses.Name, ses.Namespace)...)
+			continue
+		}
+
+		// Additionally, clean up sessions that do not have an OwnerReference (orphaned/legacy).
+		// To avoid removing valid active sessions, only delete orphaned sessions when
+		// they have no RetainedUntil set (zero value) and are not pending. Expired
+		// sessions are handled above based on RetainedUntil.
+		if len(ses.OwnerReferences) == 0 {
+			if ses.Status.RetainedUntil.IsZero() && ses.Status.State != telekomv1alpha1.SessionStatePending {
+				routine.Log.Infow("Deleting session without OwnerReferences (orphaned/legacy - no RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
+				if err := routine.Manager.Delete(ctx, &ses); err != nil {
+					routine.Log.Errorw("error deleting orphaned breakglass session", append(system.NamespacedFields(ses.Name, ses.Namespace), "error", err)...)
+					continue
+				}
+				deletedCount++
+				routine.Log.Debugw("Deleted orphaned breakglass session", system.NamespacedFields(ses.Name, ses.Namespace)...)
+				continue
+			}
+			routine.Log.Debugw("Skipping deletion of session without OwnerReferences (either pending or has RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
 		}
 	}
 	routine.Log.Infow("Expired breakglass sessions deletion completed", "deleted", deletedCount)

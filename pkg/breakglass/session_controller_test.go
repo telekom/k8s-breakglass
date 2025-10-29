@@ -406,6 +406,145 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	}
 }
 
+// Test that creating a session when a matching escalation exists attaches an OwnerReference
+func TestCreateSessionAttachesOwnerReference(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	esc := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "esc-for-ownerref",
+			UID:       "1234",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "esc-group",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+	builder.WithObjects(esc)
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			// always requester identity
+			c.Set("email", "requester@example.com")
+			c.Set("username", "requester")
+			c.Next()
+		}, nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	reqData := BreakglassSessionRequest{
+		Clustername: "test",
+		Username:    "requester@example.com",
+		GroupName:   "esc-group",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected created status, got %d", resp.StatusCode)
+	}
+
+	// Fetch sessions directly via session manager and ensure OwnerReference is present
+	allSessions, err := sesmanager.GetAllBreakglassSessions(context.Background())
+	if err != nil {
+		t.Fatalf("failed to list sessions from manager: %v", err)
+	}
+	if len(allSessions) != 1 {
+		t.Fatalf("expected 1 session in manager, got %d", len(allSessions))
+	}
+	s := allSessions[0]
+	if len(s.OwnerReferences) == 0 {
+		t.Fatalf("expected OwnerReferences to be set on created session, got none")
+	}
+	found := false
+	for _, or := range s.OwnerReferences {
+		if or.Name == "esc-for-ownerref" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected OwnerReference to escalation 'esc-for-ownerref', got %#v", s.OwnerReferences)
+	}
+}
+
+// Test that creating a session without a matching escalation returns 401 and no session is created
+func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "requester@example.com")
+			c.Set("username", "requester")
+			c.Next()
+		}, nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"some-group"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	reqData := BreakglassSessionRequest{
+		Clustername: "test",
+		Username:    "requester@example.com",
+		GroupName:   "nonexistent-group",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Expected 401 when no escalation found, got %d", resp.StatusCode)
+	}
+
+	// Verify no sessions exist
+	req, _ = http.NewRequest("GET", "/breakglassSessions", nil)
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	resp = w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected OK getting sessions, got %d", resp.StatusCode)
+	}
+	var sessions []v1alpha1.BreakglassSession
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		t.Fatalf("failed to decode sessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected 0 sessions after refused create, got %d", len(sessions))
+	}
+}
+
 // Test that an escalation-level BlockSelfApproval override blocks self-approval even when cluster allows it
 func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)

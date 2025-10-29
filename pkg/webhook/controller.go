@@ -188,15 +188,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			// Determine if any escalation paths exist for this user (use groups from sessions plus system:authenticated)
 			uniqueGroups := append([]string{}, groups...)
 			uniqueGroups = append(uniqueGroups, "system:authenticated")
-			// dedupe
-			ug := make([]string, 0, len(uniqueGroups))
-			seen := make(map[string]bool)
-			for _, g := range uniqueGroups {
-				if !seen[g] {
-					ug = append(ug, g)
-					seen[g] = true
-				}
-			}
+			ug := dedupeStrings(uniqueGroups)
 			escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, ug)
 			count := 0
 			if eerr != nil {
@@ -225,14 +217,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				// Determine escalation availability for this session/user combination
 				uniqueGroups := append([]string{}, groups...)
 				uniqueGroups = append(uniqueGroups, "system:authenticated")
-				ug := make([]string, 0, len(uniqueGroups))
-				seen := make(map[string]bool)
-				for _, g := range uniqueGroups {
-					if !seen[g] {
-						ug = append(ug, g)
-						seen[g] = true
-					}
-				}
+				ug := dedupeStrings(uniqueGroups)
 				escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, ug)
 				count := 0
 				if eerr != nil {
@@ -331,15 +316,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 		// Add basic user groups that all authenticated users should have
 		allUserGroups := append(activeUserGroups, "system:authenticated")
-		// Remove duplicates
-		uniqueGroups := make([]string, 0, len(allUserGroups))
-		seen := make(map[string]bool)
-		for _, group := range allUserGroups {
-			if !seen[group] {
-				uniqueGroups = append(uniqueGroups, group)
-				seen[group] = true
-			}
-		}
+		uniqueGroups := dedupeStrings(allUserGroups)
 		reqLog.With("allUserGroups", uniqueGroups).Debug("Final user groups including basic authenticated groups")
 
 		// Check for group-based escalations
@@ -526,6 +503,19 @@ func (wc *WebhookController) getSessions(ctx context.Context, username, clustern
 		}
 	}
 	return out, nil
+}
+
+// dedupeStrings removes duplicates from a slice of strings while preserving order.
+func dedupeStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool)
+	for _, v := range in {
+		if !seen[v] {
+			out = append(out, v)
+			seen[v] = true
+		}
+	}
+	return out
 }
 
 // authorizeViaSessions performs per-session SubjectAccessReviews using the session's granted group.

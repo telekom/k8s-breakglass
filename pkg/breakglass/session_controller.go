@@ -328,6 +328,13 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 
 	bs := v1alpha1.BreakglassSession{Spec: spec}
+	// Add labels to sessions so label selectors can operate when field indices are unavailable
+	if bs.Labels == nil {
+		bs.Labels = map[string]string{}
+	}
+	bs.Labels["breakglass.t-caas.telekom.com/cluster"] = request.Clustername
+	bs.Labels["breakglass.t-caas.telekom.com/user"] = request.Username
+	bs.Labels["breakglass.t-caas.telekom.com/group"] = request.GroupName
 	// Ensure session is created in the same namespace as the matched escalation
 	if matchedEsc != nil {
 		reqLog.Debugw("Matched escalation found during session creation; attaching ownerRef",
