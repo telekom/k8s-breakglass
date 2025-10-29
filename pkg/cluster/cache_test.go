@@ -69,7 +69,7 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	}
 	secret := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "kube-secret", Namespace: "default"},
-		Data:       map[string][]byte{"kubeconfig": kubeYAML},
+		Data:       map[string][]byte{"value": kubeYAML},
 	}
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()
@@ -101,7 +101,7 @@ func TestGetRESTConfig_MissingSecretKey(t *testing.T) {
 	}
 	secret := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "kube-secret-2", Namespace: "default"},
-		Data:       map[string][]byte{"kubeconfig": kubeYAML},
+		Data:       map[string][]byte{"value": kubeYAML},
 	}
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()

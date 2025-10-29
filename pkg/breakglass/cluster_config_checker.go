@@ -87,7 +87,9 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 				"secretNamespace", ref.Namespace,
 				"error", err)
 			// update status and emit event
-			ccc.setStatusAndEvent(ctx, &cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning)
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning); err2 != nil {
+				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
 			continue
 		}
@@ -104,7 +106,9 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 				"secret", ref.Name,
 				"secretNamespace", ref.Namespace,
 				"secretCreation", sec.CreationTimestamp.Time.Format(time.RFC3339))
-			ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning)
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning); err2 != nil {
+				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
 			continue
 		}
@@ -121,7 +125,9 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 		if err != nil {
 			msg := "kubeconfig parse failed: " + err.Error()
 			lg.Warnw(msg, "cluster", cc.Name)
-			ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning)
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning); err2 != nil {
+				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
 			continue
 		}
@@ -135,12 +141,14 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context) {
 		}
 
 		// Success: update status Ready and emit Normal event
-		ccc.setStatusAndEvent(ctx, &cc, "Ready", "Kubeconfig validated and cluster reachable", corev1.EventTypeNormal)
+		if err2 := ccc.setStatusAndEvent(ctx, &cc, "Ready", "Kubeconfig validated and cluster reachable", corev1.EventTypeNormal); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
 	}
 	lg.Debug("ClusterConfig validation check completed")
 }
 
-func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string) {
+func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string) error {
 	// nil-safe logger
 	lg := ccc.Log
 	if lg == nil {
@@ -155,6 +163,8 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 	if err := ccc.Client.Update(ctx, cc); err != nil {
 		if err2 := ccc.Client.Status().Update(ctx, cc); err2 != nil {
 			lg.Warnw("failed to update ClusterConfig status", "cluster", cc.Name, "error", err2)
+			// return the underlying status update error to caller
+			return err2
 		}
 	}
 	// emit event if recorder present
@@ -165,6 +175,7 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 			ccc.Recorder.Event(cc, eventType, "ClusterConfigValidationFailed", message)
 		}
 	}
+	return nil
 }
 
 // checkClusterReachable tries to perform a simple discovery (server version) to ensure the cluster is reachable

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -19,6 +21,8 @@ type K8sEventRecorder struct {
 	Source    corev1.EventSource
 	// Namespace where events should be created (controller pod namespace)
 	Namespace string
+	// optional logger for reporting event creation problems
+	Logger *zap.SugaredLogger
 }
 
 func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, message string) {
@@ -59,8 +63,12 @@ func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, messa
 		Count:          1,
 		Type:           eventtype,
 	}
-	// best-effort write; ignore errors but log if caller wants (caller has logger)
-	_, _ = r.Clientset.CoreV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{})
+	// best-effort write; surface errors to optional logger so operators can diagnose
+	if _, err := r.Clientset.CoreV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{}); err != nil {
+		if r.Logger != nil {
+			r.Logger.Warnw("failed to create kubernetes Event", "namespace", ns, "object", metaObj.GetName(), "error", err)
+		}
+	}
 }
 
 func (r *K8sEventRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {

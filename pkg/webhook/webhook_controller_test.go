@@ -162,7 +162,7 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 	if err != nil {
 		panic(err)
 	}
-	_ = cli.Create(context.Background(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ccfg-secret", Namespace: "default"}, Data: map[string][]byte{"kubeconfig": kcBytes}})
+	_ = cli.Create(context.Background(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ccfg-secret", Namespace: "default"}, Data: map[string][]byte{"value": kcBytes}})
 	sesmanager := breakglass.SessionManager{
 		Client: cli,
 	}

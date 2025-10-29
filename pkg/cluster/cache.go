@@ -61,7 +61,8 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 	secretKey := cc.Spec.KubeconfigSecretRef.Key
 	if secretKey == "" {
-		secretKey = "kubeconfig"
+		// default to 'value' for Cluster API compatibility
+		secretKey = "value"
 	}
 	secret := corev1.Secret{}
 	if err := p.k8s.Get(ctx, types.NamespacedName{Name: cc.Spec.KubeconfigSecretRef.Name, Namespace: cc.Spec.KubeconfigSecretRef.Namespace}, &secret); err != nil {
