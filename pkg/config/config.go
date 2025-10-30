@@ -10,6 +10,10 @@ import (
 type AuthorizationServer struct {
 	URL          string `yaml:"url"`
 	JWKSEndpoint string `yaml:"jwksEndpoint"`
+	// InsecureSkipVerify allows opting into skipping TLS verification for the
+	// authorization server. This must be explicitly enabled in non-production
+	// setups. Default is false.
+	InsecureSkipVerify bool `yaml:"insecureSkipVerify"`
 	// CertificateAuthority contains a PEM encoded CA certificate to validate the
 	// TLS certificate presented by the authorization server (optional).
 	CertificateAuthority string `yaml:"certificateAuthority"`
