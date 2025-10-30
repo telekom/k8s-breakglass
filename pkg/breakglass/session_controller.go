@@ -146,6 +146,71 @@ func isAlnum(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
 }
 
+// toRFC1123Label converts an arbitrary string to a Kubernetes label-safe value.
+// It lowercases the string, replaces invalid characters with '-', collapses
+// multiple separators, ensures it starts/ends with an alphanumeric character
+// and truncates to 63 characters (max label value length). If the input
+// cannot produce a valid value, returns "x" as a fallback.
+func toRFC1123Label(s string) string {
+	if s == "" {
+		return "x"
+	}
+	s = strings.ToLower(s)
+
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+			prevDash = false
+		} else {
+			if !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	out := b.String()
+	out = strings.TrimLeft(out, "-._")
+	out = strings.TrimRight(out, "-._")
+
+	for strings.Contains(out, "..") {
+		out = strings.ReplaceAll(out, "..", ".")
+	}
+	for strings.Contains(out, "__") {
+		out = strings.ReplaceAll(out, "__", "_")
+	}
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+
+	// Ensure starts and ends with alphanumeric
+	for len(out) > 0 && !isAlnum(rune(out[0])) {
+		out = out[1:]
+	}
+	for len(out) > 0 && !isAlnum(rune(out[len(out)-1])) {
+		out = out[:len(out)-1]
+	}
+
+	if out == "" {
+		return "x"
+	}
+
+	// Truncate to 63 chars (max label value length)
+	if len(out) > 63 {
+		out = out[:63]
+		// Strip trailing non-alnum if truncated
+		for len(out) > 0 && !isAlnum(rune(out[len(out)-1])) {
+			out = out[:len(out)-1]
+		}
+		if out == "" {
+			return "x"
+		}
+	}
+
+	return out
+}
+
 func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Context) {
 	// Get correlation ID for consistent logging
 	// request-scoped logger (includes cid, method, path)
@@ -332,9 +397,10 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	if bs.Labels == nil {
 		bs.Labels = map[string]string{}
 	}
-	bs.Labels["breakglass.t-caas.telekom.com/cluster"] = request.Clustername
-	bs.Labels["breakglass.t-caas.telekom.com/user"] = request.Username
-	bs.Labels["breakglass.t-caas.telekom.com/group"] = request.GroupName
+	// Sanitize label values to conform to Kubernetes label restrictions (RFC1123-ish)
+	bs.Labels["breakglass.t-caas.telekom.com/cluster"] = toRFC1123Label(request.Clustername)
+	bs.Labels["breakglass.t-caas.telekom.com/user"] = toRFC1123Label(request.Username)
+	bs.Labels["breakglass.t-caas.telekom.com/group"] = toRFC1123Label(request.GroupName)
 	// Ensure session is created in the same namespace as the matched escalation
 	if matchedEsc != nil {
 		reqLog.Debugw("Matched escalation found during session creation; attaching ownerRef",
@@ -373,8 +439,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	// If we have a matched escalation, increment its request counter in status for observability
-	if matchedEsc != nil && wc.escalationManager != nil {
+	// If escalationManager is available, increment the matched escalation's request counter in status for observability
+	if wc.escalationManager != nil {
 		// fetch latest escalation object
 		if esc, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, matchedEsc.Spec.Allowed.Clusters[0], []string{}); err == nil && len(esc) > 0 {
 			// Try to find by name
