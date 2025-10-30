@@ -11,7 +11,7 @@ require (
 	github.com/gin-contrib/zap v1.1.4
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-logr/zapr v1.3.0
-	github.com/golang-jwt/jwt/v4 v4.5.1
+	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.19.1
