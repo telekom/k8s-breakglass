@@ -157,13 +157,9 @@ func main() {
 						return nil
 					}
 					out := make([]string, 0, len(be.Spec.Allowed.Clusters))
-					for _, c := range be.Spec.Allowed.Clusters {
-						out = append(out, c)
-					}
+					out = append(out, be.Spec.Allowed.Clusters...)
 					// also index clusterConfigRefs to support exact lookups
-					for _, ref := range be.Spec.ClusterConfigRefs {
-						out = append(out, ref)
-					}
+					out = append(out, be.Spec.ClusterConfigRefs...)
 					return out
 				}); err != nil {
 					log.Warnw("Failed to index BreakglassEscalation.spec.allowed.cluster/clusterConfigRefs", "error", err)
