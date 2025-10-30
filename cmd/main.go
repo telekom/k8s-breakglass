@@ -149,6 +149,66 @@ func main() {
 				}); err != nil {
 					log.Warnw("Failed to index BreakglassSession.spec.grantedGroup", "error", err)
 				}
+
+				// Index BreakglassEscalation helpful fields for quick lookups
+				if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.cluster", func(rawObj client.Object) []string {
+					be := rawObj.(*v1alpha1.BreakglassEscalation)
+					if be == nil {
+						return nil
+					}
+					out := make([]string, 0, len(be.Spec.Allowed.Clusters))
+					for _, c := range be.Spec.Allowed.Clusters {
+						out = append(out, c)
+					}
+					// also index clusterConfigRefs to support exact lookups
+					for _, ref := range be.Spec.ClusterConfigRefs {
+						out = append(out, ref)
+					}
+					return out
+				}); err != nil {
+					log.Warnw("Failed to index BreakglassEscalation.spec.allowed.cluster/clusterConfigRefs", "error", err)
+				}
+
+				if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.group", func(rawObj client.Object) []string {
+					be := rawObj.(*v1alpha1.BreakglassEscalation)
+					if be == nil {
+						return nil
+					}
+					return be.Spec.Allowed.Groups
+				}); err != nil {
+					log.Warnw("Failed to index BreakglassEscalation.spec.allowed.group", "error", err)
+				}
+
+				if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.escalatedGroup", func(rawObj client.Object) []string {
+					be := rawObj.(*v1alpha1.BreakglassEscalation)
+					if be == nil || be.Spec.EscalatedGroup == "" {
+						return nil
+					}
+					return []string{be.Spec.EscalatedGroup}
+				}); err != nil {
+					log.Warnw("Failed to index BreakglassEscalation.spec.escalatedGroup", "error", err)
+				}
+
+				// Index ClusterConfig by metadata.name and spec.clusterID for fast lookup by name
+				if err := idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "metadata.name", func(rawObj client.Object) []string {
+					cc := rawObj.(*v1alpha1.ClusterConfig)
+					if cc == nil {
+						return nil
+					}
+					return []string{cc.Name}
+				}); err != nil {
+					log.Warnw("Failed to index ClusterConfig.metadata.name", "error", err)
+				}
+
+				if err := idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "spec.clusterID", func(rawObj client.Object) []string {
+					cc := rawObj.(*v1alpha1.ClusterConfig)
+					if cc == nil || cc.Spec.ClusterID == "" {
+						return nil
+					}
+					return []string{cc.Spec.ClusterID}
+				}); err != nil {
+					log.Warnw("Failed to index ClusterConfig.spec.clusterID", "error", err)
+				}
 			}
 
 			// Register webhooks

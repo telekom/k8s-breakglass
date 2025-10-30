@@ -20,18 +20,26 @@ func NewClusterConfigManager(c client.Client) *ClusterConfigManager {
 
 // GetClusterConfigByName fetches the ClusterConfig CR by metadata.name (which is usually the cluster name/ID)
 func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
-	// ClusterConfig is now namespaced. Try to find a ClusterConfig with the
-	// given metadata.name across all namespaces by listing them and matching
-	// by Name. This keeps call sites unchanged that only provide a name.
+	// Try to use a field index (metadata.name) if available via the client's cache.
 	list := telekomv1alpha1.ClusterConfigList{}
-	if err := ccm.client.List(ctx, &list); err != nil {
+	// Try to use a field index (metadata.name) via MatchingFields if available.
+	if err := ccm.client.List(ctx, &list, client.MatchingFields{"metadata.name": name}); err == nil {
+		for i := range list.Items {
+			if list.Items[i].Name == name {
+				return &list.Items[i], nil
+			}
+		}
+	}
+
+	// Fallback: do a full list scan (should be rare) - maintain original behavior for safety.
+	list2 := telekomv1alpha1.ClusterConfigList{}
+	if err := ccm.client.List(ctx, &list2); err != nil {
 		zap.S().Errorw("Failed to list ClusterConfig resources", "error", err.Error())
 		return nil, fmt.Errorf("failed to list ClusterConfig resources: %w", err)
 	}
-	for i := range list.Items {
-		if list.Items[i].Name == name {
-			// return a pointer to the matched item
-			return &list.Items[i], nil
+	for i := range list2.Items {
+		if list2.Items[i].Name == name {
+			return &list2.Items[i], nil
 		}
 	}
 	return nil, fmt.Errorf("failed to get ClusterConfig by name %q: not found", name)

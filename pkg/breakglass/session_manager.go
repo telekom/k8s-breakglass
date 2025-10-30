@@ -129,11 +129,18 @@ func (c SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 	cluster string,
 	user string,
 ) ([]v1alpha1.BreakglassSession, error) {
-	selector := fmt.Sprintf("spec.cluster=%s,spec.user=%s",
-		cluster,
-		user)
-	zap.S().Debugw("Fetching BreakglassSessions for cluster and user", "cluster", cluster, "user", user)
-	return c.GetBreakglassSessionsWithSelectorString(ctx, selector)
+	zap.S().Debugw("Fetching BreakglassSessions for cluster and user (using field index)", "cluster", cluster, "user", user)
+	bsl := v1alpha1.BreakglassSessionList{}
+	// Use MatchingFields to leverage field indexers registered by the manager
+	if err := c.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster, "spec.user": user}); err != nil {
+		zap.S().Debugw("Field-index based list failed; falling back to selector string", "error", err)
+		selector := fmt.Sprintf("spec.cluster=%s,spec.user=%s",
+			cluster,
+			user)
+		return c.GetBreakglassSessionsWithSelectorString(ctx, selector)
+	}
+	zap.S().Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
+	return bsl.Items, nil
 }
 
 // GetBreakglassSessions with custom field selector string.

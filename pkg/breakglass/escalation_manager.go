@@ -80,7 +80,35 @@ func (em EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	groups []string,
 ) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching group BreakglassEscalations", "groups", groups)
-	// Load config for OIDC prefixes to normalize allowed groups
+	// First try index-based lookup for each group and collect results (deduped)
+	collectedMap := map[string]telekomv1alpha1.BreakglassEscalation{}
+	for _, g := range groups {
+		list := telekomv1alpha1.BreakglassEscalationList{}
+		if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.group": g}); err == nil {
+			zap.S().Debugw("Index lookup for group returned items", "group", g, "count", len(list.Items))
+			for _, it := range list.Items {
+				// apply group normalization check to be safe (fake client may ignore MatchingFields)
+				allowed := it.Spec.Allowed.Groups
+				// normalize OIDC prefixes for comparison
+				normAllowed := allowed
+				if cfg, err := cfgpkg.Load(); err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
+					normAllowed = stripOIDCPrefixes(allowed, cfg.Kubernetes.OIDCPrefixes)
+				}
+				if slices.Contains(normAllowed, g) {
+					collectedMap[it.Namespace+"/"+it.Name] = it
+				}
+			}
+		}
+	}
+	if len(collectedMap) > 0 {
+		collected := make([]telekomv1alpha1.BreakglassEscalation, 0, len(collectedMap))
+		for _, v := range collectedMap {
+			collected = append(collected, v)
+		}
+		return collected, nil
+	}
+
+	// Fallback to full filter if indices not available or returned nothing
 	var oidcPrefixes []string
 	if cfg, err := cfgpkg.Load(); err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
 		oidcPrefixes = cfg.Kubernetes.OIDCPrefixes
@@ -91,27 +119,42 @@ func (em EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 		if len(oidcPrefixes) > 0 {
 			allowedGroups = stripOIDCPrefixes(allowedGroups, oidcPrefixes)
 		}
-		matched := false
 		for _, group := range groups {
 			if slices.Contains(allowedGroups, group) {
 				zap.S().Debugw("Escalation matches user group", append(system.NamespacedFields(be.Name, ""), "matchingGroup", group, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)...)
-				matched = true
-				break
-			} else {
-				zap.S().Debugw("Group not in allowed list", append(system.NamespacedFields(be.Name, ""), "candidateGroup", group, "normalizedAllowedGroups", allowedGroups)...)
+				return true
 			}
 		}
-		if !matched {
-			zap.S().Debugw("Escalation does not match any user groups", append(system.NamespacedFields(be.Name, ""), "userGroups", groups, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)...)
-		}
-		return matched
+		zap.S().Debugw("Escalation does not match any user groups", append(system.NamespacedFields(be.Name, ""), "userGroups", groups, "allowedGroups", be.Spec.Allowed.Groups, "normalizedAllowedGroups", allowedGroups)...)
+		return false
 	})
 }
 
 func (em EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching cluster BreakglassEscalations", "cluster", cluster)
+	list := telekomv1alpha1.BreakglassEscalationList{}
+	if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.cluster": cluster}); err == nil && len(list.Items) > 0 {
+		// filter results to ensure cluster actually matches (fake client may ignore MatchingFields)
+		out := make([]telekomv1alpha1.BreakglassEscalation, 0)
+		for _, be := range list.Items {
+			if slices.Contains(be.Spec.Allowed.Clusters, cluster) {
+				out = append(out, be)
+				continue
+			}
+			for _, ref := range be.Spec.ClusterConfigRefs {
+				if ref == cluster || strings.Contains(ref, cluster) {
+					out = append(out, be)
+					break
+				}
+			}
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+	}
+
+	// Fallback to filter-based scan
 	return em.GetBreakglassEscalationsWithFilter(ctx, func(be telekomv1alpha1.BreakglassEscalation) bool {
-		// match against legacy allowed.clusters or new clusterConfigRefs (names assumed to contain cluster id for now)
 		if slices.Contains(be.Spec.Allowed.Clusters, cluster) {
 			return true
 		}
@@ -127,11 +170,29 @@ func (em EscalationManager) GetClusterBreakglassEscalations(ctx context.Context,
 // GetClusterGroupBreakglassEscalations returns escalations for specific cluster and user groups
 func (em EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groups", groups)
+	// Try to perform index-based lookups. We will collect matches from cluster index and then filter by group.
+	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
+	list := telekomv1alpha1.BreakglassEscalationList{}
+	if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.cluster": cluster}); err == nil && len(list.Items) > 0 {
+		collected = append(collected, list.Items...)
+	}
+	// If index returned nothing, fall back to scanning all escalations
+	if len(collected) == 0 {
+		all, err := em.GetAllBreakglassEscalations(ctx)
+		if err != nil {
+			return nil, err
+		}
+		collected = append(collected, all...)
+	}
+
+	// Now filter collected by groups and OIDC normalization
 	var oidcPrefixes []string
 	if cfg, err := cfgpkg.Load(); err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
 		oidcPrefixes = cfg.Kubernetes.OIDCPrefixes
 	}
-	return em.GetBreakglassEscalationsWithFilter(ctx, func(be telekomv1alpha1.BreakglassEscalation) bool {
+	out := make([]telekomv1alpha1.BreakglassEscalation, 0)
+	for _, be := range collected {
+		// ensure escalation applies to the requested cluster
 		clusterMatch := slices.Contains(be.Spec.Allowed.Clusters, cluster)
 		if !clusterMatch {
 			for _, ref := range be.Spec.ClusterConfigRefs {
@@ -142,34 +203,53 @@ func (em EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Con
 			}
 		}
 		if !clusterMatch {
-			return false
+			continue
 		}
 		allowedGroups := be.Spec.Allowed.Groups
 		if len(oidcPrefixes) > 0 {
 			allowedGroups = stripOIDCPrefixes(allowedGroups, oidcPrefixes)
 		}
-		for _, group := range groups {
-			if slices.Contains(allowedGroups, group) {
-				zap.S().Debugw("Cluster-group escalation matches", "escalation", be.Name, "cluster", cluster, "group", group, "normalizedAllowedGroups", allowedGroups)
-				return true
-			} else {
-				zap.S().Debugw("Cluster-group escalation no match", "escalation", be.Name, "cluster", cluster, "candidateGroup", group, "normalizedAllowedGroups", allowedGroups)
+		matched := false
+		for _, g := range groups {
+			if slices.Contains(allowedGroups, g) {
+				matched = true
+				break
 			}
 		}
-		return false
-	})
+		if matched {
+			out = append(out, be)
+		}
+	}
+	return out, nil
 }
 
 // GetClusterGroupTargetBreakglassEscalation returns escalations for specific cluster, user groups, and target group
 func (em EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroups", userGroups, "targetGroup", targetGroup)
+	// Try index-based lookup by escalatedGroup first
+	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
+	list := telekomv1alpha1.BreakglassEscalationList{}
+	if err := em.List(ctx, &list, client.MatchingFields{"spec.escalatedGroup": targetGroup}); err == nil && len(list.Items) > 0 {
+		collected = append(collected, list.Items...)
+	}
+	// If not found via index, fall back to scanning all escalations
+	if len(collected) == 0 {
+		all, err := em.GetAllBreakglassEscalations(ctx)
+		if err != nil {
+			return nil, err
+		}
+		collected = append(collected, all...)
+	}
+
+	// Filter collected by cluster and allowed groups
 	var oidcPrefixes []string
 	if cfg, err := cfgpkg.Load(); err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
 		oidcPrefixes = cfg.Kubernetes.OIDCPrefixes
 	}
-	return em.GetBreakglassEscalationsWithFilter(ctx, func(be telekomv1alpha1.BreakglassEscalation) bool {
+	out := make([]telekomv1alpha1.BreakglassEscalation, 0)
+	for _, be := range collected {
 		if be.Spec.EscalatedGroup != targetGroup {
-			return false
+			continue
 		}
 		clusterMatch := slices.Contains(be.Spec.Allowed.Clusters, cluster)
 		if !clusterMatch {
@@ -181,7 +261,7 @@ func (em EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx contex
 			}
 		}
 		if !clusterMatch {
-			return false
+			continue
 		}
 		allowedGroups := be.Spec.Allowed.Groups
 		if len(oidcPrefixes) > 0 {
@@ -189,14 +269,12 @@ func (em EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx contex
 		}
 		for _, g := range userGroups {
 			if slices.Contains(allowedGroups, g) {
-				zap.S().Debugw("Cluster-group-target escalation matches", "escalation", be.Name, "cluster", cluster, "group", g, "targetGroup", targetGroup, "normalizedAllowedGroups", allowedGroups)
-				return true
-			} else {
-				zap.S().Debugw("Cluster-group-target escalation no match", "escalation", be.Name, "cluster", cluster, "candidateGroup", g, "targetGroup", targetGroup, "normalizedAllowedGroups", allowedGroups)
+				out = append(out, be)
+				break
 			}
 		}
-		return false
-	})
+	}
+	return out, nil
 }
 
 func NewEscalationManager(contextName string, resolver GroupMemberResolver) (EscalationManager, error) {
