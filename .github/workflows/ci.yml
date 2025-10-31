@@ -59,7 +59,7 @@ jobs:
       - name: Run scancode (action) on source dirs
         uses: aboutcode-org/scancode-action@beta
         with:
-          pipelines: 'analyze_docker_image,scan_codebase,resolve_dependencies'
+          pipelines: 'scan_codebase,resolve_dependencies'
           output-formats: "json xlsx spdx cyclonedx"
 
   build-image:
