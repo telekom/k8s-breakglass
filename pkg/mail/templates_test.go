@@ -12,6 +12,7 @@ func TestRenderRequest(t *testing.T) {
 		SubjectEmail:    "john.doe@example.com",
 		RequestedRole:   "admin",
 		URL:             "https://example.com/approve",
+		BrandingName:    "Das SCHIFF Breakglass",
 	}
 
 	result, err := RenderRequest(params)
@@ -31,6 +32,7 @@ func TestRenderApproved(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
+		BrandingName:     "Das SCHIFF Breakglass",
 	}
 
 	result, err := RenderApproved(params)
@@ -52,6 +54,7 @@ func TestRenderBreakglassSessionRequest(t *testing.T) {
 		RequestedUsername: "testuser",
 		RequestedGroup:    "admin",
 		URL:               "https://example.com/session",
+		BrandingName:      "Das SCHIFF Breakglass",
 	}
 
 	result, err := RenderBreakglassSessionRequest(params)
@@ -74,6 +77,7 @@ func TestRenderBreakglassSessionNotification(t *testing.T) {
 		RequestedUsername: "testuser",
 		RequestedGroup:    "admin",
 		URL:               "https://example.com/session",
+		BrandingName:      "Das SCHIFF Breakglass",
 	}
 
 	result, err := RenderBreakglassSessionNotification(params)
@@ -132,6 +136,7 @@ func TestTemplateParameterTypes(t *testing.T) {
 		assert.IsType(t, "", params.SubjectEmail)
 		assert.IsType(t, "", params.RequestedRole)
 		assert.IsType(t, "", params.URL)
+		assert.IsType(t, "", params.BrandingName)
 	})
 
 	t.Run("ApprovedMailParams", func(t *testing.T) {
@@ -151,6 +156,7 @@ func TestTemplateParameterTypes(t *testing.T) {
 		assert.IsType(t, "", params.RequestedUsername)
 		assert.IsType(t, "", params.RequestedGroup)
 		assert.IsType(t, "", params.URL)
+		assert.IsType(t, "", params.BrandingName)
 	})
 }
 

@@ -9,10 +9,17 @@ frontend:
   oidcAuthority: http://127.0.0.1:8080/realms/master
   oidcClientID: breakglass-ui
   baseURL: http://localhost:5173
+  # Optional: brandingName controls the product name shown in the UI header and
+  # page title. Example: "Das SCHIFF Breakglass". If omitted, the frontend will
+  # display a neutral placeholder title.
+  # brandingName: "Das SCHIFF Breakglass"
 mail:
   host: 127.0.0.1
   port: 1025
   insecureSkipVerify: false
+  # Optional: sender address and display name for outgoing mails
+  # senderAddress: noreply@example.com
+  # senderName: "Das SCHIFF Breakglass"
 kubernetes:
   context: "" # kubectl config context if empty default will be used
   oidcPrefixes: # List of prefixes to strip from user groups for cluster matching

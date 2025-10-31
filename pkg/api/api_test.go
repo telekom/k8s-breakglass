@@ -67,6 +67,7 @@ func TestServer_getConfig(t *testing.T) {
 		Frontend: config.Frontend{
 			OIDCAuthority: "https://auth.example.com",
 			OIDCClientID:  "test-client-id",
+			BrandingName:  "Das SCHIFF Breakglass",
 		},
 		AuthorizationServer: config.AuthorizationServer{
 			URL:          "https://auth.example.com",
@@ -90,6 +91,8 @@ func TestServer_getConfig(t *testing.T) {
 
 	assert.Equal(t, cfg.Frontend.OIDCAuthority, response.Frontend.OIDCAuthority)
 	assert.Equal(t, cfg.Frontend.OIDCClientID, response.Frontend.OIDCClientID)
+	// Branding should be propagated to the public config
+	assert.Equal(t, cfg.Frontend.BrandingName, response.Frontend.BrandingName)
 	assert.Equal(t, cfg.AuthorizationServer.URL, response.AuthorizationServer.URL)
 	assert.Equal(t, cfg.AuthorizationServer.JWKSEndpoint, response.AuthorizationServer.JWKSEndpoint)
 }

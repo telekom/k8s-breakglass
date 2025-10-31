@@ -11,6 +11,7 @@ type RequestMailParams struct {
 	SubjectEmail    string
 	RequestedRole   string
 	URL             string
+	BrandingName    string
 }
 
 type ApprovedMailParams struct {
@@ -19,6 +20,7 @@ type ApprovedMailParams struct {
 	RequestedRole    string
 	ApproverFullName string
 	ApproverEmail    string
+	BrandingName     string
 }
 
 type RequestBreakglassSessionMailParams struct {
@@ -29,7 +31,8 @@ type RequestBreakglassSessionMailParams struct {
 	RequestedUsername string
 	RequestedGroup    string
 
-	URL string
+	URL          string
+	BrandingName string
 }
 
 var (

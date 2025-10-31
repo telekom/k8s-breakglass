@@ -15,7 +15,9 @@ type Sender interface {
 }
 
 type sender struct {
-	dialer *gomail.Dialer
+	dialer        *gomail.Dialer
+	senderAddress string
+	senderName    string
 }
 
 func NewSender(cfg config.Config) Sender {
@@ -25,15 +27,30 @@ func NewSender(cfg config.Config) Sender {
 		log.Printf("[mail] InsecureSkipVerify is enabled for mail TLS connection")
 		d.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	// Determine sender address and name, use sensible defaults when missing
+	senderAddr := cfg.Mail.SenderAddress
+	if senderAddr == "" {
+		senderAddr = "noreply@schiff.telekom.de"
+	}
+	senderName := cfg.Mail.SenderName
+	if senderName == "" && cfg.Frontend.BrandingName != "" {
+		senderName = cfg.Frontend.BrandingName
+	}
+	if senderName == "" {
+		senderName = "Breakglass"
+	}
+
 	return &sender{
-		dialer: d,
+		dialer:        d,
+		senderAddress: senderAddr,
+		senderName:    senderName,
 	}
 }
 
 func (s *sender) Send(receivers []string, subject, body string) error {
 	log.Printf("[mail] Preparing to send mail to %d receivers. Subject: %s", len(receivers), subject)
 	msg := gomail.NewMessage()
-	msg.SetAddressHeader("From", "noreply@schiff.telekom.de", "Das SCHIFF Breakglass")
+	msg.SetAddressHeader("From", s.senderAddress, s.senderName)
 	msg.SetHeader("Bcc", receivers...)
 	msg.SetHeader("Subject", subject)
 	msg.SetBody("text/html", body)

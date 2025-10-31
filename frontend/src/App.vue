@@ -4,6 +4,7 @@ import { decodeJwt } from "jose";
 import { useRoute } from "vue-router";
 
 import { AuthKey } from "@/keys";
+import { BrandingKey } from "@/keys";
 import { useUser } from "@/services/auth";
 const auth = inject(AuthKey);
 const user = useUser();
@@ -12,6 +13,11 @@ const authenticated = computed(() => user.value && !user.value?.expired);
 const route = useRoute();
 
 const groupsRef = ref<string[]>([]);
+
+// Branding provided by backend; fallback to a neutral placeholder string if
+// backend unavailable or branding not configured.
+const brandingFromBackend = inject(BrandingKey) as string | undefined;
+const brandingTitle = computed(() => brandingFromBackend ?? "Breakglass");
 
 async function refreshGroups() {
   try {
@@ -74,10 +80,9 @@ function logout() {
   <main>
     <a class="skip-link" href="#main">Skip to content</a>
     <scale-telekom-app-shell claim-lang="de">
-      <scale-telekom-header-data-back-compat :userNavigation="userNav" logo-title="Das SCHIFF Breakglass" logo-href="/" />
-
+  <scale-telekom-header-data-back-compat :userNavigation="userNav" :logo-title="brandingTitle" logo-href="/" />
       <div class="app-container" id="main">
-        <h1 class="center">Das SCHIFF Breakglass</h1>
+  <h1 class="center">{{ brandingTitle }}</h1>
         <nav class="main-nav" aria-label="Main navigation">
           <router-link to="/">Home</router-link>
           <router-link to="/approvals/pending">Pending Approvals</router-link>

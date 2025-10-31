@@ -23,6 +23,10 @@ type Frontend struct {
 	OIDCAuthority string `yaml:"oidcAuthority"`
 	OIDCClientID  string `yaml:"oidcClientID"`
 	BaseURL       string `yaml:"baseURL"`
+	// BrandingName optionally overrides the UI product name shown in the frontend
+	// e.g. "Das SCHIFF Breakglass". If empty, the frontend may use a hardcoded
+	// default or its own placeholder.
+	BrandingName string `yaml:"brandingName"`
 }
 
 type Mail struct {
@@ -31,6 +35,12 @@ type Mail struct {
 	User               string
 	Password           string
 	InsecureSkipVerify bool `yaml:"insecureSkipVerify"`
+	// SenderAddress is the email address used in the From header for outgoing mails.
+	// Example: noreply@example.com
+	SenderAddress string `yaml:"senderAddress"`
+	// SenderName is the display name used in the From header for outgoing mails.
+	// If empty, the application will fall back to the frontend branding name or a generic placeholder.
+	SenderName string `yaml:"senderName"`
 }
 
 type Server struct {
