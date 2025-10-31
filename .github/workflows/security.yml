@@ -1,4 +1,6 @@
 name: Security Scan
+permissions:
+  contents: read
 
 on:
   schedule:
