@@ -323,17 +323,21 @@ export default class BreakglassService {
 
 // Helper: parse simple duration strings like "1h", "30m"; default seconds fallback
 function parseDuration(input: string | undefined): number | undefined {
-  if (!input || typeof input !== "string") return undefined;
-  const m = input.match(/^(\d+)([smhd])$/); // seconds, minutes, hours, days
-  if (!m) return undefined;
-  const val = parseInt(m[1]);
-  switch (m[2]) {
+  if (!input) return undefined;
+  const match = /^(\d+)([smhd])$/.exec(input);
+  if (!match) return undefined;
+  // match: [full, digits, unit]
+  const raw = match[1] ?? "";
+  const unit = match[2] ?? "";
+  const val = raw ? parseInt(raw, 10) : NaN;
+  if (Number.isNaN(val)) return undefined;
+  switch (unit) {
     case "s": return val;
     case "m": return val * 60;
     case "h": return val * 3600;
     case "d": return val * 86400;
+    default: return undefined;
   }
-  return undefined;
 }
 
 function hasApprovers(appr: any): boolean {

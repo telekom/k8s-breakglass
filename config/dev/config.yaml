@@ -6,9 +6,11 @@ authorizationServer:
   # Prefer the HTTPS endpoint inside cluster
   url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
   jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
+  # Self-signed cert used for e2e/dev; skip verification (alternative would be to inline CA in config)
+  insecureSkipVerify: true
 frontend:
-  # For local development we use localhost port-forwards for browser flows (HTTPS forwarded port)
-  oidcAuthority: https://localhost:8443/realms/breakglass-e2e
+  # Use the in-cluster Keycloak host; browser will access via /api/oidc/authority proxy
+  oidcAuthority: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e
   oidcClientID: breakglass-ui
   baseURL: http://localhost:8081
 mail:

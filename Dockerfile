@@ -1,8 +1,12 @@
 FROM node:23-alpine AS npm_builder
 WORKDIR /workspace
-COPY ./frontend /
-RUN npm i
-RUN npm run build
+ARG UI_FLAVOUR=oss
+ENV VITE_UI_FLAVOUR=$UI_FLAVOUR
+LABEL org.breakglass.ui.flavour.default="oss"
+COPY ./frontend /workspace/frontend
+RUN set -eux; cd /workspace/frontend; \
+		npm install --no-audit --no-fund; \
+		npm run build
 
 # Build the manager binary
 FROM golang:1.24.9 AS builder
@@ -34,7 +38,7 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 
 COPY --from=builder /workspace/breakglass .
-COPY --from=npm_builder  /dist /frontend/dist
+COPY --from=npm_builder /workspace/frontend/dist /frontend/dist
 
 USER 65532
 ENTRYPOINT [ "/breakglass" ]

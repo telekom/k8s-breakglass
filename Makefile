@@ -73,6 +73,15 @@ e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deplo
 .PHONY: docker-build
 docker-build: ## Build docker image with controller.
 	docker build -t ${IMG} .
+
+.PHONY: docker-build-oss
+docker-build-oss: ## Build OSS (neutral UI) image
+	docker build --build-arg UI_FLAVOUR=oss -t ${IMG:-breakglass:oss} .
+
+.PHONY: docker-build-telekom
+docker-build-telekom: ## Build Telekom branded UI image
+	docker build --build-arg UI_FLAVOUR=telekom -t ${IMG:-breakglass:telekom} .
+
 ##@ Deployment
 
 ifndef ignore-not-found

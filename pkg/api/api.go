@@ -241,13 +241,16 @@ func (s *Server) getConfig(c *gin.Context) {
 // certificate for e2e local runs. Only simple GET proxying is implemented here.
 func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if s.oidcAuthority == nil {
+		s.log.Sugar().Warnw("oidc_proxy_missing_authority")
 		c.JSON(http.StatusNotFound, gin.H{"error": "OIDC authority not configured"})
 		return
 	}
-	// Build target URL by appending the wildcard proxy path to the authority
+	start := time.Now()
 	proxyPath := c.Param("proxyPath")
-	// proxyPath starts with '/', join carefully
-	target := strings.TrimRight(s.config.Frontend.OIDCAuthority, "/") + proxyPath
+	// Safe join using parsed authority rather than raw configured string
+	base := strings.TrimRight(s.oidcAuthority.String(), "/")
+	target := base + proxyPath
+	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target", target)
 
 	// Create HTTP client; trust configured CA if present otherwise skip verify for e2e
 	transport := &http.Transport{}
@@ -266,6 +269,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", target, nil)
 	if err != nil {
+		s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
 		return
 	}
@@ -277,10 +281,12 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch from authority", "detail": err.Error()})
+		s.log.Sugar().Errorw("oidc_proxy_upstream_error", "error", err, "target", target, "elapsed", time.Since(start))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch from authority", "detail": err.Error(), "target": target})
 		return
 	}
 	defer resp.Body.Close()
+	s.log.Sugar().Debugw("oidc_proxy_upstream_response", "status", resp.StatusCode, "target", target, "elapsed", time.Since(start))
 
 	// Copy status, headers (selectively) and body
 	for k, vs := range resp.Header {
@@ -290,9 +296,8 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	}
 	c.Status(resp.StatusCode)
 	if _, err := io.Copy(c.Writer, resp.Body); err != nil {
-		// Log and return a 502 to the client if streaming fails
 		s.log.Sugar().Errorw("oidc_proxy_copy_error", "error", err, "target", target)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to stream response from authority", "detail": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to stream response from authority", "detail": err.Error(), "target": target})
 		return
 	}
 }
