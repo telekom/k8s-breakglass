@@ -220,7 +220,7 @@ export default class BreakglassService {
       // Normalize approved entries to ActiveBreakglass shape used elsewhere
       const approvedNormalized = approved.map((ses: any) => ({
         name: ses?.metadata?.name || ses.name || "",
-        group: ses?.spec?.grantedGroup || ses?.spec?.grantedGroup || "",
+        group: ses?.spec?.grantedGroup || "",
         cluster: ses?.spec?.cluster || "",
         expiry: ses?.status?.expiresAt || 0,
         state: ses?.status?.state || "Approved",
