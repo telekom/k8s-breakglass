@@ -48,10 +48,24 @@ jobs:
           flags: unittests
           fail_ci_if_error: false
 
+  license-scan:
+    name: License Scan (scancode)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: scancode-inputs
+      - name: Run scancode (action) on source dirs
+        uses: aboutcode-org/scancode-action@beta
+        with:
+          pipelines: 'analyze_docker_image,scan_codebase,resolve_dependencies'
+          output-formats: "json xlsx spdx cyclonedx"
+
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
-    needs: [lint-test]
+    needs: [lint-test, license-scan]
     permissions:
       contents: read
       packages: write
@@ -69,9 +83,7 @@ jobs:
         with:
           path: /tmp/.buildx-cache
           key: buildx-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            buildx-${{ github.ref_name }}-
-            buildx-
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -119,6 +131,7 @@ jobs:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           artifact-name: sbom-${{ github.sha }}.json
+          attach-to-release: false
       - name: Attest provenance (skipped temporarily)
         # Temporarily disabled because ACTIONS_ID_TOKEN_REQUEST_URL isn't available in some runners
         # Re-enable by removing or changing the `if` condition when the environment supports id-token requests.
