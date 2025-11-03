@@ -22,4 +22,4 @@ jobs:
         uses: oss-review-toolkit/ort-ci-github-action@v1
         with:
           ort-config-repository: 'https://github.com/telekom/ort-config.git'
-          log-level: debug
+          log-level: info
