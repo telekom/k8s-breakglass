@@ -52,3 +52,5 @@ manager.log
 e2e/kind-setup-single-tdir/rendered-config-dev/*
 e2e/kind-setup-single-tdir/tmp-config-with-ca.yaml
 apiserver.log
+.vscode/
+main

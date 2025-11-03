@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
+	"github.com/telekom/das-schiff-breakglass/api/v1alpha1"
+	"github.com/telekom/das-schiff-breakglass/pkg/breakglass"
 	"go.uber.org/zap"
 )
 

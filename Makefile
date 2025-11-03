@@ -8,6 +8,7 @@ else
 GOBIN=$(shell go env GOBIN)
 endif
 
+HACK_BIN=$(shell pwd)/hack/bin
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -162,3 +163,23 @@ mv $(1) $(1)-$(3) ;\
 } ;\
 ln -sf $(1)-$(3) $(1)
 endef
+##@ Release
+
+RELEASE_TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null)
+
+RELEASE_DIR ?= out
+
+$(RELEASE_DIR):
+	mkdir -p $(RELEASE_DIR)/
+
+licenses-report: go-licenses
+	rm -rf $(RELEASE_DIR)/licenses
+	$(GO_LICENSES) save --save_path $(RELEASE_DIR)/licenses ./...
+	$(GO_LICENSES) report --template hack/licenses.md.tpl ./... > $(RELEASE_DIR)/licenses/licenses.md
+	(cd out/licenses && tar -czf ../licenses.tar.gz *)
+
+
+GO_LICENSES = $(HACK_BIN)/go-licenses
+.PHONY: go-licenses
+go-licenses:
+	env GOBIN=$(HACK_BIN) go install github.com/google/go-licenses@latest

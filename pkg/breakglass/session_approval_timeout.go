@@ -4,7 +4,7 @@ package breakglass
 import (
 	"time"
 
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
+	"github.com/telekom/das-schiff-breakglass/api/v1alpha1"
 )
 
 func IsSessionApprovalTimedOut(session v1alpha1.BreakglassSession) bool {

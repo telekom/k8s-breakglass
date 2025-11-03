@@ -12,7 +12,7 @@ import (
 	"github.com/MicahParks/keyfunc"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
+	"github.com/telekom/das-schiff-breakglass/pkg/config"
 	"go.uber.org/zap"
 )
 

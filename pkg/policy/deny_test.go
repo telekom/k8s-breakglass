@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
+	telekomv1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"

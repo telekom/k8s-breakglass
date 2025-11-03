@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
+	"github.com/telekom/das-schiff-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
 )
 

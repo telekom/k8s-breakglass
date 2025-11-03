@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
+	telekomv1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
+	"github.com/telekom/das-schiff-breakglass/pkg/system"
 	"go.uber.org/zap"
 )
 

@@ -18,13 +18,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/cluster"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/metrics"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/policy"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
+	"github.com/telekom/das-schiff-breakglass/api/v1alpha1"
+	"github.com/telekom/das-schiff-breakglass/pkg/breakglass"
+	"github.com/telekom/das-schiff-breakglass/pkg/cluster"
+	"github.com/telekom/das-schiff-breakglass/pkg/config"
+	"github.com/telekom/das-schiff-breakglass/pkg/metrics"
+	"github.com/telekom/das-schiff-breakglass/pkg/policy"
+	"github.com/telekom/das-schiff-breakglass/pkg/system"
 )
 
 // denyReasonMessage is a user-facing instruction included in SubjectAccessReview deny responses.

@@ -14,9 +14,9 @@ import (
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/metrics"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
+	"github.com/telekom/das-schiff-breakglass/pkg/config"
+	"github.com/telekom/das-schiff-breakglass/pkg/metrics"
+	"github.com/telekom/das-schiff-breakglass/pkg/system"
 	"go.uber.org/zap"
 )
 

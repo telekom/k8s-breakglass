@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	telekomv1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
-	cfgpkg "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
+	telekomv1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
+	cfgpkg "github.com/telekom/das-schiff-breakglass/pkg/config"
 	"go.uber.org/zap"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

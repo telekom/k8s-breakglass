@@ -14,7 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
+	"github.com/telekom/das-schiff-breakglass/pkg/system"
 )
 
 // K8sEventRecorder implements record.EventRecorder but writes Events via the provided clientset.

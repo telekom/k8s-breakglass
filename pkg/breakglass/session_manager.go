@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
+	"github.com/telekom/das-schiff-breakglass/api/v1alpha1"
+	"github.com/telekom/das-schiff-breakglass/pkg/system"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/fields"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -115,7 +115,7 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 		}
 		msg := fmt.Sprintf("multiple BreakglassSessions with name %q found in namespaces: %s", name, strings.Join(namespaces, ","))
 		zap.S().Errorw("Ambiguous BreakglassSession name across namespaces", "name", name, "namespaces", namespaces)
-		return bs, errors.Errorf(msg)
+		return bs, errors.Errorf("%s", msg)
 	}
 
 	// Single match: return it

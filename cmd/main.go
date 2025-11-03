@@ -14,17 +14,17 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
-	v1alpha1 "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/api/v1alpha1"
+	v1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/api"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/breakglass"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/cluster"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/policy"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/system"
-	"gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/webhook"
+	"github.com/telekom/das-schiff-breakglass/pkg/api"
+	"github.com/telekom/das-schiff-breakglass/pkg/breakglass"
+	"github.com/telekom/das-schiff-breakglass/pkg/cluster"
+	"github.com/telekom/das-schiff-breakglass/pkg/config"
+	"github.com/telekom/das-schiff-breakglass/pkg/policy"
+	"github.com/telekom/das-schiff-breakglass/pkg/system"
+	"github.com/telekom/das-schiff-breakglass/pkg/webhook"
 )
 
 func main() {

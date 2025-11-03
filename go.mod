@@ -1,8 +1,6 @@
-module gitlab.devops.telekom.de/schiff/engine/go-breakglass.git
+module github.com/telekom/das-schiff-breakglass
 
-go 1.23.0
-
-toolchain go1.24.1
+go 1.24.9
 
 require (
 	github.com/MicahParks/keyfunc v1.9.0

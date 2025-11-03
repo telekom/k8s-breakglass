@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	pkgconfig "gitlab.devops.telekom.de/schiff/engine/go-breakglass.git/pkg/config"
+	pkgconfig "github.com/telekom/das-schiff-breakglass/pkg/config"
 )
 
 type CanGroupsDoFunction func(ctx context.Context,
