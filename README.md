@@ -1,5 +1,7 @@
 # Breakglass
 
+[![REUSE Compliance Check](https://github.com/telekom/das-schiff-breakglass/actions/workflows/reuse-compliance.yml/badge.svg)](https://github.com/telekom/das-schiff-breakglass/actions/workflows/reuse-compliance.yml)
+
 Golang application that allows for short-term elevation of privileges in an emergency situation.
 
 ## Overview
