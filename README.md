@@ -1,5 +1,7 @@
 # Breakglass
 
+[![OpenSSF Scorecard Score](https://api.scorecard.dev/projects/github.com/telekom/das-schiff-breakglass/badge)](https://scorecard.dev/viewer/?uri=github.com/telekom/das-schiff-breakglass/badge)
+
 Golang application that allows for short-term elevation of privileges in an emergency situation.
 
 ## Overview
