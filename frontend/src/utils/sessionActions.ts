@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import type { SessionCR } from '@/model/breakglass';
 
 export function decideRejectOrWithdraw(currentUserEmail: string | undefined, bg?: SessionCR): 'withdraw' | 'reject' {

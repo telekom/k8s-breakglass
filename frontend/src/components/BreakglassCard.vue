@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <script setup lang="ts">
 import humanizeDuration from "humanize-duration";
 import { computed, ref, watch } from "vue";

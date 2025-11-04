@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # End-to-end (E2E) Test Plan — Actionable Checklist
 
 This file contains singular, implementable e2e test items grouped by functional sections. Each line is one concrete test that can be automated (scripted) and asserted in CI or locally against the `e2e/kind-setup-single.sh` environment.

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Webhook Setup and Integration
 
 This guide covers setting up the breakglass authorization webhook in managed Kubernetes clusters to enable real-time access control based on active breakglass sessions.

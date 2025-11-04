@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <template>
   <span>
     <span :class="['countdown', { expired: remaining <= 0 }]" :title="fullTime">

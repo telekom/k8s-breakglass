@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
 server:
   listenAddress: 0.0.0.0:8081
   # TLS disabled for dev; manager will serve HTTP on port 8081

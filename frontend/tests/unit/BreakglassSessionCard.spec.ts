@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { mount } from '@vue/test-utils';
 import BreakglassSessionCard from '@/components/BreakglassSessionCard.vue';
 

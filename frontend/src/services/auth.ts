@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import type Config from "@/model/config";
 import { UserManager, WebStorageStateStore, User, type UserManagerSettings, Log } from "oidc-client-ts";
 import { ref } from "vue";

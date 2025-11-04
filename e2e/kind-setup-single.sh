@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
 set -euo pipefail
 # Single-cluster variant: Keycloak + Breakglass controller + webhook auth all in one kind cluster.
 # Replaces previous hub+tenant topology by creating only one cluster and using a ClusterConfig

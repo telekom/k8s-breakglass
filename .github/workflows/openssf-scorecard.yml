@@ -1,10 +1,7 @@
-# This workflow generates an OpenSSF scorecard report, and uploads the report
-# (i) as an artifact to the actions tab, and (ii) to GitHub's code scanning dashboard
-# Note: This workflow file is slightly adpated version of
-# https://github.com/ossf/scorecard/blob/99b664e5d18f6774ef63dd1e7acb9f255c6285de/.github/workflows/scorecard-analysis.yml
+# SPDX-FileCopyrightText: 2020, 2024 OpenSSF Scorecard Authors Deutsche Telekom AG
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
 #
-# SPDX-FileCopyrightText: 2020 OpenSSF Scorecard Authors, 2024 Deutsche Telekom AG
-#
+# SPDX-License-Identifier: Apache-2.0
 # SPDX-License-Identifier: CC0-1.0
 
 name: OpenSSF Scorecard

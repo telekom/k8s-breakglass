@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // IsSessionApprovalTimedOut returns true if the session is still pending and TimeoutAt has passed.
 package breakglass
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import type Config from "@/model/config";
 import axios from "axios";
 import { error as logError } from "@/services/logger";

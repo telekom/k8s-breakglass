@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # REST API Reference
 
 The breakglass controller exposes a REST API for managing breakglass sessions. This API is used by the frontend application and can be integrated with external systems.

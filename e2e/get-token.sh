@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
 set -euo pipefail
 HUB=${HUB:-breakglass-hub}
 USER=${1:-test-user}

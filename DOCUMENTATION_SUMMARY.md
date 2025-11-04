@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Documentation Summary - CORRECTED
 
 This documentation update adds comprehensive guides for all breakglass components, with corrections made to remove hallucinated features and align with the actual implementation.

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # BreakglassSession Custom Resource
 
 The `BreakglassSession` custom resource represents an active or requested privilege escalation session, containing information about the user, target cluster, granted permissions, and approval status.

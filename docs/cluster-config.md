@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # ClusterConfig Custom Resource
 
 The `ClusterConfig` custom resource enables the breakglass hub cluster to manage and connect to tenant clusters for authorization checks and breakglass session management.

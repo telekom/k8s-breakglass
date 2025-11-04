@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <script setup lang="ts">
 import BreakglassCard from "@/components/BreakglassCard.vue";
 import { inject, onMounted, reactive, computed } from "vue";

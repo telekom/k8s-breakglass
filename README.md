@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Breakglass
 
 [![REUSE Compliance Check](https://github.com/telekom/das-schiff-breakglass/actions/workflows/reuse-compliance.yml/badge.svg)](https://github.com/telekom/das-schiff-breakglass/actions/workflows/reuse-compliance.yml)

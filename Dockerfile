@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
 FROM node:23-alpine AS npm_builder
 WORKDIR /workspace
 COPY ./frontend /

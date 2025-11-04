@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Image URL to use all building/pushing image targets
 IMG ?= harbor.das-schiff.telekom.de/schiff-dev/breakglass-2:latest
 

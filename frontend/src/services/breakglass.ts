@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import axios, { type AxiosRequestHeaders, type AxiosResponse } from "axios";
 import { handleAxiosError } from "@/services/logger";
 

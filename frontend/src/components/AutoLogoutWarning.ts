@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { inject, onMounted, onUnmounted, ref } from 'vue';
 import AuthService from '@/services/auth';
 import { AuthKey } from '@/keys';

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # DenyPolicy Custom Resource
 
 The `DenyPolicy` custom resource enables cluster administrators to define explicit access restrictions that override breakglass escalations and deny specific actions regardless of user permissions.
