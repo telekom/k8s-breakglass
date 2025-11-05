@@ -15,6 +15,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -749,6 +750,18 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		wc.log.Error("error while updating breakglass session", zap.Error(err))
 		c.Status(http.StatusInternalServerError)
 		return
+	}
+
+	// Track metrics for session lifecycle events
+	switch sesCondition {
+	case v1alpha1.SessionConditionTypeApproved:
+		metrics.SessionApproved.WithLabelValues(bs.Spec.Cluster).Inc()
+		// Also track if it was a scheduled session that got approved
+		if bs.Spec.ScheduledStartTime != nil && !bs.Spec.ScheduledStartTime.IsZero() {
+			metrics.SessionScheduled.WithLabelValues(bs.Spec.Cluster).Inc()
+		}
+	case v1alpha1.SessionConditionTypeRejected:
+		metrics.SessionRejected.WithLabelValues(bs.Spec.Cluster).Inc()
 	}
 
 	c.JSON(http.StatusOK, bs)

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	v1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -105,6 +106,9 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 			"session", ses.Name,
 			"namespace", ses.Namespace,
 			"actualStartTime", ses.Status.ActualStartTime.Time)
+
+		// Record metric for successful activation
+		metrics.SessionActivated.WithLabelValues(ses.Spec.Cluster).Inc()
 
 		// RBAC group will now be applied by the authorization controller
 		// (same mechanism as immediate sessions)

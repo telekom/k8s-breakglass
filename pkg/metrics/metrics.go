@@ -75,6 +75,22 @@ var (
 		Name: "breakglass_session_expired_total",
 		Help: "Total number of Breakglass sessions that expired",
 	}, []string{"cluster"})
+	SessionScheduled = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_scheduled_total",
+		Help: "Total number of Breakglass sessions created with scheduled start time",
+	}, []string{"cluster"})
+	SessionActivated = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_activated_total",
+		Help: "Total number of scheduled Breakglass sessions that were automatically activated",
+	}, []string{"cluster"})
+	SessionApproved = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_approved_total",
+		Help: "Total number of Breakglass sessions that were approved",
+	}, []string{"cluster"})
+	SessionRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_rejected_total",
+		Help: "Total number of Breakglass sessions that were rejected",
+	}, []string{"cluster"})
 
 	// Mail metrics
 	MailSendSuccess = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -103,6 +119,10 @@ func init() {
 	prometheus.MustRegister(SessionUpdated)
 	prometheus.MustRegister(SessionDeleted)
 	prometheus.MustRegister(SessionExpired)
+	prometheus.MustRegister(SessionScheduled)
+	prometheus.MustRegister(SessionActivated)
+	prometheus.MustRegister(SessionApproved)
+	prometheus.MustRegister(SessionRejected)
 	prometheus.MustRegister(MailSendSuccess)
 	prometheus.MustRegister(MailSendFailure)
 
