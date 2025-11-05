@@ -40,5 +40,18 @@ WORKDIR /
 COPY --from=builder /workspace/breakglass .
 COPY --from=npm_builder /workspace/frontend/dist /frontend/dist
 
+# Copy license files for compliance
+COPY LICENSES /licenses/
+COPY LICENCE /licenses/PROJECT_LICENCE
+
+# OCI Image Labels - Standard metadata for container images
+LABEL org.opencontainers.image.title="Kubernetes Breakglass"
+LABEL org.opencontainers.image.description="Secure, auditable privilege escalation system for Kubernetes clusters with real-time webhook integration"
+LABEL org.opencontainers.image.url="https://github.com/telekom/k8s-breakglass"
+LABEL org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/tree/main/docs"
+LABEL org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="Deutsche Telekom"
+
 USER 65532
 ENTRYPOINT [ "/breakglass" ]

@@ -193,15 +193,3 @@ RELEASE_DIR ?= out
 
 $(RELEASE_DIR):
 	mkdir -p $(RELEASE_DIR)/
-
-licenses-report: go-licenses
-	rm -rf $(RELEASE_DIR)/licenses
-	$(GO_LICENSES) save --save_path $(RELEASE_DIR)/licenses ./...
-	$(GO_LICENSES) report --template hack/licenses.md.tpl ./... > $(RELEASE_DIR)/licenses/licenses.md
-	(cd out/licenses && tar -czf ../licenses.tar.gz *)
-
-
-GO_LICENSES = $(HACK_BIN)/go-licenses
-.PHONY: go-licenses
-go-licenses:
-	env GOBIN=$(HACK_BIN) go install github.com/google/go-licenses@latest

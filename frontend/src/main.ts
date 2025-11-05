@@ -2,74 +2,88 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 
 import App from "@/App.vue";
-// Conditionally import Scale components depending on flavour (default: oss)
-const flavour = (import.meta as any).env?.VITE_UI_FLAVOUR || "oss";
-// Favicon swap: default neutral favicon; use branded icon for telekom flavour if present
-try {
-  const fav = document.getElementById("app-favicon") as HTMLLinkElement | null;
-  if (fav) {
-    if (flavour === "telekom") {
-      fav.type = "image/x-icon";
-      fav.href = "/favicon.ico"; // legacy branded icon
-    } else {
-      fav.type = "image/svg+xml";
-      fav.href = "/favicon-oss.svg";
-    }
-  } else {
-    // create if missing
-    const link = document.createElement("link");
-    link.id = "app-favicon";
-    link.rel = "icon";
-    if (flavour === "telekom") {
-      link.type = "image/x-icon";
-      link.href = "/favicon.ico";
-    } else {
-      link.type = "image/svg+xml";
-      link.href = "/favicon-oss.svg";
-    }
-    document.head.appendChild(link);
-  }
-} catch (e) {
-  // eslint-disable-next-line no-console
-  console.warn("[favicon] swap failed", e);
-}
-// Expose flavour for e2e/UI tests & theming hooks
-try {
-  (window as any).__BREAKGLASS_UI_FLAVOUR = flavour;
-  document.documentElement.setAttribute('data-ui-flavour', flavour);
-} catch (e) {
-  // eslint-disable-next-line no-console
-  console.warn('[ui-flavour] expose failed', e);
-}
-if (flavour === "oss" || flavour === "neutral" || flavour === "default") {
-  // Use neutral variant. Stylesheet imports are side-effect only; types not provided.
-  // @ts-expect-error stylesheet side-effect import
-  import("@telekom/scale-components-neutral/dist/scale-components/scale-components.css");
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore loader lacks types in neutral package version
-  import("@telekom/scale-components-neutral/loader").then(({ applyPolyfills, defineCustomElements }) => {
-    applyPolyfills().then(() => defineCustomElements(window));
-  });
-} else {
-  // Default Telekom-branded components
-  // @ts-expect-error stylesheet side-effect import
-  import("@telekom/scale-components/dist/scale-components/scale-components.css");
-  import("@telekom/scale-components/loader").then(({ applyPolyfills, defineCustomElements }) => {
-    applyPolyfills().then(() => defineCustomElements(window));
-  });
-}
 import router from "@/router";
 import AuthService, { AuthRedirect, type State } from "@/services/auth";
 import { AuthKey } from "@/keys";
 import getConfig from "@/services/config";
 import { BrandingKey } from "@/keys";
 
-const app = createApp(App);
+/**
+ * Initialize flavour-dependent UI components and bootstrap the application.
+ * The flavour is fetched from the backend config (/api/config), allowing runtime
+ * configuration without requiring a rebuild.
+ */
+async function initializeApp() {
+  // Fetch configuration from backend, which includes runtime-configurable UI flavour
+  const config = await getConfig();
+  
+  // Determine flavour from backend config or fall back to default
+  const flavour = config.uiFlavour || "oss";
+  
+  // Configure favicon based on flavour
+  try {
+    const fav = document.getElementById("app-favicon") as HTMLLinkElement | null;
+    if (fav) {
+      if (flavour === "telekom") {
+        fav.type = "image/x-icon";
+        fav.href = "/favicon.ico"; // legacy branded icon
+      } else {
+        fav.type = "image/svg+xml";
+        fav.href = "/favicon-oss.svg";
+      }
+    } else {
+      // create if missing
+      const link = document.createElement("link");
+      link.id = "app-favicon";
+      link.rel = "icon";
+      if (flavour === "telekom") {
+        link.type = "image/x-icon";
+        link.href = "/favicon.ico";
+      } else {
+        link.type = "image/svg+xml";
+        link.href = "/favicon-oss.svg";
+      }
+      document.head.appendChild(link);
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn("[favicon] swap failed", e);
+  }
 
-app.use(createPinia());
-app.use(router);
+  // Expose flavour for e2e/UI tests & theming hooks
+  try {
+    (window as any).__BREAKGLASS_UI_FLAVOUR = flavour;
+    document.documentElement.setAttribute('data-ui-flavour', flavour);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[ui-flavour] expose failed', e);
+  }
 
-getConfig().then((config) => {
+  // Load appropriate Scale components based on runtime flavour
+  if (flavour === "oss" || flavour === "neutral" || flavour === "default") {
+    // Use neutral variant. Stylesheet imports are side-effect only; types not provided.
+    // @ts-expect-error stylesheet side-effect import
+    await import("@telekom/scale-components-neutral/dist/scale-components/scale-components.css");
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore loader lacks types in neutral package version
+    const { applyPolyfills, defineCustomElements } = await import("@telekom/scale-components-neutral/loader");
+    await applyPolyfills();
+    await defineCustomElements(window);
+  } else {
+    // Default Telekom-branded components
+    // @ts-expect-error stylesheet side-effect import
+    await import("@telekom/scale-components/dist/scale-components/scale-components.css");
+    const { applyPolyfills, defineCustomElements } = await import("@telekom/scale-components/loader");
+    await applyPolyfills();
+    await defineCustomElements(window);
+  }
+
+  // Initialize Vue app
+  const app = createApp(App);
+
+  app.use(createPinia());
+  app.use(router);
+
   const auth = new AuthService(config);
   app.provide(AuthKey, auth);
   // Provide optional branding name for the UI. Fallbacks will be used by components
@@ -81,26 +95,37 @@ getConfig().then((config) => {
   }
 
   // Handle OIDC login callback
-  router.isReady().then(() => {
-    if (router.currentRoute.value.path === AuthRedirect) {
-      auth.userManager
-        .signinCallback()
-        .then((user) => {
-          if (user && user.state) {
-            const state = user.state as State;
-            if (state.path) {
-              router.replace(state.path);
-              return;
-            }
-          }
+  await router.isReady();
+  if (router.currentRoute.value.path === AuthRedirect) {
+    try {
+      const user = await auth.userManager.signinCallback();
+      if (user && user.state) {
+        const state = user.state as State;
+        if (state.path) {
+          router.replace(state.path);
+        } else {
           router.replace("/");
-        })
-        .catch(function (error) {
-          // Log and surface a friendly message
-          // eslint-disable-next-line no-console
-          console.error('[AuthCallback]', error);
-        });
+        }
+      } else {
+        router.replace("/");
+      }
+    } catch (error) {
+      // Log and surface a friendly message
+      // eslint-disable-next-line no-console
+      console.error('[AuthCallback]', error);
     }
-  });
+  }
+
   app.mount("#app");
+}
+
+// Bootstrap the application
+initializeApp().catch((error) => {
+  // eslint-disable-next-line no-console
+  console.error('[AppInitialization]', error);
+  // Show error message to user if initialization fails
+  const app = document.getElementById("app");
+  if (app) {
+    app.innerHTML = '<div style="padding: 20px; color: red; font-family: monospace;">Failed to initialize application. Please check the console for details.</div>';
+  }
 });

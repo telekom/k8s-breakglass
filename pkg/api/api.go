@@ -194,6 +194,7 @@ type FrontendConfig struct {
 	OIDCAuthority string `json:"oidcAuthority"`
 	OIDCClientID  string `json:"oidcClientID"`
 	BrandingName  string `json:"brandingName,omitempty"`
+	UIFlavour     string `json:"uiFlavour,omitempty"`
 }
 
 type AuthorizationServerConfig struct {
@@ -226,6 +227,7 @@ func (s *Server) getConfig(c *gin.Context) {
 			OIDCAuthority: frontendAuthority,
 			OIDCClientID:  s.config.Frontend.OIDCClientID,
 			BrandingName:  s.config.Frontend.BrandingName,
+			UIFlavour:     s.config.Frontend.UIFlavour,
 		},
 		AuthorizationServer: AuthorizationServerConfig{
 			URL:          s.config.AuthorizationServer.URL,

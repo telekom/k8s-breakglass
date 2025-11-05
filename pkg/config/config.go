@@ -27,6 +27,10 @@ type Frontend struct {
 	// e.g. "Das SCHIFF Breakglass". If empty, the frontend may use a hardcoded
 	// default or its own placeholder.
 	BrandingName string `yaml:"brandingName"`
+	// UIFlavour optionally specifies the UI theme/flavour at runtime (e.g. "telekom", "oss", "neutral").
+	// If empty, defaults to "oss". This allows the UI appearance to be configured server-side
+	// without requiring a rebuild.
+	UIFlavour string `yaml:"uiFlavour"`
 }
 
 type Mail struct {

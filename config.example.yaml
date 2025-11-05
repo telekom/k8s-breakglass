@@ -13,6 +13,10 @@ frontend:
   # page title. Example: "Das SCHIFF Breakglass". If omitted, the frontend will
   # display a neutral placeholder title.
   # brandingName: "Das SCHIFF Breakglass"
+  # Optional: uiFlavour controls the UI theme/appearance at runtime.
+  # Supported values: "oss" (default, neutral), "telekom" (branded), or "neutral".
+  # This allows the UI look-and-feel to be configured server-side without requiring a rebuild.
+  # uiFlavour: "telekom"
 mail:
   host: 127.0.0.1
   port: 1025

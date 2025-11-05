@@ -46,6 +46,21 @@ jobs:
           flags: unittests
           fail_ci_if_error: false
 
+      - name: Frontend security audit (npm)
+        if: always()
+        run: |
+          cd frontend
+          npm ci
+          npm audit --json > ../npm-audit.json || true
+        continue-on-error: true
+
+      - name: Upload npm audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit
+          path: npm-audit.json
+
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
@@ -76,6 +91,24 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Determine if PR is from fork
+        id: fork_check
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # For PRs, check if the repo owner matches (not a fork from 3rd party)
+            PR_REPO_OWNER="${{ github.event.pull_request.head.repo.owner.login }}"
+            MAIN_REPO_OWNER="${{ github.repository_owner }}"
+            if [ "$PR_REPO_OWNER" == "$MAIN_REPO_OWNER" ]; then
+              echo "push_to_registry=true" >> $GITHUB_OUTPUT
+              echo "PR from internal repo, will push to registry"
+            else
+              echo "push_to_registry=false" >> $GITHUB_OUTPUT
+              echo "PR from fork, skipping registry push"
+            fi
+          else
+            echo "push_to_registry=true" >> $GITHUB_OUTPUT
+            echo "Not a PR, will push to registry"
+          fi
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
@@ -84,13 +117,28 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
+            type=raw,value=pr-${{ github.event.number }},enable=${{ github.event_name == 'pull_request' && steps.fork_check.outputs.push_to_registry == 'true' }}
             type=sha
+          labels: |
+            org.opencontainers.image.title=Kubernetes Breakglass
+            org.opencontainers.image.description=Secure, auditable privilege escalation system for Kubernetes clusters with real-time webhook integration and time-bounded access
+            org.opencontainers.image.url=https://github.com/telekom/k8s-breakglass
+            org.opencontainers.image.documentation=https://github.com/telekom/k8s-breakglass/tree/main/docs
+            org.opencontainers.image.source=https://github.com/telekom/k8s-breakglass
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.vendor=Deutsche Telekom
+            org.opencontainers.image.version=${{ github.sha }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            com.github.repo.branch=${{ github.ref_name }}
+            com.github.repo.owner=${{ github.repository_owner }}
+            com.buildkit.build.ref=${{ github.ref }}
       - name: Build & (optionally) Push multi-arch
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true' }}
           # Temporarily dropping arm64 builds to speed up CI
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
@@ -104,19 +152,20 @@ jobs:
           mv /tmp/.buildx-cache /tmp/.buildx-cache-old || true
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
       - name: Wait for image availability
-        if: ${{ github.event_name != 'pull_request' && steps.build.outputs.digest != '' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
         run: |
           echo "Waiting for image to be available in registry..."
           sleep 10
           # Verify image is accessible
           docker manifest inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" || sleep 30
       - name: Generate SBOM (Syft)
-        if: ${{ github.event_name != 'pull_request' && steps.build.outputs.digest != '' }}
         uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
+        id: sbom
+        if: ${{ (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: spdx-json
-          artifact-name: sbom-${{ github.sha }}.json
+          output-file: sbom.json
       - name: Attest provenance (skipped temporarily)
         # Temporarily disabled because ACTIONS_ID_TOKEN_REQUEST_URL isn't available in some runners
         # Re-enable by removing or changing the `if` condition when the environment supports id-token requests.
@@ -127,14 +176,14 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
       - name: Upload SBOM artifact
-        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        if: ${{ github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true' }}
         with:
           name: sbom
-          path: sbom-${{ github.sha }}.json
+          path: sbom.json
 
       - name: Push image to Artifactory (OCI)
-        if: ${{ github.event_name != 'pull_request' && steps.build.outputs.digest != '' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
         env:
           ARTIFACTORY_URL: artifactory.devops.telekom.de
           ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas

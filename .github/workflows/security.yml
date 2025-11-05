@@ -3,6 +3,8 @@ permissions:
   contents: read
 
 on:
+  pull_request:
+    branches: [main ]
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch: {}
@@ -24,7 +26,15 @@ jobs:
           ignore-unfixed: true
       - name: Upload SBOM
         uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
+        id: sbom
         with:
           image: breakglass:scan
           format: spdx-json
-          artifact-name: sbom-spdx.json
+          output-file: sbom-spdx.json
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-sbom
+          path: sbom-spdx.json

@@ -57,6 +57,20 @@ jobs:
           tags: |
             type=raw,value=${{ github.ref_name }}
             type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=Kubernetes Breakglass
+            org.opencontainers.image.description=Secure, auditable privilege escalation system for Kubernetes clusters with real-time webhook integration and time-bounded access
+            org.opencontainers.image.url=https://github.com/telekom/k8s-breakglass
+            org.opencontainers.image.documentation=https://github.com/telekom/k8s-breakglass/tree/main/docs
+            org.opencontainers.image.source=https://github.com/telekom/k8s-breakglass
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.vendor=Deutsche Telekom
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            com.github.repo.branch=${{ github.ref_name }}
+            com.github.repo.owner=${{ github.repository_owner }}
+            com.buildkit.build.ref=${{ github.ref }}
       - name: Build & Push Image
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
