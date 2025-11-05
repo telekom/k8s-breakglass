@@ -77,13 +77,22 @@ kubernetes:
 **Note:** The first matching prefix is stripped from each group. If no prefixes match, the group name remains unchanged.
 See `config.example.yaml` for reference.
 
-## Building Docker image
+## Building Docker image (UI flavour)
 
-To build docker image:
+The frontend ships with an OSS-neutral UI by default. Build without args for OSS flavour:
 
 ```bash
-docker build -t breakglass .
+docker build -t breakglass:oss .
 ```
+
+To opt into Telekom branded components set a build arg:
+
+```bash
+docker build --build-arg UI_FLAVOUR=telekom -t breakglass:telekom .
+```
+
+At runtime the UI flavour can also be toggled by setting `VITE_UI_FLAVOUR` in the build environment prior to bundling; the Dockerfile propagates the chosen flavour via `ENV VITE_UI_FLAVOUR`.
+
 
 ## Kubernetes Deployment
 
@@ -113,7 +122,7 @@ accessed.
 
 #### Accessing app through docker kind cluster
 
-It was tested for `kind` docker single cluster. <br/>
+It was tested for `kind` docker single cluster.
 Assuming your docker container has ip of `172.19.0.2` add following entry to `/etc/hosts`: `172.19.0.2      breakglass-dev`.
 Then you should be able to access main breakglass app under: `https://breakglass-dev:30081`, keycloak under: `https://breakglass-dev:30083`
 and mailhog under `http://breakglass-dev:30084`.
@@ -132,15 +141,15 @@ TODO
 ### Session
 
 `BreakglassSession` is used for storing information about permission
-extension request and its status regarding approval, rejection or expiration.  <br/>
-Sessions are fully managed by breakglass, by provided CRUD REST endpoints.<br/>
+extension request and its status regarding approval, rejection or expiration.
+Sessions are fully managed by breakglass, by provided CRUD REST endpoints.
 
 ### Escalation
 
 `BreglassEscalation` lets breakglass storage (CustomResource) cluster admins define possible transitions for breakglass
-sessions. <br/>
-Breakglass manager only lists escalations and they should be created manually using other means like `kubectl` tool.  <br/>
-For BreakglassSession to be created there must be a corresponding BreaglassEscalation. <br/>
+sessions.
+Breakglass manager only lists escalations and they should be created manually using other means like `kubectl` tool.
+For BreakglassSession to be created there must be a corresponding BreaglassEscalation.
 Single escalation defines group that user with specific user/cluster id and currently assigned groups can request for.
 It also includes information about possible approvers.
 

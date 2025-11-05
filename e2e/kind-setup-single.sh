@@ -11,6 +11,10 @@ KUSTOMIZE=${KUSTOMIZE:-kustomize}
 
 # --- Images & build ---
 IMAGE=${IMAGE:-breakglass:e2e}
+# UI flavour: default oss (neutral). Set UI_FLAVOUR=telekom to opt-in.
+UI_FLAVOUR=${UI_FLAVOUR:-oss}
+export VITE_UI_FLAVOUR=$UI_FLAVOUR
+echo "UI flavour selected: $UI_FLAVOUR (IMAGE=$IMAGE)"
 KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:23.0.0}
 
 # --- Cluster / service names (defaults kept from original script) ---
@@ -440,8 +444,8 @@ log "Creating single cluster ${CLUSTER_NAME} (image $KIND_NODE_IMAGE)"
 $KIND create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --config "$KIND_CFG" --wait 120s
 $KIND get kubeconfig --name "$CLUSTER_NAME" > "$HUB_KUBECONFIG"
 
-log 'Build & load controller image'
-docker build -t "$IMAGE" . >/dev/null
+log 'Build & load controller image (respect UI_FLAVOUR build arg)'
+docker build --build-arg UI_FLAVOUR="$UI_FLAVOUR" -t "$IMAGE" . >/dev/null
 # load built images into kind node using helper
 load_image_into_kind "$IMAGE"
 load_image_into_kind "$KEYCLOAK_IMAGE"

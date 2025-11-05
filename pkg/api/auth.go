@@ -36,17 +36,22 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 
 	url := fmt.Sprintf("%s/%s", cfg.AuthorizationServer.URL, cfg.AuthorizationServer.JWKSEndpoint)
 
-	// If a CA PEM is provided in configuration, use it to validate TLS for JWKS fetching.
+	// TLS handling for JWKS fetch:
+	// 1. If a CA PEM is provided, use it (strict validation).
+	// 2. Else if InsecureSkipVerify is explicitly enabled, skip validation (dev/e2e only).
+	// 3. Else rely on system roots (default production behavior).
 	if cfg.AuthorizationServer.CertificateAuthority != "" {
 		pool := x509.NewCertPool()
 		ok := pool.AppendCertsFromPEM([]byte(cfg.AuthorizationServer.CertificateAuthority))
 		if !ok {
 			log.Fatalf("Could not parse certificateAuthority PEM from configuration")
 		}
-		transport := &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: pool},
-		}
+		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
 		options.Client = &http.Client{Transport: transport}
+	} else if cfg.AuthorizationServer.InsecureSkipVerify {
+		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		options.Client = &http.Client{Transport: transport}
+		log.Warn("authorizationServer.insecureSkipVerify=true: TLS certificate verification is DISABLED (dev/e2e only)")
 	}
 
 	jwks, err := keyfunc.Get(url, options)

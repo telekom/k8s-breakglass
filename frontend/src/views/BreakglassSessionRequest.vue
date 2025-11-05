@@ -72,7 +72,7 @@ onMounted(async () => {
       const resp = response.data as Array<BreakglassEscalationSpec>;
       escalations.value = resp.filter((spec) => spec.allowed.clusters.indexOf(clusterName.value) != -1);
       if (escalations.value.length > 0) {
-        clusterGroup.value = escalations.value[0].escalatedGroup;
+        clusterGroup.value = escalations.value[0]?.escalatedGroup || "";
       }
     } else {
       requestStatusMessage.value = 'Failed to gather escalation information.';
