@@ -201,3 +201,15 @@ contexts:
       user: kube-apiserver
     name: webhook
 ```
+
+# Licensing
+Copyright (c) Deutsche Telekom AG
+
+All content in this repository is licensed under at least one of the licenses found in [./LICENSES](./LICENSES); you may not use this file, or any other file in this repository, except in compliance with the Licenses. 
+You may obtain a copy of the Licenses by reviewing the files found in the [./LICENSES](./LICENSES) folder.
+
+Unless required by applicable law or agreed to in writing, software distributed under the Licenses is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See in the [./LICENSES](./LICENSES) folder for the specific language governing permissions and limitations under the Licenses.
+
+This project follows the [REUSE standard for software licensing](https://reuse.software/). 
+Each file contains copyright and license information, and license texts can be found in the [./LICENSES](./LICENSES) folder. For more information visit https://reuse.software/.
+You can find a guide for developers at https://telekom.github.io/reuse-template/.
