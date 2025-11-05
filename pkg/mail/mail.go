@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"gopkg.in/gomail.v2"
 )
 
@@ -57,8 +58,10 @@ func (s *sender) Send(receivers []string, subject, body string) error {
 	err := s.dialer.DialAndSend(msg)
 	if err != nil {
 		log.Printf("[mail] Failed to send mail: %v", err)
+		metrics.MailSendFailure.WithLabelValues(s.GetHost()).Inc()
 	} else {
 		log.Printf("[mail] Mail sent successfully to %d receivers", len(receivers))
+		metrics.MailSendSuccess.WithLabelValues(s.GetHost()).Inc()
 	}
 	return err
 }

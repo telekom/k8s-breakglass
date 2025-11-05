@@ -160,6 +160,48 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	username := sar.Spec.User
 	reqLog.Infow("Processing authorization", "username", username, "groupsRequested", sar.Spec.Groups)
 
+	// Emit the actual requested API action (from SAR) at Info level for observability.
+	// This includes resource attributes (verb, group, resource, namespace, name, subresource)
+	// or non-resource attributes (path, verb) when present.
+	if sar.Spec.ResourceAttributes != nil {
+		ra := sar.Spec.ResourceAttributes
+		// Increment action-based request metric (omit name to reduce cardinality)
+		metrics.WebhookSARRequestsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource).Inc()
+		// Build a small structured action for log ingestion systems
+		action := map[string]string{
+			"verb":        ra.Verb,
+			"apiGroup":    ra.Group,
+			"resource":    ra.Resource,
+			"namespace":   ra.Namespace,
+			"name":        ra.Name,
+			"subresource": ra.Subresource,
+		}
+		reqLog.Infow("SubjectAccessReview requested action",
+			"verb", ra.Verb,
+			"apiGroup", ra.Group,
+			"resource", ra.Resource,
+			"namespace", ra.Namespace,
+			"name", ra.Name,
+			"subresource", ra.Subresource,
+			"action", action,
+		)
+	} else if sar.Spec.NonResourceAttributes != nil {
+		nra := sar.Spec.NonResourceAttributes
+		metrics.WebhookSARRequestsByAction.WithLabelValues(clusterName, nra.Verb, "", "nonresource", "", "").Inc()
+		action := map[string]string{
+			"path": nra.Path,
+			"verb": nra.Verb,
+		}
+		reqLog.Infow("SubjectAccessReview requested non-resource action",
+			"path", nra.Path,
+			"verb", nra.Verb,
+			"action", action,
+		)
+	} else {
+		reqLog.Infow("SubjectAccessReview contains no resource or non-resource attributes")
+		metrics.WebhookSARRequestsByAction.WithLabelValues(clusterName, "", "", "unknown", "", "").Inc()
+	}
+
 	groups, sessions, tenant, err := wc.getUserGroupsAndSessions(ctx, username, clusterName)
 	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
@@ -184,6 +226,9 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			reqLog.With("error", derr.Error(), "action", act).Error("deny evaluation error")
 		} else if denied {
 			reqLog.With("policy", pol).Info("Request denied by global/cluster policy")
+			// Emit denied metric for global policy short-circuit
+			metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
+			metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "global").Inc()
 			reqLog.Debugw("Global denyEval matched", "policy", pol, "action", act)
 			// Determine if any escalation paths exist for this user (use groups from sessions plus system:authenticated)
 			uniqueGroups := append([]string{}, groups...)
@@ -213,6 +258,9 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				reqLog.With("error", derr.Error(), "session", s.Name, "action", act).Error("deny evaluation error for session")
 			} else if denied {
 				reqLog.With("policy", pol, "session", s.Name).Info("Request denied by session policy")
+				// Emit denied metric for session-scoped policy short-circuit
+				metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
+				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "session").Inc()
 				reqLog.Debugw("Session denyEval matched", "policy", pol, "session", s.Name, "action", act)
 				// Determine escalation availability for this session/user combination
 				uniqueGroups := append([]string{}, groups...)
@@ -286,6 +334,11 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		allowed = true
 		allowSource = "rbac"
 		allowDetail = fmt.Sprintf("groups=%v", groups)
+		// Emit allowed decision metric for action
+		if sar.Spec.ResourceAttributes != nil {
+			ra := sar.Spec.ResourceAttributes
+			metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "allowed", "rbac").Inc()
+		}
 	} else {
 		reqLog.Debug("User not authorized through regular RBAC, checking for breakglass escalations")
 
@@ -394,8 +447,17 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	reason = wc.finalizeReason(reason, allowed, clusterName)
 	if allowed {
 		metrics.WebhookSARAllowed.WithLabelValues(clusterName).Inc()
+		// also increment action-based decision metric if we have resource attributes
+		if sar.Spec.ResourceAttributes != nil {
+			ra := sar.Spec.ResourceAttributes
+			metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "allowed", "session").Inc()
+		}
 	} else {
 		metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
+		if sar.Spec.ResourceAttributes != nil {
+			ra := sar.Spec.ResourceAttributes
+			metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "denied", "final").Inc()
+		}
 	}
 	response := SubjectAccessReviewResponse{
 		ApiVersion: sar.APIVersion,

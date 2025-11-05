@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/fields"
@@ -187,6 +188,8 @@ func (c SessionManager) AddBreakglassSession(ctx context.Context, bs v1alpha1.Br
 		return errors.Wrap(err, "failed to create new BreakglassSession")
 	}
 	zap.S().Infow("BreakglassSession created successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
+	// Emit metric for created session (cluster may be in spec)
+	metrics.SessionCreated.WithLabelValues(bs.Spec.Cluster).Inc()
 	return nil
 }
 
@@ -198,6 +201,7 @@ func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs v1alpha1
 		return errors.Wrapf(err, "failed to update new BreakglassSession")
 	}
 	zap.S().Infow("BreakglassSession updated successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
+	metrics.SessionUpdated.WithLabelValues(bs.Spec.Cluster).Inc()
 	return nil
 }
 
@@ -208,5 +212,16 @@ func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1
 		return errors.Wrapf(err, "failed to update new BreakglassSession")
 	}
 	zap.S().Infow("BreakglassSession status updated successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
+	return nil
+}
+
+// DeleteBreakglassSession deletes the given BreakglassSession and emits a metric when successful.
+func (c SessionManager) DeleteBreakglassSession(ctx context.Context, bs *v1alpha1.BreakglassSession) error {
+	if err := c.Delete(ctx, bs); err != nil {
+		zap.S().Errorw("Failed to delete BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
+		return errors.Wrap(err, "failed to delete breakglass session")
+	}
+	zap.S().Infow("BreakglassSession deleted successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
+	metrics.SessionDeleted.WithLabelValues(bs.Spec.Cluster).Inc()
 	return nil
 }

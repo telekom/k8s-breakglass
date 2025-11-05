@@ -21,6 +21,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	authorization "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -274,6 +275,49 @@ func TestHandleAuthorize(t *testing.T) {
 				t.Fatalf("Expected status allowed to be %t", testCase.ShouldAllow)
 			}
 		})
+	}
+}
+
+// Test that processing a SAR emits an Info log with a structured `action` field
+func TestHandleAuthorize_LogsActionStructured(t *testing.T) {
+	// Build an observer to capture logs
+	core, logs := observer.New(zap.InfoLevel)
+	logger := zap.New(core).Sugar()
+
+	// Reuse SetupController but replace logger on controller
+	controller := SetupController(nil)
+	controller.log = logger
+	controller.canDoFn = alwaysCanDo
+
+	engine := gin.New()
+	_ = controller.Register(engine.Group(""))
+
+	// Prepare SAR payload
+	inBytes, _ := json.Marshal(sar)
+	req, _ := http.NewRequest("POST", "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	// Ensure the request succeeded
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Result().StatusCode)
+	}
+
+	// Inspect logs for an Info entry containing the action field
+	entries := logs.All()
+	found := false
+	for _, e := range entries {
+		if e.Level == zap.InfoLevel && strings.Contains(e.Message, "SubjectAccessReview requested action") {
+			// There should be a field named "action"
+			_, ok := e.ContextMap()["action"]
+			if ok {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected Info log with structured 'action' field, got logs: %+v", entries)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 )
@@ -51,10 +52,12 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 		routine.Log.Debugw("Checking session retainedUntil", "retainedUntil", ses.Status.RetainedUntil.Time)
 		// Delete sessions that are past their retained-until timestamp
 		if !ses.Status.RetainedUntil.IsZero() && now.After(ses.Status.RetainedUntil.Time) {
-			if err := routine.Manager.Delete(ctx, &ses); err != nil {
+			if err := routine.Manager.DeleteBreakglassSession(ctx, &ses); err != nil {
 				routine.Log.Errorw("error deleting expired breakglass session", append(system.NamespacedFields(ses.Name, ses.Namespace), "error", err)...)
 				continue
 			}
+			// count expired session (DeleteBreakglassSession also increments deleted; expired counts here)
+			metrics.SessionExpired.WithLabelValues(ses.Spec.Cluster).Inc()
 			deletedCount++
 			routine.Log.Debugw("Deleted expired breakglass session", system.NamespacedFields(ses.Name, ses.Namespace)...)
 			continue
@@ -67,10 +70,11 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 		if len(ses.OwnerReferences) == 0 {
 			if ses.Status.RetainedUntil.IsZero() && ses.Status.State != telekomv1alpha1.SessionStatePending {
 				routine.Log.Infow("Deleting session without OwnerReferences (orphaned/legacy - no RetainedUntil)", system.NamespacedFields(ses.Name, ses.Namespace)...)
-				if err := routine.Manager.Delete(ctx, &ses); err != nil {
+				if err := routine.Manager.DeleteBreakglassSession(ctx, &ses); err != nil {
 					routine.Log.Errorw("error deleting orphaned breakglass session", append(system.NamespacedFields(ses.Name, ses.Namespace), "error", err)...)
 					continue
 				}
+				// DeleteBreakglassSession already increments SessionDeleted
 				deletedCount++
 				routine.Log.Debugw("Deleted orphaned breakglass session", system.NamespacedFields(ses.Name, ses.Namespace)...)
 				continue

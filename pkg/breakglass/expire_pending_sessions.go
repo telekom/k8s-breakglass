@@ -4,6 +4,7 @@ import (
 	"context"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 
 	// ExpirePendingSessions sets state to Timeout for pending sessions that have expired (approval timeout)
 
@@ -27,7 +28,12 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 				Reason:             "ApprovalTimeout",
 				Message:            "Session approval timed out.",
 			})
-			_ = wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses)
+			if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
+				// count the session as expired when status update succeeds
+				metrics.SessionExpired.WithLabelValues(ses.Spec.Cluster).Inc()
+			} else {
+				wc.log.Errorw("failed to update session status while expiring pending session", "error", err)
+			}
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -50,6 +51,8 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 			for attempt := 0; attempt < 3; attempt++ {
 				if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
 					lastErr = nil
+					// count as expired when status update succeeds
+					metrics.SessionExpired.WithLabelValues(ses.Spec.Cluster).Inc()
 					break
 				} else {
 					lastErr = errors.Wrapf(err, "status update attempt %d failed", attempt+1)
