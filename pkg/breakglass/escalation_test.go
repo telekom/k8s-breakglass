@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/telekom/das-schiff-breakglass/api/v1alpha1"
-	"github.com/telekom/das-schiff-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap"
 )
 

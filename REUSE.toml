@@ -6,7 +6,7 @@
 version = 1
 SPDX-PackageName = "Breakglass"
 SPDX-PackageSupplier = "Deutsche Telekom AG <opensource@telekom.de>"
-SPDX-PackageDownloadLocation = "https://github.com/telekom/das-schiff-breakglass"
+SPDX-PackageDownloadLocation = "https://github.com/telekom/k8s-breakglass"
 
 # Go files
 [[annotations]]

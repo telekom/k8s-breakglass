@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/telekom/das-schiff-breakglass/api/v1alpha1"
-	"github.com/telekom/das-schiff-breakglass/pkg/config"
-	"github.com/telekom/das-schiff-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 )
 

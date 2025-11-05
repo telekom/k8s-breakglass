@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	telekomv1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
-	"github.com/telekom/das-schiff-breakglass/pkg/metrics"
+	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

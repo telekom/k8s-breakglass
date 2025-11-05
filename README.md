@@ -1,7 +1,7 @@
 # Breakglass
 
-[![REUSE Compliance Check](https://github.com/telekom/das-schiff-breakglass/actions/workflows/reuse-compliance.yml/badge.svg)](https://github.com/telekom/das-schiff-breakglass/actions/workflows/reuse-compliance.yml)
-[![OpenSSF Scorecard Score](https://api.scorecard.dev/projects/github.com/telekom/das-schiff-breakglass/badge)](https://scorecard.dev/viewer/?uri=github.com/telekom/das-schiff-breakglass/badge)
+[![REUSE Compliance Check](https://github.com/telekom/k8s-breakglass/actions/workflows/reuse-compliance.yml/badge.svg)](https://github.com/telekom/k8s-breakglass/actions/workflows/reuse-compliance.yml)
+[![OpenSSF Scorecard Score](https://api.scorecard.dev/projects/github.com/telekom/k8s-breakglass/badge)](https://scorecard.dev/viewer/?uri=github.com/telekom/k8s-breakglass/badge)
 
 Golang application that allows for short-term elevation of privileges in an emergency situation.
 

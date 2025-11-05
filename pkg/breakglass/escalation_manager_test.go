@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	telekomv1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
-	"github.com/telekom/das-schiff-breakglass/pkg/breakglass"
+	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"

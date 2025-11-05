@@ -4,11 +4,11 @@ import (
 	"context"
 
 	"github.com/pkg/errors"
-	telekomv1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
+	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 
-	"github.com/telekom/das-schiff-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 )
 
 // EscalationFiltering filters given breakglass escalations and sessions based on user their definition

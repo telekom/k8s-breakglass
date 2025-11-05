@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"log"
 
-	"github.com/telekom/das-schiff-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 	"gopkg.in/gomail.v2"
 )
 

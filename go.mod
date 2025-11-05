@@ -1,4 +1,4 @@
-module github.com/telekom/das-schiff-breakglass
+module github.com/telekom/k8s-breakglass
 
 go 1.24.9
 

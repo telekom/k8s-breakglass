@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"github.com/telekom/das-schiff-breakglass/api/v1alpha1"
-	"github.com/telekom/das-schiff-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/fields"
 	"sigs.k8s.io/controller-runtime/pkg/client"

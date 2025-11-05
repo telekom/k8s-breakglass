@@ -123,11 +123,11 @@ type BreakglassSessionStatus struct {
 	// +omitempty
 	RetainedUntil metav1.Time `json:"retainedUntil,omitempty"`
 
-	// NOT IMPLEMENTED https://github.com/telekom/das-schiff-breakglass/issues/8
+	// NOT IMPLEMENTED https://github.com/telekom/k8s-breakglass/issues/8
 	// Time until session is revoked due to user not actively using it.
 	IdleUntil metav1.Time `json:"idleUntil,omitempty"`
 
-	// NOT IMPLEMENTED https://github.com/telekom/das-schiff-breakglass/issues/8
+	// NOT IMPLEMENTED https://github.com/telekom/k8s-breakglass/issues/8
 	// Last time session was used for breakglass session based authorization.
 	LastUsed metav1.Time `json:"lastUsed,omitempty"`
 

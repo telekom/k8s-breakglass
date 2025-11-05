@@ -3,7 +3,7 @@ package breakglass
 import (
 	"context"
 
-	telekomv1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
+	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 
 	// ExpirePendingSessions sets state to Timeout for pending sessions that have expired (approval timeout)
 

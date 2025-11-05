@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	telekomv1alpha1 "github.com/telekom/das-schiff-breakglass/api/v1alpha1"
+	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestSessionManager_Simple(t *testing.T) {

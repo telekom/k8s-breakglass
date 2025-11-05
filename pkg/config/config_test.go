@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/telekom/das-schiff-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 )
 
 func TestLoad(t *testing.T) {
