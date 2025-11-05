@@ -1,17 +1,16 @@
-# Breakglass
+# Kubernetes Breakglass
 
 [![](https://img.shields.io/badge/license-Apache%20License%202.0-blue)](https://img.shields.io/badge/license-Apache%20License%202.0-blue)
 [![REUSE Compliance Check](https://github.com/telekom/k8s-breakglass/actions/workflows/reuse-compliance.yml/badge.svg)](https://github.com/telekom/k8s-breakglass/actions/workflows/reuse-compliance.yml)
 [![OpenSSF Scorecard Score](https://api.scorecard.dev/projects/github.com/telekom/k8s-breakglass/badge)](https://scorecard.dev/viewer/?uri=github.com/telekom/k8s-breakglass/badge)
 
-Golang application that allows for short-term elevation of privileges in an emergency situation.
+Kubernetes Breakglass allows to temporarily aquire elevated privileges through an auditable request-approval workflow. It can be used to grant elevated access to a Kubernetes cluster in emergency situations.
 
 ## Overview
 
-Application consist of golang backend and typescript vue frontend client.  
-Main breakglass backend functionality is answering webhook authorization HTTP posts from configured clusters based
-on permission abstraction that extends existing RBAC `Roles`.  
-Breakglass introduces and manages several custom resource Kubernetes objects including `BreakglassSession`, `BreakglassEscalation`, `ClusterConfig`, and `DenyPolicy`.
+The application consists of a backend service and a web application. The backend implements a imperative API that allows to request and approve elevated privileges, and a Kubernetes authorization webhook to integrate with Kubernetes' RBAC system. The web application serves as a simple user frontend, but can be replaced with a custom interface as well.
+
+The backend service is configured through custom resources (`BreakglassEscalation`, `ClusterConfig`, and `DenyPolicy`), and also uses custom resources for persistence (`BreakglassSession`).
 
 ## Documentation
 
@@ -26,7 +25,7 @@ Comprehensive documentation is available in the [docs/](./docs/) directory:
 
 ## Configuration
 
-App should be configured using config.yaml:
+The application is configured using a `config.yaml`:
 
 ```yaml
 server:
@@ -78,22 +77,14 @@ kubernetes:
 **Note:** The first matching prefix is stripped from each group. If no prefixes match, the group name remains unchanged.
 See `config.example.yaml` for reference.
 
-## Building Docker image (UI flavour)
-
-The frontend ships with an OSS-neutral UI by default. Build without args for OSS flavour:
+## Building Docker Images
 
 ```bash
 docker build -t breakglass:oss .
 ```
 
-To opt into Telekom branded components set a build arg:
-
-```bash
-docker build --build-arg UI_FLAVOUR=telekom -t breakglass:telekom .
-```
-
-At runtime the UI flavour can also be toggled by setting `VITE_UI_FLAVOUR` in the build environment prior to bundling; the Dockerfile propagates the chosen flavour via `ENV VITE_UI_FLAVOUR`.
-
+The frontend uses the [telekom/scale](https://github.com/telekom/scale) framework, which comes with a neutral variant to be used for OSS.
+See it's [theming documentation](https://telekom.github.io/scale/?path=/docs/guidelines-customization-and-themes--page) for details on how to customize it.
 
 ## Kubernetes Deployment
 
@@ -204,6 +195,7 @@ contexts:
 ```
 
 # Licensing
+
 Copyright (c) Deutsche Telekom AG
 
 All content in this repository is licensed under at least one of the licenses found in [./LICENSES](./LICENSES); you may not use this file, or any other file in this repository, except in compliance with the Licenses. 
