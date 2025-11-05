@@ -81,6 +81,18 @@
           <td>Group:</td>
           <td><span style="font-size: 1.2rem;">{{ .RequestedGroup }}</span></td>
         </tr>
+        {{ if .ScheduledStartTime }}
+        <tr style="background-color: #fff3cd; border: 1px solid #ffc107;">
+          <td style="padding: 10px;">Scheduled Start:</td>
+          <td style="padding: 10px;"><span style="font-size: 1.2rem;">{{ .ScheduledStartTime }}</span></td>
+        </tr>
+        {{ end }}
+        {{ if .CalculatedExpiresAt }}
+        <tr {{ if .ScheduledStartTime }}style="background-color: #fff3cd; border: 1px solid #ffc107;"{{ end }}>
+          <td {{ if .ScheduledStartTime }}style="padding: 10px;"{{ end }}>Expires At:</td>
+          <td {{ if .ScheduledStartTime }}style="padding: 10px;"{{ end }}><span style="font-size: 1.2rem;">{{ .CalculatedExpiresAt }}</span></td>
+        </tr>
+        {{ end }}
       </tbody>
     </table>
     <p>

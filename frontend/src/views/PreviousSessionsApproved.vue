@@ -100,7 +100,8 @@ const approverSessions = computed(() =>
           <th>Request reason</th>
           <th>User</th>
           <th>Approved by</th>
-          <th>Started</th>
+          <th>Scheduled Start</th>
+          <th>Actual Started</th>
           <th>Ended</th>
           <th>Approval reason</th>
           <th>Reason Ended</th>
@@ -115,7 +116,8 @@ const approverSessions = computed(() =>
           <td>{{ s.spec && s.spec.requestReason ? s.spec.requestReason : '-' }}</td>
           <td>{{ (s.spec && (s.spec.user || s.spec.requester)) || '-' }}</td>
           <td>{{ s.status && (s.status.approver || (s.status.approvers && s.status.approvers.length ? s.status.approvers[s.status.approvers.length-1] : null)) || '-' }}</td>
-          <td>{{ formatDate(startedForDisplay(s)) }}</td>
+          <td>{{ s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : '-' }}</td>
+          <td>{{ s.status && s.status.actualStartTime ? formatDate(s.status.actualStartTime) : formatDate(startedForDisplay(s)) }}</td>
           <td>{{ formatDate(endedForDisplay(s)) }}</td>
           <td>{{ s.status && s.status.approvalReason ? s.status.approvalReason : '-' }}</td>
           <td>{{ reasonEndedLabel(s) }}</td>

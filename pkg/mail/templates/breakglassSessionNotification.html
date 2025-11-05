@@ -67,6 +67,18 @@
         <td>Group:</td>
         <td><span style="font-size: 1.2rem;">{{ .RequestedGroup }}</span></td>
       </tr>
+      {{ if .ActualStartTime }}
+      <tr>
+        <td>Session Started:</td>
+        <td><span style="font-size: 1.2rem;">{{ .ActualStartTime }}</span></td>
+      </tr>
+      {{ end }}
+      {{ if .CalculatedExpiresAt }}
+      <tr>
+        <td>Expires At:</td>
+        <td><span style="font-size: 1.2rem;">{{ .CalculatedExpiresAt }}</span></td>
+      </tr>
+      {{ end }}
     </table>
     <p>
       <a class="btn" href="{{ .URL }}">More information</a>

@@ -20,8 +20,11 @@ const CleanupInterval = 5 * time.Minute
 func (cr CleanupRoutine) CleanupRoutine() {
 	for {
 		cr.Log.Info("Running breakglass session cleanup task")
-		// Expire pending sessions before deleting expired ones
+		// Activate scheduled sessions first (before expiry checks)
 		if cr.Manager != nil {
+			activator := NewScheduledSessionActivator(cr.Log, cr.Manager)
+			activator.ActivateScheduledSessions()
+
 			ctrl := &BreakglassSessionController{log: cr.Log, sessionManager: cr.Manager}
 			ctrl.ExpirePendingSessions()
 			// Expire approved sessions whose ExpiresAt has passed

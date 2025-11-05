@@ -607,6 +607,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		// Clear any previous rejection timestamp so the approved state is canonical.
 		bs.Status.RejectedAt = metav1.Time{}
 		bs.Status.ApprovedAt = metav1.Now()
+
 		// Determine expiry based on session spec MaxValidFor if provided, otherwise use default
 		var validFor time.Duration = DefaultValidForDuration
 		if bs.Spec.MaxValidFor != "" {
@@ -616,7 +617,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 				wc.log.Warnw("Invalid MaxValidFor in session spec; falling back to default", "value", bs.Spec.MaxValidFor, "error", err)
 			}
 		}
-		bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(validFor))
+
 		// Determine retention based on session spec RetainFor if provided, otherwise use default
 		var retainFor time.Duration = DefaultRetainForDuration
 		if bs.Spec.RetainFor != "" {
@@ -626,9 +627,37 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 				wc.log.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
 			}
 		}
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+
 		bs.Status.TimeoutAt = metav1.Time{} // Clear approval timeout
-		bs.Status.State = v1alpha1.SessionStateApproved
+
+		// Check if session has a scheduled start time
+		if bs.Spec.ScheduledStartTime != nil && !bs.Spec.ScheduledStartTime.IsZero() {
+			// Scheduled session: enter WaitingForScheduledTime state
+			// RBAC group will NOT be applied until activation time is reached
+			bs.Status.State = v1alpha1.SessionStateWaitingForScheduledTime
+			// Calculate expiry and retention from ScheduledStartTime, not from now
+			bs.Status.ExpiresAt = metav1.NewTime(bs.Spec.ScheduledStartTime.Time.Add(validFor))
+			bs.Status.RetainedUntil = metav1.NewTime(bs.Spec.ScheduledStartTime.Time.Add(validFor).Add(retainFor))
+			// ActualStartTime will be set during activation
+			bs.Status.ActualStartTime = metav1.Time{}
+			wc.log.Infow("Session approved with scheduled start time",
+				"session", bs.Name,
+				"scheduledStartTime", bs.Spec.ScheduledStartTime.Time,
+				"expiresAt", bs.Status.ExpiresAt.Time,
+			)
+		} else {
+			// Immediate session: activate now (original behavior)
+			bs.Status.State = v1alpha1.SessionStateApproved
+			bs.Status.ActualStartTime = metav1.Now() // For consistency
+			// Calculate expiry and retention from now
+			bs.Status.ExpiresAt = metav1.NewTime(bs.Status.ApprovedAt.Add(validFor))
+			bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+			// RBAC group is immediately applied (via webhook or controller)
+			wc.log.Infow("Session approved and activated immediately",
+				"session", bs.Name,
+				"expiresAt", bs.Status.ExpiresAt.Time,
+			)
+		}
 		// increment escalation approval count if escalation manager available and owner reference points to an escalation
 		if wc.escalationManager != nil && len(bs.OwnerReferences) > 0 {
 			for _, or := range bs.OwnerReferences {
@@ -1090,13 +1119,36 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.User, bs.Spec.GrantedGroup)
 
 	wc.log.Debugw("Rendering breakglass session request email", "subject", subject, "approvers", approvers)
+
+	// Calculate scheduling information for email
+	scheduledStartTimeStr := ""
+	calculatedExpiresAtStr := ""
+
+	if bs.Spec.ScheduledStartTime != nil {
+		scheduledStartTimeStr = bs.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05")
+
+		// Calculate expiry time from scheduled start time using spec.MaxValidFor
+		expiryTime := bs.Spec.ScheduledStartTime.Time
+		if bs.Spec.MaxValidFor != "" {
+			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+				expiryTime = bs.Spec.ScheduledStartTime.Add(d)
+			}
+		} else {
+			// Default to 1 hour if not specified
+			expiryTime = bs.Spec.ScheduledStartTime.Add(1 * time.Hour)
+		}
+		calculatedExpiresAtStr = expiryTime.Format("2006-01-02 15:04:05")
+	}
+
 	body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
-		SubjectEmail:      requestEmail,
-		SubjectFullName:   requestUsername,
-		RequestedCluster:  bs.Spec.Cluster,
-		RequestedUsername: bs.Spec.User,
-		RequestedGroup:    bs.Spec.GrantedGroup,
-		URL:               fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
+		SubjectEmail:        requestEmail,
+		SubjectFullName:     requestUsername,
+		RequestedCluster:    bs.Spec.Cluster,
+		RequestedUsername:   bs.Spec.User,
+		RequestedGroup:      bs.Spec.GrantedGroup,
+		ScheduledStartTime:  scheduledStartTimeStr,
+		CalculatedExpiresAt: calculatedExpiresAtStr,
+		URL:                 fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
 		BrandingName: func() string {
 			if wc.config.Frontend.BrandingName != "" {
 				return wc.config.Frontend.BrandingName
@@ -1260,8 +1312,25 @@ func IsSessionExpired(session v1alpha1.BreakglassSession) bool {
 }
 
 func IsSessionValid(session v1alpha1.BreakglassSession) bool {
-	return !IsSessionExpired(session)
-	// session.Status.ExpiresAt.Time.IsZero() || time.Now().After(session.Status.ExpiresAt.Time)
+	// Session is not valid if it has expired
+	if IsSessionExpired(session) {
+		return false
+	}
+
+	// Session is not valid if it's in WaitingForScheduledTime state
+	// (i.e., scheduled but not yet activated)
+	if session.Status.State == v1alpha1.SessionStateWaitingForScheduledTime {
+		return false
+	}
+
+	// Session is not valid if it has a scheduled start time in the future
+	if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
+		if time.Now().Before(session.Spec.ScheduledStartTime.Time) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // IsSessionActive returns if session can be approved or was already approved
