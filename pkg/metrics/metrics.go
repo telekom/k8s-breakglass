@@ -85,6 +85,27 @@ var (
 		Name: "breakglass_mail_send_failure_total",
 		Help: "Total number of failed mail sends",
 	}, []string{"host"})
+	// Mail queue metrics
+	MailQueued = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_mail_queued_total",
+		Help: "Total number of emails added to the send queue",
+	}, []string{"host"})
+	MailQueueDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_mail_queue_dropped_total",
+		Help: "Total number of emails dropped due to full queue",
+	}, []string{"host"})
+	MailSent = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_mail_sent_total",
+		Help: "Total number of emails successfully sent from queue",
+	}, []string{"host"})
+	MailRetryScheduled = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_mail_retry_scheduled_total",
+		Help: "Total number of emails scheduled for retry",
+	}, []string{"host"})
+	MailFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_mail_failed_total",
+		Help: "Total number of emails failed after all retries",
+	}, []string{"host"})
 )
 
 func init() {
@@ -105,6 +126,11 @@ func init() {
 	prometheus.MustRegister(SessionExpired)
 	prometheus.MustRegister(MailSendSuccess)
 	prometheus.MustRegister(MailSendFailure)
+	prometheus.MustRegister(MailQueued)
+	prometheus.MustRegister(MailQueueDropped)
+	prometheus.MustRegister(MailSent)
+	prometheus.MustRegister(MailRetryScheduled)
+	prometheus.MustRegister(MailFailed)
 
 }
 

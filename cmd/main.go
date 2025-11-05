@@ -5,6 +5,8 @@ import (
 	"flag"
 	stdlog "log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -22,6 +24,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
@@ -76,8 +79,16 @@ func main() {
 	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
+	// Initialize mail queue for non-blocking async email sending
+	mailSender := mail.NewSender(config)
+	mailQueue := mail.NewQueue(mailSender, log, config.Mail.RetryCount, config.Mail.RetryBackoffMs, config.Mail.QueueSize)
+	mailQueue.Start()
+	log.Infow("Mail queue initialized and started", "retryCount", config.Mail.RetryCount, "retryBackoffMs", config.Mail.RetryBackoffMs, "queueSize", config.Mail.QueueSize)
+
+	sessionController := breakglass.NewBreakglassSessionController(log, config, &sessionManager, &escalationManager, auth.Middleware(), ccProvider, escalationManager.Client).WithQueue(mailQueue)
+
 	err = server.RegisterAll([]api.APIController{
-		breakglass.NewBreakglassSessionController(log, config, &sessionManager, &escalationManager, auth.Middleware(), ccProvider, escalationManager.Client),
+		sessionController,
 		breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware()),
 		webhook.NewWebhookController(log, config, &sessionManager, &escalationManager, ccProvider, denyEval),
 	})
@@ -229,7 +240,27 @@ func main() {
 		log.Infow("Webhook manager disabled via ENABLE_WEBHOOK_MANAGER", "value", enableMgr)
 	}
 
-	server.Listen()
+	// Add signal handlers for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Start server in a goroutine so we can listen for signals
+	go func() {
+		server.Listen()
+	}()
+
+	// Wait for signal and perform graceful shutdown
+	<-sigChan
+	log.Info("Received shutdown signal, initiating graceful shutdown")
+
+	// Shutdown mail queue with timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := mailQueue.Stop(shutdownCtx); err != nil {
+		log.Warnw("Mail queue shutdown error", "error", err)
+	} else {
+		log.Info("Mail queue shut down successfully")
+	}
 }
 
 func setupLogger(debug bool) *zap.Logger {
