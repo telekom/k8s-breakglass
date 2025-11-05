@@ -1,6 +1,6 @@
-# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
 #
-# SPDX-License-Identifier: CC0-1.0    
+# SPDX-License-Identifier: CC0-1.0
 
 # See https://reuse.software/spec-3.2/#reusetoml for specification
 version = 1
@@ -8,9 +8,50 @@ SPDX-PackageName = "Breakglass"
 SPDX-PackageSupplier = "Deutsche Telekom AG <opensource@telekom.de>"
 SPDX-PackageDownloadLocation = "https://github.com/telekom/das-schiff-breakglass"
 
-## Example:
-# [[annotations]]
-# path = [".github/workflows/*.yml"]
-# precedence = "aggregate"
-# SPDX-FileCopyrightText = "2022 Free Software Foundation Europe e.V. <https://fsfe.org>"
-# SPDX-License-Identifier = "CC0-1.0"
+# Go files
+[[annotations]]
+path = ["*.go", "go.mod", "go.sum", "pkg/**.go", "internal/**.go", "api/**.go", "pkg/*/templates/**.html", "cmd/**.go"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Config files
+[[annotations]]
+path = ["config/**.yaml", "charts/**.yaml", "charts/**.txt", "e2e/**.yaml", "utils/config/**.yaml","config.example.yaml","config/dev/resources/keycloak-realm.json"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Scripts
+[[annotations]]
+path = ["*.sh", "Makefile", "Dockerfile", "hack/**", "tools/**", "e2e/**.sh", "e2e/**.yaml", "e2e/**.md"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Documentation
+[[annotations]]
+path = ["*.md", "docs/**"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+# Frontend
+[[annotations]]
+path = ["frontend/**"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+# REUSE config itself
+[[annotations]]
+path = ["REUSE.toml", ".reuse/"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "CC0-1.0"
+
+# CI files
+[[annotations]]
+path = [".github/**", ".gitlab-ci.yml", ".golangci.yml"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "CC0-1.0"
+
+# ignore editor config files
+[[annotations]]
+path = [".editorconfig", ".dockerignore", ".gitignore", ".gitattributes", ".reuse/"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "CC0-1.0"
