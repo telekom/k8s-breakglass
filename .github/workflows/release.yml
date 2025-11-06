@@ -113,7 +113,7 @@ jobs:
             manifests-${{ github.ref_name }}.tgz
           generate_release_notes: true
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@251a468eed47e5082b105c3ba6ee500c0e65a764 # v0.17.6
+        uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
         if: ${{ false }}
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}

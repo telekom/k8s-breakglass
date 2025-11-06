@@ -114,7 +114,7 @@ jobs:
           docker manifest inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" || sleep 30
       - name: Generate SBOM (Syft)
         if: ${{ github.event_name != 'pull_request' && steps.build.outputs.digest != '' }}
-        uses: anchore/sbom-action@251a468eed47e5082b105c3ba6ee500c0e65a764 # v0.17.6
+        uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: spdx-json
