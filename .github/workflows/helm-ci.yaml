@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  packages: write
+  id-token: write
 
 jobs:
   helm-checks:
@@ -68,25 +70,30 @@ jobs:
 
       - name: Helm package (verify)
         run: |
-          mkdir -p ./.chart-packages
+          mkdir -p "$GITHUB_WORKSPACE/.chart-packages"
           for d in charts/*; do
             if [ -f "$d/Chart.yaml" ]; then
               helm dependency update "$d" || true
-              helm package "$d" --version "$VERSION" --destination ./.chart-packages
+              helm package "$d" --version "$VERSION" --destination "$GITHUB_WORKSPACE/.chart-packages"
             fi
           done
+
+      - name: List packaged charts (debug)
+        run: |
+          echo "Listing $GITHUB_WORKSPACE/.chart-packages"
+          ls -la "$GITHUB_WORKSPACE/.chart-packages" || true
 
       - name: Upload packaged charts (artifact)
         if: ${{ github.event_name != 'release' }}
         uses: actions/upload-artifact@v4
         with:
           name: helm-charts-${{ env.VERSION }}
-          path: ./.chart-packages/*.tgz
+          path: ${{ github.workspace }}/.chart-packages/*.tgz
 
       - name: Publish packaged charts to GHCR (OCI)
-        if: ${{ github.event_name == 'release' }}
+        if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
-          CHART_PKG: ./.chart-packages
+          CHART_PKG: ${{ github.workspace }}/.chart-packages
           OCI_REG: ghcr.io/${{ github.repository_owner }}/helm-charts
         run: |
           set -e
@@ -102,9 +109,9 @@ jobs:
           done
 
       - name: Publish packaged charts to Artifactory (OCI)
-        if: ${{ github.event_name == 'release' }}
+        if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
-          CHART_PKG: ./.chart-packages
+          CHART_PKG: ${{ github.workspace }}/.chart-packages
           ARTIFACTORY_URL: artifactory.devops.telekom.de
           ARTIFACTORY_REPO: cit-t-caas-oci/charts/t-caas
         run: |
