@@ -11,11 +11,11 @@ jobs:
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - name: Build image (local)
         run: docker build -t breakglass:scan .
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
         with:
           image-ref: breakglass:scan
           format: 'table'
@@ -23,7 +23,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
       - name: Upload SBOM
-        uses: anchore/sbom-action@v0.17.6
+        uses: anchore/sbom-action@251a468eed47e5082b105c3ba6ee500c0e65a764 # v0.17.6
         with:
           image: breakglass:scan
           format: spdx-json
