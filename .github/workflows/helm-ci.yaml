@@ -91,7 +91,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: helm-charts-${{ env.VERSION }}
-          path: ${{ github.workspace }}/.chart-packages/*.tgz
+          path: ${{ github.workspace }}/.chart-packages
 
       - name: Publish packaged charts to GHCR (OCI)
         if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -106,9 +106,9 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login -u "${{ github.actor }}" --password-stdin "ghcr.io"
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
-            CHART_VERSION=$(helm show chart "$f" -o yaml | grep '^version:' | awk '{print $2}')
+            CHART_VERSION=$(helm show chart "$f" | grep '^version:' | awk '{print $2}')
             echo "Pushing $f -> ${OCI_REG}/${CHART_NAME}:${CHART_VERSION}"
-            helm push "$f" "oci://${OCI_REG}" --username ${{ github.actor }} --password ${{ secrets.GITHUB_TOKEN }} || true
+            helm push "$f" "oci://${OCI_REG}" || true
           done
 
       - name: Publish packaged charts to Artifactory (OCI)
@@ -124,7 +124,7 @@ jobs:
           echo "${{ secrets.AF_TOKEN }}" | helm registry login -u "${{ secrets.AF_USER }}" --password-stdin "${ARTIFACTORY_URL}" || true
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
-            CHART_VERSION=$(helm show chart "$f" -o yaml | grep '^version:' | awk '{print $2}')
+            CHART_VERSION=$(helm show chart "$f" | grep '^version:' | awk '{print $2}')
             echo "Pushing $f -> ${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${CHART_NAME}:${CHART_VERSION}"
             helm push "$f" "oci://${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}" || true
           done
