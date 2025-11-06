@@ -5,11 +5,7 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch: {}
-
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+  
 
 env:
   GO_VERSION: '1.24.9'
@@ -19,6 +15,11 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go

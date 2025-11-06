@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
 
 env:
   GO_VERSION: '1.24.9'
@@ -25,6 +23,10 @@ jobs:
   lint-test:
     name: Lint & Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
