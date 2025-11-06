@@ -94,7 +94,7 @@ jobs:
           path: ./.chart-packages/*.tgz
 
       - name: Publish packaged charts to GHCR (OCI)
-        if: ${{ secrets.GHCR_TOKEN != '' && (github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+        if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
           CHART_PKG: ${{ github.workspace }}/.chart-packages
           OCI_REG: ghcr.io/${{ github.repository_owner }}/helm-charts
@@ -102,9 +102,12 @@ jobs:
           set -e
           mkdir -p /tmp/oci-ctx
           export HELM_EXPERIMENTAL_OCI=1
+          if [ -z "${GHCR_TOKEN:-}" ]; then
+            echo "GHCR_TOKEN not set; skipping GHCR publish. To enable GHCR publish add 'GHCR_USER' and 'GHCR_TOKEN' repository secrets with a PAT that has 'write:packages' scope."
+            exit 0
+          fi
           echo "Logging in to GHCR"
-          echo "Using GHCR_TOKEN to authenticate (hidden)"
-          echo "${{ secrets.GHCR_TOKEN }}" | helm registry login -u "${{ secrets.GHCR_USER }}" --password-stdin "ghcr.io"
+          echo "${GHCR_TOKEN}" | helm registry login -u "${GHCR_USER}" --password-stdin "ghcr.io"
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
             CHART_VERSION=$(helm show chart "$f" | grep '^version:' | awk '{print $2}')
@@ -112,10 +115,7 @@ jobs:
             helm push "$f" "oci://${OCI_REG}" || true
           done
 
-      - name: Skip GHCR publish when GHCR_TOKEN is missing
-        if: ${{ secrets.GHCR_TOKEN == '' }}
-        run: |
-          echo "GHCR_TOKEN secret not found; skipping GHCR publish. To enable GHCR publish add 'GHCR_USER' and 'GHCR_TOKEN' repository secrets with a PAT that has 'write:packages' scope."
+      # Note: GHCR publish is handled above; GHCR_TOKEN is checked at runtime inside that step.
 
       - name: Publish packaged charts to Artifactory (OCI)
         if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
