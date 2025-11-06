@@ -32,9 +32,21 @@ path = ["*.md", "docs/**"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC-BY-4.0"
 
+# Charts documentation under charts/ (recursive)
+[[annotations]]
+path = ["charts/**.md", "charts/**/README.md"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "CC-BY-4.0"
+
 # Frontend
 [[annotations]]
 path = ["frontend/**"]
+SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Chart assets and templates
+[[annotations]]
+path = ["charts/**"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
