@@ -86,12 +86,22 @@ jobs:
           echo "Listing $GITHUB_WORKSPACE/.chart-packages"
           ls -la "$GITHUB_WORKSPACE/.chart-packages" || true
 
+      - name: Archive packaged charts (debug + upload-friendly)
+        if: ${{ github.event_name != 'release' }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/helm-artifacts
+          ARCHIVE="/tmp/helm-charts-${{ env.VERSION }}.tgz"
+          echo "Creating archive $ARCHIVE"
+          tar -czf "$ARCHIVE" -C "$GITHUB_WORKSPACE" ./.chart-packages || true
+          ls -la "$ARCHIVE" || true
+
       - name: Upload packaged charts (artifact)
         if: ${{ github.event_name != 'release' }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: helm-charts-${{ env.VERSION }}
-          path: ./.chart-packages/*.tgz
+          path: /tmp/helm-charts-${{ env.VERSION }}.tgz
 
       - name: Publish packaged charts to GHCR (OCI)
         if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -102,12 +112,16 @@ jobs:
           set -e
           mkdir -p /tmp/oci-ctx
           export HELM_EXPERIMENTAL_OCI=1
-          if [ -z "${GHCR_TOKEN:-}" ]; then
-            echo "GHCR_TOKEN not set; skipping GHCR publish. To enable GHCR publish add 'GHCR_USER' and 'GHCR_TOKEN' repository secrets with a PAT that has 'write:packages' scope."
-            exit 0
+          # Attempt to login with GHCR_TOKEN if provided, otherwise fallback to GITHUB_TOKEN.
+          if [ -n "${GHCR_TOKEN:-}" ]; then
+            echo "Using GHCR_TOKEN secret to login to ghcr.io"
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          else
+            echo "GHCR_TOKEN not provided; falling back to GITHUB_TOKEN for ghcr.io login"
+            echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin || true
           fi
-          echo "Logging in to GHCR"
-          echo "${GHCR_TOKEN}" | helm registry login -u "${GHCR_USER}" --password-stdin "ghcr.io"
+          # Also do helm registry login (some helm versions read docker credentials; this is defensive)
+          echo "${GHCR_TOKEN:-${GITHUB_TOKEN}}" | helm registry login -u "${GHCR_USER:-${GITHUB_ACTOR}}" --password-stdin "ghcr.io" || true
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
             CHART_VERSION=$(helm show chart "$f" | grep '^version:' | awk '{print $2}')
