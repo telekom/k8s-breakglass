@@ -13,8 +13,8 @@ permissions:
 jobs:
   helm-checks:
     permissions:
-      packages: write
-      id-token: write
+      # packages: write
+      # id-token: write
       contents: read
     runs-on: ubuntu-latest
     steps:
