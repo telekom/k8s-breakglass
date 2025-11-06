@@ -15,15 +15,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version-file: go.mod
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@45529485b5eb76184ced07362d2331fd9d26f03f # v4
         with:
           # Allow permissive licenses (MIT, Apache, BSD, ISC, MPL-2.0)
           # NOTE: GitHub's dependency graph detects Go modules from go.mod automatically

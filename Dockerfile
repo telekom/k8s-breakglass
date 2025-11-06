@@ -1,4 +1,4 @@
-FROM node:23-alpine AS npm_builder
+FROM node:23-alpine@sha256:a34e14ef1df25b58258956049ab5a71ea7f0d498e41d0b514f4b8de09af09456 AS npm_builder
 WORKDIR /workspace
 ARG UI_FLAVOUR=oss
 ENV VITE_UI_FLAVOUR=$UI_FLAVOUR
@@ -9,7 +9,7 @@ RUN set -eux; cd /workspace/frontend; \
 	npm run build
 
 # Build the manager binary
-FROM golang:1.24.9 AS builder
+FROM golang:1.24.9@sha256:8b788ecf5fddb91cd04e532205d6411de68a08b510885bb8fb1c93f54c03f737 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -34,7 +34,7 @@ COPY pkg/ pkg/
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 go build -a -o breakglass cmd/main.go
 
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/static:nonroot@sha256:e8a4044e0b4ae4257efa45fc026c0bc30ad320d43bd4c1a7d5271bd241e386d0
 WORKDIR /
 
 COPY --from=builder /workspace/breakglass .
