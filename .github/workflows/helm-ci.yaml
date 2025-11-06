@@ -71,6 +71,58 @@ jobs:
           mkdir -p ./.chart-packages
           for d in charts/*; do
             if [ -f "$d/Chart.yaml" ]; then
+              helm dependency update "$d" || true
               helm package "$d" --version "$VERSION" --destination ./.chart-packages
             fi
           done
+
+      - name: Upload packaged charts (artifact)
+        if: ${{ github.event_name != 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-charts-${{ env.VERSION }}
+          path: ./.chart-packages/*.tgz
+
+      - name: Publish packaged charts to GHCR (OCI)
+        if: ${{ github.event_name == 'release' }}
+        env:
+          CHART_PKG: ./.chart-packages
+          OCI_REG: ghcr.io/${{ github.repository_owner }}/helm-charts
+        run: |
+          set -e
+          mkdir -p /tmp/oci-ctx
+          export HELM_EXPERIMENTAL_OCI=1
+          echo "Logging in to GHCR"
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login -u "${{ github.actor }}" --password-stdin "ghcr.io"
+          for f in ${CHART_PKG}/*.tgz; do
+            CHART_NAME=$(basename "$f" .tgz)
+            CHART_VERSION=$(helm show chart "$f" -o yaml | grep '^version:' | awk '{print $2}')
+            echo "Pushing $f -> ${OCI_REG}/${CHART_NAME}:${CHART_VERSION}"
+            helm push "$f" "oci://${OCI_REG}" --username ${{ github.actor }} --password ${{ secrets.GITHUB_TOKEN }} || true
+          done
+
+      - name: Publish packaged charts to Artifactory (OCI)
+        if: ${{ github.event_name == 'release' }}
+        env:
+          CHART_PKG: ./.chart-packages
+          ARTIFACTORY_URL: artifactory.devops.telekom.de
+          ARTIFACTORY_REPO: cit-t-caas-oci/charts/t-caas
+        run: |
+          set -e
+          export HELM_EXPERIMENTAL_OCI=1
+          echo "Logging in to Artifactory"
+          echo "${{ secrets.AF_TOKEN }}" | helm registry login -u "${{ secrets.AF_USER }}" --password-stdin "${ARTIFACTORY_URL}" || true
+          for f in ${CHART_PKG}/*.tgz; do
+            CHART_NAME=$(basename "$f" .tgz)
+            CHART_VERSION=$(helm show chart "$f" -o yaml | grep '^version:' | awk '{print $2}')
+            echo "Pushing $f -> ${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${CHART_NAME}:${CHART_VERSION}"
+            helm push "$f" "oci://${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}" || true
+          done
+
+      - name: Publish packaged charts to GitHub Release
+        if: ${{ github.event_name == 'release' }}
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./.chart-packages/*.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
