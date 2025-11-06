@@ -8,12 +8,16 @@ on:
       - 'charts/escalation-config/**'
       - '.github/workflows/release-chart.yml'
 
+
+permissions:
+      contents: read
+
+
 jobs:
   publish:
     name: Publish chart to ghcr
     runs-on: ubuntu-latest
     permissions:
-      contents: read
       packages: write
       id-token: write
 
