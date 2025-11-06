@@ -5,8 +5,8 @@ ENV VITE_UI_FLAVOUR=$UI_FLAVOUR
 LABEL org.breakglass.ui.flavour.default="oss"
 COPY ./frontend /workspace/frontend
 RUN set -eux; cd /workspace/frontend; \
-		npm install --no-audit --no-fund; \
-		npm run build
+	npm ci --no-audit --no-fund; \
+	npm run build
 
 # Build the manager binary
 FROM golang:1.24.9 AS builder
