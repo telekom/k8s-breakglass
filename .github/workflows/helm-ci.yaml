@@ -2,6 +2,7 @@ name: Helm CI
 
 on:
   pull_request: {}
+  pull_request_target: {}
   push: {}
   release:
     types: [published]
