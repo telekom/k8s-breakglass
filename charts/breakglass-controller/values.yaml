@@ -1,0 +1,60 @@
+breakglass:
+  ports:
+  - name: http
+    port: 8081
+    protocol: TCP
+    targetPort: 0
+  type: ClusterIP
+config:
+  configYaml: |-
+    server:
+      listenAddress: 0.0.0.0:8081
+    authorizationServer:
+      url: http://127.0.0.1:8080
+      jwksEndpoint: "realms/master/protocol/openid-connect/certs" # sample for keycloak
+    frontend:
+      oidcAuthority: http://127.0.0.1:8080/realms/master
+      oidcClientID: breakglass-ui
+      baseURL: http://localhost:5173
+    mail:
+      host: 172.18.0.2
+      port: 1025
+      insecureSkipVerify: true
+    kubernetes:
+      context: ""
+      oidcPrefixes:
+      - "oidc:"
+      # Interval for periodic ClusterConfig validation. Example: "10m"
+      clusterConfigCheckInterval: "10m"
+kubernetesClusterDomain: cluster.local
+manager:
+  breakglass:
+    env:
+      breakglassConfigPath: /config/config.yaml
+    image:
+      repository: harbor.das-schiff.telekom.de/schiff-dev/breakglass-2
+      tag: latest
+    imagePullPolicy: Always
+  nodeSelector: {}
+  replicas: 1
+  tolerations: []
+  topologySpreadConstraints: []
+serviceAccount:
+  annotations: {}
+  automount: true
+  create: true
+  name: ""
+
+ingress:
+  enabled: false
+  # host (FQDN) for the ingress
+  host: breakglass.example.com
+  # optional annotations map to be added to the ingress metadata
+  annotations: {}
+  tls:
+    enabled: false
+    # secretName containing TLS cert for the provided host(s)
+    secretName: ""
+    # hosts list for TLS entry
+    hosts:
+      - breakglass.example.com

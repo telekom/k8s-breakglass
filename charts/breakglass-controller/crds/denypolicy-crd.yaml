@@ -1,0 +1,149 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.4
+  name: denypolicies.breakglass.t-caas.telekom.com
+spec:
+  group: breakglass.t-caas.telekom.com
+  names:
+    kind: DenyPolicy
+    listKind: DenyPolicyList
+    plural: denypolicies
+    shortNames:
+    - dpolicy
+    singular: denypolicy
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.precedence
+      name: Precedence
+      type: integer
+    - jsonPath: .status.ruleCount
+      name: Rules
+      type: integer
+    - jsonPath: .status.compiled
+      name: Compiled
+      type: boolean
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: DenyPolicySpec defines deny rules applicable to sessions
+              / clusters / tenants.
+            properties:
+              appliesTo:
+                description: |-
+                  appliesTo scopes the policy. Empty means global.
+                  Any listed selector must match (logical AND within struct, lists are OR).
+                properties:
+                  clusters:
+                    description: clusters list exact clusterIDs.
+                    items:
+                      type: string
+                    type: array
+                  sessions:
+                    description: sessions list specific BreakglassSession names.
+                    items:
+                      type: string
+                    type: array
+                  tenants:
+                    description: tenants list tenant IDs.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              precedence:
+                description: precedence (lower wins). If unset defaults to 100.
+                format: int32
+                type: integer
+              rules:
+                description: rules are evaluated in order; first matching rule denies.
+                items:
+                  description: DenyRule blocks an action matching the attributes.
+                  properties:
+                    apiGroups:
+                      description: apiGroups for the resource ("" for core)
+                      items:
+                        type: string
+                      type: array
+                    namespaces:
+                      description: namespaces supports wildcards (shell style). Empty
+                        slice means cluster-scoped only resources.
+                      items:
+                        type: string
+                      type: array
+                    resourceNames:
+                      description: resourceNames are specific resource object names
+                        (supports wildcards). If empty matches any.
+                      items:
+                        type: string
+                      type: array
+                    resources:
+                      description: resources names (plural). Use "*" for wildcard.
+                        Subresources are matched via subresource field.
+                      items:
+                        type: string
+                      type: array
+                    subresources:
+                      description: subresources (e.g. status). If empty matches none
+                        (only main resource). Use "*" for any.
+                      items:
+                        type: string
+                      type: array
+                    verbs:
+                      description: verbs like get, list, watch, create, update, patch,
+                        delete, deletecollection
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - apiGroups
+                  - resources
+                  - verbs
+                  type: object
+                type: array
+            required:
+            - rules
+            type: object
+          status:
+            description: DenyPolicyStatus holds compiled metadata.
+            properties:
+              compiled:
+                description: compiled indicates evaluator is ready.
+                type: boolean
+              lastCompile:
+                description: lastCompile time.
+                format: date-time
+                type: string
+              ruleCount:
+                description: ruleCount is the number of rules.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+

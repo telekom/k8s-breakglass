@@ -1,0 +1,30 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "breakglass-controller.fullname" . }}-breakglass-ingress
+  labels:
+  {{- include "breakglass-controller.labels" . | nindent 4 }}
+  {{- if .Values.ingress.annotations }}
+  annotations:
+{{ toYaml .Values.ingress.annotations | indent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+  - hosts:
+{{ toYaml .Values.ingress.tls.hosts | indent 4 }}
+    secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+  - host: {{ .Values.ingress.host | quote }}
+    http:
+      paths:
+      - backend:
+          service:
+            name: '{{ include "breakglass-controller.fullname" . }}-breakglass'
+            port:
+              name: http
+        path: /
+  pathType: Prefix
+{{- end }}

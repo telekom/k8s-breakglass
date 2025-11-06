@@ -1,0 +1,200 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.4
+  name: breakglassescalations.breakglass.t-caas.telekom.com
+spec:
+  group: breakglass.t-caas.telekom.com
+  names:
+    kind: BreakglassEscalation
+    listKind: BreakglassEscalationList
+    plural: breakglassescalations
+    shortNames:
+    - bge
+    singular: breakglassescalation
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Clusters this escalation applies to
+      jsonPath: .spec.allowed.clusters
+      name: Clusters
+      type: string
+    - description: Groups allowed to request this escalation
+      jsonPath: .spec.allowed.groups
+      name: Groups
+      type: string
+    - description: The age of the escalation
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    - description: Number of requests for this escalation
+      jsonPath: .status.requestCount
+      name: Requests
+      type: integer
+    - description: Number of approvals for this escalation
+      jsonPath: .status.approvalCount
+      name: Approvals
+      type: integer
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
+            properties:
+              allowed:
+                description: allowed specifies who is allowed to use this escalation.
+                properties:
+                  clusters:
+                    description: |-
+                      clusters is a list of clusters this escalation can be used for.
+                      todo: implement globbing (or regex?) support
+                    items:
+                      type: string
+                    type: array
+                  groups:
+                    description: |-
+                      groups is a list of groups this escalation can be used by.
+                      todo: implement globbing (or regex?) support
+                    items:
+                      type: string
+                    type: array
+                type: object
+              allowedApproverDomains:
+                description: |-
+                  allowedApproverDomains can restrict approvers to specific email domains for this escalation.
+                  If omitted, cluster-level defaults are used.
+                items:
+                  type: string
+                type: array
+              approvalReason:
+                description: |-
+                  approvalReason configures an optional free-text reason the approver must or may provide
+                  when approving/rejecting a session for this escalation. If omitted, no approver reason is requested.
+                properties:
+                  description:
+                    description: description describes what to enter in the reason
+                      field (e.g. "CASM TicketID").
+                    type: string
+                  mandatory:
+                    description: mandatory indicates whether the field is required
+                      (true) or optional (false).
+                    type: boolean
+                type: object
+              approvers:
+                description: approvers specifies who is allowed to approve this escalation.
+                properties:
+                  groups:
+                    description: groups that are allowed to approve a session for
+                      this escalation
+                    items:
+                      type: string
+                    type: array
+                  users:
+                    description: users that are allowed to approve a session for this
+                      escalation
+                    items:
+                      type: string
+                    type: array
+                type: object
+              blockSelfApproval:
+                description: |-
+                  blockSelfApproval, if set to true, will prevent the session requester from approving their own session for this escalation.
+                  If omitted (nil), the cluster-level setting will be used.
+                type: boolean
+              clusterConfigRefs:
+                description: clusterConfigRefs lists ClusterConfig object names this
+                  escalation applies to (alternative to allowed.clusters).
+                items:
+                  type: string
+                type: array
+              denyPolicyRefs:
+                description: denyPolicyRefs (optional) attach default deny policies
+                  to any session created via this escalation.
+                items:
+                  type: string
+                type: array
+              escalatedGroup:
+                description: escalatedGroup is the group to be granted by this escalation.
+                type: string
+              idleTimeout:
+                default: 1h
+                description: idleTimeout is the maximum amount of time a session for
+                  this escalation can sit idle without being used.
+                type: string
+              maxValidFor:
+                default: 1h
+                description: maxValidFor is the maximum amount of time a session for
+                  this escalation will be active for after it is approved.
+                type: string
+              requestReason:
+                description: |-
+                  requestReason configures an optional free-text reason the requester must or may provide
+                  when creating a session for this escalation. If omitted, no reason is requested.
+                properties:
+                  description:
+                    description: description describes what to enter in the reason
+                      field (e.g. "CASM TicketID").
+                    type: string
+                  mandatory:
+                    description: mandatory indicates whether the field is required
+                      (true) or optional (false).
+                    type: boolean
+                type: object
+              retainFor:
+                description: retainFor is the amount of time to wait before removing
+                  a session for this escalation after it expired
+                type: string
+            required:
+            - allowed
+            type: object
+          status:
+            description: BreakglassEscalationStatus defines the observed state of
+              BreakglassEscalation.
+            properties:
+              approvalCount:
+                type: integer
+              approverGroupMembers:
+                additionalProperties:
+                  items:
+                    type: string
+                  type: array
+                description: |-
+                  approverGroupMembers caches expanded members for each approver group for notification purposes.
+                  key: group name, value: list of user emails/usernames resolved from the IdP.
+                type: object
+              groupResolutionStatus:
+                additionalProperties:
+                  type: string
+                description: Status of group resolution
+                type: object
+              requestCount:
+                description: Counters for tracking requests and approvals
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+

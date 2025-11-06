@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "breakglass-controller.fullname" . }}-manager
+  labels:
+    app: breakglass
+  {{- include "breakglass-controller.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.manager.replicas }}
+  selector:
+    matchLabels:
+      app: breakglass
+    {{- include "breakglass-controller.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app: breakglass
+      {{- include "breakglass-controller.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+      - env:
+        - name: BREAKGLASS_CONFIG_PATH
+          value: {{ quote .Values.manager.breakglass.env.breakglassConfigPath }}
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: KUBERNETES_CLUSTER_DOMAIN
+          value: {{ quote .Values.kubernetesClusterDomain }}
+        image: {{ .Values.manager.breakglass.image.repository }}:{{ .Values.manager.breakglass.image.tag
+          | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.manager.breakglass.imagePullPolicy }}
+        name: breakglass
+        resources: {}
+        volumeMounts:
+        - mountPath: /config/
+          name: config
+          readOnly: true
+      nodeSelector: {{- toYaml .Values.manager.nodeSelector | nindent 8 }}
+      serviceAccountName: {{ include "breakglass-controller.serviceAccountName" . }}
+      tolerations: {{- toYaml .Values.manager.tolerations | nindent 8 }}
+      topologySpreadConstraints: {{- toYaml .Values.manager.topologySpreadConstraints |
+        nindent 8 }}
+      volumes:
+      - configMap:
+          name: {{ include "breakglass-controller.fullname" . }}-config
+        name: config

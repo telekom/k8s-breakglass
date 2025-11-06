@@ -1,0 +1,34 @@
+name: Helm CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+
+jobs:
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.16.0
+      - name: Install kustomize
+        run: |
+          curl -sSL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash
+          sudo mv kustomize /usr/local/bin/kustomize
+      - name: Run helm lint
+        run: |
+          helm lint charts/breakglass-controller
+      - name: Run helm template (minimal)
+        run: |
+          helm template breakglass-controller charts/breakglass-controller -f charts/breakglass-controller/test-values/values-minimal.yaml
+      - name: Run helm template (tls)
+        run: |
+          helm template breakglass-controller charts/breakglass-controller -f charts/breakglass-controller/test-values/values-tls.yaml

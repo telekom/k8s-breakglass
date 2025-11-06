@@ -1,0 +1,9 @@
+# Minimal test values: ingress disabled
+ingress:
+  enabled: false
+manager:
+  breakglass:
+    image:
+      repository: busybox
+      tag: latest
+    imagePullPolicy: IfNotPresent
