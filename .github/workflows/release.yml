@@ -31,7 +31,7 @@ jobs:
           make manifests
           tar -czf manifests-${{ github.ref_name }}.tgz config/crd/bases
       - name: Upload manifests artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: manifests
           path: manifests-${{ github.ref_name }}.tgz

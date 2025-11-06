@@ -130,7 +130,7 @@ jobs:
           push-to-registry: true
       - name: Upload SBOM artifact
         if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sbom
           path: sbom-${{ github.sha }}.json
