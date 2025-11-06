@@ -1,34 +1,75 @@
 name: Helm CI
 
 on:
-  pull_request:
-  push:
-    branches:
-      - '**'
+  pull_request: {}
+  push: {}
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 jobs:
-  helm-lint:
+  helm-checks:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Helm
         uses: azure/setup-helm@v3
         with:
           version: v3.16.0
+
       - name: Install kustomize
         run: |
           curl -sSL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash
           sudo mv kustomize /usr/local/bin/kustomize
-      - name: Run helm lint
+
+      - name: Determine chart VERSION for this run
+        id: version
         run: |
-          helm lint charts/breakglass-controller
-      - name: Run helm template (minimal)
+          echo "Event: $GITHUB_EVENT_NAME"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            # PR number and short sha
+            VERSION="pr-${{ github.event.number }}-${GITHUB_SHA:0:8}"
+          elif [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            # Use release tag as chart version
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="${GITHUB_SHA:0:8}"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Set VERSION=${VERSION}"
+
+      - name: Update Chart.yaml versions (runtime only)
+        run: |
+          set -euo pipefail
+          echo "Updating chart versions to $VERSION"
+          mkdir -p ./.chart-packages
+          for chart in charts/*/Chart.yaml; do
+            echo "Updating $chart"
+            sed -E -i "s/^version: .*/version: \"$VERSION\"/" "$chart"
+          done
+          git --no-pager diff -- charts || true
+
+      - name: Helm lint (strict)
+        run: |
+          helm lint charts/* --strict
+
+      - name: Helm template (minimal)
         run: |
           helm template breakglass-controller charts/breakglass-controller -f charts/breakglass-controller/test-values/values-minimal.yaml
-      - name: Run helm template (tls)
+
+      - name: Helm template (tls)
         run: |
           helm template breakglass-controller charts/breakglass-controller -f charts/breakglass-controller/test-values/values-tls.yaml
+
+      - name: Helm package (verify)
+        run: |
+          mkdir -p ./.chart-packages
+          for d in charts/*; do
+            if [ -f "$d/Chart.yaml" ]; then
+              helm package "$d" --version "$VERSION" --destination ./.chart-packages
+            fi
+          done
