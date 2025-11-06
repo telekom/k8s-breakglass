@@ -9,18 +9,18 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
+  packages: read
+  id-token: read
 
 jobs:
   helm-checks:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 
       - name: Setup Helm
-        uses: azure/setup-helm@v3
+        uses: azure/setup-helm@5119fcb9089d432beecbf79bb2c7915207344b78 # v3.5
         with:
           version: v3.16.0
 
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload packaged charts (artifact)
         if: ${{ github.event_name != 'release' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: helm-charts-${{ env.VERSION }}
           path: ${{ github.workspace }}/.chart-packages/*.tgz
@@ -129,7 +129,7 @@ jobs:
 
       - name: Publish packaged charts to GitHub Release
         if: ${{ github.event_name == 'release' }}
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           files: ./.chart-packages/*.tgz
         env:
