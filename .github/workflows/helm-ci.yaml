@@ -13,8 +13,8 @@ permissions:
 jobs:
   helm-checks:
     permissions:
-      # packages: write
-      # id-token: write
+      packages: write
+      id-token: write
       contents: read
     runs-on: ubuntu-latest
     steps:
@@ -88,13 +88,13 @@ jobs:
 
       - name: Upload packaged charts (artifact)
         if: ${{ github.event_name != 'release' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: helm-charts-${{ env.VERSION }}
-          path: ${{ github.workspace }}/.chart-packages
+          path: ./.chart-packages/*.tgz
 
       - name: Publish packaged charts to GHCR (OCI)
-        if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: ${{ secrets.GHCR_TOKEN != '' && (github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
         env:
           CHART_PKG: ${{ github.workspace }}/.chart-packages
           OCI_REG: ghcr.io/${{ github.repository_owner }}/helm-charts
@@ -103,13 +103,19 @@ jobs:
           mkdir -p /tmp/oci-ctx
           export HELM_EXPERIMENTAL_OCI=1
           echo "Logging in to GHCR"
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login -u "${{ github.actor }}" --password-stdin "ghcr.io"
+          echo "Using GHCR_TOKEN to authenticate (hidden)"
+          echo "${{ secrets.GHCR_TOKEN }}" | helm registry login -u "${{ secrets.GHCR_USER }}" --password-stdin "ghcr.io"
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
             CHART_VERSION=$(helm show chart "$f" | grep '^version:' | awk '{print $2}')
             echo "Pushing $f -> ${OCI_REG}/${CHART_NAME}:${CHART_VERSION}"
             helm push "$f" "oci://${OCI_REG}" || true
           done
+
+      - name: Skip GHCR publish when GHCR_TOKEN is missing
+        if: ${{ secrets.GHCR_TOKEN == '' }}
+        run: |
+          echo "GHCR_TOKEN secret not found; skipping GHCR publish. To enable GHCR publish add 'GHCR_USER' and 'GHCR_TOKEN' repository secrets with a PAT that has 'write:packages' scope."
 
       - name: Publish packaged charts to Artifactory (OCI)
         if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
