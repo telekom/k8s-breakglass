@@ -1,4 +1,4 @@
-FROM node:23-alpine@sha256:a34e14ef1df25b58258956049ab5a71ea7f0d498e41d0b514f4b8de09af09456 AS npm_builder
+FROM node:25-alpine@sha256:7e467cc5aa91c87e94f93c4608cf234ca24aac3ec941f7f3db207367ccccdd11 AS npm_builder
 WORKDIR /workspace
 ARG UI_FLAVOUR=oss
 ENV VITE_UI_FLAVOUR=$UI_FLAVOUR
