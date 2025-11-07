@@ -127,7 +127,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if log != nil {
 		log.Debugw("Starting group search step", "group", group, "baseURL", k.cfg.BaseURL, "realm", k.cfg.Realm)
 	}
-	gURL := fmt.Sprintf("%s/realms/%s/groups?search=%s", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.QueryEscape(group))
+	gURL := fmt.Sprintf("%s/auth/realms/%s/groups?search=%s", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.QueryEscape(group))
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, gURL, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	if log != nil {
@@ -185,7 +185,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if log != nil {
 		log.Debugw("Starting direct members fetch step", "group", group, "groupID", groupID)
 	}
-	mURL := fmt.Sprintf("%s/realms/%s/groups/%s/members?q=&briefRepresentation=false", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
+	mURL := fmt.Sprintf("%s/auth/realms/%s/groups/%s/members?q=&briefRepresentation=false", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
 	mreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, mURL, nil)
 	mreq.Header.Set("Authorization", "Bearer "+token)
 	if log != nil {
@@ -239,7 +239,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if log != nil {
 		log.Debugw("Starting subgroups fetch step", "group", group, "groupID", groupID, "currentMemberCount", len(out))
 	}
-	sgURL := fmt.Sprintf("%s/realms/%s/groups/%s", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
+	sgURL := fmt.Sprintf("%s/auth/realms/%s/groups/%s", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
 	sgreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, sgURL, nil)
 	sgreq.Header.Set("Authorization", "Bearer "+token)
 	if log != nil {
@@ -272,7 +272,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 					if log != nil {
 						log.Debugw("Processing subgroup", "group", group, "parentGroupID", groupID, "subgroupIndex", sgIdx, "subgroupID", sg.ID, "totalSubgroups", len(groupDetail.SubGroups))
 					}
-					sgmURL := fmt.Sprintf("%s/realms/%s/groups/%s/members", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(sg.ID))
+					sgmURL := fmt.Sprintf("%s/auth/realms/%s/groups/%s/members", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(sg.ID))
 					sgmreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, sgmURL, nil)
 					sgmreq.Header.Set("Authorization", "Bearer "+token)
 					if log != nil {
@@ -362,7 +362,7 @@ func (k *KeycloakGroupMemberResolver) clientCredsToken(ctx context.Context) (str
 	form.Set("grant_type", "client_credentials")
 	form.Set("client_id", k.cfg.ClientID)
 	form.Set("client_secret", k.cfg.ClientSecret)
-	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm))
+	tokenURL := fmt.Sprintf("%s/auth/realms/%s/protocol/openid-connect/token", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm))
 	if log != nil {
 		log.Debugw("Executing token request", "tokenURL", tokenURL, "clientID", k.cfg.ClientID, "method", "POST")
 	}
