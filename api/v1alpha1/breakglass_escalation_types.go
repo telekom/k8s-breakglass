@@ -139,21 +139,18 @@ type BreakglassEscalation struct {
 
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglassescalation,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglassescalations,verbs=create;update,versions=v1alpha1,name=vbreakglassescalation.kb.io,admissionReviewVersions={v1,v1beta1}
 
-// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (be *BreakglassEscalation) ValidateCreate() error {
-	var allErrs field.ErrorList
-	if be.Spec.EscalatedGroup == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("escalatedGroup"), "escalatedGroup is required"))
-	}
+// checkNameUniqueness checks if the escalation name is unique cluster-wide.
+// Returns field errors if a conflicting name is found in another namespace.
+func (be *BreakglassEscalation) checkNameUniqueness() field.ErrorList {
+	var errs field.ErrorList
 
-	// global name uniqueness: prefer cache-backed listing
 	if webhookCache != nil {
 		var list BreakglassEscalationList
 		if err := webhookCache.List(context.Background(), &list); err == nil {
 			for _, item := range list.Items {
 				if item.Name == be.Name && item.Namespace != be.Namespace {
 					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					errs = append(errs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
 					break
 				}
 			}
@@ -164,12 +161,25 @@ func (be *BreakglassEscalation) ValidateCreate() error {
 			for _, item := range list.Items {
 				if item.Name == be.Name && item.Namespace != be.Namespace {
 					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
+					errs = append(errs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
 					break
 				}
 			}
 		}
 	}
+
+	return errs
+}
+
+// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
+func (be *BreakglassEscalation) ValidateCreate() error {
+	var allErrs field.ErrorList
+	if be.Spec.EscalatedGroup == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("escalatedGroup"), "escalatedGroup is required"))
+	}
+
+	// global name uniqueness: prefer cache-backed listing
+	allErrs = append(allErrs, be.checkNameUniqueness()...)
 
 	if len(allErrs) == 0 {
 		return nil
@@ -180,29 +190,8 @@ func (be *BreakglassEscalation) ValidateCreate() error {
 func (be *BreakglassEscalation) ValidateUpdate(old runtime.Object) error {
 	var allErrs field.ErrorList
 	// no immutability enforced
-	if webhookCache != nil {
-		var list BreakglassEscalationList
-		if err := webhookCache.List(context.Background(), &list); err == nil {
-			for _, item := range list.Items {
-				if item.Name == be.Name && item.Namespace != be.Namespace {
-					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
-					break
-				}
-			}
-		}
-	} else if webhookClient != nil {
-		var list BreakglassEscalationList
-		if err := webhookClient.List(context.Background(), &list); err == nil {
-			for _, item := range list.Items {
-				if item.Name == be.Name && item.Namespace != be.Namespace {
-					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
-					break
-				}
-			}
-		}
-	}
+	allErrs = append(allErrs, be.checkNameUniqueness()...)
+
 	if len(allErrs) == 0 {
 		return nil
 	}
