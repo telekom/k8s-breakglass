@@ -148,6 +148,15 @@ func isAlnum(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
 }
 
+// addIfNotPresent appends value to the slice only if it's not already present.
+// Uses slices.Contains for efficiency.
+func addIfNotPresent[T comparable](slice []T, value T) []T {
+	if !slices.Contains(slice, value) {
+		slice = append(slice, value)
+	}
+	return slice
+}
+
 // toRFC1123Label converts an arbitrary string to a Kubernetes label-safe value.
 // It lowercases the string, replaces invalid characters with '-', collapses
 // multiple separators, ensures it starts/ends with an alphanumeric character
@@ -300,37 +309,31 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		c.JSON(http.StatusUnauthorized, "user unauthorized for group")
 		return
 	} else {
-		reqLog.Debugw("Possible escalations", "user", cug.Username, "cluster", cug.Clustername, "count", len(possibleEscals))
-		reqLog.Debugw("Possible escalations for user", "user", cug.Username, "group", cug.GroupName, "possibleEscalations", possibleEscals)
+		reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(possibleEscals))
 	}
 
-	reqLog.Debugw("Filtering possible escalations for user", "user", cug.Username, "group", cug.GroupName)
-	possible := []string{}
+	// Single pass: collect available groups, approvers, and find matched escalation
+	possible := make([]string, 0, len(possibleEscals))
 	approvers := []string{}
 	selectedDenyPolicies := []string{}
-	// approverGroups := []string{}
-	for _, p := range possibleEscals {
+	var matchedEsc *v1alpha1.BreakglassEscalation
+
+	for i := range possibleEscals {
+		p := &possibleEscals[i]
 		possible = append(possible, p.Spec.EscalatedGroup)
 		approvers = append(approvers, p.Spec.Approvers.Users...)
-		if p.Spec.EscalatedGroup == request.GroupName {
+
+		// Check if this is the matched escalation
+		if p.Spec.EscalatedGroup == request.GroupName && matchedEsc == nil {
+			matchedEsc = p
 			selectedDenyPolicies = append(selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
 		}
-		// approverGroups = append(approverGroups, p.Spec.Approvers.Groups...)
 	}
 
 	if !slices.Contains(possible, request.GroupName) {
 		reqLog.Warnw("User unauthorized for group", "user", request.Username, "group", request.GroupName)
 		c.JSON(http.StatusUnauthorized, "user unauthorized for group")
 		return
-	}
-
-	// Validate request reason if escalation requires it. Find escalation that matches the requested group
-	var matchedEsc *v1alpha1.BreakglassEscalation
-	for _, p := range possibleEscals {
-		if p.Spec.EscalatedGroup == request.GroupName {
-			matchedEsc = &p
-			break
-		}
 	}
 	if matchedEsc != nil && matchedEsc.Spec.RequestReason != nil && matchedEsc.Spec.RequestReason.Mandatory {
 		if strings.TrimSpace(request.Reason) == "" {
@@ -378,6 +381,12 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 	username := wc.identityProvider.GetUsername(c)
+
+	reqLog.Debugw("Session creation initiated by user",
+		"requestorEmail", useremail,
+		"requestorUsername", username,
+		"requestedGroup", request.GroupName,
+		"requestedCluster", request.Clustername)
 
 	// Initialize session spec and populate duration fields from matched escalation when available
 	spec := v1alpha1.BreakglassSessionSpec{
@@ -501,9 +510,19 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	if os.Getenv("BREAKGLASS_DISABLE_EMAIL") == "1" {
 		reqLog.Debug("Email sending disabled via BREAKGLASS_DISABLE_EMAIL=1")
 	} else {
-		reqLog.Debugw("About to send breakglass request email", "approvalsRequired", len(approvers), "approvers", approvers)
+		reqLog.Debugw("About to send breakglass request email",
+			"approvalsRequired", len(approvers),
+			"approvers", approvers,
+			"requestorEmail", useremail,
+			"requestorUsername", username,
+			"grantedGroup", bs.Spec.GrantedGroup,
+			"cluster", bs.Spec.Cluster)
 		if len(approvers) == 0 {
-			reqLog.Warnw("No approvers resolved for email notification; cannot send email with empty recipients", "escalation", bs.Spec.GrantedGroup, "cluster", bs.Spec.Cluster)
+			reqLog.Warnw("No approvers resolved for email notification; cannot send email with empty recipients",
+				"escalation", bs.Spec.GrantedGroup,
+				"cluster", bs.Spec.Cluster,
+				"requestorEmail", useremail,
+				"requestorUsername", username)
 		} else {
 			// Trigger a group sync before sending email (but still send based on current status)
 			if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
@@ -518,16 +537,28 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 						log.Warnw("Failed to list escalations for group sync", "error", err)
 						return
 					}
+
+					// Deduplicate groups across all escalations to avoid syncing the same group multiple times
+					groupsToSync := make(map[string]bool)
 					for _, esc := range escalations {
 						for _, g := range esc.Spec.Approvers.Groups {
-							log.Debugw("Triggering group member sync", "escalation", esc.Name, "group", g)
-							members, merr := wc.escalationManager.Resolver.Members(ctx, g)
-							if merr != nil {
-								log.Warnw("Group member resolution failed during sync", "group", g, "escalation", esc.Name, "error", merr)
-								continue
-							}
-							log.Infow("Resolved group members for sync", "group", g, "escalation", esc.Name, "count", len(members), "members", members)
+							groupsToSync[g] = true
 						}
+					}
+
+					if len(groupsToSync) == 0 {
+						log.Debugw("No approver groups found to sync", "cluster", bs.Spec.Cluster, "escalationCount", len(escalations))
+						return
+					}
+
+					log.Debugw("Syncing approver groups", "cluster", bs.Spec.Cluster, "groupCount", len(groupsToSync))
+					for g := range groupsToSync {
+						members, merr := wc.escalationManager.Resolver.Members(ctx, g)
+						if merr != nil {
+							log.Warnw("Group member resolution failed during sync", "group", g, "error", merr)
+							continue
+						}
+						log.Debugw("Resolved group members for sync", "group", g, "count", len(members))
 					}
 				}(goroutineLog)
 			}
@@ -692,16 +723,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		if approverEmail != "" {
 			bs.Status.Approver = approverEmail
 			// append to approvers history if not already present
-			found := false
-			for _, a := range bs.Status.Approvers {
-				if a == approverEmail {
-					found = true
-					break
-				}
-			}
-			if !found {
-				bs.Status.Approvers = append(bs.Status.Approvers, approverEmail)
-			}
+			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approverEmail)
 		}
 		// store approver reason if provided
 		if strings.TrimSpace(approverPayload.Reason) != "" {
@@ -718,16 +740,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		rejectorEmail, _ := wc.identityProvider.GetEmail(c)
 		if rejectorEmail != "" {
 			bs.Status.Approver = rejectorEmail
-			found := false
-			for _, a := range bs.Status.Approvers {
-				if a == rejectorEmail {
-					found = true
-					break
-				}
-			}
-			if !found {
-				bs.Status.Approvers = append(bs.Status.Approvers, rejectorEmail)
-			}
+			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, rejectorEmail)
 		}
 		// store approver reason if provided
 		if strings.TrimSpace(approverPayload.Reason) != "" {
@@ -1100,16 +1113,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	if approverEmail != "" {
 		bs.Status.Approver = approverEmail
 		// append if not present
-		found := false
-		for _, a := range bs.Status.Approvers {
-			if a == approverEmail {
-				found = true
-				break
-			}
-		}
-		if !found {
-			bs.Status.Approvers = append(bs.Status.Approvers, approverEmail)
-		}
+		bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approverEmail)
 	}
 
 	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
@@ -1141,13 +1145,20 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 			"session", bs.Name,
 			"cluster", bs.Spec.Cluster,
 			"group", bs.Spec.GrantedGroup,
-			"requestUsername", requestUsername)
+			"requestUsername", requestUsername,
+			"requestEmail", requestEmail)
 		return fmt.Errorf("cannot send email: no approvers available")
 	}
 
 	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.User, bs.Spec.GrantedGroup)
 
-	wc.log.Debugw("Rendering breakglass session request email", "subject", subject, "approverId", len(approvers), "approvers", approvers)
+	wc.log.Debugw("Rendering breakglass session request email",
+		"session", bs.Name,
+		"subject", subject,
+		"approverId", len(approvers),
+		"approvers", approvers,
+		"requestEmail", requestEmail,
+		"requestUsername", requestUsername)
 
 	// Calculate scheduling information for email
 	scheduledStartTimeStr := ""
@@ -1186,33 +1197,72 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		}(),
 	})
 	if err != nil {
-		wc.log.Errorf("failed to render email template: %v", err)
+		wc.log.Errorw("failed to render email template",
+			"session", bs.Name,
+			"error", err,
+			"recipients", len(approvers),
+			"subject", subject)
 		return err
 	}
+
+	wc.log.Debugw("Email template rendered successfully",
+		"session", bs.Name,
+		"bodyLength", len(body),
+		"recipientCount", len(approvers),
+		"recipients", approvers,
+		"subject", subject)
 
 	// Use mail queue for non-blocking async sending
 	if wc.mailQueue != nil {
 		sessionID := fmt.Sprintf("session-%s", bs.Name)
 		if err := wc.mailQueue.Enqueue(sessionID, approvers, subject, body); err != nil {
-			wc.log.Warnw("Failed to enqueue session request email (will not retry)", "session", bs.Name, "error", err)
+			wc.log.Warnw("Failed to enqueue session request email (will not retry)",
+				"session", bs.Name,
+				"recipientCount", len(approvers),
+				"recipients", approvers,
+				"subject", subject,
+				"error", err)
 			// Try fallback to synchronous send if queue fails
 			if err := wc.mail.Send(approvers, subject, body); err != nil {
-				wc.log.Errorf("fallback: failed to send request email: %v", err)
+				wc.log.Errorw("fallback: failed to send request email",
+					"session", bs.Name,
+					"recipientCount", len(approvers),
+					"recipients", approvers,
+					"subject", subject,
+					"error", err)
 				return err
 			}
+			wc.log.Infow("Fallback: session request email sent synchronously",
+				"session", bs.Name,
+				"recipientCount", len(approvers),
+				"recipients", approvers,
+				"subject", subject)
 			return nil
 		}
-		wc.log.Infow("Breakglass session request email queued", "session", bs.Name, "approvers", approvers)
+		wc.log.Infow("Breakglass session request email queued",
+			"session", bs.Name,
+			"recipientCount", len(approvers),
+			"recipients", approvers,
+			"subject", subject)
 		return nil
 	}
 
 	// Fallback to synchronous send if no queue is available
 	if err := wc.mail.Send(approvers, subject, body); err != nil {
-		wc.log.Errorf("failed to send request email: %v", err)
+		wc.log.Errorw("failed to send request email",
+			"session", bs.Name,
+			"recipientCount", len(approvers),
+			"recipients", approvers,
+			"subject", subject,
+			"error", err)
 		return err
 	}
 
-	wc.log.Infow("Breakglass session request email sent", "session", bs.Name, "approvers", approvers)
+	wc.log.Infow("Breakglass session request email sent",
+		"session", bs.Name,
+		"recipientCount", len(approvers),
+		"recipients", approvers,
+		"subject", subject)
 	return nil
 }
 
@@ -1239,7 +1289,7 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 		wc.log.Error("Error getting user identity", zap.Error(err))
 		return false
 	}
-	wc.log.Debug("Approver identity", "email", email)
+	wc.log.Debugw("Approver identity verified", "email", email, "cluster", session.Spec.Cluster)
 	ctx := c.Request.Context()
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
 
