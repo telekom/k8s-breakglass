@@ -9,13 +9,15 @@ on:
 
 permissions:
   contents: read
-
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 jobs:
   helm-checks:
     permissions:
+      contents: write
       packages: write
       id-token: write
-      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -107,21 +109,13 @@ jobs:
         if: ${{ github.event_name == 'release' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
           CHART_PKG: ${{ github.workspace }}/.chart-packages
-          OCI_REG: ghcr.io/${{ github.repository_owner }}/helm-charts
+          OCI_REG: ${{ github.repository }}/helm-charts
         run: |
           set -e
           mkdir -p /tmp/oci-ctx
           export HELM_EXPERIMENTAL_OCI=1
-          # Attempt to login with GHCR_TOKEN if provided, otherwise fallback to GITHUB_TOKEN.
-          if [ -n "${GHCR_TOKEN:-}" ]; then
-            echo "Using GHCR_TOKEN secret to login to ghcr.io"
-            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-          else
-            echo "GHCR_TOKEN not provided; falling back to GITHUB_TOKEN for ghcr.io login"
-            echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin || true
-          fi
           # Also do helm registry login (some helm versions read docker credentials; this is defensive)
-          echo "${GHCR_TOKEN:-${GITHUB_TOKEN}}" | helm registry login -u "${GHCR_USER:-${GITHUB_ACTOR}}" --password-stdin "ghcr.io" || true
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login -u "${{ github.actor }}" --password-stdin "${{ env.REGISTRY }}" || true
           for f in ${CHART_PKG}/*.tgz; do
             CHART_NAME=$(basename "$f" .tgz)
             CHART_VERSION=$(helm show chart "$f" | grep '^version:' | awk '{print $2}')
