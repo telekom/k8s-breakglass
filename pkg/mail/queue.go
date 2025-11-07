@@ -95,6 +95,11 @@ func (q *Queue) Start() {
 // Enqueue adds an email to the queue for sending
 func (q *Queue) Enqueue(id string, receivers []string, subject, body string) error {
 	if len(receivers) == 0 {
+		q.log.Errorw("Cannot enqueue email: empty receivers list",
+			"id", id,
+			"subject", subject,
+			"stackTrace", fmt.Sprintf("%+v", receivers))
+		metrics.MailQueueDropped.WithLabelValues(q.sender.GetHost()).Inc()
 		return fmt.Errorf("cannot enqueue email with no receivers")
 	}
 

@@ -167,8 +167,28 @@ $(HELMIFY): $(LOCALBIN)
 
 .PHONY: helm
 helm: manifests kustomize helmify ## Generate helm chart from kustomize output using helmify
-	# This pipes kustomize output into helmify to generate the chart under charts/breakglass-controller
-	$(KUSTOMIZE) build config/default | $(HELMIFY) -crd-dir charts/breakglass-controller charts/breakglass-controller
+	# Strategy: Generate helmify output to temp dir, preserve custom values.yaml and ingress template
+	# This allows helmify to regenerate RBAC/CRDs while keeping your customizations intact
+	@echo "Generating Helm chart from kustomize (preserving custom files)..."
+	@TEMP_CHART=$$(mktemp -d) && \
+	  TEMP_CHART_PATH="$$TEMP_CHART/breakglass-controller" && \
+	  BACKUP_INGRESS=$$(mktemp) && \
+	  cp "charts/breakglass-controller/templates/breakglass-ingress.yaml" "$$BACKUP_INGRESS" 2>/dev/null || true && \
+	  $(KUSTOMIZE) build config/default | $(HELMIFY) -crd-dir -generate-defaults $$TEMP_CHART_PATH && \
+	  echo "Helmify generated chart to $$TEMP_CHART_PATH" && \
+	  cp -r "$$TEMP_CHART_PATH/templates" charts/breakglass-controller/ 2>/dev/null && \
+	  cp "$$BACKUP_INGRESS" "charts/breakglass-controller/templates/breakglass-ingress.yaml" 2>/dev/null || true && \
+	  cp "$$TEMP_CHART_PATH/Chart.yaml" charts/breakglass-controller/ 2>/dev/null && \
+	  cp -r "$$TEMP_CHART_PATH/crds" charts/breakglass-controller/ 2>/dev/null || true && \
+	  echo "Updated chart templates and CRDs" && \
+	  rm -rf "$$TEMP_CHART" "$$BACKUP_INGRESS" && \
+	  echo "Chart generation complete. Custom values.yaml and ingress.yaml preserved."
+
+.PHONY: helm-validate
+helm-validate: ## Validate Helm chart syntax and templates
+	helm lint charts/breakglass-controller --strict
+	helm template breakglass-controller charts/breakglass-controller > /dev/null
+	@echo "Helm chart validation passed"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

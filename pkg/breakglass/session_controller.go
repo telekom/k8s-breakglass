@@ -501,35 +501,40 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	if os.Getenv("BREAKGLASS_DISABLE_EMAIL") == "1" {
 		reqLog.Debug("Email sending disabled via BREAKGLASS_DISABLE_EMAIL=1")
 	} else {
-		// Trigger a group sync before sending email (but still send based on current status)
-		if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
-			// Capture the request-scoped logger (which contains cid) so background logs
-			// emitted during group sync include the same correlation id.
-			goroutineLog := reqLog.With("cluster", bs.Spec.Cluster)
-			go func(log *zap.SugaredLogger) {
-				ctx := context.Background()
-				// Run a sync for all approver groups in the escalation(s) for this request
-				escalations, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, bs.Spec.Cluster, []string{})
-				if err != nil {
-					log.Warnw("Failed to list escalations for group sync", "error", err)
-					return
-				}
-				for _, esc := range escalations {
-					for _, g := range esc.Spec.Approvers.Groups {
-						log.Debugw("Triggering group member sync", "escalation", esc.Name, "group", g)
-						members, merr := wc.escalationManager.Resolver.Members(ctx, g)
-						if merr != nil {
-							log.Warnw("Group member resolution failed", "group", g, "escalation", esc.Name, "error", merr)
-							continue
-						}
-						log.Infow("Resolved group members for sync", "group", g, "escalation", esc.Name, "count", len(members))
+		reqLog.Debugw("About to send breakglass request email", "approvalsRequired", len(approvers), "approvers", approvers)
+		if len(approvers) == 0 {
+			reqLog.Warnw("No approvers resolved for email notification; cannot send email with empty recipients", "escalation", bs.Spec.GrantedGroup, "cluster", bs.Spec.Cluster)
+		} else {
+			// Trigger a group sync before sending email (but still send based on current status)
+			if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
+				// Capture the request-scoped logger (which contains cid) so background logs
+				// emitted during group sync include the same correlation id.
+				goroutineLog := reqLog.With("cluster", bs.Spec.Cluster)
+				go func(log *zap.SugaredLogger) {
+					ctx := context.Background()
+					// Run a sync for all approver groups in the escalation(s) for this request
+					escalations, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, bs.Spec.Cluster, []string{})
+					if err != nil {
+						log.Warnw("Failed to list escalations for group sync", "error", err)
+						return
 					}
-				}
-			}(goroutineLog)
-		}
-		if err := wc.sendOnRequestEmail(bs, useremail, username, approvers); err != nil {
-			// Do not fail the request if email cannot be sent (e.g. mail server not running in e2e).
-			reqLog.Warnw("Skipping email notification (send failed)", "error", err)
+					for _, esc := range escalations {
+						for _, g := range esc.Spec.Approvers.Groups {
+							log.Debugw("Triggering group member sync", "escalation", esc.Name, "group", g)
+							members, merr := wc.escalationManager.Resolver.Members(ctx, g)
+							if merr != nil {
+								log.Warnw("Group member resolution failed during sync", "group", g, "escalation", esc.Name, "error", merr)
+								continue
+							}
+							log.Infow("Resolved group members for sync", "group", g, "escalation", esc.Name, "count", len(members), "members", members)
+						}
+					}
+				}(goroutineLog)
+			}
+			if err := wc.sendOnRequestEmail(bs, useremail, username, approvers); err != nil {
+				// Do not fail the request if email cannot be sent (e.g. mail server not running in e2e).
+				reqLog.Warnw("Skipping email notification (send failed)", "error", err)
+			}
 		}
 	}
 
@@ -1130,9 +1135,19 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 	requestUsername string,
 	approvers []string,
 ) error {
+	// Guard: validate approvers list
+	if len(approvers) == 0 {
+		wc.log.Errorw("Cannot send breakglass request email: approvers list is empty",
+			"session", bs.Name,
+			"cluster", bs.Spec.Cluster,
+			"group", bs.Spec.GrantedGroup,
+			"requestUsername", requestUsername)
+		return fmt.Errorf("cannot send email: no approvers available")
+	}
+
 	subject := fmt.Sprintf("Cluster %q user %q is requesting breakglass group assignment %q", bs.Spec.Cluster, bs.Spec.User, bs.Spec.GrantedGroup)
 
-	wc.log.Debugw("Rendering breakglass session request email", "subject", subject, "approvers", approvers)
+	wc.log.Debugw("Rendering breakglass session request email", "subject", subject, "approverId", len(approvers), "approvers", approvers)
 
 	// Calculate scheduling information for email
 	scheduledStartTimeStr := ""

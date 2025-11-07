@@ -78,13 +78,18 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	log := k.log
 	if k.cfg.Disable || k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
 		if log != nil {
-			log.Debugw("Keycloak resolver disabled or missing configuration; skipping group lookup", "group", group, "disabled", k.cfg.Disable)
+			log.Debugw("Keycloak resolver disabled or missing configuration; skipping group lookup",
+				"group", group,
+				"disabled", k.cfg.Disable,
+				"baseURL", k.cfg.BaseURL,
+				"realm", k.cfg.Realm,
+				"clientID", k.cfg.ClientID)
 		}
 		return nil, nil // gracefully skip when not configured
 	}
 	if v, ok := k.cache.get(group); ok {
 		if log != nil {
-			log.Debugw("Keycloak cache hit for group", "group", group, "membersCount", len(v))
+			log.Debugw("Keycloak cache hit for group", "group", group, "membersCount", len(v), "members", v)
 		}
 		return v, nil
 	}
@@ -283,38 +288,46 @@ func (u EscalationStatusUpdater) Start(ctx context.Context) {
 }
 
 func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLogger) {
+	log.Debugw("Starting escalation status update cycle", "resolver", fmt.Sprintf("%T", u.Resolver))
 	escList := telekomv1alpha1.BreakglassEscalationList{}
 	if err := u.K8sClient.List(ctx, &escList); err != nil {
 		log.Errorw("Failed listing BreakglassEscalations for status update", "error", err)
 		return
 	}
+	log.Debugw("Fetched escalations for status update", "count", len(escList.Items))
+
 	for _, esc := range escList.Items {
 		// Collect approver groups
 		groups := esc.Spec.Approvers.Groups
 		if len(groups) == 0 {
+			log.Debugw("Escalation has no approver groups; skipping", "escalation", esc.Name)
 			continue
 		}
+		log.Debugw("Processing escalation with approver groups", "escalation", esc.Name, "groupCount", len(groups), "groups", groups)
+
 		updated := esc.DeepCopy()
 		if updated.Status.ApproverGroupMembers == nil {
 			updated.Status.ApproverGroupMembers = map[string][]string{}
 		}
 		changed := false
 		for _, g := range groups {
+			log.Debugw("Resolving group for escalation", "escalation", esc.Name, "group", g, "resolverType", fmt.Sprintf("%T", u.Resolver))
 			var norm []string
 			if u.Resolver != nil {
-				log.Debugw("Resolving approver group members", "group", g, "escalation", esc.Name)
+				log.Debugw("Calling group member resolver", "group", g, "escalation", esc.Name, "resolverType", fmt.Sprintf("%T", u.Resolver))
 				members, err := u.Resolver.Members(ctx, g)
 				if err != nil {
-					log.Warnw("Failed resolving group members", "group", g, "escalation", esc.Name, "error", err)
+					log.Errorw("Failed resolving group members from resolver", "group", g, "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
 					// record resolution error in status
 					if updated.Status.GroupResolutionStatus == nil {
 						updated.Status.GroupResolutionStatus = map[string]string{}
 					}
-					updated.Status.GroupResolutionStatus[g] = err.Error()
+					updated.Status.GroupResolutionStatus[g] = fmt.Sprintf("error: %v", err)
 					continue
 				}
+				log.Debugw("Group member resolver returned members", "group", g, "escalation", esc.Name, "rawMemberCount", len(members), "members", members)
 				norm = normalizeMembers(members)
-				log.Infow("Resolved approver group members", "group", g, "escalation", esc.Name, "count", len(norm))
+				log.Infow("Resolved approver group members (normalized)", "group", g, "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm), "normalizedMembers", norm)
 				// mark group resolution ok in status
 				if updated.Status.GroupResolutionStatus == nil {
 					updated.Status.GroupResolutionStatus = map[string]string{}
@@ -329,18 +342,21 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				continue
 			}
 			if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
+				log.Debugw("Group members changed; marking for update", "group", g, "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
 				updated.Status.ApproverGroupMembers[g] = norm
 				changed = true
 			}
 		}
 		if changed {
+			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
 			if err := u.K8sClient.Status().Update(ctx, updated); err != nil {
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
 			} else {
-				log.Debugw("Updated escalation approverGroupMembers", "escalation", esc.Name, "groups", groups)
+				log.Debugw("Updated escalation approverGroupMembers successfully", "escalation", esc.Name, "groups", groups)
 			}
 		}
 	}
+	log.Debugw("Completed escalation status update cycle")
 }
 
 func normalizeMembers(in []string) []string {

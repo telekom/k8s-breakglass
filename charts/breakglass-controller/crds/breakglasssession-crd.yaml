@@ -153,6 +153,14 @@ spec:
                 description: retainFor is the amount of time to wait before removing
                   the session object after it was expired.
                 type: string
+              scheduledStartTime:
+                description: |-
+                  scheduledStartTime optionally specifies when this session should become active.
+                  If not set or zero, session activates immediately upon approval.
+                  Must be set to a future time if provided (validated by admission webhook).
+                  Sessions in WaitingForScheduledTime state are not considered valid/active until this time is reached.
+                format: date-time
+                type: string
               user:
                 description: user is the name of the user the session is valid for.
                 type: string
@@ -167,6 +175,13 @@ spec:
           status:
             description: BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
             properties:
+              actualStartTime:
+                description: |-
+                  actualStartTime records when the session actually became active.
+                  For immediate sessions (no scheduledStartTime): equals ApprovedAt.
+                  For scheduled sessions: set when ScheduledStartTime is reached and session transitions to Approved.
+                format: date-time
+                type: string
               approvalReason:
                 description: approvalReason stores the free-text reason supplied by
                   the approver when approving/rejecting the session.
