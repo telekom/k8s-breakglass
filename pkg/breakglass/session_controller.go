@@ -45,6 +45,7 @@ type BreakglassSessionController struct {
 	middleware        gin.HandlerFunc
 	identityProvider  IdentityProvider
 	mail              mail.Sender
+	mailQueue         *mail.Queue
 	getUserGroupsFn   GetUserGroupsFunction
 	ccProvider        interface {
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
@@ -1174,6 +1175,23 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		return err
 	}
 
+	// Use mail queue for non-blocking async sending
+	if wc.mailQueue != nil {
+		sessionID := fmt.Sprintf("session-%s", bs.Name)
+		if err := wc.mailQueue.Enqueue(sessionID, approvers, subject, body); err != nil {
+			wc.log.Warnw("Failed to enqueue session request email (will not retry)", "session", bs.Name, "error", err)
+			// Try fallback to synchronous send if queue fails
+			if err := wc.mail.Send(approvers, subject, body); err != nil {
+				wc.log.Errorf("fallback: failed to send request email: %v", err)
+				return err
+			}
+			return nil
+		}
+		wc.log.Infow("Breakglass session request email queued", "session", bs.Name, "approvers", approvers)
+		return nil
+	}
+
+	// Fallback to synchronous send if no queue is available
 	if err := wc.mail.Send(approvers, subject, body); err != nil {
 		wc.log.Errorf("failed to send request email: %v", err)
 		return err
@@ -1372,6 +1390,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		middleware:           middleware,
 		identityProvider:     ip,
 		mail:                 mail.NewSender(cfg),
+		mailQueue:            nil,
 		ccProvider:           ccProvider,
 		clusterConfigManager: NewClusterConfigManager(clusterConfigClient),
 	}
@@ -1404,6 +1423,12 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	}
 
 	return ctrl
+}
+
+// WithQueue sets the mail queue for asynchronous email sending
+func (b *BreakglassSessionController) WithQueue(mailQueue *mail.Queue) *BreakglassSessionController {
+	b.mailQueue = mailQueue
+	return b
 }
 
 // Handlers returns the middleware(s) for this controller (required by APIController interface)
