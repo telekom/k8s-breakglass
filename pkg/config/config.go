@@ -78,6 +78,9 @@ type Keycloak struct {
 	ClientID string `yaml:"clientID"`
 	// ClientSecret for the above client (omit if using public client w/ other flow)
 	ClientSecret string `yaml:"clientSecret"`
+	// ServiceAccountToken optional pre-authenticated bearer token for Keycloak admin API queries
+	// If provided and ClientSecret is empty, this token is used instead of client_credentials flow
+	ServiceAccountToken string `yaml:"serviceAccountToken"`
 	// CacheTTL duration string (e.g. 5m, 1h); default 10m if empty
 	CacheTTL string `yaml:"cacheTTL"`
 	// RequestTimeout duration string (default 10s)

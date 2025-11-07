@@ -96,162 +96,313 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	if log != nil {
 		log.Debugw("Keycloak cache miss for group; will perform lookup", "group", group)
 	}
-	// Support simplified public client mode (no clientSecret) for e2e tests: embed known static groups.
-	if k.cfg.ClientSecret == "" {
-		// Minimal static mapping used in e2e realm; extend as needed.
-		static := map[string][]string{
-			"emergency-response": {"senior-approver@example.com", "security-lead@example.com"},
-		}
-		if members, ok := static[group]; ok {
-			if log != nil {
-				log.Debugw("Using static keycloak mapping for group", "group", group, "membersCount", len(members))
-			}
-			k.cache.set(group, members)
-			return members, nil
-		}
-		// Fallback: no members known for this group.
-		if log != nil {
-			log.Debugw("No static mapping found for group; returning empty members", "group", group)
-		}
-		k.cache.set(group, []string{})
-		return []string{}, nil
-	}
 
-	// Acquire client credentials token
-	startToken := time.Now()
-	token, err := k.clientCredsToken(ctx)
-	if err != nil {
+	// Determine token: either use ServiceAccountToken or obtain via client_credentials
+	var token string
+	var err error
+	if k.cfg.ServiceAccountToken != "" {
+		token = k.cfg.ServiceAccountToken
 		if log != nil {
-			log.Warnw("Failed to obtain Keycloak token", "group", group, "error", err, "took", time.Since(startToken).String())
+			log.Debugw("Using configured service account token for group query", "group", group)
 		}
-		return nil, err
-	}
-	if log != nil {
-		log.Debugw("Obtained Keycloak token (redacted)", "group", group, "took", time.Since(startToken).String())
+	} else {
+		// Acquire client credentials token
+		if log != nil {
+			log.Debugw("Attempting to acquire Keycloak token via client_credentials flow", "group", group, "clientID", k.cfg.ClientID)
+		}
+		startToken := time.Now()
+		token, err = k.clientCredsToken(ctx)
+		if err != nil {
+			if log != nil {
+				log.Warnw("Failed to obtain Keycloak token via client_credentials", "group", group, "error", err, "took", time.Since(startToken).String())
+			}
+			return nil, err
+		}
+		if log != nil {
+			log.Debugw("Successfully obtained Keycloak token via client_credentials", "group", group, "took", time.Since(startToken).String())
+		}
 	}
 
 	// 1. Find group ID by name
+	if log != nil {
+		log.Debugw("Starting group search step", "group", group, "baseURL", k.cfg.BaseURL, "realm", k.cfg.Realm)
+	}
 	gURL := fmt.Sprintf("%s/realms/%s/groups?search=%s", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.QueryEscape(group))
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, gURL, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	if log != nil {
-		log.Debugw("Keycloak groups search request", "url", gURL, "group", group)
+		log.Debugw("Executing Keycloak groups search HTTP request", "url", gURL, "group", group, "method", "GET")
 	}
 	gStart := time.Now()
 	resp, err := k.client.Do(req)
 	if err != nil {
 		if log != nil {
-			log.Warnw("Keycloak groups search HTTP error", "url", gURL, "group", group, "error", err)
+			log.Errorw("Keycloak groups search HTTP request failed", "url", gURL, "group", group, "error", err, "took", time.Since(gStart).String())
 		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	// Read body for improved diagnostics
 	gBody, _ := io.ReadAll(resp.Body)
+	if log != nil {
+		log.Debugw("Keycloak groups search HTTP response received", "group", group, "statusCode", resp.StatusCode, "contentLength", len(gBody), "took", time.Since(gStart).String())
+	}
 	if resp.StatusCode != 200 {
 		if log != nil {
-			log.Warnw("Keycloak groups search returned non-200 status", "status", resp.StatusCode, "url", gURL, "group", group, "took", time.Since(gStart).String(), "body", string(bytes.TrimSpace(gBody)))
+			log.Errorw("Keycloak groups search returned non-200 status", "status", resp.StatusCode, "url", gURL, "group", group, "took", time.Since(gStart).String(), "body", string(bytes.TrimSpace(gBody)))
 		}
 		return nil, fmt.Errorf("keycloak groups search status %d", resp.StatusCode)
 	}
 	var groups []struct{ ID, Name string }
 	if err := json.NewDecoder(bytes.NewReader(gBody)).Decode(&groups); err != nil {
 		if log != nil {
-			log.Debugw("Failed to decode Keycloak groups response", "error", err, "group", group, "body", string(bytes.TrimSpace(gBody)))
+			log.Errorw("Failed to decode Keycloak groups response JSON", "error", err, "group", group, "body", string(bytes.TrimSpace(gBody)))
 		}
 		return nil, err
 	}
 	if log != nil {
-		log.Debugw("Keycloak groups search returned", "group", group, "count", len(groups), "took", time.Since(gStart).String())
+		log.Debugw("Keycloak groups search completed successfully", "group", group, "returnedGroupCount", len(groups), "took", time.Since(gStart).String(), "groups", groups)
 	}
 	var groupID string
 	for _, g := range groups {
 		if strings.EqualFold(g.Name, group) {
 			groupID = g.ID
+			if log != nil {
+				log.Debugw("Found matching group by name", "group", group, "groupID", groupID, "matchedName", g.Name)
+			}
 			break
 		}
 	}
 	if groupID == "" {
 		if log != nil {
-			log.Debugw("Keycloak group not found by name", "group", group, "returnedGroups", groups)
+			log.Warnw("Group not found in Keycloak search results", "group", group, "searchedName", group, "returnedGroups", groups)
 		}
 		k.cache.set(group, []string{})
 		return []string{}, nil
 	}
 
-	// 2. List members
-	mURL := fmt.Sprintf("%s/realms/%s/groups/%s/members", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
+	// 2. List direct group members
+	if log != nil {
+		log.Debugw("Starting direct members fetch step", "group", group, "groupID", groupID)
+	}
+	mURL := fmt.Sprintf("%s/realms/%s/groups/%s/members?q=&briefRepresentation=false", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
 	mreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, mURL, nil)
 	mreq.Header.Set("Authorization", "Bearer "+token)
 	if log != nil {
-		log.Debugw("Keycloak group members request", "url", mURL, "group", group, "groupID", groupID)
+		log.Debugw("Executing Keycloak members fetch HTTP request", "url", mURL, "group", group, "groupID", groupID, "method", "GET")
 	}
 	mStart := time.Now()
 	mresp, err := k.client.Do(mreq)
 	if err != nil {
 		if log != nil {
-			log.Warnw("Keycloak members HTTP error", "url", mURL, "group", group, "error", err)
+			log.Errorw("Keycloak members fetch HTTP request failed", "url", mURL, "group", group, "error", err, "took", time.Since(mStart).String())
 		}
 		return nil, err
 	}
 	defer mresp.Body.Close()
 	mBody, _ := io.ReadAll(mresp.Body)
+	if log != nil {
+		log.Debugw("Keycloak members fetch HTTP response received", "group", group, "statusCode", mresp.StatusCode, "contentLength", len(mBody), "took", time.Since(mStart).String())
+	}
 	if mresp.StatusCode != 200 {
 		if log != nil {
-			log.Warnw("Keycloak members returned non-200 status", "status", mresp.StatusCode, "url", mURL, "group", group, "took", time.Since(mStart).String(), "body", string(bytes.TrimSpace(mBody)))
+			log.Errorw("Keycloak members fetch returned non-200 status", "status", mresp.StatusCode, "url", mURL, "group", group, "took", time.Since(mStart).String(), "body", string(bytes.TrimSpace(mBody)))
 		}
 		return nil, fmt.Errorf("keycloak members status %d", mresp.StatusCode)
 	}
 	var membersRaw []struct{ Username, Email string }
 	if err := json.NewDecoder(bytes.NewReader(mBody)).Decode(&membersRaw); err != nil {
 		if log != nil {
-			log.Debugw("Failed to decode Keycloak members response", "error", err, "group", group, "body", string(bytes.TrimSpace(mBody)))
+			log.Errorw("Failed to decode Keycloak members response JSON", "error", err, "group", group, "body", string(bytes.TrimSpace(mBody)))
 		}
 		return nil, err
 	}
+	if log != nil {
+		log.Debugw("Keycloak direct members fetch completed", "group", group, "directMemberCount", len(membersRaw), "took", time.Since(mStart).String())
+	}
 	out := make([]string, 0, len(membersRaw))
-	for _, m := range membersRaw {
+	for i, m := range membersRaw {
 		if m.Email != "" {
 			out = append(out, m.Email)
+			if log != nil {
+				log.Debugw("Added direct member by email", "group", group, "index", i, "email", m.Email)
+			}
 		} else if m.Username != "" {
 			out = append(out, m.Username)
+			if log != nil {
+				log.Debugw("Added direct member by username", "group", group, "index", i, "username", m.Username)
+			}
 		}
+	}
+
+	// 3. Fetch subgroups and their members recursively
+	if log != nil {
+		log.Debugw("Starting subgroups fetch step", "group", group, "groupID", groupID, "currentMemberCount", len(out))
+	}
+	sgURL := fmt.Sprintf("%s/realms/%s/groups/%s", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
+	sgreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, sgURL, nil)
+	sgreq.Header.Set("Authorization", "Bearer "+token)
+	if log != nil {
+		log.Debugw("Executing Keycloak subgroups fetch HTTP request", "url", sgURL, "group", group, "groupID", groupID, "method", "GET")
+	}
+	sgStart := time.Now()
+	sgresp, err := k.client.Do(sgreq)
+	if err != nil {
+		if log != nil {
+			log.Warnw("Keycloak subgroups fetch HTTP request failed", "url", sgURL, "group", group, "error", err, "took", time.Since(sgStart).String())
+		}
+		// Continue with direct members if subgroups fetch fails
+		if log != nil {
+			log.Infow("Continuing with direct members only (subgroups fetch failed)", "group", group, "directMemberCount", len(out))
+		}
+	} else {
+		defer sgresp.Body.Close()
+		sgBody, _ := io.ReadAll(sgresp.Body)
+		if log != nil {
+			log.Debugw("Keycloak subgroups fetch HTTP response received", "group", group, "statusCode", sgresp.StatusCode, "contentLength", len(sgBody), "took", time.Since(sgStart).String())
+		}
+		if sgresp.StatusCode == 200 {
+			var groupDetail struct{ SubGroups []struct{ ID string } }
+			if err := json.NewDecoder(bytes.NewReader(sgBody)).Decode(&groupDetail); err == nil {
+				if log != nil {
+					log.Debugw("Keycloak subgroups fetch decoded successfully", "group", group, "subgroupCount", len(groupDetail.SubGroups), "took", time.Since(sgStart).String())
+				}
+				// Fetch members from each subgroup
+				for sgIdx, sg := range groupDetail.SubGroups {
+					if log != nil {
+						log.Debugw("Processing subgroup", "group", group, "parentGroupID", groupID, "subgroupIndex", sgIdx, "subgroupID", sg.ID, "totalSubgroups", len(groupDetail.SubGroups))
+					}
+					sgmURL := fmt.Sprintf("%s/realms/%s/groups/%s/members", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(sg.ID))
+					sgmreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, sgmURL, nil)
+					sgmreq.Header.Set("Authorization", "Bearer "+token)
+					if log != nil {
+						log.Debugw("Executing subgroup members fetch HTTP request", "url", sgmURL, "group", group, "subgroupID", sg.ID, "method", "GET")
+					}
+					sgmStart := time.Now()
+					sgmresp, err := k.client.Do(sgmreq)
+					if err != nil {
+						if log != nil {
+							log.Warnw("Subgroup members fetch HTTP request failed", "group", group, "subgroupID", sg.ID, "error", err, "took", time.Since(sgmStart).String())
+						}
+						continue
+					}
+					defer sgmresp.Body.Close()
+					if log != nil {
+						log.Debugw("Subgroup members fetch HTTP response received", "group", group, "subgroupID", sg.ID, "statusCode", sgmresp.StatusCode, "took", time.Since(sgmStart).String())
+					}
+					if sgmresp.StatusCode == 200 {
+						var sgmembers []struct{ Username, Email string }
+						if err := json.NewDecoder(sgmresp.Body).Decode(&sgmembers); err == nil {
+							if log != nil {
+								log.Debugw("Subgroup members decoded successfully", "group", group, "subgroupID", sg.ID, "memberCount", len(sgmembers))
+							}
+							for sgmIdx, m := range sgmembers {
+								if m.Email != "" {
+									out = append(out, m.Email)
+									if log != nil {
+										log.Debugw("Added subgroup member by email", "group", group, "subgroupID", sg.ID, "memberIndex", sgmIdx, "email", m.Email)
+									}
+								} else if m.Username != "" {
+									out = append(out, m.Username)
+									if log != nil {
+										log.Debugw("Added subgroup member by username", "group", group, "subgroupID", sg.ID, "memberIndex", sgmIdx, "username", m.Username)
+									}
+								}
+							}
+						} else if log != nil {
+							log.Warnw("Failed to decode subgroup members JSON", "group", group, "subgroupID", sg.ID, "error", err)
+						}
+					} else if log != nil {
+						log.Warnw("Subgroup members fetch returned non-200 status", "group", group, "subgroupID", sg.ID, "statusCode", sgmresp.StatusCode)
+					}
+				}
+			} else if log != nil {
+				log.Warnw("Failed to decode subgroups list JSON", "group", group, "error", err)
+			}
+		} else if log != nil {
+			log.Warnw("Subgroups fetch returned non-200 status", "group", group, "statusCode", sgresp.StatusCode)
+		}
+	}
+
+	// 4. Normalize and deduplicate members
+	if log != nil {
+		log.Debugw("Starting member list normalization", "group", group, "beforeNormalizationCount", len(out), "members", out)
 	}
 	out = normalizeMembers(out)
 	if log != nil {
-		log.Infow("Resolved keycloak group members", "group", group, "resolvedCount", len(out))
+		log.Infow("Keycloak group member resolution completed successfully", "group", group, "directMemberCount", len(membersRaw), "finalResolvedCount", len(out), "members", out)
+	}
+
+	// 5. Cache and return results
+	if log != nil {
+		log.Debugw("Caching group members for TTL", "group", group, "memberCount", len(out), "cacheTTL", k.cfg.CacheTTL)
 	}
 	k.cache.set(group, out)
+	if log != nil {
+		log.Debugw("Group member resolution function returning successfully", "group", group, "memberCount", len(out))
+	}
 	return out, nil
 }
 
 func (k *KeycloakGroupMemberResolver) clientCredsToken(ctx context.Context) (string, error) {
+	log := k.log
+	if log != nil {
+		log.Debugw("clientCredsToken function called", "clientID", k.cfg.ClientID, "realm", k.cfg.Realm)
+	}
 	if k.cfg.ClientSecret == "" {
+		if log != nil {
+			log.Errorw("clientCredsToken failed: ClientSecret is empty", "clientID", k.cfg.ClientID)
+		}
 		return "", errors.New("keycloak clientSecret empty; only client_credentials supported now")
+	}
+	if log != nil {
+		log.Debugw("Preparing client credentials form", "clientID", k.cfg.ClientID, "grantType", "client_credentials")
 	}
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
 	form.Set("client_id", k.cfg.ClientID)
 	form.Set("client_secret", k.cfg.ClientSecret)
 	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm))
+	if log != nil {
+		log.Debugw("Executing token request", "tokenURL", tokenURL, "clientID", k.cfg.ClientID, "method", "POST")
+	}
+	startReq := time.Now()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := k.client.Do(req)
 	if err != nil {
+		if log != nil {
+			log.Errorw("Token request HTTP failed", "tokenURL", tokenURL, "clientID", k.cfg.ClientID, "error", err, "took", time.Since(startReq).String())
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
+	if log != nil {
+		log.Debugw("Token request HTTP response received", "tokenURL", tokenURL, "statusCode", resp.StatusCode, "took", time.Since(startReq).String())
+	}
 	if resp.StatusCode != 200 {
+		if log != nil {
+			log.Errorw("Token request returned non-200 status", "tokenURL", tokenURL, "statusCode", resp.StatusCode)
+		}
 		return "", fmt.Errorf("keycloak token status %d", resp.StatusCode)
 	}
 	var tr struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+		if log != nil {
+			log.Errorw("Failed to decode token response JSON", "tokenURL", tokenURL, "error", err)
+		}
 		return "", err
 	}
 	if tr.AccessToken == "" {
+		if log != nil {
+			log.Errorw("Token response contained empty access_token", "tokenURL", tokenURL)
+		}
 		return "", errors.New("empty keycloak access_token")
+	}
+	if log != nil {
+		log.Debugw("clientCredsToken function returning successfully", "clientID", k.cfg.ClientID, "tokenLength", len(tr.AccessToken))
 	}
 	return tr.AccessToken, nil
 }
