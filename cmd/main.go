@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-logr/zapr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -133,19 +134,39 @@ func main() {
 	enableMgr := os.Getenv("ENABLE_WEBHOOK_MANAGER")
 	if enableMgr == "" || enableMgr == "true" {
 		go func() {
-			mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{})
+			// Create custom scheme with CRDs registered
+			log.Debugw("Creating manager with custom scheme including CRDs")
+			scheme := runtime.NewScheme()
+
+			// Add standard Kubernetes types
+			if err := corev1.AddToScheme(scheme); err != nil {
+				log.Errorw("Failed to add corev1 to scheme", "error", err)
+				return
+			}
+
+			// Add our custom resource definitions
+			if err := v1alpha1.AddToScheme(scheme); err != nil {
+				log.Errorw("Failed to add v1alpha1 CRDs to scheme", "error", err)
+				return
+			}
+			log.Infow("CRDs successfully added to scheme", "types", "BreakglassSession, BreakglassEscalation, ClusterConfig")
+
+			mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+				Scheme: scheme,
+			})
 			if merr != nil {
 				log.Warnw("Failed to start controller-runtime manager; webhooks will not be registered", "error", merr)
 				return
 			}
+			log.Infow("Controller-runtime manager created successfully")
+
 			// Register BreakglassSession, BreakglassEscalation and ClusterConfig webhooks with manager
 			// Also register field indices to support efficient cache-based lookups by controller-runtime clients.
 			// Index fields: spec.cluster, spec.user, spec.grantedGroup
 
 			// First, check if the types are registered in the manager's scheme
 			log.Debugw("Checking CRD type registration in scheme")
-			scheme := mgr.GetScheme()
-			if scheme == nil {
+			if mgr.GetScheme() == nil {
 				log.Errorw("Manager scheme is nil; cannot register indices or webhooks")
 				return
 			}
