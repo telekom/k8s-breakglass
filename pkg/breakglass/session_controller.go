@@ -1175,6 +1175,87 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	c.JSON(http.StatusOK, bs)
 }
 
+// formatDuration converts a time.Duration to a human-readable string (e.g., "2 hours", "30 minutes")
+func formatDuration(d time.Duration) string {
+	if d == 0 {
+		return "0"
+	}
+
+	// Handle days
+	if d >= 24*time.Hour {
+		days := d / (24 * time.Hour)
+		remainder := d % (24 * time.Hour)
+		if remainder == 0 {
+			if days == 1 {
+				return "1 day"
+			}
+			return fmt.Sprintf("%d days", days)
+		}
+		hours := remainder / time.Hour
+		if hours == 0 {
+			if days == 1 {
+				return "1 day"
+			}
+			return fmt.Sprintf("%d days", days)
+		}
+		if days == 1 {
+			if hours == 1 {
+				return "1 day 1 hour"
+			}
+			return fmt.Sprintf("1 day %d hours", hours)
+		}
+		if hours == 1 {
+			return fmt.Sprintf("%d days 1 hour", days)
+		}
+		return fmt.Sprintf("%d days %d hours", days, hours)
+	}
+
+	// Handle hours
+	if d >= time.Hour {
+		hours := d / time.Hour
+		remainder := d % time.Hour
+		if remainder == 0 {
+			if hours == 1 {
+				return "1 hour"
+			}
+			return fmt.Sprintf("%d hours", hours)
+		}
+		mins := remainder / time.Minute
+		if mins == 0 {
+			if hours == 1 {
+				return "1 hour"
+			}
+			return fmt.Sprintf("%d hours", hours)
+		}
+		if hours == 1 {
+			if mins == 1 {
+				return "1 hour 1 minute"
+			}
+			return fmt.Sprintf("1 hour %d minutes", mins)
+		}
+		if mins == 1 {
+			return fmt.Sprintf("%d hours 1 minute", hours)
+		}
+		return fmt.Sprintf("%d hours %d minutes", hours, mins)
+	}
+
+	// Handle minutes
+	if d >= time.Minute {
+		mins := d / time.Minute
+		if mins == 1 {
+			return "1 minute"
+		}
+		return fmt.Sprintf("%d minutes", mins)
+	}
+
+	// Handle seconds (rarely used but for completeness)
+	secs := d / time.Second
+	if secs == 1 {
+		return "1 second"
+	}
+	return fmt.Sprintf("%d seconds", secs)
+}
+
 func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession,
 	requestEmail,
 	requestUsername string,
@@ -1201,34 +1282,70 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		"requestEmail", requestEmail,
 		"requestUsername", requestUsername)
 
-	// Calculate scheduling information for email
+	// Calculate scheduling information and duration for email
 	scheduledStartTimeStr := ""
 	calculatedExpiresAtStr := ""
+	formattedDurationStr := ""
+	requestedAtStr := time.Now().Format("2006-01-02 15:04:05 MST")
 
 	if bs.Spec.ScheduledStartTime != nil {
-		scheduledStartTimeStr = bs.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05")
+		scheduledStartTimeStr = bs.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05 MST")
 
 		// Calculate expiry time from scheduled start time using spec.MaxValidFor
 		expiryTime := bs.Spec.ScheduledStartTime.Time
 		if bs.Spec.MaxValidFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				expiryTime = bs.Spec.ScheduledStartTime.Add(d)
+				formattedDurationStr = formatDuration(d)
 			}
 		} else {
 			// Default to 1 hour if not specified
 			expiryTime = bs.Spec.ScheduledStartTime.Add(1 * time.Hour)
+			formattedDurationStr = "1 hour"
 		}
-		calculatedExpiresAtStr = expiryTime.Format("2006-01-02 15:04:05")
+		calculatedExpiresAtStr = expiryTime.Format("2006-01-02 15:04:05 MST")
+	} else {
+		// Immediate session: calculate duration from MaxValidFor
+		if bs.Spec.MaxValidFor != "" {
+			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+				formattedDurationStr = formatDuration(d)
+				calculatedExpiresAtStr = time.Now().Add(d).Format("2006-01-02 15:04:05 MST")
+			}
+		} else {
+			// Default to 1 hour
+			formattedDurationStr = "1 hour"
+			calculatedExpiresAtStr = time.Now().Add(1 * time.Hour).Format("2006-01-02 15:04:05 MST")
+		}
+	}
+
+	// Collect approver groups from the matched escalation
+	approverGroups := []string{}
+	ctx := context.Background()
+	if wc.escalationManager != nil {
+		escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, bs.Spec.Cluster)
+		if err == nil {
+			for _, esc := range escalations {
+				if esc.Spec.EscalatedGroup == bs.Spec.GrantedGroup {
+					approverGroups = append(approverGroups, esc.Spec.Approvers.Groups...)
+					break // Only need the first matching escalation
+				}
+			}
+		}
 	}
 
 	body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
 		SubjectEmail:        requestEmail,
 		SubjectFullName:     requestUsername,
+		RequestingUsername:  requestUsername,
 		RequestedCluster:    bs.Spec.Cluster,
 		RequestedUsername:   bs.Spec.User,
 		RequestedGroup:      bs.Spec.GrantedGroup,
+		RequestReason:       bs.Spec.RequestReason,
 		ScheduledStartTime:  scheduledStartTimeStr,
 		CalculatedExpiresAt: calculatedExpiresAtStr,
+		FormattedDuration:   formattedDurationStr,
+		RequestedAt:         requestedAtStr,
+		ApproverGroups:      approverGroups,
 		URL:                 fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
 		BrandingName: func() string {
 			if wc.config.Frontend.BrandingName != "" {
