@@ -69,6 +69,14 @@ func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.Keycloak)
 func (k *KeycloakGroupMemberResolver) getToken(ctx context.Context) (string, error) {
 	// Use configured service account token if available
 	if k.cfg.ServiceAccountToken != "" {
+		if k.log != nil {
+			// Log a sanitized version of the token for debugging
+			tokenPreview := k.cfg.ServiceAccountToken
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+			k.log.Debugw("Using pre-configured service account token", "tokenPreview", tokenPreview)
+		}
 		return k.cfg.ServiceAccountToken, nil
 	}
 
@@ -76,13 +84,23 @@ func (k *KeycloakGroupMemberResolver) getToken(ctx context.Context) (string, err
 	k.tokenLock.RLock()
 	if k.token != "" && time.Now().Before(k.tokenTime.Add(5*time.Minute)) {
 		defer k.tokenLock.RUnlock()
+		if k.log != nil {
+			k.log.Debugw("Using cached token", "expiresIn", time.Until(k.tokenTime.Add(5*time.Minute)).Seconds())
+		}
 		return k.token, nil
 	}
 	k.tokenLock.RUnlock()
 
 	// Acquire new token using client credentials
+	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", k.cfg.BaseURL, k.cfg.Realm)
 	if k.log != nil {
-		k.log.Debugw("Acquiring token via client credentials", "clientID", k.cfg.ClientID)
+		k.log.Debugw("Acquiring token via client credentials",
+			"clientID", k.cfg.ClientID,
+			"baseURL", k.cfg.BaseURL,
+			"realm", k.cfg.Realm,
+			"endpoint", tokenURL,
+			"grantType", "client_credentials",
+			"clientSecretProvided", k.cfg.ClientSecret != "")
 	}
 	token, err := k.gocloak.GetToken(ctx, k.cfg.Realm, gocloak.TokenOptions{
 		ClientID:     &k.cfg.ClientID,
@@ -91,7 +109,11 @@ func (k *KeycloakGroupMemberResolver) getToken(ctx context.Context) (string, err
 	})
 	if err != nil {
 		if k.log != nil {
-			k.log.Errorw("Failed to acquire token", "clientID", k.cfg.ClientID, "error", err)
+			k.log.Errorw("Failed to acquire token",
+				"clientID", k.cfg.ClientID,
+				"error", err,
+				"endpoint", tokenURL,
+				"grantType", "client_credentials")
 		}
 		return "", err
 	}
@@ -103,7 +125,15 @@ func (k *KeycloakGroupMemberResolver) getToken(ctx context.Context) (string, err
 	k.tokenLock.Unlock()
 
 	if k.log != nil {
-		k.log.Debugw("Token acquired successfully", "clientID", k.cfg.ClientID)
+		tokenPreview := k.token
+		if len(tokenPreview) > 20 {
+			tokenPreview = tokenPreview[:20] + "..."
+		}
+		k.log.Debugw("Token acquired successfully",
+			"clientID", k.cfg.ClientID,
+			"tokenPreview", tokenPreview,
+			"expiresIn", token.ExpiresIn,
+			"tokenType", token.TokenType)
 	}
 	return token.AccessToken, nil
 }
@@ -146,17 +176,46 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	// 1. Search for group by name
 	if log != nil {
 		log.Debugw("Starting group search step", "group", group)
+		tokenPreview := token
+		if len(tokenPreview) > 20 {
+			tokenPreview = tokenPreview[:20] + "..."
+		}
+		log.Debugw("GetGroups API call details",
+			"baseURL", k.cfg.BaseURL,
+			"realm", k.cfg.Realm,
+			"searchParam", group,
+			"tokenPreview", tokenPreview,
+			"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups", k.cfg.BaseURL, k.cfg.Realm))
 	}
 	params := gocloak.GetGroupsParams{Search: gocloak.StringP(group)}
 	groups, err := k.gocloak.GetGroups(ctx, token, k.cfg.Realm, params)
 	if err != nil {
 		if log != nil {
-			log.Errorw("Keycloak groups search failed", "group", group, "error", err)
+			tokenPreview := token
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+			log.Errorw("Keycloak groups search failed",
+				"group", group,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err),
+				"tokenPreview", tokenPreview,
+				"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups", k.cfg.BaseURL, k.cfg.Realm),
+				"params", fmt.Sprintf("search=%s", group))
 		}
 		return nil, err
 	}
 	if log != nil {
 		log.Debugw("Keycloak groups search completed", "group", group, "returnedGroupCount", len(groups))
+		if len(groups) > 0 {
+			for i, g := range groups {
+				log.Debugw("Group search result",
+					"index", i,
+					"groupID", g.ID,
+					"groupName", g.Name,
+					"hasSubgroups", g.SubGroups != nil && len(*g.SubGroups) > 0)
+			}
+		}
 	}
 
 	// Find matching group by name
@@ -181,17 +240,44 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	// 2. Get direct group members
 	if log != nil {
 		log.Debugw("Starting direct members fetch step", "group", group, "groupID", *groupID)
+		tokenPreview := token
+		if len(tokenPreview) > 20 {
+			tokenPreview = tokenPreview[:20] + "..."
+		}
+		log.Debugw("GetGroupMembers API call details",
+			"baseURL", k.cfg.BaseURL,
+			"realm", k.cfg.Realm,
+			"groupID", *groupID,
+			"tokenPreview", tokenPreview,
+			"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s/members", k.cfg.BaseURL, k.cfg.Realm, *groupID))
 	}
 	params2 := gocloak.GetGroupsParams{}
 	members, err := k.gocloak.GetGroupMembers(ctx, token, k.cfg.Realm, *groupID, params2)
 	if err != nil {
 		if log != nil {
-			log.Errorw("Keycloak members fetch failed", "group", group, "error", err)
+			tokenPreview := token
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+			log.Errorw("Keycloak members fetch failed",
+				"group", group,
+				"groupID", *groupID,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err),
+				"tokenPreview", tokenPreview,
+				"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s/members", k.cfg.BaseURL, k.cfg.Realm, *groupID))
 		}
 		return nil, err
 	}
 	if log != nil {
 		log.Debugw("Direct members fetch completed", "group", group, "directMemberCount", len(members))
+		for i, m := range members {
+			log.Debugw("Direct group member",
+				"index", i,
+				"userID", m.ID,
+				"username", m.Username,
+				"email", m.Email)
+		}
 	}
 
 	// Collect member identifiers
@@ -217,11 +303,30 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	// 3. Get group detail to retrieve subgroups
 	if log != nil {
 		log.Debugw("Starting subgroups fetch step", "group", group, "groupID", *groupID, "currentMemberCount", len(out))
+		tokenPreview := token
+		if len(tokenPreview) > 20 {
+			tokenPreview = tokenPreview[:20] + "..."
+		}
+		log.Debugw("GetGroup API call details",
+			"baseURL", k.cfg.BaseURL,
+			"realm", k.cfg.Realm,
+			"groupID", *groupID,
+			"tokenPreview", tokenPreview,
+			"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s", k.cfg.BaseURL, k.cfg.Realm, *groupID))
 	}
 	groupDetail, err := k.gocloak.GetGroup(ctx, token, k.cfg.Realm, *groupID)
 	if err != nil {
 		if log != nil {
-			log.Warnw("Keycloak group detail fetch failed", "group", group, "error", err)
+			tokenPreview := token
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+			log.Warnw("Keycloak group detail fetch failed",
+				"group", group,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err),
+				"tokenPreview", tokenPreview,
+				"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s", k.cfg.BaseURL, k.cfg.Realm, *groupID))
 		}
 		// Continue with just direct members
 	} else if groupDetail != nil && groupDetail.SubGroups != nil {
@@ -233,17 +338,43 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 				continue
 			}
 			if log != nil {
-				log.Debugw("Processing subgroup", "group", group, "parentGroupID", *groupID, "subgroupIndex", sgIdx, "subgroupID", *sg.ID)
+				log.Debugw("Processing subgroup", "group", group, "parentGroupID", *groupID, "subgroupIndex", sgIdx, "subgroupID", *sg.ID, "subgroupName", sg.Name)
 			}
 
 			// Fetch members of each subgroup
+			if log != nil {
+				tokenPreview := token
+				if len(tokenPreview) > 20 {
+					tokenPreview = tokenPreview[:20] + "..."
+				}
+				log.Debugw("GetGroupMembers API call for subgroup",
+					"baseURL", k.cfg.BaseURL,
+					"realm", k.cfg.Realm,
+					"subgroupID", *sg.ID,
+					"tokenPreview", tokenPreview,
+					"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s/members", k.cfg.BaseURL, k.cfg.Realm, *sg.ID))
+			}
 			params3 := gocloak.GetGroupsParams{}
 			sgMembers, err := k.gocloak.GetGroupMembers(ctx, token, k.cfg.Realm, *sg.ID, params3)
 			if err != nil {
 				if log != nil {
-					log.Warnw("Subgroup members fetch failed", "group", group, "subgroupID", *sg.ID, "error", err)
+					tokenPreview := token
+					if len(tokenPreview) > 20 {
+						tokenPreview = tokenPreview[:20] + "..."
+					}
+					log.Warnw("Subgroup members fetch failed",
+						"group", group,
+						"subgroupID", *sg.ID,
+						"error", err,
+						"errorType", fmt.Sprintf("%T", err),
+						"tokenPreview", tokenPreview,
+						"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s/members", k.cfg.BaseURL, k.cfg.Realm, *sg.ID))
 				}
 				continue
+			}
+
+			if log != nil {
+				log.Debugw("Subgroup members fetch completed", "subgroupID", *sg.ID, "memberCount", len(sgMembers))
 			}
 
 			for sgmIdx, m := range sgMembers {
