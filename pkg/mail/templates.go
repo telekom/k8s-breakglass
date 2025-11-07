@@ -31,6 +31,14 @@ type RequestBreakglassSessionMailParams struct {
 	RequestedUsername string
 	RequestedGroup    string
 
+	// Approver info (for notifications)
+	Approver string
+
+	// Scheduling information
+	ScheduledStartTime  string
+	CalculatedExpiresAt string
+	ActualStartTime     string
+
 	URL          string
 	BrandingName string
 }

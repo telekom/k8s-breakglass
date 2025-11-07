@@ -6,6 +6,8 @@ export interface BreakglassSessionRequest {
   activeOnly?: boolean;
   mine?: boolean;
   approver?: boolean;
+  reason?: string;
+  scheduledStartTime?: string; // ISO 8601 date-time, e.g., "2024-01-20T15:30:00Z"
 }
 
 export interface BreakglassSessionResponse {

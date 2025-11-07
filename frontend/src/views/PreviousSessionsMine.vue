@@ -77,7 +77,8 @@ function reasonEndedLabel(s: any): string {
           <th>Cluster</th>
           <th>Group</th>
           <th>User</th>
-          <th>Started</th>
+          <th>Scheduled Start</th>
+          <th>Actual Started</th>
           <th>Ended</th>
           <th>Request reason</th>
           <th>Approval reason</th>
@@ -91,7 +92,8 @@ function reasonEndedLabel(s: any): string {
           <td>{{ s.cluster }}</td>
           <td>{{ s.group }}</td>
           <td>{{ (s.spec && (s.spec.user || s.spec.requester)) || s.user || s.requester || '-' }}</td>
-          <td>{{ formatDate(startedForDisplay(s)) }}</td>
+          <td>{{ s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : '-' }}</td>
+          <td>{{ s.status && s.status.actualStartTime ? formatDate(s.status.actualStartTime) : formatDate(startedForDisplay(s)) }}</td>
           <td>{{ formatDate(endedForDisplay(s)) }}</td>
           <td>{{ s.spec && s.spec.requestReason ? s.spec.requestReason : '-' }}</td>
           <td>{{ s.status && s.status.approvalReason ? s.status.approvalReason : '-' }}</td>

@@ -45,12 +45,13 @@ const (
 	SessionConditionTypeCanceled           BreakglassSessionConditionType   = "Canceled"
 	SessionConditionReasonEditedByApprover BreakglassSessionConditionReason = "EditedByApprover"
 
-	SessionStatePending   BreakglassSessionState = "Pending"
-	SessionStateApproved  BreakglassSessionState = "Approved"
-	SessionStateRejected  BreakglassSessionState = "Rejected"
-	SessionStateExpired   BreakglassSessionState = "Expired"
-	SessionStateWithdrawn BreakglassSessionState = "Withdrawn"
-	SessionStateTimeout   BreakglassSessionState = "ApprovalTimeout"
+	SessionStatePending                 BreakglassSessionState = "Pending"
+	SessionStateApproved                BreakglassSessionState = "Approved"
+	SessionStateRejected                BreakglassSessionState = "Rejected"
+	SessionStateExpired                 BreakglassSessionState = "Expired"
+	SessionStateWithdrawn               BreakglassSessionState = "Withdrawn"
+	SessionStateTimeout                 BreakglassSessionState = "ApprovalTimeout"
+	SessionStateWaitingForScheduledTime BreakglassSessionState = "WaitingForScheduledTime"
 )
 
 // BreakglassSessionSpec defines the desired state of BreakglassSession.
@@ -91,6 +92,13 @@ type BreakglassSessionSpec struct {
 	// This field is optional and may be populated depending on escalation configuration.
 	// +optional
 	RequestReason string `json:"requestReason,omitempty"`
+
+	// scheduledStartTime optionally specifies when this session should become active.
+	// If not set or zero, session activates immediately upon approval.
+	// Must be set to a future time if provided (validated by admission webhook).
+	// Sessions in WaitingForScheduledTime state are not considered valid/active until this time is reached.
+	// +optional
+	ScheduledStartTime *metav1.Time `json:"scheduledStartTime,omitempty"`
 }
 
 // BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
@@ -104,6 +112,12 @@ type BreakglassSessionStatus struct {
 	// approvedAt is the time when the session was approved.
 	// +omitempty
 	ApprovedAt metav1.Time `json:"approvedAt,omitempty"`
+
+	// actualStartTime records when the session actually became active.
+	// For immediate sessions (no scheduledStartTime): equals ApprovedAt.
+	// For scheduled sessions: set when ScheduledStartTime is reached and session transitions to Approved.
+	// +omitempty
+	ActualStartTime metav1.Time `json:"actualStartTime,omitempty"`
 
 	// rejectedAt is the time when the session was rejected.
 	// +omitempty
@@ -196,6 +210,19 @@ func (bs *BreakglassSession) ValidateCreate() error {
 	if bs.Spec.GrantedGroup == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("grantedGroup"), "grantedGroup is required"))
 	}
+
+	// Validate scheduledStartTime if provided
+	if bs.Spec.ScheduledStartTime != nil && !bs.Spec.ScheduledStartTime.IsZero() {
+		now := metav1.Now()
+		if bs.Spec.ScheduledStartTime.Time.Before(now.Time) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), bs.Spec.ScheduledStartTime.Time, "scheduledStartTime must be in the future"))
+		}
+		minLeadTime := now.Time.Add(5 * 60 * 1e9) // 5 minutes
+		if bs.Spec.ScheduledStartTime.Time.Before(minLeadTime) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), bs.Spec.ScheduledStartTime.Time, "scheduledStartTime must be at least 5 minutes in the future"))
+		}
+	}
+
 	if len(allErrs) == 0 {
 		// global name uniqueness: prefer cache-backed listing
 		if webhookCache != nil {

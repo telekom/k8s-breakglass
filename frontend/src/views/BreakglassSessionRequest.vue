@@ -21,6 +21,9 @@ const authenticated = computed(() => user.value && !user.value?.expired);
 const userName = computed(() => user.value?.profile.email);
 const clusterName = ref(route.query.cluster?.toString() || "");
 const clusterGroup = ref("");
+const requestReason = ref("");
+const scheduledStartTime = ref<string | null>(null);
+const showScheduleOptions = ref(false);
 const alreadyRequested = ref(false);
 const requestStatusMessage = ref("");
 const loading = ref(true);
@@ -28,15 +31,55 @@ const escalations = ref(Array<BreakglassEscalationSpec>());
 
 const hasCluster = route.query.cluster ? true : false
 
+// Compute minimum datetime (now + 5 minutes)
+const minDateTime = computed(() => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() + 5);
+  return now.toISOString().slice(0, 16);
+});
+
+// Convert between datetime-local (browser format) and ISO 8601
+const scheduleDateTimeLocal = computed({
+  get() {
+    if (!scheduledStartTime.value) return '';
+    const dt = new Date(scheduledStartTime.value);
+    return dt.toISOString().slice(0, 16);
+  },
+  set(value: string) {
+    if (!value) {
+      scheduledStartTime.value = null;
+    } else {
+      const dt = new Date(value + ':00Z');
+      scheduledStartTime.value = dt.toISOString();
+    }
+  },
+});
+
+// Calculate expiry time (default 1h from scheduled start)
+const calculatedExpiryTime = computed(() => {
+  if (!scheduledStartTime.value) return '';
+  const start = new Date(scheduledStartTime.value);
+  start.setHours(start.getHours() + 1);
+  return start.toLocaleString();
+});
+
+// Format timestamp for display
+function formatDateTime(isoString: string | null | undefined): string {
+  if (!isoString) return '';
+  return new Date(isoString).toLocaleString();
+}
+
 // Function to handle the form submission
 const handleSendButtonClick = async () => {
   loading.value = true;
 
-  const sessionRequest = {
+  const sessionRequest: BreakglassSessionRequest = {
     cluster: clusterName.value,
     user: userName.value,
     group: clusterGroup.value,
-  } as BreakglassSessionRequest
+    reason: requestReason.value || undefined,
+    scheduledStartTime: scheduledStartTime.value || undefined,
+  };
 
   try {
     const response = await sessionService.requestSession(sessionRequest);
@@ -63,6 +106,13 @@ const onInput = () => {
   alreadyRequested.value = false
   requestStatusMessage.value = ""
 }
+
+const toggleScheduleOptions = () => {
+  showScheduleOptions.value = !showScheduleOptions.value;
+  if (!showScheduleOptions.value) {
+    scheduledStartTime.value = null;
+  }
+};
 
 onMounted(async () => {
   loading.value = true;
@@ -109,6 +159,45 @@ onMounted(async () => {
             <select id="cluster_group" v-model="clusterGroup" v-on:input="onInput">
               <option v-for="escalation in escalations">{{ escalation.escalatedGroup }}</option>
             </select>
+          </div>
+
+          <!-- Reason field -->
+          <div style="margin-bottom: 10px;">
+            <label for="request_reason">Reason (optional):</label>
+            <textarea id="request_reason" v-model="requestReason" placeholder="Describe why you need access" 
+              rows="3" style="width: 100%; max-width: 300px;"></textarea>
+          </div>
+
+          <!-- Collapsible scheduling section -->
+          <div class="schedule-section" style="margin-bottom: 15px; border-top: 1px solid #ddd; padding-top: 10px;">
+            <button type="button" class="toggle-schedule" @click="toggleScheduleOptions" 
+              style="background: none; border: none; cursor: pointer; color: #0066cc; text-decoration: underline; padding: 0;">
+              <span v-if="!showScheduleOptions">⊕ Schedule for future date (optional)</span>
+              <span v-else>⊖ Schedule for future date (optional)</span>
+            </button>
+
+            <div v-if="showScheduleOptions" class="schedule-details" style="margin-top: 10px; margin-left: 15px; 
+              padding: 10px; border-left: 2px solid #0066cc; background-color: #f9f9f9;">
+              <div style="margin-bottom: 10px;">
+                <label for="scheduled_date">Scheduled Start Date/Time:</label>
+                <input
+                  id="scheduled_date"
+                  type="datetime-local"
+                  v-model="scheduleDateTimeLocal"
+                  :min="minDateTime"
+                  style="margin-left: 5px;"
+                />
+              </div>
+              
+              <div v-if="scheduledStartTime" class="schedule-preview" style="font-size: 0.9em; color: #555; margin-top: 8px;">
+                <p style="margin: 2px 0;">
+                  <strong>Session will start at:</strong> {{ formatDateTime(scheduledStartTime) }}
+                </p>
+                <p style="margin: 2px 0;">
+                  <strong>Session will expire at:</strong> {{ calculatedExpiryTime }}
+                </p>
+              </div>
+            </div>
           </div>
 
           <div>

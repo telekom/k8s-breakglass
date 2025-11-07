@@ -118,6 +118,30 @@ onMounted(fetchPendingApprovals);
       <h3>Approve request</h3>
       <p><b>User:</b> {{ modalSession.spec.user }}</p>
       <p><b>Group:</b> {{ modalSession.spec.grantedGroup }} @ {{ modalSession.spec.cluster }}</p>
+      
+      <!-- Scheduling information -->
+      <div v-if="modalSession.spec && modalSession.spec.scheduledStartTime" style="margin-top:1rem; padding: 10px; background-color: #fff3cd; border-left: 3px solid #ffc107; border-radius: 3px;">
+        <strong style="color: #856404;">Scheduled Session</strong>
+        <p style="margin: 4px 0; color: #856404;">
+          <strong>Will start at:</strong> {{ new Date(modalSession.spec.scheduledStartTime).toLocaleString() }}
+        </p>
+        <p style="margin: 4px 0; color: #856404;">
+          <strong>Will expire at:</strong> {{ modalSession.status?.expiresAt ? new Date(modalSession.status.expiresAt).toLocaleString() : 'Calculated upon activation' }}
+        </p>
+      </div>
+
+      <!-- Activation status badge -->
+      <div v-if="modalSession.status && modalSession.status.state === 'WaitingForScheduledTime'" style="margin-top:0.5rem;">
+        <span style="display: inline-block; background-color: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 3px; font-size: 0.85em; font-weight: bold;">
+          ⏳ PENDING ACTIVATION
+        </span>
+      </div>
+
+      <!-- Immediate session timing -->
+      <div v-else-if="modalSession.status && modalSession.status.expiresAt && !modalSession.spec.scheduledStartTime" style="margin-top:0.5rem; font-size: 0.9em; color: #555;">
+        <strong>Session expires at:</strong> {{ new Date(modalSession.status.expiresAt).toLocaleString() }}
+      </div>
+
       <div v-if="modalSession.spec && modalSession.spec.requestReason" style="margin-top:0.5rem">
         <strong>Request reason:</strong>
         <div class="reason-text">{{ modalSession.spec.requestReason }}</div>

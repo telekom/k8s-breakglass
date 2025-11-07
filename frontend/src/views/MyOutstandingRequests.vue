@@ -14,6 +14,18 @@
             <span class="request-name">Request Name: <code>{{ req.metadata?.name }}</code></span>
             <span class="requested-at">
               Requested at: <b>{{ req.status?.conditions?.[0]?.lastTransitionTime || 'N/A' }}</b>
+              <!-- Scheduling status badge -->
+              <div v-if="req.status?.state === 'WaitingForScheduledTime'" style="margin-top: 0.4rem;">
+                <span style="display: inline-block; background-color: #e3f2fd; color: #1565c0; padding: 3px 6px; border-radius: 3px; font-size: 0.8em; font-weight: bold;">
+                  ⏳ WAITING FOR SCHEDULED TIME
+                </span>
+              </div>
+              <!-- Scheduled session info -->
+              <template v-if="req.spec?.scheduledStartTime">
+                <div class="scheduled-row">
+                  Scheduled start: <b>{{ new Date(req.spec.scheduledStartTime).toLocaleString() }}</b>
+                </div>
+              </template>
               <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
                 <div class="timeout-row">
                   Times out in:
@@ -172,7 +184,8 @@ onMounted(async () => {
 
   /* Put countdown on a separate row for consistent wrapping and readability */
   .timeout-row,
-  .expiry-row {
+  .expiry-row,
+  .scheduled-row {
     margin-top: 0.4rem;
     font-size: 0.95rem;
     color: #444;
