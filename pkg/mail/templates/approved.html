@@ -1,53 +1,229 @@
 <!DOCTYPE html>
+
 <html>
-  <head>
-    <style>
-      body {
-        font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
-        text-align: center;
-      }
-      .card {
-        box-shadow: rgba(0, 0, 0, 0.1) 0px 8px 32px 0px, rgba(0, 0, 0, 0.1) 0px 4px 8px 0px;
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        border-radius: 12px;
-        margin: 20px auto;
-        padding: 10px;
-        max-width: 500px;
-      }
-      .btn {
-        background-color: #e20074;
-        border-radius: 8px;
-        padding: 12px 24px 10px;
-        line-height: 22.4px;
-        display: inline-block;
-        color: white;
-        text-decoration: none;
-      }
-    </style>
-  </head>
-  <body>
-  <h1>{{ .BrandingName }}</h1>
+
+<head>
+  <style>
+    body {
+      font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 0;
+    }
+
+    .header {
+      background-color: #4CAF50;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+
+    .header p {
+      margin: 5px 0 0 0;
+      font-size: 0.95rem;
+      opacity: 0.9;
+    }
+
+    .card {
+      box-shadow: rgba(0, 0, 0, 0.1) 0px 8px 32px 0px, rgba(0, 0, 0, 0.1) 0px 4px 8px 0px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 12px;
+      margin: 20px auto;
+      padding: 20px;
+      max-width: 500px;
+    }
+
+    .requester-box {
+      background: #f8f9fa;
+      padding: 15px;
+      border-left: 4px solid #4CAF50;
+      margin-bottom: 20px;
+      border-radius: 4px;
+    }
+
+    .requester-name {
+      font-size: 1.3rem;
+      font-weight: bold;
+      color: #4CAF50;
+    }
+
+    .requester-email {
+      font-size: 0.95rem;
+      color: #666;
+    }
+
+    .approval-banner {
+      background-color: #c8e6c9;
+      border-left: 4px solid #4CAF50;
+      padding: 15px;
+      margin: 15px 0;
+      border-radius: 4px;
+      text-align: center;
+    }
+
+    .approval-badge {
+      display: inline-block;
+      background-color: #4CAF50;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-weight: bold;
+      font-size: 0.95rem;
+      margin-bottom: 10px;
+    }
+
+    .approval-title {
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #2e7d32;
+      margin: 10px 0;
+    }
+
+    .approver-box {
+      background: #e8f5e9;
+      padding: 15px;
+      border-left: 4px solid #4CAF50;
+      margin: 15px 0;
+      border-radius: 4px;
+    }
+
+    .approver-label {
+      font-size: 0.9rem;
+      font-weight: bold;
+      color: #2e7d32;
+      margin-bottom: 8px;
+    }
+
+    .approver-name {
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #1b5e20;
+      margin-bottom: 4px;
+    }
+
+    .approver-email {
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    .request-details {
+      background-color: #fafafa;
+      border-left: 4px solid #2196F3;
+      padding: 12px;
+      margin: 15px 0;
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+
+    .request-details-title {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 8px;
+    }
+
+    .detail-row {
+      margin: 6px 0;
+      padding: 4px 0;
+    }
+
+    .detail-label {
+      font-weight: 600;
+      color: #555;
+      display: inline-block;
+      min-width: 100px;
+    }
+
+    .detail-value {
+      color: #333;
+      word-break: break-word;
+    }
+
+    .btn {
+      background-color: #4CAF50;
+      border-radius: 8px;
+      padding: 12px 32px;
+      line-height: 22.4px;
+      display: inline-block;
+      color: white;
+      text-decoration: none;
+      font-weight: bold;
+      margin: 20px 0;
+    }
+
+    .btn:hover {
+      background-color: #45a049;
+      text-decoration: none;
+    }
+
+    .footer {
+      background-color: #f5f5f5;
+      border-top: 1px solid #ddd;
+      padding: 15px;
+      margin-top: 20px;
+      font-size: 0.85rem;
+      color: #666;
+      text-align: left;
+    }
+
+    .footer-text {
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>✓ Request Approved</h1>
+      <p>Your breakglass access request has been approved</p>
+    </div>
+
     <div class="card">
-      <p>
-        <span style="font-size: 1.2rem; font-weight: bold;">{{ .SubjectFullName }}</span>
-        <br>
-        <span>{{ .SubjectEmail }}</span>
-      </p>
-      <p>
-        requested
-      </p>
-      <p>
-        <span style="font-size: 1.2rem;">{{ .RequestedRole }}</span>
-      </p>
-      <hr />
-      <p style="color: #e20074;">
-        The request was approved by
-      </p>
-      <p>
-        <span style="font-size: 1.2rem; font-weight: bold;">{{ .ApproverFullName }}</span>
-        <br>
-        <span>{{ .ApproverEmail }}</span>
+      <div class="requester-box">
+        <p style="margin: 0 0 8px 0;">
+          <span class="requester-name">{{ .SubjectFullName }}</span>
+        </p>
+        <p style="margin: 0;">
+          <span class="requester-email">{{ .SubjectEmail }}</span>
+        </p>
+      </div>
+
+      <div class="approval-banner">
+        <div class="approval-badge">✓ APPROVED</div>
+        <p class="approval-title">Your access request has been approved</p>
+      </div>
+
+      <div class="approver-box">
+        <p class="approver-label">Approved by:</p>
+        <p class="approver-name">{{ .ApproverFullName }}</p>
+        <p class="approver-email">{{ .ApproverEmail }}</p>
+      </div>
+
+      <div class="request-details">
+        <p class="request-details-title">📋 Access Details:</p>
+        <div class="detail-row">
+          <span class="detail-label">Role:</span>
+          <span class="detail-value">{{ .RequestedRole }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p class="footer-text">
+        This is an automated notification. Do not reply to this email. For support, contact your cluster administrator.
       </p>
     </div>
-  </body>
+  </div>
+</body>
+
 </html>
