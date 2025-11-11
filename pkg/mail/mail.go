@@ -2,6 +2,7 @@ package mail
 
 import (
 	"crypto/tls"
+	"fmt"
 	"log"
 	"math"
 	"time"
@@ -67,6 +68,12 @@ func NewSender(cfg config.Config) Sender {
 }
 
 func (s *sender) Send(receivers []string, subject, body string) error {
+	// Validate receivers
+	if len(receivers) == 0 {
+		log.Printf("[mail] ERROR: Send called with no receivers. Subject: %s", subject)
+		return fmt.Errorf("cannot send email with no receivers")
+	}
+
 	log.Printf("[mail] Preparing to send mail to %d receivers. Subject: %s", len(receivers), subject)
 	msg := gomail.NewMessage()
 	msg.SetAddressHeader("From", s.senderAddress, s.senderName)

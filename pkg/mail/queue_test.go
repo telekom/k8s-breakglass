@@ -122,26 +122,27 @@ func TestQueue_EnqueueFull(t *testing.T) {
 	}()
 	sugar := logger.Sugar()
 
-	sender := &MockSender{successAfter: 0, host: "test.example.com"}
-	queue := NewQueue(sender, sugar, 3, 100, 2) // Small queue size
-	queue.Start()
+	// Create a queue with size 1 and don't start the worker so it fills immediately
+	sender := &MockSender{successAfter: 1000, host: "test.example.com"}
+	queue := NewQueue(sender, sugar, 3, 100, 1) // Very small queue: only 1 item capacity
+
+	// DON'T call queue.Start() - this prevents the worker from draining items
 	defer func() {
 		if err := queue.Stop(context.Background()); err != nil {
 			t.Errorf("failed to stop queue: %v", err)
 		}
 	}()
 
-	// Fill the queue
+	// First item should succeed
 	err1 := queue.Enqueue("test-1", []string{"user@example.com"}, "Subject", "Body")
-	assert.NoError(t, err1)
+	assert.NoError(t, err1, "first enqueue should succeed")
 
+	// Second item should fail because queue capacity is 1 and buffer is full
 	err2 := queue.Enqueue("test-2", []string{"user@example.com"}, "Subject", "Body")
-	assert.NoError(t, err2)
-
-	// Next one should be dropped
-	err3 := queue.Enqueue("test-3", []string{"user@example.com"}, "Subject", "Body")
-	assert.Error(t, err3)
-	assert.Contains(t, err3.Error(), "queue is full")
+	assert.Error(t, err2, "second enqueue should fail - queue is full")
+	if err2 != nil {
+		assert.Contains(t, err2.Error(), "queue is full", "error message should indicate queue is full")
+	}
 }
 
 func TestQueue_EnqueueNoReceivers(t *testing.T) {

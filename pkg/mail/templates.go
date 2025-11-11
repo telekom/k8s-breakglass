@@ -24,20 +24,25 @@ type ApprovedMailParams struct {
 }
 
 type RequestBreakglassSessionMailParams struct {
-	SubjectEmail    string
-	SubjectFullName string
+	SubjectEmail       string
+	SubjectFullName    string
+	RequestingUsername string
 
 	RequestedCluster  string
 	RequestedUsername string
 	RequestedGroup    string
+	RequestReason     string
 
 	// Approver info (for notifications)
-	Approver string
+	Approver       string
+	ApproverGroups []string // Groups that receive this email (for footer)
 
 	// Scheduling information
 	ScheduledStartTime  string
 	CalculatedExpiresAt string
 	ActualStartTime     string
+	FormattedDuration   string // Human-readable duration (e.g., "2 hours")
+	RequestedAt         string // When the request was made
 
 	URL          string
 	BrandingName string

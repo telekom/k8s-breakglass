@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	stdlog "log"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-logr/zapr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -132,36 +134,74 @@ func main() {
 	enableMgr := os.Getenv("ENABLE_WEBHOOK_MANAGER")
 	if enableMgr == "" || enableMgr == "true" {
 		go func() {
-			mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{})
+			// Create custom scheme with CRDs registered
+			log.Debugw("Creating manager with custom scheme including CRDs")
+			scheme := runtime.NewScheme()
+
+			// Add standard Kubernetes types
+			if err := corev1.AddToScheme(scheme); err != nil {
+				log.Errorw("Failed to add corev1 to scheme", "error", err)
+				return
+			}
+
+			// Add our custom resource definitions
+			if err := v1alpha1.AddToScheme(scheme); err != nil {
+				log.Errorw("Failed to add v1alpha1 CRDs to scheme", "error", err)
+				return
+			}
+			log.Infow("CRDs successfully added to scheme", "types", "BreakglassSession, BreakglassEscalation, ClusterConfig")
+
+			mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+				Scheme: scheme,
+			})
 			if merr != nil {
 				log.Warnw("Failed to start controller-runtime manager; webhooks will not be registered", "error", merr)
 				return
 			}
+			log.Infow("Controller-runtime manager created successfully")
+
 			// Register BreakglassSession, BreakglassEscalation and ClusterConfig webhooks with manager
 			// Also register field indices to support efficient cache-based lookups by controller-runtime clients.
 			// Index fields: spec.cluster, spec.user, spec.grantedGroup
+
+			// First, check if the types are registered in the manager's scheme
+			log.Debugw("Checking CRD type registration in scheme")
+			if mgr.GetScheme() == nil {
+				log.Errorw("Manager scheme is nil; cannot register indices or webhooks")
+				return
+			}
+
 			idx := mgr.GetFieldIndexer()
 			if idx != nil {
+				log.Debugw("Starting field index registration for BreakglassSession", "cluster", "spec.cluster", "user", "spec.user", "group", "spec.grantedGroup")
 				if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.cluster", func(rawObj client.Object) []string {
 					bs := rawObj.(*v1alpha1.BreakglassSession)
+					log.Debugw("Indexing BreakglassSession cluster field", "name", bs.Name, "cluster", bs.Spec.Cluster)
 					return []string{bs.Spec.Cluster}
 				}); err != nil {
-					log.Warnw("Failed to index BreakglassSession.spec.cluster", "error", err)
+					log.Errorw("Failed to index BreakglassSession.spec.cluster", "error", err, "errorType", fmt.Sprintf("%T", err))
+				} else {
+					log.Infow("Successfully indexed BreakglassSession.spec.cluster")
 				}
 				if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.user", func(rawObj client.Object) []string {
 					bs := rawObj.(*v1alpha1.BreakglassSession)
 					return []string{bs.Spec.User}
 				}); err != nil {
-					log.Warnw("Failed to index BreakglassSession.spec.user", "error", err)
+					log.Errorw("Failed to index BreakglassSession.spec.user", "error", err, "errorType", fmt.Sprintf("%T", err))
+				} else {
+					log.Infow("Successfully indexed BreakglassSession.spec.user")
 				}
 				if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.grantedGroup", func(rawObj client.Object) []string {
 					bs := rawObj.(*v1alpha1.BreakglassSession)
 					return []string{bs.Spec.GrantedGroup}
 				}); err != nil {
-					log.Warnw("Failed to index BreakglassSession.spec.grantedGroup", "error", err)
+					log.Errorw("Failed to index BreakglassSession.spec.grantedGroup", "error", err, "errorType", fmt.Sprintf("%T", err))
+				} else {
+					log.Infow("Successfully indexed BreakglassSession.spec.grantedGroup")
 				}
 
 				// Index BreakglassEscalation helpful fields for quick lookups
+				log.Debugw("Starting field index registration for BreakglassEscalation", "clusterConfigRefs", "spec.allowed.cluster+clusterConfigRefs")
 				if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.cluster", func(rawObj client.Object) []string {
 					be := rawObj.(*v1alpha1.BreakglassEscalation)
 					if be == nil {
@@ -173,7 +213,9 @@ func main() {
 					out = append(out, be.Spec.ClusterConfigRefs...)
 					return out
 				}); err != nil {
-					log.Warnw("Failed to index BreakglassEscalation.spec.allowed.cluster/clusterConfigRefs", "error", err)
+					log.Errorw("Failed to index BreakglassEscalation.spec.allowed.cluster/clusterConfigRefs", "error", err, "errorType", fmt.Sprintf("%T", err))
+				} else {
+					log.Infow("Successfully indexed BreakglassEscalation.spec.allowed.cluster/clusterConfigRefs")
 				}
 
 				if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.group", func(rawObj client.Object) []string {
@@ -183,7 +225,9 @@ func main() {
 					}
 					return be.Spec.Allowed.Groups
 				}); err != nil {
-					log.Warnw("Failed to index BreakglassEscalation.spec.allowed.group", "error", err)
+					log.Errorw("Failed to index BreakglassEscalation.spec.allowed.group", "error", err, "errorType", fmt.Sprintf("%T", err))
+				} else {
+					log.Infow("Successfully indexed BreakglassEscalation.spec.allowed.group")
 				}
 
 				if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.escalatedGroup", func(rawObj client.Object) []string {
@@ -193,10 +237,13 @@ func main() {
 					}
 					return []string{be.Spec.EscalatedGroup}
 				}); err != nil {
-					log.Warnw("Failed to index BreakglassEscalation.spec.escalatedGroup", "error", err)
+					log.Errorw("Failed to index BreakglassEscalation.spec.escalatedGroup", "error", err, "errorType", fmt.Sprintf("%T", err))
+				} else {
+					log.Infow("Successfully indexed BreakglassEscalation.spec.escalatedGroup")
 				}
 
 				// Index ClusterConfig by metadata.name and spec.clusterID for fast lookup by name
+				log.Debugw("Starting field index registration for ClusterConfig", "fields", "metadata.name, spec.clusterID")
 				if err := idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "metadata.name", func(rawObj client.Object) []string {
 					cc := rawObj.(*v1alpha1.ClusterConfig)
 					if cc == nil {
@@ -204,7 +251,9 @@ func main() {
 					}
 					return []string{cc.Name}
 				}); err != nil {
-					log.Warnw("Failed to index ClusterConfig.metadata.name", "error", err)
+					log.Errorw("Failed to index ClusterConfig.metadata.name", "error", err, "errorType", fmt.Sprintf("%T", err))
+				} else {
+					log.Infow("Successfully indexed ClusterConfig.metadata.name")
 				}
 
 				if err := idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "spec.clusterID", func(rawObj client.Object) []string {
@@ -214,24 +263,38 @@ func main() {
 					}
 					return []string{cc.Spec.ClusterID}
 				}); err != nil {
-					log.Warnw("Failed to index ClusterConfig.spec.clusterID", "error", err)
+					log.Errorw("Failed to index ClusterConfig.spec.clusterID", "error", err, "errorType", fmt.Sprintf("%T", err))
+				} else {
+					log.Infow("Successfully indexed ClusterConfig.spec.clusterID")
 				}
+			} else {
+				log.Warnw("Field indexer not available from manager")
 			}
 
 			// Register webhooks
+			log.Debugw("Starting webhook registration for BreakglassSession")
 			if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
 				log.Warnw("Failed to setup BreakglassSession webhook with manager", "error", err)
 				return
 			}
+			log.Infow("Successfully registered BreakglassSession webhook")
+
+			log.Debugw("Starting webhook registration for BreakglassEscalation")
 			if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
 				log.Warnw("Failed to setup BreakglassEscalation webhook with manager", "error", err)
 				return
 			}
+			log.Infow("Successfully registered BreakglassEscalation webhook")
+
+			log.Debugw("Starting webhook registration for ClusterConfig")
 			if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
 				log.Warnw("Failed to setup ClusterConfig webhook with manager", "error", err)
 				return
 			}
+			log.Infow("Successfully registered ClusterConfig webhook")
+
 			// Start manager (blocks) but we run it in a goroutine so it doesn't prevent the API server
+			log.Infow("Starting controller-runtime manager")
 			if err := mgr.Start(ctx); err != nil {
 				log.Warnw("controller-runtime manager exited", "error", err)
 			}

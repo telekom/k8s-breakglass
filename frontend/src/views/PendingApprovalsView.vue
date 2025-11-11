@@ -62,55 +62,69 @@ onMounted(fetchPendingApprovals);
 </script>
 
 <template>
-  <main class="center">
-    <div v-if="loading">Loading...</div>
-    <div v-else-if="pendingSessions.length === 0">No pending requests to approve.</div>
-    <table v-else class="pending-approvals-table center-table">
-      <thead>
-        <tr>
-          <th>User</th>
-          <th>Cluster</th>
-          <th>Group</th>
-          <th>Requested At</th>
-          <th>Time left</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="session in pendingSessions" :key="session.metadata.name">
-          <td>{{ session.spec.user }}</td>
-          <td>{{ session.spec.cluster }}</td>
-          <td>{{ session.spec.grantedGroup }}</td>
-          <td>{{ session.metadata.creationTimestamp }}</td>
-          <td>
-            <template v-if="session.status && (session.status.expiresAt || session.status.timeoutAt)">
-              <CountdownTimer :expiresAt="session.status.expiresAt || session.status.timeoutAt" />
-            </template>
-            <template v-else>-</template>
-          </td>
-          <td>
-            <div>
-              <small v-if="session.approvalReason && session.approvalReason.description">{{ session.approvalReason.description }}</small>
-              <div v-if="session.spec && session.spec.requestReason">
-                <em>Request reason:</em>
-                <div class="reason-text">{{ session.spec.requestReason }}</div>
-              </div>
-              <div v-if="session.approvalReason && session.approvalReason.mandatory" style="color:#c62828;font-weight:bold;">Approver note required</div>
-              <div v-else-if="session.status && session.status.reason">
-                <em>Request reason:</em>
-                <div class="reason-text">{{ session.status.reason }}</div>
-              </div>
-              <div style="margin-top:0.5rem">
-                <scale-button :disabled="approving === session.metadata.name" @click="openApproveModal(session)">
-                  <span v-if="approving === session.metadata.name">Approving...</span>
-                  <span v-else>Approve</span>
-                </scale-button>
-              </div>
+  <main class="container">
+    <h2>Pending Approvals</h2>
+    <div v-if="loading" class="loading-state">Loading...</div>
+    <div v-else-if="pendingSessions.length === 0" class="empty-state">
+      <p>No pending requests to approve.</p>
+    </div>
+    <div v-else class="sessions-list">
+      <div v-for="session in pendingSessions" :key="session.metadata.name" class="approval-card">
+        <!-- Header with basic info -->
+        <div class="card-header">
+          <div class="header-left">
+            <div class="user-badge">{{ session.spec.user }}</div>
+            <div class="cluster-group">
+              <span class="cluster-tag">{{ session.spec.cluster }}</span>
+              <span class="group-tag">{{ session.spec.grantedGroup }}</span>
             </div>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+          </div>
+          <div class="header-right">
+            <div class="time-badge">
+              <span v-if="session.status && (session.status.expiresAt || session.status.timeoutAt)" class="timer">
+                <CountdownTimer :expiresAt="session.status.expiresAt || session.status.timeoutAt" />
+              </span>
+              <span v-else class="timer">-</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mandatory badge -->
+        <div v-if="session.approvalReason && session.approvalReason.mandatory" class="mandatory-badge">
+          ⚠️ Approver note required
+        </div>
+
+        <!-- Request reason -->
+        <div v-if="session.spec && session.spec.requestReason" class="reason-section">
+          <strong class="reason-label">Request Reason:</strong>
+          <div class="reason-text">{{ session.spec.requestReason }}</div>
+        </div>
+
+        <!-- Approval description -->
+        <div v-if="session.approvalReason && session.approvalReason.description" class="approval-desc">
+          <strong>{{ session.approvalReason.description }}</strong>
+        </div>
+
+        <!-- Metadata row -->
+        <div class="meta-row">
+          <span class="meta-item">
+            <strong>Requested:</strong> {{ new Date(session.metadata.creationTimestamp).toLocaleString() }}
+          </span>
+        </div>
+
+        <!-- Action button -->
+        <div class="card-actions">
+          <scale-button 
+            :disabled="approving === session.metadata.name" 
+            @click="openApproveModal(session)"
+            class="approve-btn"
+          >
+            <span v-if="approving === session.metadata.name">Approving...</span>
+            <span v-else>Review & Approve</span>
+          </scale-button>
+        </div>
+      </div>
+    </div>
   </main>
   <div v-if="showApproveModal" class="approve-modal-overlay">
     <div class="approve-modal">
@@ -165,22 +179,185 @@ onMounted(fetchPendingApprovals);
 </template>
 
 <style scoped>
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+h2 {
+  color: #0b0b0b;
+  margin-bottom: 1.5rem;
+  font-size: 1.8rem;
+}
+
+.loading-state,
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+  font-size: 1.1rem;
+}
+
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.approval-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+}
+
+.approval-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  border-color: #d9006c;
+}
+
+/* Header section */
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+  gap: 1rem;
+}
+
+.header-left {
+  flex: 1;
+}
+
+.user-badge {
+  font-size: 1.3rem;
+  font-weight: bold;
+  color: #d9006c;
+  margin-bottom: 0.5rem;
+}
+
+.cluster-group {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cluster-tag,
+.group-tag {
+  display: inline-block;
+  background-color: #f0f0f0;
+  color: #555;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.cluster-tag {
+  border-left: 3px solid #0070b8;
+}
+
+.group-tag {
+  border-left: 3px solid #4CAF50;
+}
+
+.header-right {
+  text-align: right;
+}
+
+.time-badge {
+  display: inline-block;
+  background-color: #fff3cd;
+  color: #856404;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+/* Mandatory badge */
+.mandatory-badge {
+  background-color: #ffebee;
+  color: #c62828;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border-left: 3px solid #c62828;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+/* Reason section */
+.reason-section {
+  background-color: #e3f2fd;
+  border-left: 3px solid #2196F3;
+  padding: 1rem;
+  border-radius: 4px;
+  margin: 1rem 0;
+}
+
+.reason-label {
+  color: #1976D2;
+  font-size: 0.9rem;
+}
+
+.reason-text {
+  margin-top: 0.5rem;
+  color: #0b0b0b;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Approval description */
+.approval-desc {
+  background-color: #f5f5f5;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  border-left: 3px solid #ffc107;
+  margin: 1rem 0;
+  color: #666;
+  font-size: 0.95rem;
+}
+
+/* Metadata row */
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid #eee;
+  border-bottom: 1px solid #eee;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+}
+
+.meta-item strong {
+  color: #333;
+  margin-right: 0.5rem;
+}
+
+/* Actions */
+.card-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.approve-btn {
+  min-width: 150px;
+}
+
+/* Modal styling remains */
 .center {
   text-align: center;
-}
-.center-table {
-  margin-left: auto;
-  margin-right: auto;
-}
-.pending-approvals-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 2rem;
-}
-.pending-approvals-table th, .pending-approvals-table td {
-  border: 1px solid #ccc;
-  padding: 0.5rem 1rem;
-  text-align: left;
 }
 
 .approve-modal-overlay {
@@ -190,60 +367,109 @@ onMounted(fetchPendingApprovals);
   display: flex;
   align-items: center;
   justify-content: center;
-}
-.approve-modal {
-  background: white;
-  /* ensure readable text color even if global theme sets light text */
-  color: #0b0b0b;
-  padding: 1.25rem;
-  position: relative;
-  border-radius: 6px;
-  max-width: 500px;
-  width: 90%;
+  z-index: 1000;
 }
 
-/* Notifications inside modals can inherit contrasting text too */
-scale-notification-message {
-  color: inherit;
+.approve-modal {
+  background: white;
+  color: #0b0b0b;
+  padding: 1.5rem;
+  position: relative;
+  border-radius: 8px;
+  max-width: 550px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.approve-modal h3 {
+  color: #d9006c;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.approve-modal p {
+  margin: 0.75rem 0;
+  color: #333;
 }
 
 .modal-close {
   position: absolute;
-  top: 0.5rem;
-  right: 0.6rem;
+  top: 0.75rem;
+  right: 0.75rem;
   background: transparent;
   border: none;
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   line-height: 1;
   cursor: pointer;
-  color: #666;
+  color: #999;
+  padding: 0.25rem;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.modal-close:hover { color: #222; }
 
+.modal-close:hover {
+  color: #333;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+}
+
+/* Reason text in modal */
 .reason-text {
   margin-top: 0.25rem;
-  padding: 0.5rem;
+  padding: 0.75rem;
   background: #f7f7f7;
   border-radius: 4px;
   color: #222;
   white-space: pre-wrap;
+  font-size: 0.9rem;
 }
 
-/* Ensure the approver textarea inside modals has high-contrast text and placeholder */
+/* High contrast for form inputs */
 scale-textarea::v-deep .textarea__control {
   color: #111;
 }
+
 scale-textarea::v-deep .textarea__control::placeholder {
-  color: #6b6b6b;
+  color: #999;
 }
 
-/* Make approve modal Cancel/secondary button high-contrast */
+/* Button overrides */
 .approve-modal scale-button[variant="secondary"] {
   background: #374151 !important;
   color: #ffffff !important;
   border: 1px solid #374151 !important;
 }
+
 .approve-modal scale-button[variant="secondary"]:hover {
   background: #2d3748 !important;
+}
+
+/* Responsive design */
+@media (max-width: 600px) {
+  .card-header {
+    flex-direction: column;
+  }
+
+  .header-right {
+    text-align: left;
+  }
+
+  .cluster-group {
+    margin-top: 0.5rem;
+  }
+
+  .meta-row {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .approve-modal {
+    padding: 1rem;
+  }
 }
 </style>

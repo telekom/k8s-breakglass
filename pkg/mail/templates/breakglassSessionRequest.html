@@ -6,21 +6,26 @@
   <style>
     body {
       font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 0;
+    }
+
+    .header {
+      background-color: #e20074;
+      color: white;
+      padding: 20px;
       text-align: center;
     }
 
-    table {
-      font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
-      margin-left: auto;
-      margin-right: auto;
-    }
-
-    table td:nth-child(1) {
-      text-align: right;
-    }
-
-    table td:nth-child(2) {
-      text-align: left;
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
     }
 
     .card {
@@ -28,76 +33,239 @@
       border: 1px solid rgba(0, 0, 0, 0.1);
       border-radius: 12px;
       margin: 20px auto;
-      padding: 10px;
+      padding: 20px;
       max-width: 500px;
+    }
+
+    .requester-box {
+      background: #f8f9fa;
+      padding: 15px;
+      border-left: 4px solid #e20074;
+      margin-bottom: 20px;
+      border-radius: 4px;
+    }
+
+    .requester-name {
+      font-size: 1.3rem;
+      font-weight: bold;
+      color: #e20074;
+    }
+
+    .requester-email {
+      font-size: 0.95rem;
+      color: #666;
+    }
+
+    .details-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 0.95rem;
+    }
+
+    .details-table th {
+      background-color: #f0f0f0;
+      padding: 10px;
+      text-align: left;
+      font-weight: bold;
+      border-bottom: 2px solid #e20074;
+    }
+
+    .details-table td {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .details-table tr:nth-child(odd) {
+      background-color: #f9f9f9;
+    }
+
+    .label {
+      font-weight: 600;
+      color: #555;
+      width: 30%;
+    }
+
+    .value {
+      color: #333;
+      word-break: break-word;
+    }
+
+    .highlight-value {
+      font-weight: bold;
+      color: #e20074;
+      font-size: 1.1rem;
+    }
+
+    .warning-section {
+      background-color: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 4px;
+      padding: 12px;
+      margin: 15px 0;
+      font-size: 0.9rem;
+    }
+
+    .reason-section {
+      background-color: #e3f2fd;
+      border-left: 4px solid #2196F3;
+      padding: 12px;
+      margin: 15px 0;
+      border-radius: 4px;
+    }
+
+    .reason-label {
+      font-weight: bold;
+      color: #1976D2;
+      font-size: 0.9rem;
+    }
+
+    .reason-text {
+      margin-top: 8px;
+      color: #333;
+      font-style: italic;
     }
 
     .btn {
       background-color: #e20074;
       border-radius: 8px;
-      padding: 12px 24px 10px;
+      padding: 12px 32px;
       line-height: 22.4px;
       display: inline-block;
       color: white;
       text-decoration: none;
+      font-weight: bold;
+      margin: 20px 0;
     }
 
-    .box {
-      background: white;
-      font-size: 20px;
-      padding: 10px;
-      border: 1px solid lightgray;
-      margin-left: 80px;
-      margin-right: 80px;
-      margin-bottom: 10px;
-      margin-top: 10px;
+    .btn:hover {
+      background-color: #c7005f;
+      text-decoration: none;
+    }
+
+    .footer {
+      background-color: #f5f5f5;
+      border-top: 1px solid #ddd;
+      padding: 15px;
+      margin-top: 20px;
+      font-size: 0.85rem;
+      color: #666;
+      text-align: left;
+      border-radius: 0 0 4px 4px;
+    }
+
+    .footer-title {
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+    }
+
+    .footer-item {
+      margin: 4px 0;
+      padding-left: 10px;
+      border-left: 2px solid #e20074;
+    }
+
+    .footer-reason {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #ddd;
     }
   </style>
 </head>
 
 <body>
-  <h1>{{ .BrandingName }}</h1>
-  <div class="card">
-    <div class="box">
-      <p>
-        <span style="font-size: 1.2rem; font-weight: bold;">{{ .SubjectFullName }}</span>
-        <br>
-        <span>{{ .SubjectEmail }}</span>
-      </p>
+  <div class="container">
+    <div class="header">
+      <h1>{{ .BrandingName }} - Access Request</h1>
     </div>
-    <p>
-      is requesting breakglass cluster session
-    <table>
-      <tbody>
-        <tr>
-          <td>Cluster:</td>
-          <td> <span style="font-size: 1.2rem;">{{ .RequestedCluster }}</span></td>
-        </tr>
-        <tr>
-          <td>Username:</td>
-          <td><span style="font-size: 1.2rem;">{{ .RequestedUsername }}</span></td>
-        </tr>
-        <tr>
-          <td>Group:</td>
-          <td><span style="font-size: 1.2rem;">{{ .RequestedGroup }}</span></td>
-        </tr>
-        {{ if .ScheduledStartTime }}
-        <tr style="background-color: #fff3cd; border: 1px solid #ffc107;">
-          <td style="padding: 10px;">Scheduled Start:</td>
-          <td style="padding: 10px;"><span style="font-size: 1.2rem;">{{ .ScheduledStartTime }}</span></td>
-        </tr>
+
+    <div class="card">
+      <div class="requester-box">
+        <p style="margin: 0 0 8px 0;">
+          <span class="requester-name">{{ .SubjectFullName }}</span>
+        </p>
+        <p style="margin: 0;">
+          <span class="requester-email">{{ .SubjectEmail }}</span>
+        </p>
+      </div>
+
+      <p style="text-align: center; font-size: 1.1rem; margin: 15px 0;">
+        is requesting breakglass cluster access
+      </p>
+
+      <table class="details-table">
+        <tbody>
+          <tr>
+            <td class="label">Cluster:</td>
+            <td class="value"><span class="highlight-value">{{ .RequestedCluster }}</span></td>
+          </tr>
+          <tr>
+            <td class="label">Username:</td>
+            <td class="value"><span class="highlight-value">{{ .RequestedUsername }}</span></td>
+          </tr>
+          <tr>
+            <td class="label">Group:</td>
+            <td class="value"><span class="highlight-value">{{ .RequestedGroup }}</span></td>
+          </tr>
+          {{ if .RequestedAt }}
+          <tr>
+            <td class="label">Requested At:</td>
+            <td class="value">{{ .RequestedAt }}</td>
+          </tr>
+          {{ end }}
+          {{ if .FormattedDuration }}
+          <tr style="background-color: #fff3cd;">
+            <td class="label">Duration:</td>
+            <td class="value"><strong>{{ .FormattedDuration }}</strong></td>
+          </tr>
+          {{ end }}
+          {{ if .ScheduledStartTime }}
+          <tr style="background-color: #fff3cd;">
+            <td class="label">Scheduled Start:</td>
+            <td class="value"><strong>{{ .ScheduledStartTime }}</strong></td>
+          </tr>
+          {{ end }}
+          {{ if .CalculatedExpiresAt }}
+          <tr style="background-color: #fff3cd;">
+            <td class="label">Expires At:</td>
+            <td class="value"><strong>{{ .CalculatedExpiresAt }}</strong></td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+
+      {{ if .RequestReason }}
+      <div class="reason-section">
+        <div class="reason-label">Request Reason:</div>
+        <div class="reason-text">{{ .RequestReason }}</div>
+      </div>
+      {{ end }}
+
+      <div style="text-align: center;">
+        <a class="btn" href="{{ .URL }}">Review Request</a>
+      </div>
+
+      <div class="footer">
+        <div class="footer-title">Why did you receive this email?</div>
+        {{ if .ApproverGroups }}
+        <div style="margin-bottom: 8px;">You are a member of the following approver groups:</div>
+        {{ range .ApproverGroups }}
+        <div class="footer-item">{{ . }}</div>
         {{ end }}
-        {{ if .CalculatedExpiresAt }}
-        <tr {{ if .ScheduledStartTime }}style="background-color: #fff3cd; border: 1px solid #ffc107;"{{ end }}>
-          <td {{ if .ScheduledStartTime }}style="padding: 10px;"{{ end }}>Expires At:</td>
-          <td {{ if .ScheduledStartTime }}style="padding: 10px;"{{ end }}><span style="font-size: 1.2rem;">{{ .CalculatedExpiresAt }}</span></td>
-        </tr>
+        {{ else }}
+        <div class="footer-item">You are configured as an approver for this escalation path</div>
         {{ end }}
-      </tbody>
-    </table>
-    <p>
-      <a class="btn" href="{{ .URL }}">Review</a>
-    </p>
+
+        {{ if .RequestReason }}
+        <div class="footer-reason">
+          <strong>Request Details:</strong><br>
+          {{ .RequestReason }}
+        </div>
+        {{ end }}
+      </div>
+    </div>
   </div>
 </body>
 

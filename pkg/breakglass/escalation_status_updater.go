@@ -1,18 +1,13 @@
 package breakglass
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Nerzal/gocloak/v13"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
@@ -25,12 +20,15 @@ type GroupMemberResolver interface {
 	Members(ctx context.Context, group string) ([]string, error)
 }
 
-// KeycloakGroupMemberResolver is a placeholder; implement actual Keycloak admin API lookup.
+// KeycloakGroupMemberResolver uses GoCloak client to fetch group members from Keycloak admin API.
 type KeycloakGroupMemberResolver struct {
-	log    *zap.SugaredLogger
-	cfg    cfgpkg.Keycloak
-	client *http.Client
-	cache  *kcCache
+	log       *zap.SugaredLogger
+	cfg       cfgpkg.Keycloak
+	gocloak   *gocloak.GoCloak
+	cache     *kcCache
+	token     string
+	tokenTime time.Time
+	tokenLock sync.RWMutex
 }
 
 type kcCache struct {
@@ -60,15 +58,84 @@ func (c *kcCache) set(k string, v []string) {
 }
 
 func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.Keycloak) *KeycloakGroupMemberResolver {
-	timeout := 10 * time.Second
-	if d, err := time.ParseDuration(cfg.RequestTimeout); err == nil && d > 0 {
-		timeout = d
-	}
 	ttl := 10 * time.Minute
 	if d, err := time.ParseDuration(cfg.CacheTTL); err == nil && d > 0 {
 		ttl = d
 	}
-	return &KeycloakGroupMemberResolver{log: log, cfg: cfg, client: &http.Client{Timeout: timeout}, cache: newKCCache(ttl)}
+	gc := gocloak.NewClient(cfg.BaseURL)
+	return &KeycloakGroupMemberResolver{log: log, cfg: cfg, gocloak: gc, cache: newKCCache(ttl)}
+}
+
+func (k *KeycloakGroupMemberResolver) getToken(ctx context.Context) (string, error) {
+	// Use configured service account token if available
+	if k.cfg.ServiceAccountToken != "" {
+		if k.log != nil {
+			// Log a sanitized version of the token for debugging
+			tokenPreview := k.cfg.ServiceAccountToken
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+			k.log.Debugw("Using pre-configured service account token", "tokenPreview", tokenPreview)
+		}
+		return k.cfg.ServiceAccountToken, nil
+	}
+
+	// Check cached token
+	k.tokenLock.RLock()
+	if k.token != "" && time.Now().Before(k.tokenTime.Add(5*time.Minute)) {
+		defer k.tokenLock.RUnlock()
+		if k.log != nil {
+			k.log.Debugw("Using cached token", "expiresIn", time.Until(k.tokenTime.Add(5*time.Minute)).Seconds())
+		}
+		return k.token, nil
+	}
+	k.tokenLock.RUnlock()
+
+	// Acquire new token using client credentials
+	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", k.cfg.BaseURL, k.cfg.Realm)
+	if k.log != nil {
+		k.log.Debugw("Acquiring token via client credentials",
+			"clientID", k.cfg.ClientID,
+			"baseURL", k.cfg.BaseURL,
+			"realm", k.cfg.Realm,
+			"endpoint", tokenURL,
+			"grantType", "client_credentials",
+			"clientSecretProvided", k.cfg.ClientSecret != "")
+	}
+	token, err := k.gocloak.GetToken(ctx, k.cfg.Realm, gocloak.TokenOptions{
+		ClientID:     &k.cfg.ClientID,
+		ClientSecret: &k.cfg.ClientSecret,
+		GrantType:    gocloak.StringP("client_credentials"),
+	})
+	if err != nil {
+		if k.log != nil {
+			k.log.Errorw("Failed to acquire token",
+				"clientID", k.cfg.ClientID,
+				"error", err,
+				"endpoint", tokenURL,
+				"grantType", "client_credentials")
+		}
+		return "", err
+	}
+
+	// Cache token
+	k.tokenLock.Lock()
+	k.token = token.AccessToken
+	k.tokenTime = time.Now()
+	k.tokenLock.Unlock()
+
+	if k.log != nil {
+		tokenPreview := k.token
+		if len(tokenPreview) > 20 {
+			tokenPreview = tokenPreview[:20] + "..."
+		}
+		k.log.Debugw("Token acquired successfully",
+			"clientID", k.cfg.ClientID,
+			"tokenPreview", tokenPreview,
+			"expiresIn", token.ExpiresIn,
+			"tokenType", token.TokenType)
+	}
+	return token.AccessToken, nil
 }
 
 func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string) ([]string, error) {
@@ -78,177 +145,273 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	log := k.log
 	if k.cfg.Disable || k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
 		if log != nil {
-			log.Debugw("Keycloak resolver disabled or missing configuration; skipping group lookup", "group", group, "disabled", k.cfg.Disable)
+			log.Debugw("Keycloak resolver disabled or missing configuration; skipping group lookup",
+				"group", group,
+				"disabled", k.cfg.Disable,
+				"baseURL", k.cfg.BaseURL,
+				"realm", k.cfg.Realm,
+				"clientID", k.cfg.ClientID)
 		}
 		return nil, nil // gracefully skip when not configured
 	}
 	if v, ok := k.cache.get(group); ok {
 		if log != nil {
-			log.Debugw("Keycloak cache hit for group", "group", group, "membersCount", len(v))
+			log.Debugw("Keycloak cache hit for group", "group", group, "membersCount", len(v), "members", v)
 		}
 		return v, nil
 	}
 	if log != nil {
 		log.Debugw("Keycloak cache miss for group; will perform lookup", "group", group)
 	}
-	// Support simplified public client mode (no clientSecret) for e2e tests: embed known static groups.
-	if k.cfg.ClientSecret == "" {
-		// Minimal static mapping used in e2e realm; extend as needed.
-		static := map[string][]string{
-			"emergency-response": {"senior-approver@example.com", "security-lead@example.com"},
+
+	// Get token
+	token, err := k.getToken(ctx)
+	if err != nil {
+		if log != nil {
+			log.Errorw("Failed to get Keycloak token", "group", group, "error", err)
 		}
-		if members, ok := static[group]; ok {
-			if log != nil {
-				log.Debugw("Using static keycloak mapping for group", "group", group, "membersCount", len(members))
+		return nil, err
+	}
+
+	// 1. Search for group by name
+	if log != nil {
+		log.Debugw("Starting group search step", "group", group)
+		tokenPreview := token
+		if len(tokenPreview) > 20 {
+			tokenPreview = tokenPreview[:20] + "..."
+		}
+		log.Debugw("GetGroups API call details",
+			"baseURL", k.cfg.BaseURL,
+			"realm", k.cfg.Realm,
+			"searchParam", group,
+			"tokenPreview", tokenPreview,
+			"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups", k.cfg.BaseURL, k.cfg.Realm))
+	}
+	params := gocloak.GetGroupsParams{Search: gocloak.StringP(group)}
+	groups, err := k.gocloak.GetGroups(ctx, token, k.cfg.Realm, params)
+	if err != nil {
+		if log != nil {
+			tokenPreview := token
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
 			}
-			k.cache.set(group, members)
-			return members, nil
+			log.Errorw("Keycloak groups search failed",
+				"group", group,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err),
+				"tokenPreview", tokenPreview,
+				"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups", k.cfg.BaseURL, k.cfg.Realm),
+				"params", fmt.Sprintf("search=%s", group))
 		}
-		// Fallback: no members known for this group.
-		if log != nil {
-			log.Debugw("No static mapping found for group; returning empty members", "group", group)
+		return nil, err
+	}
+	if log != nil {
+		log.Debugw("Keycloak groups search completed", "group", group, "returnedGroupCount", len(groups))
+		if len(groups) > 0 {
+			for i, g := range groups {
+				log.Debugw("Group search result",
+					"index", i,
+					"groupID", g.ID,
+					"groupName", g.Name,
+					"hasSubgroups", g.SubGroups != nil && len(*g.SubGroups) > 0)
+			}
 		}
-		k.cache.set(group, []string{})
-		return []string{}, nil
 	}
 
-	// Acquire client credentials token
-	startToken := time.Now()
-	token, err := k.clientCredsToken(ctx)
-	if err != nil {
-		if log != nil {
-			log.Warnw("Failed to obtain Keycloak token", "group", group, "error", err, "took", time.Since(startToken).String())
-		}
-		return nil, err
-	}
-	if log != nil {
-		log.Debugw("Obtained Keycloak token (redacted)", "group", group, "took", time.Since(startToken).String())
-	}
-
-	// 1. Find group ID by name
-	gURL := fmt.Sprintf("%s/realms/%s/groups?search=%s", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.QueryEscape(group))
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, gURL, nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	if log != nil {
-		log.Debugw("Keycloak groups search request", "url", gURL, "group", group)
-	}
-	gStart := time.Now()
-	resp, err := k.client.Do(req)
-	if err != nil {
-		if log != nil {
-			log.Warnw("Keycloak groups search HTTP error", "url", gURL, "group", group, "error", err)
-		}
-		return nil, err
-	}
-	defer resp.Body.Close()
-	// Read body for improved diagnostics
-	gBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		if log != nil {
-			log.Warnw("Keycloak groups search returned non-200 status", "status", resp.StatusCode, "url", gURL, "group", group, "took", time.Since(gStart).String(), "body", string(bytes.TrimSpace(gBody)))
-		}
-		return nil, fmt.Errorf("keycloak groups search status %d", resp.StatusCode)
-	}
-	var groups []struct{ ID, Name string }
-	if err := json.NewDecoder(bytes.NewReader(gBody)).Decode(&groups); err != nil {
-		if log != nil {
-			log.Debugw("Failed to decode Keycloak groups response", "error", err, "group", group, "body", string(bytes.TrimSpace(gBody)))
-		}
-		return nil, err
-	}
-	if log != nil {
-		log.Debugw("Keycloak groups search returned", "group", group, "count", len(groups), "took", time.Since(gStart).String())
-	}
-	var groupID string
+	// Find matching group by name
+	var groupID *string
 	for _, g := range groups {
-		if strings.EqualFold(g.Name, group) {
+		if g.Name != nil && strings.EqualFold(*g.Name, group) {
 			groupID = g.ID
+			if log != nil {
+				log.Debugw("Found matching group by name", "group", group, "groupID", *groupID, "matchedName", *g.Name)
+			}
 			break
 		}
 	}
-	if groupID == "" {
+	if groupID == nil {
 		if log != nil {
-			log.Debugw("Keycloak group not found by name", "group", group, "returnedGroups", groups)
+			log.Warnw("Group not found in search results", "group", group)
 		}
 		k.cache.set(group, []string{})
 		return []string{}, nil
 	}
 
-	// 2. List members
-	mURL := fmt.Sprintf("%s/realms/%s/groups/%s/members", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm), url.PathEscape(groupID))
-	mreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, mURL, nil)
-	mreq.Header.Set("Authorization", "Bearer "+token)
+	// 2. Get direct group members
 	if log != nil {
-		log.Debugw("Keycloak group members request", "url", mURL, "group", group, "groupID", groupID)
+		log.Debugw("Starting direct members fetch step", "group", group, "groupID", *groupID)
+		tokenPreview := token
+		if len(tokenPreview) > 20 {
+			tokenPreview = tokenPreview[:20] + "..."
+		}
+		log.Debugw("GetGroupMembers API call details",
+			"baseURL", k.cfg.BaseURL,
+			"realm", k.cfg.Realm,
+			"groupID", *groupID,
+			"tokenPreview", tokenPreview,
+			"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s/members", k.cfg.BaseURL, k.cfg.Realm, *groupID))
 	}
-	mStart := time.Now()
-	mresp, err := k.client.Do(mreq)
+	params2 := gocloak.GetGroupsParams{}
+	members, err := k.gocloak.GetGroupMembers(ctx, token, k.cfg.Realm, *groupID, params2)
 	if err != nil {
 		if log != nil {
-			log.Warnw("Keycloak members HTTP error", "url", mURL, "group", group, "error", err)
+			tokenPreview := token
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+			log.Errorw("Keycloak members fetch failed",
+				"group", group,
+				"groupID", *groupID,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err),
+				"tokenPreview", tokenPreview,
+				"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s/members", k.cfg.BaseURL, k.cfg.Realm, *groupID))
 		}
 		return nil, err
 	}
-	defer mresp.Body.Close()
-	mBody, _ := io.ReadAll(mresp.Body)
-	if mresp.StatusCode != 200 {
-		if log != nil {
-			log.Warnw("Keycloak members returned non-200 status", "status", mresp.StatusCode, "url", mURL, "group", group, "took", time.Since(mStart).String(), "body", string(bytes.TrimSpace(mBody)))
+	if log != nil {
+		log.Debugw("Direct members fetch completed", "group", group, "directMemberCount", len(members))
+		for i, m := range members {
+			log.Debugw("Direct group member",
+				"index", i,
+				"userID", m.ID,
+				"username", m.Username,
+				"email", m.Email)
 		}
-		return nil, fmt.Errorf("keycloak members status %d", mresp.StatusCode)
 	}
-	var membersRaw []struct{ Username, Email string }
-	if err := json.NewDecoder(bytes.NewReader(mBody)).Decode(&membersRaw); err != nil {
-		if log != nil {
-			log.Debugw("Failed to decode Keycloak members response", "error", err, "group", group, "body", string(bytes.TrimSpace(mBody)))
+
+	// Collect member identifiers
+	out := make([]string, 0, len(members))
+	for i, m := range members {
+		identifier := ""
+		if m.Email != nil && *m.Email != "" {
+			identifier = *m.Email
+			if log != nil {
+				log.Debugw("Added direct member by email", "group", group, "index", i, "email", identifier)
+			}
+		} else if m.Username != nil && *m.Username != "" {
+			identifier = *m.Username
+			if log != nil {
+				log.Debugw("Added direct member by username", "group", group, "index", i, "username", identifier)
+			}
 		}
-		return nil, err
+		if identifier != "" {
+			out = append(out, identifier)
+		}
 	}
-	out := make([]string, 0, len(membersRaw))
-	for _, m := range membersRaw {
-		if m.Email != "" {
-			out = append(out, m.Email)
-		} else if m.Username != "" {
-			out = append(out, m.Username)
+
+	// 3. Get group detail to retrieve subgroups
+	if log != nil {
+		log.Debugw("Starting subgroups fetch step", "group", group, "groupID", *groupID, "currentMemberCount", len(out))
+		tokenPreview := token
+		if len(tokenPreview) > 20 {
+			tokenPreview = tokenPreview[:20] + "..."
 		}
+		log.Debugw("GetGroup API call details",
+			"baseURL", k.cfg.BaseURL,
+			"realm", k.cfg.Realm,
+			"groupID", *groupID,
+			"tokenPreview", tokenPreview,
+			"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s", k.cfg.BaseURL, k.cfg.Realm, *groupID))
+	}
+	groupDetail, err := k.gocloak.GetGroup(ctx, token, k.cfg.Realm, *groupID)
+	if err != nil {
+		if log != nil {
+			tokenPreview := token
+			if len(tokenPreview) > 20 {
+				tokenPreview = tokenPreview[:20] + "..."
+			}
+			log.Warnw("Keycloak group detail fetch failed",
+				"group", group,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err),
+				"tokenPreview", tokenPreview,
+				"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s", k.cfg.BaseURL, k.cfg.Realm, *groupID))
+		}
+		// Continue with just direct members
+	} else if groupDetail != nil && groupDetail.SubGroups != nil {
+		if log != nil {
+			log.Debugw("Subgroups fetch completed", "group", group, "subgroupCount", len(*groupDetail.SubGroups))
+		}
+		for sgIdx, sg := range *groupDetail.SubGroups {
+			if sg.ID == nil {
+				continue
+			}
+			if log != nil {
+				log.Debugw("Processing subgroup", "group", group, "parentGroupID", *groupID, "subgroupIndex", sgIdx, "subgroupID", *sg.ID, "subgroupName", sg.Name)
+			}
+
+			// Fetch members of each subgroup
+			if log != nil {
+				tokenPreview := token
+				if len(tokenPreview) > 20 {
+					tokenPreview = tokenPreview[:20] + "..."
+				}
+				log.Debugw("GetGroupMembers API call for subgroup",
+					"baseURL", k.cfg.BaseURL,
+					"realm", k.cfg.Realm,
+					"subgroupID", *sg.ID,
+					"tokenPreview", tokenPreview,
+					"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s/members", k.cfg.BaseURL, k.cfg.Realm, *sg.ID))
+			}
+			params3 := gocloak.GetGroupsParams{}
+			sgMembers, err := k.gocloak.GetGroupMembers(ctx, token, k.cfg.Realm, *sg.ID, params3)
+			if err != nil {
+				if log != nil {
+					tokenPreview := token
+					if len(tokenPreview) > 20 {
+						tokenPreview = tokenPreview[:20] + "..."
+					}
+					log.Warnw("Subgroup members fetch failed",
+						"group", group,
+						"subgroupID", *sg.ID,
+						"error", err,
+						"errorType", fmt.Sprintf("%T", err),
+						"tokenPreview", tokenPreview,
+						"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups/%s/members", k.cfg.BaseURL, k.cfg.Realm, *sg.ID))
+				}
+				continue
+			}
+
+			if log != nil {
+				log.Debugw("Subgroup members fetch completed", "subgroupID", *sg.ID, "memberCount", len(sgMembers))
+			}
+
+			for sgmIdx, m := range sgMembers {
+				identifier := ""
+				if m.Email != nil && *m.Email != "" {
+					identifier = *m.Email
+					if log != nil {
+						log.Debugw("Added subgroup member by email", "group", group, "subgroupID", *sg.ID, "memberIndex", sgmIdx, "email", identifier)
+					}
+				} else if m.Username != nil && *m.Username != "" {
+					identifier = *m.Username
+					if log != nil {
+						log.Debugw("Added subgroup member by username", "group", group, "subgroupID", *sg.ID, "memberIndex", sgmIdx, "username", identifier)
+					}
+				}
+				if identifier != "" {
+					out = append(out, identifier)
+				}
+			}
+		}
+	}
+
+	// 4. Normalize and deduplicate members
+	if log != nil {
+		log.Debugw("Starting member list normalization", "group", group, "beforeNormalizationCount", len(out))
 	}
 	out = normalizeMembers(out)
 	if log != nil {
-		log.Infow("Resolved keycloak group members", "group", group, "resolvedCount", len(out))
+		log.Infow("Keycloak group member resolution completed successfully", "group", group, "finalResolvedCount", len(out), "members", out)
 	}
-	k.cache.set(group, out)
-	return out, nil
-}
 
-func (k *KeycloakGroupMemberResolver) clientCredsToken(ctx context.Context) (string, error) {
-	if k.cfg.ClientSecret == "" {
-		return "", errors.New("keycloak clientSecret empty; only client_credentials supported now")
+	// 5. Cache and return results
+	k.cache.set(group, out)
+	if log != nil {
+		log.Debugw("Group member resolution returning successfully", "group", group, "memberCount", len(out))
 	}
-	form := url.Values{}
-	form.Set("grant_type", "client_credentials")
-	form.Set("client_id", k.cfg.ClientID)
-	form.Set("client_secret", k.cfg.ClientSecret)
-	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", strings.TrimRight(k.cfg.BaseURL, "/"), url.PathEscape(k.cfg.Realm))
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := k.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("keycloak token status %d", resp.StatusCode)
-	}
-	var tr struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
-		return "", err
-	}
-	if tr.AccessToken == "" {
-		return "", errors.New("empty keycloak access_token")
-	}
-	return tr.AccessToken, nil
+	return out, nil
 }
 
 // EscalationStatusUpdater periodically expands approver groups into member lists and stores in status.
@@ -283,38 +446,46 @@ func (u EscalationStatusUpdater) Start(ctx context.Context) {
 }
 
 func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLogger) {
+	log.Debugw("Starting escalation status update cycle", "resolver", fmt.Sprintf("%T", u.Resolver))
 	escList := telekomv1alpha1.BreakglassEscalationList{}
 	if err := u.K8sClient.List(ctx, &escList); err != nil {
 		log.Errorw("Failed listing BreakglassEscalations for status update", "error", err)
 		return
 	}
+	log.Debugw("Fetched escalations for status update", "count", len(escList.Items))
+
 	for _, esc := range escList.Items {
 		// Collect approver groups
 		groups := esc.Spec.Approvers.Groups
 		if len(groups) == 0 {
+			log.Debugw("Escalation has no approver groups; skipping", "escalation", esc.Name)
 			continue
 		}
+		log.Debugw("Processing escalation with approver groups", "escalation", esc.Name, "groupCount", len(groups), "groups", groups)
+
 		updated := esc.DeepCopy()
 		if updated.Status.ApproverGroupMembers == nil {
 			updated.Status.ApproverGroupMembers = map[string][]string{}
 		}
 		changed := false
 		for _, g := range groups {
+			log.Debugw("Resolving group for escalation", "escalation", esc.Name, "group", g, "resolverType", fmt.Sprintf("%T", u.Resolver))
 			var norm []string
 			if u.Resolver != nil {
-				log.Debugw("Resolving approver group members", "group", g, "escalation", esc.Name)
+				log.Debugw("Calling group member resolver", "group", g, "escalation", esc.Name, "resolverType", fmt.Sprintf("%T", u.Resolver))
 				members, err := u.Resolver.Members(ctx, g)
 				if err != nil {
-					log.Warnw("Failed resolving group members", "group", g, "escalation", esc.Name, "error", err)
+					log.Errorw("Failed resolving group members from resolver", "group", g, "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
 					// record resolution error in status
 					if updated.Status.GroupResolutionStatus == nil {
 						updated.Status.GroupResolutionStatus = map[string]string{}
 					}
-					updated.Status.GroupResolutionStatus[g] = err.Error()
+					updated.Status.GroupResolutionStatus[g] = fmt.Sprintf("error: %v", err)
 					continue
 				}
+				log.Debugw("Group member resolver returned members", "group", g, "escalation", esc.Name, "rawMemberCount", len(members), "members", members)
 				norm = normalizeMembers(members)
-				log.Infow("Resolved approver group members", "group", g, "escalation", esc.Name, "count", len(norm))
+				log.Infow("Resolved approver group members (normalized)", "group", g, "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm), "normalizedMembers", norm)
 				// mark group resolution ok in status
 				if updated.Status.GroupResolutionStatus == nil {
 					updated.Status.GroupResolutionStatus = map[string]string{}
@@ -329,18 +500,21 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				continue
 			}
 			if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
+				log.Debugw("Group members changed; marking for update", "group", g, "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
 				updated.Status.ApproverGroupMembers[g] = norm
 				changed = true
 			}
 		}
 		if changed {
+			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
 			if err := u.K8sClient.Status().Update(ctx, updated); err != nil {
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
 			} else {
-				log.Debugw("Updated escalation approverGroupMembers", "escalation", esc.Name, "groups", groups)
+				log.Debugw("Updated escalation approverGroupMembers successfully", "escalation", esc.Name, "groups", groups)
 			}
 		}
 	}
+	log.Debugw("Completed escalation status update cycle")
 }
 
 func normalizeMembers(in []string) []string {

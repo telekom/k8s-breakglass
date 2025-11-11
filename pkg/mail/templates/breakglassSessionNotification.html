@@ -6,21 +6,32 @@
   <style>
     body {
       font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 0;
+    }
+
+    .header {
+      background-color: #e20074;
+      color: white;
+      padding: 20px;
       text-align: center;
     }
 
-    table {
-      font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
-      margin-left: auto;
-      margin-right: auto;
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
     }
 
-    table td:nth-child(1) {
-      text-align: right;
-    }
-
-    table td:nth-child(2) {
-      text-align: left;
+    .header p {
+      margin: 5px 0 0 0;
+      font-size: 0.95rem;
+      opacity: 0.9;
     }
 
     .card {
@@ -28,61 +39,201 @@
       border: 1px solid rgba(0, 0, 0, 0.1);
       border-radius: 12px;
       margin: 20px auto;
-      padding: 10px;
+      padding: 20px;
       max-width: 500px;
     }
 
+    .requester-box {
+      background: #f8f9fa;
+      padding: 15px;
+      border-left: 4px solid #4CAF50;
+      margin-bottom: 20px;
+      border-radius: 4px;
+    }
+
+    .requester-name {
+      font-size: 1.3rem;
+      font-weight: bold;
+      color: #4CAF50;
+    }
+
+    .requester-email {
+      font-size: 0.95rem;
+      color: #666;
+    }
+
+    .status-banner {
+      background-color: #c8e6c9;
+      border-left: 4px solid #4CAF50;
+      padding: 12px;
+      margin: 15px 0;
+      border-radius: 4px;
+      text-align: center;
+    }
+
+    .status-banner-text {
+      font-weight: bold;
+      color: #2e7d32;
+      font-size: 1rem;
+    }
+
+    .details-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 0.95rem;
+    }
+
+    .details-table th {
+      background-color: #f0f0f0;
+      padding: 10px;
+      text-align: left;
+      font-weight: bold;
+      border-bottom: 2px solid #4CAF50;
+    }
+
+    .details-table td {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .details-table tr:nth-child(odd) {
+      background-color: #f9f9f9;
+    }
+
+    .label {
+      font-weight: 600;
+      color: #555;
+      width: 30%;
+    }
+
+    .value {
+      color: #333;
+      word-break: break-word;
+    }
+
+    .highlight-value {
+      font-weight: bold;
+      color: #2e7d32;
+      font-size: 1.1rem;
+    }
+
+    .info-section {
+      background-color: #e8f5e9;
+      border-left: 4px solid #4CAF50;
+      padding: 12px;
+      margin: 15px 0;
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+
+    .info-label {
+      font-weight: bold;
+      color: #2e7d32;
+      font-size: 0.9rem;
+    }
+
     .btn {
-      background-color: #e20074;
+      background-color: #4CAF50;
       border-radius: 8px;
-      padding: 12px 24px 10px;
+      padding: 12px 32px;
       line-height: 22.4px;
       display: inline-block;
       color: white;
       text-decoration: none;
+      font-weight: bold;
+      margin: 20px 0;
+    }
+
+    .btn:hover {
+      background-color: #45a049;
+      text-decoration: none;
+    }
+
+    .footer {
+      background-color: #f5f5f5;
+      border-top: 1px solid #ddd;
+      padding: 15px;
+      margin-top: 20px;
+      font-size: 0.85rem;
+      color: #666;
+      text-align: left;
+      border-radius: 0 0 4px 4px;
+    }
+
+    .footer-text {
+      margin: 0;
     }
   </style>
 </head>
 
 <body>
-  <h1>{{ .BrandingName }}</h1>
-  <div class="card">
-    <p>
-      <span style="font-size: 1.2rem; font-weight: bold;">{{ .SubjectFullName }}</span>
-      <br>
-      <span>{{ .SubjectEmail }}</span>
-    </p>
-    <p>
-      request was accepted by {{ .Approver }}
-    <table>
-      <tr>
-        <td>Cluster:</td>
-        <td> <span style="font-size: 1.2rem;">{{ .RequestedCluster }}</span></td>
-      </tr>
-      <tr>
-        <td>Username:</td>
-        <td><span style="font-size: 1.2rem;">{{ .RequestedUsername }}</span></td>
-      </tr>
-      <tr>
-        <td>Group:</td>
-        <td><span style="font-size: 1.2rem;">{{ .RequestedGroup }}</span></td>
-      </tr>
-      {{ if .ActualStartTime }}
-      <tr>
-        <td>Session Started:</td>
-        <td><span style="font-size: 1.2rem;">{{ .ActualStartTime }}</span></td>
-      </tr>
-      {{ end }}
-      {{ if .CalculatedExpiresAt }}
-      <tr>
-        <td>Expires At:</td>
-        <td><span style="font-size: 1.2rem;">{{ .CalculatedExpiresAt }}</span></td>
-      </tr>
-      {{ end }}
-    </table>
-    <p>
-      <a class="btn" href="{{ .URL }}">More information</a>
-    </p>
+  <div class="container">
+    <div class="header">
+      <h1>{{ .BrandingName }} - Session Active</h1>
+      <p>Your breakglass cluster access is now active</p>
+    </div>
+
+    <div class="card">
+      <div class="requester-box">
+        <p style="margin: 0 0 8px 0;">
+          <span class="requester-name">{{ .SubjectFullName }}</span>
+        </p>
+        <p style="margin: 0;">
+          <span class="requester-email">{{ .SubjectEmail }}</span>
+        </p>
+      </div>
+
+      <div class="status-banner">
+        <p class="status-banner-text">✓ Request Approved & Session Started</p>
+      </div>
+
+      <table class="details-table">
+        <tbody>
+          <tr>
+            <td class="label">Cluster:</td>
+            <td class="value"><span class="highlight-value">{{ .RequestedCluster }}</span></td>
+          </tr>
+          <tr>
+            <td class="label">Username:</td>
+            <td class="value"><span class="highlight-value">{{ .RequestedUsername }}</span></td>
+          </tr>
+          <tr>
+            <td class="label">Group:</td>
+            <td class="value">{{ .RequestedGroup }}</td>
+          </tr>
+          {{ if .ActualStartTime }}
+          <tr>
+            <td class="label">Session Started:</td>
+            <td class="value">{{ .ActualStartTime }}</td>
+          </tr>
+          {{ end }}
+          {{ if .CalculatedExpiresAt }}
+          <tr>
+            <td class="label">Expires At:</td>
+            <td class="value">{{ .CalculatedExpiresAt }}</td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+
+      <div class="info-section">
+        <p class="info-label">⏱️ Session Information</p>
+        <p style="margin: 8px 0 0 0; font-size: 0.9rem;">
+          Your breakglass session is now active. Please note the expiration time above. Make sure to complete your administrative tasks before the session expires.
+        </p>
+      </div>
+
+      <div style="text-align: center;">
+        <a class="btn" href="{{ .URL }}">View Session Details</a>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p class="footer-text">
+        This is an automated notification. Do not reply to this email. For support, contact your cluster administrator.
+      </p>
+    </div>
   </div>
 </body>
 
