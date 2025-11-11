@@ -324,14 +324,10 @@ func TestQueue_Length(t *testing.T) {
 	}()
 	sugar := logger.Sugar()
 
+	// Test queue length before starting the worker
 	sender := &MockSender{successAfter: 100, host: "test.example.com"}
 	queue := NewQueue(sender, sugar, 3, 100, 10)
-	queue.Start()
-	defer func() {
-		if err := queue.Stop(context.Background()); err != nil {
-			t.Errorf("failed to stop queue: %v", err)
-		}
-	}()
+	// Don't start the queue yet - test it while idle
 
 	assert.Equal(t, 0, queue.Length())
 
@@ -342,6 +338,19 @@ func TestQueue_Length(t *testing.T) {
 	err = queue.Enqueue("test-2", []string{"user@example.com"}, "Subject", "Body")
 	assert.NoError(t, err)
 	assert.Equal(t, 2, queue.Length())
+
+	// Now start the queue and let it process
+	queue.Start()
+	defer func() {
+		if err := queue.Stop(context.Background()); err != nil {
+			t.Errorf("failed to stop queue: %v", err)
+		}
+	}()
+
+	// Give worker time to process all items
+	time.Sleep(200 * time.Millisecond)
+	// After processing, queue should be empty
+	assert.Equal(t, 0, queue.Length())
 }
 
 func TestNewSenderWithQueue(t *testing.T) {
