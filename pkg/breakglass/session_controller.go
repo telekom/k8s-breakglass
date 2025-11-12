@@ -314,7 +314,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	// Single pass: collect available groups, approvers, and find matched escalation
 	possible := make([]string, 0, len(possibleEscals))
-	approvers := []string{}
+	// Track approvers by group: map[groupName][]approverEmails
+	approversByGroup := make(map[string][]string)
+	allApprovers := []string{} // Deduplicated list of all approvers for filtering
 	selectedDenyPolicies := []string{}
 	var matchedEsc *v1alpha1.BreakglassEscalation
 
@@ -331,15 +333,17 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			"explicitUserCount", len(p.Spec.Approvers.Users),
 			"approverGroupCount", len(p.Spec.Approvers.Groups))
 
-		// Add explicit users (deduplicated)
+		// Add explicit users (deduplicated) - track them under special key
 		for _, user := range p.Spec.Approvers.Users {
-			before := len(approvers)
-			approvers = addIfNotPresent(approvers, user)
-			if len(approvers) > before {
+			before := len(allApprovers)
+			allApprovers = addIfNotPresent(allApprovers, user)
+			if len(allApprovers) > before {
+				// Explicit users are tracked separately
+				approversByGroup["_explicit_users"] = addIfNotPresent(approversByGroup["_explicit_users"], user)
 				reqLog.Debugw("Added explicit approver user",
 					"user", user,
 					"escalation", p.Name,
-					"totalApproversNow", len(approvers))
+					"totalApproversNow", len(allApprovers))
 			}
 		}
 
@@ -360,16 +364,18 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 					"escalation", p.Name,
 					"memberCount", len(members),
 					"members", members)
-				countBefore := len(approvers)
+				countBefore := len(allApprovers)
 				for _, member := range members {
-					approvers = addIfNotPresent(approvers, member)
+					allApprovers = addIfNotPresent(allApprovers, member)
+					// Track member as belonging to this group
+					approversByGroup[group] = addIfNotPresent(approversByGroup[group], member)
 				}
-				countAdded := len(approvers) - countBefore
+				countAdded := len(allApprovers) - countBefore
 				reqLog.Debugw("Added group members to approvers",
 					"group", group,
 					"escalation", p.Name,
 					"newMembersAdded", countAdded,
-					"totalApproversNow", len(approvers))
+					"totalApproversNow", len(allApprovers))
 			}
 		}
 
@@ -385,8 +391,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 
 	reqLog.Infow("Completed approver resolution from escalations",
-		"totalApproversCollected", len(approvers),
-		"approversList", approvers,
+		"totalApproversCollected", len(allApprovers),
+		"approversList", allApprovers,
+		"approverGroupsCount", len(approversByGroup),
 		"requestedGroup", request.GroupName)
 
 	if !slices.Contains(possible, request.GroupName) {
@@ -575,19 +582,19 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			"grantedGroup", bs.Spec.GrantedGroup)
 	} else {
 		reqLog.Infow("Resolved approvers from escalation (explicit users + group members)",
-			"approverCount", len(approvers),
-			"approvers", approvers,
+			"approverCount", len(allApprovers),
+			"approvers", allApprovers,
 			"cluster", bs.Spec.Cluster,
 			"grantedGroup", bs.Spec.GrantedGroup)
 
 		reqLog.Debugw("About to send breakglass request email",
-			"approvalsRequired", len(approvers),
-			"approvers", approvers,
+			"approvalsRequired", len(allApprovers),
+			"approvers", allApprovers,
 			"requestorEmail", useremail,
 			"requestorUsername", username,
 			"grantedGroup", bs.Spec.GrantedGroup,
 			"cluster", bs.Spec.Cluster)
-		if len(approvers) == 0 {
+		if len(allApprovers) == 0 {
 			reqLog.Warnw("No approvers resolved for email notification; cannot send email with empty recipients",
 				"escalation", bs.Spec.GrantedGroup,
 				"cluster", bs.Spec.Cluster,
@@ -636,37 +643,29 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			// Filter out excluded users/groups and hidden groups from approvers list
 			reqLog.Debugw("About to filter approvers",
 				"escalationName", matchedEsc.Name,
-				"preFilterApproverCount", len(approvers),
-				"preFilterApprovers", approvers)
+				"preFilterApproverCount", len(allApprovers),
+				"preFilterApprovers", allApprovers)
 
-			filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, approvers, matchedEsc)
+			filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, matchedEsc)
 			reqLog.Debugw("After filterExcludedNotificationRecipients",
 				"postExcludeApproverCount", len(filteredApprovers),
 				"postExcludeApprovers", filteredApprovers,
-				"excludedCount", len(approvers)-len(filteredApprovers))
+				"excludedCount", len(allApprovers)-len(filteredApprovers))
 
 			filteredApprovers = wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, matchedEsc)
 			reqLog.Debugw("After filterHiddenFromUIRecipients",
 				"postHiddenFilterApproverCount", len(filteredApprovers),
 				"postHiddenFilterApprovers", filteredApprovers,
-				"hiddenFilteredOutCount", len(approvers)-len(filteredApprovers))
+				"hiddenFilteredOutCount", len(allApprovers)-len(filteredApprovers))
 
 			if len(filteredApprovers) == 0 {
 				reqLog.Infow("All approvers excluded from notifications via NotificationExclusions or HiddenFromUI",
 					"escalationName", matchedEsc.Name,
-					"originalApproverCount", len(approvers))
-			} else if len(filteredApprovers) < len(approvers) {
-				reqLog.Infow("Some approvers excluded from notifications",
-					"originalApproverCount", len(approvers),
-					"filteredApproverCount", len(filteredApprovers),
-					"excludedCount", len(approvers)-len(filteredApprovers))
-				if err := wc.sendOnRequestEmail(bs, useremail, username, filteredApprovers); err != nil {
-					// Do not fail the request if email cannot be sent (e.g. mail server not running in e2e).
-					reqLog.Warnw("Skipping email notification (send failed)", "error", err)
-				}
-			} else if err := wc.sendOnRequestEmail(bs, useremail, username, filteredApprovers); err != nil {
-				// Do not fail the request if email cannot be sent (e.g. mail server not running in e2e).
-				reqLog.Warnw("Skipping email notification (send failed)", "error", err)
+					"originalApproverCount", len(allApprovers))
+			} else {
+				// Send separate emails per approver group
+				// Each email shows only the specific group that matched
+				wc.sendOnRequestEmailsByGroup(reqLog, bs, useremail, username, filteredApprovers, approversByGroup, matchedEsc)
 			}
 		}
 	}
@@ -1338,6 +1337,8 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 	requestEmail,
 	requestUsername string,
 	approvers []string,
+	approverGroupsToShow []string, // The specific approver group(s) to display in this email
+	matchedEscalation *v1alpha1.BreakglassEscalation,
 ) error {
 	// Guard: validate approvers list
 	if len(approvers) == 0 {
@@ -1396,20 +1397,11 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		}
 	}
 
-	// Collect approver groups from the matched escalation
-	approverGroups := []string{}
-	ctx := context.Background()
-	if wc.escalationManager != nil {
-		escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, bs.Spec.Cluster)
-		if err == nil {
-			for _, esc := range escalations {
-				if esc.Spec.EscalatedGroup == bs.Spec.GrantedGroup {
-					approverGroups = append(approverGroups, esc.Spec.Approvers.Groups...)
-					break // Only need the first matching escalation
-				}
-			}
-		}
-	}
+	// Use the provided approver groups to display
+	// These are specific to this email (e.g., just "group-a" for members of group-a)
+	wc.log.Debugw("Using provided approver groups for email",
+		"approverGroupsToShow", approverGroupsToShow,
+		"session", bs.Name)
 
 	body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
 		SubjectEmail:        requestEmail,
@@ -1423,7 +1415,7 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		CalculatedExpiresAt: calculatedExpiresAtStr,
 		FormattedDuration:   formattedDurationStr,
 		RequestedAt:         requestedAtStr,
-		ApproverGroups:      approverGroups,
+		ApproverGroups:      approverGroupsToShow,
 		URL:                 fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
 		BrandingName: func() string {
 			if wc.config.Frontend.BrandingName != "" {
@@ -1500,6 +1492,97 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		"recipients", approvers,
 		"subject", subject)
 	return nil
+}
+
+// sendOnRequestEmailsByGroup sends separate emails for each approver group, where each email shows
+// only the specific group that matched. This allows approvers to understand which group they're
+// being notified on behalf of.
+func (wc BreakglassSessionController) sendOnRequestEmailsByGroup(
+	log *zap.SugaredLogger,
+	bs v1alpha1.BreakglassSession,
+	requestEmail, requestUsername string,
+	filteredApprovers []string,
+	approversByGroup map[string][]string, // map[groupName][]approverEmails
+	matchedEscalation *v1alpha1.BreakglassEscalation,
+) {
+	if matchedEscalation == nil {
+		log.Warnw("Cannot send emails by group: matched escalation is nil", "session", bs.Name)
+		return
+	}
+
+	log.Debugw("Sending emails per approver group",
+		"session", bs.Name,
+		"totalApprovers", len(filteredApprovers),
+		"groupCount", len(approversByGroup))
+
+	// Build a map of approver email -> groups they belong to (across ALL groups)
+	// This ensures we send one email per approver, showing all their groups
+	approverToGroups := make(map[string][]string)
+
+	// For each configured approver group, collect which groups each approver belongs to
+	for _, groupName := range matchedEscalation.Spec.Approvers.Groups {
+		groupMembers := approversByGroup[groupName]
+
+		// Filter the group members to only include those in filteredApprovers
+		for _, member := range groupMembers {
+			for _, filtered := range filteredApprovers {
+				if member == filtered {
+					// Record this approver -> group mapping
+					approverToGroups[member] = append(approverToGroups[member], groupName)
+					break
+				}
+			}
+		}
+	}
+
+	// Send one email to each approver, showing all groups they belong to
+	for approver, groups := range approverToGroups {
+		log.Debugw("Sending email for approver",
+			"session", bs.Name,
+			"approver", approver,
+			"groupCount", len(groups),
+			"groups", groups)
+
+		// Send email with ALL groups this approver belongs to
+		if err := wc.sendOnRequestEmail(bs, requestEmail, requestUsername, []string{approver}, groups, matchedEscalation); err != nil {
+			log.Warnw("Failed to send email for approver",
+				"session", bs.Name,
+				"approver", approver,
+				"groupCount", len(groups),
+				"groups", groups,
+				"error", err)
+			// Continue with other approvers even if one fails
+		}
+	}
+
+	// Also send emails to explicit users (those not in any group)
+	explicitUsers := approversByGroup["_explicit_users"]
+	if len(explicitUsers) > 0 {
+		// Filter explicit users to only include those in filteredApprovers
+		var approversForExplicit []string
+		for _, user := range explicitUsers {
+			for _, filtered := range filteredApprovers {
+				if user == filtered {
+					approversForExplicit = append(approversForExplicit, user)
+					break
+				}
+			}
+		}
+
+		if len(approversForExplicit) > 0 {
+			log.Debugw("Sending email for explicit users",
+				"session", bs.Name,
+				"recipientCount", len(approversForExplicit))
+
+			// Send email with no specific group (since these are explicit users)
+			if err := wc.sendOnRequestEmail(bs, requestEmail, requestUsername, approversForExplicit, []string{}, matchedEscalation); err != nil {
+				log.Warnw("Failed to send email for explicit users",
+					"session", bs.Name,
+					"recipientCount", len(approversForExplicit),
+					"error", err)
+			}
+		}
+	}
 }
 
 // filterExcludedNotificationRecipients filters out users/groups that are in the escalation's NotificationExclusions

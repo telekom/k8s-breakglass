@@ -24,12 +24,14 @@ type FakeMailSender struct {
 	LastRecivers          []string
 	LastSubject, LastBody string
 	OnSendError           error
+	SendCallCount         int // Track how many times Send was called
 }
 
 func (s *FakeMailSender) Send(receivers []string, subject, body string) error {
 	s.LastRecivers = receivers
 	s.LastSubject = subject
 	s.LastBody = body
+	s.SendCallCount++
 	return s.OnSendError
 }
 
@@ -3159,6 +3161,267 @@ func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 	}
 	if foundEmergency {
 		t.Fatal("emergency@example.com should NOT receive email (hidden user)")
+	}
+}
+
+// TestSendOnRequestEmail_ApproverGroupsToShow tests that the email correctly displays
+// only the specific approver groups provided in the approverGroupsToShow parameter.
+// This allows sending separate emails to different groups, where each email shows only
+// the group that matched for those specific approvers.
+func TestSendOnRequestEmail_ApproverGroupsToShow(t *testing.T) {
+	tests := []struct {
+		name                          string
+		approverGroupsToShow          []string
+		expectedApproverGroupsInEmail []string
+		description                   string
+	}{
+		{
+			name:                          "single_group_to_show",
+			approverGroupsToShow:          []string{"dttcaas-first-line_fixed-core"},
+			expectedApproverGroupsInEmail: []string{"dttcaas-first-line_fixed-core"},
+			description:                   "Email shows single specified approver group",
+		},
+		{
+			name:                          "multiple_groups_to_show",
+			approverGroupsToShow:          []string{"dttcaas-first-line_fixed-core", "dttcaas-first-line_mobile-core"},
+			expectedApproverGroupsInEmail: []string{"dttcaas-first-line_fixed-core", "dttcaas-first-line_mobile-core"},
+			description:                   "Email shows multiple specified approver groups",
+		},
+		{
+			name:                          "no_groups_to_show_explicit_users",
+			approverGroupsToShow:          []string{},
+			expectedApproverGroupsInEmail: []string{},
+			description:                   "Email for explicit users (no groups) shows no groups",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := zap.NewNop().Sugar()
+
+			controller := &BreakglassSessionController{
+				log: log,
+				config: config.Config{
+					Frontend: config.Frontend{
+						BaseURL:      "https://breakglass.example.com",
+						BrandingName: "Test Breakglass",
+					},
+				},
+				mail:      &FakeMailSender{},
+				mailQueue: nil, // Disable queue to use direct mail sender
+			}
+
+			// Create test session
+			session := v1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-session-123",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      "test-cluster",
+					User:         "test-user",
+					GrantedGroup: "admin",
+				},
+			}
+
+			// Create test escalation
+			escalation := &v1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-escalation",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.BreakglassEscalationSpec{
+					EscalatedGroup: "admin",
+					Approvers: v1alpha1.BreakglassEscalationApprovers{
+						Groups: []string{"dttcaas-first-line_fixed-core", "dttcaas-first-line_mobile-core"},
+						Users:  []string{},
+					},
+				},
+			}
+
+			// Send the email with specific groups to show
+			approvers := []string{"approver1@example.com", "approver2@example.com"}
+			err := controller.sendOnRequestEmail(
+				session,
+				"requester@example.com",
+				"Test Requester",
+				approvers,
+				tt.approverGroupsToShow, // Only show these specific groups in the email
+				escalation,
+			)
+
+			if err != nil {
+				t.Fatalf("sendOnRequestEmail failed: %v", err)
+			}
+
+			// Verify email was sent
+			mailSender := controller.mail.(*FakeMailSender)
+			if mailSender.LastBody == "" {
+				t.Fatal("Email body is empty")
+			}
+
+			// Verify the correct approver groups appear in the email body
+			for _, expectedGroup := range tt.expectedApproverGroupsInEmail {
+				if !strings.Contains(mailSender.LastBody, expectedGroup) {
+					t.Errorf("Expected approver group %q not found in email body", expectedGroup)
+				}
+			}
+
+			t.Logf("Test case: %s", tt.description)
+			t.Logf("Groups to show: %v", tt.approverGroupsToShow)
+			t.Logf("Expected groups in email: %v", tt.expectedApproverGroupsInEmail)
+		})
+	}
+}
+
+// TestSendOnRequestEmail_NilEscalation tests that sendOnRequestEmail handles nil escalation gracefully
+func TestSendOnRequestEmail_NilEscalation(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	controller := &BreakglassSessionController{
+		log: log,
+		config: config.Config{
+			Frontend: config.Frontend{
+				BaseURL:      "https://breakglass.example.com",
+				BrandingName: "Test Breakglass",
+			},
+		},
+		mail:      &FakeMailSender{},
+		mailQueue: nil,
+	}
+
+	session := v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session-456",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:      "test-cluster",
+			User:         "test-user",
+			GrantedGroup: "admin",
+		},
+	}
+
+	approvers := []string{"approver@example.com"}
+
+	// Should not panic when escalation is nil
+	err := controller.sendOnRequestEmail(
+		session,
+		"requester@example.com",
+		"Test Requester",
+		approvers,
+		[]string{}, // no approver groups to show
+		nil,        // nil escalation
+	)
+
+	if err != nil {
+		t.Fatalf("sendOnRequestEmail with nil escalation failed: %v", err)
+	}
+
+	mailSender := controller.mail.(*FakeMailSender)
+	if mailSender.LastBody == "" {
+		t.Fatal("Email body should not be empty even with nil escalation")
+	}
+
+	t.Log("Email sent successfully with nil escalation (no approver groups shown)")
+}
+
+// TestSendOnRequestEmailsByGroup_DeduplicateApproversInMultipleGroups tests that when an approver
+// belongs to multiple approver groups, they receive only ONE email showing all their groups.
+func TestSendOnRequestEmailsByGroup_DeduplicateApproversInMultipleGroups(t *testing.T) {
+	// Setup: alice@example.com is in both "fixed-core" and "mobile-core"
+	// Expected: alice should get exactly ONE email (not two)
+	tests := []struct {
+		name              string
+		approversByGroup  map[string][]string
+		filteredApprovers []string
+		expectedSendCount int
+		description       string
+	}{
+		{
+			name: "approver_in_multiple_groups",
+			approversByGroup: map[string][]string{
+				"fixed-core":  {"alice@example.com", "bob@example.com"},
+				"mobile-core": {"alice@example.com", "charlie@example.com"},
+			},
+			filteredApprovers: []string{"alice@example.com", "bob@example.com", "charlie@example.com"},
+			expectedSendCount: 3, // alice once, bob once, charlie once
+			description:       "Approver in multiple groups receives one email",
+		},
+		{
+			name: "all_approvers_in_all_groups",
+			approversByGroup: map[string][]string{
+				"fixed-core":  {"alice@example.com", "bob@example.com"},
+				"mobile-core": {"alice@example.com", "bob@example.com"},
+			},
+			filteredApprovers: []string{"alice@example.com", "bob@example.com"},
+			expectedSendCount: 2, // alice once, bob once
+			description:       "When all approvers are in all groups, each gets one email",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			log := zap.NewNop().Sugar()
+
+			fakeSender := &FakeMailSender{}
+
+			controller := &BreakglassSessionController{
+				log: log,
+				config: config.Config{
+					Frontend: config.Frontend{
+						BaseURL:      "https://breakglass.example.com",
+						BrandingName: "Test Breakglass",
+					},
+				},
+				mail: fakeSender,
+			}
+
+			session := v1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-session",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      "test-cluster",
+					User:         "test-user",
+					GrantedGroup: "admin",
+				},
+			}
+
+			escalation := &v1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-escalation",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.BreakglassEscalationSpec{
+					EscalatedGroup: "admin",
+					Approvers: v1alpha1.BreakglassEscalationApprovers{
+						Groups: []string{"fixed-core", "mobile-core"},
+						Users:  []string{},
+					},
+				},
+			}
+
+			// Call sendOnRequestEmailsByGroup
+			controller.sendOnRequestEmailsByGroup(
+				log,
+				session,
+				"requester@example.com",
+				"Test Requester",
+				tt.filteredApprovers,
+				tt.approversByGroup,
+				escalation,
+			)
+
+			// Verify the FakeMailSender was called the expected number of times
+			if fakeSender.SendCallCount != tt.expectedSendCount {
+				t.Errorf("Expected Send() to be called %d times, but was called %d times", tt.expectedSendCount, fakeSender.SendCallCount)
+			}
+
+			t.Logf("Test: %s", tt.description)
+			t.Logf("Send() called %d times (expected %d)", fakeSender.SendCallCount, tt.expectedSendCount)
+		})
 	}
 }
 
