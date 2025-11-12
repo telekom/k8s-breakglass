@@ -146,7 +146,7 @@ type IdentityProviderStatus struct {
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:scope=Cluster
+// +kubebuilder:resource:scope=Cluster
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Primary",type=boolean,JSONPath=`.spec.primary`
 // +kubebuilder:printcolumn:name="GroupSync",type=string,JSONPath=`.spec.groupSyncProvider`
@@ -168,7 +168,7 @@ type IdentityProvider struct {
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:scope=Cluster
+// +kubebuilder:resource:scope=Cluster
 
 // IdentityProviderList contains a list of IdentityProvider resources
 type IdentityProviderList struct {

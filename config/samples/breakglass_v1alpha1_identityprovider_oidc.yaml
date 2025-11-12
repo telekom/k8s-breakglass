@@ -1,7 +1,7 @@
 # Example IdentityProvider configuration for OIDC only (no group sync)
 # This configuration sets up OpenID Connect as the identity provider for Breakglass
 # The frontend will use this provider for user authentication
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
   name: primary-oidc
@@ -42,7 +42,7 @@ spec:
 
 ---
 # Example: Secondary OIDC provider for fallback/testing
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
   name: backup-oidc

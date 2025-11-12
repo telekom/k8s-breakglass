@@ -101,7 +101,7 @@ Authorization: Bearer <token>
 ```json
 [
   {
-    "apiVersion": "breakglass.telekom.de/v1alpha1",
+    "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
     "kind": "BreakglassSession",
     "metadata": {
       "name": "session-abc123",
@@ -166,7 +166,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "apiVersion": "breakglass.telekom.de/v1alpha1",
+  "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
   "kind": "BreakglassSession",
   "metadata": {
     "name": "session-abc123",
@@ -225,7 +225,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "apiVersion": "breakglass.telekom.de/v1alpha1",
+  "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
   "kind": "BreakglassSession",
   "metadata": {
     "name": "session-abc123",
@@ -282,7 +282,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "apiVersion": "breakglass.telekom.de/v1alpha1",
+  "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
   "kind": "BreakglassSession",
   "metadata": {
     "name": "session-abc123",
@@ -333,7 +333,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "apiVersion": "breakglass.telekom.de/v1alpha1",
+  "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
   "kind": "BreakglassSession",
   "metadata": {
     "name": "session-abc123",
@@ -385,7 +385,7 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "apiVersion": "breakglass.telekom.de/v1alpha1",
+  "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
   "kind": "BreakglassSession",
   "metadata": {
     "name": "session-abc123",
@@ -471,7 +471,7 @@ Authorization: Bearer <token>
 ```json
 [
   {
-    "apiVersion": "breakglass.telekom.de/v1alpha1",
+    "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
     "kind": "BreakglassEscalation",
     "metadata": {
       "name": "cluster-admin-escalation",

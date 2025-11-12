@@ -12,7 +12,7 @@ spec:
     listKind: IdentityProviderList
     plural: identityproviders
     singular: identityprovider
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.primary

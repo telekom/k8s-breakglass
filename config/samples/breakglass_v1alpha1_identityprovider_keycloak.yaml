@@ -1,7 +1,7 @@
 # Example IdentityProvider configuration with Keycloak for group synchronization
 # This configuration uses OIDC for user authentication and Keycloak for group/user sync
 # The Keycloak client should have view-users and view-groups permissions only
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
   name: primary-keycloak
@@ -77,7 +77,7 @@ stringData:
 
 ---
 # Example: OIDC-only provider (no group sync)
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
   name: fallback-oidc
