@@ -168,10 +168,6 @@ func main() {
 	defer cancel()
 	go breakglass.EscalationStatusUpdater{Log: log, K8sClient: escalationManager.Client, Resolver: escalationManager.Resolver, Interval: 10 * time.Minute}.Start(ctx)
 
-	// Note: IdentityProvider reconciler is registered with the controller-runtime manager
-	// (see ENABLE_WEBHOOK_MANAGER section below). This replaces the old polling-based watcher
-	// with a proper event-driven Kubernetes controller using the controller-runtime pattern.
-
 	// Event recorder for emitting Kubernetes events (persisted to API server)
 	restCfg := ctrl.GetConfigOrDie()
 	kubeClientset, err := kubernetes.NewForConfig(restCfg)
@@ -354,9 +350,7 @@ func main() {
 			}
 			log.Infow("Successfully registered IdentityProvider webhook")
 
-			// Register IdentityProvider Reconciler (controller-runtime pattern)
-			// This watches IdentityProvider CRs and reloads config on changes
-			// Replaces the old polling-based watcher with proper event-driven reconciliation
+			// Register IdentityProvider Reconciler with controller-runtime manager
 			log.Debugw("Setting up IdentityProvider reconciler")
 			idpReconciler := config.NewIdentityProviderReconciler(
 				mgr.GetClient(),
