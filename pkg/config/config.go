@@ -7,6 +7,41 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// IdentityProviderConfig represents the runtime identity provider configuration
+// loaded from IdentityProvider CRD resources
+type IdentityProviderConfig struct {
+	// Type is the provider type (OIDC, Keycloak, LDAP, AzureAD)
+	Type string
+
+	// Authority/URL for OIDC and other endpoint-based providers
+	Authority string
+
+	// ClientID for OIDC and Keycloak
+	ClientID string
+
+	// ClientSecret for Keycloak (loaded from secret reference)
+	ClientSecret string
+
+	// Other provider-specific fields (BaseURL for Keycloak, etc.)
+	Keycloak *KeycloakRuntimeConfig
+
+	// Raw provider config for extensibility
+	RawConfig interface{}
+}
+
+// KeycloakRuntimeConfig is Keycloak-specific runtime configuration
+type KeycloakRuntimeConfig struct {
+	BaseURL              string
+	Realm                string
+	ClientID             string
+	ClientSecret         string
+	ServiceAccountToken  string
+	CacheTTL             string
+	RequestTimeout       string
+	InsecureSkipVerify   bool
+	CertificateAuthority string
+}
+
 type AuthorizationServer struct {
 	URL          string `yaml:"url"`
 	JWKSEndpoint string `yaml:"jwksEndpoint"`
@@ -20,9 +55,7 @@ type AuthorizationServer struct {
 }
 
 type Frontend struct {
-	OIDCAuthority string `yaml:"oidcAuthority"`
-	OIDCClientID  string `yaml:"oidcClientID"`
-	BaseURL       string `yaml:"baseURL"`
+	BaseURL string `yaml:"baseURL"`
 	// BrandingName optionally overrides the UI product name shown in the frontend
 	// e.g. "Das SCHIFF Breakglass". If empty, the frontend may use a hardcoded
 	// default or its own placeholder.
@@ -31,6 +64,11 @@ type Frontend struct {
 	// If empty, defaults to "oss". This allows the UI appearance to be configured server-side
 	// without requiring a rebuild.
 	UIFlavour string `yaml:"uiFlavour"`
+
+	// IdentityProviderName is the name of the IdentityProvider CR to use for frontend config
+	// This is REQUIRED and must reference a valid IdentityProvider resource
+	// Example: "production-idp"
+	IdentityProviderName string `yaml:"identityProviderName"`
 }
 
 type Mail struct {
@@ -67,35 +105,12 @@ type Kubernetes struct {
 	ClusterConfigCheckInterval string `yaml:"clusterConfigCheckInterval"`
 }
 
-// Keycloak holds optional configuration for read-only group membership sync.
-// Only minimal (view) permissions should be granted to the configured client.
-type Keycloak struct {
-	// BaseURL of the Keycloak server, e.g. https://keycloak.example.com
-	BaseURL string `yaml:"baseURL"`
-	// Realm to query, e.g. master or custom realm name
-	Realm string `yaml:"realm"`
-	// ClientID used for client_credentials flow (should have view-users/view-groups only)
-	ClientID string `yaml:"clientID"`
-	// ClientSecret for the above client (omit if using public client w/ other flow)
-	ClientSecret string `yaml:"clientSecret"`
-	// ServiceAccountToken optional pre-authenticated bearer token for Keycloak admin API queries
-	// If provided and ClientSecret is empty, this token is used instead of client_credentials flow
-	ServiceAccountToken string `yaml:"serviceAccountToken"`
-	// CacheTTL duration string (e.g. 5m, 1h); default 10m if empty
-	CacheTTL string `yaml:"cacheTTL"`
-	// RequestTimeout duration string (default 10s)
-	RequestTimeout string `yaml:"requestTimeout"`
-	// Disable set to true to turn off sync even if values present
-	Disable bool `yaml:"disable"`
-}
-
 type Config struct {
 	Server              Server
 	AuthorizationServer AuthorizationServer `yaml:"authorizationServer"`
 	Mail                Mail
 	Frontend            Frontend
 	Kubernetes          Kubernetes
-	Keycloak            Keycloak
 }
 
 func Load() (Config, error) {

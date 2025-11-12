@@ -57,10 +57,16 @@ type ClusterConfigSpec struct {
 	AllowedApproverDomains []string `json:"allowedApproverDomains,omitempty"`
 }
 
-// SecretKeyReference is a namespaced secret key reference.
+// SecretKeyReference is a namespaced secret key reference supporting cross-namespace references.
+// This allows cluster-scoped resources (like IdentityProvider) to reference Secrets in any namespace.
 type SecretKeyReference struct {
-	Name      string `json:"name"`
+	// Name is the name of the secret
+	Name string `json:"name"`
+
+	// Namespace is the namespace containing the secret (supports cross-namespace references)
 	Namespace string `json:"namespace"`
+
+	// Key is the data key in the secret (defaults to "value" if not specified)
 	// +optional
 	Key string `json:"key,omitempty"`
 }

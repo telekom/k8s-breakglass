@@ -43,28 +43,107 @@ server:
   tlsKeyFile: /etc/breakglass/tls/tls.key
 
 authorizationserver:
-  url: https://keycloak.example.com
-  jwksEndpoint: "realms/master/protocol/openid-connect/certs"
+  url: https://keycloak.example.com/realms/master
+  jwksEndpoint: "protocol/openid-connect/certs"
 
 frontend:
-  oidcAuthority: https://keycloak.example.com/realms/master
-  oidcClientID: breakglass-ui
+  identityProviderName: production-idp  # REQUIRED - name of IdentityProvider CR
   baseURL: https://breakglass.example.com
+  brandingName: "Das SCHIFF Breakglass"
 
 mail:
   host: smtp.example.com
   port: 587
   username: breakglass
   password: <secure-password>
-  fromAddress: breakglass-noreply@example.com
+  senderAddress: breakglass-noreply@example.com
 
 kubernetes:
   context: ""
   oidcPrefixes:
-    - "keycloak:"
+    - "oidc:"
 ```
 
-## Step 3: Create Secrets
+**Important:** The `identityProviderName` field in `frontend` section is **REQUIRED**. It must reference a valid IdentityProvider resource that will be created in the next step.
+
+## Step 3: Create IdentityProvider Resource
+
+**IdentityProvider is MANDATORY** for Breakglass operation. Create the IdentityProvider resource in the hub cluster.
+
+### 3a. Create OIDC-only Configuration (Minimal)
+
+```yaml
+# identity-provider.yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: production-idp
+spec:
+  primary: true
+  oidc:
+    authority: "https://keycloak.example.com/realms/master"
+    clientID: "breakglass-ui"
+```
+
+Apply to the hub cluster:
+
+```bash
+kubectl apply -f identity-provider.yaml -n breakglass-system
+```
+
+Verify:
+
+```bash
+kubectl get identityproviders
+```
+
+### 3b. Create OIDC with Keycloak Group Sync (Advanced)
+
+For group-based authorization:
+
+```yaml
+# identity-provider.yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: production-idp
+spec:
+  primary: true
+  oidc:
+    authority: "https://keycloak.example.com/realms/master"
+    clientID: "breakglass-ui"
+  
+  # Optional: Group synchronization
+  groupSyncProvider: Keycloak
+  keycloak:
+    baseURL: "https://keycloak.example.com"
+    realm: "master"
+    clientID: "breakglass-service-account"
+    clientSecretRef:
+      name: keycloak-service-account
+      namespace: breakglass-system
+      key: clientSecret
+    cacheTTL: "10m"
+    requestTimeout: "10s"
+```
+
+Create Keycloak service account secret:
+
+```bash
+kubectl create secret generic keycloak-service-account \
+  -n breakglass-system \
+  --from-literal=clientSecret=<service-account-password>
+```
+
+Apply IdentityProvider:
+
+```bash
+kubectl apply -f identity-provider.yaml
+```
+
+**Note:** The Keycloak service account should have **view-users** and **view-groups** permissions only (no admin rights).
+
+## Step 4: Create Secrets
 
 Create TLS secret:
 
@@ -83,7 +162,7 @@ kubectl create secret generic breakglass-config \
   --from-file=config.yaml=config.yaml
 ```
 
-## Step 4: Build and Push Image
+## Step 5: Build and Push Image
 
 Build image (use OSS flavour):
 
@@ -98,7 +177,7 @@ docker tag breakglass:v1.0.0 myregistry.example.com/breakglass:v1.0.0
 docker push myregistry.example.com/breakglass:v1.0.0
 ```
 
-## Step 5: Deploy to Hub Cluster
+## Step 6: Deploy to Hub Cluster
 
 Update deployment manifests with your image:
 
@@ -122,7 +201,7 @@ kubectl get pods -n breakglass-system
 kubectl get crd | grep breakglass
 ```
 
-## Step 6: Expose Breakglass Service
+## Step 7: Expose Breakglass Service
 
 Create Ingress for external access:
 
@@ -162,7 +241,7 @@ Verify DNS resolution:
 nslookup breakglass.example.com
 ```
 
-## Step 7: Configure Tenant Clusters
+## Step 8: Configure Tenant Clusters
 
 For each tenant cluster:
 

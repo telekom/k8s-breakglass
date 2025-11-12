@@ -41,6 +41,7 @@ Complete documentation is available in the [docs/](./docs/) directory:
 - **[Building](./docs/building.md)** - Build from source
 
 **Resources & Configuration:**
+- **[IdentityProvider](./docs/identity-provider.md)** - **MANDATORY** - Configure OIDC authentication for users
 - **[BreakglassEscalation](./docs/breakglass-escalation.md)** - Define available privilege escalations
 - **[BreakglassSession](./docs/breakglass-session.md)** - Session lifecycle and state management
 - **[ClusterConfig](./docs/cluster-config.md)** - Configure managed clusters

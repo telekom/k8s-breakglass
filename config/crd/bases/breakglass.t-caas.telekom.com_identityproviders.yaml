@@ -1,0 +1,259 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.4
+  name: identityproviders.breakglass.t-caas.telekom.com
+spec:
+  group: breakglass.t-caas.telekom.com
+  names:
+    kind: IdentityProvider
+    listKind: IdentityProviderList
+    plural: identityproviders
+    singular: identityprovider
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.primary
+      name: Primary
+      type: boolean
+    - jsonPath: .spec.groupSyncProvider
+      name: GroupSync
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.connected
+      name: Connected
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          IdentityProvider represents a configured identity provider with OIDC authentication and optional group synchronization
+          IdentityProvider is cluster-scoped, allowing global identity provider configuration.
+          All identity providers use OIDC for user authentication. Group synchronization can be optionally
+          configured using providers like Keycloak. Multiple IdentityProviders can be configured, but only
+          one should be marked as Primary for use as the default.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: IdentityProviderSpec defines the desired state of an IdentityProvider
+            properties:
+              disabled:
+                description: Disabled can be set to true to temporarily disable this
+                  provider without deleting it
+                type: boolean
+              displayName:
+                description: DisplayName is a human-readable name for this provider
+                  (shown in UI/logs)
+                type: string
+              groupSyncProvider:
+                description: |-
+                  GroupSyncProvider specifies which provider to use for group synchronization (optional)
+                  If not set, group synchronization is disabled
+                enum:
+                - Keycloak
+                type: string
+              keycloak:
+                description: |-
+                  Keycloak holds Keycloak-specific configuration for group synchronization
+                  Required when groupSyncProvider is "Keycloak"
+                properties:
+                  baseURL:
+                    description: |-
+                      BaseURL is the Keycloak server URL
+                      Example: https://keycloak.example.com
+                    type: string
+                  cacheTTL:
+                    description: 'CacheTTL is the duration to cache user/group memberships
+                      (default: 10m)'
+                    type: string
+                  certificateAuthority:
+                    description: CertificateAuthority contains a PEM encoded CA certificate
+                      for TLS validation
+                    type: string
+                  clientID:
+                    description: ClientID is the service account client ID for group/user
+                      queries (should have view-users/view-groups only)
+                    type: string
+                  clientSecretRef:
+                    description: ClientSecretRef references a Secret containing the
+                      client secret
+                    properties:
+                      key:
+                        description: Key is the data key in the secret (defaults to
+                          "value" if not specified)
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace containing the secret
+                          (supports cross-namespace references)
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  insecureSkipVerify:
+                    description: InsecureSkipVerify allows skipping TLS verification
+                      (NOT for production!)
+                    type: boolean
+                  realm:
+                    description: Realm is the Keycloak realm name
+                    type: string
+                  requestTimeout:
+                    description: 'RequestTimeout is the timeout for Keycloak API requests
+                      (default: 10s)'
+                    type: string
+                required:
+                - baseURL
+                - clientID
+                - clientSecretRef
+                - realm
+                type: object
+              oidc:
+                description: |-
+                  OIDC holds mandatory OIDC configuration for user authentication
+                  This is the base authentication mechanism for all identity providers
+                properties:
+                  authority:
+                    description: |-
+                      Authority is the OIDC provider authority endpoint
+                      Example: https://auth.example.com
+                    type: string
+                  certificateAuthority:
+                    description: CertificateAuthority contains a PEM encoded CA certificate
+                      for TLS validation
+                    type: string
+                  clientID:
+                    description: ClientID is the OIDC client ID for user authentication
+                      (frontend/UI)
+                    type: string
+                  insecureSkipVerify:
+                    description: InsecureSkipVerify allows skipping TLS verification
+                      (NOT for production!)
+                    type: boolean
+                  jwksEndpoint:
+                    description: |-
+                      JWKSEndpoint is the endpoint for fetching JSON Web Key Sets
+                      If empty, defaults to Authority/.well-known/openid-configuration
+                    type: string
+                required:
+                - authority
+                - clientID
+                type: object
+              primary:
+                description: |-
+                  Primary indicates if this is the primary identity provider (used by default)
+                  Only one IdentityProvider should have primary: true per cluster
+                type: boolean
+            required:
+            - oidc
+            type: object
+          status:
+            description: IdentityProviderStatus defines the observed state of an IdentityProvider
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the IdentityProvider's state
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              configHash:
+                description: ConfigHash is a hash of the current configuration for
+                  change detection
+                type: string
+              connected:
+                description: Connected indicates if the provider is currently reachable
+                type: boolean
+              lastValidation:
+                description: LastValidation is when the provider was last validated
+                format: date-time
+                type: string
+              message:
+                description: Message provides details about the current phase
+                type: string
+              phase:
+                description: 'Phase indicates the current phase: Ready, Validating,
+                  Error'
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

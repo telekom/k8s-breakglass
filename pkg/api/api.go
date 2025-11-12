@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -31,6 +33,11 @@ type Server struct {
 	config config.Config
 	auth   *AuthHandler
 	log    *zap.Logger
+	// idpConfig caches the loaded IdentityProvider configuration for API responses
+	// This is protected by idpMutex to support safe reloading
+	idpConfig *config.IdentityProviderConfig
+	// idpMutex protects concurrent access to idpConfig during reloads
+	idpMutex sync.RWMutex
 	// parsed OIDC authority (original configured value) used by the OIDC proxy
 	oidcAuthority *url.URL
 }
@@ -134,9 +141,9 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		log:    log,
 	}
 
-	// parse configured frontend OIDC authority for proxying requests when possible
-	if cfg.Frontend.OIDCAuthority != "" {
-		if u, err := url.Parse(cfg.Frontend.OIDCAuthority); err == nil {
+	// parse configured authorization server URL for proxying requests when possible
+	if cfg.AuthorizationServer.URL != "" {
+		if u, err := url.Parse(cfg.AuthorizationServer.URL); err == nil {
 			s.oidcAuthority = u
 		}
 	}
@@ -154,9 +161,51 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		metricsHandler(c.Writer, c.Request)
 	})
 
+	// Public configuration endpoint
 	engine.GET("api/config", s.getConfig)
 
+	// Identity Provider configuration endpoint (non-secrets)
+	engine.GET("api/identity-provider", s.getIdentityProvider)
+
 	return s
+}
+
+// SetIdentityProvider sets the loaded IdentityProvider configuration on the server.
+// This is called after loading the IDP to ensure it's available for API responses.
+// Thread-safe: uses mutex to protect concurrent access during reloads.
+func (s *Server) SetIdentityProvider(idpConfig *config.IdentityProviderConfig) {
+	s.idpMutex.Lock()
+	defer s.idpMutex.Unlock()
+
+	if idpConfig != nil {
+		s.idpConfig = idpConfig
+		s.log.Sugar().Infow("identity_provider_loaded", "type", idpConfig.Type, "authority", idpConfig.Authority)
+		// Record metric for provider type
+		metrics.IdentityProviderLoaded.WithLabelValues(idpConfig.Type).Inc()
+	}
+}
+
+// ReloadIdentityProvider reloads the IdentityProvider configuration from the provided loader.
+// This is called when the IdentityProvider CR is updated to pick up changes like:
+// - Certificate rotations
+// - Timeout adjustments
+// - Authority URL changes
+// - Secret updates (e.g., ClientSecret, ServiceAccountToken)
+// Thread-safe: acquires write lock during reload.
+// Returns error if reload fails; existing config remains unchanged on error.
+func (s *Server) ReloadIdentityProvider(loader *config.IdentityProviderLoader) error {
+	ctx := context.Background()
+	newConfig, err := loader.LoadIdentityProvider(ctx)
+	if err != nil {
+		s.log.Sugar().Errorw("failed_to_reload_identity_provider", "error", err)
+		metrics.IdentityProviderLoadFailed.WithLabelValues("reload_error").Inc()
+		return fmt.Errorf("failed to reload identity provider: %w", err)
+	}
+
+	// Update config atomically
+	s.SetIdentityProvider(newConfig)
+	s.log.Sugar().Infow("identity_provider_reloaded", "type", newConfig.Type)
+	return nil
 }
 
 func (s *Server) RegisterAll(controllers []APIController) error {
@@ -207,14 +256,46 @@ type PublicConfig struct {
 	AuthorizationServer AuthorizationServerConfig `json:"authorizationServer"`
 }
 
+// IdentityProviderResponse exposes the configured IdentityProvider details to the frontend.
+// IMPORTANT: This never includes secrets (ClientSecret, ServiceAccountToken, etc.)
+type IdentityProviderResponse struct {
+	// Type is the provider type (e.g., "OIDC", "Keycloak", "LDAP", "AzureAD")
+	Type string `json:"type"`
+	// Authority is the OIDC or OAuth authority URL (exposed to frontend for browser flows)
+	Authority string `json:"authority"`
+	// ClientID is the OIDC or OAuth client ID
+	ClientID string `json:"clientId"`
+	// KeycloakMetadata contains Keycloak-specific non-secret configuration if applicable
+	KeycloakMetadata *KeycloakResponseMetadata `json:"keycloakMetadata,omitempty"`
+}
+
+// KeycloakResponseMetadata contains Keycloak-specific metadata exposed to the frontend.
+// This intentionally excludes all secrets and sensitive information.
+type KeycloakResponseMetadata struct {
+	// BaseURL is the Keycloak server base URL (visible to frontend)
+	BaseURL string `json:"baseUrl"`
+	// Realm is the Keycloak realm name (visible to frontend)
+	Realm string `json:"realm"`
+}
+
 func (s *Server) getConfig(c *gin.Context) {
 	// Expose a frontend-facing OIDC authority that points at the server-side proxy
 	// so the browser performs discovery/JWKS calls against the API server origin
 	// (avoids requiring the Keycloak cert to be trusted by the host/browser).
-	frontendAuthority := s.config.Frontend.OIDCAuthority
-	// If the configured authority is an absolute URL (Keycloak), expose the proxy
-	// path instead for the browser. Keep s.config.Frontend.OIDCAuthority intact so
-	// the server-side proxy can still target the real Keycloak authority.
+	frontendAuthority := ""
+	clientID := ""
+
+	// Load OIDC config from IdentityProvider if available (thread-safe read)
+	s.idpMutex.RLock()
+	if s.idpConfig != nil {
+		frontendAuthority = s.idpConfig.Authority
+		clientID = s.idpConfig.ClientID
+	}
+	s.idpMutex.RUnlock()
+
+	// If the configured authority is an absolute URL (OIDC), expose the proxy
+	// path instead for the browser. Keep s.config.AuthorizationServer.URL intact so
+	// the server-side proxy can still target the real OIDC authority.
 	if s.oidcAuthority != nil {
 		// Build a proxy URL relative to the API server. Use the controller listen
 		// address as origin when available; prefer relative proxy root so client
@@ -225,7 +306,7 @@ func (s *Server) getConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, PublicConfig{
 		Frontend: FrontendConfig{
 			OIDCAuthority: frontendAuthority,
-			OIDCClientID:  s.config.Frontend.OIDCClientID,
+			OIDCClientID:  clientID,
 			BrandingName:  s.config.Frontend.BrandingName,
 			UIFlavour:     s.config.Frontend.UIFlavour,
 		},
@@ -234,6 +315,41 @@ func (s *Server) getConfig(c *gin.Context) {
 			JWKSEndpoint: s.config.AuthorizationServer.JWKSEndpoint,
 		},
 	})
+}
+
+// getIdentityProvider returns the configured IdentityProvider metadata (non-secrets).
+// This endpoint is called by the frontend to determine which authentication method to use.
+// IMPORTANT: No secrets (ClientSecret, ServiceAccountToken, etc.) are ever exposed.
+func (s *Server) getIdentityProvider(c *gin.Context) {
+	// Thread-safe read of idpConfig with RLock
+	s.idpMutex.RLock()
+	idpCfg := s.idpConfig
+	s.idpMutex.RUnlock()
+
+	// If no IdentityProvider is loaded, return 404
+	if idpCfg == nil {
+		s.log.Sugar().Warnw("identity_provider_not_loaded")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Identity provider not configured"})
+		return
+	}
+
+	// Build response with only non-secret fields
+	resp := IdentityProviderResponse{
+		Type:      idpCfg.Type,
+		Authority: idpCfg.Authority,
+		ClientID:  idpCfg.ClientID,
+	}
+
+	// If Keycloak is configured, expose only non-secret metadata
+	if idpCfg.Keycloak != nil {
+		resp.KeycloakMetadata = &KeycloakResponseMetadata{
+			BaseURL: idpCfg.Keycloak.BaseURL,
+			Realm:   idpCfg.Keycloak.Realm,
+		}
+	}
+
+	s.log.Sugar().Debugw("identity_provider_exposed", "type", resp.Type)
+	c.JSON(http.StatusOK, resp)
 }
 
 // handleOIDCProxy proxies OIDC discovery and JWKS endpoints from the configured

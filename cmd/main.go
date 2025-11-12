@@ -27,10 +27,31 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 )
+
+// createScheme creates and returns a runtime scheme with all necessary types registered.
+// This includes standard Kubernetes types and all custom breakglass CRDs.
+// The same scheme instance should be reused for all Kubernetes clients to ensure consistency.
+func createScheme(log *zap.SugaredLogger) *runtime.Scheme {
+	scheme := runtime.NewScheme()
+
+	// Add standard Kubernetes types (core API)
+	if err := corev1.AddToScheme(scheme); err != nil {
+		log.Fatalf("Failed to add corev1 to scheme: %v", err)
+	}
+
+	// Add custom breakglass CRD types (v1alpha1)
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		log.Fatalf("Failed to add v1alpha1 CRDs to scheme: %v", err)
+	}
+
+	log.Debugw("Scheme initialized with CRDs", "types", "corev1, BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider, DenyPolicy")
+	return scheme
+}
 
 func main() {
 	debug := true
@@ -45,28 +66,70 @@ func main() {
 	log := zl.Sugar()
 	log.With("version", system.Version).Info("Starting breakglass api")
 
-	config, err := config.Load()
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Error loading config for breakglass controller: %v", err)
 	}
 
 	if debug {
-		log.Infof("%#v", config)
+		log.Infof("%#v", cfg)
 	}
 
-	auth := api.NewAuth(log, config)
-	server := api.NewServer(log.Desugar(), config, debug, auth)
+	auth := api.NewAuth(log, cfg)
+	server := api.NewServer(log.Desugar(), cfg, debug, auth)
 
-	kubeContext := config.Kubernetes.Context
+	kubeContext := cfg.Kubernetes.Context
 	sessionManager, err := breakglass.NewSessionManager(kubeContext)
 	if err != nil {
 		log.Fatalf("Error creating breakglass session manager: %v", err)
 		return
 	}
+
+	// Create a unified scheme with all CRDs registered
+	// This scheme is reused throughout the application for all Kubernetes clients
+	scheme := createScheme(log)
+
+	// Create a Kubernetes client for loading IdentityProvider (with custom scheme)
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Fatalf("Error getting Kubernetes config: %v", err)
+		return
+	}
+	kubeClient, err := client.New(restConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		log.Fatalf("Error creating Kubernetes client: %v", err)
+		return
+	}
+
+	// Load IdentityProvider configuration for group sync
+	idpLoader := config.NewIdentityProviderLoader(kubeClient)
+	idpLoader.WithLogger(log)
+
+	// Validate IdentityProvider exists (mandatory)
+	ctx := context.Background()
+	if err := idpLoader.ValidateIdentityProviderExists(ctx); err != nil {
+		metrics.IdentityProviderValidationFailed.WithLabelValues("not_found").Inc()
+		log.Fatalf("IdentityProvider validation failed: %v", err)
+	}
+
+	// Load primary IdentityProvider to check for Keycloak group sync
+	idpConfig, err := idpLoader.LoadIdentityProvider(ctx)
+	if err != nil {
+		log.Warnf("Failed to load IdentityProvider: %v; group sync disabled", err)
+		metrics.IdentityProviderLoadFailed.WithLabelValues("load_error").Inc()
+		idpConfig = nil
+	}
+
+	// Make IdentityProvider available to API server for frontend configuration
+	if idpConfig != nil {
+		server.SetIdentityProvider(idpConfig)
+		log.Infow("identity_provider_set_on_api_server", "type", idpConfig.Type)
+	}
+
 	var resolver breakglass.GroupMemberResolver
-	if !config.Keycloak.Disable && config.Keycloak.BaseURL != "" && config.Keycloak.Realm != "" && config.Keycloak.ClientID != "" {
-		resolver = breakglass.NewKeycloakGroupMemberResolver(log, config.Keycloak)
-		log.Infow("Keycloak group sync enabled", "baseURL", config.Keycloak.BaseURL, "realm", config.Keycloak.Realm)
+	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" {
+		resolver = breakglass.NewKeycloakGroupMemberResolver(log, *idpConfig.Keycloak)
+		log.Infow("Keycloak group sync enabled", "baseURL", idpConfig.Keycloak.BaseURL, "realm", idpConfig.Keycloak.Realm)
 	} else {
 		resolver = &breakglass.KeycloakGroupMemberResolver{} // no-op
 		log.Infow("Keycloak group sync disabled or not fully configured; using no-op resolver")
@@ -82,17 +145,17 @@ func main() {
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
 	// Initialize mail queue for non-blocking async email sending
-	mailSender := mail.NewSender(config)
-	mailQueue := mail.NewQueue(mailSender, log, config.Mail.RetryCount, config.Mail.RetryBackoffMs, config.Mail.QueueSize)
+	mailSender := mail.NewSender(cfg)
+	mailQueue := mail.NewQueue(mailSender, log, cfg.Mail.RetryCount, cfg.Mail.RetryBackoffMs, cfg.Mail.QueueSize)
 	mailQueue.Start()
-	log.Infow("Mail queue initialized and started", "retryCount", config.Mail.RetryCount, "retryBackoffMs", config.Mail.RetryBackoffMs, "queueSize", config.Mail.QueueSize)
+	log.Infow("Mail queue initialized and started", "retryCount", cfg.Mail.RetryCount, "retryBackoffMs", cfg.Mail.RetryBackoffMs, "queueSize", cfg.Mail.QueueSize)
 
-	sessionController := breakglass.NewBreakglassSessionController(log, config, &sessionManager, &escalationManager, auth.Middleware(), ccProvider, escalationManager.Client).WithQueue(mailQueue)
+	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), ccProvider, escalationManager.Client).WithQueue(mailQueue)
 
 	err = server.RegisterAll([]api.APIController{
 		sessionController,
 		breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware()),
-		webhook.NewWebhookController(log, config, &sessionManager, &escalationManager, ccProvider, denyEval),
+		webhook.NewWebhookController(log, cfg, &sessionManager, &escalationManager, ccProvider, denyEval),
 	})
 	if err != nil {
 		log.Fatalf("Error registering breakglass controllers: %v", err)
@@ -104,9 +167,27 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go breakglass.EscalationStatusUpdater{Log: log, K8sClient: escalationManager.Client, Resolver: escalationManager.Resolver, Interval: 10 * time.Minute}.Start(ctx)
+
+	// Start IdentityProvider watcher to detect and reload config changes
+	// This enables zero-downtime updates for cert rotation, secret updates, etc.
+	// The watcher monitors ALL IdentityProvider CRs in the cluster, supporting
+	// multi-provider scenarios where multiple providers can be configured.
+	idpWatcher := config.NewIdentityProviderWatcher(kubeClient, log)
+	idpWatcher.WithReloadCallback(func(reloadCtx context.Context) error {
+		return server.ReloadIdentityProvider(idpLoader)
+	})
+	idpWatcher.WithDebounce(2 * time.Second)
+
+	go func() {
+		done := idpWatcher.Start(ctx)
+		<-done
+		log.Warn("IdentityProvider watcher stopped")
+	}()
+	log.Infow("IdentityProvider watcher started", "debounce", "2s")
+
 	// Event recorder for emitting Kubernetes events (persisted to API server)
-	cfg := ctrl.GetConfigOrDie()
-	kubeClientset, err := kubernetes.NewForConfig(cfg)
+	restCfg := ctrl.GetConfigOrDie()
+	kubeClientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		log.Fatalf("failed to create kubernetes clientset for event recorder: %v", err)
 	}
@@ -118,11 +199,11 @@ func main() {
 
 	// Determine interval from config (fallback to 10m)
 	interval := 10 * time.Minute
-	if config.Kubernetes.ClusterConfigCheckInterval != "" {
-		if d, err := time.ParseDuration(config.Kubernetes.ClusterConfigCheckInterval); err == nil {
+	if cfg.Kubernetes.ClusterConfigCheckInterval != "" {
+		if d, err := time.ParseDuration(cfg.Kubernetes.ClusterConfigCheckInterval); err == nil {
 			interval = d
 		} else {
-			log.Warnw("Invalid clusterConfigCheckInterval in config; using default 10m", "value", config.Kubernetes.ClusterConfigCheckInterval, "error", err)
+			log.Warnw("Invalid clusterConfigCheckInterval in config; using default 10m", "value", cfg.Kubernetes.ClusterConfigCheckInterval, "error", err)
 		}
 	}
 
@@ -134,22 +215,8 @@ func main() {
 	enableMgr := os.Getenv("ENABLE_WEBHOOK_MANAGER")
 	if enableMgr == "" || enableMgr == "true" {
 		go func() {
-			// Create custom scheme with CRDs registered
-			log.Debugw("Creating manager with custom scheme including CRDs")
-			scheme := runtime.NewScheme()
-
-			// Add standard Kubernetes types
-			if err := corev1.AddToScheme(scheme); err != nil {
-				log.Errorw("Failed to add corev1 to scheme", "error", err)
-				return
-			}
-
-			// Add our custom resource definitions
-			if err := v1alpha1.AddToScheme(scheme); err != nil {
-				log.Errorw("Failed to add v1alpha1 CRDs to scheme", "error", err)
-				return
-			}
-			log.Infow("CRDs successfully added to scheme", "types", "BreakglassSession, BreakglassEscalation, ClusterConfig")
+			// Reuse the unified scheme for consistency across all Kubernetes clients
+			log.Debugw("Starting manager with unified scheme")
 
 			mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 				Scheme: scheme,
@@ -292,6 +359,13 @@ func main() {
 				return
 			}
 			log.Infow("Successfully registered ClusterConfig webhook")
+
+			log.Debugw("Starting webhook registration for IdentityProvider")
+			if err := (&v1alpha1.IdentityProvider{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup IdentityProvider webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered IdentityProvider webhook")
 
 			// Start manager (blocks) but we run it in a goroutine so it doesn't prevent the API server
 			log.Infow("Starting controller-runtime manager")

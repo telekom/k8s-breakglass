@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "breakglass-controller.fullname" . }}-identity-provider-manager-role
+  labels:
+  {{- include "breakglass-controller.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - identityproviders
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - identityproviders/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get

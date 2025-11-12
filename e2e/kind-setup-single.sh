@@ -938,6 +938,26 @@ for t in "${TENANTS[@]}"; do
   create_tenant "$t"
 done
 
+log 'Create IdentityProvider for OIDC authentication'
+# IdentityProvider is a mandatory cluster-scoped resource that configures user authentication.
+# It must be created before the controller can fully function.
+cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: breakglass-e2e-idp
+spec:
+  # Mark as primary so controller uses this as default provider
+  primary: true
+  oidc:
+    # Authority URL pointing to test Keycloak instance (in-cluster DNS)
+    authority: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/${KEYCLOAK_REALM}"
+    # OIDC client ID (must match realm configuration)
+    clientID: "breakglass-ui"
+    # Skip TLS verification for self-signed test certificates (NOT for production!)
+    insecureSkipVerify: true
+YAML
+
 log 'Port-forward controller and keycloak for tests'
 rm -f "$PF_FILE" || true
 # Expose controller only (keycloak port-forward is already running from JWKS step)

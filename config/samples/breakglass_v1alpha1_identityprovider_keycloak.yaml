@@ -1,0 +1,90 @@
+# Example IdentityProvider configuration with Keycloak for group synchronization
+# This configuration uses OIDC for user authentication and Keycloak for group/user sync
+# The Keycloak client should have view-users and view-groups permissions only
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: primary-keycloak
+spec:
+  # Mandatory OIDC configuration for user authentication
+  oidc:
+    authority: "https://auth.example.com"
+    clientID: "breakglass-ui"
+    # Optional: jwksEndpoint for custom JWKS endpoint
+    # jwksEndpoint: "https://auth.example.com/.well-known/jwks.json"
+
+  # Enable Keycloak for group synchronization
+  groupSyncProvider: Keycloak
+
+  # Keycloak configuration for group/user queries
+  keycloak:
+    # BaseURL is the Keycloak server URL
+    baseURL: "https://keycloak.example.com"
+
+    # Realm is the Keycloak realm name to use
+    realm: "master"
+
+    # ClientID is the service account client for group/user queries
+    # This client should ONLY have view-users and view-groups permissions
+    clientID: "breakglass-admin"
+
+    # ClientSecretRef references a Secret containing the client secret
+    # The secret should be created in the same namespace as the IdentityProvider
+    # kubectl create secret generic keycloak-secret \
+    #   --from-literal=clientSecret=YOUR_SECRET_HERE
+    clientSecretRef:
+      name: keycloak-secret
+      key: clientSecret
+      # namespace: default  # Optional: defaults to current namespace
+
+    # CacheTTL is the duration to cache user/group memberships
+    # Recommended: 5m to 30m depending on how frequently group memberships change
+    cacheTTL: "10m"
+
+    # RequestTimeout is the timeout for individual Keycloak API requests
+    # Default: 10s, increase if you have slow API responses
+    requestTimeout: "10s"
+
+    # InsecureSkipVerify allows skipping TLS certificate verification
+    # WARNING: Only use in development/testing environments!
+    # insecureSkipVerify: false
+
+    # CertificateAuthority (optional) contains a PEM-encoded CA certificate
+    # for validating the TLS certificate presented by the Keycloak server
+    # certificateAuthority: |
+    #   -----BEGIN CERTIFICATE-----
+    #   ...
+    #   -----END CERTIFICATE-----
+
+  # This is the primary/default identity provider
+  primary: true
+  displayName: "Primary Keycloak Provider"
+
+---
+# Secret containing Keycloak client credentials
+# Create this before applying the IdentityProvider CR
+# Or use: kubectl create secret generic keycloak-secret \
+#   --from-literal=clientSecret='your-secret-here'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-secret
+type: Opaque
+stringData:
+  # The client secret for the Keycloak service account
+  # This is used to authenticate API requests to Keycloak for group queries
+  clientSecret: "your-keycloak-client-secret-here"
+
+---
+# Example: OIDC-only provider (no group sync)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: fallback-oidc
+spec:
+  oidc:
+    authority: "https://backup-auth.example.com"
+    clientID: "breakglass-ui-fallback"
+
+  primary: false
+  displayName: "Fallback OIDC Provider"

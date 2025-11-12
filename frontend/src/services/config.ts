@@ -1,10 +1,30 @@
 import type Config from "@/model/config";
 import axios from "axios";
 import { error as logError } from "@/services/logger";
+import { getIdentityProvider, extractOIDCConfig } from "@/services/identityProvider";
 
 // Supports both legacy flat shape { oidcAuthority, oidcClientID }
 // and new nested shape { frontend: { oidcAuthority, oidcClientID, uiFlavour }, authorizationServer: {...} }
 export default async function getConfig(): Promise<Config> {
+  try {
+    // Try fetching from new IdentityProvider endpoint first
+    const idpConfig = await getIdentityProvider();
+    if (idpConfig && idpConfig.type) {
+      const oidcConfig = extractOIDCConfig(idpConfig);
+      if (oidcConfig) {
+        return {
+          oidcAuthority: oidcConfig.oidcAuthority,
+          oidcClientID: oidcConfig.oidcClientID,
+          brandingName: undefined,
+          uiFlavour: undefined,
+        };
+      }
+    }
+  } catch (err) {
+    logError("ConfigService", "Failed to fetch from /api/identity-provider, falling back to /api/config", err);
+  }
+
+  // Fall back to /api/config if IdentityProvider endpoint fails or returns invalid data
   const res = await axios.get<any>("/api/config");
   const data = res.data || {};
   if (data.oidcAuthority && data.oidcClientID) {
@@ -16,3 +36,4 @@ export default async function getConfig(): Promise<Config> {
   logError('ConfigService', 'Config missing OIDC fields', data);
   return { oidcAuthority: "", oidcClientID: "", brandingName: undefined, uiFlavour: undefined };
 }
+
