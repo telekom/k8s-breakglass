@@ -33,6 +33,26 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 )
 
+// createScheme creates and returns a runtime scheme with all necessary types registered.
+// This includes standard Kubernetes types and all custom breakglass CRDs.
+// The same scheme instance should be reused for all Kubernetes clients to ensure consistency.
+func createScheme(log *zap.SugaredLogger) *runtime.Scheme {
+	scheme := runtime.NewScheme()
+
+	// Add standard Kubernetes types (core API)
+	if err := corev1.AddToScheme(scheme); err != nil {
+		log.Fatalf("Failed to add corev1 to scheme: %v", err)
+	}
+
+	// Add custom breakglass CRD types (v1alpha1)
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		log.Fatalf("Failed to add v1alpha1 CRDs to scheme: %v", err)
+	}
+
+	log.Debugw("Scheme initialized with CRDs", "types", "corev1, BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider, DenyPolicy")
+	return scheme
+}
+
 func main() {
 	debug := true
 	flag.BoolVar(&debug, "debug", false, "enable debug level logging")
@@ -65,13 +85,17 @@ func main() {
 		return
 	}
 
-	// Create a Kubernetes client for loading IdentityProvider
+	// Create a unified scheme with all CRDs registered
+	// This scheme is reused throughout the application for all Kubernetes clients
+	scheme := createScheme(log)
+
+	// Create a Kubernetes client for loading IdentityProvider (with custom scheme)
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
 		log.Fatalf("Error getting Kubernetes config: %v", err)
 		return
 	}
-	kubeClient, err := client.New(restConfig, client.Options{})
+	kubeClient, err := client.New(restConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		log.Fatalf("Error creating Kubernetes client: %v", err)
 		return
@@ -191,22 +215,8 @@ func main() {
 	enableMgr := os.Getenv("ENABLE_WEBHOOK_MANAGER")
 	if enableMgr == "" || enableMgr == "true" {
 		go func() {
-			// Create custom scheme with CRDs registered
-			log.Debugw("Creating manager with custom scheme including CRDs")
-			scheme := runtime.NewScheme()
-
-			// Add standard Kubernetes types
-			if err := corev1.AddToScheme(scheme); err != nil {
-				log.Errorw("Failed to add corev1 to scheme", "error", err)
-				return
-			}
-
-			// Add our custom resource definitions
-			if err := v1alpha1.AddToScheme(scheme); err != nil {
-				log.Errorw("Failed to add v1alpha1 CRDs to scheme", "error", err)
-				return
-			}
-			log.Infow("CRDs successfully added to scheme", "types", "BreakglassSession, BreakglassEscalation, ClusterConfig")
+			// Reuse the unified scheme for consistency across all Kubernetes clients
+			log.Debugw("Starting manager with unified scheme")
 
 			mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 				Scheme: scheme,
