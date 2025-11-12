@@ -44,6 +44,10 @@ type RequestBreakglassSessionMailParams struct {
 	FormattedDuration   string // Human-readable duration (e.g., "2 hours")
 	RequestedAt         string // When the request was made
 
+	// UI/UX enhancements
+	RequestedApprovalGroups string // Requested approval groups expression (e.g., "fixed-core OR mobile-core")
+	TimeRemaining           string // Time remaining until expiration (e.g., "23 hours 45 minutes")
+
 	URL          string
 	BrandingName string
 }

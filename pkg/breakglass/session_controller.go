@@ -1403,20 +1403,61 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		"approverGroupsToShow", approverGroupsToShow,
 		"session", bs.Name)
 
+	// Build TimeRemaining string for UI/UX
+	timeRemaining := ""
+	var expiryTime time.Time
+	if bs.Spec.ScheduledStartTime != nil {
+		expiryTime = bs.Spec.ScheduledStartTime.Time
+		if bs.Spec.MaxValidFor != "" {
+			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+				expiryTime = bs.Spec.ScheduledStartTime.Add(d)
+			}
+		} else {
+			expiryTime = bs.Spec.ScheduledStartTime.Add(1 * time.Hour)
+		}
+	} else {
+		// Immediate session
+		expiryTime = time.Now()
+		if bs.Spec.MaxValidFor != "" {
+			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+				expiryTime = time.Now().Add(d)
+			}
+		} else {
+			expiryTime = time.Now().Add(1 * time.Hour)
+		}
+	}
+	remainingDuration := time.Until(expiryTime)
+	if remainingDuration > 0 {
+		timeRemaining = formatDuration(remainingDuration)
+	}
+
+	// Build RequestedApprovalGroups string
+	requestedApprovalGroupsStr := ""
+	if matchedEscalation != nil && len(matchedEscalation.Spec.Approvers.Groups) > 0 {
+		groupNames := matchedEscalation.Spec.Approvers.Groups
+		if len(groupNames) == 1 {
+			requestedApprovalGroupsStr = groupNames[0]
+		} else {
+			requestedApprovalGroupsStr = strings.Join(groupNames, " OR ")
+		}
+	}
+
 	body, err := mail.RenderBreakglassSessionRequest(mail.RequestBreakglassSessionMailParams{
-		SubjectEmail:        requestEmail,
-		SubjectFullName:     requestUsername,
-		RequestingUsername:  requestUsername,
-		RequestedCluster:    bs.Spec.Cluster,
-		RequestedUsername:   bs.Spec.User,
-		RequestedGroup:      bs.Spec.GrantedGroup,
-		RequestReason:       bs.Spec.RequestReason,
-		ScheduledStartTime:  scheduledStartTimeStr,
-		CalculatedExpiresAt: calculatedExpiresAtStr,
-		FormattedDuration:   formattedDurationStr,
-		RequestedAt:         requestedAtStr,
-		ApproverGroups:      approverGroupsToShow,
-		URL:                 fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
+		SubjectEmail:            requestEmail,
+		SubjectFullName:         requestUsername,
+		RequestingUsername:      requestUsername,
+		RequestedCluster:        bs.Spec.Cluster,
+		RequestedUsername:       bs.Spec.User,
+		RequestedGroup:          bs.Spec.GrantedGroup,
+		RequestReason:           bs.Spec.RequestReason,
+		ScheduledStartTime:      scheduledStartTimeStr,
+		CalculatedExpiresAt:     calculatedExpiresAtStr,
+		FormattedDuration:       formattedDurationStr,
+		RequestedAt:             requestedAtStr,
+		ApproverGroups:          approverGroupsToShow,
+		RequestedApprovalGroups: requestedApprovalGroupsStr,
+		TimeRemaining:           timeRemaining,
+		URL:                     fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
 		BrandingName: func() string {
 			if wc.config.Frontend.BrandingName != "" {
 				return wc.config.Frontend.BrandingName

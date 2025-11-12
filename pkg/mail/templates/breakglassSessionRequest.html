@@ -172,6 +172,194 @@
       padding-top: 12px;
       border-top: 1px solid #ddd;
     }
+
+    .urgency-banner {
+      background-color: #fff3cd;
+      border-left: 4px solid #ff9800;
+      padding: 12px;
+      margin: 15px 0;
+      border-radius: 4px;
+      font-weight: bold;
+      color: #856404;
+    }
+
+    .why-you-section {
+      background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 20px 0;
+    }
+
+    .why-you-title {
+      font-size: 1rem;
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .why-you-content {
+      font-size: 0.95rem;
+      color: #555;
+      line-height: 1.6;
+    }
+
+    .group-requirement {
+      background: #f0f7ff;
+      border-left: 3px solid #2196F3;
+      padding: 10px 12px;
+      margin: 10px 0;
+      border-radius: 3px;
+    }
+
+    .group-requirement strong {
+      color: #1976D2;
+    }
+
+    .group-badge {
+      display: inline-block;
+      background-color: #4CAF50;
+      color: white;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      font-weight: bold;
+      margin: 3px 3px 3px 0;
+      vertical-align: middle;
+    }
+
+    .group-badge::before {
+      content: "✓ ";
+      margin-right: 4px;
+    }
+
+    .time-remaining {
+      font-size: 0.95rem;
+      color: #666;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #ddd;
+    }
+
+    /* Dark mode support */
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-color: #1e1e1e;
+        color: #e0e0e0;
+      }
+
+      .container {
+        background-color: #1e1e1e;
+      }
+
+      .card {
+        background-color: #2d2d2d;
+        border-color: rgba(255, 255, 255, 0.1);
+      }
+
+      .footer {
+        background-color: #252525;
+        border-top-color: #444;
+      }
+
+      .why-you-section {
+        background: linear-gradient(135deg, #2d2d2d 0%, #333333 100%);
+        border-color: #444;
+      }
+
+      .why-you-title {
+        color: #e0e0e0;
+      }
+
+      .why-you-content {
+        color: #b0b0b0;
+      }
+
+      .group-requirement {
+        background: #1a3a52;
+        border-left-color: #64B5F6;
+      }
+
+      .group-requirement strong {
+        color: #64B5F6;
+      }
+
+      .details-table th {
+        background-color: #333;
+        color: #e0e0e0;
+        border-bottom-color: #e20074;
+      }
+
+      .details-table td {
+        color: #b0b0b0;
+        border-bottom-color: #333;
+      }
+
+      .details-table tr:nth-child(odd) {
+        background-color: #2a2a2a;
+      }
+    }
+
+    /* Mobile responsive */
+    @media (max-width: 600px) {
+      .container {
+        padding: 10px;
+      }
+
+      .card {
+        margin: 10px auto;
+        padding: 15px;
+        max-width: 100%;
+      }
+
+      .header h1 {
+        font-size: 20px;
+      }
+
+      .requester-box {
+        padding: 12px;
+      }
+
+      .details-table {
+        font-size: 0.85rem;
+      }
+
+      .details-table th,
+      .details-table td {
+        padding: 8px;
+      }
+
+      .btn {
+        width: 100%;
+        text-align: center;
+        box-sizing: border-box;
+        padding: 14px 16px;
+      }
+
+      .why-you-section {
+        padding: 12px;
+      }
+
+      .group-badge {
+        display: block;
+        margin: 5px 0;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      .footer {
+        padding: 12px;
+        font-size: 0.8rem;
+      }
+
+      .urgency-banner {
+        padding: 10px;
+        font-size: 0.9rem;
+      }
+    }
   </style>
 </head>
 
@@ -243,27 +431,59 @@
       </div>
       {{ end }}
 
+      {{ if .TimeRemaining }}
+      <div class="urgency-banner">
+        ⏱️ Please respond within {{ .TimeRemaining }}
+        {{ if .CalculatedExpiresAt }}
+        <br/>This request expires: {{ .CalculatedExpiresAt }}
+        {{ end }}
+      </div>
+      {{ end }}
+
+      <div class="why-you-section">
+        <div class="why-you-title">
+          🔑 Why You?
+        </div>
+        <div class="why-you-content">
+          <p>This request requires approval from:</p>
+          <div class="group-requirement">
+            <strong>{{ .RequestedApprovalGroups }}</strong>
+          </div>
+
+          {{ if .ApproverGroups }}
+          <p>You are a member of:</p>
+          <div>
+            {{ range .ApproverGroups }}
+            <span class="group-badge">{{ . }}</span>
+            {{ end }}
+          </div>
+          {{ else }}
+          <p><strong>You are configured as an approver for this escalation path</strong></p>
+          {{ end }}
+
+          {{ if .TimeRemaining }}
+          <div class="time-remaining">
+            <strong>Action Required:</strong> Please approve or reject within {{ .TimeRemaining }}
+          </div>
+          {{ end }}
+        </div>
+      </div>
+
       <div style="text-align: center;">
         <a class="btn" href="{{ .URL }}">Review Request</a>
       </div>
 
       <div class="footer">
-        <div class="footer-title">Why did you receive this email?</div>
-        {{ if .ApproverGroups }}
-        <div style="margin-bottom: 8px;">You are a member of the following approver groups:</div>
-        {{ range .ApproverGroups }}
-        <div class="footer-item">{{ . }}</div>
-        {{ end }}
-        {{ else }}
-        <div class="footer-item">You are configured as an approver for this escalation path</div>
-        {{ end }}
-
+        <div class="footer-title">Additional Information</div>
         {{ if .RequestReason }}
-        <div class="footer-reason">
-          <strong>Request Details:</strong><br>
+        <div style="margin-bottom: 8px;">
+          <strong>Request Reason:</strong><br/>
           {{ .RequestReason }}
         </div>
         {{ end }}
+        <div style="margin-top: 12px; font-size: 0.8rem; color: #999;">
+          This is an automated email. Please do not reply to this address.
+        </div>
       </div>
     </div>
   </div>

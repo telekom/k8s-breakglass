@@ -1,6 +1,6 @@
 <script setup lang="ts">
 
-import { inject, ref, onMounted, reactive } from "vue";
+import { inject, ref, onMounted, reactive, computed } from "vue";
 import CountdownTimer from '@/components/CountdownTimer.vue';
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
@@ -16,6 +16,68 @@ const approverNotes = reactive<Record<string, string>>({});
 const showApproveModal = ref(false);
 const modalSession = ref<any | null>(null);
 
+// Filter and sort controls
+const sortBy = ref<'urgent' | 'recent' | 'groups'>('urgent');
+const urgencyFilter = ref<'all' | 'critical' | 'high' | 'normal'>('all');
+
+// Helper function to get time remaining in seconds
+function getTimeRemaining(expiresAt: string | undefined): number {
+  if (!expiresAt) return Infinity;
+  const expiry = new Date(expiresAt).getTime();
+  const now = Date.now();
+  return Math.max(0, Math.floor((expiry - now) / 1000));
+}
+
+// Helper function to categorize urgency based on time remaining
+function getUrgency(expiresAt: string | undefined): 'critical' | 'high' | 'normal' {
+  const secondsRemaining = getTimeRemaining(expiresAt);
+  if (secondsRemaining < 3600) return 'critical'; // < 1 hour
+  if (secondsRemaining < 21600) return 'high';     // < 6 hours
+  return 'normal';
+}
+
+// Enhanced sessions list with urgency calculation
+const sessionsWithUrgency = computed(() => {
+  return pendingSessions.value.map(session => ({
+    ...session,
+    urgency: getUrgency(session.status?.expiresAt),
+    timeRemaining: getTimeRemaining(session.status?.expiresAt),
+  }));
+});
+
+// Filter sessions based on urgency filter
+const filteredSessions = computed(() => {
+  return sessionsWithUrgency.value.filter(session => {
+    if (urgencyFilter.value === 'all') return true;
+    return session.urgency === urgencyFilter.value;
+  });
+});
+
+// Sort sessions based on selected sort option
+const sortedSessions = computed(() => {
+  const sorted = [...filteredSessions.value];
+  
+  switch (sortBy.value) {
+    case 'urgent':
+      // Sort by time remaining (soonest first)
+      sorted.sort((a, b) => a.timeRemaining - b.timeRemaining);
+      break;
+    case 'recent':
+      // Sort by creation date (newest first)
+      sorted.sort((a, b) => {
+        const timeA = new Date(a.metadata.creationTimestamp).getTime();
+        const timeB = new Date(b.metadata.creationTimestamp).getTime();
+        return timeB - timeA;
+      });
+      break;
+    case 'groups':
+      // Sort by granted group name
+      sorted.sort((a, b) => (a.spec?.grantedGroup || '').localeCompare(b.spec?.grantedGroup || ''));
+      break;
+  }
+  
+  return sorted;
+});
 
 async function fetchPendingApprovals() {
   loading.value = true;
@@ -64,12 +126,44 @@ onMounted(fetchPendingApprovals);
 <template>
   <main class="container">
     <h2>Pending Approvals</h2>
+    
+    <!-- Filter and Sort Controls -->
+    <div class="controls-section">
+      <div class="control-group">
+        <label for="sort-select">Sort by:</label>
+        <select id="sort-select" v-model="sortBy" class="sort-select">
+          <option value="urgent">Most Urgent (expires soonest)</option>
+          <option value="recent">Most Recent</option>
+          <option value="groups">By Group</option>
+        </select>
+      </div>
+      
+      <div class="control-group">
+        <label for="urgency-filter">Urgency:</label>
+        <select id="urgency-filter" v-model="urgencyFilter" class="urgency-select">
+          <option value="all">All</option>
+          <option value="critical">Critical (&lt; 1 hour)</option>
+          <option value="high">High (&lt; 6 hours)</option>
+          <option value="normal">Normal (≥ 6 hours)</option>
+        </select>
+      </div>
+
+      <div class="control-info">
+        Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
+      </div>
+    </div>
+
     <div v-if="loading" class="loading-state">Loading...</div>
-    <div v-else-if="pendingSessions.length === 0" class="empty-state">
-      <p>No pending requests to approve.</p>
+    <div v-else-if="sortedSessions.length === 0" class="empty-state">
+      <p v-if="pendingSessions.length === 0">No pending requests to approve.</p>
+      <p v-else>No requests match the selected filters.</p>
     </div>
     <div v-else class="sessions-list">
-      <div v-for="session in pendingSessions" :key="session.metadata.name" class="approval-card">
+      <div v-for="session in sortedSessions" :key="session.metadata.name" class="approval-card" :class="`urgency-${session.urgency}`">
+        <!-- Urgency Badge -->
+        <div v-if="session.urgency === 'critical'" class="urgency-badge critical">⚠️ CRITICAL - Action Required</div>
+        <div v-else-if="session.urgency === 'high'" class="urgency-badge high">⏱️ High Priority</div>
+
         <!-- Header with basic info -->
         <div class="card-header">
           <div class="header-left">
@@ -191,12 +285,263 @@ h2 {
   font-size: 1.8rem;
 }
 
+/* Controls Section */
+.controls-section {
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.control-group label {
+  font-weight: 600;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.sort-select,
+.urgency-select {
+  padding: 6px 10px;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  background: white;
+  color: #333;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.sort-select:hover,
+.urgency-select:hover {
+  border-color: #d9006c;
+}
+
+.sort-select:focus,
+.urgency-select:focus {
+  outline: none;
+  border-color: #d9006c;
+  box-shadow: 0 0 0 3px rgba(217, 0, 108, 0.1);
+}
+
+.control-info {
+  margin-left: auto;
+  font-size: 0.9rem;
+  color: #666;
+  font-weight: 500;
+}
+
 .loading-state,
 .empty-state {
   text-align: center;
   padding: 2rem;
   color: #666;
   font-size: 1.1rem;
+}
+
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.approval-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+  border-left: 4px solid #d0d0d0;
+}
+
+.approval-card.urgency-critical {
+  border-left-color: #c62828;
+  background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%);
+}
+
+.approval-card.urgency-high {
+  border-left-color: #ff9800;
+}
+
+.approval-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  border-color: #d9006c;
+}
+
+/* Urgency Badges */
+.urgency-badge {
+  display: inline-block;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.urgency-badge.critical {
+  background-color: #ffebee;
+  color: #c62828;
+  border-left: 3px solid #c62828;
+  padding-left: 9px;
+}
+
+.urgency-badge.high {
+  background-color: #fff3e0;
+  color: #e65100;
+  border-left: 3px solid #ff9800;
+  padding-left: 9px;
+}
+
+/* Header section */
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+  gap: 1rem;
+}
+
+.header-left {
+  flex: 1;
+}
+
+.user-badge {
+  font-size: 1.3rem;
+  font-weight: bold;
+  color: #d9006c;
+  margin-bottom: 0.5rem;
+}
+
+.cluster-group {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cluster-tag,
+.group-tag {
+  display: inline-block;
+  background-color: #f0f0f0;
+  color: #555;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.cluster-tag {
+  border-left: 3px solid #0070b8;
+}
+
+.group-tag {
+  border-left: 3px solid #4CAF50;
+}
+
+.header-right {
+  text-align: right;
+}
+
+.time-badge {
+  display: inline-block;
+  background-color: #fff3cd;
+  color: #856404;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+/* Mandatory badge */
+.mandatory-badge {
+  background-color: #ffebee;
+  color: #c62828;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border-left: 3px solid #c62828;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+/* Reason section */
+.reason-section {
+  background-color: #e3f2fd;
+  border-left: 3px solid #2196F3;
+  padding: 1rem;
+  border-radius: 4px;
+  margin: 1rem 0;
+}
+
+.reason-label {
+  color: #1976D2;
+  font-size: 0.9rem;
+}
+
+.reason-text {
+  margin-top: 0.5rem;
+  color: #0b0b0b;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Approval description */
+.approval-desc {
+  background-color: #f5f5f5;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  border-left: 3px solid #ffc107;
+  margin: 1rem 0;
+  color: #666;
+  font-size: 0.95rem;
+}
+
+/* Metadata row */
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid #eee;
+  border-bottom: 1px solid #eee;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+}
+
+.meta-item strong {
+  color: #333;
+  margin-right: 0.5rem;
+}
+
+/* Actions */
+.card-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.approve-btn {
+  min-width: 150px;
+}
+
+/* Modal styling remains */
+.center {
+  text-align: center;
 }
 
 .sessions-list {
@@ -450,6 +795,28 @@ scale-textarea::v-deep .textarea__control::placeholder {
 }
 
 /* Responsive design */
+@media (max-width: 900px) {
+  .controls-section {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+
+  .control-group {
+    width: 100%;
+  }
+
+  .sort-select,
+  .urgency-select {
+    width: 100%;
+  }
+
+  .control-info {
+    margin-left: 0;
+    text-align: center;
+  }
+}
+
 @media (max-width: 600px) {
   .card-header {
     flex-direction: column;
@@ -470,6 +837,40 @@ scale-textarea::v-deep .textarea__control::placeholder {
 
   .approve-modal {
     padding: 1rem;
+  }
+
+  .controls-section {
+    padding: 0.75rem;
+  }
+
+  .control-group label {
+    font-size: 0.85rem;
+  }
+
+  .sort-select,
+  .urgency-select {
+    font-size: 0.85rem;
+  }
+
+  .approval-card {
+    padding: 1rem;
+  }
+
+  .urgency-badge {
+    font-size: 0.8rem;
+    padding: 6px 10px;
+  }
+
+  .user-badge {
+    font-size: 1.1rem;
+  }
+
+  .card-actions {
+    flex-direction: column;
+  }
+
+  .approve-btn {
+    width: 100%;
   }
 }
 </style>

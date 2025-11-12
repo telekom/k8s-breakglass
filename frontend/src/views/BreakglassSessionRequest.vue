@@ -179,13 +179,14 @@ onMounted(async () => {
             <div v-if="showScheduleOptions" class="schedule-details" style="margin-top: 10px; margin-left: 15px; 
               padding: 10px; border-left: 2px solid #0066cc; background-color: #f9f9f9;">
               <div style="margin-bottom: 10px;">
-                <label for="scheduled_date">Scheduled Start Date/Time:</label>
+                <label for="scheduled_date" style="width: auto; display: block; text-align: left; margin-bottom: 5px;">Scheduled Start Date/Time:</label>
                 <input
                   id="scheduled_date"
                   type="datetime-local"
                   v-model="scheduleDateTimeLocal"
                   :min="minDateTime"
-                  style="margin-left: 5px;"
+                  required
+                  style="width: 100%; max-width: 300px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;"
                 />
               </div>
               
