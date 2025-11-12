@@ -15,6 +15,10 @@ spec:
   approvers:
     groups:
 {{ toYaml $esc.approvers.groups | indent 6 }}
+    {{- if $esc.approvers.hiddenFromUI }}
+    hiddenFromUI:
+{{ toYaml $esc.approvers.hiddenFromUI | indent 6 }}
+    {{- end }}
   # Optional: restrict approver email domains for this escalation
   {{- if $esc.allowedApproverDomains }}
   allowedApproverDomains:
@@ -23,6 +27,22 @@ spec:
   # Optional: block self-approval for this escalation (true/false)
   {{- if hasKey $esc "blockSelfApproval" }}
   blockSelfApproval: {{ $esc.blockSelfApproval }}
+  {{- end }}
+  # Optional: disable notifications for this escalation (true/false)
+  {{- if hasKey $esc "disableNotifications" }}
+  disableNotifications: {{ $esc.disableNotifications }}
+  {{- end }}
+  # Optional: exclude specific users/groups from notifications
+  {{- if $esc.notificationExclusions }}
+  notificationExclusions:
+    {{- if $esc.notificationExclusions.users }}
+    users:
+{{ toYaml $esc.notificationExclusions.users | indent 6 }}
+    {{- end }}
+    {{- if $esc.notificationExclusions.groups }}
+    groups:
+{{ toYaml $esc.notificationExclusions.groups | indent 6 }}
+    {{- end }}
   {{- end }}
   requestReason:
     mandatory: {{ default false $esc.requestReason.mandatory }}

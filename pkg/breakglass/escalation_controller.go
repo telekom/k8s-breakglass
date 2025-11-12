@@ -109,7 +109,41 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	// Return full objects including (future) status with approverGroupMembers for UI
 	response := make([]v1alpha1.BreakglassEscalation, 0, len(filtered))
 	response = append(response, filtered...)
-	reqLog.With("responseCount", len(response)).Debug("Returning escalations response (filtered)")
+
+	// Filter out hidden groups from the response - they should not be visible to users in the UI
+	for i := range response {
+		if len(response[i].Spec.Approvers.HiddenFromUI) > 0 {
+			// Build set of hidden items for quick lookup
+			hiddenSet := make(map[string]bool)
+			for _, item := range response[i].Spec.Approvers.HiddenFromUI {
+				hiddenSet[item] = true
+			}
+
+			// Filter out hidden groups and users from the visible approvers
+			filteredGroups := []string{}
+			for _, group := range response[i].Spec.Approvers.Groups {
+				if !hiddenSet[group] {
+					filteredGroups = append(filteredGroups, group)
+				}
+			}
+
+			filteredUsers := []string{}
+			for _, user := range response[i].Spec.Approvers.Users {
+				if !hiddenSet[user] {
+					filteredUsers = append(filteredUsers, user)
+				}
+			}
+
+			// Update the response with filtered approvers
+			response[i].Spec.Approvers.Groups = filteredGroups
+			response[i].Spec.Approvers.Users = filteredUsers
+
+			// Remove HiddenFromUI field from response (client doesn't need to see it)
+			response[i].Spec.Approvers.HiddenFromUI = nil
+		}
+	}
+
+	reqLog.With("responseCount", len(response)).Debug("Returning escalations response (filtered, hidden groups removed)")
 	c.JSON(http.StatusOK, dropK8sInternalFieldsEscalationList(response))
 }
 

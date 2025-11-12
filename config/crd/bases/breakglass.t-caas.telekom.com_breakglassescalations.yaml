@@ -109,6 +109,14 @@ spec:
                     items:
                       type: string
                     type: array
+                  hiddenFromUI:
+                    description: |-
+                      hiddenFromUI is a list of groups that are used as fallback approvers but are hidden from the UI and notification emails.
+                      This is useful for groups that should not be bothered with notifications (e.g., FLM or duty managers).
+                      These groups will still function as approvers for sessions but won't be displayed in the UI or sent emails.
+                    items:
+                      type: string
+                    type: array
                   users:
                     description: users that are allowed to approve a session for this
                       escalation
@@ -133,6 +141,12 @@ spec:
                 items:
                   type: string
                 type: array
+              disableNotifications:
+                description: |-
+                  disableNotifications, if set to true, will disable email notifications for sessions created via this escalation.
+                  Approvers will not receive emails when sessions are requested, approved, or rejected.
+                  Default: false (notifications are enabled by default)
+                type: boolean
               escalatedGroup:
                 description: escalatedGroup is the group to be granted by this escalation.
                 type: string
@@ -146,6 +160,24 @@ spec:
                 description: maxValidFor is the maximum amount of time a session for
                   this escalation will be active for after it is approved.
                 type: string
+              notificationExclusions:
+                description: |-
+                  notificationExclusions allows excluding specific users or groups from receiving email notifications for this escalation.
+                  This is useful for excluding automated users or specific groups from notification spam.
+                properties:
+                  groups:
+                    description: groups is a list of approver groups to exclude from
+                      notifications
+                    items:
+                      type: string
+                    type: array
+                  users:
+                    description: users is a list of user emails/usernames to exclude
+                      from notifications
+                    items:
+                      type: string
+                    type: array
+                type: object
               requestReason:
                 description: |-
                   requestReason configures an optional free-text reason the requester must or may provide

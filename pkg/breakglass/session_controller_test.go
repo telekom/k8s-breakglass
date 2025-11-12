@@ -2647,3 +2647,528 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		}
 	}
 }
+
+// TestFilterExcludedNotificationRecipients tests the filtering of excluded users/groups from notifications
+func TestFilterExcludedNotificationRecipients(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	cases := []struct {
+		name      string
+		approvers []string
+		exclusion *v1alpha1.NotificationExclusions
+		expect    []string
+	}{
+		{
+			name:      "No exclusions",
+			approvers: []string{"user1@example.com", "user2@example.com"},
+			exclusion: nil,
+			expect:    []string{"user1@example.com", "user2@example.com"},
+		},
+		{
+			name:      "Exclude single user",
+			approvers: []string{"user1@example.com", "user2@example.com", "user3@example.com"},
+			exclusion: &v1alpha1.NotificationExclusions{
+				Users: []string{"user2@example.com"},
+			},
+			expect: []string{"user1@example.com", "user3@example.com"},
+		},
+		{
+			name:      "Exclude multiple users",
+			approvers: []string{"user1@example.com", "user2@example.com", "user3@example.com"},
+			exclusion: &v1alpha1.NotificationExclusions{
+				Users: []string{"user1@example.com", "user3@example.com"},
+			},
+			expect: []string{"user2@example.com"},
+		},
+		{
+			name:      "Exclude non-existing user",
+			approvers: []string{"user1@example.com", "user2@example.com"},
+			exclusion: &v1alpha1.NotificationExclusions{
+				Users: []string{"nonexistent@example.com"},
+			},
+			expect: []string{"user1@example.com", "user2@example.com"},
+		},
+		{
+			name:      "All users excluded",
+			approvers: []string{"user1@example.com", "user2@example.com"},
+			exclusion: &v1alpha1.NotificationExclusions{
+				Users: []string{"user1@example.com", "user2@example.com"},
+			},
+			expect: []string{},
+		},
+		{
+			name:      "Empty approvers",
+			approvers: []string{},
+			exclusion: &v1alpha1.NotificationExclusions{
+				Users: []string{"user1@example.com"},
+			},
+			expect: []string{},
+		},
+	}
+
+	for _, tc := range cases {
+		escalation := &v1alpha1.BreakglassEscalation{
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				NotificationExclusions: tc.exclusion,
+			},
+		}
+
+		ctrl := &BreakglassSessionController{}
+		result := ctrl.filterExcludedNotificationRecipients(log, tc.approvers, escalation)
+
+		if len(result) != len(tc.expect) {
+			t.Fatalf("case %s: expected %d recipients, got %d: %v", tc.name, len(tc.expect), len(result), result)
+		}
+
+		// Convert to map for easy comparison
+		resultMap := make(map[string]bool)
+		for _, r := range result {
+			resultMap[r] = true
+		}
+
+		for _, exp := range tc.expect {
+			if !resultMap[exp] {
+				t.Fatalf("case %s: expected recipient %s not in result: %v", tc.name, exp, result)
+			}
+		}
+	}
+}
+
+// TestDisableNotificationsFlag tests that disableNotifications prevents emails
+func TestDisableNotificationsFlag(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	// Test with nil escalation
+	ctrl := &BreakglassSessionController{}
+	result := ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 recipient with nil escalation, got %d", len(result))
+	}
+
+	// Test with no exclusions
+	escalation := &v1alpha1.BreakglassEscalation{
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			NotificationExclusions: nil,
+		},
+	}
+	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, escalation)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 recipient with no exclusions, got %d", len(result))
+	}
+
+	// Test with empty exclusions
+	escalation = &v1alpha1.BreakglassEscalation{
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			NotificationExclusions: &v1alpha1.NotificationExclusions{},
+		},
+	}
+	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, escalation)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 recipient with empty exclusions, got %d", len(result))
+	}
+}
+
+// TestFilterHiddenFromUIRecipients tests the filtering of hidden users/groups from UI and notifications
+func TestFilterHiddenFromUIRecipients(t *testing.T) {
+	log := zap.NewExample().Sugar()
+	ctrl := &BreakglassSessionController{}
+
+	tests := []struct {
+		name      string
+		approvers []string
+		hidden    []string
+		expected  int
+	}{
+		{
+			name:      "No hidden groups",
+			approvers: []string{"alice@example.com", "bob@example.com"},
+			hidden:    []string{},
+			expected:  2,
+		},
+		{
+			name:      "Single user hidden",
+			approvers: []string{"alice@example.com", "bob@example.com", "charlie@example.com"},
+			hidden:    []string{"alice@example.com"},
+			expected:  2,
+		},
+		{
+			name:      "Multiple users hidden",
+			approvers: []string{"alice@example.com", "bob@example.com", "charlie@example.com"},
+			hidden:    []string{"alice@example.com", "charlie@example.com"},
+			expected:  1,
+		},
+		{
+			name:      "All users hidden",
+			approvers: []string{"alice@example.com", "bob@example.com"},
+			hidden:    []string{"alice@example.com", "bob@example.com"},
+			expected:  0,
+		},
+		{
+			name:      "Empty approvers",
+			approvers: []string{},
+			hidden:    []string{"alice@example.com"},
+			expected:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escalation := &v1alpha1.BreakglassEscalation{
+				Spec: v1alpha1.BreakglassEscalationSpec{
+					Approvers: v1alpha1.BreakglassEscalationApprovers{
+						HiddenFromUI: tt.hidden,
+					},
+				},
+			}
+			result := ctrl.filterHiddenFromUIRecipients(log, tt.approvers, escalation)
+			if len(result) != tt.expected {
+				t.Fatalf("expected %d recipients, got %d; result: %v", tt.expected, len(result), result)
+			}
+		})
+	}
+
+	// Test with nil escalation
+	result := ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 recipient with nil escalation, got %d", len(result))
+	}
+
+	// Test with empty hidden list
+	escalation := &v1alpha1.BreakglassEscalation{
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				HiddenFromUI: []string{},
+			},
+		},
+	}
+	result = ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, escalation)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 recipient with empty hidden list, got %d", len(result))
+	}
+}
+
+// TestHiddenFromUIAndNotificationExclusionsCombined tests that both filtering mechanisms work together
+func TestHiddenFromUIAndNotificationExclusionsCombined(t *testing.T) {
+	log := zap.NewExample().Sugar()
+	ctrl := &BreakglassSessionController{}
+
+	// Start with approvers: alice, bob, charlie, dave
+	approvers := []string{"alice@example.com", "bob@example.com", "charlie@example.com", "dave@example.com"}
+
+	escalation := &v1alpha1.BreakglassEscalation{
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				HiddenFromUI: []string{"charlie@example.com"}, // charlie is hidden
+			},
+			NotificationExclusions: &v1alpha1.NotificationExclusions{
+				Users: []string{"dave@example.com"}, // dave is excluded from notifications
+			},
+		},
+	}
+
+	// First filter: notification exclusions
+	filtered := ctrl.filterExcludedNotificationRecipients(log, approvers, escalation)
+	// Should have: alice, bob, charlie (dave excluded)
+	if len(filtered) != 3 {
+		t.Fatalf("after notificationExclusions filter: expected 3, got %d; result: %v", len(filtered), filtered)
+	}
+
+	// Second filter: hidden from UI
+	filtered = ctrl.filterHiddenFromUIRecipients(log, filtered, escalation)
+	// Should have: alice, bob (charlie hidden, dave already excluded)
+	if len(filtered) != 2 {
+		t.Fatalf("after hiddenFromUI filter: expected 2, got %d; result: %v", len(filtered), filtered)
+	}
+
+	// Verify the remaining are alice and bob
+	found := map[string]bool{}
+	for _, r := range filtered {
+		found[r] = true
+	}
+	if !found["alice@example.com"] || !found["bob@example.com"] {
+		t.Fatalf("unexpected recipients in result: %v", filtered)
+	}
+}
+
+// TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups tests that hidden groups don't receive email notifications
+// when a session is requested
+func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	// Escalation with visible and hidden approver groups
+	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-with-hidden",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "admin",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Groups:       []string{"security-team", "flm-on-duty"},
+				HiddenFromUI: []string{"flm-on-duty"},
+			},
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
+		&sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "requester@example.com")
+			c.Set("username", "Requester")
+			c.Next()
+		}, nil, cli)
+
+	// Mock group resolver to return members
+	mockResolver := &MockGroupResolver{
+		members: map[string][]string{
+			"security-team": {"security1@example.com", "security2@example.com"},
+			"flm-on-duty":   {"flm-manager@example.com"},
+		},
+	}
+	ctrl.escalationManager.Resolver = mockResolver
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	mailSender := &FakeMailSender{}
+	ctrl.mail = mailSender
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	// Request session
+	reqData := BreakglassSessionRequest{
+		Clustername: "test",
+		Username:    "requester@example.com",
+		GroupName:   "admin",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+
+	// Verify emails were sent only to security-team, not flm-on-duty
+	if mailSender.LastRecivers == nil {
+		t.Fatal("expected email to be sent, got nil")
+	}
+
+	// Check that flm-manager@example.com is NOT in recipients
+	for _, email := range mailSender.LastRecivers {
+		if email == "flm-manager@example.com" {
+			t.Fatalf("hidden group member should not receive email: %s", email)
+		}
+	}
+
+	// Check that security team members ARE in recipients
+	foundSecurity := false
+	for _, email := range mailSender.LastRecivers {
+		if email == "security1@example.com" || email == "security2@example.com" {
+			foundSecurity = true
+			break
+		}
+	}
+	if !foundSecurity {
+		t.Fatalf("security team should receive emails, got: %v", mailSender.LastRecivers)
+	}
+}
+
+// TestHiddenFromUI_EscalationResponse_GroupsRemoved tests that hidden groups are not shown in API response
+func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+
+	// Create escalation with hidden groups
+	escalation := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-escalation",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "admin",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Groups:       []string{"security-team", "flm-on-duty", "on-call"},
+				HiddenFromUI: []string{"flm-on-duty", "on-call"},
+			},
+		},
+	}
+	builder.WithObjects(escalation)
+
+	cli := builder.Build()
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := &BreakglassEscalationController{
+		log:     logger.Sugar(),
+		manager: &escmanager,
+		middleware: func(c *gin.Context) {
+			c.Set("email", "user@example.com")
+			c.Set("groups", []string{"system:authenticated"})
+			c.Next()
+		},
+		identityProvider: KeycloakIdentityProvider{},
+		getUserGroupsFn: func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"system:authenticated"}, nil
+		},
+	}
+
+	engine := gin.New()
+	rg := engine.Group("/breakglassEscalations", ctrl.middleware)
+	_ = ctrl.Register(rg)
+
+	req, _ := http.NewRequest("GET", "/breakglassEscalations", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Parse response
+	var escList []v1alpha1.BreakglassEscalation
+	_ = json.Unmarshal(w.Body.Bytes(), &escList)
+
+	if len(escList) != 1 {
+		t.Fatalf("expected 1 escalation, got %d", len(escList))
+	}
+
+	resp := escList[0]
+
+	// Verify hidden groups are removed
+	for _, group := range resp.Spec.Approvers.Groups {
+		if group == "flm-on-duty" || group == "on-call" {
+			t.Fatalf("hidden group should be removed from response: %s", group)
+		}
+	}
+
+	// Verify visible group is present
+	if len(resp.Spec.Approvers.Groups) != 1 || resp.Spec.Approvers.Groups[0] != "security-team" {
+		t.Fatalf("expected only visible group 'security-team', got: %v", resp.Spec.Approvers.Groups)
+	}
+
+	// Verify HiddenFromUI field is removed from response
+	if len(resp.Spec.Approvers.HiddenFromUI) > 0 {
+		t.Fatalf("HiddenFromUI field should be removed from response, got: %v", resp.Spec.Approvers.HiddenFromUI)
+	}
+}
+
+// TestHiddenFromUI_MixedVisibleAndHidden tests escalation with both visible and hidden users
+func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	// Escalation with mixed visible and hidden approvers
+	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-mixed",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "admin",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Users:        []string{"alice@example.com", "emergency@example.com"},
+				Groups:       []string{"security-team"},
+				HiddenFromUI: []string{"emergency@example.com"},
+			},
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
+		&sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "requester@example.com")
+			c.Set("username", "Requester")
+			c.Next()
+		}, nil, cli)
+
+	// Mock group resolver
+	mockResolver := &MockGroupResolver{
+		members: map[string][]string{
+			"security-team": {"security@example.com"},
+		},
+	}
+	ctrl.escalationManager.Resolver = mockResolver
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	mailSender := &FakeMailSender{}
+	ctrl.mail = mailSender
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	// Request session
+	reqData := BreakglassSessionRequest{
+		Clustername: "test",
+		Username:    "requester@example.com",
+		GroupName:   "admin",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+
+	// Verify alice receives email (visible user)
+	foundAlice := false
+	foundEmergency := false
+	for _, email := range mailSender.LastRecivers {
+		if email == "alice@example.com" {
+			foundAlice = true
+		}
+		if email == "emergency@example.com" {
+			foundEmergency = true
+		}
+	}
+
+	if !foundAlice {
+		t.Fatal("alice@example.com should receive email (visible user)")
+	}
+	if foundEmergency {
+		t.Fatal("emergency@example.com should NOT receive email (hidden user)")
+	}
+}
+
+type MockGroupResolver struct {
+	members map[string][]string
+}
+
+func (m *MockGroupResolver) Members(ctx context.Context, group string) ([]string, error) {
+	if members, ok := m.members[group]; ok {
+		return members, nil
+	}
+	return nil, fmt.Errorf("group not found: %s", group)
+}

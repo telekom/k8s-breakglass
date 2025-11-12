@@ -20,10 +20,20 @@ escalations: []
   #   approvers:
   #     groups:
   #       - senior-ops
+  #       - flm-on-duty  # FLM group added as fallback
+  #     hiddenFromUI:
+  #       - flm-on-duty  # Hide FLM from UI and notifications (fallback only)
   #   # Per-escalation optional fields:
   #   allowedApproverDomains:
   #     - example.org
   #   blockSelfApproval: true
+  #   disableNotifications: false
+  #   notificationExclusions:
+  #     users:
+  #       - automation@example.com
+  #       - bot@example.com
+  #     groups:
+  #       - automated-services
   #   requestReason:
   #     mandatory: true
   #     description: "Please provide a short justification or ticket ID"

@@ -74,6 +74,28 @@ type BreakglassEscalationSpec struct {
 	// If omitted (nil), the cluster-level setting will be used.
 	// +optional
 	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
+
+	// disableNotifications, if set to true, will disable email notifications for sessions created via this escalation.
+	// Approvers will not receive emails when sessions are requested, approved, or rejected.
+	// Default: false (notifications are enabled by default)
+	// +optional
+	DisableNotifications *bool `json:"disableNotifications,omitempty"`
+
+	// notificationExclusions allows excluding specific users or groups from receiving email notifications for this escalation.
+	// This is useful for excluding automated users or specific groups from notification spam.
+	// +optional
+	NotificationExclusions *NotificationExclusions `json:"notificationExclusions,omitempty"`
+}
+
+// NotificationExclusions defines which users/groups should be excluded from email notifications
+type NotificationExclusions struct {
+	// users is a list of user emails/usernames to exclude from notifications
+	// +optional
+	Users []string `json:"users,omitempty"`
+
+	// groups is a list of approver groups to exclude from notifications
+	// +optional
+	Groups []string `json:"groups,omitempty"`
 }
 
 type ReasonConfig struct {
@@ -103,6 +125,11 @@ type BreakglassEscalationApprovers struct {
 	Users []string `json:"users,omitempty"`
 	// groups that are allowed to approve a session for this escalation
 	Groups []string `json:"groups,omitempty"`
+	// hiddenFromUI is a list of groups that are used as fallback approvers but are hidden from the UI and notification emails.
+	// This is useful for groups that should not be bothered with notifications (e.g., FLM or duty managers).
+	// These groups will still function as approvers for sessions but won't be displayed in the UI or sent emails.
+	// +optional
+	HiddenFromUI []string `json:"hiddenFromUI,omitempty"`
 }
 
 // BreakglassEscalationStatus defines the observed state of BreakglassEscalation.

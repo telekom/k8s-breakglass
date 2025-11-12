@@ -114,6 +114,151 @@ retainFor: "720h"    # Keep for 30 days (default: 720h)
 retainFor: "168h"    # Keep for 7 days
 ```
 
+### disableNotifications
+
+Disable email notifications for sessions created via this escalation. When set to `true`, approvers will **not** receive email notifications when:
+- A new session is requested
+- A session is approved/rejected
+- A session expires
+
+This is useful for automated/internal escalations where email notifications are unnecessary.
+
+```yaml
+disableNotifications: false   # Enable notifications (default)
+disableNotifications: true    # Disable email notifications
+```
+
+**Example:** Disable notifications for internal tooling escalations:
+
+```yaml
+spec:
+  escalatedGroup: "monitoring-access"
+  allowed:
+    groups: ["monitoring-automation"]
+  disableNotifications: true    # No emails for automated monitoring access
+```
+
+### notificationExclusions
+
+Exclude specific users or groups from receiving email notifications for this escalation. Useful for excluding automated services, bots, or specific approvers from notification spam.
+
+```yaml
+notificationExclusions:
+  users:
+    - "automation@example.com"
+    - "bot-user@example.com"
+  groups:
+    - "automated-services"
+    - "ci-cd-approvers"
+```
+
+**Behavior:**
+- Excluded users will NOT receive emails when sessions are requested/approved/rejected
+- Excluded groups' members will NOT receive emails
+- All other approvers will receive emails as normal
+- Takes precedence over individual approver lists
+
+**Use Cases:**
+- Exclude automated CI/CD systems from notifications
+- Exclude specific approver groups that don't need notifications
+- Exclude service accounts that shouldn't receive emails
+- Mix with `disableNotifications: true` for fully silent escalations
+
+**Example:** Exclude automated services:
+
+```yaml
+spec:
+  escalatedGroup: "deployment-admin"
+  approvers:
+    groups: ["deployment-team", "platform-team"]
+    users: ["ci-system@example.com"]
+  notificationExclusions:
+    users: ["ci-system@example.com"]  # Exclude CI system from emails
+    groups: ["platform-team"]          # But exclude platform team too
+```
+
+### approvers.hiddenFromUI
+
+Mark specific approver groups or users as hidden from the UI and notifications. Hidden approvers still function as fallback approvers and can approve sessions, but they are not shown in the UI and do not receive email notifications.
+
+This is useful for fallback escalation paths (e.g., FLM - Facility & Logistics Management) that should be available but shouldn't be bothered with routine notifications.
+
+```yaml
+approvers:
+  groups: ["security-team", "flm-on-duty"]  # flm-on-duty is a fallback group
+  users: ["emergency-contact@example.com"]
+  hiddenFromUI:
+    - "flm-on-duty"                 # Hide FLM from UI and notifications
+    - "emergency-contact@example.com"  # Also hide emergency contact from UI
+```
+
+**Behavior:**
+- Hidden users/groups are NOT shown in the UI's approver list
+- Hidden users/groups do NOT receive email notifications
+- Hidden users/groups CAN still approve sessions if they know about them
+- Hidden users/groups are still counted as valid approvers for approval requirements
+- Useful for "on-call" or "last resort" approver groups
+
+**Important Distinction:**
+- `hiddenFromUI`: Group exists as a fallback approver but is hidden from UI/emails
+- `notificationExclusions`: Group receives no emails but is still shown in UI
+- `disableNotifications: true`: All approvers receive no emails and group is still shown in UI
+
+**Use Cases:**
+- Hide FLM group (only contact in emergencies)
+- Hide on-call escalation groups from routine notifications
+- Hide duty manager group from daily UI displays
+- Keep emergency approvers as fallback without notifying them
+- Hide automated approvers that still function as backup
+
+**Example:** FLM as hidden fallback:
+
+```yaml
+spec:
+  escalatedGroup: "infrastructure-admin"
+  allowed:
+    clusters: ["prod-cluster"]
+    groups: ["infrastructure-team"]
+  approvers:
+    groups:
+      - "security-team"        # Primary approvers (visible, gets emails)
+      - "flm-on-duty"          # Fallback escalation (hidden, no emails)
+    hiddenFromUI:
+      - "flm-on-duty"          # Only FLM is hidden
+```
+
+In this example:
+- Users see "security-team" as approvers in the UI
+- Security team members receive approval emails
+- If security-team is unavailable, FLM-on-duty can still approve
+- FLM doesn't receive emails and doesn't see this in the UI until activated
+
+**Example:** Hide both direct user and group:
+
+```yaml
+approvers:
+  users:
+    - "manager@example.com"
+    - "emergency-contact@example.com"
+  groups:
+    - "duty-team"
+    - "backup-team"
+  hiddenFromUI:
+    - "emergency-contact@example.com"  # Hide individual user
+    - "backup-team"                    # Hide entire group
+```
+
+### blockSelfApproval
+
+Prevent users from approving their own escalation requests. When set to `true`, a user cannot approve a session they themselves requested.
+
+```yaml
+blockSelfApproval: false   # Allow self-approval (default, uses cluster-level setting)
+blockSelfApproval: true    # Prevent self-approval for this escalation
+```
+
+If not specified, the cluster-level `blockSelfApproval` setting from `ClusterConfig` is used.
+
 ### clusterConfigRefs
 
 Alternative to `allowed.clusters` - list specific `ClusterConfig` resource names:

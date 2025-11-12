@@ -318,16 +318,36 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	selectedDenyPolicies := []string{}
 	var matchedEsc *v1alpha1.BreakglassEscalation
 
+	reqLog.Debugw("Starting approver resolution from escalations",
+		"escalationCount", len(possibleEscals),
+		"requestedGroup", request.GroupName)
+
 	for i := range possibleEscals {
 		p := &possibleEscals[i]
 		possible = append(possible, p.Spec.EscalatedGroup)
+		reqLog.Debugw("Processing escalation for approver resolution",
+			"escalationName", p.Name,
+			"escalatedGroup", p.Spec.EscalatedGroup,
+			"explicitUserCount", len(p.Spec.Approvers.Users),
+			"approverGroupCount", len(p.Spec.Approvers.Groups))
+
 		// Add explicit users (deduplicated)
 		for _, user := range p.Spec.Approvers.Users {
+			before := len(approvers)
 			approvers = addIfNotPresent(approvers, user)
+			if len(approvers) > before {
+				reqLog.Debugw("Added explicit approver user",
+					"user", user,
+					"escalation", p.Name,
+					"totalApproversNow", len(approvers))
+			}
 		}
 
 		// Resolve and add group members (deduplicated)
 		for _, group := range p.Spec.Approvers.Groups {
+			reqLog.Debugw("Resolving approver group members",
+				"group", group,
+				"escalation", p.Name)
 			if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
 				members, err := wc.escalationManager.Resolver.Members(ctx, group)
 				if err != nil {
@@ -335,9 +355,21 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 					// Continue with other groups even if one fails
 					continue
 				}
+				reqLog.Debugw("Resolved approver group members",
+					"group", group,
+					"escalation", p.Name,
+					"memberCount", len(members),
+					"members", members)
+				countBefore := len(approvers)
 				for _, member := range members {
 					approvers = addIfNotPresent(approvers, member)
 				}
+				countAdded := len(approvers) - countBefore
+				reqLog.Debugw("Added group members to approvers",
+					"group", group,
+					"escalation", p.Name,
+					"newMembersAdded", countAdded,
+					"totalApproversNow", len(approvers))
 			}
 		}
 
@@ -345,8 +377,17 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		if p.Spec.EscalatedGroup == request.GroupName && matchedEsc == nil {
 			matchedEsc = p
 			selectedDenyPolicies = append(selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
+			reqLog.Debugw("Matched escalation found during approver collection",
+				"escalationName", matchedEsc.Name,
+				"escalatedGroup", matchedEsc.Spec.EscalatedGroup,
+				"denyPolicyCount", len(selectedDenyPolicies))
 		}
 	}
+
+	reqLog.Infow("Completed approver resolution from escalations",
+		"totalApproversCollected", len(approvers),
+		"approversList", approvers,
+		"requestedGroup", request.GroupName)
 
 	if !slices.Contains(possible, request.GroupName) {
 		reqLog.Warnw("User unauthorized for group", "user", request.Username, "group", request.GroupName)
@@ -527,6 +568,11 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	if os.Getenv("BREAKGLASS_DISABLE_EMAIL") == "1" {
 		reqLog.Debug("Email sending disabled via BREAKGLASS_DISABLE_EMAIL=1")
+	} else if matchedEsc != nil && matchedEsc.Spec.DisableNotifications != nil && *matchedEsc.Spec.DisableNotifications {
+		reqLog.Infow("Email sending disabled for this escalation via DisableNotifications",
+			"escalationName", matchedEsc.Name,
+			"cluster", bs.Spec.Cluster,
+			"grantedGroup", bs.Spec.GrantedGroup)
 	} else {
 		reqLog.Infow("Resolved approvers from escalation (explicit users + group members)",
 			"approverCount", len(approvers),
@@ -586,7 +632,39 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 					}
 				}(goroutineLog)
 			}
-			if err := wc.sendOnRequestEmail(bs, useremail, username, approvers); err != nil {
+
+			// Filter out excluded users/groups and hidden groups from approvers list
+			reqLog.Debugw("About to filter approvers",
+				"escalationName", matchedEsc.Name,
+				"preFilterApproverCount", len(approvers),
+				"preFilterApprovers", approvers)
+
+			filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, approvers, matchedEsc)
+			reqLog.Debugw("After filterExcludedNotificationRecipients",
+				"postExcludeApproverCount", len(filteredApprovers),
+				"postExcludeApprovers", filteredApprovers,
+				"excludedCount", len(approvers)-len(filteredApprovers))
+
+			filteredApprovers = wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, matchedEsc)
+			reqLog.Debugw("After filterHiddenFromUIRecipients",
+				"postHiddenFilterApproverCount", len(filteredApprovers),
+				"postHiddenFilterApprovers", filteredApprovers,
+				"hiddenFilteredOutCount", len(approvers)-len(filteredApprovers))
+
+			if len(filteredApprovers) == 0 {
+				reqLog.Infow("All approvers excluded from notifications via NotificationExclusions or HiddenFromUI",
+					"escalationName", matchedEsc.Name,
+					"originalApproverCount", len(approvers))
+			} else if len(filteredApprovers) < len(approvers) {
+				reqLog.Infow("Some approvers excluded from notifications",
+					"originalApproverCount", len(approvers),
+					"filteredApproverCount", len(filteredApprovers),
+					"excludedCount", len(approvers)-len(filteredApprovers))
+				if err := wc.sendOnRequestEmail(bs, useremail, username, filteredApprovers); err != nil {
+					// Do not fail the request if email cannot be sent (e.g. mail server not running in e2e).
+					reqLog.Warnw("Skipping email notification (send failed)", "error", err)
+				}
+			} else if err := wc.sendOnRequestEmail(bs, useremail, username, filteredApprovers); err != nil {
 				// Do not fail the request if email cannot be sent (e.g. mail server not running in e2e).
 				reqLog.Warnw("Skipping email notification (send failed)", "error", err)
 			}
@@ -1422,6 +1500,220 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		"recipients", approvers,
 		"subject", subject)
 	return nil
+}
+
+// filterExcludedNotificationRecipients filters out users/groups that are in the escalation's NotificationExclusions
+func (wc BreakglassSessionController) filterExcludedNotificationRecipients(
+	log *zap.SugaredLogger,
+	approvers []string,
+	escalation *v1alpha1.BreakglassEscalation,
+) []string {
+	log.Debugw("filterExcludedNotificationRecipients called",
+		"approverCount", len(approvers),
+		"approvers", approvers,
+		"escalationNil", escalation == nil,
+		"hasNotificationExclusions", escalation != nil && escalation.Spec.NotificationExclusions != nil)
+
+	if escalation == nil || escalation.Spec.NotificationExclusions == nil {
+		log.Debugw("No notification exclusions configured",
+			"escalationNil", escalation == nil)
+		return approvers
+	}
+
+	exclusions := escalation.Spec.NotificationExclusions
+	log.Infow("Notification exclusions configured",
+		"excludedUserCount", len(exclusions.Users),
+		"excludedUsers", exclusions.Users,
+		"excludedGroupCount", len(exclusions.Groups),
+		"excludedGroups", exclusions.Groups)
+
+	// Build set of excluded users for O(1) lookup
+	excludedUsers := make(map[string]bool)
+	for _, user := range exclusions.Users {
+		excludedUsers[user] = true
+	}
+	log.Debugw("Built excluded users set",
+		"directExcludedUserCount", len(excludedUsers),
+		"directExcludedUsers", exclusions.Users)
+
+	// Get members of excluded groups
+	excludedGroupMembers := make(map[string]bool)
+	if len(exclusions.Groups) > 0 && wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
+		ctx := context.Background()
+		resolvedGroupsCount := 0
+		totalMembersCount := 0
+
+		for _, group := range exclusions.Groups {
+			log.Debugw("Attempting to resolve excluded group members",
+				"group", group)
+			members, err := wc.escalationManager.Resolver.Members(ctx, group)
+			if err != nil {
+				log.Warnw("Failed to resolve members of excluded group",
+					"group", group,
+					"error", err,
+					"errorType", fmt.Sprintf("%T", err))
+				continue
+			}
+			log.Infow("Successfully resolved excluded group members",
+				"group", group,
+				"memberCount", len(members),
+				"members", members)
+			resolvedGroupsCount++
+			totalMembersCount += len(members)
+			for _, member := range members {
+				excludedGroupMembers[member] = true
+			}
+		}
+
+		excludedGroupMembersList := make([]string, 0, len(excludedGroupMembers))
+		for m := range excludedGroupMembers {
+			excludedGroupMembersList = append(excludedGroupMembersList, m)
+		}
+		log.Infow("Excluded group resolution summary",
+			"resolvedGroupCount", resolvedGroupsCount,
+			"totalGroupMemberCount", totalMembersCount,
+			"uniqueExcludedGroupMembers", len(excludedGroupMembers),
+			"excludedGroupMemberList", excludedGroupMembersList)
+	} else {
+		resolverNil := wc.escalationManager != nil && wc.escalationManager.Resolver == nil
+		log.Debugw("Cannot resolve excluded group members",
+			"groupCount", len(exclusions.Groups),
+			"escalationManagerNil", wc.escalationManager == nil,
+			"resolverNil", resolverNil)
+	}
+
+	// Filter approvers
+	filtered := []string{}
+	excludedApprovers := []string{}
+	for _, approver := range approvers {
+		isExcluded := excludedUsers[approver] || excludedGroupMembers[approver]
+		if isExcluded {
+			excludedApprovers = append(excludedApprovers, approver)
+		} else {
+			filtered = append(filtered, approver)
+		}
+	}
+
+	log.Infow("Filtering results",
+		"originalApproverCount", len(approvers),
+		"originalApprovers", approvers,
+		"visibleApproverCount", len(filtered),
+		"visibleApprovers", filtered,
+		"excludedApproverCount", len(excludedApprovers),
+		"excludedApproversFiltered", excludedApprovers,
+		"totalDirectExcluded", len(excludedUsers),
+		"totalGroupMembersExcluded", len(excludedGroupMembers))
+
+	return filtered
+}
+
+// filterHiddenFromUIRecipients filters out users/groups that are marked as hidden from UI in the escalation.
+// Hidden groups are used as fallback approvers but are not displayed in the UI or sent notifications.
+func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
+	log *zap.SugaredLogger,
+	approvers []string,
+	escalation *v1alpha1.BreakglassEscalation,
+) []string {
+	hiddenFromUICount := 0
+	if escalation != nil {
+		hiddenFromUICount = len(escalation.Spec.Approvers.HiddenFromUI)
+	}
+	log.Debugw("filterHiddenFromUIRecipients called",
+		"approverCount", len(approvers),
+		"approvers", approvers,
+		"escalationNil", escalation == nil,
+		"hiddenFromUICount", hiddenFromUICount)
+
+	if escalation == nil || len(escalation.Spec.Approvers.HiddenFromUI) == 0 {
+		log.Debugw("No hidden approvers configured, returning all approvers",
+			"escalationNil", escalation == nil,
+			"hiddenCount", hiddenFromUICount)
+		return approvers
+	}
+
+	log.Infow("Hidden approvers configured",
+		"hiddenItems", escalation.Spec.Approvers.HiddenFromUI,
+		"hiddenItemCount", len(escalation.Spec.Approvers.HiddenFromUI))
+
+	// Build set of hidden users for O(1) lookup
+	hiddenUsers := make(map[string]bool)
+	for _, user := range escalation.Spec.Approvers.HiddenFromUI {
+		hiddenUsers[user] = true
+	}
+	log.Debugw("Built hidden users set",
+		"directHiddenUserCount", len(hiddenUsers),
+		"directHiddenUsers", escalation.Spec.Approvers.HiddenFromUI)
+
+	// Get members of hidden groups
+	hiddenGroupMembers := make(map[string]bool)
+	if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
+		ctx := context.Background()
+		resolvedGroupsCount := 0
+		totalMembersCount := 0
+
+		for _, group := range escalation.Spec.Approvers.HiddenFromUI {
+			log.Debugw("Attempting to resolve hidden item as group",
+				"item", group)
+			members, err := wc.escalationManager.Resolver.Members(ctx, group)
+			if err != nil {
+				// This might be a user, not a group - just continue
+				log.Debugw("Failed to resolve members of hidden item (treating as individual user)",
+					"item", group,
+					"error", err,
+					"errorType", fmt.Sprintf("%T", err))
+				continue
+			}
+			log.Infow("Successfully resolved hidden group members",
+				"group", group,
+				"memberCount", len(members),
+				"members", members)
+			resolvedGroupsCount++
+			totalMembersCount += len(members)
+			for _, member := range members {
+				hiddenGroupMembers[member] = true
+			}
+		}
+
+		log.Infow("Hidden group resolution summary",
+			"resolvedGroupCount", resolvedGroupsCount,
+			"totalGroupMemberCount", totalMembersCount,
+			"uniqueHiddenGroupMembers", len(hiddenGroupMembers),
+			"hiddenGroupMemberList", func() []string {
+				members := make([]string, 0, len(hiddenGroupMembers))
+				for m := range hiddenGroupMembers {
+					members = append(members, m)
+				}
+				return members
+			}())
+	} else {
+		log.Warnw("Cannot resolve hidden group members - resolver not available",
+			"escalationManagerNil", wc.escalationManager == nil,
+			"resolverNil", wc.escalationManager != nil && wc.escalationManager.Resolver == nil)
+	}
+
+	// Filter approvers - only include those not in hidden lists
+	filtered := []string{}
+	hiddenApprovers := []string{}
+	for _, approver := range approvers {
+		isHidden := hiddenUsers[approver] || hiddenGroupMembers[approver]
+		if isHidden {
+			hiddenApprovers = append(hiddenApprovers, approver)
+		} else {
+			filtered = append(filtered, approver)
+		}
+	}
+
+	log.Infow("Filtering results",
+		"originalApproverCount", len(approvers),
+		"originalApprovers", approvers,
+		"visibleApproverCount", len(filtered),
+		"visibleApprovers", filtered,
+		"hiddenApproverCount", len(hiddenApprovers),
+		"hiddenApproversFiltered", hiddenApprovers,
+		"totalDirectHidden", len(hiddenUsers),
+		"totalGroupMembersHidden", len(hiddenGroupMembers))
+
+	return filtered
 }
 
 // nolint:unused // might use later
