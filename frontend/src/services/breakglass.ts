@@ -209,16 +209,18 @@ export default class BreakglassService {
     }));
   }
 
-  // Fetch sessions belonging to the current user (approved + historical)
+  // Fetch sessions belonging to the current user (approved + expired/timed-out + historical)
   public async fetchMySessions(): Promise<ActiveBreakglass[]> {
     try {
-      const [approvedResp, historical] = await Promise.all([
-  this.client.get('/breakglassSessions', { params: { mine: true, approver: false, state: 'approved' } }),
+      const [approvedResp, timedOutResp, historical] = await Promise.all([
+        this.client.get('/breakglassSessions', { params: { mine: true, approver: false, state: 'approved' } }),
+        this.client.get('/breakglassSessions', { params: { mine: true, approver: false, state: 'timeout' } }),
         this.fetchHistoricalSessions(),
       ]);
       const approved = Array.isArray(approvedResp.data) ? approvedResp.data : [];
-      // Normalize approved entries to ActiveBreakglass shape used elsewhere
-      const approvedNormalized = approved.map((ses: any) => ({
+      const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
+      
+      const normalizeSession = (ses: any) => ({
         name: ses?.metadata?.name || ses.name || "",
         group: ses?.spec?.grantedGroup || "",
         cluster: ses?.spec?.cluster || "",
@@ -227,9 +229,14 @@ export default class BreakglassService {
         metadata: ses?.metadata || {},
         spec: ses?.spec || {},
         status: ses?.status || {},
-      }));
-      // Merge approved + historical (historical already normalized) and dedupe by session name
-      const combined = [...approvedNormalized, ...historical];
+      });
+      
+      // Normalize entries to ActiveBreakglass shape
+      const approvedNormalized = approved.map(normalizeSession);
+      const timedOutNormalized = timedOut.map(normalizeSession);
+      
+      // Merge all session sources (approved + timed-out + historical) and dedupe by session name
+      const combined = [...approvedNormalized, ...timedOutNormalized, ...historical];
       const seen = new Map<string, ActiveBreakglass>();
       for (const s of combined) {
         const key = s?.name || (s?.metadata && s.metadata.name) || `${s.group}-${s.cluster}-${s.expiry}`;
@@ -242,12 +249,17 @@ export default class BreakglassService {
     }
   }
 
-  // Fetch sessions that the current user approved (approximation: look through approved sessions and find conditions mentioning approver email)
+  // Fetch sessions that the current user approved (includes approved + timed-out sessions)
   public async fetchSessionsIApproved(): Promise<ActiveBreakglass[]> {
     try {
-  const r = await this.client.get('/breakglassSessions', { params: { state: 'approved', mine: false, approver: false } });
-      const data = Array.isArray(r.data) ? r.data : [];
-      return data.map((ses: any) => ({
+      const [approvedResp, timedOutResp] = await Promise.all([
+        this.client.get('/breakglassSessions', { params: { state: 'approved', mine: false, approver: false } }),
+        this.client.get('/breakglassSessions', { params: { state: 'timeout', mine: false, approver: false } }),
+      ]);
+      const approved = Array.isArray(approvedResp.data) ? approvedResp.data : [];
+      const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
+      
+      const normalizeSession = (ses: any) => ({
         name: ses?.metadata?.name || "",
         group: ses?.spec?.grantedGroup || "",
         cluster: ses?.spec?.cluster || "",
@@ -256,7 +268,16 @@ export default class BreakglassService {
         metadata: ses?.metadata || {},
         spec: ses?.spec || {},
         status: ses?.status || {},
-      }));
+      });
+      
+      // Combine approved and timed-out sessions, then dedupe by session name
+      const combined = [...approved.map(normalizeSession), ...timedOut.map(normalizeSession)];
+      const seen = new Map<string, ActiveBreakglass>();
+      for (const s of combined) {
+        const key = s?.name || `${s.group}-${s.cluster}-${s.expiry}`;
+        if (!seen.has(key)) seen.set(key, s);
+      }
+      return Array.from(seen.values());
     } catch (e) {
       handleAxiosError('BreakglassService.fetchSessionsIApproved', e, 'Failed to fetch sessions I approved');
       return [];

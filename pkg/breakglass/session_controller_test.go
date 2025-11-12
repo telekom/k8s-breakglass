@@ -3425,6 +3425,212 @@ func TestSendOnRequestEmailsByGroup_DeduplicateApproversInMultipleGroups(t *test
 	}
 }
 
+// TestIsSessionPendingApproval tests the IsSessionPendingApproval function with various timeout scenarios
+func TestIsSessionPendingApproval(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name     string
+		session  v1alpha1.BreakglassSession
+		expected bool
+		reason   string
+	}{
+		{
+			name: "pending_session_no_timeout_set",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.Time{},
+				},
+			},
+			expected: true,
+			reason:   "session is pending with no timeout set",
+		},
+		{
+			name: "pending_session_timeout_in_future",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
+				},
+			},
+			expected: true,
+			reason:   "session is pending with timeout in the future",
+		},
+		{
+			name: "pending_session_timeout_in_past",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "session timeout has passed, so it's no longer pending",
+		},
+		{
+			name: "approved_session",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					ApprovedAt: metav1.NewTime(now),
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "session is approved, not pending",
+		},
+		{
+			name: "rejected_session",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.NewTime(now),
+					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "session is rejected, not pending",
+		},
+		{
+			name: "approved_and_timed_out",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					ApprovedAt: metav1.NewTime(now.Add(-2 * time.Hour)),
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "session is approved, so timeout is irrelevant",
+		},
+		{
+			name: "timeout_exactly_now",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now),
+				},
+			},
+			expected: false,
+			reason:   "session timeout is at current time, should be treated as expired",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsSessionPendingApproval(tt.session)
+			if result != tt.expected {
+				t.Errorf("Expected %v but got %v. Reason: %s", tt.expected, result, tt.reason)
+			}
+		})
+	}
+}
+
+// TestIsSessionApprovalTimedOut tests the IsSessionApprovalTimedOut function
+func TestIsSessionApprovalTimedOut(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name     string
+		session  v1alpha1.BreakglassSession
+		expected bool
+		reason   string
+	}{
+		{
+			name: "pending_timeout_in_future",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStatePending,
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "session is pending and timeout is in future",
+		},
+		{
+			name: "pending_timeout_in_past",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStatePending,
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
+				},
+			},
+			expected: true,
+			reason:   "session is pending and timeout has passed",
+		},
+		{
+			name: "approved_timeout_in_past",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStateApproved,
+					ApprovedAt: metav1.NewTime(now.Add(-2 * time.Hour)),
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "session is approved, timeout doesn't matter",
+		},
+		{
+			name: "rejected_timeout_in_past",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStateRejected,
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.NewTime(now.Add(-2 * time.Hour)),
+					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "session is rejected, timeout doesn't matter",
+		},
+		{
+			name: "pending_no_timeout_set",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStatePending,
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.Time{},
+				},
+			},
+			expected: false,
+			reason:   "session is pending but no timeout is set",
+		},
+		{
+			name: "timeout_state_already_set",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStateTimeout,
+					ApprovedAt: metav1.Time{},
+					RejectedAt: metav1.Time{},
+					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
+				},
+			},
+			expected: false,
+			reason:   "session state is already marked as timeout",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsSessionApprovalTimedOut(tt.session)
+			if result != tt.expected {
+				t.Errorf("Expected %v but got %v. Reason: %s", tt.expected, result, tt.reason)
+			}
+		})
+	}
+}
+
 type MockGroupResolver struct {
 	members map[string][]string
 }

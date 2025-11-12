@@ -54,8 +54,17 @@ type BreakglassSessionController struct {
 }
 
 // IsSessionPendingApproval returns true if the session is not rejected and not yet approved (pending approval)
+// and the approval timeout has not passed. It returns false if the session has timed out.
 func IsSessionPendingApproval(session v1alpha1.BreakglassSession) bool {
-	return session.Status.ApprovedAt.IsZero() && session.Status.RejectedAt.IsZero()
+	// Must not be approved or rejected
+	if !session.Status.ApprovedAt.IsZero() || !session.Status.RejectedAt.IsZero() {
+		return false
+	}
+	// If TimeoutAt is set and has passed, session is no longer pending (it has timed out)
+	if !session.Status.TimeoutAt.IsZero() && time.Now().After(session.Status.TimeoutAt.Time) {
+		return false
+	}
+	return true
 }
 
 func (BreakglassSessionController) BasePath() string {

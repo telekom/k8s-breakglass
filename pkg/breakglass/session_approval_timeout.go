@@ -8,5 +8,14 @@ import (
 )
 
 func IsSessionApprovalTimedOut(session v1alpha1.BreakglassSession) bool {
-	return IsSessionPendingApproval(session) && !session.Status.TimeoutAt.Time.IsZero() && time.Now().After(session.Status.TimeoutAt.Time)
+	// If session is already in timeout state, it's not "approval timed out" anymore - it's already timed out
+	if session.Status.State == v1alpha1.SessionStateTimeout {
+		return false
+	}
+	// Session must be pending (not approved or rejected)
+	if !session.Status.ApprovedAt.IsZero() || !session.Status.RejectedAt.IsZero() {
+		return false
+	}
+	// Timeout must be set and must have passed
+	return !session.Status.TimeoutAt.IsZero() && time.Now().After(session.Status.TimeoutAt.Time)
 }
