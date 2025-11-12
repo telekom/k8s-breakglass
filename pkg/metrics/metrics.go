@@ -122,6 +122,42 @@ var (
 		Name: "breakglass_mail_failed_total",
 		Help: "Total number of emails failed after all retries",
 	}, []string{"host"})
+
+	// Identity Provider metrics
+	IdentityProviderLoaded = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_identity_provider_loaded_total",
+		Help: "Total number of times an IdentityProvider was successfully loaded",
+	}, []string{"provider_type"})
+	IdentityProviderLoadFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_identity_provider_load_failed_total",
+		Help: "Total number of times IdentityProvider loading failed",
+	}, []string{"reason"})
+	IdentityProviderValidationFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_identity_provider_validation_failed_total",
+		Help: "Total number of times IdentityProvider validation failed at startup",
+	}, []string{"reason"})
+	// Extended lifecycle metrics for comprehensive monitoring
+	IdentityProviderReloadDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_identity_provider_reload_duration_seconds",
+		Help:    "Time taken to reload identity provider configuration in seconds",
+		Buckets: []float64{.1, .5, 1, 2, 5, 10, 30, 60},
+	}, []string{"provider_type"})
+	IdentityProviderReloadAttempts = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_identity_provider_reload_attempts_total",
+		Help: "Total reload attempts with success/failure status",
+	}, []string{"provider_type", "status"})
+	IdentityProviderLastReloadTimestamp = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_identity_provider_last_reload_timestamp_seconds",
+		Help: "Unix timestamp of last successful IdentityProvider reload",
+	}, []string{"provider_type"})
+	IdentityProviderConfigVersion = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_identity_provider_config_version",
+		Help: "Current configuration version/hash of the IdentityProvider",
+	}, []string{"provider_type"})
+	IdentityProviderStatus = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_identity_provider_status",
+		Help: "Current status of IdentityProvider (1=Active, 0=Error, -1=Disabled)",
+	}, []string{"provider_name", "provider_type"})
 )
 
 func init() {
@@ -151,7 +187,14 @@ func init() {
 	prometheus.MustRegister(MailSent)
 	prometheus.MustRegister(MailRetryScheduled)
 	prometheus.MustRegister(MailFailed)
-
+	prometheus.MustRegister(IdentityProviderLoaded)
+	prometheus.MustRegister(IdentityProviderLoadFailed)
+	prometheus.MustRegister(IdentityProviderValidationFailed)
+	prometheus.MustRegister(IdentityProviderReloadDuration)
+	prometheus.MustRegister(IdentityProviderReloadAttempts)
+	prometheus.MustRegister(IdentityProviderLastReloadTimestamp)
+	prometheus.MustRegister(IdentityProviderConfigVersion)
+	prometheus.MustRegister(IdentityProviderStatus)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.

@@ -254,6 +254,98 @@ metric_relabel_configs:
     labels: [namespace]  # Drop namespace label to reduce cardinality
 ```
 
+## IdentityProvider Lifecycle Metrics
+
+Monitor the health and performance of identity provider configuration reloading and OIDC authentication.
+
+### Configuration Reload Performance
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_identity_provider_reload_duration_seconds` | Histogram | `provider_type` | Duration of IdentityProvider configuration reloads (buckets: 0.1s to 60s) |
+| `breakglass_identity_provider_reload_attempts_total` | Counter | `status`, `provider_type` | Total reload attempts by status (`success`, `error`, `skipped`) |
+| `breakglass_identity_provider_last_reload_timestamp_seconds` | Gauge | `provider_type` | Unix timestamp of last successful reload per provider type |
+
+**Example Queries:**
+
+```promql
+# Configuration reload latency (p95)
+histogram_quantile(0.95, rate(breakglass_identity_provider_reload_duration_seconds_bucket[5m]))
+
+# Reload failure rate (should be 0 or near 0)
+sum(rate(breakglass_identity_provider_reload_attempts_total{status="error"}[5m]))
+/
+sum(rate(breakglass_identity_provider_reload_attempts_total[5m]))
+
+# Time since last successful reload (staleness detection)
+time() - breakglass_identity_provider_last_reload_timestamp_seconds
+```
+
+### Configuration State and Validity
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_identity_provider_config_version` | Gauge | `provider_type` | Hash of current loaded configuration (changes when config updates) |
+| `breakglass_identity_provider_status` | Gauge | `provider_name`, `provider_type` | Provider status: `1` = Active, `0` = Error, `-1` = Disabled |
+
+**Example Queries:**
+
+```promql
+# Configuration version changes (indicates successful reloads)
+changes(breakglass_identity_provider_config_version[1h])
+
+# Active providers count
+count(breakglass_identity_provider_status == 1)
+
+# Disabled providers count
+count(breakglass_identity_provider_status == -1)
+
+# Alert on provider errors
+breakglass_identity_provider_status == 0
+```
+
+### Alert Rules
+
+**Recommended Prometheus alert rules:**
+
+```yaml
+groups:
+  - name: breakglass_identity_provider
+    interval: 30s
+    rules:
+      - alert: IdentityProviderReloadFailure
+        expr: |
+          rate(breakglass_identity_provider_reload_attempts_total{status="error"}[5m]) > 0
+        for: 2m
+        annotations:
+          summary: "IdentityProvider reload failing"
+          description: "Identity provider configuration reload has failed: {{ $value }}"
+
+      - alert: IdentityProviderStale
+        expr: |
+          time() - breakglass_identity_provider_last_reload_timestamp_seconds > 900
+        for: 5m
+        annotations:
+          summary: "IdentityProvider configuration is stale (>15m)"
+          description: "No successful reload for 15+ minutes on {{ $labels.provider_type }}"
+
+      - alert: IdentityProviderReloadSlow
+        expr: |
+          histogram_quantile(0.95, rate(breakglass_identity_provider_reload_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        annotations:
+          summary: "IdentityProvider reload is slow (>5s)"
+          description: "p95 reload latency: {{ $value | humanizeDuration }}"
+
+      - alert: IdentityProviderDown
+        expr: |
+          breakglass_identity_provider_status == 0
+        for: 2m
+        annotations:
+          summary: "IdentityProvider {{ $labels.provider_name }} is DOWN"
+          description: "Provider cannot be loaded or is in error state"
+```
+
 ## Scrape Configuration Best Practices
 
 1. **Set appropriate scrape intervals** - Default 15s is usually fine, but high-volume environments may use 30s

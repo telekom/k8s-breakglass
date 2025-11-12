@@ -22,8 +22,8 @@ func TestNewServer(t *testing.T) {
 			ListenAddress: ":8080",
 		},
 		Frontend: config.Frontend{
-			OIDCAuthority: "https://auth.example.com",
-			OIDCClientID:  "test-client-id",
+			BaseURL:      "https://example.com",
+			BrandingName: "Test",
 		},
 		AuthorizationServer: config.AuthorizationServer{
 			URL:          "https://auth.example.com",
@@ -65,9 +65,8 @@ func TestServer_getConfig(t *testing.T) {
 
 	cfg := config.Config{
 		Frontend: config.Frontend{
-			OIDCAuthority: "https://auth.example.com",
-			OIDCClientID:  "test-client-id",
-			BrandingName:  "Das SCHIFF Breakglass",
+			BaseURL:      "https://example.com",
+			BrandingName: "Das SCHIFF Breakglass",
 		},
 		AuthorizationServer: config.AuthorizationServer{
 			URL:          "https://auth.example.com",
@@ -75,7 +74,13 @@ func TestServer_getConfig(t *testing.T) {
 		},
 	}
 
-	server := &Server{config: cfg}
+	server := &Server{
+		config: cfg,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: "https://auth.example.com",
+			ClientID:  "test-client-id",
+		},
+	}
 	router := gin.New()
 	router.GET("/config", server.getConfig)
 
@@ -89,12 +94,249 @@ func TestServer_getConfig(t *testing.T) {
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
 
-	assert.Equal(t, cfg.Frontend.OIDCAuthority, response.Frontend.OIDCAuthority)
-	assert.Equal(t, cfg.Frontend.OIDCClientID, response.Frontend.OIDCClientID)
+	// Check that IdentityProvider config is exposed in frontend config
+	assert.Equal(t, "https://auth.example.com", response.Frontend.OIDCAuthority)
+	assert.Equal(t, "test-client-id", response.Frontend.OIDCClientID)
 	// Branding should be propagated to the public config
 	assert.Equal(t, cfg.Frontend.BrandingName, response.Frontend.BrandingName)
 	assert.Equal(t, cfg.AuthorizationServer.URL, response.AuthorizationServer.URL)
 	assert.Equal(t, cfg.AuthorizationServer.JWKSEndpoint, response.AuthorizationServer.JWKSEndpoint)
+}
+
+func TestServer_getIdentityProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+		idpConfig: &config.IdentityProviderConfig{
+			Type:      "OIDC",
+			Authority: "https://auth.example.com",
+			ClientID:  "test-client-id",
+			// ClientSecret should NOT be exposed
+			ClientSecret: "this-should-not-be-exposed",
+		},
+	}
+
+	router := gin.New()
+	router.GET("/identity-provider", server.getIdentityProvider)
+
+	req, err := http.NewRequest("GET", "/identity-provider", nil)
+	assert.NoError(t, err)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response IdentityProviderResponse
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	// Verify expected fields are exposed
+	assert.Equal(t, "OIDC", response.Type)
+	assert.Equal(t, "https://auth.example.com", response.Authority)
+	assert.Equal(t, "test-client-id", response.ClientID)
+	// Verify response body does NOT contain the secret
+	assert.NotContains(t, w.Body.String(), "this-should-not-be-exposed")
+}
+
+func TestServer_getIdentityProvider_WithKeycloak(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+		idpConfig: &config.IdentityProviderConfig{
+			Type:      "Keycloak",
+			Authority: "https://keycloak.example.com/auth/realms/master",
+			ClientID:  "keycloak-client",
+			Keycloak: &config.KeycloakRuntimeConfig{
+				BaseURL:             "https://keycloak.example.com",
+				Realm:               "master",
+				ClientSecret:        "secret-should-not-expose",
+				ServiceAccountToken: "token-should-not-expose",
+			},
+		},
+	}
+
+	router := gin.New()
+	router.GET("/identity-provider", server.getIdentityProvider)
+
+	req, err := http.NewRequest("GET", "/identity-provider", nil)
+	assert.NoError(t, err)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response IdentityProviderResponse
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	// Verify Keycloak metadata is exposed (non-secrets only)
+	assert.Equal(t, "Keycloak", response.Type)
+	assert.NotNil(t, response.KeycloakMetadata)
+	assert.Equal(t, "https://keycloak.example.com", response.KeycloakMetadata.BaseURL)
+	assert.Equal(t, "master", response.KeycloakMetadata.Realm)
+
+	// Verify secrets are NOT exposed
+	responseBody := w.Body.String()
+	assert.NotContains(t, responseBody, "secret-should-not-expose")
+	assert.NotContains(t, responseBody, "token-should-not-expose")
+}
+
+func TestServer_getIdentityProvider_NotConfigured(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log:       logger,
+		idpConfig: nil, // No IDP configured
+	}
+
+	router := gin.New()
+	router.GET("/identity-provider", server.getIdentityProvider)
+
+	req, err := http.NewRequest("GET", "/identity-provider", nil)
+	assert.NoError(t, err)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	var response gin.H
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Contains(t, response["error"], "not configured")
+}
+
+func TestServer_SetIdentityProvider(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	cfg := config.Config{}
+	server := &Server{
+		config: cfg,
+		log:    logger,
+	}
+
+	// Initially nil
+	assert.Nil(t, server.idpConfig)
+
+	// Set identity provider
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "OIDC",
+		Authority: "https://example.com",
+		ClientID:  "test",
+	}
+	server.SetIdentityProvider(idpConfig)
+
+	// Now it should be set
+	assert.NotNil(t, server.idpConfig)
+	assert.Equal(t, "OIDC", server.idpConfig.Type)
+	assert.Equal(t, "https://example.com", server.idpConfig.Authority)
+}
+
+func TestServer_getConfig_WithoutIdentityProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Config with no IdentityProvider set
+	cfg := config.Config{
+		Frontend: config.Frontend{
+			BrandingName: "Test Brand",
+		},
+		AuthorizationServer: config.AuthorizationServer{
+			URL:          "https://auth.example.com",
+			JWKSEndpoint: ".well-known/jwks.json",
+		},
+	}
+
+	server := &Server{
+		config:    cfg,
+		idpConfig: nil, // No provider loaded
+	}
+	router := gin.New()
+	router.GET("/config", server.getConfig)
+
+	req, err := http.NewRequest("GET", "/config", nil)
+	assert.NoError(t, err)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response PublicConfig
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	// When no provider is loaded, OIDC fields should be empty
+	assert.Equal(t, "", response.Frontend.OIDCAuthority)
+	assert.Equal(t, "", response.Frontend.OIDCClientID)
+	// But branding should still be present
+	assert.Equal(t, "Test Brand", response.Frontend.BrandingName)
+}
+
+func TestServer_getIdentityProvider_EmptyKeycloakConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logger := zaptest.NewLogger(t)
+	// Provider with partial Keycloak config (should not expose metadata)
+	server := &Server{
+		log: logger,
+		idpConfig: &config.IdentityProviderConfig{
+			Type:      "Keycloak",
+			Authority: "https://keycloak.example.com",
+			ClientID:  "client",
+			Keycloak:  nil, // No keycloak metadata
+		},
+	}
+
+	router := gin.New()
+	router.GET("/identity-provider", server.getIdentityProvider)
+
+	req, err := http.NewRequest("GET", "/identity-provider", nil)
+	assert.NoError(t, err)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response IdentityProviderResponse
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "Keycloak", response.Type)
+	assert.Nil(t, response.KeycloakMetadata) // Should be nil when not configured
+}
+
+func TestServer_getIdentityProvider_AllProviderTypes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+
+	testCases := []string{"OIDC", "Keycloak", "LDAP", "AzureAD"}
+
+	for _, providerType := range testCases {
+		t.Run(providerType, func(t *testing.T) {
+			server := &Server{
+				log: logger,
+				idpConfig: &config.IdentityProviderConfig{
+					Type:      providerType,
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			}
+
+			router := gin.New()
+			router.GET("/identity-provider", server.getIdentityProvider)
+
+			req, err := http.NewRequest("GET", "/identity-provider", nil)
+			assert.NoError(t, err)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			var response IdentityProviderResponse
+			err = json.Unmarshal(w.Body.Bytes(), &response)
+			assert.NoError(t, err)
+
+			assert.Equal(t, providerType, response.Type)
+			assert.Equal(t, "https://auth.example.com", response.Authority)
+			assert.Equal(t, "test-client", response.ClientID)
+		})
+	}
 }
 
 func TestServer_RegisterAll(t *testing.T) {

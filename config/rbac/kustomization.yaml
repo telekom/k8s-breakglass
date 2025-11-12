@@ -8,3 +8,5 @@ resources:
 - impersonate_role_binding.yaml
 - secrets_reader_role.yaml
 - secrets_reader_role_binding.yaml
+- identityprovider_role.yaml
+- identityprovider_role_binding.yaml

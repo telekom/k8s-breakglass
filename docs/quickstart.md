@@ -22,31 +22,57 @@ Edit `config.yaml` with your settings:
 ```yaml
 server:
   listenAddress: :8080
-  # Add TLS for production
-  # tlsCertFile: /path/to/cert.pem
-  # tlsKeyFile: /path/to/key.pem
 
 authorizationserver:
   url: https://keycloak.example.com
   jwksEndpoint: "realms/master/protocol/openid-connect/certs"
 
 frontend:
-  oidcAuthority: https://keycloak.example.com/realms/master
-  oidcClientID: breakglass-ui
+  identityProviderName: "production-idp"  # REQUIRED
   baseURL: https://breakglass.example.com
 
 mail:
   host: smtp.example.com
   port: 587
-  fromAddress: breakglass@example.com
+  senderAddress: breakglass@example.com
 
 kubernetes:
-  context: ""  # Use default context
+  context: ""
   oidcPrefixes:
-    - "keycloak:"
+    - "oidc:"
 ```
 
-## 2. Deploy to Hub Cluster
+## 2. Create IdentityProvider Resource
+
+**This is REQUIRED** - Breakglass will not start without it.
+
+Create `identity-provider.yaml`:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: production-idp
+spec:
+  primary: true
+  oidc:
+    authority: "https://keycloak.example.com/realms/master"
+    clientID: "breakglass-ui"
+```
+
+Deploy to hub cluster:
+
+```bash
+kubectl apply -f identity-provider.yaml -n breakglass-system
+```
+
+Verify:
+
+```bash
+kubectl get identityproviders
+```
+
+## 3. Deploy to Hub Cluster
 
 Update deployment configuration:
 
@@ -68,7 +94,7 @@ kubectl get pods -n breakglass-system
 kubectl get crd | grep breakglass
 ```
 
-## 3. Create Your First Escalation Policy
+## 4. Create Your First Escalation Policy
 
 Create a file `escalation-policy.yaml`:
 
@@ -94,7 +120,7 @@ Deploy:
 kubectl apply -f escalation-policy.yaml
 ```
 
-## 4. Configure Tenant Cluster
+## 5. Configure Tenant Cluster
 
 On the tenant cluster that needs breakglass authorization:
 

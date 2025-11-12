@@ -1,0 +1,56 @@
+# Example IdentityProvider configuration for OIDC only (no group sync)
+# This configuration sets up OpenID Connect as the identity provider for Breakglass
+# The frontend will use this provider for user authentication
+apiVersion: breakglass.telekom.de/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: primary-oidc
+spec:
+  # Mandatory OIDC configuration for user authentication
+  oidc:
+    # Authority is the OIDC provider authority endpoint
+    # This is typically the root URL of your OIDC provider
+    authority: "https://auth.example.com"
+
+    # ClientID is the OIDC client ID for user authentication
+    clientID: "breakglass-ui"
+
+    # JWKSEndpoint (optional) specifies a custom endpoint for fetching JSON Web Key Sets
+    # If empty, defaults to Authority/.well-known/openid-configuration
+    # jwksEndpoint: "https://auth.example.com/.well-known/jwks.json"
+
+    # InsecureSkipVerify allows skipping TLS certificate verification
+    # WARNING: Only use in development/testing environments!
+    # insecureSkipVerify: false
+
+    # CertificateAuthority (optional) contains a PEM-encoded CA certificate
+    # for validating the TLS certificate presented by the OIDC provider
+    # certificateAuthority: |
+    #   -----BEGIN CERTIFICATE-----
+    #   ...
+    #   -----END CERTIFICATE-----
+
+  # Primary indicates this is the default identity provider
+  # Only one IdentityProvider should have primary: true per cluster
+  primary: true
+
+  # Display name for this provider (shown in logs)
+  displayName: "Primary OIDC Provider"
+
+  # Disabled can be set to true to temporarily disable this provider
+  # disabled: false
+
+---
+# Example: Secondary OIDC provider for fallback/testing
+apiVersion: breakglass.telekom.de/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: backup-oidc
+spec:
+  oidc:
+    authority: "https://backup-auth.example.com"
+    clientID: "breakglass-ui-backup"
+
+  primary: false  # This is not the default provider
+  displayName: "Backup OIDC Provider"
+

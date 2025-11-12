@@ -30,9 +30,8 @@ authorizationServer:
   url: "http://localhost:8080"
   jwksEndpoint: "certs"
 frontend:
-  oidcAuthority: "http://localhost:8080"
-  oidcClientID: "test-client"
   baseURL: "http://localhost:3000"
+  identityProviderName: "default"
 mail:
   host: "localhost"
   port: 587
@@ -52,9 +51,8 @@ authorizationServer:
   url: "http://localhost:8080"
   jwksEndpoint: "certs"
 frontend:
-  oidcAuthority: "http://localhost:8080"
-  oidcClientID: "test-client"
   baseURL: "http://localhost:3000"
+  identityProviderName: "default"
 mail:
   host: "localhost"
   port: 587
@@ -72,9 +70,7 @@ authorizationServer:
   url: "http://localhost:8080"
   jwksEndpoint: "certs"
 frontend:
-  oidcAuthority: "http://localhost:8080"
-  oidcClientID: "test-client"
-  baseURL: "http://localhost:3000"
+  identityProviderName: "default"
 mail:
   host: "localhost"
   port: 587

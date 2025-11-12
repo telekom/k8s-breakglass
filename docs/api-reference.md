@@ -22,6 +22,54 @@ Authorization: Bearer <jwt-token>
 
 Obtain tokens through the configured OIDC provider (e.g., Keycloak).
 
+## Identity Provider Configuration
+
+### Overview
+
+The identity provider is configured via the `IdentityProvider` Kubernetes resource (cluster-scoped). This resource is **MANDATORY** and defines:
+
+- OIDC authentication configuration
+- Optional group synchronization (Keycloak)
+- Cross-namespace secret references
+
+For complete information, see the [IdentityProvider documentation](identity-provider.md).
+
+### Configuration Example
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: production-idp
+spec:
+  primary: true
+  oidc:
+    authority: "https://keycloak.example.com/realms/master"
+    clientID: "breakglass-ui"
+  groupSyncProvider: Keycloak
+  keycloak:
+    baseURL: "https://keycloak.example.com"
+    realm: "master"
+    clientID: "breakglass-admin"
+    clientSecretRef:
+      name: keycloak-secret
+      namespace: default
+      key: clientSecret
+```
+
+### config.yaml Reference
+
+The breakglass `config.yaml` must reference an IdentityProvider:
+
+```yaml
+frontend:
+  identityProviderName: "production-idp"  # REQUIRED
+  baseURL: "https://breakglass.example.com"
+  brandingName: "Das SCHIFF Breakglass"
+```
+
+If the referenced IdentityProvider is not found, breakglass will fail to start.
+
 ## Breakglass Session API
 
 The API provides endpoints for managing breakglass sessions.

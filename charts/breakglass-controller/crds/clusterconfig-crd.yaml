@@ -80,10 +80,15 @@ spec:
                   The referenced Secret MUST exist in the specified namespace and contain the key (default: kubeconfig).
                 properties:
                   key:
+                    description: Key is the data key in the secret (defaults to "value"
+                      if not specified)
                     type: string
                   name:
+                    description: Name is the name of the secret
                     type: string
                   namespace:
+                    description: Namespace is the namespace containing the secret
+                      (supports cross-namespace references)
                     type: string
                 required:
                 - name

@@ -23,7 +23,7 @@ type GroupMemberResolver interface {
 // KeycloakGroupMemberResolver uses GoCloak client to fetch group members from Keycloak admin API.
 type KeycloakGroupMemberResolver struct {
 	log       *zap.SugaredLogger
-	cfg       cfgpkg.Keycloak
+	cfg       cfgpkg.KeycloakRuntimeConfig
 	gocloak   *gocloak.GoCloak
 	cache     *kcCache
 	token     string
@@ -57,7 +57,7 @@ func (c *kcCache) set(k string, v []string) {
 	c.items[k] = kcEntry{members: append([]string(nil), v...), expires: time.Now().Add(c.ttl)}
 }
 
-func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.Keycloak) *KeycloakGroupMemberResolver {
+func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.KeycloakRuntimeConfig) *KeycloakGroupMemberResolver {
 	ttl := 10 * time.Minute
 	if d, err := time.ParseDuration(cfg.CacheTTL); err == nil && d > 0 {
 		ttl = d
@@ -143,11 +143,10 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		return nil, nil
 	}
 	log := k.log
-	if k.cfg.Disable || k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
+	if k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
 		if log != nil {
-			log.Debugw("Keycloak resolver disabled or missing configuration; skipping group lookup",
+			log.Debugw("Keycloak resolver missing configuration; skipping group lookup",
 				"group", group,
-				"disabled", k.cfg.Disable,
 				"baseURL", k.cfg.BaseURL,
 				"realm", k.cfg.Realm,
 				"clientID", k.cfg.ClientID)
