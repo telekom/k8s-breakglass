@@ -84,9 +84,8 @@ func main() {
 	// Validate IdentityProvider exists (mandatory)
 	ctx := context.Background()
 	if err := idpLoader.ValidateIdentityProviderExists(ctx); err != nil {
-		log.Fatalf("IdentityProvider validation failed: %v", err)
 		metrics.IdentityProviderValidationFailed.WithLabelValues("not_found").Inc()
-		return
+		log.Fatalf("IdentityProvider validation failed: %v", err)
 	}
 
 	// Load primary IdentityProvider to check for Keycloak group sync
