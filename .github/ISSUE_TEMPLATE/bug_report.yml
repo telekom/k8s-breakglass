@@ -1,0 +1,98 @@
+name: 'Bug report'
+description: |
+  Submit a bug report which includes a reproducible self-contained example. 
+  For security vulnerabilities, use the security issue.
+title: '[BUG] <Write a short and informative title after the [BUG] prefix>'
+labels: ['bug']
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to file a bug report. Before creating a new issue, please make 
+        sure to take a few minutes to check the issue tracker for existing issues about bugs.
+      
+  - type: textarea
+    attributes:
+      label: Describe the bug
+      placeholder: A clear and concise description of what the bug is.
+
+  - type: textarea
+    attributes:
+      label: Expected behavior
+      placeholder: A clear and concise description of what you expected to happen.
+
+  - type: textarea
+    attributes:
+      label: Screenshots
+      placeholder: | 
+        If useful, add screenshots to help explain your problem. However, please do not use 
+        screenshots to show code or anything similar.
+
+  - type: textarea
+    attributes:
+      label: "Error message"
+      description: |
+        Please include full error message, if any.
+      placeholder: |
+        << Full traceback >>
+      render: shell
+
+  - type: textarea
+    attributes:
+      label: Code to reproduce the bug
+      description: |
+        A minimal self-contained code example that reproduces the bug, e.g. the error message above.
+        
+        The minimal self-contained example should have the following structure.
+        ```
+        # All necessary imports at the beginning
+  
+        # A succinct reproducing example trimmed down to the essential parts
+        
+        # Note: the bug is here
+        ```
+      placeholder: |
+        << your code here >>
+      render: go
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: System Environment
+      description: |
+        Complete the following information about your system.
+        You can get the system environment from `import platform; print(platform.uname())`.
+        And you can get the python version from `import sys; print(sys.version)`.
+      value: |
+        - OS: [e.g. Windows]
+        - Version: [e.g. 22]
+        - Go version: [e.g. 1.24.10]
+      render: markdown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: k8s-breakglass-version
+    attributes:
+      label: Kubernetes Breakglass Version
+      description: > 
+        What version of Kubernetes Breakglass are you running?
+      options: 
+        - 0.0.1
+        - 0.0.2
+        - 0.0.3
+        - 0.0.4
+        - 0.0.5
+        - 0.0.6
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: >
+        Add any other information that is important to know.
+        For example, explain how this bug affects your work and why it is important to be addressed.
+      placeholder: Add any other context about the problem here.
