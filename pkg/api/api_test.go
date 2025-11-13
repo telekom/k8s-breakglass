@@ -493,3 +493,193 @@ func (m *mockAPIControllerWithError) Register(rg *gin.RouterGroup) error {
 func (m *mockAPIControllerWithError) Handlers() []gin.HandlerFunc {
 	return m.handlers
 }
+
+func TestSetIdentityProvider_OIDCOnly(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+	}
+
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "OIDC",
+		Authority: "https://auth.example.com",
+		ClientID:  "oidc-client",
+	}
+
+	server.SetIdentityProvider(idpConfig)
+
+	assert.NotNil(t, server.idpConfig)
+	assert.Equal(t, "OIDC", server.idpConfig.Type)
+	assert.Equal(t, "https://auth.example.com", server.idpConfig.Authority)
+	assert.NotNil(t, server.oidcAuthority)
+	assert.Equal(t, "https", server.oidcAuthority.Scheme)
+	assert.Equal(t, "auth.example.com", server.oidcAuthority.Host)
+}
+
+func TestSetIdentityProvider_KeycloakWithAuthPath(t *testing.T) {
+	// Test case with /auth in the baseURL (like the actual Keycloak deployment)
+	// Config: baseURL="https://keycloak.das-schiff.telekom.de/auth", realm="schiff"
+	// Expected authority: "https://keycloak.das-schiff.telekom.de/auth/realms/schiff"
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+	}
+
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "Keycloak",
+		Authority: "https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
+		ClientID:  "breakglass-ui",
+		Keycloak: &config.KeycloakRuntimeConfig{
+			BaseURL:  "https://keycloak.das-schiff.telekom.de/auth",
+			Realm:    "schiff",
+			ClientID: "breakglass-controller",
+		},
+	}
+
+	server.SetIdentityProvider(idpConfig)
+
+	assert.NotNil(t, server.idpConfig)
+	assert.Equal(t, "Keycloak", server.idpConfig.Type)
+	assert.NotNil(t, server.oidcAuthority)
+	// Verify the constructed URL matches the expected Keycloak realm authority
+	expectedURL := "https://keycloak.das-schiff.telekom.de/auth/realms/schiff"
+	assert.Equal(t, expectedURL, server.oidcAuthority.String())
+	assert.Equal(t, "https", server.oidcAuthority.Scheme)
+	assert.Equal(t, "keycloak.das-schiff.telekom.de", server.oidcAuthority.Host)
+	assert.Equal(t, "/auth/realms/schiff", server.oidcAuthority.Path)
+}
+
+func TestSetIdentityProvider_KeycloakWithoutAuthPath(t *testing.T) {
+	// Test case without /auth in the baseURL (alternative Keycloak deployment)
+	// Config: baseURL="https://keycloak.example.com", realm="mycompany"
+	// Expected authority: "https://keycloak.example.com/realms/mycompany"
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+	}
+
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "Keycloak",
+		Authority: "https://keycloak.example.com/realms/mycompany",
+		ClientID:  "app-client",
+		Keycloak: &config.KeycloakRuntimeConfig{
+			BaseURL:  "https://keycloak.example.com",
+			Realm:    "mycompany",
+			ClientID: "app-service-account",
+		},
+	}
+
+	server.SetIdentityProvider(idpConfig)
+
+	assert.NotNil(t, server.idpConfig)
+	assert.Equal(t, "Keycloak", server.idpConfig.Type)
+	assert.NotNil(t, server.oidcAuthority)
+	// Verify the constructed URL matches the expected Keycloak realm authority
+	expectedURL := "https://keycloak.example.com/realms/mycompany"
+	assert.Equal(t, expectedURL, server.oidcAuthority.String())
+	assert.Equal(t, "https", server.oidcAuthority.Scheme)
+	assert.Equal(t, "keycloak.example.com", server.oidcAuthority.Host)
+	assert.Equal(t, "/realms/mycompany", server.oidcAuthority.Path)
+}
+
+func TestSetIdentityProvider_KeycloakWithTrailingSlash(t *testing.T) {
+	// Test case with trailing slash in baseURL (should be trimmed)
+	// Config: baseURL="https://keycloak.example.com/", realm="test"
+	// Expected authority: "https://keycloak.example.com/realms/test"
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+	}
+
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "Keycloak",
+		Authority: "https://keycloak.example.com/realms/test",
+		ClientID:  "test-client",
+		Keycloak: &config.KeycloakRuntimeConfig{
+			BaseURL:  "https://keycloak.example.com/",
+			Realm:    "test",
+			ClientID: "test-service-account",
+		},
+	}
+
+	server.SetIdentityProvider(idpConfig)
+
+	assert.NotNil(t, server.idpConfig)
+	assert.NotNil(t, server.oidcAuthority)
+	// Verify trailing slash is handled correctly
+	expectedURL := "https://keycloak.example.com/realms/test"
+	assert.Equal(t, expectedURL, server.oidcAuthority.String())
+}
+
+func TestSetIdentityProvider_KeycloakMissingRealm(t *testing.T) {
+	// Test case with Keycloak config but missing realm (should fall back to Authority)
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+	}
+
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "Keycloak",
+		Authority: "https://keycloak.example.com/realms/fallback",
+		ClientID:  "test-client",
+		Keycloak: &config.KeycloakRuntimeConfig{
+			BaseURL:  "https://keycloak.example.com",
+			Realm:    "", // Missing realm
+			ClientID: "test-service-account",
+		},
+	}
+
+	server.SetIdentityProvider(idpConfig)
+
+	assert.NotNil(t, server.idpConfig)
+	assert.NotNil(t, server.oidcAuthority)
+	// Should fall back to the Authority field
+	assert.Equal(t, "https://keycloak.example.com/realms/fallback", server.oidcAuthority.String())
+}
+
+func TestSetIdentityProvider_KeycloakMissingBaseURL(t *testing.T) {
+	// Test case with Keycloak config but missing baseURL (should fall back to Authority)
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+	}
+
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "Keycloak",
+		Authority: "https://keycloak.example.com/realms/fallback",
+		ClientID:  "test-client",
+		Keycloak: &config.KeycloakRuntimeConfig{
+			BaseURL:  "", // Missing baseURL
+			Realm:    "test",
+			ClientID: "test-service-account",
+		},
+	}
+
+	server.SetIdentityProvider(idpConfig)
+
+	assert.NotNil(t, server.idpConfig)
+	assert.NotNil(t, server.oidcAuthority)
+	// Should fall back to the Authority field
+	assert.Equal(t, "https://keycloak.example.com/realms/fallback", server.oidcAuthority.String())
+}
+
+func TestSetIdentityProvider_NilKeycloak(t *testing.T) {
+	// Test case with nil Keycloak config (should use Authority)
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+	}
+
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "OIDC",
+		Authority: "https://auth.example.com",
+		ClientID:  "oidc-client",
+		Keycloak:  nil,
+	}
+
+	server.SetIdentityProvider(idpConfig)
+
+	assert.NotNil(t, server.idpConfig)
+	assert.NotNil(t, server.oidcAuthority)
+	assert.Equal(t, "https://auth.example.com", server.oidcAuthority.String())
+}
