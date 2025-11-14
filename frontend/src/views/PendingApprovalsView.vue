@@ -36,6 +36,51 @@ function getUrgency(expiresAt: string | undefined): 'critical' | 'high' | 'norma
   return 'normal';
 }
 
+// Helper function to format Go duration strings (e.g., "1h0m0s") to human-readable format
+function formatDuration(durationStr: string | undefined): string {
+  if (!durationStr) return 'Not specified';
+  
+  // Parse Go duration string format: "1h0m0s"
+  const match = durationStr.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+  if (!match) return durationStr;
+  
+  const hours = parseInt(match[1] || '0', 10);
+  const minutes = parseInt(match[2] || '0', 10);
+  const seconds = parseInt(match[3] || '0', 10);
+  
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0) parts.push(`${seconds}s`);
+  
+  return parts.length > 0 ? parts.join(' ') : '0s';
+}
+
+// Helper function to compute end time from start time and duration
+function computeEndTime(startTimeStr: string | undefined, durationStr: string | undefined): string {
+  if (!startTimeStr || !durationStr) return 'Not available';
+  
+  try {
+    const startTime = new Date(startTimeStr);
+    
+    // Parse Go duration string format: "1h0m0s"
+    const match = durationStr.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    if (!match) return 'Invalid duration format';
+    
+    const hours = parseInt(match[1] || '0', 10);
+    const minutes = parseInt(match[2] || '0', 10);
+    const seconds = parseInt(match[3] || '0', 10);
+    
+    // Calculate total milliseconds
+    const totalMs = (hours * 3600 + minutes * 60 + seconds) * 1000;
+    
+    const endTime = new Date(startTime.getTime() + totalMs);
+    return endTime.toLocaleString();
+  } catch (e) {
+    return 'Invalid date format';
+  }
+}
+
 // Enhanced sessions list with urgency calculation
 const sessionsWithUrgency = computed(() => {
   return pendingSessions.value.map(session => ({
@@ -204,6 +249,16 @@ onMounted(fetchPendingApprovals);
           <span class="meta-item">
             <strong>Requested:</strong> {{ new Date(session.metadata.creationTimestamp).toLocaleString() }}
           </span>
+          <span v-if="session.spec && session.spec.maxValidFor" class="meta-item">
+            <strong>Duration:</strong> {{ formatDuration(session.spec.maxValidFor) }}
+          </span>
+        </div>
+        
+        <!-- Scheduled session end time (if applicable) -->
+        <div v-if="session.spec && session.spec.scheduledStartTime && session.spec.maxValidFor" class="meta-row">
+          <span class="meta-item">
+            <strong>Will end at:</strong> {{ computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor) }}
+          </span>
         </div>
 
         <!-- Action button -->
@@ -227,13 +282,23 @@ onMounted(fetchPendingApprovals);
       <p><b>User:</b> {{ modalSession.spec.user }}</p>
       <p><b>Group:</b> {{ modalSession.spec.grantedGroup }} @ {{ modalSession.spec.cluster }}</p>
       
+      <!-- Duration information -->
+      <div v-if="modalSession.spec && modalSession.spec.maxValidFor" style="margin-top:0.5rem; padding: 8px; background-color: #e8f4f8; border-left: 3px solid #0288d1; border-radius: 3px;">
+        <p style="margin: 4px 0; color: #01579b;">
+          <strong>Duration:</strong> {{ formatDuration(modalSession.spec.maxValidFor) }}
+        </p>
+      </div>
+      
       <!-- Scheduling information -->
       <div v-if="modalSession.spec && modalSession.spec.scheduledStartTime" style="margin-top:1rem; padding: 10px; background-color: #fff3cd; border-left: 3px solid #ffc107; border-radius: 3px;">
         <strong style="color: #856404;">Scheduled Session</strong>
         <p style="margin: 4px 0; color: #856404;">
           <strong>Will start at:</strong> {{ new Date(modalSession.spec.scheduledStartTime).toLocaleString() }}
         </p>
-        <p style="margin: 4px 0; color: #856404;">
+        <p v-if="modalSession.spec.maxValidFor" style="margin: 4px 0; color: #856404;">
+          <strong>Will end at:</strong> {{ computeEndTime(modalSession.spec.scheduledStartTime, modalSession.spec.maxValidFor) }}
+        </p>
+        <p v-else style="margin: 4px 0; color: #856404;">
           <strong>Will expire at:</strong> {{ modalSession.status?.expiresAt ? new Date(modalSession.status.expiresAt).toLocaleString() : 'Calculated upon activation' }}
         </p>
       </div>
