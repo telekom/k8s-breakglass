@@ -2,36 +2,16 @@
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: breakglass-validating-webhook
+  name: breakglass-validating-session-webhook
 webhooks:
 - admissionReviewVersions:
   - v1
   - v1beta1
   clientConfig:
     service:
-      name: webhook-service
-      namespace: system
-      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-breakglassescalation
-  failurePolicy: Fail
-  name: vbreakglassescalation.kb.io
-  rules:
-  - apiGroups:
-    - breakglass.t-caas.telekom.com
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - breakglassescalations
-  sideEffects: None
-- admissionReviewVersions:
-  - v1
-  - v1beta1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
+      name: breakglass-webhook-service
+      namespace: breakglass-system
+      port: 443
       path: /validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession
   failurePolicy: Fail
   name: vbreakglasssession.kb.io
@@ -46,13 +26,48 @@ webhooks:
     resources:
     - breakglasssessions
   sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: breakglass-validating-escalation-webhook
+webhooks:
 - admissionReviewVersions:
   - v1
   - v1beta1
   clientConfig:
     service:
-      name: webhook-service
-      namespace: system
+      name: breakglass-webhook-service
+      namespace: breakglass-system
+      port: 443
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-breakglassescalation
+  failurePolicy: Fail
+  name: vbreakglassescalation.kb.io
+  rules:
+  - apiGroups:
+    - breakglass.t-caas.telekom.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - breakglassescalations
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: breakglass-validating-clusterconfig-webhook
+webhooks:
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: breakglass-webhook-service
+      namespace: breakglass-system
+      port: 443
       path: /validate-breakglass-t-caas-telekom-com-v1alpha1-clusterconfig
   failurePolicy: Fail
   name: vclusterconfig.kb.io
@@ -66,4 +81,31 @@ webhooks:
     - UPDATE
     resources:
     - clusterconfigs
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: breakglass-validating-identityprovider-webhook
+webhooks:
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: breakglass-webhook-service
+      namespace: breakglass-system
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-identityprovider
+  failurePolicy: Fail
+  name: videntityprovider.kb.io
+  rules:
+  - apiGroups:
+    - breakglass.t-caas.telekom.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - identityproviders
   sideEffects: None

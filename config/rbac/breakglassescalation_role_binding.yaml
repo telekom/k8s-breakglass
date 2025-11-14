@@ -4,12 +4,12 @@ metadata:
   labels:
     app.kubernetes.io/name: scaffold
     app.kubernetes.io/managed-by: kustomize
-  name: manager-escalation-rolebinding
+  name: breakglass-manager-escalation-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: escalation-manager-role
+  name: breakglass-escalation-manager-role
 subjects:
 - kind: ServiceAccount
-  name: manager
-  namespace: system
+  name: breakglass-manager
+  namespace: breakglass-system

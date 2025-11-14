@@ -1,5 +1,3 @@
----
-# Webhook service for admission webhooks
 apiVersion: v1
 kind: Service
 metadata:

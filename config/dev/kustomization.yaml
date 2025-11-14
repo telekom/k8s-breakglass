@@ -32,25 +32,25 @@ patches:
     group: apps
     version: v1
     kind: Deployment
-    name: manager
+    name: breakglass-manager
   path: ./resources/cert_volumes_patch.yaml
 - target:
     group: apps
     version: v1
     kind: Deployment
-    name: manager
+    name: breakglass-manager
   path: ./resources/keycloak_wait_initcontainer.yaml
 - target:
     group: apps
     version: v1
     kind: Deployment
-    name: manager
+    name: breakglass-manager
   path: ./resources/manager_debug_patch.yaml
 - target:
     group: apps
     version: v1
     kind: Deployment
-    name: manager
+    name: breakglass-manager
   path: ./resources/enable-webhooks-patch.yaml
 - target:
     group: admissionregistration.k8s.io

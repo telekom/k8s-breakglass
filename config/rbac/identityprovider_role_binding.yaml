@@ -1,12 +1,12 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: identity-provider-manager-role-binding
+  name: breakglass-identity-provider-manager-role-binding
 subjects:
 - kind: ServiceAccount
   name: controller-manager
-  namespace: system
+  namespace: breakglass-system
 roleRef:
   kind: ClusterRole
-  name: identity-provider-manager-role
+  name: breakglass-identity-provider-manager-role
   apiGroup: rbac.authorization.k8s.io

@@ -39,7 +39,7 @@ roleRef:
   name: webhook-cert-rotator-role
 subjects:
 - kind: ServiceAccount
-  name: manager
+  name: breakglass-manager
   namespace: breakglass-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -90,5 +90,5 @@ roleRef:
   name: webhook-cert-rotator-cluster-role
 subjects:
 - kind: ServiceAccount
-  name: manager
+  name: breakglass-manager
   namespace: breakglass-system

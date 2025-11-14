@@ -65,13 +65,9 @@ jobs:
         run: |
           helm lint charts/* --strict
 
-      - name: Helm template (minimal)
+      - name: Helm template (escalation-config)
         run: |
-          helm template breakglass-controller charts/breakglass-controller -f charts/breakglass-controller/test-values/values-minimal.yaml
-
-      - name: Helm template (tls)
-        run: |
-          helm template breakglass-controller charts/breakglass-controller -f charts/breakglass-controller/test-values/values-tls.yaml
+          helm template escalation-config charts/escalation-config > /dev/null
 
       - name: Helm package (verify)
         run: |

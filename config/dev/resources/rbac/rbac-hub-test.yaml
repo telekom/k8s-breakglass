@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: session-manager-role-test
+  name: breakglass-session-manager-role-test
   labels:
     breakglass.dev/test-resource: "true"
 rules:
@@ -30,7 +30,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: secrets-reader-role-test
+  name: breakglass-secrets-reader-role-test
   labels:
     breakglass.dev/test-resource: "true"
 rules:
@@ -41,29 +41,29 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: manager-secrets-reader-rolebinding-test
+  name: breakglass-manager-secrets-reader-rolebinding-test
   labels:
     breakglass.dev/test-resource: "true"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: secrets-reader-role-test
+  name: breakglass-secrets-reader-role-test
 subjects:
 - kind: ServiceAccount
-  name: manager
-  namespace: system
+  name: breakglass-manager
+  namespace: breakglass-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: manager-session-rolebinding-test
+  name: breakglass-manager-session-rolebinding-test
   labels:
     breakglass.dev/test-resource: "true"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: session-manager-role-test
+  name: breakglass-session-manager-role-test
 subjects:
 - kind: ServiceAccount
-  name: manager
-  namespace: system
+  name: breakglass-manager
+  namespace: breakglass-system

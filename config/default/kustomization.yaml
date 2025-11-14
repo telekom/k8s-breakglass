@@ -32,7 +32,7 @@ patches:
     group: apps
     version: v1
     kind: Deployment
-    name: manager
+    name: breakglass-manager
   patch: |-
     - op: add
       path: /spec/template/spec/containers/0/ports/-

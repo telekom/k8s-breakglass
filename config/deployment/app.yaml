@@ -2,10 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   creationTimestamp: null
-  namespace: system
+  namespace: breakglass-system
   labels:
     app: breakglass
-  name: manager
+  name: breakglass-manager
 spec:
   replicas: 1
   selector:
@@ -74,7 +74,7 @@ spec:
             - mountPath: /config/
               name: config
               readOnly: true
-      serviceAccountName: manager
+      serviceAccountname: breakglass-manager
       volumes:
       - name: config
         configMap:

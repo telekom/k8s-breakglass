@@ -4,7 +4,7 @@ metadata:
   annotations:
     rbac.authorization.kubernetes.io/autoupdate: "true"
   labels:
-  name: impersonate-auth-manager-role
+  name: breakglass-impersonate-auth-manager-role
 rules:
 - apiGroups:
   - ""

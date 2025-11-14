@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: session-manager-role
+  name: breakglass-session-manager-role
 rules:
 - apiGroups:
   - breakglass.t-caas.telekom.com

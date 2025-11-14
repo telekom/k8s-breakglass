@@ -4,4 +4,4 @@ metadata:
   labels:
     app.kubernetes.io/name: scaffold
     app.kubernetes.io/managed-by: kustomize
-  name: system
+  name: breakglass-system
