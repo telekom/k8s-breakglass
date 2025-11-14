@@ -459,9 +459,18 @@ func main() {
 // to process certificate reconciliation and close the setupFinished channel.
 func registerWebhooksAfterCerts(mgr ctrl.Manager, setupFinished <-chan struct{}, webhooksReady chan<- struct{}, enableWebhookMgr string, log *zap.SugaredLogger) {
 	// Wait for certificates to be ready (setupFinished channel will close)
+	// with a timeout to prevent hanging forever if cert setup fails
 	log.Infow("Webhook registration goroutine started, waiting for certificate setup to complete")
-	<-setupFinished
-	log.Infow("✓ Certificates ready, proceeding with webhook registration")
+
+	certReadyTimeout := time.After(120 * time.Second) // 2-minute timeout for cert setup
+	select {
+	case <-setupFinished:
+		log.Infow("✓ Certificates ready, proceeding with webhook registration")
+	case <-certReadyTimeout:
+		log.Fatalf("✗ Timeout waiting for certificate setup (120s) - pod will exit for restart. Check: 1) webhook-certs secret exists in %s namespace, 2) cert-rotator logs for errors, 3) RBAC permissions", os.Getenv("POD_NAMESPACE"))
+	}
+
+	log.Infow("Proceeding with webhook registration")
 
 	// Only register if webhooks are enabled
 	if enableWebhookMgr == "" || enableWebhookMgr == "true" {

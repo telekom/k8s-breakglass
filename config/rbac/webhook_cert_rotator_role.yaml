@@ -47,16 +47,30 @@ kind: ClusterRole
 metadata:
   name: webhook-cert-rotator-cluster-role
 rules:
-# Patch ValidatingWebhookConfiguration to inject CA bundle
+# List and watch all ValidatingWebhookConfigurations to discover and monitor them
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - validatingwebhookconfigurations
+  verbs:
+  - list
+  - watch
+  - get
+# Patch each specific ValidatingWebhookConfiguration to inject CA bundle
 - apiGroups:
   - admissionregistration.k8s.io
   resources:
   - validatingwebhookconfigurations
   resourceNames:
-  - validating-webhook-configuration
+  - breakglass-validating-session-webhook
+  - breakglass-validating-webhook
+  - breakglass-validating-escalation-webhook
+  - breakglass-validating-clusterconfig-webhook
+  - breakglass-validating-identityprovider-webhook
   verbs:
   - get
   - patch
+  - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
