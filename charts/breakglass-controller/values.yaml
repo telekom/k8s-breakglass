@@ -38,6 +38,7 @@ manager:
   breakglass:
     env:
       breakglassConfigPath: /config/config.yaml
+      enableWebhookManager: "true"
     image:
       repository: harbor.das-schiff.telekom.de/schiff-dev/breakglass-2
       tag: latest
