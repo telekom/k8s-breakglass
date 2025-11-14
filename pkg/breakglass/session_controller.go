@@ -514,14 +514,28 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 				c.JSON(http.StatusUnprocessableEntity, "invalid scheduledStartTime format (expected ISO 8601)")
 				return
 			}
+
 			// Ensure scheduled time is in the future
-			if scheduledTime.Before(time.Now()) {
-				reqLog.Warnw("scheduledStartTime is in the past", "value", request.ScheduledStartTime)
+			now := time.Now()
+			if scheduledTime.Before(now) {
+				reqLog.Warnw("scheduledStartTime is in the past",
+					"requestedTime", request.ScheduledStartTime,
+					"parsedUTC", scheduledTime.Format(time.RFC3339),
+					"nowUTC", now.Format(time.RFC3339),
+					"nowLocal", now.Local().Format(time.RFC3339),
+					"parsedLocal", scheduledTime.Local().Format(time.RFC3339),
+					"timeDiffSeconds", now.Unix()-scheduledTime.Unix())
 				c.JSON(http.StatusUnprocessableEntity, "scheduledStartTime must be in the future")
 				return
 			}
+
 			spec.ScheduledStartTime = &metav1.Time{Time: scheduledTime}
-			reqLog.Debugw("Scheduled start time set", "scheduledStartTime", request.ScheduledStartTime)
+			reqLog.Debugw("Scheduled start time set",
+				"scheduledStartTimeISO", request.ScheduledStartTime,
+				"scheduledTimeUTC", scheduledTime.Format(time.RFC3339),
+				"scheduledTimeLocal", scheduledTime.Local().Format(time.RFC3339),
+				"nowUTC", now.Format(time.RFC3339),
+				"secondsInFuture", scheduledTime.Unix()-now.Unix())
 		}
 	}
 

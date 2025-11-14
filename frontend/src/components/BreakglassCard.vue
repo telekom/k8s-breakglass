@@ -120,17 +120,49 @@ const minDateTime = computed(() => {
 });
 
 // Convert between datetime-local (browser format) and ISO 8601
+// NOTE: datetime-local input returns local time in format "YYYY-MM-DDTHH:mm"
+// We must treat it as local time and convert to UTC for ISO 8601 storage
 const scheduleDateTimeLocal = computed({
   get() {
     if (!scheduledStartTime.value) return '';
+    // scheduledStartTime is stored as ISO 8601 (UTC)
+    // Convert to local time for display in datetime-local input
     const dt = new Date(scheduledStartTime.value);
-    return dt.toISOString().slice(0, 16);
+    // Format as YYYY-MM-DDTHH:mm for datetime-local input
+    const year = dt.getFullYear();
+    const month = String(dt.getMonth() + 1).padStart(2, '0');
+    const day = String(dt.getDate()).padStart(2, '0');
+    const hours = String(dt.getHours()).padStart(2, '0');
+    const minutes = String(dt.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
   },
   set(value: string) {
     if (!value) {
       scheduledStartTime.value = null;
     } else {
-      const dt = new Date(value + ':00Z');
+      // value is in format "YYYY-MM-DDTHH:mm" and represents LOCAL time
+      // Parse it as local time and convert to UTC ISO 8601
+      const parts = value.split('T');
+      if (parts.length !== 2) return;
+      
+      const datePart = parts[0]!;
+      const timePart = parts[1]!;
+      
+      const dateParts = datePart.split('-').map(Number);
+      const timeParts = timePart.split(':').map(Number);
+      
+      if (dateParts.length !== 3 || timeParts.length !== 2) return;
+      
+      const year = dateParts[0]!;
+      const month = dateParts[1]!;
+      const day = dateParts[2]!;
+      const hours = timeParts[0]!;
+      const minutes = timeParts[1]!;
+      
+      // Create date in LOCAL timezone (not UTC!)
+      const dt = new Date(year, month - 1, day, hours, minutes, 0, 0);
+      
+      // Convert to ISO 8601 UTC string
       scheduledStartTime.value = dt.toISOString();
     }
   },
@@ -329,7 +361,10 @@ function drop() { emit("drop"); }
               
               <div v-if="scheduledStartTime" class="schedule-preview" style="font-size: 0.9em; color: #555; margin-top: 0.5rem;">
                 <p style="margin: 0.25rem 0;">
-                  <strong>Request will start at:</strong> {{ formatDateTime(scheduledStartTime) }}
+                  <strong>Request will start at:</strong> {{ formatDateTime(scheduledStartTime) }} (UTC)
+                </p>
+                <p style="margin: 0.25rem 0; color: #888; font-size: 0.85em;">
+                  Your local time: {{ new Date(scheduledStartTime).toLocaleString() }}
                 </p>
               </div>
             </div>

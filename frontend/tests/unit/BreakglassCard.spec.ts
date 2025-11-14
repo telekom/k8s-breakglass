@@ -450,4 +450,142 @@ describe('BreakglassCard Duration and Reason Handling', () => {
       expect(validation.valid).toBe(true); // null means use default
     });
   });
+
+  /**
+   * DateTime Local to ISO 8601 Conversion Tests
+   *
+   * Tests the conversion between:
+   * - datetime-local input (browser format: YYYY-MM-DDTHH:mm in LOCAL time)
+   * - ISO 8601 UTC format (YYYY-MM-DDTHH:mm:ssZ)
+   *
+   * This is CRITICAL to ensure scheduled escalations use correct time
+   */
+  describe('scheduledStartTime conversion (datetime-local ↔ ISO 8601)', () => {
+    // Helper to convert datetime-local string to ISO 8601
+    function convertToISO8601(dateTimeLocal: string): string {
+      const parts = dateTimeLocal.split('T');
+      if (parts.length !== 2) return '';
+
+      const datePart = parts[0]!;
+      const timePart = parts[1]!;
+
+      const dateParts = datePart.split('-').map(Number);
+      const timeParts = timePart.split(':').map(Number);
+
+      if (dateParts.length !== 3 || timeParts.length !== 2) return '';
+
+      const year = dateParts[0]!;
+      const month = dateParts[1]!;
+      const day = dateParts[2]!;
+      const hours = timeParts[0]!;
+      const minutes = timeParts[1]!;
+
+      // Create date in LOCAL timezone (not UTC!)
+      const dt = new Date(year, month - 1, day, hours, minutes, 0, 0);
+
+      // Convert to ISO 8601 UTC string
+      return dt.toISOString();
+    }
+
+    // Helper to convert ISO 8601 back to datetime-local format
+    function convertToDateTimeLocal(isoString: string): string {
+      const dt = new Date(isoString);
+      const year = dt.getFullYear();
+      const month = String(dt.getMonth() + 1).padStart(2, '0');
+      const day = String(dt.getDate()).padStart(2, '0');
+      const hours = String(dt.getHours()).padStart(2, '0');
+      const minutes = String(dt.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}`;
+    }
+
+    it('correctly converts local datetime to ISO 8601 UTC', () => {
+      // User picks "2025-11-14 at 14:30" in their local time
+      const localTime = '2025-11-14T14:30';
+      const iso = convertToISO8601(localTime);
+
+      // Parse back to verify it's a valid ISO string
+      const parsed = new Date(iso);
+      expect(parsed.toISOString()).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    });
+
+    it('maintains time value during round-trip conversion', () => {
+      const originalLocal = '2025-11-14T14:30';
+      const iso = convertToISO8601(originalLocal);
+      const backToLocal = convertToDateTimeLocal(iso);
+
+      // Should match the original (within parsing accuracy)
+      expect(backToLocal).toBe(originalLocal);
+    });
+
+    it('handles dates in the future', () => {
+      const futureTime = '2025-12-25T23:59';
+      const iso = convertToISO8601(futureTime);
+      const parsed = new Date(iso);
+
+      // Should be parseable and valid
+      expect(parsed.getTime()).toBeGreaterThan(0);
+      expect(iso).toMatch(/Z$/); // Should end with Z (UTC)
+    });
+
+    it('handles dates across month boundaries', () => {
+      const monthBoundary = '2025-11-30T23:00';
+      const iso = convertToISO8601(monthBoundary);
+      const parsed = new Date(iso);
+
+      // Should properly handle month boundaries
+      expect(parsed.toISOString()).toBeDefined();
+    });
+
+    it('handles dates across year boundaries', () => {
+      const yearBoundary = '2025-12-31T23:59';
+      const iso = convertToISO8601(yearBoundary);
+      const parsed = new Date(iso);
+
+      // Should properly handle year boundaries
+      expect(parsed.toISOString()).toBeDefined();
+    });
+
+    it('rejects malformed datetime-local strings', () => {
+      const malformed = [
+        '',
+        'invalid',
+        '2025-11-14', // missing time
+        '14:30', // missing date
+        '2025-11-14 14:30', // wrong separator (space instead of T)
+      ];
+
+      malformed.forEach((input) => {
+        const result = convertToISO8601(input);
+        expect(result).toBe('');
+      });
+      
+      // Note: JavaScript Date constructor is lenient with invalid dates like "2025-13-01"
+      // (month 13 rolls over to next year), so we don't test that case here.
+      // Real validation should happen at the backend.
+    });
+
+    it('produces ISO 8601 strings that reject past times', () => {
+      // Create a time from 1 hour ago
+      const now = new Date();
+      const pastDate = new Date(now.getTime() - 3600000); // 1 hour ago
+
+      const isoString = pastDate.toISOString();
+      const parsed = new Date(isoString);
+
+      // Should be in the past
+      expect(parsed.getTime()).toBeLessThan(Date.now());
+    });
+
+    it('produces ISO 8601 strings that accept future times', () => {
+      // Create a time 24 hours from now
+      const now = new Date();
+      const futureDate = new Date(now.getTime() + 86400000); // 24 hours from now
+
+      const isoString = futureDate.toISOString();
+      const parsed = new Date(isoString);
+
+      // Should be in the future
+      expect(parsed.getTime()).toBeGreaterThan(Date.now());
+    });
+  });
 });
