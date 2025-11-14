@@ -33,6 +33,10 @@ spec:
       jsonPath: .status.expiresAt
       name: Expires At
       type: string
+    - description: The scheduled start time of the session
+      jsonPath: .spec.scheduledStartTime
+      name: Scheduled Start
+      type: string
     - description: When the session object will be removed
       jsonPath: .status.retainedUntil
       name: Retained Until

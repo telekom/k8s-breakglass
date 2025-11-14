@@ -113,7 +113,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		if len(c.Request.URL.Path) >= 5 && c.Request.URL.Path[:5] == "/api/" {
 			c.JSON(http.StatusNotFound, gin.H{"error": "API endpoint not found", "path": c.Request.URL.Path})
 		} else {
-			ServeSPA("/", "./frontend/dist/")(c)
+			ServeSPA("/", "/frontend/dist/")(c)
 		}
 	})
 

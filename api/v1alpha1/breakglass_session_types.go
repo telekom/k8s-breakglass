@@ -173,6 +173,7 @@ type BreakglassSessionStatus struct {
 // +kubebuilder:printcolumn:name="User",type=string,JSONPath=".spec.user",description="The user associated with the session"
 // +kubebuilder:printcolumn:name="Cluster",type=string,JSONPath=".spec.cluster",description="The cluster associated with the session"
 // +kubebuilder:printcolumn:name="Expires At",type=string,JSONPath=".status.expiresAt",description="The expiration time of the session"
+// +kubebuilder:printcolumn:name="Scheduled Start",type=string,JSONPath=".spec.scheduledStartTime",description="The scheduled start time of the session"
 // +kubebuilder:printcolumn:name="Retained Until",type=string,JSONPath=".status.retainedUntil",description="When the session object will be removed"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the session"
 // +kubebuilder:subresource:status

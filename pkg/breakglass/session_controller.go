@@ -2084,8 +2084,9 @@ func IsSessionValid(session v1alpha1.BreakglassSession) bool {
 }
 
 // IsSessionActive returns if session can be approved or was already approved
+// A session is active if it's valid, not rejected, and not withdrawn
 func IsSessionActive(session v1alpha1.BreakglassSession) bool {
-	return IsSessionValid(session) && session.Status.RejectedAt.IsZero()
+	return IsSessionValid(session) && session.Status.RejectedAt.IsZero() && session.Status.State != v1alpha1.SessionStateWithdrawn
 }
 
 func NewBreakglassSessionController(log *zap.SugaredLogger,
