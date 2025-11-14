@@ -275,18 +275,14 @@ func main() {
 			}
 			log.Infow("Certificate rotator registered with manager; manager will handle cert generation")
 
-			// Webhook registration MUST happen AFTER manager starts
-			// because cert-rotator's ensureReady() needs the manager running to process certificates
-			// Spawn a goroutine that will wait for setupFinished and register webhooks
-			go registerWebhooksAfterCerts(mgr, setupFinished, webhooksReady, enableWebhookMgr, log)
+			// Webhook registration happens BEFORE manager starts (in the manager setup code below)
+			// This allows controller-runtime to properly register webhook paths when the HTTP server starts
 		} else {
 			log.Infow("Certificate rotation disabled via ENABLE_CERT_ROTATION env var - webhooks will not be available")
 			close(setupFinished)
 			// Signal webhooks ready even though certs are disabled (they won't be used)
 			close(webhooksReady)
-		}
-
-		// Register field indices to support efficient cache-based lookups by controller-runtime clients.
+		} // Register field indices to support efficient cache-based lookups by controller-runtime clients.
 		// Index fields: spec.cluster, spec.user, spec.grantedGroup
 		// These are registered unconditionally as they are needed for reconciliation.
 
@@ -419,6 +415,43 @@ func main() {
 		}
 		log.Infow("Successfully registered IdentityProvider reconciler", "resyncPeriod", "10m")
 
+		// Register webhooks BEFORE starting the manager - this is required for the webhook HTTP server
+		// to properly register the paths when it starts listening
+		if enableWebhookMgr == "" || enableWebhookMgr == "true" {
+			log.Infow("Registering webhooks before starting manager", "webhooksToRegister", []string{"BreakglassSession", "BreakglassEscalation", "ClusterConfig", "IdentityProvider"})
+
+			if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Errorw("Failed to setup BreakglassSession webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered BreakglassSession webhook")
+
+			if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Errorw("Failed to setup BreakglassEscalation webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered BreakglassEscalation webhook")
+
+			if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Errorw("Failed to setup ClusterConfig webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered ClusterConfig webhook")
+
+			if err := (&v1alpha1.IdentityProvider{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Errorw("Failed to setup IdentityProvider webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered IdentityProvider webhook")
+			log.Infow("All webhooks registered successfully", "count", 4)
+			// Signal that webhooks are ready to handle traffic
+			close(webhooksReady)
+		} else {
+			log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER env var", "value", enableWebhookMgr)
+			// Still signal ready since webhooks are disabled
+			close(webhooksReady)
+		}
+
 		// Start manager (blocks) but we run it in a goroutine so it doesn't prevent the API server
 		log.Infow("Starting controller-runtime manager", "port", webhookPort, "certRotationEnabled", (certRotatorEnabled == "" || certRotatorEnabled == "true"))
 		if err := mgr.Start(ctx); err != nil {
@@ -451,62 +484,6 @@ func main() {
 		log.Warnw("Mail queue shutdown error", "error", err)
 	} else {
 		log.Info("Mail queue shut down successfully")
-	}
-}
-
-// registerWebhooksAfterCerts waits for setupFinished to close, then registers all webhooks.
-// This MUST run after the manager starts because cert-rotator needs the manager running
-// to process certificate reconciliation and close the setupFinished channel.
-func registerWebhooksAfterCerts(mgr ctrl.Manager, setupFinished <-chan struct{}, webhooksReady chan<- struct{}, enableWebhookMgr string, log *zap.SugaredLogger) {
-	// Wait for certificates to be ready (setupFinished channel will close)
-	// with a timeout to prevent hanging forever if cert setup fails
-	log.Infow("Webhook registration goroutine started, waiting for certificate setup to complete")
-
-	certReadyTimeout := time.After(120 * time.Second) // 2-minute timeout for cert setup
-	select {
-	case <-setupFinished:
-		log.Infow("✓ Certificates ready, proceeding with webhook registration")
-	case <-certReadyTimeout:
-		log.Fatalf("✗ Timeout waiting for certificate setup (120s) - pod will exit for restart. Check: 1) webhook-certs secret exists in %s namespace, 2) cert-rotator logs for errors, 3) RBAC permissions", os.Getenv("POD_NAMESPACE"))
-	}
-
-	log.Infow("Proceeding with webhook registration")
-
-	// Only register if webhooks are enabled
-	if enableWebhookMgr == "" || enableWebhookMgr == "true" {
-		log.Infow("Registering webhooks", "webhooksToRegister", []string{"BreakglassSession", "BreakglassEscalation", "ClusterConfig", "IdentityProvider"})
-
-		if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
-			log.Errorw("Failed to setup BreakglassSession webhook with manager", "error", err)
-			return
-		}
-		log.Infow("Successfully registered BreakglassSession webhook")
-
-		if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
-			log.Errorw("Failed to setup BreakglassEscalation webhook with manager", "error", err)
-			return
-		}
-		log.Infow("Successfully registered BreakglassEscalation webhook")
-
-		if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
-			log.Errorw("Failed to setup ClusterConfig webhook with manager", "error", err)
-			return
-		}
-		log.Infow("Successfully registered ClusterConfig webhook")
-
-		if err := (&v1alpha1.IdentityProvider{}).SetupWebhookWithManager(mgr); err != nil {
-			log.Errorw("Failed to setup IdentityProvider webhook with manager", "error", err)
-			return
-		}
-		log.Infow("Successfully registered IdentityProvider webhook")
-		log.Infow("All webhooks registered successfully", "count", 4)
-
-		// Signal that webhooks are ready to handle traffic
-		close(webhooksReady)
-	} else {
-		log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER env var", "value", enableWebhookMgr)
-		// Still signal ready since webhooks are disabled
-		close(webhooksReady)
 	}
 }
 

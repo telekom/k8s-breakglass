@@ -47,6 +47,15 @@ kind: ClusterRole
 metadata:
   name: webhook-cert-rotator-cluster-role
 rules:
+# List and watch all Secrets (needed for cert-rotator's cache sync)
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - list
+  - watch
+  - get
 # List and watch all ValidatingWebhookConfigurations to discover and monitor them
 - apiGroups:
   - admissionregistration.k8s.io
@@ -63,7 +72,6 @@ rules:
   - validatingwebhookconfigurations
   resourceNames:
   - breakglass-validating-session-webhook
-  - breakglass-validating-webhook
   - breakglass-validating-escalation-webhook
   - breakglass-validating-clusterconfig-webhook
   - breakglass-validating-identityprovider-webhook
