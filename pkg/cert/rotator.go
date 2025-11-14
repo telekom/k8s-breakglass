@@ -6,7 +6,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/open-policy-agent/cert-controller/pkg/rotator"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -88,14 +90,23 @@ func SetupRotator(
 		return nil, fmt.Errorf("failed to add rotator: %w", err)
 	}
 
-	log.Info("Certificate rotator configured successfully",
+	log.Info("✓ Certificate rotator added to manager successfully",
 		"secretKey", fmt.Sprintf("%s/%s", certRotator.SecretKey.Namespace, certRotator.SecretKey.Name),
 		"certDir", certRotator.CertDir,
 		"dnsName", certRotator.DNSName,
+		"webhookNames", fmt.Sprintf("%d webhooks", len(certRotator.Webhooks)),
 		"caCertDuration", certRotator.CaCertDuration,
 		"serverCertDuration", certRotator.ServerCertDuration,
 		"rotationCheckFrequency", certRotator.RotationCheckFrequency,
 		"lookaheadInterval", certRotator.LookaheadInterval)
+
+	log.Info("Certificate rotator is now monitoring for cert-rotator controller to generate certificates",
+		"isReady_channel", "waiting for signal",
+		"note", "certCompleted channel will be closed when certificates are ready")
+
+	// Start background goroutine to monitor certificate readiness status
+	go monitorCertificateReadiness(mgr, log, podNamespace, secretName)
+
 	return certCompleted, nil
 }
 
@@ -129,4 +140,50 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// monitorCertificateReadiness monitors the certificate secret and logs diagnostic information
+func monitorCertificateReadiness(mgr ctrl.Manager, log logr.Logger, namespace, secretName string) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		secret := &corev1.Secret{}
+		secretKey := types.NamespacedName{
+			Name:      secretName,
+			Namespace: namespace,
+		}
+
+		if err := mgr.GetClient().Get(context.Background(), secretKey, secret); err != nil {
+			log.Error(err, "Failed to check certificate secret status",
+				"secret", secretName,
+				"namespace", namespace,
+				"check_reason", "monitoring_certificate_generation")
+		} else {
+			// Check if secret has certificate data
+			hasTLSCrt := len(secret.Data["tls.crt"]) > 0
+			hasTLSKey := len(secret.Data["tls.key"]) > 0
+			hasCACrt := len(secret.Data["ca.crt"]) > 0
+			hasCAKey := len(secret.Data["ca.key"]) > 0
+
+			if hasTLSCrt && hasTLSKey && hasCACrt && hasCAKey {
+				log.V(1).Info("✓ Certificate secret contains all required certificate data",
+					"secret", secretName,
+					"namespace", namespace,
+					"tls.crt_size", len(secret.Data["tls.crt"]),
+					"tls.key_size", len(secret.Data["tls.key"]),
+					"ca.crt_size", len(secret.Data["ca.crt"]),
+					"ca.key_size", len(secret.Data["ca.key"]))
+			} else {
+				log.Info("⚠️  Certificate secret missing some certificate data",
+					"secret", secretName,
+					"namespace", namespace,
+					"has_tls.crt", hasTLSCrt,
+					"has_tls.key", hasTLSKey,
+					"has_ca.crt", hasCACrt,
+					"has_ca.key", hasCAKey,
+					"total_keys", len(secret.Data))
+			}
+		}
+	}
 }
