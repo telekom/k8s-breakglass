@@ -27,15 +27,36 @@ func SetupRotator(
 
 	podNamespace := getEnvOrDefault("POD_NAMESPACE", "system")
 	secretName := getEnvOrDefault("WEBHOOK_SECRET_NAME", "webhook-certs")
-	dnsName := "webhook-service." + podNamespace + ".svc"
+	serviceName := "breakglass-webhook-service"
+	dnsName := serviceName + "." + podNamespace + ".svc"
 
 	log := ctrl.Log.WithName("cert-rotator")
 	log.Info("Setting up certificate rotation",
 		"webhook", webhookName,
 		"namespace", podNamespace,
+		"serviceName", serviceName,
 		"secretName", secretName,
 		"dnsName", dnsName,
 		"restartOnRefresh", restartOnRefresh)
+
+	webhooks := []rotator.WebhookInfo{
+		{
+			Name: "breakglass-validating-session-webhook",
+			Type: rotator.Validating,
+		},
+		{
+			Name: "breakglass-validating-escalation-webhook",
+			Type: rotator.Validating,
+		},
+		{
+			Name: "breakglass-validating-clusterconfig-webhook",
+			Type: rotator.Validating,
+		},
+		{
+			Name: "breakglass-validating-identityprovider-webhook",
+			Type: rotator.Validating,
+		},
+	}
 
 	certRotator := &rotator.CertRotator{
 		SecretKey: types.NamespacedName{
@@ -47,11 +68,13 @@ func SetupRotator(
 		CAOrganization: "Deutsche Telekom, Breakglass",
 		DNSName:        dnsName,
 		ExtraDNSNames: []string{
-			"webhook-service." + podNamespace,
-			"webhook-service",
+			serviceName + "." + podNamespace,
+			serviceName,
 		},
 		IsReady:                certCompleted,
-		RestartOnSecretRefresh: restartOnRefresh,
+		RestartOnSecretRefresh: true,
+		RequireLeaderElection:  false,
+		Webhooks:               webhooks,
 		// Certificate durations
 		CaCertDuration:     10 * 365 * 24 * time.Hour, // 10 years
 		ServerCertDuration: 365 * 24 * time.Hour,      // 1 year

@@ -261,11 +261,21 @@ func main() {
 			} else {
 				log.Debugw("Certificate rotator setup successful, waiting for certificates to be ready", "timeout", "60s")
 				// Wait for certs to be ready with a timeout to prevent hanging forever
-				select {
-				case <-setupFinished:
-					log.Infow("Webhook certificates ready and loaded")
-				case <-time.After(60 * time.Second):
-					log.Fatalf("Timeout waiting for webhook certificates after 60s - certificate generation failed, controller cannot proceed without webhooks")
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+				timeout := time.After(60 * time.Second)
+				certReady := false
+
+				for !certReady {
+					select {
+					case <-setupFinished:
+						log.Infow("Webhook certificates ready and loaded")
+						certReady = true
+					case <-ticker.C:
+						log.Debugw("Still waiting for webhook certificates to be generated...")
+					case <-timeout:
+						log.Fatalf("Timeout waiting for webhook certificates after 60s - certificate generation failed or stalled, controller cannot proceed without webhooks. Check if webhook-certs secret exists and cert-rotator logs for errors")
+					}
 				}
 			}
 		} else {
