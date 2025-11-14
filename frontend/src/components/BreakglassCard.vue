@@ -361,7 +361,7 @@ function drop() { emit("drop"); }
               
               <div v-if="scheduledStartTime" class="schedule-preview" style="font-size: 0.9em; color: #555; margin-top: 0.5rem;">
                 <p style="margin: 0.25rem 0;">
-                  <strong>Request will start at:</strong> {{ formatDateTime(scheduledStartTime) }} (UTC)
+                  <strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}
                 </p>
                 <p style="margin: 0.25rem 0; color: #888; font-size: 0.85em;">
                   Your local time: {{ new Date(scheduledStartTime).toLocaleString() }}

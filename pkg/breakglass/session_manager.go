@@ -181,9 +181,9 @@ func (c SessionManager) GetBreakglassSessionsWithSelector(ctx context.Context,
 }
 
 // Add new breakglass session.
-func (c SessionManager) AddBreakglassSession(ctx context.Context, bs v1alpha1.BreakglassSession) error {
+func (c SessionManager) AddBreakglassSession(ctx context.Context, bs *v1alpha1.BreakglassSession) error {
 	zap.S().Infow("Adding new BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "user", bs.Spec.User, "cluster", bs.Spec.Cluster)...)
-	if err := c.Create(ctx, &bs); err != nil {
+	if err := c.Create(ctx, bs); err != nil {
 		zap.S().Errorw("Failed to create new BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
 		return errors.Wrap(err, "failed to create new BreakglassSession")
 	}

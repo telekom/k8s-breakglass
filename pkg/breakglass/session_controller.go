@@ -580,7 +580,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	safeCluster := toRFC1123Subdomain(request.Clustername)
 	safeGroup := toRFC1123Subdomain(request.GroupName)
 	bs.GenerateName = fmt.Sprintf("%s-%s-", safeCluster, safeGroup)
-	if err := wc.sessionManager.AddBreakglassSession(ctx, bs); err != nil {
+	if err := wc.sessionManager.AddBreakglassSession(ctx, &bs); err != nil {
 		reqLog.Errorw("error while adding breakglass session", "error", err)
 		c.Status(http.StatusInternalServerError)
 		return

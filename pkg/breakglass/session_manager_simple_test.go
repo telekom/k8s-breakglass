@@ -89,10 +89,8 @@ func TestSessionManager_Simple(t *testing.T) {
 			},
 		}
 
-		err := manager.AddBreakglassSession(context.Background(), newSession)
-		assert.NoError(t, err)
-
-		// Verify session was created
+		err := manager.AddBreakglassSession(context.Background(), &newSession)
+		assert.NoError(t, err) // Verify session was created
 		sessions, err := manager.GetAllBreakglassSessions(context.Background())
 		assert.NoError(t, err)
 		assert.Len(t, sessions, 3, "Should have 3 sessions after creation")
