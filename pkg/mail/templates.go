@@ -74,7 +74,7 @@ func init() {
 	if _, err := breakglassSessionTemplate.Parse(breakglassSessionReqTemplateRaw); err != nil {
 		panic(err)
 	}
-	if _, err := breakglassNotificationTemplate.Parse(breakglassSessionNotifiTemplateRaw); err != nil {
+	if _, err := breakglassNotificationTemplate.Parse(breakglassSessionNotificationTemplateRaw); err != nil {
 		panic(err)
 	}
 }
