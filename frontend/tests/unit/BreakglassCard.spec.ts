@@ -439,7 +439,6 @@ describe('BreakglassCard Duration and Reason Handling', () => {
 
     it('rejects invalid input at any step', () => {
       const invalidDuration = 'invalid';
-      const invalidReason = ''; // Will be trimmed
       const maxDuration = 3600;
 
       const parsed = parseDurationInput(invalidDuration);
