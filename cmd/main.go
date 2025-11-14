@@ -22,7 +22,7 @@ import (
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
@@ -205,7 +205,7 @@ func main() {
 		log.Debugw("Starting manager with unified scheme")
 
 		// Configure webhook port (default 8443, can be overridden via WEBHOOK_PORT env var)
-		webhookPort := 8443
+		webhookPort := 9443
 		if wPort := os.Getenv("WEBHOOK_PORT"); wPort != "" {
 			if p, err := strconv.Atoi(wPort); err == nil {
 				webhookPort = p
@@ -215,34 +215,62 @@ func main() {
 			}
 		}
 
+		log.Debugw("Configuring webhook server options", "port", webhookPort, "webhooksEnabled", (enableWebhookMgr == "" || enableWebhookMgr == "true"))
+
 		mgrOpts := ctrl.Options{
 			Scheme: scheme,
 		}
 
 		// Set webhook port if webhooks are enabled
 		if enableWebhookMgr == "" || enableWebhookMgr == "true" {
-			mgrOpts.WebhookServer = webhook.NewServer(webhook.Options{
+			log.Debugw("Creating webhook server", "port", webhookPort)
+			mgrOpts.WebhookServer = ctrlwebhook.NewServer(ctrlwebhook.Options{
 				Port: webhookPort,
 			})
+			log.Debugw("Webhook server instance created", "port", webhookPort)
+		} else {
+			log.Infow("Webhook server creation skipped", "reason", "ENABLE_WEBHOOK_MANAGER=false")
 		}
 
+		log.Debugw("Creating controller-runtime manager")
 		mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOpts)
 		if merr != nil {
 			log.Warnw("Failed to start controller-runtime manager; reconcilers and webhooks will not be available", "error", merr)
 			return
 		}
-		log.Infow("Controller-runtime manager created successfully")
+		log.Infow("Controller-runtime manager created successfully", "webhookEnabled", (enableWebhookMgr == "" || enableWebhookMgr == "true"))
 
 		// Setup certificate rotation for webhook TLS certificates using cert-controller
 		setupFinished := make(chan struct{})
 		certRotatorEnabled := os.Getenv("ENABLE_CERT_ROTATION")
+		podNamespace := os.Getenv("POD_NAMESPACE")
+		if podNamespace == "" {
+			podNamespace = "system"
+		}
+		webhookSecretName := os.Getenv("WEBHOOK_SECRET_NAME")
+		if webhookSecretName == "" {
+			webhookSecretName = "webhook-certs"
+		}
+
+		log.Debugw("Certificate rotation configuration", "enabled", (certRotatorEnabled == "" || certRotatorEnabled == "true"), "namespace", podNamespace, "secretName", webhookSecretName)
+
 		if certRotatorEnabled == "" || certRotatorEnabled == "true" {
-			log.Infow("Setting up certificate rotation for webhooks")
+			log.Infow("Setting up certificate rotation for webhooks", "namespace", podNamespace, "secretName", webhookSecretName, "webhookName", "breakglass-webhook")
 			if _, err := cert.SetupRotator(mgr, "breakglass-webhook", false, setupFinished); err != nil {
 				log.Errorw("Failed to setup certificate rotation", "error", err)
 				close(setupFinished)
+			} else {
+				log.Debugw("Certificate rotator setup successful, waiting for certificates to be ready", "timeout", "60s")
+				// Wait for certs to be ready with a timeout to prevent hanging forever
+				select {
+				case <-setupFinished:
+					log.Infow("Webhook certificates ready and loaded")
+				case <-time.After(60 * time.Second):
+					log.Warnw("Timeout waiting for webhook certificates; proceeding anyway", "timeout", "60s")
+				}
 			}
 		} else {
+			log.Infow("Certificate rotation disabled via ENABLE_CERT_ROTATION env var")
 			close(setupFinished)
 		}
 
@@ -361,33 +389,34 @@ func main() {
 		if enableWebhookMgr == "" || enableWebhookMgr == "true" {
 			log.Debugw("Starting webhook registration for BreakglassSession")
 			if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
-				log.Warnw("Failed to setup BreakglassSession webhook with manager", "error", err)
+				log.Errorw("Failed to setup BreakglassSession webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
 				return
 			}
 			log.Infow("Successfully registered BreakglassSession webhook")
 
 			log.Debugw("Starting webhook registration for BreakglassEscalation")
 			if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
-				log.Warnw("Failed to setup BreakglassEscalation webhook with manager", "error", err)
+				log.Errorw("Failed to setup BreakglassEscalation webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
 				return
 			}
 			log.Infow("Successfully registered BreakglassEscalation webhook")
 
 			log.Debugw("Starting webhook registration for ClusterConfig")
 			if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
-				log.Warnw("Failed to setup ClusterConfig webhook with manager", "error", err)
+				log.Errorw("Failed to setup ClusterConfig webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
 				return
 			}
 			log.Infow("Successfully registered ClusterConfig webhook")
 
 			log.Debugw("Starting webhook registration for IdentityProvider")
 			if err := (&v1alpha1.IdentityProvider{}).SetupWebhookWithManager(mgr); err != nil {
-				log.Warnw("Failed to setup IdentityProvider webhook with manager", "error", err)
+				log.Errorw("Failed to setup IdentityProvider webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
 				return
 			}
 			log.Infow("Successfully registered IdentityProvider webhook")
+			log.Infow("All webhooks registered successfully", "count", 4, "webhooks", "BreakglassSession,BreakglassEscalation,ClusterConfig,IdentityProvider")
 		} else {
-			log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER env var")
+			log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER env var", "value", enableWebhookMgr)
 		}
 
 		// Register IdentityProvider Reconciler with controller-runtime manager (unconditional)
@@ -413,7 +442,7 @@ func main() {
 		log.Infow("Successfully registered IdentityProvider reconciler", "resyncPeriod", "10m")
 
 		// Start manager (blocks) but we run it in a goroutine so it doesn't prevent the API server
-		log.Infow("Starting controller-runtime manager")
+		log.Infow("Starting controller-runtime manager", "port", webhookPort, "certRotationEnabled", (certRotatorEnabled == "" || certRotatorEnabled == "true"))
 		if err := mgr.Start(ctx); err != nil {
 			log.Warnw("controller-runtime manager exited", "error", err)
 		}

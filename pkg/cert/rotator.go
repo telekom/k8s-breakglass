@@ -65,7 +65,14 @@ func SetupRotator(
 		return nil, fmt.Errorf("failed to add rotator: %w", err)
 	}
 
-	log.Info("Certificate rotator configured successfully")
+	log.Info("Certificate rotator configured successfully",
+		"secretKey", fmt.Sprintf("%s/%s", certRotator.SecretKey.Namespace, certRotator.SecretKey.Name),
+		"certDir", certRotator.CertDir,
+		"dnsName", certRotator.DNSName,
+		"caCertDuration", certRotator.CaCertDuration,
+		"serverCertDuration", certRotator.ServerCertDuration,
+		"rotationCheckFrequency", certRotator.RotationCheckFrequency,
+		"lookaheadInterval", certRotator.LookaheadInterval)
 	return certCompleted, nil
 }
 
