@@ -7,7 +7,8 @@
     "src/**/*.test.ts",
     "src/components/AutoLogoutWarning.vue",
     "src/services/auth.ts",
-    "src/keys.ts"
+    "src/keys.ts",
+    "tests/unit/BreakglassCard.spec.ts"
   ],
   "compilerOptions": {
     "module": "ESNext", // Use ESNext module syntax
@@ -28,9 +29,5 @@
     {
       "path": "./tsconfig.node.json"
     }
-  ]
-  ,
-  "exclude": [
-    "tests"
   ]
 }

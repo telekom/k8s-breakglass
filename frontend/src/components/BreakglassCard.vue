@@ -1,16 +1,155 @@
 <script setup lang="ts">
 import humanizeDuration from "humanize-duration";
 import { computed, ref, watch } from "vue";
+import { pushError } from "@/services/toast";
+
 const humanizeConfig = { round: true, largest: 2 };
 const props = defineProps<{ breakglass: any; time: number }>();
 const emit = defineEmits(["request", "drop", "withdraw"]);
 
+// Sanitization utility: escape HTML special characters to prevent XSS
+function sanitizeReason(text: string): string {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Validation for duration input (in seconds)
+function validateDuration(seconds: number | null, maxAllowed: number): { valid: boolean; error?: string } {
+  if (!seconds || seconds === 0) {
+    return { valid: false, error: "Duration must be specified" };
+  }
+  if (seconds < 60) {
+    return { valid: false, error: "Duration must be at least 1 minute" };
+  }
+  if (seconds > maxAllowed) {
+    return { valid: false, error: `Duration exceeds maximum allowed time of ${humanizeDuration(maxAllowed * 1000, humanizeConfig)}` };
+  }
+  return { valid: true };
+}
+
 const requestReason = ref("");
+const selectedDuration = ref<number | null>(null);
+const durationInput = ref<string>("");
 const showRequestModal = ref(false);
-function closeRequestModal() { showRequestModal.value = false; requestReason.value = ""; }
+const scheduledStartTime = ref<string | null>(null);
+const showScheduleOptions = ref(false);
+const showDurationHints = ref(false);
+
+function closeRequestModal() { 
+  showRequestModal.value = false; 
+  requestReason.value = ""; 
+  selectedDuration.value = null;
+  durationInput.value = "";
+  scheduledStartTime.value = null;
+  showScheduleOptions.value = false;
+  showDurationHints.value = false;
+}
 
 // Clear reason when breakglass changes
-watch(() => props.breakglass, () => { requestReason.value = ""; });
+watch(() => props.breakglass, () => { 
+  requestReason.value = ""; 
+  selectedDuration.value = null;
+  durationInput.value = "";
+  scheduledStartTime.value = null;
+  showScheduleOptions.value = false;
+  showDurationHints.value = false;
+});
+
+// Parse duration input string to seconds
+function parseDurationInput(input: string): number | null {
+  if (!input.trim()) return null;
+  
+  const trimmed = input.toLowerCase().trim();
+  
+  // Try parsing direct number (assume seconds if just a number)
+  const directNum = parseFloat(trimmed);
+  if (!isNaN(directNum) && trimmed.match(/^\d+(\.\d+)?$/)) {
+    return directNum;
+  }
+  
+  // Try parsing "30m", "1h", "2h 30m" format
+  let totalSeconds = 0;
+  
+  // Match hours
+  const hoursMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*h/);
+  if (hoursMatch && hoursMatch[1]) {
+    totalSeconds += parseFloat(hoursMatch[1]) * 3600;
+  }
+  
+  // Match minutes
+  const minutesMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*m/);
+  if (minutesMatch && minutesMatch[1]) {
+    totalSeconds += parseFloat(minutesMatch[1]) * 60;
+  }
+  
+  // Match seconds
+  const secondsMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*s/);
+  if (secondsMatch && secondsMatch[1]) {
+    totalSeconds += parseFloat(secondsMatch[1]);
+  }
+  
+  return totalSeconds > 0 ? totalSeconds : null;
+}
+
+// Format seconds to readable duration format
+function formatDurationSeconds(seconds: number): string {
+  if (!seconds) return '';
+  
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  
+  const parts = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+  
+  return parts.join(' ');
+}
+
+const reasonCharLimit = 1024;
+const reasonCharCount = computed(() => requestReason.value.length);
+
+// Compute minimum datetime (now + 5 minutes)
+const minDateTime = computed(() => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() + 5);
+  return now.toISOString().slice(0, 16);
+});
+
+// Convert between datetime-local (browser format) and ISO 8601
+const scheduleDateTimeLocal = computed({
+  get() {
+    if (!scheduledStartTime.value) return '';
+    const dt = new Date(scheduledStartTime.value);
+    return dt.toISOString().slice(0, 16);
+  },
+  set(value: string) {
+    if (!value) {
+      scheduledStartTime.value = null;
+    } else {
+      const dt = new Date(value + ':00Z');
+      scheduledStartTime.value = dt.toISOString();
+    }
+  },
+});
+
+// Format timestamp for display
+function formatDateTime(isoString: string | null | undefined): string {
+  if (!isoString) return '';
+  return new Date(isoString).toLocaleString();
+}
+
+// Predefined duration options (in seconds)
+const durationOptions = [
+  { label: "30 minutes", value: 1800 },
+  { label: "1 hour", value: 3600 },
+  { label: "2 hours", value: 7200 },
+  { label: "4 hours", value: 14400 },
+  { label: "8 hours", value: 28800 },
+];
 
 const canRequest = computed(() => {
   const cfg = props.breakglass?.requestReason;
@@ -42,8 +181,57 @@ const timeoutHumanized = computed(() => {
   return "";
 });
 
-function openRequest() { showRequestModal.value = true; }
-function request() { emit("request", requestReason.value); requestReason.value = ""; showRequestModal.value = false; }
+function openRequest() { 
+  showRequestModal.value = true;
+  // Set default duration to the escalation's predefined duration
+  selectedDuration.value = props.breakglass.duration || 7200; // default to 2 hours
+  if (selectedDuration.value) {
+    durationInput.value = formatDurationSeconds(selectedDuration.value);
+  }
+}
+
+function toggleScheduleOptions() {
+  showScheduleOptions.value = !showScheduleOptions.value;
+  if (!showScheduleOptions.value) {
+    scheduledStartTime.value = null;
+  }
+}
+
+function request() { 
+  // Validate and parse duration from input
+  const parsedDuration = parseDurationInput(durationInput.value);
+  if (!parsedDuration) {
+    pushError("Please enter a valid duration (e.g., '1h', '30m', '3600')");
+    return;
+  }
+  
+  // Validate duration against maximum allowed
+  const maxAllowed = props.breakglass.duration || 7200;
+  const validation = validateDuration(parsedDuration, maxAllowed);
+  if (!validation.valid) {
+    pushError(validation.error || "Invalid duration");
+    return;
+  }
+  
+  // Validate reason field is not empty if required
+  const cfg = props.breakglass?.requestReason;
+  if (cfg && cfg.mandatory) {
+    if (!requestReason.value.trim()) {
+      pushError("Reason is required for this escalation");
+      return;
+    }
+  }
+  
+  // Sanitize reason before sending
+  const sanitizedReason = sanitizeReason(requestReason.value);
+  
+  emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value); 
+  requestReason.value = ""; 
+  selectedDuration.value = null;
+  durationInput.value = "";
+  scheduledStartTime.value = null;
+  showRequestModal.value = false; 
+}
 function withdraw() { emit("withdraw"); }
 function drop() { emit("drop"); }
 </script>
@@ -88,13 +276,85 @@ function drop() { emit("drop"); }
       <div class="request-modal">
           <button class="modal-close" @click="closeRequestModal" aria-label="Close">×</button>
           <h3>Request breakglass</h3>
-          <scale-text-field
-            label="Reason"
-            :value="requestReason"
-            @scaleChange="(ev: any) => requestReason = ev.target.value"
-            :placeholder="(breakglass.requestReason && breakglass.requestReason.description) || 'Optional reason'">
-          </scale-text-field>
-          <p v-if="props.breakglass && props.breakglass.requestReason && props.breakglass.requestReason.mandatory && !(requestReason || '').trim()" style="color:#c62828;margin-top:0.5rem">This field is required.</p>
+          
+          <!-- Duration Input (Freeform) -->
+          <div class="duration-selector" style="margin-bottom: 1rem;">
+            <label for="duration-input" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">
+              Duration (default: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}, min: 1m):
+            </label>
+            <input
+              id="duration-input"
+              v-model="durationInput"
+              type="text"
+              :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
+              style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; box-sizing: border-box;"
+            />
+            <p style="font-size: 0.85em; color: #666; margin-top: 0.25rem;">
+              Enter a shorter duration if needed. Defaults to maximum allowed ({{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
+            </p>
+            <p v-if="durationInput" style="font-size: 0.9em; color: #555; margin-top: 0.25rem;">
+              Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
+            </p>
+            <button 
+              type="button" 
+              @click="showDurationHints = !showDurationHints"
+              style="background: none; border: none; cursor: pointer; color: #0066cc; text-decoration: underline; padding: 0; font-size: 12px; margin-top: 0.25rem;"
+            >
+              {{ showDurationHints ? '⊖ Hide' : '⊕ Show' }} common durations
+            </button>
+            <div v-if="showDurationHints" style="margin-top: 0.5rem; padding: 0.5rem; background-color: #f5f5f5; border-radius: 4px; font-size: 12px;">
+              <p style="margin: 0.25rem 0;">Examples: 30m, 1h, 2h, 4h (all less than max {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})</p>
+            </div>
+          </div>
+          <!-- Schedule Options Toggle -->
+          <div class="schedule-section" style="margin-bottom: 1rem; border-top: 1px solid #ddd; padding-top: 0.75rem;">
+            <button type="button" class="toggle-schedule" @click="toggleScheduleOptions" 
+              style="background: none; border: none; cursor: pointer; color: #0066cc; text-decoration: underline; padding: 0; font-size: 14px;">
+              <span v-if="!showScheduleOptions">⊕ Schedule for future date (optional)</span>
+              <span v-else>⊖ Schedule for future date (optional)</span>
+            </button>
+
+            <div v-if="showScheduleOptions" class="schedule-details" style="margin-top: 0.75rem; margin-left: 15px; 
+              padding: 0.75rem; border-left: 2px solid #0066cc; background-color: #f9f9f9;">
+              <div style="margin-bottom: 0.75rem;">
+                <label for="scheduled_date_escalation" style="width: auto; display: block; text-align: left; margin-bottom: 0.25rem; font-size: 14px; font-weight: 500;">Scheduled Start Date/Time:</label>
+                <input
+                  id="scheduled_date_escalation"
+                  type="datetime-local"
+                  v-model="scheduleDateTimeLocal"
+                  :min="minDateTime"
+                  style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;"
+                />
+              </div>
+              
+              <div v-if="scheduledStartTime" class="schedule-preview" style="font-size: 0.9em; color: #555; margin-top: 0.5rem;">
+                <p style="margin: 0.25rem 0;">
+                  <strong>Request will start at:</strong> {{ formatDateTime(scheduledStartTime) }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reason Field with Character Limit -->
+          <div style="margin-bottom: 1rem;">
+            <label for="reason-field" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">
+              Reason {{ reasonCharCount }}/{{ reasonCharLimit }}:
+            </label>
+            <textarea
+              id="reason-field"
+              v-model="requestReason"
+              :maxlength="reasonCharLimit"
+              :placeholder="(breakglass.requestReason && breakglass.requestReason.description) || 'Optional reason (max 1024 characters)'"
+              rows="4"
+              style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; font-family: inherit; box-sizing: border-box; resize: vertical;"
+            ></textarea>
+            <p v-if="reasonCharCount >= reasonCharLimit * 0.9" style="font-size: 0.85em; color: #ff6b6b; margin-top: 0.25rem;">
+              ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
+            </p>
+            <p v-if="props.breakglass && props.breakglass.requestReason && props.breakglass.requestReason.mandatory && !(requestReason || '').trim()" style="color:#c62828;margin-top:0.5rem">This field is required.</p>
+          </div>
+          
+          <!-- Action Buttons -->
           <p class="actions">
             <scale-button :disabled="props.breakglass && props.breakglass.requestReason && props.breakglass.requestReason.mandatory && !(requestReason || '').trim()" @click="request">Confirm Request</scale-button>
             <scale-button variant="secondary" @click="closeRequestModal">Cancel</scale-button>
@@ -152,7 +412,8 @@ scale-button {
 
 /* Ensure inputs and textarea inside the scale-text-field are readable */
 .request-modal ::v-deep input,
-.request-modal ::v-deep textarea {
+.request-modal ::v-deep textarea,
+.request-modal select {
   color: #111 !important;
   border-color: #b1cbf5 !important; /* blue focus ring */
   background: #b3b3b3 !important; /* slightly off-white to remain distinct from modal bg */
@@ -160,7 +421,8 @@ scale-button {
 
 /* Make inputs clearly highlighted when focused for accessibility */
 .request-modal ::v-deep input:focus,
-.request-modal ::v-deep textarea:focus {
+.request-modal ::v-deep textarea:focus,
+.request-modal select:focus {
   outline: none !important;
   border-color: #3b82f6 !important; /* blue focus ring */
   box-shadow: 0 0 0 4px rgba(59,130,246,0.12) !important;
@@ -170,6 +432,21 @@ scale-button {
 .request-modal ::v-deep ::placeholder {
   color: #6b7280 !important;
   opacity: 1 !important;
+}
+
+/* Duration selector specific styling */
+.duration-selector select {
+  width: 100% !important;
+  padding: 0.5rem !important;
+  border: 1px solid #ccc !important;
+  border-radius: 4px !important;
+  font-size: 14px !important;
+}
+
+.duration-selector select option {
+  color: #111 !important;
+  background: #ffffff !important;
+  padding: 0.5rem !important;
 }
 
 /* Make the secondary/cancel button clearly visible and slightly darker */

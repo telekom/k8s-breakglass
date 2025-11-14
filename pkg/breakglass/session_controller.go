@@ -254,6 +254,13 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
+	// Sanitize reason field to prevent injection attacks
+	if err := request.SanitizeReason(); err != nil {
+		reqLog.With("error", err).Warn("Reason field sanitization failed")
+		c.JSON(http.StatusUnprocessableEntity, "invalid reason: "+err.Error())
+		return
+	}
+
 	ctx := c.Request.Context()
 	cug := ClusterUserGroup{
 		Clustername: request.Clustername,
@@ -476,6 +483,46 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		spec.MaxValidFor = matchedEsc.Spec.MaxValidFor
 		spec.RetainFor = matchedEsc.Spec.RetainFor
 		spec.IdleTimeout = matchedEsc.Spec.IdleTimeout
+
+		// Validate and apply custom duration if provided
+		if request.Duration > 0 {
+			// Parse max allowed duration from string (e.g., "1h", "3600s")
+			d, err := time.ParseDuration(matchedEsc.Spec.MaxValidFor)
+			if err != nil {
+				reqLog.Warnw("Failed to parse MaxValidFor duration", "error", err, "value", matchedEsc.Spec.MaxValidFor)
+				c.JSON(http.StatusInternalServerError, "invalid escalation duration configuration")
+				return
+			}
+			maxAllowed := int64(d.Seconds())
+			if err := request.ValidateDuration(maxAllowed); err != nil {
+				reqLog.Warnw("Duration validation failed", "error", err, "requestedDuration", request.Duration, "maxAllowed", maxAllowed)
+				c.JSON(http.StatusUnprocessableEntity, "invalid duration: "+err.Error())
+				return
+			}
+			// Convert custom duration to Go duration string (e.g., "1h30m")
+			customDuration := time.Duration(request.Duration) * time.Second
+			spec.MaxValidFor = customDuration.String()
+			reqLog.Debugw("Custom duration applied", "duration", request.Duration, "defaultMaxValidFor", matchedEsc.Spec.MaxValidFor, "customMaxValidFor", spec.MaxValidFor)
+		}
+
+		// Store scheduled start time if provided
+		if request.ScheduledStartTime != "" {
+			// Parse ISO 8601 datetime
+			scheduledTime, err := time.Parse(time.RFC3339, request.ScheduledStartTime)
+			if err != nil {
+				reqLog.Warnw("Failed to parse scheduledStartTime", "error", err, "value", request.ScheduledStartTime)
+				c.JSON(http.StatusUnprocessableEntity, "invalid scheduledStartTime format (expected ISO 8601)")
+				return
+			}
+			// Ensure scheduled time is in the future
+			if scheduledTime.Before(time.Now()) {
+				reqLog.Warnw("scheduledStartTime is in the past", "value", request.ScheduledStartTime)
+				c.JSON(http.StatusUnprocessableEntity, "scheduledStartTime must be in the future")
+				return
+			}
+			spec.ScheduledStartTime = &metav1.Time{Time: scheduledTime}
+			reqLog.Debugw("Scheduled start time set", "scheduledStartTime", request.ScheduledStartTime)
+		}
 	}
 
 	bs := v1alpha1.BreakglassSession{Spec: spec}

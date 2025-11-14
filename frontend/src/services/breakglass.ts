@@ -128,13 +128,15 @@ export default class BreakglassService {
     }
   }
 
-  public async requestBreakglass(transition: Breakglass, reason?: string): Promise<AxiosResponse> {
-    // Backend expects POST /api/breakglassSessions with body { cluster, user, group }
+  public async requestBreakglass(transition: Breakglass, reason?: string, duration?: number, scheduledStartTime?: string): Promise<AxiosResponse> {
+    // Backend expects POST /api/breakglassSessions with body { cluster, user, group, reason, duration, scheduledStartTime }
     try {
       const username = await this.auth.getUserEmail(); // Derive username from auth service
       // backend expects short schema keys: cluster, user, group
-  const body: { cluster: string; group: string; user: string; reason?: string } = { cluster: transition.cluster, group: transition.to, user: username };
+  const body: { cluster: string; group: string; user: string; reason?: string; duration?: number; scheduledStartTime?: string } = { cluster: transition.cluster, group: transition.to, user: username };
   if (reason && reason.trim().length > 0) body.reason = reason;
+  if (duration && duration > 0) body.duration = Math.floor(duration);
+  if (scheduledStartTime) body.scheduledStartTime = scheduledStartTime;
   return await this.client.post('/breakglassSessions', body);
     } catch (e) {
       handleAxiosError('BreakglassService.requestBreakglass', e, 'Failed to request breakglass');

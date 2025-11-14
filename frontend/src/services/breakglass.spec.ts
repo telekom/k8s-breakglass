@@ -75,4 +75,47 @@ describe('BreakglassService', () => {
     await svc.requestBreakglass(transition, 'needed for testing');
     expect(mockClient2.post).toHaveBeenCalledWith('/breakglassSessions', expect.objectContaining({ reason: 'needed for testing', user: 'test-user@example.com' }));
   });
+
+  it('includes custom duration when requesting breakglass', async () => {
+    const fakeAuth = { getAccessToken: async () => 'tok', getUserEmail: async () => 'user@example.com' } as any;
+    const mockClient: any = { post: jest.fn(), get: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } };
+    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient);
+    const svc = new BreakglassService(fakeAuth);
+    mockClient.post.mockResolvedValueOnce({ status: 201 });
+
+    const transition = { cluster: 'c1', to: 'g1', duration: 3600 } as any;
+    const customDuration = 1800; // 30 minutes instead of 3600
+    await svc.requestBreakglass(transition, 'testing', customDuration);
+    expect(mockClient.post).toHaveBeenCalledWith('/breakglassSessions', expect.objectContaining({ duration: 1800, user: 'user@example.com' }));
+  });
+
+  it('includes scheduled start time when requesting breakglass', async () => {
+    const fakeAuth = { getAccessToken: async () => 'tok', getUserEmail: async () => 'user@example.com' } as any;
+    const mockClient: any = { post: jest.fn(), get: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } };
+    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient);
+    const svc = new BreakglassService(fakeAuth);
+    mockClient.post.mockResolvedValueOnce({ status: 201 });
+
+    const transition = { cluster: 'c1', to: 'g1', duration: 3600 } as any;
+    const futureTime = new Date(Date.now() + 3600000).toISOString(); // 1 hour from now
+    await svc.requestBreakglass(transition, 'scheduled access', 3600, futureTime);
+    expect(mockClient.post).toHaveBeenCalledWith('/breakglassSessions', expect.objectContaining({
+      duration: 3600,
+      scheduledStartTime: futureTime,
+      user: 'user@example.com'
+    }));
+  });
+
+  it('omits duration when not provided (uses server default)', async () => {
+    const fakeAuth = { getAccessToken: async () => 'tok', getUserEmail: async () => 'user@example.com' } as any;
+    const mockClient: any = { post: jest.fn(), get: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } };
+    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient);
+    const svc = new BreakglassService(fakeAuth);
+    mockClient.post.mockResolvedValueOnce({ status: 201 });
+
+    const transition = { cluster: 'c1', to: 'g1' } as any;
+    await svc.requestBreakglass(transition, 'needs access');
+    // When duration is not provided, it should be 0 or not sent
+    expect(mockClient.post).toHaveBeenCalledWith('/breakglassSessions', expect.objectContaining({ user: 'user@example.com' }));
+  });
 });
