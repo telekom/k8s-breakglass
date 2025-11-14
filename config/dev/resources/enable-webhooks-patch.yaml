@@ -1,0 +1,15 @@
+---
+# Patch to enable webhooks in dev environment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manager
+  namespace: breakglass-dev-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: breakglass
+          env:
+            - name: ENABLE_WEBHOOK_MANAGER
+              value: "true"

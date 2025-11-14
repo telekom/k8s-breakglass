@@ -47,10 +47,17 @@ patches:
     name: manager
   path: ./resources/manager_debug_patch.yaml
 - target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: manager
+  path: ./resources/enable-webhooks-patch.yaml
+- target:
     group: admissionregistration.k8s.io
     version: v1
     kind: ValidatingWebhookConfiguration
   path: ./resources/webhook-dev-ca-patch.yaml
+
 
 
 
