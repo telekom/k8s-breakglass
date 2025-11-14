@@ -8,4 +8,5 @@ kind: Kustomization
 resources:
   - manifests.yaml
   - service.yaml
+  - webhook-certs-secret.yaml
 

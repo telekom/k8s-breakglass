@@ -246,6 +246,36 @@ func (s *Server) RegisterAll(controllers []APIController) error {
 	return nil
 }
 
+// RegisterHealthChecks registers liveness and readiness probes with the server.
+// webhooksReady should be a channel that is closed when webhooks are initialized and ready to handle traffic.
+// If webhooksReady is nil, readiness probe will always report ready (webhooks disabled).
+func (s *Server) RegisterHealthChecks(webhooksReady <-chan struct{}) {
+	logger := s.log.Sugar()
+
+	// Liveness probe: checks if the process is alive (always true unless manager crashes)
+	s.gin.GET("/healthz", func(c *gin.Context) {
+		logger.Debugw("Liveness probe check")
+		c.JSON(200, gin.H{"status": "alive"})
+	})
+
+	// Readiness probe: checks if webhooks are ready (if enabled) and the service can accept traffic
+	s.gin.GET("/readyz", func(c *gin.Context) {
+		if webhooksReady != nil {
+			select {
+			case <-webhooksReady:
+				logger.Debugw("Readiness probe check - ready")
+				c.JSON(200, gin.H{"status": "ready"})
+			default:
+				logger.Debugw("Readiness probe check - not ready, waiting for webhooks")
+				c.JSON(503, gin.H{"status": "not_ready", "reason": "webhooks_not_ready"})
+			}
+		} else {
+			logger.Debugw("Readiness probe check - ready (webhooks disabled)")
+			c.JSON(200, gin.H{"status": "ready"})
+		}
+	})
+}
+
 func (s *Server) Listen() {
 	var err error
 	if s.config.Server.TLSCertFile != "" && s.config.Server.TLSKeyFile != "" {

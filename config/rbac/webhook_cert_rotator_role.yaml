@@ -2,7 +2,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: webhook-cert-rotator-role
-  namespace: system
+  namespace: breakglass-system
 rules:
 # Permissions for cert-controller to manage webhook certificates
 # Following principle of least privilege: minimal permissions for necessary operations
@@ -14,6 +14,8 @@ rules:
   - secrets
   verbs:
   - create
+  - list
+  - watch
 # Update and patch the specific webhook-certs secret
 - apiGroups:
   - ""
@@ -30,7 +32,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: webhook-cert-rotator-role-binding
-  namespace: system
+  namespace: breakglass-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -38,13 +40,12 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: manager
-  namespace: system
+  namespace: breakglass-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: webhook-cert-rotator-cluster-role
-  namespace: system
 rules:
 # Patch ValidatingWebhookConfiguration to inject CA bundle
 - apiGroups:
@@ -68,4 +69,4 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: manager
-  namespace: system
+  namespace: breakglass-system

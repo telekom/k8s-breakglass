@@ -200,6 +200,20 @@ func main() {
 	// Webhook registration can be optionally disabled via ENABLE_WEBHOOK_MANAGER env var (default: true).
 	// The manager is always needed for IdentityProvider reconciliation and field indexing.
 	enableWebhookMgr := os.Getenv("ENABLE_WEBHOOK_MANAGER")
+
+	// Health probe channels - webhooksReady signals that webhooks are initialized and ready to handle traffic
+	webhooksReady := make(chan struct{})
+
+	// Register health check endpoints on the API server
+	webhooksEnabled := enableWebhookMgr == "" || enableWebhookMgr == "true"
+	if webhooksEnabled {
+		// Readiness probe will wait for webhooksReady channel to close
+		server.RegisterHealthChecks(webhooksReady)
+	} else {
+		// Readiness probe will always return ready (webhooks disabled)
+		server.RegisterHealthChecks(nil)
+	}
+
 	go func() {
 		// Reuse the unified scheme for consistency across all Kubernetes clients
 		log.Debugw("Starting manager with unified scheme")
@@ -277,7 +291,6 @@ func main() {
 						log.Fatalf("Timeout waiting for webhook certificates after 60s - certificate generation failed or stalled, controller cannot proceed without webhooks. Check if webhook-certs secret exists and cert-rotator logs for errors")
 					}
 				}
-
 				// Register webhooks immediately after certificates are ready
 				if enableWebhookMgr == "" || enableWebhookMgr == "true" {
 					log.Debugw("Starting webhook registration for BreakglassSession")
@@ -308,13 +321,20 @@ func main() {
 					}
 					log.Infow("Successfully registered IdentityProvider webhook")
 					log.Infow("All webhooks registered successfully", "count", 4, "webhooks", "BreakglassSession,BreakglassEscalation,ClusterConfig,IdentityProvider")
+
+					// Signal that webhooks are ready to handle traffic
+					close(webhooksReady)
 				} else {
 					log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER env var", "value", enableWebhookMgr)
+					// Still signal ready since webhooks are disabled
+					close(webhooksReady)
 				}
 			}
 		} else {
 			log.Infow("Certificate rotation disabled via ENABLE_CERT_ROTATION env var - webhooks will not be available")
 			close(setupFinished)
+			// Signal webhooks ready even though certs are disabled (they won't be used)
+			close(webhooksReady)
 		}
 
 		// Register field indices to support efficient cache-based lookups by controller-runtime clients.
