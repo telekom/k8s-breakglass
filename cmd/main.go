@@ -22,6 +22,7 @@ import (
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/telekom/k8s-breakglass/pkg/api"
@@ -56,10 +57,70 @@ func createScheme(log *zap.SugaredLogger) *runtime.Scheme {
 	return scheme
 }
 
+// getConfigValueString returns the value from environment variable if set, otherwise returns the default value
+func getConfigValueString(envVar string, defaultVal string) string {
+	if val := os.Getenv(envVar); val != "" {
+		return val
+	}
+	return defaultVal
+}
+
+// getConfigValueBool returns the value from environment variable if set as "true" or "false", otherwise returns the default value
+func getConfigValueBool(envVar string, defaultVal bool) bool {
+	if val := os.Getenv(envVar); val != "" {
+		return val == "true"
+	}
+	return defaultVal
+}
+
+// getConfigValueInt returns the value from environment variable if set as a valid integer, otherwise returns the default value
+func getConfigValueInt(envVar string, defaultVal int) int {
+	if val := os.Getenv(envVar); val != "" {
+		if i, err := strconv.Atoi(val); err == nil {
+			return i
+		}
+	}
+	return defaultVal
+}
+
 func main() {
-	debug := true
+	// Define flags for all configuration (webhook, email, config path, namespace, etc.)
+	// These can be overridden by environment variables
+	var (
+		debug                bool
+		webhookPort          int
+		enableWebhookManager bool
+		webhookCertDir       string
+		webhookCertName      string
+		webhookSecretName    string
+		enableCertRotation   bool
+		podNamespace         string
+		disableEmail         bool
+		configPath           string
+	)
+
 	flag.BoolVar(&debug, "debug", false, "enable debug level logging")
+	flag.IntVar(&webhookPort, "webhook-port", 9443, "port for webhook server (can be overridden by WEBHOOK_PORT env var)")
+	flag.BoolVar(&enableWebhookManager, "enable-webhook-manager", true, "enable webhook manager (can be overridden by ENABLE_WEBHOOK_MANAGER env var)")
+	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "directory for webhook certificates (can be overridden by WEBHOOK_CERT_DIR env var)")
+	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "webhook certificate file name (can be overridden by WEBHOOK_CERT_NAME env var)")
+	flag.StringVar(&webhookSecretName, "webhook-secret-name", "breakglass-webhook-certs", "kubernetes secret name for webhook certificates (can be overridden by WEBHOOK_SECRET_NAME env var)")
+	flag.BoolVar(&enableCertRotation, "enable-cert-rotation", true, "enable certificate rotation (can be overridden by ENABLE_CERT_ROTATION env var)")
+	flag.StringVar(&podNamespace, "pod-namespace", "default", "kubernetes namespace for breakglass pod and secret resources (can be overridden by POD_NAMESPACE or BREAKGLASS_NAMESPACE env var)")
+	flag.BoolVar(&disableEmail, "disable-email", false, "disable email sending (can be overridden by BREAKGLASS_DISABLE_EMAIL env var, set to '1' or 'true')")
+	flag.StringVar(&configPath, "config-path", "", "path to breakglass config file (can be overridden by BREAKGLASS_CONFIG_PATH env var)")
 	flag.Parse()
+
+	// Override flag values with environment variables if set
+	webhookPort = getConfigValueInt("WEBHOOK_PORT", webhookPort)
+	enableWebhookManager = getConfigValueBool("ENABLE_WEBHOOK_MANAGER", enableWebhookManager)
+	webhookCertDir = getConfigValueString("WEBHOOK_CERT_DIR", webhookCertDir)
+	webhookCertName = getConfigValueString("WEBHOOK_CERT_NAME", webhookCertName)
+	webhookSecretName = getConfigValueString("WEBHOOK_SECRET_NAME", webhookSecretName)
+	enableCertRotation = getConfigValueBool("ENABLE_CERT_ROTATION", enableCertRotation)
+	podNamespace = getConfigValueString("POD_NAMESPACE", podNamespace)
+	disableEmail = getConfigValueBool("BREAKGLASS_DISABLE_EMAIL", disableEmail)
+	configPath = getConfigValueString("BREAKGLASS_CONFIG_PATH", configPath)
 
 	zl := setupLogger(debug)
 	// Ensure controller-runtime uses our zap logger to avoid its default stacktrace output
@@ -69,7 +130,7 @@ func main() {
 	log := zl.Sugar()
 	log.With("version", system.Version).Info("Starting breakglass api")
 
-	cfg, err := config.Load()
+	cfg, err := config.LoadWithPath(configPath)
 	if err != nil {
 		log.Fatalf("Error loading config for breakglass controller: %v", err)
 	}
@@ -153,7 +214,7 @@ func main() {
 	mailQueue.Start()
 	log.Infow("Mail queue initialized and started", "retryCount", cfg.Mail.RetryCount, "retryBackoffMs", cfg.Mail.RetryBackoffMs, "queueSize", cfg.Mail.QueueSize)
 
-	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), ccProvider, escalationManager.Client).WithQueue(mailQueue)
+	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), ccProvider, escalationManager.Client, disableEmail).WithQueue(mailQueue)
 
 	err = server.RegisterAll([]api.APIController{
 		sessionController,
@@ -177,11 +238,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create kubernetes clientset for event recorder: %v", err)
 	}
-	podNs := os.Getenv("POD_NAMESPACE")
-	if podNs == "" {
-		podNs = "default"
-	}
-	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: podNs, Logger: log}
+	// Use namespace flag for event recorder (namespace for pod and secrets)
+	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: podNamespace, Logger: log}
 
 	// Determine interval from config (fallback to 10m)
 	interval := 10 * time.Minute
@@ -199,14 +257,11 @@ func main() {
 	// Start a controller-runtime manager to register webhooks and run reconcilers (non-blocking).
 	// Webhook registration can be optionally disabled via ENABLE_WEBHOOK_MANAGER env var (default: true).
 	// The manager is always needed for IdentityProvider reconciliation and field indexing.
-	enableWebhookMgr := os.Getenv("ENABLE_WEBHOOK_MANAGER")
-
 	// Health probe channels - webhooksReady signals that webhooks are initialized and ready to handle traffic
 	webhooksReady := make(chan struct{})
 
 	// Register health check endpoints on the API server
-	webhooksEnabled := enableWebhookMgr == "" || enableWebhookMgr == "true"
-	if webhooksEnabled {
+	if enableWebhookManager {
 		// Readiness probe will wait for webhooksReady channel to close
 		server.RegisterHealthChecks(webhooksReady)
 	} else {
@@ -218,29 +273,21 @@ func main() {
 		// Reuse the unified scheme for consistency across all Kubernetes clients
 		log.Debugw("Starting manager with unified scheme")
 
-		// Configure webhook port (default 8443, can be overridden via WEBHOOK_PORT env var)
-		webhookPort := 9443
-		if wPort := os.Getenv("WEBHOOK_PORT"); wPort != "" {
-			if p, err := strconv.Atoi(wPort); err == nil {
-				webhookPort = p
-				log.Infow("Using custom webhook port", "port", webhookPort)
-			} else {
-				log.Warnw("Invalid WEBHOOK_PORT value, using default", "value", wPort, "default", webhookPort)
-			}
-		}
-
-		log.Debugw("Configuring webhook server options", "port", webhookPort, "webhooksEnabled", (enableWebhookMgr == "" || enableWebhookMgr == "true"))
+		log.Debugw("Configuring webhook server options", "port", webhookPort, "webhooksEnabled", enableWebhookManager, "certDir", webhookCertDir)
 
 		mgrOpts := ctrl.Options{
 			Scheme: scheme,
 		}
 
 		// Set webhook port if webhooks are enabled
-		if enableWebhookMgr == "" || enableWebhookMgr == "true" {
-			log.Debugw("Creating webhook server", "port", webhookPort)
-			mgrOpts.WebhookServer = ctrlwebhook.NewServer(ctrlwebhook.Options{
+		if enableWebhookManager {
+			log.Debugw("Creating webhook server", "port", webhookPort, "certDir", webhookCertDir)
+
+			webhookServerOpts := ctrlwebhook.Options{
 				Port: webhookPort,
-			})
+			}
+
+			mgrOpts.WebhookServer = ctrlwebhook.NewServer(webhookServerOpts)
 			log.Debugw("Webhook server instance created", "port", webhookPort)
 		} else {
 			log.Infow("Webhook server creation skipped", "reason", "ENABLE_WEBHOOK_MANAGER=false")
@@ -252,25 +299,27 @@ func main() {
 			log.Warnw("Failed to start controller-runtime manager; reconcilers and webhooks will not be available", "error", merr)
 			return
 		}
-		log.Infow("Controller-runtime manager created successfully", "webhookEnabled", (enableWebhookMgr == "" || enableWebhookMgr == "true"))
+		log.Infow("Controller-runtime manager created successfully", "webhookEnabled", enableWebhookManager)
+
+		// Setup health checks for liveness and readiness probes
+		if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+			log.Errorw("Failed to add healthz check to manager", "error", err)
+			return
+		}
+		if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+			log.Errorw("Failed to add readyz check to manager", "error", err)
+			return
+		}
+		log.Infow("Health checks registered with manager")
 
 		// Setup certificate rotation for webhook TLS certificates using cert-controller
 		setupFinished := make(chan struct{})
-		certRotatorEnabled := os.Getenv("ENABLE_CERT_ROTATION")
-		podNamespace := os.Getenv("POD_NAMESPACE")
-		if podNamespace == "" {
-			podNamespace = "system"
-		}
-		webhookSecretName := os.Getenv("WEBHOOK_SECRET_NAME")
-		if webhookSecretName == "" {
-			webhookSecretName = "webhook-certs"
-		}
 
-		log.Debugw("Certificate rotation configuration", "enabled", (certRotatorEnabled == "" || certRotatorEnabled == "true"), "namespace", podNamespace, "secretName", webhookSecretName)
+		log.Debugw("Certificate rotation configuration", "enabled", enableCertRotation, "namespace", podNamespace, "secretName", webhookSecretName, "certDir", webhookCertDir)
 
-		if certRotatorEnabled == "" || certRotatorEnabled == "true" {
-			log.Infow("Setting up certificate rotation for webhooks", "namespace", podNamespace, "secretName", webhookSecretName, "webhookName", "breakglass-webhook")
-			if _, err := cert.SetupRotator(mgr, "breakglass-webhook", false, setupFinished); err != nil {
+		if enableCertRotation {
+			log.Infow("Setting up certificate rotation for webhooks", "namespace", podNamespace, "secretName", webhookSecretName, "certDir", webhookCertDir, "webhookName", "breakglass-webhook")
+			if _, err := cert.SetupRotator(mgr, "breakglass-webhook", false, setupFinished, podNamespace, webhookSecretName); err != nil {
 				log.Fatalf("Failed to setup certificate rotation - controller cannot proceed without webhook certificates: %v", err)
 			}
 			log.Infow("Certificate rotator registered with manager; manager will handle cert generation")
@@ -417,7 +466,7 @@ func main() {
 
 		// Register webhooks BEFORE starting the manager - this is required for the webhook HTTP server
 		// to properly register the paths when it starts listening
-		if enableWebhookMgr == "" || enableWebhookMgr == "true" {
+		if enableWebhookManager {
 			log.Infow("Registering webhooks before starting manager", "webhooksToRegister", []string{"BreakglassSession", "BreakglassEscalation", "ClusterConfig", "IdentityProvider"})
 
 			if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
@@ -447,21 +496,21 @@ func main() {
 			// Signal that webhooks are ready to handle traffic
 			close(webhooksReady)
 		} else {
-			log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER env var", "value", enableWebhookMgr)
+			log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER", "value", enableWebhookManager)
 			// Still signal ready since webhooks are disabled
 			close(webhooksReady)
 		}
 
 		// Start manager (blocks) but we run it in a goroutine so it doesn't prevent the API server
-		log.Infow("Starting controller-runtime manager", "port", webhookPort, "certRotationEnabled", (certRotatorEnabled == "" || certRotatorEnabled == "true"))
+		log.Infow("Starting controller-runtime manager", "port", webhookPort, "certRotationEnabled", enableCertRotation)
 		if err := mgr.Start(ctx); err != nil {
 			log.Warnw("controller-runtime manager exited", "error", err)
 		}
 	}()
 
 	// If webhooks are disabled, log it
-	if enableWebhookMgr == "false" {
-		log.Infow("Webhook manager disabled via ENABLE_WEBHOOK_MANAGER", "value", enableWebhookMgr)
+	if !enableWebhookManager {
+		log.Infow("Webhook manager disabled", "enableWebhookManager", enableWebhookManager)
 	}
 
 	// Add signal handlers for graceful shutdown

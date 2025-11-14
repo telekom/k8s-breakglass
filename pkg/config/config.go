@@ -114,9 +114,13 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	return LoadWithPath("")
+}
+
+// LoadWithPath loads the config from the specified path (empty string defaults to ./config.yaml)
+func LoadWithPath(configPath string) (Config, error) {
 	var config Config
 
-	configPath := os.Getenv("BREAKGLASS_CONFIG_PATH")
 	if len(configPath) == 0 {
 		configPath = "./config.yaml"
 	}

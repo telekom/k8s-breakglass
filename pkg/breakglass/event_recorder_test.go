@@ -2,7 +2,6 @@ package breakglass
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -51,13 +50,14 @@ func TestEventRecorder_UsesObjectNamespace(t *testing.T) {
 
 // Test that when object has no namespace, recorder falls back to POD_NAMESPACE
 func TestEventRecorder_FallbackToPodNamespace(t *testing.T) {
-	prev := os.Getenv("POD_NAMESPACE")
-	defer os.Setenv("POD_NAMESPACE", prev)
-	os.Setenv("POD_NAMESPACE", "podns")
-
 	cs := fake.NewSimpleClientset()
 	logger, _ := zap.NewDevelopment()
-	rec := &K8sEventRecorder{Clientset: cs, Source: corev1.EventSource{Component: "test"}, Logger: logger.Sugar()}
+	rec := &K8sEventRecorder{
+		Clientset: cs,
+		Source:    corev1.EventSource{Component: "test"},
+		Namespace: "podns", // Set the namespace directly on the recorder
+		Logger:    logger.Sugar(),
+	}
 
 	// object without namespace -> cluster-scoped
 	obj := &metav1.PartialObjectMetadata{}

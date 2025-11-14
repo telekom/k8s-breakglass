@@ -3,7 +3,7 @@ kind: Service
 metadata:
   labels:
     app: breakglass
-  name: breakglass
+  name: breakglass-api
   namespace: breakglass-system
 spec:
   ports:

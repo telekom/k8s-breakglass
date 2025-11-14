@@ -4,7 +4,7 @@ metadata:
   name: breakglass-identity-provider-manager-role-binding
 subjects:
 - kind: ServiceAccount
-  name: controller-manager
+  name: breakglass-manager
   namespace: breakglass-system
 roleRef:
   kind: ClusterRole

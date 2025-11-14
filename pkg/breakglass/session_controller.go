@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -51,6 +50,7 @@ type BreakglassSessionController struct {
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 	}
 	clusterConfigManager *ClusterConfigManager
+	disableEmail         bool
 }
 
 // IsSessionPendingApproval returns true if the session is in Pending state (state-first validation)
@@ -652,8 +652,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		return
 	}
 
-	if os.Getenv("BREAKGLASS_DISABLE_EMAIL") == "1" {
-		reqLog.Debug("Email sending disabled via BREAKGLASS_DISABLE_EMAIL=1")
+	if wc.disableEmail {
+		reqLog.Debug("Email sending disabled via flag/override")
 	} else if matchedEsc != nil && matchedEsc.Spec.DisableNotifications != nil && *matchedEsc.Spec.DisableNotifications {
 		reqLog.Infow("Email sending disabled for this escalation via DisableNotifications",
 			"escalationName", matchedEsc.Name,
@@ -2226,6 +2226,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 	},
 	clusterConfigClient client.Client,
+	disableEmail bool,
 ) *BreakglassSessionController {
 
 	ip := KeycloakIdentityProvider{}
@@ -2241,6 +2242,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		mailQueue:            nil,
 		ccProvider:           ccProvider,
 		clusterConfigManager: NewClusterConfigManager(clusterConfigClient),
+		disableEmail:         disableEmail,
 	}
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {

@@ -31,7 +31,7 @@ func TestSetupRotator_Success(t *testing.T) {
 	require.NoError(t, err, "Failed to create manager")
 
 	// Setup rotator
-	result, err := SetupRotator(mgr, "breakglass-webhook", false, certCompleted)
+	result, err := SetupRotator(mgr, "breakglass-webhook", false, certCompleted, "default", "breakglass-webhook-certs")
 	require.NoError(t, err, "SetupRotator should not return an error")
 	assert.NotNil(t, result, "SetupRotator should return a channel")
 	assert.Equal(t, certCompleted, result, "Should return the same channel")
@@ -41,7 +41,7 @@ func TestSetupRotator_Success(t *testing.T) {
 func TestSetupRotator_NilManager(t *testing.T) {
 	certCompleted := make(chan struct{})
 
-	result, err := SetupRotator(nil, "test-webhook", false, certCompleted)
+	result, err := SetupRotator(nil, "test-webhook", false, certCompleted, "default", "breakglass-webhook-certs")
 	assert.Error(t, err, "SetupRotator should return an error for nil manager")
 	assert.Nil(t, result, "Should return nil on error")
 	assert.Contains(t, err.Error(), "manager is nil", "Error message should mention nil manager")
@@ -64,7 +64,7 @@ func TestSetupRotator_WithRestartFlag(t *testing.T) {
 	require.NoError(t, err, "Failed to create manager")
 
 	// Use a different webhook name to avoid controller registration conflicts
-	result, err := SetupRotator(mgr, "test-webhook-restart", true, certCompleted)
+	result, err := SetupRotator(mgr, "test-webhook-restart", true, certCompleted, "default", "breakglass-webhook-certs")
 	// Expected error: rotator.AddRotator may fail if test doesn't run in isolated environment
 	// This is acceptable as we're testing the function is called, not cert-controller internals
 	if err == nil {
@@ -81,9 +81,9 @@ func TestCertificateInjection_ValidatingWebhookConfiguration(t *testing.T) {
 
 	webhookConfig := &admissionv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "validating-webhook-configuration",
+			Name: "breakglass-validating-webhook-configuration",
 			Annotations: map[string]string{
-				"cert-controller.breakglass.io/inject-ca-from": "system/webhook-certs",
+				"cert-controller.breakglass.io/inject-ca-from": "breakglass-system/breakglass-webhook-certs",
 			},
 		},
 		Webhooks: []admissionv1.ValidatingWebhook{
@@ -91,8 +91,8 @@ func TestCertificateInjection_ValidatingWebhookConfiguration(t *testing.T) {
 				Name: "vbreakglasssession.kb.io",
 				ClientConfig: admissionv1.WebhookClientConfig{
 					Service: &admissionv1.ServiceReference{
-						Name:      "webhook-service",
-						Namespace: "system",
+						Name:      "breakglass-webhook-service",
+						Namespace: "breakglass-system",
 						Path:      stringPtr("/validate-breakglass-session"),
 					},
 					CABundle: []byte{}, // Will be injected by cert-controller
@@ -103,13 +103,13 @@ func TestCertificateInjection_ValidatingWebhookConfiguration(t *testing.T) {
 
 	// Verify the annotation is present
 	caFrom := webhookConfig.ObjectMeta.Annotations["cert-controller.breakglass.io/inject-ca-from"]
-	assert.Equal(t, "system/webhook-certs", caFrom, "Annotation should specify the secret location")
+	assert.Equal(t, "breakglass-system/breakglass-webhook-certs", caFrom, "Annotation should specify the secret location")
 
 	// Verify webhook is configured
 	assert.Len(t, webhookConfig.Webhooks, 1, "Should have at least one webhook")
 	assert.NotNil(t, webhookConfig.Webhooks[0].ClientConfig.Service, "Service should be configured")
-	assert.Equal(t, "webhook-service", webhookConfig.Webhooks[0].ClientConfig.Service.Name)
-	assert.Equal(t, "system", webhookConfig.Webhooks[0].ClientConfig.Service.Namespace)
+	assert.Equal(t, "breakglass-webhook-service", webhookConfig.Webhooks[0].ClientConfig.Service.Name)
+	assert.Equal(t, "breakglass-system", webhookConfig.Webhooks[0].ClientConfig.Service.Namespace)
 }
 
 // TestWebhookCertificateSecret verifies the expected secret structure
@@ -117,8 +117,8 @@ func TestWebhookCertificateSecret(t *testing.T) {
 	// Verify the secret that cert-controller will create
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "webhook-certs",
-			Namespace: "system",
+			Name:      "breakglass-webhook-certs",
+			Namespace: "breakglass-system",
 		},
 		Type: corev1.SecretTypeTLS,
 		Data: map[string][]byte{
@@ -129,8 +129,8 @@ func TestWebhookCertificateSecret(t *testing.T) {
 	}
 
 	// Verify secret structure
-	assert.Equal(t, "webhook-certs", secret.Name)
-	assert.Equal(t, "system", secret.Namespace)
+	assert.Equal(t, "breakglass-webhook-certs", secret.Name)
+	assert.Equal(t, "breakglass-system", secret.Namespace)
 	assert.Equal(t, corev1.SecretTypeTLS, secret.Type)
 	assert.Len(t, secret.Data, 3, "Secret should have 3 keys")
 	assert.NotNil(t, secret.Data["tls.crt"], "Should have certificate")
@@ -183,28 +183,6 @@ func TestDNSNameConfiguration(t *testing.T) {
 	assert.Len(t, extraDNSNames, 2, "Should have 2 extra DNS names in addition to primary")
 	assert.Contains(t, extraDNSNames, "webhook-service.system")
 	assert.Contains(t, extraDNSNames, "webhook-service")
-}
-
-// TestEnvironmentVariableDefaults verifies default values when env vars aren't set
-func TestEnvironmentVariableDefaults(t *testing.T) {
-	// Test the getEnvOrDefault function behavior
-	cases := []struct {
-		envVar      string
-		defaultVal  string
-		expectedVal string
-	}{
-		{"NONEXISTENT_VAR", "default-value", "default-value"},
-		{"PATH", "/usr/bin", "/usr/bin"}, // PATH typically exists, so won't use default
-	}
-
-	for _, tc := range cases {
-		result := getEnvOrDefault(tc.envVar, tc.defaultVal)
-		// Either the env var value or the default should be returned
-		assert.True(t,
-			result == tc.defaultVal || result != tc.defaultVal,
-			"Should return either env value or default",
-		)
-	}
 }
 
 // TestWebhookServiceMapping verifies the service name mapping

@@ -131,7 +131,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 			}
 
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated", "breakglass-standard-user"}, nil
@@ -296,7 +296,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 				}
 			}
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated", "breakglass-standard-user"}, nil
@@ -444,7 +444,7 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 			c.Set("email", "requester@example.com")
 			c.Set("username", "requester")
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
@@ -507,7 +507,7 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 			c.Set("email", "requester@example.com")
 			c.Set("username", "requester")
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"some-group"}, nil
@@ -581,7 +581,7 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 		c.Set("email", "self@example.com")
 		c.Set("username", "Self")
 		c.Next()
-	}, nil, cli)
+	}, nil, cli, false)
 
 	// avoid hitting real kubeconfig contexts in unit tests by stubbing group lookup
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -657,7 +657,7 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 			c.Set("username", "Approver")
 		}
 		c.Next()
-	}, nil, cli)
+	}, nil, cli, false)
 
 	// stub out group lookup to avoid kubeconfig parsing in unit tests
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -728,7 +728,7 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 			c.Set("email", "req@example.com")
 			c.Set("username", "Req")
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
@@ -831,7 +831,7 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 		}
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated", "breakglass-standard-user"}, nil
 	}
@@ -911,7 +911,7 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 		func(c *gin.Context) {
 			c.Set("email", "not-an-approver@example.com")
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	// Force getUserGroupsFn to return no special groups
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -984,7 +984,7 @@ func TestTerminalStateImmutability(t *testing.T) {
 			c.Set("email", "a@e.com")
 		}
 		c.Next()
-	}, nil, cli)
+	}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
@@ -1090,7 +1090,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 			c.Set("email", "user@e.com")
 		}
 		c.Next()
-	}, nil, cli)
+	}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
@@ -1231,7 +1231,7 @@ func TestApproverCancelRunningSession(t *testing.T) {
 			c.Set("email", "user@e.com")
 		}
 		c.Next()
-	}, nil, cli)
+	}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
@@ -1291,7 +1291,7 @@ func TestApproverCancelRunningSession(t *testing.T) {
 			c.Set("email", "not-approver@e.com")
 		}
 		c.Next()
-	}, nil, cli)
+	}, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1342,7 +1342,7 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 		c.Set("username", "user1")
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1404,7 +1404,7 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 		c.Set("username", "alice")
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1466,7 +1466,7 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 		c.Set("username", "u")
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1539,7 +1539,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 		c.Next()
 	}
 
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &ss, &es, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &ss, &es, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1630,7 +1630,7 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 		c.Set("username", "u1")
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1700,7 +1700,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 				}
 			}
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
@@ -1816,7 +1816,7 @@ func TestLongReasonStored(t *testing.T) {
 				c.Set("username", "Approver")
 			}
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1881,7 +1881,7 @@ func TestWhitespaceReasonRejectedWhenMandatory(t *testing.T) {
 				c.Set("username", "WS")
 			}
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -1930,7 +1930,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 				c.Set("username", "Owner")
 			}
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2014,7 +2014,7 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 		c.Set("username", "x")
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2075,7 +2075,7 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 		c.Set("username", "sam")
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2136,7 +2136,7 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 		c.Set("username", "p")
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2232,7 +2232,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		}
 		c.Next()
 	}
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2318,7 +2318,7 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 		c.Next()
 	}
 
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2372,7 +2372,7 @@ func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
 
 	// middleware tries to set nothing; identityProvider will error
 	ctxSetup := func(c *gin.Context) { c.Next() }
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.identityProvider = ErrIdentityProvider{}
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) { return []string{}, nil }
 	ctrl.mail = &FakeMailSender{}
@@ -2439,7 +2439,7 @@ func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 		c.Next()
 	}
 
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2512,7 +2512,7 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 		c.Next()
 	}
 
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2594,7 +2594,7 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		c.Next()
 	}
 
-	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli)
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, nil, cli, false)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
@@ -2930,7 +2930,7 @@ func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
 			c.Set("email", "requester@example.com")
 			c.Set("username", "Requester")
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	// Mock group resolver to return members
 	mockResolver := &MockGroupResolver{
@@ -3110,7 +3110,7 @@ func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 			c.Set("email", "requester@example.com")
 			c.Set("username", "Requester")
 			c.Next()
-		}, nil, cli)
+		}, nil, cli, false)
 
 	// Mock group resolver
 	mockResolver := &MockGroupResolver{

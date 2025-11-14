@@ -4,6 +4,7 @@
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: validating-webhook-configuration
+  name: breakglass-validating-webhook-configuration
   annotations:
-    cert-controller.breakglass.io/inject-ca-from: breakglass-dev-system/webhook-certs
+    cert-controller.breakglass.io/inject-ca-from: breakglass-dev-system/breakglass-webhook-certs
+

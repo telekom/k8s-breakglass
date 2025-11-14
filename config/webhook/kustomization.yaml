@@ -10,3 +10,34 @@ resources:
   - service.yaml
   - webhook-certs-secret.yaml
 
+# Patch the auto-generated webhook manifest to use the correct service name and namespace
+patches:
+- target:
+    kind: ValidatingWebhookConfiguration
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: breakglass-validating-webhook-configuration
+    - op: add
+      path: /metadata/annotations
+      value:
+        cert-controller.breakglass.io/inject-ca-from: breakglass-system/breakglass-webhook-certs
+    - op: replace
+      path: /webhooks/0/clientConfig/service/name
+      value: breakglass-webhook-service
+    - op: replace
+      path: /webhooks/0/clientConfig/service/namespace
+      value: breakglass-system
+    - op: replace
+      path: /webhooks/1/clientConfig/service/name
+      value: breakglass-webhook-service
+    - op: replace
+      path: /webhooks/1/clientConfig/service/namespace
+      value: breakglass-system
+    - op: replace
+      path: /webhooks/2/clientConfig/service/name
+      value: breakglass-webhook-service
+    - op: replace
+      path: /webhooks/2/clientConfig/service/namespace
+      value: breakglass-system
+

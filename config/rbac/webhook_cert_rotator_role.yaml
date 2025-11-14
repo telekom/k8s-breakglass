@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: webhook-cert-rotator-role
+  name: breakglass-webhook-cert-rotator-role
   namespace: breakglass-system
 rules:
 # Permissions for cert-controller to manage webhook certificates
@@ -16,13 +16,13 @@ rules:
   - create
   - list
   - watch
-# Update and patch the specific webhook-certs secret
+# Update and patch the specific breakglass-webhook-certs secret
 - apiGroups:
   - ""
   resources:
   - secrets
   resourceNames:
-  - webhook-certs
+  - breakglass-webhook-certs
   verbs:
   - get
   - update
@@ -31,12 +31,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: webhook-cert-rotator-role-binding
+  name: breakglass-webhook-cert-rotator-role-binding
   namespace: breakglass-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: webhook-cert-rotator-role
+  name: breakglass-webhook-cert-rotator-role
 subjects:
 - kind: ServiceAccount
   name: breakglass-manager
@@ -45,7 +45,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: webhook-cert-rotator-cluster-role
+  name: breakglass-webhook-cert-rotator-cluster-role
 rules:
 # List and watch all Secrets (needed for cert-rotator's cache sync)
 - apiGroups:
@@ -83,11 +83,11 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: webhook-cert-rotator-cluster-role-binding
+  name: breakglass-webhook-cert-rotator-cluster-role-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: webhook-cert-rotator-cluster-role
+  name: breakglass-webhook-cert-rotator-cluster-role
 subjects:
 - kind: ServiceAccount
   name: breakglass-manager

@@ -74,8 +74,8 @@ spec:
             - mountPath: /config/
               name: config
               readOnly: true
-      serviceAccountname: breakglass-manager
+      serviceAccountName: breakglass-manager
       volumes:
       - name: config
         configMap:
-          name: config
+          name: breakglass-config

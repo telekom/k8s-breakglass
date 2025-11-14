@@ -2,7 +2,6 @@ package cert
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -13,26 +12,33 @@ import (
 // SetupRotator configures and registers the certificate rotator with the manager.
 // It returns a channel that will be closed when the certificates are ready.
 // The returned channel should be waited on before setting up webhooks.
-// The webhook secret name can be customized via WEBHOOK_SECRET_NAME environment variable (defaults to "webhook-certs").
 func SetupRotator(
 	mgr ctrl.Manager,
 	webhookName string,
 	restartOnRefresh bool,
 	certCompleted chan struct{},
+	namespace string,
+	secretName string,
 ) (chan struct{}, error) {
 	if mgr == nil {
 		return nil, fmt.Errorf("manager is nil")
 	}
 
-	podNamespace := getEnvOrDefault("POD_NAMESPACE", "system")
-	secretName := getEnvOrDefault("WEBHOOK_SECRET_NAME", "webhook-certs")
+	// Apply defaults if not provided
+	if namespace == "" {
+		namespace = "default"
+	}
+	if secretName == "" {
+		secretName = "breakglass-webhook-certs"
+	}
+
 	serviceName := "breakglass-webhook-service"
-	dnsName := serviceName + "." + podNamespace + ".svc"
+	dnsName := serviceName + "." + namespace + ".svc"
 
 	log := ctrl.Log.WithName("cert-rotator")
 	log.Info("Setting up certificate rotation",
 		"webhook", webhookName,
-		"namespace", podNamespace,
+		"namespace", namespace,
 		"serviceName", serviceName,
 		"secretName", secretName,
 		"dnsName", dnsName,
@@ -40,26 +46,14 @@ func SetupRotator(
 
 	webhooks := []rotator.WebhookInfo{
 		{
-			Name: "breakglass-validating-session-webhook",
-			Type: rotator.Validating,
-		},
-		{
-			Name: "breakglass-validating-escalation-webhook",
-			Type: rotator.Validating,
-		},
-		{
-			Name: "breakglass-validating-clusterconfig-webhook",
-			Type: rotator.Validating,
-		},
-		{
-			Name: "breakglass-validating-identityprovider-webhook",
+			Name: "breakglass-validating-webhook-configuration",
 			Type: rotator.Validating,
 		},
 	}
 
 	certRotator := &rotator.CertRotator{
 		SecretKey: types.NamespacedName{
-			Namespace: podNamespace,
+			Namespace: namespace,
 			Name:      secretName,
 		},
 		CertDir:        "/tmp/k8s-webhook-server/serving-certs",
@@ -67,7 +61,7 @@ func SetupRotator(
 		CAOrganization: "Deutsche Telekom, Breakglass",
 		DNSName:        dnsName,
 		ExtraDNSNames: []string{
-			serviceName + "." + podNamespace,
+			serviceName + "." + namespace,
 			serviceName,
 		},
 		IsReady:                certCompleted,
@@ -102,12 +96,4 @@ func SetupRotator(
 		"note", "certCompleted channel will be closed when certificates are ready")
 
 	return certCompleted, nil
-}
-
-// getEnvOrDefault gets an environment variable or returns the default value.
-func getEnvOrDefault(key, defaultValue string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return defaultValue
 }

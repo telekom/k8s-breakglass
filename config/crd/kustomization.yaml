@@ -6,6 +6,7 @@ resources:
 - bases/breakglass.t-caas.telekom.com_breakglasssessions.yaml
 - bases/breakglass.t-caas.telekom.com_clusterconfigs.yaml
 - bases/breakglass.t-caas.telekom.com_denypolicies.yaml
+- bases/breakglass.t-caas.telekom.com_identityproviders.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
