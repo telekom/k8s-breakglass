@@ -35,6 +35,7 @@ type MockSender struct {
 	lastSubject   string
 	lastBody      string
 	host          string
+	done          chan struct{}
 }
 
 func (m *MockSender) Send(receivers []string, subject, body string) error {
@@ -42,6 +43,12 @@ func (m *MockSender) Send(receivers []string, subject, body string) error {
 	m.lastReceivers = receivers
 	m.lastSubject = subject
 	m.lastBody = body
+
+	// Signal on done channel if it's set and not already closed.
+	select {
+	case m.done <- struct{}{}:
+	default:
+	}
 
 	if m.attempts > m.successAfter {
 		return nil // Success
@@ -66,7 +73,7 @@ func TestQueue_Enqueue(t *testing.T) {
 	}()
 	sugar := logger.Sugar()
 
-	sender := &MockSender{successAfter: 0, host: "test.example.com"}
+	sender := &MockSender{successAfter: 0, host: "test.example.com", done: make(chan struct{}, 1)}
 	queue := NewQueue(sender, sugar, 3, 100, 10)
 	queue.Start()
 	defer func() {
@@ -78,8 +85,13 @@ func TestQueue_Enqueue(t *testing.T) {
 	err := queue.Enqueue("test-1", []string{"user@example.com"}, "Test", "Body")
 	assert.NoError(t, err)
 
-	// Give worker time to process
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the message to be sent, or timeout.
+	select {
+	case <-sender.done:
+		// OK
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for mail to be sent")
+	}
 
 	assert.Equal(t, 1, sender.attempts)
 	assert.Equal(t, "Test", sender.lastSubject)
