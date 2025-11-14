@@ -163,6 +163,24 @@ async function confirmApprove() {
   }
   approving.value = null;
 }
+
+async function confirmReject() {
+  if (!modalSession.value) return;
+  const name = modalSession.value.metadata?.name;
+  approving.value = name;
+  try {
+    const note = approverNotes[name || ""] || undefined;
+    await breakglassService.rejectBreakglass(name, note);
+    pushSuccess(`Rejected request for ${modalSession.value.spec?.user} (${modalSession.value.spec?.grantedGroup})!`);
+    showApproveModal.value = false;
+    modalSession.value = null;
+    await fetchPendingApprovals();
+  } catch (e) {
+    pushError("Failed to reject request");
+  }
+  approving.value = null;
+}
+
 function closeApproveModal() { showApproveModal.value = false; modalSession.value = null; }
 
 onMounted(fetchPendingApprovals);
@@ -331,7 +349,8 @@ onMounted(fetchPendingApprovals);
       <p v-if="modalSession.approvalReason && modalSession.approvalReason.mandatory && !(approverNotes[modalSession.metadata.name] || '').trim()" style="color:#c62828;margin-top:0.5rem">This field is required.</p>
       <div style="margin-top:0.5rem">
         <scale-button @click="confirmApprove" :disabled="approving !== null">Confirm Approve</scale-button>
-        <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
+        <scale-button variant="danger" @click="confirmReject" :disabled="approving !== null" style="margin-left: 0.5rem;">Reject</scale-button>
+        <scale-button variant="secondary" @click="closeApproveModal" style="margin-left: 0.5rem;">Cancel</scale-button>
       </div>
     </div>
   </div>

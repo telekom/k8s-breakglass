@@ -118,4 +118,59 @@ describe('BreakglassService', () => {
     // When duration is not provided, it should be 0 or not sent
     expect(mockClient.post).toHaveBeenCalledWith('/breakglassSessions', expect.objectContaining({ user: 'user@example.com' }));
   });
+
+  it('rejects a breakglass session with reason', async () => {
+    const mockClient2: any = { post: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } };
+    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    const svc = new BreakglassService(fakeAuth);
+    mockClient2.post.mockResolvedValueOnce({ status: 200 });
+
+    const result = await svc.rejectBreakglass('test-session', 'Not needed');
+    expect(mockClient2.post).toHaveBeenCalledWith('/breakglassSessions/test-session/reject', { reason: 'Not needed' });
+    expect(result.status).toBe(200);
+  });
+
+  it('rejects a breakglass session without reason', async () => {
+    const mockClient2: any = { post: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } };
+    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    const svc = new BreakglassService(fakeAuth);
+    mockClient2.post.mockResolvedValueOnce({ status: 200 });
+
+    const result = await svc.rejectBreakglass('test-session');
+    expect(mockClient2.post).toHaveBeenCalledWith('/breakglassSessions/test-session/reject', {});
+    expect(result.status).toBe(200);
+  });
+
+  it('rejects a breakglass session and ignores empty reason string', async () => {
+    const mockClient2: any = { post: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } };
+    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    const svc = new BreakglassService(fakeAuth);
+    mockClient2.post.mockResolvedValueOnce({ status: 200 });
+
+    const result = await svc.rejectBreakglass('test-session', '   ');
+    expect(mockClient2.post).toHaveBeenCalledWith('/breakglassSessions/test-session/reject', {});
+    expect(result.status).toBe(200);
+  });
+
+  it('approves a breakglass session with reason', async () => {
+    const mockClient2: any = { post: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } };
+    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    const svc = new BreakglassService(fakeAuth);
+    mockClient2.post.mockResolvedValueOnce({ status: 200 });
+
+    const result = await svc.approveBreakglass('test-session', 'Approved');
+    expect(mockClient2.post).toHaveBeenCalledWith('/breakglassSessions/test-session/approve', { reason: 'Approved' });
+    expect(result.status).toBe(200);
+  });
+
+  it('approves a breakglass session without reason', async () => {
+    const mockClient2: any = { post: jest.fn(), interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } } };
+    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    const svc = new BreakglassService(fakeAuth);
+    mockClient2.post.mockResolvedValueOnce({ status: 200 });
+
+    const result = await svc.approveBreakglass('test-session');
+    expect(mockClient2.post).toHaveBeenCalledWith('/breakglassSessions/test-session/approve', {});
+    expect(result.status).toBe(200);
+  });
 });

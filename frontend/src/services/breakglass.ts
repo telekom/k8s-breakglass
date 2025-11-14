@@ -167,6 +167,19 @@ export default class BreakglassService {
     }
   }
 
+  // Reject a pending breakglass session by session name (metadata.name)
+  public async rejectBreakglass(sessionName: string, reason?: string): Promise<AxiosResponse> {
+    // RESTful: POST /api/breakglassSessions/:sessionName/reject
+    try {
+  const body: Record<string, any> = {};
+  if (reason && reason.trim().length > 0) body.reason = reason;
+  return await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/reject`, body);
+    } catch (e) {
+      handleAxiosError('BreakglassService.rejectBreakglass', e, 'Failed to reject breakglass');
+      throw e;
+    }
+  }
+
   public async testButton(user_name: string, cluster_name: string): Promise<AxiosResponse> {
     try {
       return await this.client.post('/test', { user: user_name, cluster: cluster_name });

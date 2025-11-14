@@ -605,12 +605,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		}
 	}
 
-	bs, err = wc.getActiveBreakglassSession(ctx, request.Username, request.Clustername, request.GroupName)
-	if err != nil && !errors.Is(err, ErrSessionNotFound) {
-		reqLog.Errorw("error while getting breakglass session", "error", err)
-		c.Status(http.StatusInternalServerError)
-		return
-	}
+	// Note: bs already has its Name populated by AddBreakglassSession (passed as pointer).
+	// Do not try to fetch it again as this can race with informer cache population.
+	// Instead, reuse the bs object that was created.
 
 	approvalTimeout := time.Hour // TODO: make configurable per escalation/cluster
 
