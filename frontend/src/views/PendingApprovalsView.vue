@@ -5,6 +5,7 @@ import CountdownTimer from '@/components/CountdownTimer.vue';
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
+import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -75,8 +76,10 @@ function computeEndTime(startTimeStr: string | undefined, durationStr: string | 
     const totalMs = (hours * 3600 + minutes * 60 + seconds) * 1000;
     
     const endTime = new Date(startTime.getTime() + totalMs);
-    return endTime.toLocaleString();
+    debugLogDateTime('computeEndTime', endTime.toISOString());
+    return format24Hour(endTime.toISOString());
   } catch (e) {
+    console.error('[DateTime] Error computing end time:', e);
     return 'Invalid date format';
   }
 }
@@ -226,6 +229,11 @@ onMounted(fetchPendingApprovals);
         <!-- Urgency Badge -->
         <div v-if="session.urgency === 'critical'" class="urgency-badge critical">⚠️ CRITICAL - Action Required</div>
         <div v-else-if="session.urgency === 'high'" class="urgency-badge high">⏱️ High Priority</div>
+        
+        <!-- Scheduled Session Badge -->
+        <div v-if="session.spec && session.spec.scheduledStartTime" class="scheduled-badge">
+          📅 Scheduled Session
+        </div>
 
         <!-- Header with basic info -->
         <div class="card-header">
@@ -265,7 +273,7 @@ onMounted(fetchPendingApprovals);
         <!-- Metadata row -->
         <div class="meta-row">
           <span class="meta-item">
-            <strong>Requested:</strong> {{ new Date(session.metadata.creationTimestamp).toLocaleString() }}
+            <strong>Requested:</strong> {{ format24Hour(session.metadata.creationTimestamp) }}
           </span>
           <span v-if="session.spec && session.spec.maxValidFor" class="meta-item">
             <strong>Duration:</strong> {{ formatDuration(session.spec.maxValidFor) }}
@@ -311,13 +319,13 @@ onMounted(fetchPendingApprovals);
       <div v-if="modalSession.spec && modalSession.spec.scheduledStartTime" style="margin-top:1rem; padding: 10px; background-color: #fff3cd; border-left: 3px solid #ffc107; border-radius: 3px;">
         <strong style="color: #856404;">Scheduled Session</strong>
         <p style="margin: 4px 0; color: #856404;">
-          <strong>Will start at:</strong> {{ new Date(modalSession.spec.scheduledStartTime).toLocaleString() }}
+          <strong>Will start at:</strong> {{ format24Hour(modalSession.spec.scheduledStartTime) }}
         </p>
         <p v-if="modalSession.spec.maxValidFor" style="margin: 4px 0; color: #856404;">
           <strong>Will end at:</strong> {{ computeEndTime(modalSession.spec.scheduledStartTime, modalSession.spec.maxValidFor) }}
         </p>
         <p v-else style="margin: 4px 0; color: #856404;">
-          <strong>Will expire at:</strong> {{ modalSession.status?.expiresAt ? new Date(modalSession.status.expiresAt).toLocaleString() : 'Calculated upon activation' }}
+          <strong>Will expire at:</strong> {{ modalSession.status?.expiresAt ? format24Hour(modalSession.status.expiresAt) : 'Calculated upon activation' }}
         </p>
       </div>
 
@@ -330,7 +338,7 @@ onMounted(fetchPendingApprovals);
 
       <!-- Immediate session timing -->
       <div v-else-if="modalSession.status && modalSession.status.expiresAt && !modalSession.spec.scheduledStartTime" style="margin-top:0.5rem; font-size: 0.9em; color: #555;">
-        <strong>Session expires at:</strong> {{ new Date(modalSession.status.expiresAt).toLocaleString() }}
+        <strong>Session expires at:</strong> {{ format24Hour(modalSession.status.expiresAt) }}
       </div>
 
       <div v-if="modalSession.spec && modalSession.spec.requestReason" style="margin-top:0.5rem">
@@ -485,6 +493,20 @@ h2 {
   color: #e65100;
   border-left: 3px solid #ff9800;
   padding-left: 9px;
+}
+
+/* Scheduled session badge */
+.scheduled-badge {
+  display: inline-block;
+  background-color: #e8f5e9;
+  color: #2e7d32;
+  padding: 6px 12px;
+  border-radius: 4px;
+  border-left: 3px solid #4CAF50;
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  margin-left: 0.5rem;
 }
 
 /* Header section */

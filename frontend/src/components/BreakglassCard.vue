@@ -2,6 +2,7 @@
 import humanizeDuration from "humanize-duration";
 import { computed, ref, watch } from "vue";
 import { pushError } from "@/services/toast";
+import { format24Hour, format24HourWithTZ, debugLogDateTime } from "@/utils/dateTime";
 
 const humanizeConfig = { round: true, largest: 2 };
 const props = defineProps<{ breakglass: any; time: number }>();
@@ -171,7 +172,8 @@ const scheduleDateTimeLocal = computed({
 // Format timestamp for display
 function formatDateTime(isoString: string | null | undefined): string {
   if (!isoString) return '';
-  return new Date(isoString).toLocaleString();
+  debugLogDateTime('formatDateTime', isoString);
+  return format24Hour(isoString);
 }
 
 // Predefined duration options (in seconds)
@@ -364,7 +366,7 @@ function drop() { emit("drop"); }
                   <strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}
                 </p>
                 <p style="margin: 0.25rem 0; color: #888; font-size: 0.85em;">
-                  Your local time: {{ new Date(scheduledStartTime).toLocaleString() }}
+                  Your local time: {{ format24HourWithTZ(scheduledStartTime) }}
                 </p>
               </div>
             </div>

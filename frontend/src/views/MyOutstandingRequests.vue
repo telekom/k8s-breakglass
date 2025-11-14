@@ -23,7 +23,7 @@
               <!-- Scheduled session info -->
               <template v-if="req.spec?.scheduledStartTime">
                 <div class="scheduled-row">
-                  Scheduled start: <b>{{ new Date(req.spec.scheduledStartTime).toLocaleString() }}</b>
+                  Scheduled start: <b>{{ format24Hour(req.spec.scheduledStartTime) }}</b>
                 </div>
               </template>
               <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
@@ -63,6 +63,7 @@ import { ref, onMounted, inject } from 'vue';
 import CountdownTimer from '@/components/CountdownTimer.vue';
 import BreakglassService from '@/services/breakglass';
 import { AuthKey } from '@/keys';
+import { format24Hour, debugLogDateTime } from '@/utils/dateTime';
 
 const withdrawing = ref("");
 

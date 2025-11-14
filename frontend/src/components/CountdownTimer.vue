@@ -13,6 +13,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { format24Hour, debugLogDateTime } from '@/utils/dateTime';
 
 const props = defineProps<{
   expiresAt: string | Date;
@@ -22,8 +23,9 @@ const remaining = ref(0);
 const interval = ref<number | null>(null);
 
 const fullTime = computed(() => {
-  const d = new Date(props.expiresAt);
-  return d.toLocaleString();
+  const dateStr = typeof props.expiresAt === 'string' ? props.expiresAt : props.expiresAt.toISOString();
+  debugLogDateTime('CountdownTimer', dateStr);
+  return format24Hour(dateStr);
 });
 
 const formatted = computed(() => {

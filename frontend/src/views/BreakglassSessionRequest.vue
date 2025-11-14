@@ -10,6 +10,7 @@ import BreakglassEscalationService from "@/services/breakglassEscalation";
 import { handleAxiosError } from "@/services/logger";
 import type { BreakglassSessionRequest } from "@/model/breakglassSession";
 import type { BreakglassEscalationSpec } from "@/model/escalation";
+import { format24Hour, format24HourWithTZ, debugLogDateTime } from "@/utils/dateTime";
 
 const auth = inject(AuthKey);
 const sessionService = new BreakglassSessionService(auth!);
@@ -39,17 +40,25 @@ const minDateTime = computed(() => {
 });
 
 // Convert between datetime-local (browser format) and ISO 8601
+// Format: YYYY-MM-DDTHH:mm (24-hour format for consistent display)
 const scheduleDateTimeLocal = computed({
   get() {
     if (!scheduledStartTime.value) return '';
     const dt = new Date(scheduledStartTime.value);
-    return dt.toISOString().slice(0, 16);
+    // Format in 24-hour format: YYYY-MM-DDTHH:mm
+    const year = dt.getUTCFullYear();
+    const month = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(dt.getUTCDate()).padStart(2, '0');
+    const hours = String(dt.getUTCHours()).padStart(2, '0');
+    const minutes = String(dt.getUTCMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
   },
   set(value: string) {
     if (!value) {
       scheduledStartTime.value = null;
     } else {
-      const dt = new Date(value + ':00Z');
+      // Parse the datetime-local value (which is in user's local time)
+      const dt = new Date(value + ':00');
       scheduledStartTime.value = dt.toISOString();
     }
   },
@@ -60,13 +69,22 @@ const calculatedExpiryTime = computed(() => {
   if (!scheduledStartTime.value) return '';
   const start = new Date(scheduledStartTime.value);
   start.setHours(start.getHours() + 1);
-  return start.toLocaleString();
+  debugLogDateTime('calculatedExpiryTime', start.toISOString());
+  return format24Hour(start.toISOString());
 });
 
 // Format timestamp for display
 function formatDateTime(isoString: string | null | undefined): string {
   if (!isoString) return '';
-  return new Date(isoString).toLocaleString();
+  debugLogDateTime('formatDateTime', isoString);
+  return format24Hour(isoString);
+}
+
+// Format scheduled start time for local display
+function formatScheduledLocal(isoString: string | null | undefined): string {
+  if (!isoString) return '';
+  debugLogDateTime('formatScheduledLocal', isoString);
+  return format24HourWithTZ(isoString);
 }
 
 // Function to handle the form submission
@@ -179,7 +197,12 @@ onMounted(async () => {
             <div v-if="showScheduleOptions" class="schedule-details" style="margin-top: 10px; margin-left: 15px; 
               padding: 10px; border-left: 2px solid #0066cc; background-color: #f9f9f9;">
               <div style="margin-bottom: 10px;">
-                <label for="scheduled_date" style="width: auto; display: block; text-align: left; margin-bottom: 5px;">Scheduled Start Date/Time:</label>
+                <label for="scheduled_date" style="width: auto; display: block; text-align: left; margin-bottom: 5px;">
+                  <strong>Scheduled Start Date/Time (24-hour format):</strong>
+                  <span style="display: block; font-size: 0.85em; color: #666; margin-top: 2px; font-weight: normal;">
+                    Your local time: {{ new Date().toLocaleString('en-GB', { hour12: false }).split(',')[0] }}
+                  </span>
+                </label>
                 <input
                   id="scheduled_date"
                   type="datetime-local"
@@ -190,12 +213,15 @@ onMounted(async () => {
                 />
               </div>
               
-              <div v-if="scheduledStartTime" class="schedule-preview" style="font-size: 0.9em; color: #555; margin-top: 8px;">
-                <p style="margin: 2px 0;">
-                  <strong>Session will start at:</strong> {{ formatDateTime(scheduledStartTime) }}
+              <div v-if="scheduledStartTime" class="schedule-preview" style="font-size: 0.9em; color: #555; margin-top: 8px; padding: 8px; background-color: #e3f2fd; border-left: 3px solid #0288d1; border-radius: 3px;">
+                <p style="margin: 4px 0; color: #01579b;">
+                  <strong>Your local time:</strong> {{ formatScheduledLocal(scheduledStartTime) }}
                 </p>
-                <p style="margin: 2px 0;">
-                  <strong>Session will expire at:</strong> {{ calculatedExpiryTime }}
+                <p style="margin: 4px 0; color: #01579b;">
+                  <strong>Request will start at (UTC):</strong> {{ formatDateTime(scheduledStartTime) }}
+                </p>
+                <p style="margin: 4px 0; color: #01579b;">
+                  <strong>Request will expire at:</strong> {{ calculatedExpiryTime }}
                 </p>
               </div>
             </div>

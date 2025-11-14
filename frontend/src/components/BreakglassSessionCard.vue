@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { decideRejectOrWithdraw } from '@/utils/sessionActions';
 import humanizeDuration from "humanize-duration";
+import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
 
 const humanizeConfig: humanizeDuration.Options = {
   round: true,
@@ -55,21 +56,24 @@ const expiryHumanized = computed(() => {
 
 const approvedAt = computed(() => {
   if (props.breakglass.status.approvedAt) {
-    return new Date(props.breakglass.status.approvedAt).toLocaleString();
+    debugLogDateTime('approvedAt', props.breakglass.status.approvedAt);
+    return format24Hour(props.breakglass.status.approvedAt);
   }
   return null;
 });
 
 const rejectedAt = computed(() => {
   if (props.breakglass.status.rejectedAt) {
-    return new Date(props.breakglass.status.rejectedAt).toLocaleString();
+    debugLogDateTime('rejectedAt', props.breakglass.status.rejectedAt);
+    return format24Hour(props.breakglass.status.rejectedAt);
   }
   return null;
 });
 
 const requestedAt = computed(() => {
   if (props.breakglass.metadata && props.breakglass.metadata.creationTimestamp) {
-    return new Date(props.breakglass.metadata.creationTimestamp).toLocaleString();
+    debugLogDateTime('requestedAt', props.breakglass.metadata.creationTimestamp);
+    return format24Hour(props.breakglass.metadata.creationTimestamp);
   }
   return null;
 });

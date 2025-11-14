@@ -2,6 +2,7 @@
 import { ref, onMounted, inject, computed } from "vue";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
+import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -25,8 +26,8 @@ onMounted(async () => {
 
 function formatDate(ts: string | number) {
   if (!ts) return "-";
-  const d = new Date(ts);
-  return d.toLocaleString();
+  debugLogDateTime('formatDate', typeof ts === 'string' ? ts : new Date(ts).toISOString());
+  return format24Hour(typeof ts === 'string' ? ts : new Date(ts).toISOString());
 }
 
 function startedForDisplay(s: any) {
