@@ -5,6 +5,13 @@ breakglass:
     protocol: TCP
     targetPort: 0
   type: ClusterIP
+webhookService:
+  type: ClusterIP
+  ports:
+  - name: webhook
+    port: 443
+    protocol: TCP
+    targetPort: 9443
 config:
   configYaml: |-
     server:
@@ -35,7 +42,27 @@ manager:
       repository: harbor.das-schiff.telekom.de/schiff-dev/breakglass-2
       tag: latest
     imagePullPolicy: Always
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
   nodeSelector: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
   replicas: 1
   tolerations: []
   topologySpreadConstraints: []

@@ -1,0 +1,26 @@
+---
+# Patch to add webhook port and webhook certificate volume to deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manager
+  namespace: system
+spec:
+  template:
+    spec:
+      containers:
+        - name: breakglass
+          ports:
+            - name: webhook
+              containerPort: 9443
+              protocol: TCP
+          volumeMounts:
+            - mountPath: /tmp/k8s-webhook-server/serving-certs
+              name: webhook-certs
+              readOnly: true
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: webhook-certs
+            optional: true
+

@@ -10,3 +10,4 @@ resources:
 - secrets_reader_role_binding.yaml
 - identityprovider_role.yaml
 - identityprovider_role_binding.yaml
+- webhook_cert_rotator_role.yaml

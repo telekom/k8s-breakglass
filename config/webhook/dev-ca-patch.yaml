@@ -1,0 +1,17 @@
+---
+# Patch to disable webhook service certificate requirement for development
+# This allows webhooks to run without valid TLS certificates
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+  - name: vbreakglassescalation.kb.io
+    clientConfig:
+      caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi9UL1RFTVBPUEFSWS9DRVJULS9JIENPTUVTIEhFUkUKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  - name: vbreakglasssession.kb.io
+    clientConfig:
+      caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi9UL1RFTVBPUEFSWSRDT1JES1MgQ09NRVMgSEVSRQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+  - name: vclusterconfig.kb.io
+    clientConfig:
+      caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi9UL1RFTVBPUEFSWSRDT1JEVS9DRVJUIENBIGZPUIBERVZFTE9QUwovVFBST1dZQ0DVRUKVFDBU1dFREVORCBDRVJUSUZJQ0FURS0tLS0tCg==

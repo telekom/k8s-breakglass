@@ -18,6 +18,7 @@ resources:
 - ../crd
 - ../rbac
 - ../deployment
+- ../webhook
 
 configMapGenerator:
 - name: config
@@ -26,7 +27,32 @@ configMapGenerator:
   options:
     disableNameSuffixHash: true
 
-# [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
+patches:
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: manager
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/ports/-
+      value:
+        name: webhook
+        containerPort: 9443
+        protocol: TCP
+    - op: add
+      path: /spec/template/spec/containers/0/volumeMounts/-
+      value:
+        mountPath: /tmp/k8s-webhook-server/serving-certs
+        name: webhook-certs
+        readOnly: true
+    - op: add
+      path: /spec/template/spec/volumes/-
+      value:
+        name: webhook-certs
+        secret:
+          secretName: webhook-certs
+          optional: true
 # Uncomment the following replacements to add the cert-manager CA injection annotations
 #replacements:
 # - source: # Uncomment the following block if you have a ValidatingWebhook (--programmatic-validation)

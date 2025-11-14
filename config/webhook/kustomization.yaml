@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Webhook configuration resources
+# This is included by ../default/kustomization.yaml
+# The deployment-patch is applied through ../default/kustomization.yaml patches
+
+resources:
+  - manifests.yaml
+  - service.yaml
+

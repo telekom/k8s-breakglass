@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "breakglass-controller.fullname" . }}-webhook-cert-rotator-role
+  labels:
+  {{- include "breakglass-controller.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resourceNames:
+  - webhook-certs
+  resources:
+  - secrets
+  verbs:
+  - get
+  - update
+  - patch

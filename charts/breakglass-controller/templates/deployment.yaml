@@ -31,12 +31,25 @@ spec:
           | default .Chart.AppVersion }}
         imagePullPolicy: {{ .Values.manager.breakglass.imagePullPolicy }}
         name: breakglass
-        resources: {}
+        ports:
+        - containerPort: 8081
+          name: http
+          protocol: TCP
+        - containerPort: 9443
+          name: webhook
+          protocol: TCP
+        resources: {{- toYaml .Values.manager.breakglass.resources | nindent 10 }}
+        securityContext: {{- toYaml .Values.manager.breakglass.containerSecurityContext
+          | nindent 10 }}
         volumeMounts:
         - mountPath: /config/
           name: config
           readOnly: true
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: webhook-certs
+          readOnly: true
       nodeSelector: {{- toYaml .Values.manager.nodeSelector | nindent 8 }}
+      securityContext: {{- toYaml .Values.manager.podSecurityContext | nindent 8 }}
       serviceAccountName: {{ include "breakglass-controller.serviceAccountName" . }}
       tolerations: {{- toYaml .Values.manager.tolerations | nindent 8 }}
       topologySpreadConstraints: {{- toYaml .Values.manager.topologySpreadConstraints |
@@ -45,3 +58,7 @@ spec:
       - configMap:
           name: {{ include "breakglass-controller.fullname" . }}-config
         name: config
+      - name: webhook-certs
+        secret:
+          optional: true
+          secretName: webhook-certs

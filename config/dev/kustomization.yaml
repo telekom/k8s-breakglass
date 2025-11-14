@@ -18,6 +18,7 @@ resources:
 - ../crd
 - ../rbac
 - ../deployment
+- ../webhook
 - ./resources/keycloak.yaml
 - ./resources/mailhog.yaml
 - ./resources/crs/cluster-configs-test.yaml
@@ -45,6 +46,11 @@ patches:
     kind: Deployment
     name: manager
   path: ./resources/manager_debug_patch.yaml
+- target:
+    group: admissionregistration.k8s.io
+    version: v1
+    kind: ValidatingWebhookConfiguration
+  path: ./resources/webhook-dev-ca-patch.yaml
 
 
 

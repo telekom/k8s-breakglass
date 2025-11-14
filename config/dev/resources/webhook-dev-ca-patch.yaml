@@ -1,0 +1,9 @@
+---
+# Patch to add caBundle to ValidatingWebhookConfiguration for development
+# The caBundle will be injected by cert-controller at runtime
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+  annotations:
+    cert-controller.breakglass.io/inject-ca-from: breakglass-dev-system/webhook-certs
