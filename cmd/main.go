@@ -257,8 +257,7 @@ func main() {
 		if certRotatorEnabled == "" || certRotatorEnabled == "true" {
 			log.Infow("Setting up certificate rotation for webhooks", "namespace", podNamespace, "secretName", webhookSecretName, "webhookName", "breakglass-webhook")
 			if _, err := cert.SetupRotator(mgr, "breakglass-webhook", false, setupFinished); err != nil {
-				log.Errorw("Failed to setup certificate rotation", "error", err)
-				close(setupFinished)
+				log.Fatalf("Failed to setup certificate rotation - controller cannot proceed without webhook certificates: %v", err)
 			} else {
 				log.Debugw("Certificate rotator setup successful, waiting for certificates to be ready", "timeout", "60s")
 				// Wait for certs to be ready with a timeout to prevent hanging forever
@@ -266,11 +265,11 @@ func main() {
 				case <-setupFinished:
 					log.Infow("Webhook certificates ready and loaded")
 				case <-time.After(60 * time.Second):
-					log.Warnw("Timeout waiting for webhook certificates; proceeding anyway", "timeout", "60s")
+					log.Fatalf("Timeout waiting for webhook certificates after 60s - certificate generation failed, controller cannot proceed without webhooks")
 				}
 			}
 		} else {
-			log.Infow("Certificate rotation disabled via ENABLE_CERT_ROTATION env var")
+			log.Infow("Certificate rotation disabled via ENABLE_CERT_ROTATION env var - webhooks will not be available")
 			close(setupFinished)
 		}
 
