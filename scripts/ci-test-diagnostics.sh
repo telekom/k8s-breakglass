@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom
+# SPDX-License-Identifier: Apache-2.0
+
 # CI Test Diagnostics Helper
 # This script provides enhanced error handling and diagnostics for unit tests in CI environments
 

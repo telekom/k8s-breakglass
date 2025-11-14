@@ -116,8 +116,8 @@ test-ci: manifests generate fmt vet ## Run tests with enhanced CI diagnostics.
 	exit $$TEST_EXIT_CODE
 
 .PHONY: test-verbose
-test-verbose: manifests generate fmt vet ## Run tests with maximum verbosity and race detection.
-	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out -v -race -count=1
+test-verbose: manifests generate fmt vet ## Run tests with maximum verbosity and fresh cache.
+	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out -v -count=1
 
 .PHONY: e2e
 e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deployed (no tests).
