@@ -108,7 +108,6 @@ describe('PendingApprovalsView Duration Utilities', () => {
     it('computes end time with hours duration', () => {
       const startTime = '2025-11-14T10:00:00Z';
       const endTimeStr = computeEndTime(startTime, '1h0m0s');
-      const endTime = new Date(endTimeStr.split(' ').join('T').replace(/\//g, '-'));
       
       // Check that endTime is 1 hour after start
       expect(new Date(endTimeStr).getTime()).toBeGreaterThan(new Date(startTime).getTime());
