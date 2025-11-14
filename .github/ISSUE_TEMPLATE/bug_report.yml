@@ -1,74 +1,94 @@
 name: 'Bug report'
 description: |
-  Submit a bug report which includes a reproducible self-contained example. 
-  For security vulnerabilities, use the security issue.
-title: '[BUG] <Write a short and informative title after the [BUG] prefix>'
-labels: ['bug']
+  Submit a bug report about Kubernetes Breakglass. Include a reproducible example and 
+  detailed environment information. For security vulnerabilities, use the security advisory form instead.
+title: '[BUG] <brief description>'
+labels: ['bug', 'triage-needed']
 
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for taking the time to file a bug report. Before creating a new issue, please make 
-        sure to take a few minutes to check the issue tracker for existing issues about bugs.
-      
-  - type: textarea
-    attributes:
-      label: Describe the bug
-      placeholder: A clear and concise description of what the bug is.
-
-  - type: textarea
-    attributes:
-      label: Expected behavior
-      placeholder: A clear and concise description of what you expected to happen.
-
-  - type: textarea
-    attributes:
-      label: Screenshots
-      placeholder: | 
-        If useful, add screenshots to help explain your problem. However, please do not use 
-        screenshots to show code or anything similar.
-
-  - type: textarea
-    attributes:
-      label: "Error message"
-      description: |
-        Please include full error message, if any.
-      placeholder: |
-        << Full traceback >>
-      render: shell
-
-  - type: textarea
-    attributes:
-      label: Code to reproduce the bug
-      description: |
-        A minimal self-contained code example that reproduces the bug, e.g. the error message above.
-        
-        The minimal self-contained example should have the following structure.
-        ```
-        # All necessary imports at the beginning
+        Thank you for reporting a bug! Before submitting, please:
+        - Check the [documentation](https://github.com/telekom/k8s-breakglass/tree/main/docs)
+        - Search [existing issues](https://github.com/telekom/k8s-breakglass/issues) for similar reports
+        - For security issues, email security@telekom.de instead of using this form
   
-        # A succinct reproducing example trimmed down to the essential parts
-        
-        # Note: the bug is here
-        ```
-      placeholder: |
-        << your code here >>
-      render: go
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component is affected?
+      options:
+        - Backend (Go/API)
+        - Frontend (Vue/TypeScript)
+        - Kubernetes Integration (CRDs/Webhooks)
+        - Authentication/OIDC
+        - Deployment/Helm
+        - Documentation
+        - Other
     validations:
       required: true
 
   - type: textarea
     attributes:
-      label: System Environment
+      label: Describe the bug
+      description: Clear and concise description of what is broken
+      placeholder: |
+        What happened and what did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps to reproduce the issue
+      placeholder: |
+        1. Configure ...
+        2. Create a session ...
+        3. Approve the request ...
+        4. Bug occurs when ...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Expected behavior
+      description: What should happen instead?
+      placeholder: |
+        The session should be approved successfully and...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Error logs or output
       description: |
-        Complete the following information about your system.
-        You can get the system environment from `import platform; print(platform.uname())`.
-        And you can get the python version from `import sys; print(sys.version)`.
+        Relevant error messages, stack traces, or logs
+      placeholder: |
+        ```
+        error logs here
+        ```
+      render: shell
+
+  - type: textarea
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots (not code - use logs instead)
+      placeholder: |
+        You can drag and drop images here
+
+  - type: textarea
+    attributes:
+      label: Environment
+      description: |
+        Your setup details
       value: |
-        - OS: [e.g. Windows]
-        - Version: [e.g. 22]
-        - Go version: [e.g. 1.24.10]
+        - **Breakglass Version**: [e.g., 0.0.6]
+        - **Go Version**: [e.g., 1.24]
+        - **Kubernetes Version**: [e.g., v1.31]
+        - **OS/Platform**: [e.g., Ubuntu 22.04, macOS 14]
+        - **Deployment Method**: [Helm, Kustomize, Manual]
       render: markdown
     validations:
       required: true
@@ -76,9 +96,8 @@ body:
   - type: dropdown
     id: k8s-breakglass-version
     attributes:
-      label: Kubernetes Breakglass Version
-      description: > 
-        What version of Kubernetes Breakglass are you running?
+      label: Breakglass Version
+      description: What version are you running?
       options: 
         - 0.0.1
         - 0.0.2
@@ -86,13 +105,40 @@ body:
         - 0.0.4
         - 0.0.5
         - 0.0.6
+        - main (development)
     validations:
       required: true
+
+  - type: dropdown
+    id: authentication
+    attributes:
+      label: Authentication Provider
+      description: Which OIDC provider are you using?
+      options:
+        - Keycloak
+        - Other OIDC provider
+        - Not applicable / not tested yet
+      required: false
 
   - type: textarea
     attributes:
       label: Additional context
-      description: >
-        Add any other information that is important to know.
-        For example, explain how this bug affects your work and why it is important to be addressed.
-      placeholder: Add any other context about the problem here.
+      description: Any other relevant information
+      placeholder: |
+        - Related issues/PRs
+        - Workarounds you've found
+        - Impact on your deployment
+        - Configuration snippets (sanitize secrets!)
+
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: I've checked existing issues and documentation
+          required: true
+        - label: I'm reporting a bug, not a security vulnerability
+          required: true
+        - label: I've included all relevant environment information
+          required: true
+        - label: I've included steps to reproduce the issue
+          required: true
