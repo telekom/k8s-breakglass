@@ -384,6 +384,15 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	}
 	start := time.Now()
 	proxyPath := c.Param("proxyPath")
+
+	// Validate proxyPath to prevent SSRF attacks: must be a relative path
+	// Check that it doesn't contain a scheme (://) or absolute URL
+	if strings.Contains(proxyPath, "://") || strings.HasPrefix(proxyPath, "//") {
+		s.log.Sugar().Warnw("oidc_proxy_invalid_path", "path", proxyPath)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: absolute URLs not allowed"})
+		return
+	}
+
 	// Safe join using parsed authority rather than raw configured string
 	base := strings.TrimRight(s.oidcAuthority.String(), "/")
 	target := base + proxyPath
