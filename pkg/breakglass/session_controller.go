@@ -901,12 +901,23 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 			bs.Status.ApprovalReason = approverPayload.Reason
 		}
 	case v1alpha1.SessionConditionTypeRejected:
-		bs.Status.ApprovedAt = metav1.Time{}
-		bs.Status.ExpiresAt = metav1.Time{}
-		bs.Status.TimeoutAt = metav1.Time{}
+		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
+		// Only set state and rejection-specific timestamp.
 		bs.Status.RejectedAt = metav1.Now()
 		bs.Status.State = v1alpha1.SessionStateRejected
 		bs.Status.ReasonEnded = "rejected"
+
+		// Set RetainedUntil for rejected sessions (same logic as approved sessions)
+		var retainFor time.Duration = DefaultRetainForDuration
+		if bs.Spec.RetainFor != "" {
+			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
+				retainFor = d
+			} else {
+				reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
+			}
+		}
+		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+
 		// record approver (rejector)
 		rejectorEmail, _ := wc.identityProvider.GetEmail(c)
 		if rejectorEmail != "" {
@@ -1171,15 +1182,27 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	}
 
 	// Set status to Withdrawn
-	bs.Status.ApprovedAt = metav1.Time{}
-	bs.Status.ExpiresAt = metav1.Time{}
-	bs.Status.RejectedAt = metav1.Now()
+	// IMPORTANT: Do NOT clear existing timestamps (ApprovedAt, ExpiresAt, etc.)
+	// We want to preserve history. Only set state and withdrawal-specific timestamp.
+	bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
 	bs.Status.State = v1alpha1.SessionStateWithdrawn
 	// short reason for UI
 	bs.Status.ReasonEnded = "withdrawn"
 	// clear approver info for withdrawn sessions
 	bs.Status.Approver = ""
 	bs.Status.Approvers = nil
+
+	// Set RetainedUntil for withdrawn sessions (same logic as other terminal states)
+	var retainFor time.Duration = DefaultRetainForDuration
+	if bs.Spec.RetainFor != "" {
+		if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
+			retainFor = d
+		} else {
+			reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
+		}
+	}
+	bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+
 	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
 		Type:               string(v1alpha1.SessionConditionTypeCanceled),
 		Status:             metav1.ConditionTrue,
@@ -1225,9 +1248,10 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 
 	// If approved -> mark as Expired and set RetainedUntil appropriately (owner requested termination)
 	if bs.Status.State == v1alpha1.SessionStateApproved && !bs.Status.ApprovedAt.IsZero() {
+		// Approved session dropped - transition to Expired
+		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		bs.Status.ExpiresAt = metav1.NewTime(time.Now())
 		bs.Status.State = v1alpha1.SessionStateExpired
-		bs.Status.RejectedAt = metav1.Now()
 		bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
 			Type:               string(v1alpha1.SessionConditionTypeExpired),
 			Status:             metav1.ConditionTrue,
@@ -1236,14 +1260,36 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 			Message:            "Session dropped by owner",
 		})
 		bs.Status.ReasonEnded = "dropped"
+
+		// Set RetainedUntil for expired sessions (same logic as other terminal states)
+		var retainFor time.Duration = DefaultRetainForDuration
+		if bs.Spec.RetainFor != "" {
+			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
+				retainFor = d
+			} else {
+				reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
+			}
+		}
+		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 	} else {
 		// Pending or other state -> behave like withdraw
-		bs.Status.ApprovedAt = metav1.Time{}
-		bs.Status.ExpiresAt = metav1.Time{}
-		bs.Status.RejectedAt = metav1.Now()
+		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
+		bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
 		bs.Status.State = v1alpha1.SessionStateWithdrawn
 		bs.Status.Approver = ""
 		bs.Status.Approvers = nil
+
+		// Set RetainedUntil for withdrawn sessions (same logic as other terminal states)
+		var retainFor time.Duration = DefaultRetainForDuration
+		if bs.Spec.RetainFor != "" {
+			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
+				retainFor = d
+			} else {
+				reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
+			}
+		}
+		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+
 		bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
 			Type:               string(v1alpha1.SessionConditionTypeCanceled),
 			Status:             metav1.ConditionTrue,
@@ -1290,9 +1336,21 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	}
 
 	// Transition to expired immediately
+	// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 	bs.Status.ExpiresAt = metav1.NewTime(time.Now())
 	bs.Status.State = v1alpha1.SessionStateExpired
-	bs.Status.RejectedAt = metav1.Now()
+
+	// Set RetainedUntil for expired sessions (same logic as other terminal states)
+	var retainFor time.Duration = DefaultRetainForDuration
+	if bs.Spec.RetainFor != "" {
+		if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
+			retainFor = d
+		} else {
+			reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
+		}
+	}
+	bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
+
 	// record approver who canceled
 	approverEmail, _ := wc.identityProvider.GetEmail(c)
 	if approverEmail != "" {
@@ -2062,8 +2120,12 @@ func IsSessionExpired(session v1alpha1.BreakglassSession) bool {
 }
 
 func IsSessionValid(session v1alpha1.BreakglassSession) bool {
-	// Session is not valid if it has expired
-	if IsSessionExpired(session) {
+	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
+	// Even if timestamps suggest validity, terminal states are never valid.
+	if session.Status.State == v1alpha1.SessionStateRejected ||
+		session.Status.State == v1alpha1.SessionStateWithdrawn ||
+		session.Status.State == v1alpha1.SessionStateExpired ||
+		session.Status.State == v1alpha1.SessionStateTimeout {
 		return false
 	}
 
@@ -2080,13 +2142,29 @@ func IsSessionValid(session v1alpha1.BreakglassSession) bool {
 		}
 	}
 
+	// Only now check if it has expired based on ExpiresAt timestamp
+	// But only for approved sessions (which should have ExpiresAt set)
+	if session.Status.State == v1alpha1.SessionStateApproved && IsSessionExpired(session) {
+		return false
+	}
+
 	return true
 }
 
 // IsSessionActive returns if session can be approved or was already approved
-// A session is active if it's valid, not rejected, and not withdrawn
+// A session is active if it's valid and not in a terminal state.
+// State is the primary determinant; timestamps are secondary validators.
 func IsSessionActive(session v1alpha1.BreakglassSession) bool {
-	return IsSessionValid(session) && session.Status.RejectedAt.IsZero() && session.Status.State != v1alpha1.SessionStateWithdrawn
+	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
+	if session.Status.State == v1alpha1.SessionStateRejected ||
+		session.Status.State == v1alpha1.SessionStateWithdrawn ||
+		session.Status.State == v1alpha1.SessionStateExpired ||
+		session.Status.State == v1alpha1.SessionStateTimeout {
+		return false
+	}
+
+	// Use general validity check for other state-based rules
+	return IsSessionValid(session)
 }
 
 func NewBreakglassSessionController(log *zap.SugaredLogger,

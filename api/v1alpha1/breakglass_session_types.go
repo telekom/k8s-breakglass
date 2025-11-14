@@ -119,9 +119,15 @@ type BreakglassSessionStatus struct {
 	// +omitempty
 	ActualStartTime metav1.Time `json:"actualStartTime,omitempty"`
 
-	// rejectedAt is the time when the session was rejected.
+	// rejectedAt is the time when the session was rejected by an approver.
+	// Only set for SessionStateRejected.
 	// +omitempty
 	RejectedAt metav1.Time `json:"rejectedAt,omitempty"`
+
+	// withdrawnAt is the time when the session was withdrawn by the user.
+	// Only set for SessionStateWithdrawn.
+	// +omitempty
+	WithdrawnAt metav1.Time `json:"withdrawnAt,omitempty"`
 
 	// ExpiresAt is the time when the session will expire.
 	// This value is set based on spec.MaxValidFor when the session is approved.
@@ -180,6 +186,7 @@ type BreakglassSessionStatus struct {
 // +kubebuilder:selectablefield:JSONPath=`.spec.cluster`
 // +kubebuilder:selectablefield:JSONPath=`.spec.user`
 // +kubebuilder:selectablefield:JSONPath=`.spec.grantedGroup`
+// +kubebuilder:selectablefield:JSONPath=`.status.state`
 
 // BreakglassSession is the Schema for the breakglasssessions API.
 // Session unique identifier is a triple - cluster name, username, RBAC group.

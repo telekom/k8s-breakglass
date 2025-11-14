@@ -391,6 +391,125 @@ Export for compliance reporting:
 kubectl get breakglasssession -A -o json > sessions-export.json
 ```
 
+## State Management and Validation
+
+Breakglass implements a **state-first validation architecture** where session state takes absolute precedence over timestamps. This ensures robust session lifecycle management and prevents edge cases.
+
+### State is Ultimate Authority
+
+A session's validity is determined solely by its `state` field:
+
+```go
+// Pseudocode: State-first validation
+func isSessionValid(session) bool {
+    // Terminal states are NEVER valid, regardless of timestamps
+    if session.state in [Rejected, Withdrawn, Expired, ApprovalTimeout] {
+        return false  // Terminal → Never valid
+    }
+    
+    // Only Approved state can be valid
+    if session.state != Approved {
+        return false  // Other non-terminal states not valid
+    }
+    
+    // Approved: Check scheduled time
+    if session.spec.scheduledStartTime > now {
+        return false  // Awaiting scheduled start
+    }
+    
+    // Approved: Check expiration (ONLY checked for Approved)
+    if session.status.expiresAt <= now {
+        return false  // Session expired
+    }
+    
+    return true  // Approved, not expired, scheduled time reached
+}
+```
+
+### Timestamp Preservation
+
+Timestamps are never cleared during state transitions—only added or updated. This creates an immutable audit trail:
+
+| Timestamp | Purpose | When Set | Never Cleared |
+|-----------|---------|----------|---------------|
+| `createdAt` | Session creation | Initial state | ✓ Always preserved |
+| `approvedAt` | Session approved | Pending → Approved | ✓ Always preserved |
+| `rejectedAt` | Session rejected | Pending → Rejected | ✓ Always preserved |
+| `withdrawnAt` | Session withdrawn | Pending/Approved → Withdrawn | ✓ Always preserved |
+| `expiresAt` | Session expiration | Approval, after drops | ✓ Always preserved |
+| `timeoutAt` | Pending timed out | Timeout threshold reached | ✓ Always preserved |
+| `retainedUntil` | Object deletion time | Terminal state entry | ✓ Always preserved |
+
+**Example state transition with timestamp preservation:**
+
+```
+t=10:30 - Session created
+  state: Pending
+  timestamps: createdAt=10:30
+
+t=10:31 - User approves (approvedAt set)
+  state: Approved
+  timestamps: createdAt=10:30, approvedAt=10:31, expiresAt=10:32
+  (NOTE: createdAt preserved)
+
+t=10:32 - Admin drops early (expiresAt updated, other timestamps preserved)
+  state: Expired
+  timestamps: createdAt=10:30, approvedAt=10:31, expiresAt=10:32, retainedUntil=11:02
+  (NOTE: createdAt and approvedAt still intact)
+```
+
+### Terminal States
+
+Terminal states are permanent and can never transition to non-terminal states:
+
+- **Rejected** - Approver denied the request
+- **Withdrawn** - User canceled their request  
+- **Expired** - Session reached max duration or was dropped
+- **ApprovalTimeout** - Pending request timed out
+
+```yaml
+# Terminal session example
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassSession
+metadata:
+  name: session-abc123
+status:
+  state: Expired  # Terminal state
+  createdAt: "2024-01-15T10:30:00Z"      # Preserved from creation
+  approvedAt: "2024-01-15T10:31:00Z"     # Preserved from approval
+  expiresAt: "2024-01-15T10:32:00Z"      # Preserved from expiration
+  retainedUntil: "2024-02-14T10:30:00Z"  # Set at terminal entry
+  # Session is NEVER valid due to state=Expired, regardless of timestamps
+```
+
+### Implications for External Systems
+
+If you have external systems integrating with breakglass:
+
+1. **Don't rely on timestamps alone** - Always check the `state` field first
+2. **Expect timestamp preservation** - Old timestamps will be present for audit trail
+3. **Terminal states are final** - Never expect a Rejected/Withdrawn/Expired session to become active
+4. **State filtering** - Use the `state` query parameter to filter sessions efficiently
+5. **Audit history** - Timestamps provide complete audit trail of state transitions
+
+### Querying by State
+
+When listing sessions, use the `state` query parameter for efficient filtering:
+
+```bash
+# Get all pending sessions
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglass/breakglassSessions?state=pending"
+
+# Get all active (approved) sessions
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglass/breakglassSessions?state=approved"
+
+# Get all terminal sessions for audit
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglass/breakglassSessions?state=rejected,withdrawn,expired,timeout"
+```
+
 ## Related Documentation
 
 - [API Reference](./api-reference.md) - Complete API endpoint documentation
@@ -398,3 +517,5 @@ kubectl get breakglasssession -A -o json > sessions-export.json
 - [DenyPolicy](./deny-policy.md) - Access restriction policies
 - [ClusterConfig](./cluster-config.md) - Cluster connection setup
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
+
+````

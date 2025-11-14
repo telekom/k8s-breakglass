@@ -1,4 +1,20 @@
 <script setup lang="ts">
+/*
+ * BreakglassSessionCard Component
+ * 
+ * This component displays session details using STATE-FIRST validation:
+ * - Session validity is determined by the state field (Approved, Rejected, Withdrawn, etc.)
+ * - Timestamps are preserved across state transitions (never cleared) for audit history
+ * - Terminal states (Rejected, Withdrawn, Expired, ApprovalTimeout) are never valid
+ * 
+ * State Semantics:
+ * - Pending: Awaiting approval
+ * - Approved: Active, granting privileges
+ * - Rejected: Terminal - rejected by approver (has rejectedAt timestamp)
+ * - Withdrawn: Terminal - withdrawn by user (has withdrawnAt timestamp)
+ * - Expired: Terminal - exceeded max duration
+ * - ApprovalTimeout: Terminal - pending approval timed out
+ */
 import { computed } from "vue";
 import { decideRejectOrWithdraw } from '@/utils/sessionActions';
 import humanizeDuration from "humanize-duration";
@@ -66,6 +82,14 @@ const rejectedAt = computed(() => {
   if (props.breakglass.status.rejectedAt) {
     debugLogDateTime('rejectedAt', props.breakglass.status.rejectedAt);
     return format24Hour(props.breakglass.status.rejectedAt);
+  }
+  return null;
+});
+
+const withdrawnAt = computed(() => {
+  if (props.breakglass.status.withdrawnAt) {
+    debugLogDateTime('withdrawnAt', props.breakglass.status.withdrawnAt);
+    return format24Hour(props.breakglass.status.withdrawnAt);
   }
   return null;
 });
@@ -138,6 +162,9 @@ const ownerActionLabel = computed(() => {
       </p>
       <p v-if="rejectedAt">
         <b>Rejected at:</b> {{ rejectedAt }}
+      </p>
+      <p v-if="withdrawnAt">
+        <b>Withdrawn at:</b> {{ withdrawnAt }}
       </p>
       <p v-if="approver">
         <b>Approved by:</b> {{ approver }}
