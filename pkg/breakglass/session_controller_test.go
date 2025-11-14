@@ -1505,6 +1505,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 			User:         "owner@example.com",
 			GrantedGroup: "g",
 		},
+		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStatePending},
 	}
 
 	// approved session (should not be withdrawable)
@@ -2613,7 +2614,7 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		{"user_u2_mine", "user=u2@example.com&mine=true", "u2@example.com", []string{"s2", "s4", "s6"}},
 		{"group_g1_mine_u1", "group=g1&mine=true", "u1@example.com", []string{"s1"}},
 		{"cluster_c2_group_g2_mine_u1", "cluster=c2&group=g2&mine=true", "u1@example.com", []string{"s3"}},
-		{"state_pending_mine_u2", "state=pending&mine=true", "u2@example.com", []string{"s4", "s6"}},
+		{"state_pending_mine_u2", "state=pending&mine=true", "u2@example.com", []string{"s4"}},
 		{"state_approved_mine_u2", "state=approved&mine=true", "u2@example.com", []string{"s2"}},
 		{"cluster_c2_state_expired_mine_u2", "cluster=c2&state=expired&mine=true", "u2@example.com", []string{"s6"}},
 		{"user_u1_group_g2_mine", "user=u1@example.com&group=g2&mine=true", "u1@example.com", []string{"s3", "s5"}},
@@ -3439,6 +3440,7 @@ func TestIsSessionPendingApproval(t *testing.T) {
 			name: "pending_session_no_timeout_set",
 			session: v1alpha1.BreakglassSession{
 				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.Time{},
@@ -3451,6 +3453,7 @@ func TestIsSessionPendingApproval(t *testing.T) {
 			name: "pending_session_timeout_in_future",
 			session: v1alpha1.BreakglassSession{
 				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -3463,6 +3466,7 @@ func TestIsSessionPendingApproval(t *testing.T) {
 			name: "pending_session_timeout_in_past",
 			session: v1alpha1.BreakglassSession{
 				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
@@ -3475,6 +3479,7 @@ func TestIsSessionPendingApproval(t *testing.T) {
 			name: "approved_session",
 			session: v1alpha1.BreakglassSession{
 				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStateApproved,
 					ApprovedAt: metav1.NewTime(now),
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -3487,6 +3492,7 @@ func TestIsSessionPendingApproval(t *testing.T) {
 			name: "rejected_session",
 			session: v1alpha1.BreakglassSession{
 				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStateRejected,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.NewTime(now),
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)),
@@ -3499,6 +3505,7 @@ func TestIsSessionPendingApproval(t *testing.T) {
 			name: "approved_and_timed_out",
 			session: v1alpha1.BreakglassSession{
 				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStateApproved,
 					ApprovedAt: metav1.NewTime(now.Add(-2 * time.Hour)),
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now.Add(-1 * time.Hour)),
@@ -3511,6 +3518,7 @@ func TestIsSessionPendingApproval(t *testing.T) {
 			name: "timeout_exactly_now",
 			session: v1alpha1.BreakglassSession{
 				Status: v1alpha1.BreakglassSessionStatus{
+					State:      v1alpha1.SessionStatePending,
 					ApprovedAt: metav1.Time{},
 					RejectedAt: metav1.Time{},
 					TimeoutAt:  metav1.NewTime(now),

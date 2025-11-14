@@ -351,13 +351,14 @@ function drop() { emit("drop"); }
             <div v-if="showScheduleOptions" class="schedule-details" style="margin-top: 0.75rem; margin-left: 15px; 
               padding: 0.75rem; border-left: 2px solid #0066cc; background-color: #f9f9f9;">
               <div style="margin-bottom: 0.75rem;">
-                <label for="scheduled_date_escalation" style="width: auto; display: block; text-align: left; margin-bottom: 0.25rem; font-size: 14px; font-weight: 500;">Scheduled Start Date/Time:</label>
+                <label for="scheduled_date_escalation" style="width: auto; display: block; text-align: left; margin-bottom: 0.25rem; font-size: 14px; font-weight: 500;">Scheduled Start Date/Time (24-hour):</label>
                 <input
                   id="scheduled_date_escalation"
                   type="datetime-local"
                   v-model="scheduleDateTimeLocal"
                   :min="minDateTime"
-                  style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;"
+                  style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; font-family: monospace;"
+                  step="60"
                 />
               </div>
               

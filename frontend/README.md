@@ -44,3 +44,97 @@ npm run build
 ```sh
 npm run lint
 ```
+
+## State Management Architecture
+
+The frontend uses a **state-first validation approach** where:
+
+### Session State Handling
+
+- **State is Ultimate Authority** - Use the `state` field to determine session validity, not timestamps
+- **Terminal States** - Sessions in states `Rejected`, `Withdrawn`, `Expired`, or `ApprovalTimeout` are never valid
+- **Approved State Only Valid** - Only sessions with `state: Approved` can grant access (if not expired)
+- **Timestamp Preservation** - Timestamps are preserved during state transitions for audit history
+
+### UI Components
+
+The `BreakglassSessionCard` component displays session state and timestamps with proper semantics:
+
+```vue
+<!-- State display -->
+<span :class="'state state-' + (breakglass.status.state || 'unknown').toLowerCase()">
+  {{ breakglass.status.state || 'Unknown' }}
+</span>
+
+<!-- Terminal state timestamps -->
+<p v-if="rejectedAt"><b>Rejected at:</b> {{ rejectedAt }}</p>
+<p v-if="withdrawnAt"><b>Withdrawn at:</b> {{ withdrawnAt }}</p>
+
+<!-- Preserved audit timestamps -->
+<p v-if="approvedAt"><b>Approved at:</b> {{ approvedAt }}</p>
+```
+
+### State Display Styles
+
+```scss
+.state {
+  font-weight: bold;
+  padding: 0.1em 0.5em;
+  border-radius: 0.3em;
+}
+.state-approved  { color: #1565c0; background: #e3f2fd; }  // Blue
+.state-rejected  { color: #b71c1c; background: #ffebee; }  // Red
+.state-withdrawn { color: #616161; background: #f5f5f5; }  // Gray
+.state-timeout   { color: #f9a825; background: #fffde7; }  // Yellow
+.state-unknown   { color: #757575; background: #f5f5f5; }  // Gray
+```
+
+### API Integration
+
+When calling the backend API:
+
+```typescript
+// List sessions by state (state-first filtering)
+GET /api/breakglass/breakglassSessions?state=approved,pending
+
+// The API response includes:
+// - state: The current state (Pending, Approved, Rejected, Withdrawn, Expired, ApprovalTimeout)
+// - timestamps: All preserved timestamps (createdAt, approvedAt, rejectedAt, withdrawnAt, etc.)
+// - Validity checks are done server-side using isSessionValid()
+```
+
+#### Response Example
+
+```json
+{
+  "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
+  "kind": "BreakglassSession",
+  "metadata": {
+    "name": "session-abc123",
+    "creationTimestamp": "2024-01-15T10:30:00Z"
+  },
+  "spec": {
+    "cluster": "prod-cluster",
+    "user": "user@example.com",
+    "grantedGroup": "cluster-admin"
+  },
+  "status": {
+    "state": "Approved",
+    "createdAt": "2024-01-15T10:30:00Z",
+    "approvedAt": "2024-01-15T10:31:00Z",
+    "expiresAt": "2024-01-15T11:31:00Z",
+    "retainedUntil": "2024-02-14T10:31:00Z"
+  }
+}
+```
+
+### Validation Logic
+
+The frontend should **never** implement its own session validity logic. Instead:
+
+1. Display the session state from the API response
+2. Show all timestamps for audit trail
+3. Let the backend (via `isSessionValid()`) determine if a session is valid
+4. Render UI based on state + backend response codes (e.g., 403 for invalid access)
+
+````

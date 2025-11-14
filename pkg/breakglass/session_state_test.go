@@ -130,12 +130,12 @@ func TestIsSessionActive_WithdrawnSessionNotActive(t *testing.T) {
 	}
 }
 
-// TestIsSessionPendingApproval_StateDoesntMatter verifies that IsSessionPendingApproval
-// only looks at timestamps (ApprovedAt, RejectedAt, TimeoutAt), not the State field.
-// This is a key distinction: a session can be State=Withdrawn but still technically
-// "pending" from a timestamp perspective if it doesn't have approval/rejection timestamps.
+// TestIsSessionPendingApproval_StateFirst verifies that IsSessionPendingApproval
+// uses STATE-FIRST validation: it checks the State field FIRST, then timestamps.
+// This is the correct behavior: a session in Withdrawn state is NOT pending,
+// even if timestamps don't indicate approval/rejection.
 //
-// Note: This is different from IsSessionActive() which DOES check the State field.
+// Note: This is consistent with IsSessionActive() which also checks the State field first.
 func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 	now := time.Now()
 
@@ -146,7 +146,7 @@ func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 		reason   string
 	}{
 		{
-			name: "withdrawn_IS_pending_by_timestamps",
+			name: "withdrawn_NOT_pending_despite_timestamps",
 			session: v1alpha1.BreakglassSession{
 				Status: v1alpha1.BreakglassSessionStatus{
 					State:      v1alpha1.SessionStateWithdrawn,
@@ -155,8 +155,8 @@ func TestIsSessionPendingApproval_StateDoesntMatter(t *testing.T) {
 					TimeoutAt:  metav1.NewTime(now.Add(1 * time.Hour)), // Timeout in future
 				},
 			},
-			expected: true,
-			reason:   "IsSessionPendingApproval only checks timestamps, not State field; so withdrawn sessions can be 'pending' by timestamps",
+			expected: false,
+			reason:   "IsSessionPendingApproval checks State FIRST - Withdrawn state means NOT pending, regardless of timestamps",
 		},
 		{
 			name: "pending_is_pending_approval",
@@ -280,13 +280,13 @@ func TestCreateSessionAfterWithdrawal_WithdrawnDoesNotBlock(t *testing.T) {
 	t.Log("✓ New session creation would NOT be blocked by 409 conflict")
 }
 
-// TestWithdrawnSessionExcludedFromActiveButNotPending verifies the distinction:
+// TestWithdrawnSessionExcludedFromActiveAndPending verifies the distinction:
 // - Withdrawn sessions ARE excluded from "active" (IsSessionActive returns false)
-// - Withdrawn sessions MAY be "pending" (IsSessionPendingApproval checks only timestamps)
+// - Withdrawn sessions ARE ALSO excluded from "pending" (IsSessionPendingApproval checks State first)
 //
-// This distinction is important: IsSessionActive properly excludes withdrawn sessions,
-// preventing 409 conflicts on new session creation. But IsSessionPendingApproval doesn't
-// look at State, only timestamps.
+// This is the correct state-first behavior: withdrawn sessions are in a terminal state
+// and should not appear in pending lists. This prevents confusion in the UI and ensures
+// consistent behavior across all filters.
 func TestWithdrawnSessionExcludedFromActiveButNotPending(t *testing.T) {
 	now := time.Now()
 
@@ -301,10 +301,10 @@ func TestWithdrawnSessionExcludedFromActiveButNotPending(t *testing.T) {
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "withdrawn-session"},
 			Status: v1alpha1.BreakglassSessionStatus{
-				State:     v1alpha1.SessionStateWithdrawn,
-				ExpiresAt: metav1.NewTime(now.Add(1 * time.Hour)),
-				// Note: withdrawn has empty ApprovedAt/RejectedAt/TimeoutAt
-				// So it will be considered "pending" by IsSessionPendingApproval timestamp logic
+				State:       v1alpha1.SessionStateWithdrawn,
+				WithdrawnAt: metav1.NewTime(now),
+				ExpiresAt:   metav1.NewTime(now.Add(1 * time.Hour)),
+				// Withdrawn is a terminal state - should not appear in pending or active
 			},
 		},
 		{
@@ -339,7 +339,7 @@ func TestWithdrawnSessionExcludedFromActiveButNotPending(t *testing.T) {
 	}
 
 	// Test filtering for pending approval
-	// Withdrawn is considered "pending" because it has no ApprovedAt/RejectedAt
+	// With state-first validation, withdrawn is NOT pending (terminal state)
 	pendingCount := 0
 	for _, s := range sessions {
 		if IsSessionPendingApproval(s) {
@@ -347,13 +347,13 @@ func TestWithdrawnSessionExcludedFromActiveButNotPending(t *testing.T) {
 		}
 	}
 
-	expectedPending := 2 // pending AND withdrawn (both lack ApprovedAt/RejectedAt)
+	expectedPending := 1 // only pending (withdrawn is terminal state, NOT pending)
 	if pendingCount != expectedPending {
 		t.Errorf("Expected %d pending sessions but found %d", expectedPending, pendingCount)
 	}
 
 	t.Logf("✓ Withdrawn session correctly EXCLUDED from active sessions (prevents 409)")
-	t.Logf("✓ Withdrawn session included in pending (IsSessionPendingApproval checks only timestamps)")
+	t.Logf("✓ Withdrawn session correctly EXCLUDED from pending sessions (state-first validation)")
 }
 
 // TestIsSessionValid_EdgeCases tests edge cases for IsSessionValid which is used
@@ -1409,6 +1409,108 @@ func TestWithdrawnAtSemantics(t *testing.T) {
 			if isWithdrawnAtEmpty != shouldBeEmpty {
 				t.Errorf("%s: WithdrawnAt emptiness=%v, expected=%v. %s",
 					tt.name, isWithdrawnAtEmpty, shouldBeEmpty, tt.description)
+			}
+		})
+	}
+}
+
+// TestIsSessionPendingApproval_WithdrawnSessionsExcluded ensures that withdrawn
+// sessions are NOT considered pending, fixing the bug where withdrawn sessions
+// appeared in the "pending" filter on the UI.
+//
+// This is a regression test for a bug where IsSessionPendingApproval() only checked
+// ApprovedAt and RejectedAt, but not WithdrawnAt. This caused withdrawn sessions
+// to be incorrectly returned as "pending" when users queried ?mine=true&state=pending.
+//
+// The fix adds explicit WithdrawnAt check to exclude withdrawn sessions from
+// pending approval query results.
+func TestIsSessionPendingApproval_WithdrawnSessionsExcluded(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name     string
+		session  v1alpha1.BreakglassSession
+		expected bool
+		reason   string
+	}{
+		{
+			name: "withdrawn_session_not_pending",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:       v1alpha1.SessionStateWithdrawn,
+					WithdrawnAt: metav1.NewTime(now.Add(-5 * time.Minute)),
+					ApprovedAt:  metav1.Time{},
+					RejectedAt:  metav1.Time{},
+					TimeoutAt:   metav1.Time{},
+				},
+			},
+			expected: false,
+			reason:   "withdrawn session should NOT be pending (terminal state)",
+		},
+		{
+			name: "truly_pending_session",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:       v1alpha1.SessionStatePending,
+					WithdrawnAt: metav1.Time{}, // not withdrawn
+					ApprovedAt:  metav1.Time{}, // not approved
+					RejectedAt:  metav1.Time{}, // not rejected
+					TimeoutAt:   metav1.Time{}, // not timed out
+				},
+			},
+			expected: true,
+			reason:   "truly pending session (no terminal state timestamp) should be pending",
+		},
+		{
+			name: "pending_but_timed_out",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:       v1alpha1.SessionStatePending,
+					WithdrawnAt: metav1.Time{},
+					ApprovedAt:  metav1.Time{},
+					RejectedAt:  metav1.Time{},
+					TimeoutAt:   metav1.NewTime(now.Add(-1 * time.Minute)), // timed out
+				},
+			},
+			expected: false,
+			reason:   "pending session that timed out should NOT be pending",
+		},
+		{
+			name: "rejected_session_not_pending",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:       v1alpha1.SessionStateRejected,
+					WithdrawnAt: metav1.Time{},
+					ApprovedAt:  metav1.Time{},
+					RejectedAt:  metav1.NewTime(now.Add(-5 * time.Minute)), // rejected
+					TimeoutAt:   metav1.Time{},
+				},
+			},
+			expected: false,
+			reason:   "rejected session should NOT be pending (terminal state)",
+		},
+		{
+			name: "approved_session_not_pending",
+			session: v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:       v1alpha1.SessionStateApproved,
+					WithdrawnAt: metav1.Time{},
+					ApprovedAt:  metav1.NewTime(now.Add(-5 * time.Minute)), // approved
+					RejectedAt:  metav1.Time{},
+					TimeoutAt:   metav1.Time{},
+				},
+			},
+			expected: false,
+			reason:   "approved session should NOT be pending",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsSessionPendingApproval(tt.session)
+			if result != tt.expected {
+				t.Errorf("%s failed: got %v, expected %v. Reason: %s",
+					tt.name, result, tt.expected, tt.reason)
 			}
 		})
 	}

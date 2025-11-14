@@ -53,17 +53,29 @@ type BreakglassSessionController struct {
 	clusterConfigManager *ClusterConfigManager
 }
 
-// IsSessionPendingApproval returns true if the session is not rejected and not yet approved (pending approval)
-// and the approval timeout has not passed. It returns false if the session has timed out.
+// IsSessionPendingApproval returns true if the session is in Pending state (state-first validation)
+// State takes absolute priority over timestamps. Terminal states (Rejected, Withdrawn, Expired, Timeout)
+// are never pending, regardless of timestamp values.
 func IsSessionPendingApproval(session v1alpha1.BreakglassSession) bool {
-	// Must not be approved or rejected
-	if !session.Status.ApprovedAt.IsZero() || !session.Status.RejectedAt.IsZero() {
+	// CRITICAL: Check STATE FIRST - terminal states are never pending
+	if session.Status.State == v1alpha1.SessionStateRejected ||
+		session.Status.State == v1alpha1.SessionStateWithdrawn ||
+		session.Status.State == v1alpha1.SessionStateExpired ||
+		session.Status.State == v1alpha1.SessionStateTimeout {
 		return false
 	}
-	// If TimeoutAt is set and has passed, session is no longer pending (it has timed out)
+
+	// CRITICAL: Only Pending state is pending (not WaitingForScheduledTime or Approved)
+	if session.Status.State != v1alpha1.SessionStatePending {
+		return false
+	}
+
+	// Now verify timeout status (secondary check after state verification)
+	// If TimeoutAt is set and has passed, session is in timeout state (not pending)
 	if !session.Status.TimeoutAt.IsZero() && time.Now().After(session.Status.TimeoutAt.Time) {
 		return false
 	}
+
 	return true
 }
 
@@ -1103,29 +1115,42 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		if mine && !isMine {
 			continue
 		}
-		if state == "pending" && !IsSessionPendingApproval(ses) {
-			continue
-		}
-		if state == "approved" && ses.Status.State != v1alpha1.SessionStateApproved {
-			continue
-		}
-		if state == "rejected" && ses.Status.RejectedAt.IsZero() {
-			continue
-		}
-		// expired: session whose ExpiresAt has passed
-		if state == "expired" && !IsSessionExpired(ses) {
-			continue
-		}
-		// timeout / approval timeout: session timed out while pending approval
-		if (state == "timeout" || strings.ToLower(state) == "approvaltimeout") && ses.Status.State != v1alpha1.SessionStateTimeout {
-			// also accept TimeoutAt in the past as timeout indicator
-			if ses.Status.TimeoutAt.IsZero() || time.Now().Before(ses.Status.TimeoutAt.Time) {
-				continue
+
+		// STATE-FIRST FILTERING: Check state field before any timestamps
+		// Only filter by state if explicitly requested (state != "")
+		if state != "" {
+			switch state {
+			case "pending":
+				// Only include sessions in Pending state
+				if ses.Status.State != v1alpha1.SessionStatePending {
+					continue
+				}
+			case "approved":
+				// Only include sessions in Approved state
+				if ses.Status.State != v1alpha1.SessionStateApproved {
+					continue
+				}
+			case "rejected":
+				// Only include sessions in Rejected state
+				if !IsSessionRejected(ses) {
+					continue
+				}
+			case "withdrawn":
+				// Only include sessions in Withdrawn state
+				if !IsSessionWithdrawn(ses) {
+					continue
+				}
+			case "expired":
+				// Only include sessions in Expired state
+				if ses.Status.State != v1alpha1.SessionStateExpired {
+					continue
+				}
+			case "timeout", "approvaltimeout":
+				// Only include sessions in ApprovalTimeout state
+				if ses.Status.State != v1alpha1.SessionStateTimeout {
+					continue
+				}
 			}
-		}
-		// Add explicit filter for withdrawn sessions
-		if state == "withdrawn" && (ses.Status.State != v1alpha1.SessionStateWithdrawn) {
-			continue
 		}
 		filtered = append(filtered, ses)
 	}
@@ -2108,15 +2133,40 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 	return false
 }
 
+// IsSessionRetained checks if a session should be removed (retainedUntil passed)
 func IsSessionRetained(session v1alpha1.BreakglassSession) bool {
 	return time.Now().After(session.Status.RetainedUntil.Time)
 }
 
-// Session can be expired if it was previously approved
-// IsSessionExpired returns true if the session's ExpiresAt has passed (for approved sessions).
-// For approval timeout, use IsSessionApprovalTimedOut (TimeoutAt).
+// IsSessionRejected returns true if session is in Rejected state (state-first validation)
+func IsSessionRejected(session v1alpha1.BreakglassSession) bool {
+	// CRITICAL: Check STATE FIRST - state is the ultimate truth
+	return session.Status.State == v1alpha1.SessionStateRejected
+}
+
+// IsSessionWithdrawn returns true if session is in Withdrawn state (state-first validation)
+func IsSessionWithdrawn(session v1alpha1.BreakglassSession) bool {
+	// CRITICAL: Check STATE FIRST - state is the ultimate truth
+	return session.Status.State == v1alpha1.SessionStateWithdrawn
+}
+
+// IsSessionExpired returns true if session is in Expired state OR (state is Approved AND ExpiresAt passed).
+// State-first: Check terminal Expired state first, then timestamp for Approved state.
 func IsSessionExpired(session v1alpha1.BreakglassSession) bool {
-	return !session.Status.ExpiresAt.Time.IsZero() && time.Now().After(session.Status.ExpiresAt.Time)
+	// CRITICAL: Check STATE FIRST
+	// If state is explicitly Expired, it is definitely expired
+	if session.Status.State == v1alpha1.SessionStateExpired {
+		return true
+	}
+
+	// For Approved state, check if the timestamp has passed (timestamp is secondary check)
+	if session.Status.State == v1alpha1.SessionStateApproved {
+		return !session.Status.ExpiresAt.Time.IsZero() && time.Now().After(session.Status.ExpiresAt.Time)
+	}
+
+	// All other states (terminal or non-Approved) are not considered expired by this function
+	// Expired state is explicitly set via Status.State
+	return false
 }
 
 func IsSessionValid(session v1alpha1.BreakglassSession) bool {
