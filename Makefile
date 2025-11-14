@@ -61,7 +61,63 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet ## Run tests.
-	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	@echo "Running unit tests..." && \
+	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out -v 2>&1 | tee test-output.log; \
+	TEST_EXIT_CODE=$$?; \
+	if [ $$TEST_EXIT_CODE -ne 0 ]; then \
+		echo ""; \
+		echo "=== TEST FAILURE DETECTED ==="; \
+		echo "Exit code: $$TEST_EXIT_CODE"; \
+		echo ""; \
+		echo "=== FAILED TEST PACKAGES ==="; \
+		grep "^FAIL" test-output.log | head -20; \
+		echo ""; \
+		echo "=== ERROR DETAILS ==="; \
+		grep -A 10 "^---.*FAIL:" test-output.log | head -50; \
+		echo ""; \
+		echo "=== TEST OUTPUT LOG ==="; \
+		tail -100 test-output.log; \
+		exit $$TEST_EXIT_CODE; \
+	fi
+
+.PHONY: test-ci
+test-ci: manifests generate fmt vet ## Run tests with enhanced CI diagnostics.
+	@echo "=== CI TEST DIAGNOSTICS ===" && \
+	echo "Go Version: $$(go version)" && \
+	echo "Go Environment (key vars):" && \
+	go env | grep -E "GO(OS|ARCH|VERSION|CACHE)" && \
+	echo "" && \
+	echo "=== RUNNING TESTS ===" && \
+	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out -v 2>&1 | tee test-output.log; \
+	TEST_EXIT_CODE=$$?; \
+	if [ $$TEST_EXIT_CODE -eq 0 ]; then \
+		echo ""; \
+		echo "✓ All tests PASSED"; \
+		grep "^ok " test-output.log | wc -l | xargs -I {} echo "  {} packages passed"; \
+	else \
+		echo ""; \
+		echo "✗ Tests FAILED with exit code: $$TEST_EXIT_CODE"; \
+		echo ""; \
+		echo "=== FAILED PACKAGES ==="; \
+		grep "^FAIL" test-output.log; \
+		echo ""; \
+		echo "=== PANIC/ERROR TRACES ==="; \
+		grep -E "panic|runtime error|fatal" test-output.log || echo "  No direct panic messages"; \
+		echo ""; \
+		echo "=== TEST FAILURES BY PACKAGE ==="; \
+		grep "^--- FAIL:" test-output.log | sort | uniq -c; \
+		echo ""; \
+		echo "=== DETAILED FAILURE OUTPUT ==="; \
+		grep -A 20 "^--- FAIL:" test-output.log | head -100; \
+		echo ""; \
+		echo "=== FULL TEST OUTPUT ==="; \
+		cat test-output.log; \
+	fi; \
+	exit $$TEST_EXIT_CODE
+
+.PHONY: test-verbose
+test-verbose: manifests generate fmt vet ## Run tests with maximum verbosity and race detection.
+	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out -v -race -count=1
 
 .PHONY: e2e
 e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deployed (no tests).
