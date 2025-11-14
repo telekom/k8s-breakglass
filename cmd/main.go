@@ -277,6 +277,40 @@ func main() {
 						log.Fatalf("Timeout waiting for webhook certificates after 60s - certificate generation failed or stalled, controller cannot proceed without webhooks. Check if webhook-certs secret exists and cert-rotator logs for errors")
 					}
 				}
+
+				// Register webhooks immediately after certificates are ready
+				if enableWebhookMgr == "" || enableWebhookMgr == "true" {
+					log.Debugw("Starting webhook registration for BreakglassSession")
+					if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
+						log.Errorw("Failed to setup BreakglassSession webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
+						return
+					}
+					log.Infow("Successfully registered BreakglassSession webhook")
+
+					log.Debugw("Starting webhook registration for BreakglassEscalation")
+					if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
+						log.Errorw("Failed to setup BreakglassEscalation webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
+						return
+					}
+					log.Infow("Successfully registered BreakglassEscalation webhook")
+
+					log.Debugw("Starting webhook registration for ClusterConfig")
+					if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
+						log.Errorw("Failed to setup ClusterConfig webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
+						return
+					}
+					log.Infow("Successfully registered ClusterConfig webhook")
+
+					log.Debugw("Starting webhook registration for IdentityProvider")
+					if err := (&v1alpha1.IdentityProvider{}).SetupWebhookWithManager(mgr); err != nil {
+						log.Errorw("Failed to setup IdentityProvider webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
+						return
+					}
+					log.Infow("Successfully registered IdentityProvider webhook")
+					log.Infow("All webhooks registered successfully", "count", 4, "webhooks", "BreakglassSession,BreakglassEscalation,ClusterConfig,IdentityProvider")
+				} else {
+					log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER env var", "value", enableWebhookMgr)
+				}
 			}
 		} else {
 			log.Infow("Certificate rotation disabled via ENABLE_CERT_ROTATION env var - webhooks will not be available")
@@ -392,40 +426,6 @@ func main() {
 			}
 		} else {
 			log.Warnw("Field indexer not available from manager")
-		}
-
-		// Conditionally register webhooks (can be disabled via ENABLE_WEBHOOK_MANAGER env var)
-		if enableWebhookMgr == "" || enableWebhookMgr == "true" {
-			log.Debugw("Starting webhook registration for BreakglassSession")
-			if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
-				log.Errorw("Failed to setup BreakglassSession webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
-				return
-			}
-			log.Infow("Successfully registered BreakglassSession webhook")
-
-			log.Debugw("Starting webhook registration for BreakglassEscalation")
-			if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
-				log.Errorw("Failed to setup BreakglassEscalation webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
-				return
-			}
-			log.Infow("Successfully registered BreakglassEscalation webhook")
-
-			log.Debugw("Starting webhook registration for ClusterConfig")
-			if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
-				log.Errorw("Failed to setup ClusterConfig webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
-				return
-			}
-			log.Infow("Successfully registered ClusterConfig webhook")
-
-			log.Debugw("Starting webhook registration for IdentityProvider")
-			if err := (&v1alpha1.IdentityProvider{}).SetupWebhookWithManager(mgr); err != nil {
-				log.Errorw("Failed to setup IdentityProvider webhook with manager", "error", err, "errorType", fmt.Sprintf("%T", err))
-				return
-			}
-			log.Infow("Successfully registered IdentityProvider webhook")
-			log.Infow("All webhooks registered successfully", "count", 4, "webhooks", "BreakglassSession,BreakglassEscalation,ClusterConfig,IdentityProvider")
-		} else {
-			log.Infow("Webhook registration disabled via ENABLE_WEBHOOK_MANAGER env var", "value", enableWebhookMgr)
 		}
 
 		// Register IdentityProvider Reconciler with controller-runtime manager (unconditional)
