@@ -11,7 +11,7 @@ import useCurrentTime from "@/util/currentTime";
 import BreakglassSessionCard from "@/components/BreakglassSessionCard.vue";
 import { handleAxiosError } from "@/services/logger";
 
-const route = useRoute()
+const route = useRoute();
 const user = useUser();
 const auth = inject(AuthKey);
 const authenticated = computed(() => user.value && !user.value?.expired);
