@@ -119,9 +119,15 @@ type BreakglassSessionStatus struct {
 	// +omitempty
 	ActualStartTime metav1.Time `json:"actualStartTime,omitempty"`
 
-	// rejectedAt is the time when the session was rejected.
+	// rejectedAt is the time when the session was rejected by an approver.
+	// Only set for SessionStateRejected.
 	// +omitempty
 	RejectedAt metav1.Time `json:"rejectedAt,omitempty"`
+
+	// withdrawnAt is the time when the session was withdrawn by the user.
+	// Only set for SessionStateWithdrawn.
+	// +omitempty
+	WithdrawnAt metav1.Time `json:"withdrawnAt,omitempty"`
 
 	// ExpiresAt is the time when the session will expire.
 	// This value is set based on spec.MaxValidFor when the session is approved.
@@ -173,12 +179,14 @@ type BreakglassSessionStatus struct {
 // +kubebuilder:printcolumn:name="User",type=string,JSONPath=".spec.user",description="The user associated with the session"
 // +kubebuilder:printcolumn:name="Cluster",type=string,JSONPath=".spec.cluster",description="The cluster associated with the session"
 // +kubebuilder:printcolumn:name="Expires At",type=string,JSONPath=".status.expiresAt",description="The expiration time of the session"
+// +kubebuilder:printcolumn:name="Scheduled Start",type=string,JSONPath=".spec.scheduledStartTime",description="The scheduled start time of the session"
 // +kubebuilder:printcolumn:name="Retained Until",type=string,JSONPath=".status.retainedUntil",description="When the session object will be removed"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the session"
 // +kubebuilder:subresource:status
 // +kubebuilder:selectablefield:JSONPath=`.spec.cluster`
 // +kubebuilder:selectablefield:JSONPath=`.spec.user`
 // +kubebuilder:selectablefield:JSONPath=`.spec.grantedGroup`
+// +kubebuilder:selectablefield:JSONPath=`.status.state`
 
 // BreakglassSession is the Schema for the breakglasssessions API.
 // Session unique identifier is a triple - cluster name, username, RBAC group.

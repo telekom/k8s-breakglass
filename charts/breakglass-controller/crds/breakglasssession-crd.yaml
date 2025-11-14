@@ -32,6 +32,10 @@ spec:
       jsonPath: .status.expiresAt
       name: Expires At
       type: string
+    - description: The scheduled start time of the session
+      jsonPath: .spec.scheduledStartTime
+      name: Scheduled Start
+      type: string
     - description: When the session object will be removed
       jsonPath: .status.retainedUntil
       name: Retained Until
@@ -284,7 +288,9 @@ spec:
                   Possible values: "timeExpired", "canceled", "dropped", "withdrawn", "rejected"
                 type: string
               rejectedAt:
-                description: rejectedAt is the time when the session was rejected.
+                description: |-
+                  rejectedAt is the time when the session was rejected by an approver.
+                  Only set for SessionStateRejected.
                 format: date-time
                 type: string
               retainedUntil:
@@ -303,6 +309,12 @@ spec:
                   This value is set when the session is created and only applies while pending approval.
                 format: date-time
                 type: string
+              withdrawnAt:
+                description: |-
+                  withdrawnAt is the time when the session was withdrawn by the user.
+                  Only set for SessionStateWithdrawn.
+                format: date-time
+                type: string
             required:
             - conditions
             type: object
@@ -313,6 +325,7 @@ spec:
     - jsonPath: .spec.cluster
     - jsonPath: .spec.user
     - jsonPath: .spec.grantedGroup
+    - jsonPath: .status.state
     served: true
     storage: true
     subresources:

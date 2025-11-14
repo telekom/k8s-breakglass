@@ -13,6 +13,56 @@ The `BreakglassSession` custom resource represents an active or requested privil
 - Active privileges granted
 - Audit information
 
+## Session State Machine
+
+The breakglass controller implements a **state-first validation architecture** where:
+
+1. **State is the ultimate authority** - A session's validity is determined by its `state` field, not timestamps
+2. **Timestamps are immutable records** - Timestamps are never cleared, only added or updated to preserve audit history
+3. **Terminal states are never valid** - Rejected, Withdrawn, Expired, and ApprovalTimeout sessions can never be reactivated
+
+### Session States
+
+| State | Meaning | Valid for Access? | When It Happens | Timestamp |
+|-------|---------|-------------------|-----------------|-----------|
+| `Pending` | Awaiting approval or scheduled start | ❌ No | Session created | `createdAt` |
+| `WaitingForScheduledTime` | Approved but waiting for scheduled start | ❌ No | Approved with future `scheduledStartTime` | `approvedAt` + `scheduledStartTime` |
+| `Approved` | Active and granting privileges | ✅ Yes (if not expired) | Approver approved OR scheduled time reached | `approvedAt`, `expiresAt` |
+| `Rejected` | Approver denied the request | ❌ No | Approver rejected request | `rejectedAt` (Terminal) |
+| `Withdrawn` | User canceled their own request | ❌ No | User withdrew before approval | `withdrawnAt` (Terminal) |
+| `Expired` | Session reached max duration OR approver dropped it | ❌ No | Session time exceeded OR explicitly expired | `expiresAt` (Terminal) |
+| `ApprovalTimeout` | Pending session timed out awaiting approval | ❌ No | Pending session exceeded timeout threshold | `timeoutAt` (Terminal) |
+
+### Terminal States
+
+Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**, **ApprovalTimeout**), it can NEVER return to an active state:
+
+- These states take absolute precedence over any timestamps
+- Even if timestamps appear valid, the session is not valid
+- The state field is the only determinant for terminal state detection
+
+### Timestamp Semantics
+
+Timestamps are preserved across state transitions to maintain audit history:
+
+| Timestamp | Purpose | Set When | Cleared When |
+|-----------|---------|----------|--------------|
+| `createdAt` | Session object creation | Initial creation | Never |
+| `approvedAt` | When session was approved | Transition to Approved | Never |
+| `rejectedAt` | When session was rejected | Transition to Rejected ONLY | Never |
+| `withdrawnAt` | When session was withdrawn | Transition to Withdrawn ONLY | Never |
+| `expiresAt` | When session expires or expired | Approval and after each drop | Never |
+| `timeoutAt` | When pending session timed out | After timeout threshold | Never |
+| `retainedUntil` | When session object will be deleted | Terminal state entry | Never |
+
+**Example timestamp preservation:**
+```
+Initial (Pending): createdAt=10:30
+↓ User approves: approvedAt=10:31, expiresAt=10:32
+↓ Admin drops early: expiresAt=10:31 (UPDATED), approvedAt=10:31 (PRESERVED)
+  Terminal state: Expired, retainedUntil=11:01, all previous timestamps intact
+```
+
 ## Resource Definition
 
 ```yaml
