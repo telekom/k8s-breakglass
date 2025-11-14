@@ -7,6 +7,7 @@ import (
 	stdlog "log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
@@ -202,9 +204,29 @@ func main() {
 		// Reuse the unified scheme for consistency across all Kubernetes clients
 		log.Debugw("Starting manager with unified scheme")
 
-		mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		// Configure webhook port (default 8443, can be overridden via WEBHOOK_PORT env var)
+		webhookPort := 8443
+		if wPort := os.Getenv("WEBHOOK_PORT"); wPort != "" {
+			if p, err := strconv.Atoi(wPort); err == nil {
+				webhookPort = p
+				log.Infow("Using custom webhook port", "port", webhookPort)
+			} else {
+				log.Warnw("Invalid WEBHOOK_PORT value, using default", "value", wPort, "default", webhookPort)
+			}
+		}
+
+		mgrOpts := ctrl.Options{
 			Scheme: scheme,
-		})
+		}
+
+		// Set webhook port if webhooks are enabled
+		if enableWebhookMgr == "" || enableWebhookMgr == "true" {
+			mgrOpts.WebhookServer = webhook.NewServer(webhook.Options{
+				Port: webhookPort,
+			})
+		}
+
+		mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOpts)
 		if merr != nil {
 			log.Warnw("Failed to start controller-runtime manager; reconcilers and webhooks will not be available", "error", merr)
 			return
