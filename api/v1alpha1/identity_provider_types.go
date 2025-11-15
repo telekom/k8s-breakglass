@@ -17,8 +17,16 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // GroupSyncProvider defines which provider to use for group synchronization
@@ -167,6 +175,63 @@ type IdentityProvider struct {
 	Status IdentityProviderStatus `json:"status,omitempty"`
 }
 
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-identityprovider,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=identityproviders,verbs=create;update,versions=v1alpha1,name=videntityprovider.kb.io,admissionReviewVersions={v1,v1beta1}
+
+// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
+func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	identityProvider, ok := obj.(*IdentityProvider)
+	if !ok {
+		return nil, fmt.Errorf("expected an IdentityProvider object but got %T", obj)
+	}
+
+	var allErrs field.ErrorList
+
+	// Validate mandatory OIDC configuration
+	if identityProvider.Spec.OIDC.Authority == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("authority"), "authority is required"))
+	}
+	if identityProvider.Spec.OIDC.ClientID == "" {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("clientID"), "clientID is required"))
+	}
+
+	// Validate Keycloak configuration if group sync is enabled
+	if identityProvider.Spec.GroupSyncProvider == GroupSyncProviderKeycloak {
+		if identityProvider.Spec.Keycloak == nil {
+			allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak"), "keycloak configuration is required when groupSyncProvider is Keycloak"))
+		} else {
+			if identityProvider.Spec.Keycloak.BaseURL == "" {
+				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("baseURL"), "baseURL is required"))
+			}
+			if identityProvider.Spec.Keycloak.Realm == "" {
+				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("realm"), "realm is required"))
+			}
+			if identityProvider.Spec.Keycloak.ClientID == "" {
+				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientID"), "clientID is required"))
+			}
+			if identityProvider.Spec.Keycloak.ClientSecretRef.Name == "" || identityProvider.Spec.Keycloak.ClientSecretRef.Namespace == "" {
+				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientSecretRef"), "clientSecretRef name and namespace are required"))
+			}
+		}
+	}
+
+	if len(allErrs) == 0 {
+		return nil, nil
+	}
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "IdentityProvider"}, identityProvider.Name, allErrs)
+}
+
+// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
+func (idp *IdentityProvider) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	// For updates, perform same validations as create
+	return idp.ValidateCreate(ctx, newObj)
+}
+
+// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
+func (idp *IdentityProvider) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	// allow deletes
+	return nil, nil
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster
 
@@ -220,5 +285,6 @@ func (idp *IdentityProvider) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(idp).
+		WithValidator(idp).
 		Complete()
 }

@@ -274,6 +274,7 @@ func (bs *BreakglassSession) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(bs).
+		WithValidator(bs).
 		Complete()
 }
 

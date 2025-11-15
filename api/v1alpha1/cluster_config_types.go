@@ -138,6 +138,7 @@ func (cc *ClusterConfig) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(cc).
+		WithValidator(cc).
 		Complete()
 }
 

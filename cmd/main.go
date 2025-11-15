@@ -501,7 +501,7 @@ func main() {
 		setupWebhooks(managerCtx, log, scheme,
 			webhookBindAddr, webhookCertPath, webhookCertName, webhookCertKey,
 			webhooksMetricsAddr, webhooksMetricsSecure, webhooksMetricsCertPath, webhooksMetricsCertName, webhooksMetricsCertKey,
-			enableValidatingWebhooks, enableHTTP2)
+			enableValidatingWebhooks, enableHTTP2, debug)
 		log.Infow("Webhooks enabled via --enable-webhooks flag")
 	} else {
 		log.Infow("Webhooks disabled via --enable-webhooks flag")
@@ -671,6 +671,7 @@ func setupWebhooks(
 	webhooksMetricsCertKey string,
 	enableValidatingWebhooks bool,
 	enableHTTP2 bool,
+	debug bool,
 ) {
 	go func() {
 		log.Debugw("Starting webhook server setup")
@@ -737,6 +738,11 @@ func setupWebhooks(
 			metricsServerOptions = metricsserver.Options{
 				BindAddress: "0",
 			}
+		}
+
+		// Set up debug logging for webhook builder if debug mode is enabled
+		if debug {
+			log.Debugw("Webhook server debug logging enabled")
 		}
 
 		// Create a manager for webhooks (separate from reconciler manager)

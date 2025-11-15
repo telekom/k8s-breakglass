@@ -203,6 +203,7 @@ func (be *BreakglassEscalation) SetupWebhookWithManager(mgr ctrl.Manager) error 
 	}
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(be).
+		WithValidator(be).
 		Complete()
 }
 
