@@ -18,11 +18,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/client-go/tools/record"
 
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/leaderelection"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
 
@@ -101,6 +104,17 @@ func setupLogger(debug bool) *zap.Logger {
 		panic(err)
 	}
 	return logger
+}
+
+// simpleRecorderProvider is a minimal implementation of the recorder.Provider interface
+// needed for leader election resource lock creation.
+type simpleRecorderProvider struct {
+	recorder record.EventRecorder
+}
+
+// GetEventRecorderFor returns the event recorder instance.
+func (s *simpleRecorderProvider) GetEventRecorderFor(name string) record.EventRecorder {
+	return s.recorder
 }
 
 func main() {
@@ -192,12 +206,12 @@ func main() {
 		// Health probe flags
 		probeAddr string
 
-		// Manager flags
-		leaderElect    bool
-		leaderElectID  string
-		enableHTTP2    bool
-		enableWebhooks bool
-		podNamespace   string
+		// Leader election flags
+		leaderElectNamespace string
+		leaderElectID        string
+		enableHTTP2          bool
+		enableWebhooks       bool
+		podNamespace         string
 
 		// Component enable flags (for splitting controller into multiple instances)
 		enableFrontend           bool
@@ -260,10 +274,9 @@ func main() {
 	flag.StringVar(&probeAddr, "health-probe-bind-address", getEnvString("PROBE_BIND_ADDRESS", ":8082"),
 		"The address the probe endpoint binds to")
 
-	// Manager configuration
-	flag.BoolVar(&leaderElect, "leader-elect", getEnvBool("LEADER_ELECT", false),
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager")
+	// Leader election configuration
+	flag.StringVar(&leaderElectNamespace, "leader-elect-namespace", getEnvString("LEADER_ELECT_NAMESPACE", ""),
+		"The namespace where the leader election lease will be created. If empty, will default to the pod's namespace")
 	flag.StringVar(&leaderElectID, "leader-elect-id", getEnvString("LEADER_ELECT_ID", "breakglass.telekom.io"),
 		"The ID used for leader election; ensures multiple instances coordinate properly")
 	flag.BoolVar(&enableHTTP2, "enable-http2", getEnvBool("ENABLE_HTTP2", false),
@@ -344,8 +357,8 @@ func main() {
 		"webhooks_metrics_secure", webhooksMetricsSecure,
 		// Health probe
 		"health_probe_bind_address", probeAddr,
-		// Manager configuration
-		"leader_elect", leaderElect,
+		// Leader election configuration
+		"leader_elect_namespace", leaderElectNamespace,
 		"leader_elect_id", leaderElectID,
 		"enable_http2", enableHTTP2,
 		"pod_namespace", podNamespace,
@@ -479,9 +492,37 @@ func main() {
 		log.Infow("HTTP server disabled: both --enable-frontend and --enable-api are false")
 	}
 
+	// Create a channel to broadcast leadership signal to background loops
+	// This enables safe horizontal scaling: only the leader runs cleanup loops
+	leaderElectedCh := make(chan struct{})
+
+	// Create leader election resourcelock using controller-runtime's leaderelection package
+	// This replaces the builtin flag-based approach with proper k8s native leader election
+	restCfgForLock := ctrl.GetConfigOrDie()
+	eventBroadcaster := record.NewBroadcaster()
+	eventRecorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-controller"})
+
+	// Create a simple recorder provider for leader election
+	recorderProvider := &simpleRecorderProvider{recorder: eventRecorder}
+
+	leaderElectionOptions := leaderelection.Options{
+		LeaderElection:             true,     // Always use leader election for proper coordination
+		LeaderElectionResourceLock: "leases", // Use leases (default, best practice)
+		LeaderElectionID:           leaderElectID,
+		LeaderElectionNamespace:    leaderElectNamespace,
+		RenewDeadline:              10 * time.Second,
+	}
+
+	var resourceLock resourcelock.Interface
+	resourceLock, err = leaderelection.NewResourceLock(restCfgForLock, recorderProvider, leaderElectionOptions)
+	if err != nil {
+		log.Fatalf("Failed to create leader election resource lock: %v", err)
+	}
+	log.Infow("Leader election resource lock created", "id", leaderElectID, "namespace", leaderElectNamespace)
+
 	// Background routines (cleanup routine is optional)
 	if enableCleanup {
-		go breakglass.CleanupRoutine{Log: log, Manager: &sessionManager}.CleanupRoutine()
+		go breakglass.CleanupRoutine{Log: log, Manager: &sessionManager, LeaderElected: leaderElectedCh}.CleanupRoutine()
 		log.Infow("Cleanup routine enabled")
 	} else {
 		log.Infow("Cleanup routine disabled via --enable-cleanup=false")
@@ -501,7 +542,7 @@ func main() {
 		}
 	}
 
-	go breakglass.EscalationStatusUpdater{Log: log, K8sClient: escalationManager.Client, Resolver: escalationManager.Resolver, Interval: escalationInterval}.Start(managerCtx)
+	go breakglass.EscalationStatusUpdater{Log: log, K8sClient: escalationManager.Client, Resolver: escalationManager.Resolver, Interval: escalationInterval, LeaderElected: leaderElectedCh}.Start(managerCtx)
 
 	// Event recorder for emitting Kubernetes events (persisted to API server)
 	restCfg := ctrl.GetConfigOrDie()
@@ -527,12 +568,77 @@ func main() {
 	}
 
 	// ClusterConfig checker: validates that referenced kubeconfig secrets contain the expected key
-	go breakglass.ClusterConfigChecker{Log: log, Client: escalationManager.Client, Recorder: recorder, Interval: interval}.Start(managerCtx)
+	go breakglass.ClusterConfigChecker{Log: log, Client: escalationManager.Client, Recorder: recorder, Interval: interval, LeaderElected: leaderElectedCh}.Start(managerCtx)
+
+	// Start leader election loop in a separate goroutine
+	// This coordinates background loops (cleanup, escalation updater, cluster config checker)
+	// to run only on the leader replica using the resourcelock
+	go func() {
+		leCtx, leCancel := context.WithCancel(managerCtx)
+		defer leCancel()
+
+		for {
+			select {
+			case <-managerCtx.Done():
+				log.Infow("Leader election context cancelled, exiting leader election loop")
+				return
+			default:
+			}
+
+			record, _, err := resourceLock.Get(leCtx)
+			if err != nil {
+				log.Warnw("Failed to get leader election record", "error", err)
+				time.Sleep(time.Second)
+				continue
+			}
+
+			hostname, err := os.Hostname()
+			if err != nil {
+				log.Warnw("Failed to get hostname for leader election", "error", err)
+				time.Sleep(time.Second)
+				continue
+			}
+
+			// Check if we are the leader by examining the resourcelock holder identity
+			if record != nil && strings.Contains(record.HolderIdentity, hostname) {
+				// We are the leader - signal background loops
+				select {
+				case <-leaderElectedCh:
+					// Already closed, we've signaled leadership
+				default:
+					log.Infow("This replica acquired leadership, signaling background loops")
+					close(leaderElectedCh)
+				}
+				// Keep checking if we still hold leadership
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-managerCtx.Done():
+						return
+					case <-ticker.C:
+						record, _, err := resourceLock.Get(leCtx)
+						if err != nil || record == nil || !strings.Contains(record.HolderIdentity, hostname) {
+							log.Infow("Lost leadership, exiting leader")
+							// Recreate the channel for the next leader
+							leaderElectedCh = make(chan struct{})
+							return
+						}
+					}
+				}
+			}
+
+			// We are not the leader, wait before trying again
+			time.Sleep(time.Second)
+		}
+	}()
 
 	// Always start the reconciler manager (field indices and reconcilers always run)
+	// The manager does NOT do leader election; background loops handle that
 	setupReconcilerManager(managerCtx, log, scheme, kubeClient, idpLoader, server,
 		metricsAddr, metricsSecure, metricsCertPath, metricsCertName, metricsCertKey,
-		probeAddr, leaderElect, leaderElectID, enableHTTP2, clusterConfigCheckInterval, escalationStatusUpdateInt)
+		probeAddr, resourceLock, enableHTTP2, clusterConfigCheckInterval, escalationStatusUpdateInt, leaderElectedCh)
 
 	// Optionally setup webhooks if enabled (webhooks are optional, reconcilers are not)
 	if enableWebhooks {
@@ -578,8 +684,8 @@ func main() {
 // - Metrics server configuration with secure serving
 // - Field index setup for efficient queries
 // - IdentityProvider reconciler setup
-// - Manager startup
-// The reconciler always runs regardless of webhook configuration.
+// - Manager startup and leader election
+// - Broadcasting leadership signal to background loops when acquired
 func setupReconcilerManager(
 	ctx context.Context,
 	log *zap.SugaredLogger,
@@ -593,11 +699,11 @@ func setupReconcilerManager(
 	metricsCertName string,
 	metricsCertKey string,
 	probeAddr string,
-	leaderElect bool,
-	leaderElectID string,
+	resourceLock resourcelock.Interface,
 	enableHTTP2 bool,
 	clusterConfigCheckInterval string,
 	escalationStatusUpdateInterval string,
+	leaderElectedCh chan<- struct{}, // Channel to broadcast leadership signal to background loops
 ) {
 	go func() {
 		log.Debugw("Starting reconciler manager with unified scheme")
@@ -628,19 +734,20 @@ func setupReconcilerManager(
 		}
 
 		// Create manager without webhook server (webhooks are optional)
+		// NOTE: Manager does NOT use leader election; that's handled separately by background loops
+		// The resourcelock is passed to background loops for their own coordination
 		mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 			Scheme:                 scheme,
 			Metrics:                metricsServerOptions,
 			HealthProbeBindAddress: probeAddr,
-			WebhookServer:          nil, // Webhooks are handled separately if enabled
-			LeaderElection:         leaderElect,
-			LeaderElectionID:       leaderElectID,
+			WebhookServer:          nil,   // Webhooks are handled separately if enabled
+			LeaderElection:         false, // Reconcilers run on all replicas
 		})
 		if merr != nil {
 			log.Errorw("Failed to start controller-runtime manager; reconcilers will not run", "error", merr)
 			return
 		}
-		log.Infow("Controller-runtime manager created successfully")
+		log.Infow("Controller-runtime manager created successfully (no leader election at manager level)")
 
 		// Register health check handlers for liveness and readiness probes
 		// These endpoints are exposed at the health probe bind address (default :8082)
@@ -676,8 +783,14 @@ func setupReconcilerManager(
 		}
 		log.Infow("Successfully registered IdentityProvider reconciler", "resyncPeriod", "10m")
 
+		// Note: Leadership election is NOT handled by the manager at this level.
+		// Background loops (cleanup, escalation updater, cluster config checker) use the resourcelock
+		// to coordinate and run only on the leader. The signal propagation to those loops happens
+		// outside this manager in the main() function after the manager and loops are set up.
+
 		// Start manager (blocks) but we run it in a goroutine so it doesn't prevent the API server
-		log.Infow("Starting controller-runtime reconciler manager")
+		// The manager runs reconcilers on all replicas (no leader election)
+		log.Infow("Starting controller-runtime reconciler manager (no leader election at manager level)")
 		if err := mgr.Start(ctx); err != nil {
 			log.Warnw("controller-runtime reconciler manager exited", "error", err)
 		}

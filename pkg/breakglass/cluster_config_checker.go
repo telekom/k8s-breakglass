@@ -20,10 +20,11 @@ import (
 // a secret containing the expected `kubeconfig` key. It logs Info when configs are valid
 // and Warn when a secret or the key is missing so operators can remediate.
 type ClusterConfigChecker struct {
-	Log      *zap.SugaredLogger
-	Client   client.Client
-	Interval time.Duration
-	Recorder record.EventRecorder
+	Log           *zap.SugaredLogger
+	Client        client.Client
+	Interval      time.Duration
+	Recorder      record.EventRecorder
+	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
 }
 
 const ClusterConfigCheckInterval = 10 * time.Minute
@@ -32,6 +33,19 @@ func (ccc ClusterConfigChecker) Start(ctx context.Context) {
 	// Ensure we always have a logger to avoid nil deref
 	lg := ccc.Log
 	interval := ccc.Interval
+
+	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
+	if ccc.LeaderElected != nil {
+		lg.Info("Cluster config checker waiting for leadership signal before starting...")
+		select {
+		case <-ctx.Done():
+			lg.Info("Cluster config checker stopping before acquiring leadership (context cancelled)")
+			return
+		case <-ccc.LeaderElected:
+			lg.Info("Leadership acquired - starting cluster config checker")
+		}
+	}
+
 	if interval == 0 {
 		interval = ClusterConfigCheckInterval
 	}

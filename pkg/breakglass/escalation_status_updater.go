@@ -415,10 +415,11 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 
 // EscalationStatusUpdater periodically expands approver groups into member lists and stores in status.
 type EscalationStatusUpdater struct {
-	Log       *zap.SugaredLogger
-	K8sClient client.Client
-	Resolver  GroupMemberResolver
-	Interval  time.Duration
+	Log           *zap.SugaredLogger
+	K8sClient     client.Client
+	Resolver      GroupMemberResolver
+	Interval      time.Duration
+	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
 }
 
 func (u EscalationStatusUpdater) Start(ctx context.Context) {
@@ -426,6 +427,19 @@ func (u EscalationStatusUpdater) Start(ctx context.Context) {
 	log := u.Log
 
 	log = log.With("component", "EscalationStatusUpdater")
+
+	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
+	if u.LeaderElected != nil {
+		log.Info("Escalation status updater waiting for leadership signal before starting...")
+		select {
+		case <-ctx.Done():
+			log.Infow("Escalation status updater stopping before acquiring leadership (context cancelled)")
+			return
+		case <-u.LeaderElected:
+			log.Info("Leadership acquired - starting escalation status updater")
+		}
+	}
+
 	if u.Interval <= 0 {
 		u.Interval = 5 * time.Minute
 	}
