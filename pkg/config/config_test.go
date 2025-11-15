@@ -95,6 +95,7 @@ mail:
 			// Create temporary config file if content is provided
 			var tempFile *os.File
 			var err error
+			var configPath string
 
 			if tt.configContent != "" {
 				tempFile, err = os.CreateTemp("", "test-config-*.yaml")
@@ -108,31 +109,21 @@ mail:
 					t.Fatalf("Failed to write to temp file: %v", err)
 				}
 
-				// Set environment variable to point to temp file
-				if err := os.Setenv("BREAKGLASS_CONFIG_PATH", tempFile.Name()); err != nil {
-					t.Fatalf("Failed to set env var: %v", err)
-				}
+				// Pass temp file path to Load function directly
+				configPath = tempFile.Name()
 			} else if tt.envVar != "" {
-				// Set environment variable to specific path
-				if err := os.Setenv("BREAKGLASS_CONFIG_PATH", tt.envVar); err != nil {
-					t.Fatalf("Failed to set env var: %v", err)
-				}
-			} else {
-				// Clear environment variable to test default behavior
-				if err := os.Unsetenv("BREAKGLASS_CONFIG_PATH"); err != nil {
-					t.Fatalf("Failed to unset env var: %v", err)
-				}
+				// Use the provided path for non-existent file test
+				configPath = tt.envVar
 			}
-
-			// Clean up environment variable after test
-			defer func() {
-				if tt.configContent != "" || tt.envVar != "" {
-					_ = os.Unsetenv("BREAKGLASS_CONFIG_PATH")
-				}
-			}()
+			// else: use default path by passing empty string
 
 			// Test the Load function
-			cfg, err := config.Load()
+			var cfg config.Config
+			if configPath != "" {
+				cfg, err = config.Load(configPath)
+			} else {
+				cfg, err = config.Load()
+			}
 
 			if tt.expectError {
 				if err == nil {

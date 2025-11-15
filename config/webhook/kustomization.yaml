@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Include webhook manifests, certificate resources, and service
+resources:
+  - manifests.yaml
+  - certificate.yaml
+  - service.yaml
+
+# Add breakglass- prefix to webhook resources (except Service which has explicit namespace)
+namePrefix: breakglass-
+
+# Patch the ValidatingWebhookConfiguration to:
+# 1. Add cert-manager annotation for automatic CA injection
+# 2. Fix the webhook service references to use the correct prefixed service name and namespace
+patchesJson6902:
+  - target:
+      group: admissionregistration.k8s.io
+      version: v1
+      kind: ValidatingWebhookConfiguration
+      name: breakglass-validating-webhook-configuration
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          cert-manager.io/inject-ca-from: breakglass-system/breakglass-webhook-serving-cert
+      - op: replace
+        path: /webhooks/0/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/0/clientConfig/service/namespace
+        value: breakglass-system
+      - op: replace
+        path: /webhooks/1/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/1/clientConfig/service/namespace
+        value: breakglass-system
+      - op: replace
+        path: /webhooks/2/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/2/clientConfig/service/namespace
+        value: breakglass-system

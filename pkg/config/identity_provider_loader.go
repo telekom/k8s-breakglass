@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -197,13 +196,10 @@ func (l *IdentityProviderLoader) getSecretValue(ctx context.Context, secretRef *
 		return "", fmt.Errorf("secret reference is empty")
 	}
 
-	// Cluster-scoped resources use the namespace specified in the secret ref or env var
+	// Cluster-scoped resources use the namespace specified in the secret ref or the configured default namespace
 	namespace := secretRef.Namespace
 	if namespace == "" {
-		namespace = os.Getenv("BREAKGLASS_NAMESPACE")
-		if namespace == "" {
-			namespace = "default"
-		}
+		return "", fmt.Errorf("secret reference must specify a namespace for cluster-scoped resources")
 	}
 
 	secret := &corev1.Secret{}

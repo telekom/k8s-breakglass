@@ -63,8 +63,9 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 							ClientID: "keycloak-admin",
 							CacheTTL: "10m",
 							ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
-								Name: "keycloak-secret",
-								Key:  "clientSecret",
+								Name:      "keycloak-secret",
+								Namespace: "default",
+								Key:       "clientSecret",
 							},
 						},
 					},

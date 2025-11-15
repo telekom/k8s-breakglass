@@ -3,7 +3,6 @@ package breakglass
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -36,11 +35,11 @@ func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, messa
 	}
 	// Per new policy: always emit events into the same namespace the object
 	// lives in. Only for cluster-scoped objects (object namespace empty) we
-	// fall back to the POD_NAMESPACE environment variable. If neither the
-	// object's namespace nor POD_NAMESPACE is available, do not create an
-	// Event (best-effort, but avoids writing into an unrelated namespace).
+	// fall back to the controller's pod namespace (from r.Namespace field).
+	// If neither the object's namespace nor the controller's namespace is available,
+	// do not create an Event (best-effort, but avoids writing into an unrelated namespace).
 	objNS := metaObj.GetNamespace()
-	podNS := os.Getenv("POD_NAMESPACE")
+	podNS := r.Namespace
 
 	var ns string
 	var involvedNS string
@@ -52,7 +51,7 @@ func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, messa
 		involvedNS = podNS
 	} else {
 		if r.Logger != nil {
-			r.Logger.Infow("skipping kubernetes Event creation: object has no namespace and POD_NAMESPACE is not set", "object", metaObj.GetName())
+			r.Logger.Infow("skipping kubernetes Event creation: object has no namespace and controller namespace is not set", "object", metaObj.GetName())
 		}
 		return
 	}

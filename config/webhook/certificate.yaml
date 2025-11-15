@@ -1,0 +1,35 @@
+---
+# Certificate for the webhook server
+# This certificate is used by cert-manager to:
+# 1. Generate TLS certificates for the webhook service
+# 2. Inject the CA certificate into ValidatingWebhookConfiguration via annotations
+# 3. Mount the certificate as a secret in the webhook pod
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: webhook-serving-cert
+  namespace: breakglass-system
+spec:
+  issuerRef:
+    kind: Issuer
+    name: webhook-selfsigned-issuer
+  secretName: webhook-server-cert
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  # DNS names for the webhook certificate
+  # These should match the service DNS name pattern used for webhook connections
+  dnsNames:
+  - breakglass-webhook-service
+  - breakglass-webhook-service.breakglass-system
+  - breakglass-webhook-service.breakglass-system.svc
+  - breakglass-webhook-service.breakglass-system.svc.cluster.local
+
+---
+# Self-signed issuer for generating the webhook certificate
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: webhook-selfsigned-issuer
+  namespace: breakglass-system
+spec:
+  selfSigned: {}

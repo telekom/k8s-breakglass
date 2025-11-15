@@ -113,15 +113,22 @@ type Config struct {
 	Kubernetes          Kubernetes
 }
 
-func Load() (Config, error) {
-	var config Config
+// Load loads the breakglass configuration from a file path.
+// If configPath is empty, defaults to "./config.yaml".
+// The config file path can also be overridden via the BREAKGLASS_CONFIG_PATH environment variable.
+func Load(configPath ...string) (Config, error) {
+	var path string
 
-	configPath := os.Getenv("BREAKGLASS_CONFIG_PATH")
-	if len(configPath) == 0 {
-		configPath = "./config.yaml"
+	// Use provided path or fall back to default
+	if len(configPath) > 0 && configPath[0] != "" {
+		path = configPath[0]
+	} else {
+		path = "./config.yaml"
 	}
 
-	content, err := os.ReadFile(configPath)
+	var config Config
+
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return config, fmt.Errorf("trying to open breakglass config file %s: %v", configPath, err)
 	}

@@ -18,24 +18,73 @@ spec:
       labels:
         app: breakglass
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      serviceAccountName: manager
       containers:
         - image: breakglass:e2e
           imagePullPolicy: "Always"
           name: breakglass
-          resources: {}
+          args:
+            - --config-path=/config/config.yaml
+            - --pod-namespace=$(POD_NAMESPACE)
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8082
           env:
-            - name: BREAKGLASS_CONFIG_PATH
-              value: /config/config.yaml
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+            - name: healthz
+              containerPort: 8082
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: healthz
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
           volumeMounts:
             - mountPath: /config/
               name: config
               readOnly: true
-      serviceAccountName: manager
+            - mountPath: /tmp
+              name: tmp
       volumes:
-      - name: config
-        configMap:
-          name: config
+        - name: config
+          configMap:
+            name: config
+        - name: tmp
+          emptyDir: {}
