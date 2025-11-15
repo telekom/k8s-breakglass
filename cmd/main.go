@@ -326,6 +326,44 @@ func main() {
 		log.Debug("Debug logging enabled")
 	}
 
+	// Log all startup configuration flags for debuggability
+	log.Infow("Startup Configuration",
+		// Debug and logging
+		"debug", debug,
+		// Webhook server configuration
+		"webhook_bind_address", webhookBindAddr,
+		"webhook_cert_path", webhookCertPath,
+		"webhook_cert_name", webhookCertName,
+		"webhook_cert_key", webhookCertKey,
+		// Metrics server configuration
+		"metrics_bind_address", metricsAddr,
+		"metrics_secure", metricsSecure,
+		"metrics_cert_path", metricsCertPath,
+		// Webhook metrics server configuration
+		"webhooks_metrics_bind_address", webhooksMetricsAddr,
+		"webhooks_metrics_secure", webhooksMetricsSecure,
+		// Health probe
+		"health_probe_bind_address", probeAddr,
+		// Manager configuration
+		"leader_elect", leaderElect,
+		"leader_elect_id", leaderElectID,
+		"enable_http2", enableHTTP2,
+		"pod_namespace", podNamespace,
+		// Component enable flags
+		"enable_frontend", enableFrontend,
+		"enable_api", enableAPI,
+		"enable_cleanup", enableCleanup,
+		"enable_webhooks", enableWebhooks,
+		"enable_validating_webhooks", enableValidatingWebhooks,
+		// Intervals
+		"cluster_config_check_interval", clusterConfigCheckInterval,
+		"escalation_status_update_interval", escalationStatusUpdateInt,
+		// Configuration paths
+		"config_path", configPath,
+		"breakglass_namespace", breakglassNamespace,
+		"disable_email", disableEmail,
+	)
+
 	// Load configuration from config.yaml
 	cfg, err := config.Load(configPath)
 	if err != nil {
