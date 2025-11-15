@@ -7,7 +7,16 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Quick Start](./quickstart.md)** - Get up and running in 5 minutes
 - **[Installation](./installation.md)** - Complete step-by-step installation
 - **[Building](./building.md)** - Build breakglass from source
+- **[CLI Flags Reference](./cli-flags-reference.md)** - All configuration flags
 - **[Troubleshooting](./troubleshooting.md)** - Common issues and solutions
+
+## Configuration & Operations
+
+- **[Scaling and Leader Election](./scaling-and-leader-election.md)** - Multi-replica deployments with leader election
+- **[Webhook Setup](./webhook-setup.md)** - Configure authorization webhooks
+- **[CLI Flags Reference](./cli-flags-reference.md)** - All controller flags and environment variables
+- **[Configuration Reference](./configuration-reference.md)** - config.yaml settings and examples
+- **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 
 ## Quick Reference
 

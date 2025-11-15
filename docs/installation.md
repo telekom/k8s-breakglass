@@ -66,6 +66,8 @@ kubernetes:
 
 **Important:** The `identityProviderName` field in `frontend` section is **REQUIRED**. It must reference a valid IdentityProvider resource that will be created in the next step.
 
+For complete configuration options, see [Configuration Reference](./configuration-reference.md).
+
 ## Step 3: Create IdentityProvider Resource
 
 **IdentityProvider is MANDATORY** for Breakglass operation. Create the IdentityProvider resource in the hub cluster.
@@ -496,6 +498,119 @@ kubectl delete namespace breakglass-system
 # 2. Remove webhook kubeconfig
 # 3. Restart kube-apiserver
 ```
+
+## Controller Configuration Flags
+
+The breakglass controller supports 40+ configuration flags for customizing deployment behavior. All flags are optional and have sensible defaults.
+
+### Quick Flag Reference
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--enable-leader-election` | `true` | Enable Kubernetes-native leader election for multi-replica deployments |
+| `--enable-frontend` | `true` | Enable web UI endpoints |
+| `--enable-api` | `true` | Enable REST API endpoints |
+| `--enable-cleanup` | `true` | Enable background session cleanup routine |
+| `--enable-webhooks` | `true` | Enable validating webhooks for CRDs |
+| `--webhook-bind-address` | `0.0.0.0:9443` | Address for webhook server |
+| `--metrics-bind-address` | `0.0.0.0:8081` | Address for Prometheus metrics endpoint |
+| `--health-probe-bind-address` | `:8082` | Address for health probes (liveness/readiness) |
+| `--config-path` | `./config.yaml` | Path to configuration file |
+| `--pod-namespace` | `default` | Pod's namespace (used for event recording) |
+
+### Setting Flags
+
+Flags can be set via:
+
+1. **Command-line arguments**:
+```bash
+breakglass-controller \
+  --enable-leader-election=true \
+  --webhook-bind-address=0.0.0.0:9443 \
+  --config-path=/etc/breakglass/config.yaml
+```
+
+2. **Environment variables**:
+```bash
+export ENABLE_LEADER_ELECTION=true
+export WEBHOOK_BIND_ADDRESS=0.0.0.0:9443
+export BREAKGLASS_CONFIG_PATH=/etc/breakglass/config.yaml
+breakglass-controller
+```
+
+3. **Kubernetes deployment**:
+```yaml
+containers:
+- name: controller
+  image: breakglass:latest
+  args:
+    - --enable-leader-election=true
+    - --enable-frontend=true
+    - --enable-api=true
+    - --enable-cleanup=true
+    - --enable-webhooks=true
+    - --config-path=/etc/breakglass/config.yaml
+    - --pod-namespace=breakglass-system
+```
+
+### Common Configurations
+
+**Single Instance (Development)**:
+```bash
+breakglass-controller \
+  --enable-leader-election=false \
+  --enable-frontend=true \
+  --enable-api=true \
+  --enable-cleanup=true \
+  --enable-webhooks=true
+```
+
+**Multi-Replica (Production)**:
+```bash
+breakglass-controller \
+  --enable-leader-election=true \
+  --enable-frontend=true \
+  --enable-api=true \
+  --enable-cleanup=true \
+  --enable-webhooks=true \
+  --pod-namespace=breakglass-system
+```
+
+**Webhook-Only Instance**:
+```bash
+breakglass-controller \
+  --enable-frontend=false \
+  --enable-api=false \
+  --enable-cleanup=false \
+  --enable-webhooks=true \
+  --webhook-bind-address=0.0.0.0:9443
+```
+
+**API-Only Instance**:
+```bash
+breakglass-controller \
+  --enable-frontend=true \
+  --enable-api=true \
+  --enable-cleanup=false \
+  --enable-webhooks=false
+```
+
+For complete flag documentation, see [CLI Flags Reference](./cli-flags-reference.md).
+
+## Leader Election and Scaling
+
+For multi-replica deployments, leader election is **enabled by default** (`--enable-leader-election=true`):
+
+- ✅ Automatically coordinates background loops across replicas
+- ✅ Only leader runs cleanup, status updates, and config validation
+- ✅ Automatic failover when leader crashes
+- ✅ Uses Kubernetes Lease API (no external dependencies)
+
+See [Scaling and Leader Election](./scaling-and-leader-election.md) for detailed information about:
+- How leader election works
+- Multi-replica deployment patterns
+- Troubleshooting leadership issues
+- Disabling leader election for single-instance deployments
 
 ## Troubleshooting Installation
 

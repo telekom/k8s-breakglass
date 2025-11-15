@@ -196,6 +196,7 @@ func main() {
 		probeAddr string
 
 		// Leader election flags
+		enableLeaderElection bool
 		leaderElectNamespace string
 		leaderElectID        string
 		enableHTTP2          bool
@@ -264,6 +265,8 @@ func main() {
 		"The address the probe endpoint binds to")
 
 	// Leader election configuration
+	flag.BoolVar(&enableLeaderElection, "enable-leader-election", getEnvBool("ENABLE_LEADER_ELECTION", true),
+		"Enable leader election for running multiple instances. Set to false when running a single instance")
 	flag.StringVar(&leaderElectNamespace, "leader-elect-namespace", getEnvString("LEADER_ELECT_NAMESPACE", ""),
 		"The namespace where the leader election lease will be created. If empty, will default to the pod's namespace")
 	flag.StringVar(&leaderElectID, "leader-elect-id", getEnvString("LEADER_ELECT_ID", "breakglass.telekom.io"),
@@ -347,6 +350,7 @@ func main() {
 		// Health probe
 		"health_probe_bind_address", probeAddr,
 		// Leader election configuration
+		"enable_leader_election", enableLeaderElection,
 		"leader_elect_namespace", leaderElectNamespace,
 		"leader_elect_id", leaderElectID,
 		"enable_http2", enableHTTP2,
@@ -579,60 +583,67 @@ func main() {
 	// ClusterConfig checker: validates that referenced kubeconfig secrets contain the expected key
 	go breakglass.ClusterConfigChecker{Log: log, Client: escalationManager.Client, Recorder: recorder, Interval: interval, LeaderElected: leaderElectedCh}.Start(managerCtx)
 
-	// Start leader election loop in a separate goroutine
+	// Start leader election if enabled
 	// This coordinates background loops (cleanup, escalation updater, cluster config checker)
 	// to run only on the leader replica using the resourcelock
-	go func() {
-		// Create callbacks for leader election
-		leaderCallbacks := leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				log.Infow("This replica acquired leadership, signaling background loops")
-				// Signal background loops that we're the leader
-				select {
-				case <-leaderElectedCh:
-					// Already closed, we've signaled leadership
-				default:
-					close(leaderElectedCh)
-				}
-			},
-			OnStoppedLeading: func() {
-				log.Infow("Lost leadership")
-				// Recreate the channel for the next leader to use
-				leaderElectedCh = make(chan struct{})
-			},
-			OnNewLeader: func(identity string) {
-				if identity == hostname {
-					log.Infow("I became the leader", "identity", identity)
-				} else {
-					log.Infow("New leader elected", "identity", identity)
-				}
-			},
-		}
+	if enableLeaderElection {
+		go func() {
+			// Create callbacks for leader election
+			leaderCallbacks := leaderelection.LeaderCallbacks{
+				OnStartedLeading: func(ctx context.Context) {
+					log.Infow("This replica acquired leadership, signaling background loops")
+					// Signal background loops that we're the leader
+					select {
+					case <-leaderElectedCh:
+						// Already closed, we've signaled leadership
+					default:
+						close(leaderElectedCh)
+					}
+				},
+				OnStoppedLeading: func() {
+					log.Infow("Lost leadership")
+					// Recreate the channel for the next leader to use
+					leaderElectedCh = make(chan struct{})
+				},
+				OnNewLeader: func(identity string) {
+					if identity == hostname {
+						log.Infow("I became the leader", "identity", identity)
+					} else {
+						log.Infow("New leader elected", "identity", identity)
+					}
+				},
+			}
 
-		// Create the LeaderElector which handles the full lifecycle of leader election:
-		// - Acquires the lock when becoming leader (creates/updates the lease)
-		// - Renews the lock at the specified interval to maintain leadership
-		// - Releases the lock when context is cancelled
-		// - Detects when leadership is lost and calls OnStoppedLeading
-		elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
-			Lock:          resourceLock,
-			LeaseDuration: 15 * time.Second, // Time the lease is held by leader
-			RenewDeadline: 10 * time.Second, // Deadline for renewing the lease before losing it
-			RetryPeriod:   2 * time.Second,  // Duration to wait between leader election tries
-			Callbacks:     leaderCallbacks,
-			WatchDog:      nil,
-			Name:          "breakglass-controller",
-		})
-		if err != nil {
-			log.Fatalf("Failed to create LeaderElector: %v", err)
-		}
+			// Create the LeaderElector which handles the full lifecycle of leader election:
+			// - Acquires the lock when becoming leader (creates/updates the lease)
+			// - Renews the lock at the specified interval to maintain leadership
+			// - Releases the lock when context is cancelled
+			// - Detects when leadership is lost and calls OnStoppedLeading
+			elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+				Lock:          resourceLock,
+				LeaseDuration: 15 * time.Second, // Time the lease is held by leader
+				RenewDeadline: 10 * time.Second, // Deadline for renewing the lease before losing it
+				RetryPeriod:   2 * time.Second,  // Duration to wait between leader election tries
+				Callbacks:     leaderCallbacks,
+				WatchDog:      nil,
+				Name:          "breakglass-controller",
+			})
+			if err != nil {
+				log.Fatalf("Failed to create LeaderElector: %v", err)
+			}
 
-		log.Infow("Starting leader election", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
+			log.Infow("Starting leader election", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
 
-		// Run the leader election - this will block until context is cancelled
-		// It continuously tries to acquire the lease and renews it if successful
-		elector.Run(managerCtx)
-	}()
+			// Run the leader election - this will block until context is cancelled
+			// It continuously tries to acquire the lease and renews it if successful
+			elector.Run(managerCtx)
+		}()
+	} else {
+		// If leader election is disabled, immediately signal that we're the leader
+		// This allows background loops to run on all replicas
+		log.Infow("Leader election disabled via --enable-leader-election=false, background loops will run on all replicas")
+		close(leaderElectedCh)
+	}
 
 	// Always start the reconciler manager (field indices and reconcilers always run)
 	// The manager does NOT do leader election; background loops handle that
