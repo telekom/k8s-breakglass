@@ -501,7 +501,7 @@ func main() {
 		setupWebhooks(managerCtx, log, scheme,
 			webhookBindAddr, webhookCertPath, webhookCertName, webhookCertKey,
 			webhooksMetricsAddr, webhooksMetricsSecure, webhooksMetricsCertPath, webhooksMetricsCertName, webhooksMetricsCertKey,
-			enableValidatingWebhooks, enableHTTP2, debug)
+			enableValidatingWebhooks, enableHTTP2)
 		log.Infow("Webhooks enabled via --enable-webhooks flag")
 	} else {
 		log.Infow("Webhooks disabled via --enable-webhooks flag")
@@ -671,7 +671,6 @@ func setupWebhooks(
 	webhooksMetricsCertKey string,
 	enableValidatingWebhooks bool,
 	enableHTTP2 bool,
-	debug bool,
 ) {
 	go func() {
 		log.Debugw("Starting webhook server setup")
@@ -740,11 +739,6 @@ func setupWebhooks(
 			}
 		}
 
-		// Set up debug logging for webhook builder if debug mode is enabled
-		if debug {
-			log.Debugw("Webhook server debug logging enabled")
-		}
-
 		// Create a manager for webhooks (separate from reconciler manager)
 		mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 			Scheme:           scheme,
@@ -752,8 +746,6 @@ func setupWebhooks(
 			Metrics:          metricsServerOptions,
 			LeaderElection:   false,
 			LeaderElectionID: "",
-			// Webhook manager doesn't need heavy caching, but needs minimal setup
-			//Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{}},
 		})
 		if merr != nil {
 			log.Warnw("Failed to start webhook server; webhooks will not be registered", "error", merr)
@@ -805,27 +797,8 @@ func setupWebhooks(
 			log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 		}
 
-		// Debug: Check if webhook server is properly configured
-		log.Debugw("Webhook server status before start",
-			"webhookServer", fmt.Sprintf("%v", mgr.GetWebhookServer()),
-			"host", webhookHost, "port", webhookPort)
-
-		// Get webhook server and print its handler info for debugging
-		ws := mgr.GetWebhookServer()
-		if ws != nil {
-			log.Infow("Webhook server configuration",
-				"host", webhookHost,
-				"port", webhookPort,
-				"certDir", webhookCertPath,
-				"certName", webhookCertName,
-				"keyName", webhookCertKey)
-
-			// Debug: Try to access the webhook server's HTTP client field
-			log.Debugw("Webhook server type", "type", fmt.Sprintf("%T", ws))
-		}
-
 		// Start webhook server (blocks) but we run it in a goroutine so it doesn't prevent the API server
-		log.Infow("Starting webhook manager", "bindAddress", webhookBindAddr, "host", webhookHost, "port", webhookPort)
+		log.Infow("Starting webhook manager", "bindAddress", webhookBindAddr)
 
 		// Monitor cache readiness in background
 		go func() {

@@ -175,7 +175,7 @@ type IdentityProvider struct {
 	Status IdentityProviderStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-identityprovider,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=identityproviders,verbs=create;update,versions=v1alpha1,name=videntityprovider.kb.io,admissionReviewVersions={v1,v1beta1}
+//+kubebuilder:webhook:path=/validate-breakglass-v1alpha1-identityprovider,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=identityproviders,verbs=create;update,versions=v1alpha1,name=identityprovider.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
 func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {

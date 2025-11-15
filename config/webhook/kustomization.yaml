@@ -42,3 +42,9 @@ patchesJson6902:
       - op: replace
         path: /webhooks/2/clientConfig/service/namespace
         value: breakglass-system
+      - op: replace
+        path: /webhooks/3/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/3/clientConfig/service/namespace
+        value: breakglass-system
