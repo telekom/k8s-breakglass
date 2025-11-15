@@ -614,115 +614,7 @@ func setupReconcilerManager(
 		}
 		log.Infow("Health check handlers registered", "endpoint", probeAddr)
 
-		// Register field indices to support efficient cache-based lookups by controller-runtime clients.
-		// Index fields: spec.cluster, spec.user, spec.grantedGroup
-
-		// First, check if the types are registered in the manager's scheme
-		log.Debugw("Checking CRD type registration in scheme")
-		if mgr.GetScheme() == nil {
-			log.Errorw("Manager scheme is nil; cannot register indices")
-			return
-		}
-
-		idx := mgr.GetFieldIndexer()
-		if idx != nil {
-			log.Debugw("Starting field index registration for BreakglassSession", "cluster", "spec.cluster", "user", "spec.user", "group", "spec.grantedGroup")
-			if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.cluster", func(rawObj client.Object) []string {
-				bs := rawObj.(*v1alpha1.BreakglassSession)
-				log.Debugw("Indexing BreakglassSession cluster field", "name", bs.Name, "cluster", bs.Spec.Cluster)
-				return []string{bs.Spec.Cluster}
-			}); err != nil {
-				log.Errorw("Failed to index BreakglassSession.spec.cluster", "error", err, "errorType", fmt.Sprintf("%T", err))
-			} else {
-				log.Infow("Successfully indexed BreakglassSession.spec.cluster")
-			}
-			if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.user", func(rawObj client.Object) []string {
-				bs := rawObj.(*v1alpha1.BreakglassSession)
-				return []string{bs.Spec.User}
-			}); err != nil {
-				log.Errorw("Failed to index BreakglassSession.spec.user", "error", err, "errorType", fmt.Sprintf("%T", err))
-			} else {
-				log.Infow("Successfully indexed BreakglassSession.spec.user")
-			}
-			if err := idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.grantedGroup", func(rawObj client.Object) []string {
-				bs := rawObj.(*v1alpha1.BreakglassSession)
-				return []string{bs.Spec.GrantedGroup}
-			}); err != nil {
-				log.Errorw("Failed to index BreakglassSession.spec.grantedGroup", "error", err, "errorType", fmt.Sprintf("%T", err))
-			} else {
-				log.Infow("Successfully indexed BreakglassSession.spec.grantedGroup")
-			}
-
-			// Index BreakglassEscalation helpful fields for quick lookups
-			log.Debugw("Starting field index registration for BreakglassEscalation", "clusterConfigRefs", "spec.allowed.cluster+clusterConfigRefs")
-			if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.cluster", func(rawObj client.Object) []string {
-				be := rawObj.(*v1alpha1.BreakglassEscalation)
-				if be == nil {
-					return nil
-				}
-				out := make([]string, 0, len(be.Spec.Allowed.Clusters))
-				out = append(out, be.Spec.Allowed.Clusters...)
-				// also index clusterConfigRefs to support exact lookups
-				out = append(out, be.Spec.ClusterConfigRefs...)
-				return out
-			}); err != nil {
-				log.Errorw("Failed to index BreakglassEscalation.spec.allowed.cluster/clusterConfigRefs", "error", err, "errorType", fmt.Sprintf("%T", err))
-			} else {
-				log.Infow("Successfully indexed BreakglassEscalation.spec.allowed.cluster/clusterConfigRefs")
-			}
-
-			if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.group", func(rawObj client.Object) []string {
-				be := rawObj.(*v1alpha1.BreakglassEscalation)
-				if be == nil {
-					return nil
-				}
-				return be.Spec.Allowed.Groups
-			}); err != nil {
-				log.Errorw("Failed to index BreakglassEscalation.spec.allowed.group", "error", err, "errorType", fmt.Sprintf("%T", err))
-			} else {
-				log.Infow("Successfully indexed BreakglassEscalation.spec.allowed.group")
-			}
-
-			if err := idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.escalatedGroup", func(rawObj client.Object) []string {
-				be := rawObj.(*v1alpha1.BreakglassEscalation)
-				if be == nil || be.Spec.EscalatedGroup == "" {
-					return nil
-				}
-				return []string{be.Spec.EscalatedGroup}
-			}); err != nil {
-				log.Errorw("Failed to index BreakglassEscalation.spec.escalatedGroup", "error", err, "errorType", fmt.Sprintf("%T", err))
-			} else {
-				log.Infow("Successfully indexed BreakglassEscalation.spec.escalatedGroup")
-			}
-
-			// Index ClusterConfig by metadata.name and spec.clusterID for fast lookup by name
-			log.Debugw("Starting field index registration for ClusterConfig", "fields", "metadata.name, spec.clusterID")
-			if err := idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "metadata.name", func(rawObj client.Object) []string {
-				cc := rawObj.(*v1alpha1.ClusterConfig)
-				if cc == nil {
-					return nil
-				}
-				return []string{cc.Name}
-			}); err != nil {
-				log.Errorw("Failed to index ClusterConfig.metadata.name", "error", err, "errorType", fmt.Sprintf("%T", err))
-			} else {
-				log.Infow("Successfully indexed ClusterConfig.metadata.name")
-			}
-
-			if err := idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "spec.clusterID", func(rawObj client.Object) []string {
-				cc := rawObj.(*v1alpha1.ClusterConfig)
-				if cc == nil || cc.Spec.ClusterID == "" {
-					return nil
-				}
-				return []string{cc.Spec.ClusterID}
-			}); err != nil {
-				log.Errorw("Failed to index ClusterConfig.spec.clusterID", "error", err, "errorType", fmt.Sprintf("%T", err))
-			} else {
-				log.Infow("Successfully indexed ClusterConfig.spec.clusterID")
-			}
-		} else {
-			log.Warnw("Field indexer not available from manager")
-		}
+		registerCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log)
 
 		// Register IdentityProvider Reconciler with controller-runtime manager
 		log.Debugw("Setting up IdentityProvider reconciler")
@@ -863,6 +755,8 @@ func setupWebhooks(
 		}
 		log.Infow("Webhook server created successfully")
 
+		registerCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log)
+
 		// Register health check handlers for the webhook manager
 		if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
 			log.Warnw("Failed to add webhook healthz check", "error", err)
@@ -943,4 +837,120 @@ func setupWebhooks(
 			log.Infow("webhook server exited normally (this should not happen during normal operation)")
 		}
 	}()
+}
+
+// registerCommonFieldIndexes configures the field indices required by both the
+// reconcilers and validating webhooks. These indices allow cache-backed
+// lookups for frequently queried fields (e.g., spec.cluster) and enable
+// metadata.name selectors for cluster-wide uniqueness checks.
+func registerCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, log *zap.SugaredLogger) {
+	if idx == nil {
+		log.Warnw("Field indexer not available from manager")
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	register := func(field string, fn func() error) {
+		if err := fn(); err != nil {
+			log.Errorw("Failed to register field index", "field", field, "error", err, "errorType", fmt.Sprintf("%T", err))
+		} else {
+			log.Debugw("Registered field index", "field", field)
+		}
+	}
+
+	register("BreakglassSession.spec.cluster", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.cluster", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.Cluster != "" {
+				return []string{bs.Spec.Cluster}
+			}
+			return nil
+		})
+	})
+
+	register("BreakglassSession.spec.user", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.user", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.User != "" {
+				return []string{bs.Spec.User}
+			}
+			return nil
+		})
+	})
+
+	register("BreakglassSession.spec.grantedGroup", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.grantedGroup", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.GrantedGroup != "" {
+				return []string{bs.Spec.GrantedGroup}
+			}
+			return nil
+		})
+	})
+
+	register("BreakglassSession.metadata.name", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "metadata.name", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Name != "" {
+				return []string{bs.Name}
+			}
+			return nil
+		})
+	})
+
+	register("BreakglassEscalation.spec.allowed.cluster", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.cluster", func(rawObj client.Object) []string {
+			be, ok := rawObj.(*v1alpha1.BreakglassEscalation)
+			if !ok || be == nil {
+				return nil
+			}
+			out := make([]string, 0, len(be.Spec.Allowed.Clusters)+len(be.Spec.ClusterConfigRefs))
+			out = append(out, be.Spec.Allowed.Clusters...)
+			out = append(out, be.Spec.ClusterConfigRefs...)
+			return out
+		})
+	})
+
+	register("BreakglassEscalation.spec.allowed.group", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.group", func(rawObj client.Object) []string {
+			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil {
+				return be.Spec.Allowed.Groups
+			}
+			return nil
+		})
+	})
+
+	register("BreakglassEscalation.spec.escalatedGroup", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.escalatedGroup", func(rawObj client.Object) []string {
+			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil && be.Spec.EscalatedGroup != "" {
+				return []string{be.Spec.EscalatedGroup}
+			}
+			return nil
+		})
+	})
+
+	register("BreakglassEscalation.metadata.name", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "metadata.name", func(rawObj client.Object) []string {
+			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil && be.Name != "" {
+				return []string{be.Name}
+			}
+			return nil
+		})
+	})
+
+	register("ClusterConfig.metadata.name", func() error {
+		return idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "metadata.name", func(rawObj client.Object) []string {
+			if cc, ok := rawObj.(*v1alpha1.ClusterConfig); ok && cc != nil && cc.Name != "" {
+				return []string{cc.Name}
+			}
+			return nil
+		})
+	})
+
+	register("ClusterConfig.spec.clusterID", func() error {
+		return idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "spec.clusterID", func(rawObj client.Object) []string {
+			if cc, ok := rawObj.(*v1alpha1.ClusterConfig); ok && cc != nil && cc.Spec.ClusterID != "" {
+				return []string{cc.Spec.ClusterID}
+			}
+			return nil
+		})
+	})
 }

@@ -2,7 +2,6 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -10,7 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
@@ -107,30 +105,7 @@ func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object)
 	if cc.Spec.KubeconfigSecretRef.Name == "" || cc.Spec.KubeconfigSecretRef.Namespace == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("kubeconfigSecretRef"), "kubeconfigSecretRef name and namespace are required"))
 	}
-	// global name uniqueness across namespaces - prefer cache-backed listing
-	if webhookCache != nil {
-		var list ClusterConfigList
-		if err := webhookCache.List(context.Background(), &list); err == nil {
-			for _, item := range list.Items {
-				if item.Name == cc.Name && item.Namespace != cc.Namespace {
-					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
-					break
-				}
-			}
-		}
-	} else if webhookClient != nil {
-		var list ClusterConfigList
-		if err := webhookClient.List(context.Background(), &list, &client.ListOptions{}); err == nil {
-			for _, item := range list.Items {
-				if item.Name == cc.Name && item.Namespace != cc.Namespace {
-					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
-					break
-				}
-			}
-		}
-	}
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, cc.Namespace, cc.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
@@ -142,29 +117,7 @@ func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runt
 	var allErrs field.ErrorList
 	// no immutability enforcement for ClusterConfig
 	// still ensure the name is unique across the cluster
-	if webhookCache != nil {
-		var list ClusterConfigList
-		if err := webhookCache.List(context.Background(), &list); err == nil {
-			for _, item := range list.Items {
-				if item.Name == cc.Name && item.Namespace != cc.Namespace {
-					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
-					break
-				}
-			}
-		}
-	} else if webhookClient != nil {
-		var list ClusterConfigList
-		if err := webhookClient.List(context.Background(), &list, &client.ListOptions{}); err == nil {
-			for _, item := range list.Items {
-				if item.Name == cc.Name && item.Namespace != cc.Namespace {
-					msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
-					break
-				}
-			}
-		}
-	}
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, cc.Namespace, cc.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}

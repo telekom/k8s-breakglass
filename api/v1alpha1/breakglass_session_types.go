@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
@@ -237,34 +236,10 @@ func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj runtime.Obj
 		}
 	}
 
+	nameErrs := ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, bs.Namespace, bs.Name, field.NewPath("metadata").Child("name"))
+	allErrs = append(allErrs, nameErrs...)
 	if len(allErrs) == 0 {
-		// global name uniqueness: prefer cache-backed listing
-		if webhookCache != nil {
-			var list BreakglassSessionList
-			if err := webhookCache.List(context.Background(), &list); err == nil {
-				for _, item := range list.Items {
-					if item.Name == bs.Name && item.Namespace != bs.Namespace {
-						msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-						allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
-						break
-					}
-				}
-			}
-		} else if webhookClient != nil {
-			var list BreakglassSessionList
-			if err := webhookClient.List(context.Background(), &list, &client.ListOptions{}); err == nil {
-				for _, item := range list.Items {
-					if item.Name == bs.Name && item.Namespace != bs.Namespace {
-						msg := fmt.Sprintf("name must be unique cluster-wide; conflicting namespace=%s", item.Namespace)
-						allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), msg))
-						break
-					}
-				}
-			}
-		}
-		if len(allErrs) == 0 {
-			return nil, nil
-		}
+		return nil, nil
 	}
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, bs.Name, allErrs)
 }
@@ -278,18 +253,7 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 			allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), bs.Spec, "spec is immutable"))
 		}
 	}
-	// global name uniqueness check on update as well
-	if webhookClient != nil {
-		var list BreakglassSessionList
-		if err := webhookClient.List(context.Background(), &list, &client.ListOptions{}); err == nil {
-			for _, item := range list.Items {
-				if item.Name == bs.Name && item.Namespace != bs.Namespace {
-					allErrs = append(allErrs, field.Duplicate(field.NewPath("metadata").Child("name"), "name must be unique cluster-wide"))
-					break
-				}
-			}
-		}
-	}
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, bs.Namespace, bs.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
