@@ -54,7 +54,7 @@ var (
 		Help: "Total number of errors during session SAR checks",
 	}, []string{"cluster", "session", "group"})
 	WebhookSessionSARSSkipped = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "breakglass_webhook_session_sars_skipped_total",
+		Name: "breakglass_webhook_session_sar_skipped_total",
 		Help: "Total number of times session SAR checks were skipped due to cluster config errors",
 	}, []string{"cluster"})
 
