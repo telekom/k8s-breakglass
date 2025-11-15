@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
 
@@ -25,7 +26,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/leaderelection"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
 
@@ -104,17 +104,6 @@ func setupLogger(debug bool) *zap.Logger {
 		panic(err)
 	}
 	return logger
-}
-
-// simpleRecorderProvider is a minimal implementation of the recorder.Provider interface
-// needed for leader election resource lock creation.
-type simpleRecorderProvider struct {
-	recorder record.EventRecorder
-}
-
-// GetEventRecorderFor returns the event recorder instance.
-func (s *simpleRecorderProvider) GetEventRecorderFor(name string) record.EventRecorder {
-	return s.recorder
 }
 
 func main() {
@@ -496,29 +485,8 @@ func main() {
 	// This enables safe horizontal scaling: only the leader runs cleanup loops
 	leaderElectedCh := make(chan struct{})
 
-	// Create leader election resourcelock using controller-runtime's leaderelection package
-	// This replaces the builtin flag-based approach with proper k8s native leader election
-	restCfgForLock := ctrl.GetConfigOrDie()
-	eventBroadcaster := record.NewBroadcaster()
-	eventRecorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-controller"})
-
-	// Create a simple recorder provider for leader election
-	recorderProvider := &simpleRecorderProvider{recorder: eventRecorder}
-
-	leaderElectionOptions := leaderelection.Options{
-		LeaderElection:             true,     // Always use leader election for proper coordination
-		LeaderElectionResourceLock: "leases", // Use leases (default, best practice)
-		LeaderElectionID:           leaderElectID,
-		LeaderElectionNamespace:    leaderElectNamespace,
-		RenewDeadline:              10 * time.Second,
-	}
-
+	// Placeholder for resourcelock - will be created after kubeClientset is initialized
 	var resourceLock resourcelock.Interface
-	resourceLock, err = leaderelection.NewResourceLock(restCfgForLock, recorderProvider, leaderElectionOptions)
-	if err != nil {
-		log.Fatalf("Failed to create leader election resource lock: %v", err)
-	}
-	log.Infow("Leader election resource lock created", "id", leaderElectID, "namespace", leaderElectNamespace)
 
 	// Background routines (cleanup routine is optional)
 	if enableCleanup {
@@ -551,6 +519,47 @@ func main() {
 		log.Fatalf("failed to create kubernetes clientset for event recorder: %v", err)
 	}
 
+	// Now create the leader election resourcelock using the kubeClientset
+	eventBroadcaster := record.NewBroadcaster()
+	eventRecorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-controller"})
+
+	// Determine the namespace for the lease
+	// If not specified via flag, use the pod's namespace from the environment
+	leaseName := leaderElectID
+	leaseNamespace := leaderElectNamespace
+	if leaseNamespace == "" {
+		leaseNamespace = podNamespace
+	}
+	if leaseNamespace == "" {
+		leaseNamespace = "default"
+	}
+
+	log.Infow("Creating leader election lease", "id", leaseName, "namespace", leaseNamespace)
+
+	// Get hostname for the resourcelock identity
+	hostname, err := os.Hostname()
+	if err != nil {
+		log.Fatalf("Failed to get hostname for leader election: %v", err)
+	}
+
+	// Create the resourcelock directly using resourcelock.New
+	// This will automatically create the lease if it doesn't exist
+	resourceLock, err = resourcelock.New(
+		"leases",
+		leaseNamespace,
+		leaseName,
+		kubeClientset.CoreV1(),
+		kubeClientset.CoordinationV1(),
+		resourcelock.ResourceLockConfig{
+			Identity:      hostname,
+			EventRecorder: eventRecorder,
+		},
+	)
+	if err != nil {
+		log.Fatalf("Failed to create leader election resource lock: %v", err)
+	}
+	log.Infow("Leader election resource lock created", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
+
 	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: podNamespace, Logger: log}
 
 	// Determine interval from CLI flag first, then config (fallback to 10m)
@@ -574,64 +583,55 @@ func main() {
 	// This coordinates background loops (cleanup, escalation updater, cluster config checker)
 	// to run only on the leader replica using the resourcelock
 	go func() {
-		leCtx, leCancel := context.WithCancel(managerCtx)
-		defer leCancel()
-
-		for {
-			select {
-			case <-managerCtx.Done():
-				log.Infow("Leader election context cancelled, exiting leader election loop")
-				return
-			default:
-			}
-
-			record, _, err := resourceLock.Get(leCtx)
-			if err != nil {
-				log.Warnw("Failed to get leader election record", "error", err)
-				time.Sleep(time.Second)
-				continue
-			}
-
-			hostname, err := os.Hostname()
-			if err != nil {
-				log.Warnw("Failed to get hostname for leader election", "error", err)
-				time.Sleep(time.Second)
-				continue
-			}
-
-			// Check if we are the leader by examining the resourcelock holder identity
-			if record != nil && strings.Contains(record.HolderIdentity, hostname) {
-				// We are the leader - signal background loops
+		// Create callbacks for leader election
+		leaderCallbacks := leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(ctx context.Context) {
+				log.Infow("This replica acquired leadership, signaling background loops")
+				// Signal background loops that we're the leader
 				select {
 				case <-leaderElectedCh:
 					// Already closed, we've signaled leadership
 				default:
-					log.Infow("This replica acquired leadership, signaling background loops")
 					close(leaderElectedCh)
 				}
-				// Keep checking if we still hold leadership
-				ticker := time.NewTicker(5 * time.Second)
-				defer ticker.Stop()
-
-				for {
-					select {
-					case <-managerCtx.Done():
-						return
-					case <-ticker.C:
-						record, _, err := resourceLock.Get(leCtx)
-						if err != nil || record == nil || !strings.Contains(record.HolderIdentity, hostname) {
-							log.Infow("Lost leadership, exiting leader")
-							// Recreate the channel for the next leader
-							leaderElectedCh = make(chan struct{})
-							return
-						}
-					}
+			},
+			OnStoppedLeading: func() {
+				log.Infow("Lost leadership")
+				// Recreate the channel for the next leader to use
+				leaderElectedCh = make(chan struct{})
+			},
+			OnNewLeader: func(identity string) {
+				if identity == hostname {
+					log.Infow("I became the leader", "identity", identity)
+				} else {
+					log.Infow("New leader elected", "identity", identity)
 				}
-			}
-
-			// We are not the leader, wait before trying again
-			time.Sleep(time.Second)
+			},
 		}
+
+		// Create the LeaderElector which handles the full lifecycle of leader election:
+		// - Acquires the lock when becoming leader (creates/updates the lease)
+		// - Renews the lock at the specified interval to maintain leadership
+		// - Releases the lock when context is cancelled
+		// - Detects when leadership is lost and calls OnStoppedLeading
+		elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+			Lock:          resourceLock,
+			LeaseDuration: 15 * time.Second, // Time the lease is held by leader
+			RenewDeadline: 10 * time.Second, // Deadline for renewing the lease before losing it
+			RetryPeriod:   2 * time.Second,  // Duration to wait between leader election tries
+			Callbacks:     leaderCallbacks,
+			WatchDog:      nil,
+			Name:          "breakglass-controller",
+		})
+		if err != nil {
+			log.Fatalf("Failed to create LeaderElector: %v", err)
+		}
+
+		log.Infow("Starting leader election", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
+
+		// Run the leader election - this will block until context is cancelled
+		// It continuously tries to acquire the lease and renews it if successful
+		elector.Run(managerCtx)
 	}()
 
 	// Always start the reconciler manager (field indices and reconcilers always run)
@@ -951,16 +951,7 @@ func setupWebhooks(
 		// Start webhook server (blocks) but we run it in a goroutine so it doesn't prevent the API server
 		log.Infow("Starting webhook manager", "bindAddress", webhookBindAddr)
 
-		// Monitor cache readiness in background
-		go func() {
-			time.Sleep(500 * time.Millisecond) // Give manager a moment to start initializing
-			if mgr.GetCache().WaitForCacheSync(ctx) {
-				log.Infow("Webhook manager cache synced successfully")
-			} else {
-				log.Warnw("Webhook manager cache sync context cancelled or failed")
-			}
-		}()
-
+		// Start the manager in a blocking call that will also handle cache synchronization
 		if err := mgr.Start(ctx); err != nil {
 			log.Errorw("webhook server failed to start or exited with error", "error", err, "errorType", fmt.Sprintf("%T", err))
 		} else {
