@@ -32,6 +32,9 @@ spec:
             - --pod-namespace=$(POD_NAMESPACE)
             - --metrics-bind-address=:8080
             - --health-probe-bind-address=:8082
+            - --leader-elect-id=breakglass.telekom.io
+            - --cluster-config-check-interval=10m
+            - --escalation-status-update-interval=10m
           env:
             - name: POD_NAMESPACE
               valueFrom:

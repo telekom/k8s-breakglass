@@ -12,7 +12,7 @@ metadata:
 spec:
   issuerRef:
     kind: Issuer
-    name: webhook-selfsigned-issuer
+    name: breakglass-webhook-selfsigned-issuer
   secretName: webhook-server-cert
   duration: 2160h # 90d
   renewBefore: 360h # 15d

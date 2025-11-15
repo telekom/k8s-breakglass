@@ -123,6 +123,7 @@ func main() {
 
 		// Manager flags
 		leaderElect    bool
+		leaderElectID  string
 		enableHTTP2    bool
 		enableWebhooks bool
 		podNamespace   string
@@ -131,6 +132,10 @@ func main() {
 		configPath          string
 		breakglassNamespace string
 		disableEmail        bool
+
+		// Interval flags
+		clusterConfigCheckInterval string
+		escalationStatusUpdateInt  string
 	)
 
 	// Define command-line flags with environment variable fallbacks.
@@ -161,19 +166,27 @@ func main() {
 		"The name of the metrics server key file")
 
 	// Health probe configuration
-	flag.StringVar(&probeAddr, "health-probe-bind-address", getEnvString("PROBE_BIND_ADDRESS", ":8081"),
+	flag.StringVar(&probeAddr, "health-probe-bind-address", getEnvString("PROBE_BIND_ADDRESS", ":8082"),
 		"The address the probe endpoint binds to")
 
 	// Manager configuration
 	flag.BoolVar(&leaderElect, "leader-elect", getEnvBool("LEADER_ELECT", false),
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager")
+	flag.StringVar(&leaderElectID, "leader-elect-id", getEnvString("LEADER_ELECT_ID", "breakglass.telekom.io"),
+		"The ID used for leader election; ensures multiple instances coordinate properly")
 	flag.BoolVar(&enableHTTP2, "enable-http2", getEnvBool("ENABLE_HTTP2", false),
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", getEnvBool("ENABLE_WEBHOOKS", true),
 		"Enable webhook manager for BreakglassSession, BreakglassEscalation, ClusterConfig and IdentityProvider")
 	flag.StringVar(&podNamespace, "pod-namespace", getEnvString("POD_NAMESPACE", "default"),
 		"The namespace where the pod is running (used for event recording)")
+
+	// Interval configuration flags
+	flag.StringVar(&clusterConfigCheckInterval, "cluster-config-check-interval", getEnvString("CLUSTER_CONFIG_CHECK_INTERVAL", "10m"),
+		"Interval for checking cluster configuration validity (e.g., '10m', '5m')")
+	flag.StringVar(&escalationStatusUpdateInt, "escalation-status-update-interval", getEnvString("ESCALATION_STATUS_UPDATE_INTERVAL", "10m"),
+		"Interval for updating escalation status from identity provider (e.g., '10m', '5m')")
 
 	// Configuration flags
 	flag.StringVar(&configPath, "config-path", getEnvString("BREAKGLASS_CONFIG_PATH", "./config.yaml"),
@@ -314,7 +327,18 @@ func main() {
 	// Escalation approver group expansion updater (Keycloak read-only sync)
 	managerCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go breakglass.EscalationStatusUpdater{Log: log, K8sClient: escalationManager.Client, Resolver: escalationManager.Resolver, Interval: 10 * time.Minute}.Start(managerCtx)
+
+	// Determine escalation status update interval from CLI flag (fallback to 10m)
+	escalationInterval := 10 * time.Minute
+	if escalationStatusUpdateInt != "" {
+		if d, err := time.ParseDuration(escalationStatusUpdateInt); err == nil {
+			escalationInterval = d
+		} else {
+			log.Warnw("Invalid escalation-status-update-interval; using default 10m", "value", escalationStatusUpdateInt, "error", err)
+		}
+	}
+
+	go breakglass.EscalationStatusUpdater{Log: log, K8sClient: escalationManager.Client, Resolver: escalationManager.Resolver, Interval: escalationInterval}.Start(managerCtx)
 
 	// Event recorder for emitting Kubernetes events (persisted to API server)
 	restCfg := ctrl.GetConfigOrDie()
@@ -325,13 +349,17 @@ func main() {
 
 	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: podNamespace, Logger: log}
 
-	// Determine interval from config (fallback to 10m)
+	// Determine interval from CLI flag first, then config (fallback to 10m)
 	interval := 10 * time.Minute
-	if cfg.Kubernetes.ClusterConfigCheckInterval != "" {
-		if d, err := time.ParseDuration(cfg.Kubernetes.ClusterConfigCheckInterval); err == nil {
+	intervalStr := clusterConfigCheckInterval
+	if intervalStr == "" && cfg.Kubernetes.ClusterConfigCheckInterval != "" {
+		intervalStr = cfg.Kubernetes.ClusterConfigCheckInterval
+	}
+	if intervalStr != "" {
+		if d, err := time.ParseDuration(intervalStr); err == nil {
 			interval = d
 		} else {
-			log.Warnw("Invalid clusterConfigCheckInterval in config; using default 10m", "value", cfg.Kubernetes.ClusterConfigCheckInterval, "error", err)
+			log.Warnw("Invalid cluster-config-check-interval; using default 10m", "value", intervalStr, "error", err)
 		}
 	}
 
@@ -341,7 +369,7 @@ func main() {
 	// Always start the reconciler manager (field indices and reconcilers always run)
 	setupReconcilerManager(managerCtx, log, scheme, kubeClient, idpLoader, server,
 		metricsAddr, metricsSecure, metricsCertPath, metricsCertName, metricsCertKey,
-		leaderElect, enableHTTP2)
+		probeAddr, leaderElect, leaderElectID, enableHTTP2, clusterConfigCheckInterval, escalationStatusUpdateInt)
 
 	// Optionally setup webhooks if enabled (webhooks are optional, reconcilers are not)
 	if enableWebhooks {
@@ -397,8 +425,12 @@ func setupReconcilerManager(
 	metricsCertPath string,
 	metricsCertName string,
 	metricsCertKey string,
+	probeAddr string,
 	leaderElect bool,
+	leaderElectID string,
 	enableHTTP2 bool,
+	clusterConfigCheckInterval string,
+	escalationStatusUpdateInterval string,
 ) {
 	go func() {
 		log.Debugw("Starting reconciler manager with unified scheme")
@@ -430,11 +462,12 @@ func setupReconcilerManager(
 
 		// Create manager without webhook server (webhooks are optional)
 		mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-			Scheme:           scheme,
-			Metrics:          metricsServerOptions,
-			WebhookServer:    nil, // Webhooks are handled separately if enabled
-			LeaderElection:   leaderElect,
-			LeaderElectionID: "breakglass.telekom.io",
+			Scheme:                 scheme,
+			Metrics:                metricsServerOptions,
+			HealthProbeBindAddress: probeAddr,
+			WebhookServer:          nil, // Webhooks are handled separately if enabled
+			LeaderElection:         leaderElect,
+			LeaderElectionID:       leaderElectID,
 		})
 		if merr != nil {
 			log.Errorw("Failed to start controller-runtime manager; reconcilers will not run", "error", merr)
