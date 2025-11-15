@@ -30,7 +30,7 @@ spec:
           args:
             - --config-path=/config/config.yaml
             - --pod-namespace=$(POD_NAMESPACE)
-            - --metrics-bind-address=:8080
+            - --metrics-bind-address=:8081
             - --health-probe-bind-address=:8082
             - --leader-elect-id=breakglass.telekom.io
             - --cluster-config-check-interval=10m
@@ -51,10 +51,10 @@ spec:
                   fieldPath: metadata.namespace
           ports:
             - name: metrics
-              containerPort: 8080
+              containerPort: 8081
               protocol: TCP
             - name: http
-              containerPort: 8081
+              containerPort: 8080
               protocol: TCP
             - name: webhook-metrics
               containerPort: 8083

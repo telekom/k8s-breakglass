@@ -8,7 +8,7 @@ metadata:
 spec:
   ports:
   - name: http
-    port: 8081
+    port: 8080
     protocol: TCP
   selector:
     app: breakglass

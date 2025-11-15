@@ -3,7 +3,7 @@ kind: Config
 clusters:
   - name: breakglass
     cluster:
-      server: http://172.19.0.1:8081/api/breakglass/webhook/authorize/kind
+      server: http://172.19.0.1:8080/api/breakglass/webhook/authorize/kind
       insecure-skip-tls-verify: true
       # server: https://localhost:30771/authorize
 

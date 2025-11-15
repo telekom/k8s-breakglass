@@ -27,7 +27,7 @@ WEBHOOK_SERVICE_PORT=${WEBHOOK_SERVICE_PORT:-8081} # in-cluster port webhook/con
 # Forward Keycloak HTTPS (container uses 8443) by default so local https access matches container port
 KEYCLOAK_SVC_PORT=${KEYCLOAK_SVC_PORT:-8443}     # keycloak service internal port (prefer HTTPS)
 KEYCLOAK_FORWARD_PORT=${KEYCLOAK_FORWARD_PORT:-8443} # local port forwarded to Keycloak svc:8443
-CONTROLLER_FORWARD_PORT=${CONTROLLER_FORWARD_PORT:-28081} # local port forwarded to controller svc:8081
+CONTROLLER_FORWARD_PORT=${CONTROLLER_FORWARD_PORT:-28081} # local port forwarded to controller svc:8080
 MAILHOG_UI_PORT=${MAILHOG_UI_PORT:-8025}
 
 # --- Kind node image ---
@@ -490,7 +490,7 @@ metadata:
 data:
   config.yaml: |
     server:
-      listenAddress: 0.0.0.0:8081
+      listenAddress: 0.0.0.0:8080
     authorizationServer:
       url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
       jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
@@ -539,7 +539,7 @@ metadata:
 data:
   config.yaml: |
     server:
-      listenAddress: 0.0.0.0:8081
+      listenAddress: 0.0.0.0:8080
     authorizationServer:
       url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
       jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
@@ -880,7 +880,7 @@ log 'Expose breakglass service NodePort for local tests'
 BG_SVC_NS=$($KUBECTL get svc --all-namespaces -l app=breakglass -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || true)
 BG_SVC_NAME=$($KUBECTL get svc --all-namespaces -l app=breakglass -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 if [ -n "$BG_SVC_NAME" ] && [ -n "$BG_SVC_NS" ]; then
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL patch svc "$BG_SVC_NAME" -n "$BG_SVC_NS" -p "{\"spec\":{\"type\":\"NodePort\",\"ports\":[{\"port\":8081,\"targetPort\":8081,\"nodePort\":${NODEPORT},\"protocol\":\"TCP\",\"name\":\"http\"}]}}" >/dev/null 2>&1 || true
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL patch svc "$BG_SVC_NAME" -n "$BG_SVC_NS" -p "{\"spec\":{\"type\":\"NodePort\",\"ports\":[{\"port\":8080,\"targetPort\":8080,\"nodePort\":${NODEPORT},\"protocol\":\"TCP\",\"name\":\"http\"}]}}" >/dev/null 2>&1 || true
 else
   log 'Warning: breakglass service not found; skipping NodePort patch'
 fi

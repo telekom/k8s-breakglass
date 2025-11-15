@@ -115,7 +115,7 @@ func main() {
 	//      --enable-frontend=false \
 	//      --enable-api=false \
 	//      --enable-cleanup=false \
-	//      --webhooks-metrics-bind-address=0.0.0.0:8081
+	//      --webhooks-metrics-bind-address=0.0.0.0:8083
 	//
 	// 3. API-ONLY INSTANCE (frontend, REST API, SAR webhook):
 	//    Runs API endpoints (Session/Escalation), web UI, and SAR authorization webhook.
@@ -160,7 +160,7 @@ func main() {
 	//   ENABLE_CLEANUP=true           # Background cleanup
 	//   ENABLE_WEBHOOKS=true          # Validating webhooks (CRD validation)
 	//   ENABLE_VALIDATING_WEBHOOKS=true  # Which validating webhooks to register
-	//   WEBHOOKS_METRICS_BIND_ADDRESS=0.0.0.0:8081  # Separate metrics for webhooks
+	//   WEBHOOKS_METRICS_BIND_ADDRESS=0.0.0.0:8083  # Separate metrics for webhooks
 	//
 	var (
 		// Application flags
@@ -227,9 +227,9 @@ func main() {
 		"The name of the webhook key file")
 
 	// Metrics server configuration
-	flag.StringVar(&metricsAddr, "metrics-bind-address", getEnvString("METRICS_BIND_ADDRESS", "0.0.0.0:8080"),
+	flag.StringVar(&metricsAddr, "metrics-bind-address", getEnvString("METRICS_BIND_ADDRESS", "0.0.0.0:8081"),
 		"The address the metrics endpoint binds to. "+
-			"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service")
+			"Use :8443 for HTTPS or :8081 for HTTP, or leave as 0 to disable the metrics service")
 	flag.BoolVar(&metricsSecure, "metrics-secure", getEnvBool("METRICS_SECURE", false),
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead")
 	flag.StringVar(&metricsCertPath, "metrics-cert-path", getEnvString("METRICS_CERT_PATH", ""),
@@ -243,7 +243,7 @@ func main() {
 	flag.StringVar(&webhooksMetricsAddr, "webhooks-metrics-bind-address", getEnvString("WEBHOOKS_METRICS_BIND_ADDRESS", ""),
 		"The address the webhook metrics endpoint binds to (separate from reconciler metrics). "+
 			"If empty, webhook metrics will use the reconciler metrics address. "+
-			"Use :8443 for HTTPS or :8081 for HTTP")
+			"Use :8443 for HTTPS or :8083 for HTTP")
 	flag.BoolVar(&webhooksMetricsSecure, "webhooks-metrics-secure", getEnvBool("WEBHOOKS_METRICS_SECURE", false),
 		"If set, the webhook metrics endpoint is served securely via HTTPS")
 	flag.StringVar(&webhooksMetricsCertPath, "webhooks-metrics-cert-path", getEnvString("WEBHOOKS_METRICS_CERT_PATH", ""),
@@ -746,8 +746,8 @@ func setupReconcilerManager(
 // Webhooks are optional; they can be disabled for deployments that don't use CRD validation.
 //
 // Component flags allow splitting the controller into multiple instances:
-// - enableValidatingWebhooks: enables validating webhooks for breakglass CRDs (BreakglassSession, 
-//   BreakglassEscalation, ClusterConfig, IdentityProvider)
+//   - enableValidatingWebhooks: enables validating webhooks for breakglass CRDs (BreakglassSession,
+//     BreakglassEscalation, ClusterConfig, IdentityProvider)
 //
 // NOTE: Subject Access Review (SAR) webhooks run on the API server (Gin), not here, and cannot
 // be independently disabled. They run whenever enable-api is true.
@@ -790,7 +790,7 @@ func setupWebhooks(
 		if webhooksMetricsAddr != "" {
 			log.Infow("Configuring separate metrics server for webhooks",
 				"address", webhooksMetricsAddr, "secure", webhooksMetricsSecure)
-			
+
 			tlsOpts := []func(*tls.Config){}
 			if !enableHTTP2 {
 				tlsOpts = append(tlsOpts, disableHTTP2)

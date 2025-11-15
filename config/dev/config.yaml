@@ -1,5 +1,5 @@
 server:
-  listenAddress: 0.0.0.0:8081
+  listenAddress: 0.0.0.0:8080
   # TLS disabled for dev; manager will serve HTTP on port 8081
 authorizationServer:
   # Use the kustomize rendered Keycloak service name and dev namespace (kustomize adds namePrefix 'breakglass-dev-')
@@ -12,7 +12,7 @@ frontend:
   # Use the in-cluster Keycloak host; browser will access via /api/oidc/authority proxy
   oidcAuthority: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e
   oidcClientID: breakglass-ui
-  baseURL: http://localhost:8081
+  baseURL: http://localhost:8080
 mail:
   # Rendered MailHog service in dev overlay
   host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
