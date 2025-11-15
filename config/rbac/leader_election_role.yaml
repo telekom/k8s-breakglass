@@ -1,0 +1,30 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: leader-election-role
+  labels:
+    app.kubernetes.io/name: breakglass-controller
+    app.kubernetes.io/component: rbac
+rules:
+# Leader election - coordination.k8s.io
+# Required for: leaderelection.NewResourceLock with "leases" lock type
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+# Events - for recording leadership events
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
