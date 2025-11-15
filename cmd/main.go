@@ -20,6 +20,7 @@ import (
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
 
@@ -601,6 +602,16 @@ func setupReconcilerManager(
 		}
 		log.Infow("Controller-runtime manager created successfully")
 
+		// Register health check handlers for liveness and readiness probes
+		// These endpoints are exposed at the health probe bind address (default :8082)
+		if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+			log.Warnw("Failed to add healthz check", "error", err)
+		}
+		if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
+			log.Warnw("Failed to add readyz check", "error", err)
+		}
+		log.Infow("Health check handlers registered", "endpoint", probeAddr)
+
 		// Register field indices to support efficient cache-based lookups by controller-runtime clients.
 		// Index fields: spec.cluster, spec.user, spec.grantedGroup
 
@@ -830,6 +841,15 @@ func setupWebhooks(
 			return
 		}
 		log.Infow("Webhook server created successfully")
+
+		// Register health check handlers for the webhook manager
+		if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+			log.Warnw("Failed to add webhook healthz check", "error", err)
+		}
+		if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
+			log.Warnw("Failed to add webhook readyz check", "error", err)
+		}
+		log.Infow("Webhook health check handlers registered")
 
 		// Register validating webhooks (conditionally based on enableValidatingWebhooks)
 		if enableValidatingWebhooks {
