@@ -35,6 +35,15 @@ spec:
             - --leader-elect-id=breakglass.telekom.io
             - --cluster-config-check-interval=10m
             - --escalation-status-update-interval=10m
+            # Component enable flags for multi-instance deployments (all default to true)
+            - --enable-frontend=true
+            - --enable-api=true
+            - --enable-cleanup=true
+            - --enable-webhooks=true
+            - --enable-validating-webhooks=true
+            # Webhook metrics server (optional separate endpoint)
+            - --webhooks-metrics-bind-address=:8083
+            - --webhooks-metrics-secure=false
           env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -46,6 +55,9 @@ spec:
               protocol: TCP
             - name: http
               containerPort: 8081
+              protocol: TCP
+            - name: webhook-metrics
+              containerPort: 8083
               protocol: TCP
             - name: healthz
               containerPort: 8082

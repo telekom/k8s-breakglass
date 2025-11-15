@@ -101,6 +101,67 @@ func setupLogger(debug bool) *zap.Logger {
 }
 
 func main() {
+	// DEPLOYMENT PATTERNS
+	// ===================
+	// The breakglass controller supports multiple deployment patterns via component enable flags:
+	//
+	// 1. MONOLITHIC (default):
+	//    All components run in a single instance. Use defaults or:
+	//    breakglass-controller
+	//
+	// 2. WEBHOOK-ONLY INSTANCE (validating webhooks only):
+	//    Runs only Kubernetes validating webhooks (CRD validation) with separate metrics.
+	//    breakglass-controller \
+	//      --enable-frontend=false \
+	//      --enable-api=false \
+	//      --enable-cleanup=false \
+	//      --webhooks-metrics-bind-address=0.0.0.0:8081
+	//
+	// 3. API-ONLY INSTANCE (frontend, REST API, SAR webhook):
+	//    Runs API endpoints (Session/Escalation), web UI, and SAR authorization webhook.
+	//    breakglass-controller \
+	//      --enable-webhooks=false \
+	//      --enable-cleanup=false
+	//
+	// 4. FRONTEND-ONLY INSTANCE:
+	//    Runs only the frontend web UI without webhooks, API, or SAR.
+	//    breakglass-controller \
+	//      --enable-api=false \
+	//      --enable-webhooks=false \
+	//      --enable-cleanup=false
+	//
+	// 5. CLEANUP-ONLY INSTANCE:
+	//    Runs only the background cleanup routine for expired sessions.
+	//    breakglass-controller \
+	//      --enable-frontend=false \
+	//      --enable-api=false \
+	//      --enable-webhooks=false
+	//
+	// COMPONENT ARCHITECTURE
+	// ======================
+	// Frontend/API/SAR:      Gin HTTP server (port 8080) - runs if enable-frontend or enable-api
+	// Validating Webhooks:   controller-runtime webhook server (port 9443) - runs if enable-webhooks
+	// Cleanup Routine:       background goroutine - runs if enable-cleanup
+	//
+	// METRICS SEPARATION
+	// ==================
+	// The --webhooks-metrics-bind-address flag allows running a separate metrics server for webhooks.
+	// This is useful for multi-instance deployments where you want to scrape metrics separately:
+	//
+	//   API/Reconciler metrics:  0.0.0.0:8080  (main controller metrics)
+	//   Webhook metrics:         0.0.0.0:8081  (webhook-specific metrics)
+	//   Health probe:            0.0.0.0:8082  (health checks)
+	//
+	// ENVIRONMENT VARIABLES
+	// =====================
+	// All flags can be set via environment variables with UPPERCASE_SNAKE_CASE names:
+	//   ENABLE_FRONTEND=true          # Web UI
+	//   ENABLE_API=true               # REST API and SAR webhook
+	//   ENABLE_CLEANUP=true           # Background cleanup
+	//   ENABLE_WEBHOOKS=true          # Validating webhooks (CRD validation)
+	//   ENABLE_VALIDATING_WEBHOOKS=true  # Which validating webhooks to register
+	//   WEBHOOKS_METRICS_BIND_ADDRESS=0.0.0.0:8081  # Separate metrics for webhooks
+	//
 	var (
 		// Application flags
 		debug bool
@@ -118,6 +179,13 @@ func main() {
 		metricsCertName string
 		metricsCertKey  string
 
+		// Webhook metrics server flags
+		webhooksMetricsAddr     string
+		webhooksMetricsSecure   bool
+		webhooksMetricsCertPath string
+		webhooksMetricsCertName string
+		webhooksMetricsCertKey  string
+
 		// Health probe flags
 		probeAddr string
 
@@ -127,6 +195,12 @@ func main() {
 		enableHTTP2    bool
 		enableWebhooks bool
 		podNamespace   string
+
+		// Component enable flags (for splitting controller into multiple instances)
+		enableFrontend           bool
+		enableAPI                bool
+		enableCleanup            bool
+		enableValidatingWebhooks bool
 
 		// Configuration flags
 		configPath          string
@@ -165,6 +239,20 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", getEnvString("METRICS_CERT_KEY", "tls.key"),
 		"The name of the metrics server key file")
 
+	// Webhook metrics server configuration (separate from reconciler metrics)
+	flag.StringVar(&webhooksMetricsAddr, "webhooks-metrics-bind-address", getEnvString("WEBHOOKS_METRICS_BIND_ADDRESS", ""),
+		"The address the webhook metrics endpoint binds to (separate from reconciler metrics). "+
+			"If empty, webhook metrics will use the reconciler metrics address. "+
+			"Use :8443 for HTTPS or :8081 for HTTP")
+	flag.BoolVar(&webhooksMetricsSecure, "webhooks-metrics-secure", getEnvBool("WEBHOOKS_METRICS_SECURE", false),
+		"If set, the webhook metrics endpoint is served securely via HTTPS")
+	flag.StringVar(&webhooksMetricsCertPath, "webhooks-metrics-cert-path", getEnvString("WEBHOOKS_METRICS_CERT_PATH", ""),
+		"The directory that contains the webhook metrics server certificate")
+	flag.StringVar(&webhooksMetricsCertName, "webhooks-metrics-cert-name", getEnvString("WEBHOOKS_METRICS_CERT_NAME", "tls.crt"),
+		"The name of the webhook metrics server certificate file")
+	flag.StringVar(&webhooksMetricsCertKey, "webhooks-metrics-cert-key", getEnvString("WEBHOOKS_METRICS_CERT_KEY", "tls.key"),
+		"The name of the webhook metrics server key file")
+
 	// Health probe configuration
 	flag.StringVar(&probeAddr, "health-probe-bind-address", getEnvString("PROBE_BIND_ADDRESS", ":8082"),
 		"The address the probe endpoint binds to")
@@ -181,6 +269,17 @@ func main() {
 		"Enable webhook manager for BreakglassSession, BreakglassEscalation, ClusterConfig and IdentityProvider")
 	flag.StringVar(&podNamespace, "pod-namespace", getEnvString("POD_NAMESPACE", "default"),
 		"The namespace where the pod is running (used for event recording)")
+
+	// Component enable flags for multi-instance deployments
+	// By default, all components are enabled for backwards compatibility
+	flag.BoolVar(&enableFrontend, "enable-frontend", getEnvBool("ENABLE_FRONTEND", true),
+		"Enable the frontend API endpoints. Use false when deploying a webhook-only instance")
+	flag.BoolVar(&enableAPI, "enable-api", getEnvBool("ENABLE_API", true),
+		"Enable the API controller for BreakglassSession and BreakglassEscalation endpoints. Use false when deploying a webhook-only instance")
+	flag.BoolVar(&enableCleanup, "enable-cleanup", getEnvBool("ENABLE_CLEANUP", true),
+		"Enable the background cleanup routine for expired sessions. Use false when deploying a webhook-only instance")
+	flag.BoolVar(&enableValidatingWebhooks, "enable-validating-webhooks", getEnvBool("ENABLE_VALIDATING_WEBHOOKS", true),
+		"Enable validating webhooks for breakglass CRDs. Disable when running a frontend/API-only instance")
 
 	// Interval configuration flags
 	flag.StringVar(&clusterConfigCheckInterval, "cluster-config-check-interval", getEnvString("CLUSTER_CONFIG_CHECK_INTERVAL", "10m"),
@@ -311,18 +410,41 @@ func main() {
 	// Setup session controller with all dependencies
 	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), ccProvider, escalationManager.Client, disableEmail).WithQueue(mailQueue)
 
-	// Register API controllers
-	err = server.RegisterAll([]api.APIController{
-		sessionController,
-		breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware()),
-		webhook.NewWebhookController(log, cfg, &sessionManager, &escalationManager, ccProvider, denyEval),
-	})
-	if err != nil {
-		log.Fatalf("Error registering breakglass controllers: %v", err)
+	// Register API controllers based on component flags
+	// Both frontend and API share the same HTTP server, so we check both flags
+	shouldEnableHTTPServer := enableFrontend || enableAPI
+	apiControllers := []api.APIController{}
+
+	if enableFrontend {
+		log.Infow("Frontend UI enabled via --enable-frontend=true")
 	}
 
-	// Background routines
-	go breakglass.CleanupRoutine{Log: log, Manager: &sessionManager}.CleanupRoutine()
+	if enableAPI {
+		apiControllers = append(apiControllers, sessionController)
+		apiControllers = append(apiControllers, breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware()))
+		log.Infow("API controllers enabled", "components", "BreakglassSession, BreakglassEscalation")
+	}
+
+	// Webhook controller is always registered but may not be exposed via webhooks
+	webhookCtrl := webhook.NewWebhookController(log, cfg, &sessionManager, &escalationManager, ccProvider, denyEval)
+	apiControllers = append(apiControllers, webhookCtrl)
+
+	if shouldEnableHTTPServer {
+		err = server.RegisterAll(apiControllers)
+		if err != nil {
+			log.Fatalf("Error registering breakglass controllers: %v", err)
+		}
+	} else {
+		log.Infow("HTTP server disabled: both --enable-frontend and --enable-api are false")
+	}
+
+	// Background routines (cleanup routine is optional)
+	if enableCleanup {
+		go breakglass.CleanupRoutine{Log: log, Manager: &sessionManager}.CleanupRoutine()
+		log.Infow("Cleanup routine enabled")
+	} else {
+		log.Infow("Cleanup routine disabled via --enable-cleanup=false")
+	}
 
 	// Escalation approver group expansion updater (Keycloak read-only sync)
 	managerCtx, cancel := context.WithCancel(context.Background())
@@ -374,7 +496,9 @@ func main() {
 	// Optionally setup webhooks if enabled (webhooks are optional, reconcilers are not)
 	if enableWebhooks {
 		setupWebhooks(managerCtx, log, scheme,
-			webhookBindAddr, webhookCertPath, webhookCertName, webhookCertKey)
+			webhookBindAddr, webhookCertPath, webhookCertName, webhookCertKey,
+			webhooksMetricsAddr, webhooksMetricsSecure, webhooksMetricsCertPath, webhooksMetricsCertName, webhooksMetricsCertKey,
+			enableValidatingWebhooks, enableHTTP2)
 		log.Infow("Webhooks enabled via --enable-webhooks flag")
 	} else {
 		log.Infow("Webhooks disabled via --enable-webhooks flag")
@@ -384,10 +508,12 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Start server in a goroutine so we can listen for signals
-	go func() {
-		server.Listen()
-	}()
+	// Start HTTP server (API/Frontend/SAR) if either frontend or API is enabled
+	if shouldEnableHTTPServer {
+		go func() {
+			server.Listen()
+		}()
+	}
 
 	// Wait for signal and perform graceful shutdown
 	<-sigChan
@@ -615,9 +741,16 @@ func setupReconcilerManager(
 	}()
 }
 
-// setupWebhooks starts the webhook server with TLS configuration.
+// setupWebhooks starts the webhook server with TLS configuration and optional separate metrics server.
 // This function is only called if webhooks are enabled via --enable-webhooks flag.
 // Webhooks are optional; they can be disabled for deployments that don't use CRD validation.
+//
+// Component flags allow splitting the controller into multiple instances:
+// - enableValidatingWebhooks: enables validating webhooks for breakglass CRDs (BreakglassSession, 
+//   BreakglassEscalation, ClusterConfig, IdentityProvider)
+//
+// NOTE: Subject Access Review (SAR) webhooks run on the API server (Gin), not here, and cannot
+// be independently disabled. They run whenever enable-api is true.
 func setupWebhooks(
 	ctx context.Context,
 	log *zap.SugaredLogger,
@@ -626,6 +759,13 @@ func setupWebhooks(
 	webhookCertPath string,
 	webhookCertName string,
 	webhookCertKey string,
+	webhooksMetricsAddr string,
+	webhooksMetricsSecure bool,
+	webhooksMetricsCertPath string,
+	webhooksMetricsCertName string,
+	webhooksMetricsCertKey string,
+	enableValidatingWebhooks bool,
+	enableHTTP2 bool,
 ) {
 	go func() {
 		log.Debugw("Starting webhook server")
@@ -644,10 +784,44 @@ func setupWebhooks(
 		}
 		webhookServer := webhookserver.NewServer(webhookServerOptions)
 
+		// Configure separate metrics server for webhooks (if specified)
+		// This allows running webhook-only instances with their own metrics endpoint
+		var metricsServerOptions metricsserver.Options
+		if webhooksMetricsAddr != "" {
+			log.Infow("Configuring separate metrics server for webhooks",
+				"address", webhooksMetricsAddr, "secure", webhooksMetricsSecure)
+			
+			tlsOpts := []func(*tls.Config){}
+			if !enableHTTP2 {
+				tlsOpts = append(tlsOpts, disableHTTP2)
+			}
+
+			metricsServerOptions = metricsserver.Options{
+				BindAddress:   webhooksMetricsAddr,
+				SecureServing: webhooksMetricsSecure,
+				TLSOpts:       tlsOpts,
+			}
+
+			if len(webhooksMetricsCertPath) > 0 {
+				log.Infow("Initializing webhook metrics certificate watcher using provided certificates",
+					"webhooks-metrics-cert-path", webhooksMetricsCertPath, "webhooks-metrics-cert-name", webhooksMetricsCertName,
+					"webhooks-metrics-cert-key", webhooksMetricsCertKey)
+				metricsServerOptions.CertDir = webhooksMetricsCertPath
+				metricsServerOptions.CertName = webhooksMetricsCertName
+				metricsServerOptions.KeyName = webhooksMetricsCertKey
+			}
+		} else {
+			log.Infow("Webhook metrics will use default metrics endpoint; to use separate metrics, set --webhooks-metrics-bind-address")
+			metricsServerOptions = metricsserver.Options{
+				BindAddress: "0",
+			}
+		}
+
 		// Create a manager for webhooks (separate from reconciler manager)
 		mgr, merr := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 			Scheme:           scheme,
 			WebhookServer:    webhookServer,
+			Metrics:          metricsServerOptions,
 			LeaderElection:   false,
 			LeaderElectionID: "",
 		})
@@ -657,34 +831,38 @@ func setupWebhooks(
 		}
 		log.Infow("Webhook server created successfully")
 
-		// Register webhooks
-		log.Debugw("Starting webhook registration for BreakglassSession")
-		if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
-			log.Warnw("Failed to setup BreakglassSession webhook with manager", "error", err)
-			return
-		}
-		log.Infow("Successfully registered BreakglassSession webhook")
+		// Register validating webhooks (conditionally based on enableValidatingWebhooks)
+		if enableValidatingWebhooks {
+			log.Debugw("Starting webhook registration for BreakglassSession")
+			if err := (&v1alpha1.BreakglassSession{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup BreakglassSession webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered BreakglassSession webhook")
 
-		log.Debugw("Starting webhook registration for BreakglassEscalation")
-		if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
-			log.Warnw("Failed to setup BreakglassEscalation webhook with manager", "error", err)
-			return
-		}
-		log.Infow("Successfully registered BreakglassEscalation webhook")
+			log.Debugw("Starting webhook registration for BreakglassEscalation")
+			if err := (&v1alpha1.BreakglassEscalation{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup BreakglassEscalation webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered BreakglassEscalation webhook")
 
-		log.Debugw("Starting webhook registration for ClusterConfig")
-		if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
-			log.Warnw("Failed to setup ClusterConfig webhook with manager", "error", err)
-			return
-		}
-		log.Infow("Successfully registered ClusterConfig webhook")
+			log.Debugw("Starting webhook registration for ClusterConfig")
+			if err := (&v1alpha1.ClusterConfig{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup ClusterConfig webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered ClusterConfig webhook")
 
-		log.Debugw("Starting webhook registration for IdentityProvider")
-		if err := (&v1alpha1.IdentityProvider{}).SetupWebhookWithManager(mgr); err != nil {
-			log.Warnw("Failed to setup IdentityProvider webhook with manager", "error", err)
-			return
+			log.Debugw("Starting webhook registration for IdentityProvider")
+			if err := (&v1alpha1.IdentityProvider{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup IdentityProvider webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered IdentityProvider webhook")
+		} else {
+			log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 		}
-		log.Infow("Successfully registered IdentityProvider webhook")
 
 		// Start webhook server (blocks) but we run it in a goroutine so it doesn't prevent the API server
 		log.Infow("Starting webhook server")
