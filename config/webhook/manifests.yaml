@@ -11,7 +11,7 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-breakglass-v1alpha1-breakglassescalation
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-breakglassescalation
   failurePolicy: Fail
   name: breakglassescalation.validation.breakglass.t-caas.telekom.com
   rules:
@@ -32,7 +32,7 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-breakglass-v1alpha1-breakglasssession
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession
   failurePolicy: Fail
   name: breakglasssession.validation.breakglass.t-caas.telekom.com
   rules:
@@ -53,7 +53,7 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-breakglass-v1alpha1-clusterconfig
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-clusterconfig
   failurePolicy: Fail
   name: clusterconfig.validation.breakglass.t-caas.telekom.com
   rules:
@@ -74,7 +74,7 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-breakglass-v1alpha1-identityprovider
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-identityprovider
   failurePolicy: Fail
   name: identityprovider.validation.breakglass.t-caas.telekom.com
   rules:

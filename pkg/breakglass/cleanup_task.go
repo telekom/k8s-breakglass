@@ -11,13 +11,21 @@ import (
 )
 
 type CleanupRoutine struct {
-	Log     *zap.SugaredLogger
-	Manager *SessionManager
+	Log           *zap.SugaredLogger
+	Manager       *SessionManager
+	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
 }
 
 const CleanupInterval = 5 * time.Minute
 
 func (cr CleanupRoutine) CleanupRoutine() {
+	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
+	if cr.LeaderElected != nil {
+		cr.Log.Info("Cleanup routine waiting for leadership signal before starting...")
+		<-cr.LeaderElected
+		cr.Log.Info("Leadership acquired - starting cleanup routine")
+	}
+
 	for {
 		cr.Log.Info("Running breakglass session cleanup task")
 		// Activate scheduled sessions first (before expiry checks)
