@@ -24,7 +24,6 @@ body:
         - Frontend (Vue/TypeScript)
         - Kubernetes Integration (CRDs/Webhooks)
         - Authentication/OIDC
-        - Deployment/Helm
         - Documentation
         - Other
     validations:
@@ -88,7 +87,7 @@ body:
         - **Go Version**: [e.g., 1.24]
         - **Kubernetes Version**: [e.g., v1.31]
         - **OS/Platform**: [e.g., Ubuntu 22.04, macOS 14]
-        - **Deployment Method**: [Helm, Kustomize, Manual]
+        - **Deployment Method**: [Kustomize, Manual]
       render: markdown
     validations:
       required: true
