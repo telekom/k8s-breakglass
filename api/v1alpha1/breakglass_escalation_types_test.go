@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"context"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -8,7 +9,8 @@ import (
 
 func TestBreakglassEscalation_ValidateCreate_MissingFields(t *testing.T) {
 	be := &BreakglassEscalation{}
-	if err := be.ValidateCreate(); err == nil {
+	_, err := be.ValidateCreate(context.Background(), be)
+	if err == nil {
 		t.Fatalf("expected ValidateCreate to fail when required fields missing")
 	}
 }
@@ -21,7 +23,8 @@ func TestBreakglassEscalation_ValidateCreate_Success(t *testing.T) {
 			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
 		},
 	}
-	if err := be.ValidateCreate(); err != nil {
+	_, err := be.ValidateCreate(context.Background(), be)
+	if err != nil {
 		t.Fatalf("expected ValidateCreate to succeed, got %v", err)
 	}
 }
@@ -37,10 +40,12 @@ func TestBreakglassEscalation_ValidateUpdate_Immutable(t *testing.T) {
 	modified := old.DeepCopy()
 	modified.Spec.EscalatedGroup = "g2"
 	// spec immutability no longer enforced; update should succeed
-	if err := modified.ValidateUpdate(old); err != nil {
+	_, err := modified.ValidateUpdate(context.Background(), old, modified)
+	if err != nil {
 		t.Fatalf("expected ValidateUpdate to succeed when spec changed, got %v", err)
 	}
-	if err := old.ValidateUpdate(old); err != nil {
+	_, err = old.ValidateUpdate(context.Background(), old, old)
+	if err != nil {
 		t.Fatalf("expected ValidateUpdate to succeed when spec unchanged, got %v", err)
 	}
 }

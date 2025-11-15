@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // ClusterConfigSpec defines metadata and secret reference for a managed tenant cluster.
@@ -100,8 +101,8 @@ type ClusterConfig struct {
 
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-clusterconfig,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=clusterconfigs,verbs=create;update,versions=v1alpha1,name=vclusterconfig.kb.io,admissionReviewVersions={v1,v1beta1}
 
-// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (cc *ClusterConfig) ValidateCreate() error {
+// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
+func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	var allErrs field.ErrorList
 	if cc.Spec.KubeconfigSecretRef.Name == "" || cc.Spec.KubeconfigSecretRef.Namespace == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("kubeconfigSecretRef"), "kubeconfigSecretRef name and namespace are required"))
@@ -131,13 +132,13 @@ func (cc *ClusterConfig) ValidateCreate() error {
 		}
 	}
 	if len(allErrs) == 0 {
-		return nil
+		return nil, nil
 	}
-	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, cc.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, cc.Name, allErrs)
 }
 
-// ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (cc *ClusterConfig) ValidateUpdate(old runtime.Object) error {
+// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
+func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
 	var allErrs field.ErrorList
 	// no immutability enforcement for ClusterConfig
 	// still ensure the name is unique across the cluster
@@ -165,15 +166,15 @@ func (cc *ClusterConfig) ValidateUpdate(old runtime.Object) error {
 		}
 	}
 	if len(allErrs) == 0 {
-		return nil
+		return nil, nil
 	}
-	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, cc.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, cc.Name, allErrs)
 }
 
-// ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (cc *ClusterConfig) ValidateDelete() error {
+// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
+func (cc *ClusterConfig) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	// allow deletes
-	return nil
+	return nil, nil
 }
 
 // SetupWebhookWithManager registers webhooks for ClusterConfig

@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"context"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -8,7 +9,8 @@ import (
 
 func TestClusterConfig_ValidateCreate_MissingSecretRef(t *testing.T) {
 	cc := &ClusterConfig{}
-	if err := cc.ValidateCreate(); err == nil {
+	_, err := cc.ValidateCreate(context.Background(), cc)
+	if err == nil {
 		t.Fatalf("expected ValidateCreate to fail when kubeconfig secret ref missing")
 	}
 }
@@ -20,7 +22,8 @@ func TestClusterConfig_ValidateCreate_Success(t *testing.T) {
 			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
 		},
 	}
-	if err := cc.ValidateCreate(); err != nil {
+	_, err := cc.ValidateCreate(context.Background(), cc)
+	if err != nil {
 		t.Fatalf("expected ValidateCreate to succeed, got %v", err)
 	}
 }
@@ -35,10 +38,12 @@ func TestClusterConfig_ValidateUpdate_Immutable(t *testing.T) {
 	modified := old.DeepCopy()
 	modified.Spec.QPS = func() *int32 { v := int32(10); return &v }()
 	// spec immutability no longer enforced; update should succeed
-	if err := modified.ValidateUpdate(old); err != nil {
+	_, err := modified.ValidateUpdate(context.Background(), old, modified)
+	if err != nil {
 		t.Fatalf("expected ValidateUpdate to succeed when spec changed, got %v", err)
 	}
-	if err := old.ValidateUpdate(old); err != nil {
+	_, err = old.ValidateUpdate(context.Background(), old, old)
+	if err != nil {
 		t.Fatalf("expected ValidateUpdate to succeed when spec unchanged, got %v", err)
 	}
 }

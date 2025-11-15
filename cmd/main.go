@@ -854,6 +854,8 @@ func setupWebhooks(
 			Metrics:          metricsServerOptions,
 			LeaderElection:   false,
 			LeaderElectionID: "",
+			// Webhook manager doesn't need heavy caching, but needs minimal setup
+			//Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{}},
 		})
 		if merr != nil {
 			log.Warnw("Failed to start webhook server; webhooks will not be registered", "error", merr)
@@ -908,8 +910,33 @@ func setupWebhooks(
 			"webhookServer", fmt.Sprintf("%v", mgr.GetWebhookServer()),
 			"host", webhookHost, "port", webhookPort)
 
+		// Get webhook server and print its handler info for debugging
+		ws := mgr.GetWebhookServer()
+		if ws != nil {
+			log.Infow("Webhook server configuration",
+				"host", webhookHost,
+				"port", webhookPort,
+				"certDir", webhookCertPath,
+				"certName", webhookCertName,
+				"keyName", webhookCertKey)
+
+			// Debug: Try to access the webhook server's HTTP client field
+			log.Debugw("Webhook server type", "type", fmt.Sprintf("%T", ws))
+		}
+
 		// Start webhook server (blocks) but we run it in a goroutine so it doesn't prevent the API server
 		log.Infow("Starting webhook manager", "bindAddress", webhookBindAddr, "host", webhookHost, "port", webhookPort)
+
+		// Monitor cache readiness in background
+		go func() {
+			time.Sleep(500 * time.Millisecond) // Give manager a moment to start initializing
+			if mgr.GetCache().WaitForCacheSync(ctx) {
+				log.Infow("Webhook manager cache synced successfully")
+			} else {
+				log.Warnw("Webhook manager cache sync context cancelled or failed")
+			}
+		}()
+
 		if err := mgr.Start(ctx); err != nil {
 			log.Errorw("webhook server failed to start or exited with error", "error", err, "errorType", fmt.Sprintf("%T", err))
 		} else {

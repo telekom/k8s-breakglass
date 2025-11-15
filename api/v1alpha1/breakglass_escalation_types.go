@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
@@ -198,8 +199,8 @@ func (be *BreakglassEscalation) checkNameUniqueness() field.ErrorList {
 	return errs
 }
 
-// ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (be *BreakglassEscalation) ValidateCreate() error {
+// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
+func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	var allErrs field.ErrorList
 	if be.Spec.EscalatedGroup == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("escalatedGroup"), "escalatedGroup is required"))
@@ -209,23 +210,25 @@ func (be *BreakglassEscalation) ValidateCreate() error {
 	allErrs = append(allErrs, be.checkNameUniqueness()...)
 
 	if len(allErrs) == 0 {
-		return nil
+		return nil, nil
 	}
-	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, be.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, be.Name, allErrs)
 }
 
-func (be *BreakglassEscalation) ValidateUpdate(old runtime.Object) error {
+func (be *BreakglassEscalation) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
 	var allErrs field.ErrorList
 	// no immutability enforced
 	allErrs = append(allErrs, be.checkNameUniqueness()...)
 
 	if len(allErrs) == 0 {
-		return nil
+		return nil, nil
 	}
-	return apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, be.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, be.Name, allErrs)
 }
 
-func (be *BreakglassEscalation) ValidateDelete() error { return nil }
+func (be *BreakglassEscalation) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	return nil, nil
+}
 
 func (be *BreakglassEscalation) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	webhookClient = mgr.GetClient()

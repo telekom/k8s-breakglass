@@ -1,6 +1,7 @@
 package breakglass
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -69,7 +70,7 @@ func TestScheduledSessionValidation(t *testing.T) {
 			}
 
 			// Test validation
-			err := session.ValidateCreate()
+			_, err := session.ValidateCreate(context.Background(), session)
 			if (err != nil) != tt.validationError {
 				t.Errorf("%s: validation error mismatch. Expected error: %v, got error: %v", tt.name, tt.validationError, err)
 			}
