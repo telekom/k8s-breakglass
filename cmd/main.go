@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -219,8 +221,8 @@ func main() {
 
 	// Webhook server configuration
 	flag.StringVar(&webhookBindAddr, "webhook-bind-address", getEnvString("WEBHOOK_BIND_ADDRESS", "0.0.0.0:9443"),
-		"The address the webhook server binds to")
-	flag.StringVar(&webhookCertPath, "webhook-cert-path", getEnvString("WEBHOOK_CERT_PATH", ""),
+		"The address the webhook server binds to (host:port)")
+	flag.StringVar(&webhookCertPath, "webhook-cert-path", getEnvString("WEBHOOK_CERT_PATH", "/tmp/k8s-webhook-server/serving-certs"),
 		"The directory that contains the webhook certificate")
 	flag.StringVar(&webhookCertName, "webhook-cert-name", getEnvString("WEBHOOK_CERT_NAME", "tls.crt"),
 		"The name of the webhook certificate file")
@@ -779,11 +781,26 @@ func setupWebhooks(
 	enableHTTP2 bool,
 ) {
 	go func() {
-		log.Debugw("Starting webhook server")
+		log.Debugw("Starting webhook server setup")
+
+		// Parse webhook bind address to extract host and port
+		// webhookBindAddr should be in format "host:port" (e.g., "0.0.0.0:9443")
+		webhookHost := "0.0.0.0"
+		webhookPort := 9443
+		if parts := strings.Split(webhookBindAddr, ":"); len(parts) == 2 {
+			webhookHost = parts[0]
+			if port, err := strconv.Atoi(parts[1]); err == nil {
+				webhookPort = port
+				log.Debugw("Parsed webhook bind address", "bindAddress", webhookBindAddr, "host", webhookHost, "port", webhookPort)
+			} else {
+				log.Warnw("Failed to parse webhook port from bind address; using default", "bindAddress", webhookBindAddr, "defaultPort", 9443, "error", err)
+			}
+		}
 
 		// Webhook server configuration
 		webhookServerOptions := webhookserver.Options{
-			Port: 9443,
+			Host: webhookHost,
+			Port: webhookPort,
 		}
 		if len(webhookCertPath) > 0 {
 			log.Infow("Initializing webhook certificate watcher using provided certificates",
@@ -792,6 +809,8 @@ func setupWebhooks(
 			webhookServerOptions.CertDir = webhookCertPath
 			webhookServerOptions.CertName = webhookCertName
 			webhookServerOptions.KeyName = webhookCertKey
+		} else {
+			log.Infow("No webhook certificate path provided; controller-runtime will auto-generate self-signed certificates")
 		}
 		webhookServer := webhookserver.NewServer(webhookServerOptions)
 
@@ -884,10 +903,17 @@ func setupWebhooks(
 			log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 		}
 
+		// Debug: Check if webhook server is properly configured
+		log.Debugw("Webhook server status before start",
+			"webhookServer", fmt.Sprintf("%v", mgr.GetWebhookServer()),
+			"host", webhookHost, "port", webhookPort)
+
 		// Start webhook server (blocks) but we run it in a goroutine so it doesn't prevent the API server
-		log.Infow("Starting webhook server")
+		log.Infow("Starting webhook manager", "bindAddress", webhookBindAddr, "host", webhookHost, "port", webhookPort)
 		if err := mgr.Start(ctx); err != nil {
-			log.Warnw("webhook server exited", "error", err)
+			log.Errorw("webhook server failed to start or exited with error", "error", err, "errorType", fmt.Sprintf("%T", err))
+		} else {
+			log.Infow("webhook server exited normally (this should not happen during normal operation)")
 		}
 	}()
 }
