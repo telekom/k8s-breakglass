@@ -4,6 +4,32 @@ import { UserManager, WebStorageStateStore, User, type UserManagerSettings, Log 
 import { ref } from "vue";
 import { info as logInfo, error as logError } from "@/services/logger";
 
+/**
+ * Custom fetch wrapper that injects X-OIDC-Authority header for OIDC proxy requests
+ * This allows the backend to route to the correct Keycloak instance when using multi-IDP
+ */
+function createOIDCFetcher(directAuthority?: string) {
+  return async (url: string, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers || {});
+    
+    // For OIDC proxy requests, inject the direct authority header
+    if (url.includes("/api/oidc/authority") && directAuthority) {
+      console.debug("[OIDCFetcher] Injecting X-OIDC-Authority header", {
+        url,
+        directAuthority,
+      });
+      headers.set("X-OIDC-Authority", directAuthority);
+    }
+    
+    const modifiedInit = {
+      ...init,
+      headers,
+    };
+    
+    return fetch(url, modifiedInit);
+  };
+}
+
 // Direct oidc-client logs into our logger
 Log.setLogger({
   debug: (...args: any[]) => logInfo('oidc-client', ...args),
@@ -20,10 +46,12 @@ export interface State {
 }
 
 const user = ref<User>();
+const currentIDPName = ref<string | undefined>();
 
 export default class AuthService {
   public userManager: UserManager;
   private userManagers: Map<string, UserManager> = new Map();
+  private currentIDPName: string | undefined;
 
   constructor(config: Config) {
     const baseURL = `${window.location.protocol}//${window.location.host}`;
@@ -57,8 +85,11 @@ export default class AuthService {
   /**
    * Create or get a UserManager for a specific IDP
    * Used in multi-IDP mode to authenticate with the selected IDP
+   * @param authority The authority URL (proxy or direct) to use in OIDC settings
+   * @param clientID The OIDC client ID
+   * @param directAuthority Optional direct IDP authority URL for backend communication
    */
-  private getOrCreateUserManager(authority: string, clientID: string): UserManager {
+  private getOrCreateUserManager(authority: string, clientID: string, directAuthority?: string): UserManager {
     const key = `${authority}:${clientID}`;
     if (this.userManagers.has(key)) {
       return this.userManagers.get(key)!;
@@ -79,6 +110,17 @@ export default class AuthService {
     };
 
     const manager = new UserManager(settings);
+    
+    // Store the direct authority as metadata and setup custom fetcher for header injection
+    if (directAuthority) {
+      (manager as any).directAuthority = directAuthority;
+      
+      // Override the internal fetcher to inject X-OIDC-Authority header
+      if ((manager as any).metadataService) {
+        (manager as any).metadataService.fetcher = createOIDCFetcher(directAuthority);
+      }
+    }
+    
     manager.events.addUserLoaded((loadedUser) => {
       user.value = loadedUser;
     });
@@ -139,12 +181,18 @@ export default class AuthService {
         // The backend will proxy /api/oidc/authority/* requests to the real Keycloak authority
         const proxyAuthority = "/api/oidc/authority";
         
+        // Store the current IDP name for later retrieval
+        this.currentIDPName = state.idpName;
+        currentIDPName.value = state.idpName;
+        
         // Get or create UserManager for this IDP with the proxy authority
-        const manager = this.getOrCreateUserManager(proxyAuthority, oidcClientID);
+        // Also pass the direct authority so we can tell the backend which IDP to proxy to
+        const manager = this.getOrCreateUserManager(proxyAuthority, oidcClientID, directAuthority);
         
         console.debug("[AuthService] Using UserManager for IDP:", {
           idpName: state.idpName,
           proxyAuthority,
+          directAuthority,
           oidcClientID,
         });
         return manager.signinRedirect({ state });
@@ -160,8 +208,15 @@ export default class AuthService {
     return this.userManager.signinRedirect({ state });
   }
 
+  public getIdentityProviderName(): string | undefined {
+    return this.currentIDPName;
+  }
+
   public logout(): Promise<void> {
     console.debug("[AuthService] Logging out");
+    // Clear the current IDP name on logout
+    this.currentIDPName = undefined;
+    currentIDPName.value = undefined;
     return this.userManager.signoutRedirect();
   }
 
@@ -210,6 +265,14 @@ export default class AuthService {
         console.debug('[AuthService] Successfully processed signin callback with manager', {
           authority: manager.settings.authority,
         });
+        
+        // Restore IDP name from the state if available
+        if (result && result.state && typeof result.state === 'object' && 'idpName' in result.state) {
+          this.currentIDPName = (result.state as any).idpName;
+          currentIDPName.value = (result.state as any).idpName;
+          console.debug('[AuthService] Restored IDP name from state:', { idpName: this.currentIDPName });
+        }
+        
         return result;
       } catch (error) {
         // Check if this is an authority mismatch error

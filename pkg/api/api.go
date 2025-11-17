@@ -130,7 +130,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	// Serve static assets (must be before NoRoute handler)
 	engine.Use(static.Serve("/assets/", static.LocalFile("/frontend/dist/assets", false)))
-	engine.Use(static.Serve("/favicon-oss.svg", static.LocalFile("/frontend/dist/favicon-oss.svg", false)))
+	// Serve root-level files like favicon
+	engine.Static("/favicon-oss.svg", "/frontend/dist/favicon-oss.svg")
 
 	// Custom NoRoute: JSON 404 for /api/*, SPA fallback for others
 	engine.NoRoute(func(c *gin.Context) {
@@ -486,11 +487,36 @@ func (s *Server) getMultiIDPConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// isKnownIDPAuthority checks if the given authority URL is from a known IDP configuration
+// This prevents SSRF attacks by ensuring we only proxy to configured Keycloak instances
+func (s *Server) isKnownIDPAuthority(authority string) bool {
+	// Check against cached IDPs
+	if s.idpReconciler != nil {
+		cachedIDPs := s.idpReconciler.GetCachedIdentityProviders()
+		for _, idp := range cachedIDPs {
+			if idp.Spec.OIDC.Authority == authority {
+				return true
+			}
+		}
+	}
+
+	// Also check against the default configured authority for single-IDP mode
+	if s.oidcAuthority != nil && s.oidcAuthority.String() == authority {
+		return true
+	}
+
+	return false
+}
+
 // handleOIDCProxy proxies OIDC discovery and JWKS endpoints from the configured
 // authorization server authority. The route is mounted at /api/oidc/authority/*proxyPath
 // and performs a backend GET to the configured authority, returning the body and
 // status to the browser. This avoids requiring the browser to trust the Keycloak
 // certificate for e2e local runs. Only simple GET proxying is implemented here.
+//
+// In multi-IDP setups, the frontend can send X-OIDC-Authority header to specify
+// which Keycloak instance to proxy to. This header is validated against known IDPs
+// to prevent SSRF attacks.
 func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if s.oidcAuthority == nil {
 		s.log.Sugar().Warnw("oidc_proxy_missing_authority")
@@ -508,8 +534,30 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		return
 	}
 
+	// Check for X-OIDC-Authority header to support multi-IDP routing
+	// The frontend sends this header when using a specific IDP to tell backend which Keycloak to proxy to
+	targetAuthority := s.oidcAuthority
+	if customAuthority := c.Request.Header.Get("X-OIDC-Authority"); customAuthority != "" {
+		// Validate that the custom authority is a valid URL
+		if parsed, err := url.Parse(customAuthority); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+			// Verify this is from a known IDP configuration to prevent SSRF attacks
+			if s.isKnownIDPAuthority(customAuthority) {
+				targetAuthority, _ = url.Parse(customAuthority)
+				s.log.Sugar().Debugw("oidc_proxy_using_custom_authority", "customAuthority", customAuthority)
+			} else {
+				s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", customAuthority)
+				c.JSON(http.StatusBadRequest, gin.H{"error": "unknown OIDC authority"})
+				return
+			}
+		} else {
+			s.log.Sugar().Warnw("oidc_proxy_invalid_authority_header", "customAuthority", customAuthority)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid X-OIDC-Authority header"})
+			return
+		}
+	}
+
 	// Safe join using parsed authority rather than raw configured string
-	base := strings.TrimRight(s.oidcAuthority.String(), "/")
+	base := strings.TrimRight(targetAuthority.String(), "/")
 	target := base + proxyPath
 	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target", target)
 

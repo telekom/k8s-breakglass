@@ -73,6 +73,14 @@ onMounted(checkMultiIDP);
 const userNav = computed(() => {
   if (authenticated.value) {
   const groups = groupsRef.value;
+  const idpName = auth?.getIdentityProviderName?.();
+  const descriptions: string[] = [];
+  if (idpName) {
+    descriptions.push(`Provider: ${idpName}`);
+  }
+  if (groups.length) {
+    descriptions.push(`Groups: ${groups.join(', ')}`);
+  }
     return [
       {
         type: "userInfo",
@@ -80,9 +88,10 @@ const userNav = computed(() => {
         name: user.value?.profile.name || user.value?.profile.email,
         email: user.value?.profile.email,
         badge: true,
-        description: groups.length ? `Groups: ${groups.join(', ')}` : undefined,
+        description: descriptions.length ? descriptions.join(' | ') : undefined,
       },
       { type: "divider" },
+      ...(idpName ? [{ type: "label", name: `Provider: ${idpName}` }] : []),
       ...(groups.length ? [{ type: "label", name: `Groups: ${groups.join(', ')}` }] : []),
       { type: "button", name: "Logout", id: "logout", onClick: logout, variant: "secondary" },
     ];
