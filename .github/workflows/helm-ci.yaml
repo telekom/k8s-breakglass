@@ -37,16 +37,20 @@ jobs:
         id: version
         run: |
           echo "Event: $GITHUB_EVENT_NAME"
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME}" = "pull_request_target" ]; then
-            # Use a semver-compatible pre-release: 0.0.0-pr<number>.<shortsha>
-            VERSION="0.0.0-pr${{ github.event.number }}.${GITHUB_SHA:0:8}"
-          elif [ "${GITHUB_EVENT_NAME}" = "release" ]; then
-            # Use release tag as chart version (assumed valid semver)
-            VERSION="${{ github.event.release.tag_name }}"
-          else
-            # For other pushes use a 0.0.0-dev.<shortsha> pre-release
-            VERSION="0.0.0-dev.${GITHUB_SHA:0:8}"
-          fi
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request|pull_request_target)
+              # Use a semver-compatible pre-release: 0.0.0-pr<number>.<shortsha>
+              VERSION="0.0.0-pr${{ github.event.number }}.${GITHUB_SHA:0:8}"
+              ;;
+            release)
+              # Use release tag as chart version (assumed valid semver)
+              VERSION="${{ github.event.release.tag_name }}"
+              ;;
+            *)
+              # For other pushes use a 0.0.0-dev.<shortsha> pre-release
+              VERSION="0.0.0-dev.${GITHUB_SHA:0:8}"
+              ;;
+          esac
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "Set VERSION=${VERSION}"
 
