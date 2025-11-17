@@ -37,7 +37,7 @@ jobs:
         id: version
         run: |
           echo "Event: $GITHUB_EVENT_NAME"
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME}" = "pull_request_target" ]; then
             # Use a semver-compatible pre-release: 0.0.0-pr<number>.<shortsha>
             VERSION="0.0.0-pr${{ github.event.number }}.${GITHUB_SHA:0:8}"
           elif [ "${GITHUB_EVENT_NAME}" = "release" ]; then
