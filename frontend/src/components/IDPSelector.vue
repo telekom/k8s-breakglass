@@ -159,7 +159,7 @@ function clearSelection() {
     <template v-if="!hasMultipleIDPs && !error && !loading">
       <div v-if="allowedIDPs.length === 1" class="idp-single-mode">
         <p class="idp-single-message">
-          Using <strong>{{ allowedIDPs[0]!.displayName }}</strong> for authentication
+          Using <strong>{{ allowedIDPs[0]?.displayName }}</strong> for authentication
         </p>
       </div>
       <div v-else-if="allowedIDPs.length === 0" class="idp-no-available">

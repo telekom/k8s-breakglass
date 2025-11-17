@@ -229,6 +229,7 @@ func (l *IdentityProviderLoader) getSecretValue(ctx context.Context, secretRef *
 
 // LoadAllIdentityProviders returns all enabled identity providers as a map of name -> config
 // Only includes providers where Disabled=false
+// Note: If any enabled IDPs fail to convert, they are skipped with logged warnings
 func (l *IdentityProviderLoader) LoadAllIdentityProviders(ctx context.Context) (map[string]*IdentityProviderConfig, error) {
 	l.logger.Debug("Loading all enabled IdentityProviders")
 
@@ -240,16 +241,22 @@ func (l *IdentityProviderLoader) LoadAllIdentityProviders(ctx context.Context) (
 	}
 
 	result := make(map[string]*IdentityProviderConfig)
+	var conversionErrors []string
 	for i := range idpList.Items {
 		idp := &idpList.Items[i]
 		if !idp.Spec.Disabled {
 			config, err := l.convertToRuntimeConfig(ctx, idp)
 			if err != nil {
-				l.logger.Errorw("Failed to convert IdentityProvider", "name", idp.Name, "error", err)
+				l.logger.Warnw("Failed to convert IdentityProvider, skipping", "name", idp.Name, "error", err)
+				conversionErrors = append(conversionErrors, fmt.Sprintf("%s: %v", idp.Name, err))
 				continue // Skip problematic configs
 			}
 			result[idp.Name] = config
 		}
+	}
+
+	if len(conversionErrors) > 0 {
+		l.logger.Warnw("Some IdentityProviders were skipped due to conversion errors", "count", len(conversionErrors), "errors", conversionErrors)
 	}
 
 	l.logger.Debugw("Loaded enabled IdentityProviders", "count", len(result))
