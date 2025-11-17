@@ -4,31 +4,52 @@ import { UserManager, WebStorageStateStore, User, type UserManagerSettings, Log 
 import { ref } from "vue";
 import { info as logInfo, error as logError } from "@/services/logger";
 
+// Store the current direct authority for header injection during OIDC requests
+let currentDirectAuthority: string | undefined = undefined;
+
 /**
- * Custom fetch wrapper that injects X-OIDC-Authority header for OIDC proxy requests
- * This allows the backend to route to the correct Keycloak instance when using multi-IDP
+ * Set the current direct authority for the active OIDC session
+ * This is used to inject the X-OIDC-Authority header in fetch requests
  */
-function createOIDCFetcher(directAuthority?: string) {
-  return async (url: string, init?: RequestInit): Promise<Response> => {
+function setCurrentDirectAuthority(authority: string | undefined) {
+  console.debug("[AuthService] Setting current direct authority for header injection:", {
+    newAuthority: authority,
+    previousAuthority: currentDirectAuthority,
+  });
+  currentDirectAuthority = authority;
+}
+
+/**
+ * Get the current direct authority
+ */
+function getCurrentDirectAuthority(): string | undefined {
+  return currentDirectAuthority;
+}
+
+// Wrap the global fetch to inject X-OIDC-Authority header
+const originalFetch = window.fetch.bind(window);
+window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = typeof input === "string" ? input : input.toString();
+  
+  // For OIDC proxy requests, inject the direct authority header
+  if (url.includes("/api/oidc/authority") && currentDirectAuthority) {
     const headers = new Headers(init?.headers || {});
+    console.debug("[GlobalFetch] Injecting X-OIDC-Authority header for OIDC proxy request:", {
+      url,
+      directAuthority: currentDirectAuthority,
+    });
+    headers.set("X-OIDC-Authority", currentDirectAuthority);
     
-    // For OIDC proxy requests, inject the direct authority header
-    if (url.includes("/api/oidc/authority") && directAuthority) {
-      console.debug("[OIDCFetcher] Injecting X-OIDC-Authority header", {
-        url,
-        directAuthority,
-      });
-      headers.set("X-OIDC-Authority", directAuthority);
-    }
-    
-    const modifiedInit = {
+    const modifiedInit: RequestInit = {
       ...init,
       headers,
     };
     
-    return fetch(url, modifiedInit);
-  };
-}
+    return originalFetch(url, modifiedInit);
+  }
+  
+  return originalFetch(input, init);
+} as any;
 
 // Direct oidc-client logs into our logger
 Log.setLogger({
@@ -92,10 +113,26 @@ export default class AuthService {
   private getOrCreateUserManager(authority: string, clientID: string, directAuthority?: string): UserManager {
     const key = `${authority}:${clientID}`;
     if (this.userManagers.has(key)) {
-      return this.userManagers.get(key)!;
+      const existingManager = this.userManagers.get(key)!;
+      // Update the direct authority on the existing manager (for cached managers)
+      if (directAuthority) {
+        (existingManager as any).directAuthority = directAuthority;
+        console.debug("[AuthService] Updated direct authority on cached UserManager:", {
+          key,
+          directAuthority,
+        });
+      }
+      return existingManager;
     }
 
     const baseURL = `${window.location.protocol}//${window.location.host}`;
+    console.debug("[AuthService] Creating new UserManager:", {
+      key,
+      authority,
+      clientID,
+      directAuthority,
+    });
+
     const settings: UserManagerSettings = {
       userStore: new WebStorageStateStore({ store: window.localStorage }),
       authority,
@@ -111,14 +148,13 @@ export default class AuthService {
 
     const manager = new UserManager(settings);
     
-    // Store the direct authority as metadata and setup custom fetcher for header injection
+    // Store the direct authority as metadata
     if (directAuthority) {
       (manager as any).directAuthority = directAuthority;
-      
-      // Override the internal fetcher to inject X-OIDC-Authority header
-      if ((manager as any).metadataService) {
-        (manager as any).metadataService.fetcher = createOIDCFetcher(directAuthority);
-      }
+      console.debug("[AuthService] Stored directAuthority in UserManager:", {
+        key,
+        directAuthority,
+      });
     }
     
     manager.events.addUserLoaded((loadedUser) => {
@@ -189,12 +225,20 @@ export default class AuthService {
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
         const manager = this.getOrCreateUserManager(proxyAuthority, oidcClientID, directAuthority);
         
-        console.debug("[AuthService] Using UserManager for IDP:", {
+        console.debug("[AuthService] About to initiate signin redirect for IDP:", {
           idpName: state.idpName,
           proxyAuthority,
           directAuthority,
           oidcClientID,
+          willInjectHeader: true,
         });
+
+        // Set the direct authority globally so fetch interceptor can inject the header
+        setCurrentDirectAuthority(directAuthority);
+        console.debug("[AuthService] Set global directAuthority for header injection:", {
+          directAuthority,
+        });
+
         return manager.signinRedirect({ state });
       } catch (err) {
         console.error("[AuthService] Error getting IDP config:", err);
@@ -204,7 +248,9 @@ export default class AuthService {
       }
     }
     
-    console.debug("[AuthService] Logging in with default IDP");
+    console.debug("[AuthService] Logging in with default IDP (no specific IDP selected)");
+    // Clear any previously set direct authority for default login
+    setCurrentDirectAuthority(undefined);
     return this.userManager.signinRedirect({ state });
   }
 
@@ -257,20 +303,36 @@ export default class AuthService {
     
     for (const manager of managers) {
       try {
+        const directAuthority = (manager as any).directAuthority;
         console.debug('[AuthService] Attempting signin callback with manager', {
           authority: manager.settings.authority,
           client_id: manager.settings.client_id,
+          hasDirectAuthority: !!directAuthority,
+          directAuthority,
         });
+
+        // Set the direct authority for this manager so header injection works during callback
+        if (directAuthority) {
+          setCurrentDirectAuthority(directAuthority);
+          console.debug('[AuthService] Set directAuthority for callback processing:', {
+            directAuthority,
+          });
+        }
+
         const result = await manager.signinCallback();
         console.debug('[AuthService] Successfully processed signin callback with manager', {
           authority: manager.settings.authority,
+          directAuthority,
         });
         
         // Restore IDP name from the state if available
         if (result && result.state && typeof result.state === 'object' && 'idpName' in result.state) {
           this.currentIDPName = (result.state as any).idpName;
           currentIDPName.value = (result.state as any).idpName;
-          console.debug('[AuthService] Restored IDP name from state:', { idpName: this.currentIDPName });
+          console.debug('[AuthService] Restored IDP name from state:', { 
+            idpName: this.currentIDPName,
+            directAuthority,
+          });
         }
         
         return result;
