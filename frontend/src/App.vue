@@ -54,10 +54,16 @@ onMounted(refreshGroups);
 // Check if multi-IDP is available
 async function checkMultiIDP() {
   try {
+    console.debug("[App] Checking for multi-IDP configuration");
     const config = await getMultiIDPConfig();
-    hasMultipleIDPs.value = config && config.identityProviders && config.identityProviders.length > 1;
+    const idpCount = config && config.identityProviders ? config.identityProviders.length : 0;
+    hasMultipleIDPs.value = idpCount > 1;
+    console.debug(`[App] Multi-IDP check completed: found ${idpCount} IDPs`, {
+      hasMultiple: hasMultipleIDPs.value,
+      idps: config?.identityProviders?.map((idp) => ({ name: idp.name, displayName: idp.displayName })),
+    });
   } catch (err) {
-    console.debug("Multi-IDP config not available or error:", err);
+    console.warn("[App] Multi-IDP config not available or error:", err);
     hasMultipleIDPs.value = false;
   }
 }
@@ -86,10 +92,16 @@ const userNav = computed(() => {
 
 
 function login() {
+  console.debug("[App] Login initiated", {
+    selectedIDP: selectedIDPName.value,
+    hasMultipleIDPs: hasMultipleIDPs.value,
+    redirectPath: route.fullPath,
+  });
   auth?.login({ path: route.fullPath, idpName: selectedIDPName.value });
 }
 
 function logout() {
+  console.debug("[App] Logout initiated");
   auth?.logout();
 }
 </script>

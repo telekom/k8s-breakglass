@@ -56,10 +56,18 @@ export interface MultiIDPConfig {
  */
 export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
   try {
+    console.debug("[MultiIDP] Fetching multi-IDP configuration from /api/config/idps");
     const res = await axios.get<MultiIDPConfig>("/api/config/idps");
-    return res.data || { identityProviders: [], escalationIDPMapping: {} };
+    const config = res.data || { identityProviders: [], escalationIDPMapping: {} };
+    console.debug("[MultiIDP] Successfully fetched config:", {
+      idpCount: config.identityProviders.length,
+      idps: config.identityProviders.map((idp) => ({ name: idp.name, displayName: idp.displayName, enabled: idp.enabled })),
+      escalationMappings: config.escalationIDPMapping,
+    });
+    return config;
   } catch (err) {
     logError("MultiIDPService", "Failed to fetch multi-IDP configuration", err);
+    console.error("[MultiIDP] Error fetching config:", err);
     // Return empty config so UI can gracefully handle missing data
     return { identityProviders: [], escalationIDPMapping: {} };
   }
@@ -78,16 +86,23 @@ export function getAllowedIDPsForEscalation(
   config: MultiIDPConfig
 ): IDPInfo[] {
   const allowedIDPNames = config.escalationIDPMapping[escalationName];
+  console.debug(`[MultiIDP] Getting allowed IDPs for escalation "${escalationName}":`, {
+    escalationMapping: allowedIDPNames,
+    availableIDPs: config.identityProviders.map((idp) => idp.name),
+  });
 
   // Empty array [] means all IDPs allowed (backward compatibility)
   if (allowedIDPNames === undefined || allowedIDPNames.length === 0) {
+    console.debug(`[MultiIDP] No restrictions for escalation "${escalationName}", returning all ${config.identityProviders.length} IDPs`);
     return config.identityProviders;
   }
 
   // Filter to only allowed IDPs
-  return config.identityProviders.filter((idp) =>
+  const filtered = config.identityProviders.filter((idp) =>
     allowedIDPNames.includes(idp.name)
   );
+  console.debug(`[MultiIDP] Filtered to ${filtered.length} allowed IDPs for escalation "${escalationName}":`, filtered.map((idp) => idp.name));
+  return filtered;
 }
 
 /**

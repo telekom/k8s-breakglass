@@ -93,27 +93,40 @@ export default class AuthService {
   public login(state?: State): Promise<void> {
     // If specific IDP requested, use its UserManager
     if (state?.idpName) {
+      console.debug("[AuthService] Logging in with specific IDP:", {
+        idpName: state.idpName,
+        redirectPath: state.path,
+      });
       logInfo('AuthService', 'logging in with IDP', state.idpName);
       // For now, store the idpName in state for later retrieval
       // The actual IDP-specific login will be handled by the frontend after getting IDP config
       return this.userManager.signinRedirect({ state });
     }
     
+    console.debug("[AuthService] Logging in with default IDP");
     return this.userManager.signinRedirect({ state });
   }
 
   public logout(): Promise<void> {
+    console.debug("[AuthService] Logging out");
     return this.userManager.signoutRedirect();
   }
 
   public async getAccessToken(): Promise<string> {
     const data = await this.userManager.getUser();
-    return data?.access_token || "";
+    const token = data?.access_token || "";
+    console.debug("[AuthService] Retrieved access token", {
+      hasToken: !!token,
+      tokenLength: token.length,
+    });
+    return token;
   }
 
   public async getUserEmail(): Promise<string> {
     const data = await this.userManager.getUser();
-    return data?.profile?.email || ""; // Extract email from user profile
+    const email = data?.profile?.email || ""; // Extract email from user profile
+    console.debug("[AuthService] Retrieved user email:", { email });
+    return email;
   }
 }
 

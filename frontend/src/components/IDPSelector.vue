@@ -47,13 +47,24 @@ const selectedIDPName = ref<string | undefined>(props.modelValue);
 
 // Load multi-IDP config on mount
 onMounted(async () => {
+  console.debug("[IDPSelector] Component mounted", { escalationName: props.escalationName });
   loading.value = true;
   error.value = undefined;
   try {
     multiIDPConfig.value = await getMultiIDPConfig();
+    console.debug("[IDPSelector] Multi-IDP config loaded", {
+      escalationName: props.escalationName,
+      idpCount: multiIDPConfig.value?.identityProviders.length,
+      idps: multiIDPConfig.value?.identityProviders.map((idp) => ({
+        name: idp.name,
+        displayName: idp.displayName,
+        enabled: idp.enabled,
+      })),
+    });
     
     // If no config returned, log it but don't treat as fatal error
     if (!multiIDPConfig.value || multiIDPConfig.value.identityProviders.length === 0) {
+      console.warn("[IDPSelector] No IDPs available in multi-IDP config");
       logError(
         "IDPSelector",
         "No IDPs available in multi-IDP config",
@@ -62,6 +73,7 @@ onMounted(async () => {
       error.value = "No identity providers available";
     }
   } catch (err) {
+    console.error("[IDPSelector] Failed to load multi-IDP configuration:", err);
     logError("IDPSelector", "Failed to load multi-IDP configuration", err);
     error.value = "Failed to load identity provider configuration";
   } finally {
@@ -73,6 +85,7 @@ onMounted(async () => {
 watch(
   () => props.modelValue,
   (newValue) => {
+    console.debug("[IDPSelector] modelValue prop changed", { newValue });
     selectedIDPName.value = newValue;
   }
 );
@@ -81,6 +94,10 @@ watch(
 watch(
   () => props.escalationName,
   () => {
+    console.debug("[IDPSelector] Escalation changed", {
+      newEscalation: props.escalationName,
+      currentSelection: selectedIDPName.value,
+    });
     // Escalation changed, potentially allowed IDPs changed
     // Check if current selection is still valid
     if (selectedIDPName.value && allowedIDPs.value) {
@@ -89,6 +106,10 @@ watch(
       );
       if (!stillAllowed) {
         // Current selection not allowed for new escalation, clear it
+        console.debug("[IDPSelector] Current IDP selection no longer allowed, clearing", {
+          currentSelection: selectedIDPName.value,
+          allowedIDPs: allowedIDPs.value.map((idp) => idp.name),
+        });
         selectedIDPName.value = undefined;
         emit("update:modelValue", undefined);
       }
@@ -140,6 +161,11 @@ const isSelectionValid = computed((): boolean => {
 function handleIDPChange(event: Event) {
   const target = event.target as HTMLSelectElement;
   const newValue = target.value || undefined;
+  console.debug("[IDPSelector] IDP selection changed", {
+    newValue,
+    escalation: props.escalationName,
+    isValid: newValue ? true : !props.required,
+  });
   selectedIDPName.value = newValue;
   emit("update:modelValue", newValue);
 }
@@ -148,6 +174,7 @@ function handleIDPChange(event: Event) {
  * Clear IDP selection
  */
 function clearSelection() {
+  console.debug("[IDPSelector] IDP selection cleared");
   selectedIDPName.value = undefined;
   emit("update:modelValue", undefined);
 }
