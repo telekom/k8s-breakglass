@@ -110,7 +110,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		return nil, fmt.Errorf("IDP %s has no authority configured", idpCfg.Name)
 	}
 
-	jwksURL := fmt.Sprintf("%s/.well-known/openid-configuration", strings.TrimRight(idpCfg.Authority, "/"))
+	jwksURL := fmt.Sprintf("%s/.well-known/jwks.json", strings.TrimRight(idpCfg.Authority, "/"))
 
 	// Create JWKS options
 	options := keyfunc.Options{

@@ -196,8 +196,7 @@ function clearSelection() {
               :key="idp.name"
               :value="idp.name"
             >
-              {{ idp.displayName }}
-              <span v-if="!idp.enabled" class="idp-option-disabled">(disabled)</span>
+              {{ idp.displayName }}{{ !idp.enabled ? " (disabled)" : "" }}
             </option>
           </select>
 

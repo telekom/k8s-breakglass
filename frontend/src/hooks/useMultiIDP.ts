@@ -24,6 +24,8 @@ import {
   isIDPAllowedForEscalation,
 } from "@/services/multiIDP";
 import { error as logError } from "@/services/logger";
+import type { Ref, ComputedRef } from "vue";
+import { onMounted } from "vue";
 
 export interface UseMultiIDPOptions {
   /** Whether IDP selection is required */
@@ -213,7 +215,3 @@ export function useMultiIDP(
     refreshConfig,
   };
 }
-
-// TypeScript support for imports
-import type { Ref, ComputedRef } from "vue";
-import { onMounted } from "vue";
