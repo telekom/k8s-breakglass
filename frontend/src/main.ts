@@ -98,7 +98,7 @@ async function initializeApp() {
   await router.isReady();
   if (router.currentRoute.value.path === AuthRedirect) {
     try {
-      const user = await auth.userManager.signinCallback();
+      const user = await auth.handleSigninCallback();
       if (user && user.state) {
         const state = user.state as State;
         if (state.path) {

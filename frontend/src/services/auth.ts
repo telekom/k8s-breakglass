@@ -172,6 +172,57 @@ export default class AuthService {
     console.debug("[AuthService] Retrieved user email:", { email });
     return email;
   }
+
+  /**
+   * Handle OIDC signin callback after redirect from authorization server
+   * This method intelligently finds the correct UserManager based on the stored state
+   * to properly validate the signin response, especially important in multi-IDP scenarios
+   */
+  public async handleSigninCallback() {
+    // Get the state parameter from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const stateParam = urlParams.get('state');
+    
+    console.debug('[AuthService] Processing signin callback', { stateParam });
+    
+    // Try to find the correct UserManager by matching the stored state
+    if (stateParam) {
+      const storageKeys = Object.keys(localStorage);
+      for (const key of storageKeys) {
+        // Storage key format: oidc.user:<authority>:<client_id>
+        if (key.startsWith('oidc.user:')) {
+          try {
+            const storedData = JSON.parse(localStorage.getItem(key) || '{}');
+            // Check if this storage entry has a matching state
+            if (storedData && storedData.state === stateParam) {
+              console.debug('[AuthService] Found matching UserManager by state', { storageKey: key });
+              // Extract authority and client_id from storage key
+              // Format: oidc.user:<authority>:<client_id>
+              const keyParts = key.substring('oidc.user:'.length);
+              // Split by the last colon to separate authority from client_id
+              const lastColonIndex = keyParts.lastIndexOf(':');
+              if (lastColonIndex > 0) {
+                const authority = keyParts.substring(0, lastColonIndex);
+                const clientId = keyParts.substring(lastColonIndex + 1);
+                
+                console.debug('[AuthService] Using UserManager from storage', { authority, clientId });
+                // Get or create the UserManager with these credentials
+                const manager = this.getOrCreateUserManager(authority, clientId);
+                return await manager.signinCallback();
+              }
+            }
+          } catch (e) {
+            // Continue to next key if parsing fails
+            console.debug('[AuthService] Could not parse storage key:', { key, error: e });
+          }
+        }
+      }
+    }
+    
+    // Fall back to default UserManager if we couldn't find a match
+    console.debug('[AuthService] Using default UserManager for callback');
+    return await this.userManager.signinCallback();
+  }
 }
 
 export function useUser() {
