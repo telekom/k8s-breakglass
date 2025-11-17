@@ -508,7 +508,7 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
 
       // User selected idp1 for prod escalation
       let currentSelection = "idp1";
-      let currentEscalation = "prod";
+      let currentEscalation: string;
 
       // User changes escalation to dev
       currentEscalation = "dev";
@@ -555,7 +555,7 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
 
       // User selected idp1 for prod
       let currentSelection = "idp1";
-      let currentEscalation = "prod";
+      let currentEscalation: string;
 
       // User changes to dev
       currentEscalation = "dev";
@@ -602,7 +602,7 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
       };
 
       let selection = "idp-a";
-      let escalation = "esc-1";
+      let escalation: string;
 
       // Switch 1: esc-1 -> esc-3 (selection still valid)
       escalation = "esc-3";
@@ -616,7 +616,6 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
       if (!valid) selection = "";
 
       // Switch 3: esc-2 -> esc-3 (selection empty now)
-      escalation = "esc-3";
       expect(selection).toBe("");
     });
   });
@@ -679,18 +678,6 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
     });
 
     it("should support optional IDP selection (undefined/empty)", () => {
-      const config: MultiIDPConfig = {
-        identityProviders: [
-          {
-            name: "idp1",
-            displayName: "IDP 1",
-            issuer: "https://idp1.com",
-            enabled: true,
-          },
-        ],
-        escalationIDPMapping: {},
-      };
-
       let selectedIDP: string | undefined = undefined;
 
       // Should allow undefined selection (backward compat with single-IDP)
