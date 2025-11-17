@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/static"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -114,15 +115,6 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		},
 	)
 
-	// Custom NoRoute: JSON 404 for /api/*, SPA fallback for others
-	engine.NoRoute(func(c *gin.Context) {
-		if len(c.Request.URL.Path) >= 5 && c.Request.URL.Path[:5] == "/api/" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "API endpoint not found", "path": c.Request.URL.Path})
-		} else {
-			ServeSPA("/", "/frontend/dist/")(c)
-		}
-	})
-
 	// Always expose CORS for browser-based OIDC flows (token exchange happens against keycloak but frontend hits API)
 	engine.Use(
 		cors.New(cors.Config{
@@ -135,6 +127,19 @@ func NewServer(log *zap.Logger, cfg config.Config,
 			MaxAge:           12 * time.Hour,
 		}),
 	)
+
+	// Serve static assets (must be before NoRoute handler)
+	engine.Use(static.Serve("/assets/", static.LocalFile("/frontend/dist/assets", false)))
+	engine.Use(static.Serve("/favicon-oss.svg", static.LocalFile("/frontend/dist/favicon-oss.svg", false)))
+
+	// Custom NoRoute: JSON 404 for /api/*, SPA fallback for others
+	engine.NoRoute(func(c *gin.Context) {
+		if len(c.Request.URL.Path) >= 5 && c.Request.URL.Path[:5] == "/api/" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "API endpoint not found", "path": c.Request.URL.Path})
+		} else {
+			ServeSPA("/", "/frontend/dist/")(c)
+		}
+	})
 
 	if auth == nil {
 		auth = NewAuth(log.Sugar(), cfg)
