@@ -1,4 +1,5 @@
 import type Config from "@/model/config";
+import type { IDPInfo } from "@/model/multiIDP";
 import { UserManager, WebStorageStateStore, User, type UserManagerSettings, Log } from "oidc-client-ts";
 import { ref } from "vue";
 import { info as logInfo, error as logError } from "@/services/logger";
@@ -90,17 +91,60 @@ export default class AuthService {
     return this.userManager.getUser();
   }
 
-  public login(state?: State): Promise<void> {
-    // If specific IDP requested, use its UserManager
+  public async login(state?: State): Promise<void> {
+    // If specific IDP requested, need to get its config and use its UserManager
     if (state?.idpName) {
       console.debug("[AuthService] Logging in with specific IDP:", {
         idpName: state.idpName,
         redirectPath: state.path,
       });
-      logInfo('AuthService', 'logging in with IDP', state.idpName);
-      // For now, store the idpName in state for later retrieval
-      // The actual IDP-specific login will be handled by the frontend after getting IDP config
-      return this.userManager.signinRedirect({ state });
+      
+      try {
+        // Import here to avoid circular dependency
+        const { getMultiIDPConfig } = await import("@/services/multiIDP");
+        const config = await getMultiIDPConfig();
+        
+        // Find the IDP config by name
+        const idpConfigFound = config?.identityProviders.find(idp => idp.name === state.idpName);
+        const idpConfig = idpConfigFound as IDPInfo | undefined;
+        
+        if (!idpConfig) {
+          console.error("[AuthService] IDP not found in config:", state.idpName);
+          logError('AuthService', 'IDP not found', state.idpName);
+          // Fall back to default UserManager
+          return this.userManager.signinRedirect({ state });
+        }
+
+        console.debug("[AuthService] Found IDP config:", {
+          name: idpConfig.name,
+          displayName: idpConfig.displayName,
+          issuer: idpConfig.issuer,
+          oidcAuthority: (idpConfig as any).oidcAuthority,
+          oidcClientID: (idpConfig as any).oidcClientID,
+        });
+
+        // Check if we have the OIDC credentials for this IDP
+        const oidcAuthority = (idpConfig as any).oidcAuthority;
+        const oidcClientID = (idpConfig as any).oidcClientID;
+        
+        if (!oidcAuthority || !oidcClientID) {
+          console.error("[AuthService] IDP missing OIDC configuration", idpConfig);
+          logError('AuthService', 'IDP missing OIDC config', idpConfig);
+          // Fall back to default UserManager
+          return this.userManager.signinRedirect({ state });
+        }
+
+        // Get or create UserManager for this IDP
+        const manager = this.getOrCreateUserManager(oidcAuthority, oidcClientID);
+        
+        console.debug("[AuthService] Using UserManager for IDP:", state.idpName);
+        return manager.signinRedirect({ state });
+      } catch (err) {
+        console.error("[AuthService] Error getting IDP config:", err);
+        logError('AuthService', 'Error getting IDP config', err);
+        // Fall back to default UserManager
+        return this.userManager.signinRedirect({ state });
+      }
     }
     
     console.debug("[AuthService] Logging in with default IDP");

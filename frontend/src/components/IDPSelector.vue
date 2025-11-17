@@ -332,8 +332,14 @@ function clearSelection() {
   border-radius: 4px;
   font-size: 1rem;
   background-color: white;
+  color: var(--scale-color-gray-80, #333);
   cursor: pointer;
   transition: border-color 0.2s;
+}
+
+.idp-select option {
+  color: var(--scale-color-gray-80, #333);
+  background-color: white;
 }
 
 .idp-select:hover:not(:disabled) {

@@ -97,7 +97,19 @@ function login() {
     hasMultipleIDPs: hasMultipleIDPs.value,
     redirectPath: route.fullPath,
   });
-  auth?.login({ path: route.fullPath, idpName: selectedIDPName.value });
+
+  // If multiple IDPs available, require explicit selection
+  if (hasMultipleIDPs.value && !selectedIDPName.value) {
+    console.warn("[App] Login blocked: Multiple IDPs available but none selected");
+    alert("Please select an identity provider before logging in");
+    return;
+  }
+
+  // Pass the selected IDP (if any) to auth service
+  auth?.login({ 
+    path: route.fullPath, 
+    idpName: selectedIDPName.value || undefined 
+  });
 }
 
 function logout() {

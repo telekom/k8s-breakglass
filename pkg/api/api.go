@@ -454,10 +454,12 @@ func (s *Server) getMultiIDPConfig(c *gin.Context) {
 	var idpInfos []IDPInfo
 	for _, idp := range cachedIDPs {
 		idpInfos = append(idpInfos, IDPInfo{
-			Name:        idp.Name,
-			DisplayName: idp.Spec.DisplayName,
-			Issuer:      idp.Spec.Issuer,
-			Enabled:     true,
+			Name:          idp.Name,
+			DisplayName:   idp.Spec.DisplayName,
+			Issuer:        idp.Spec.Issuer,
+			Enabled:       true,
+			OIDCAuthority: idp.Spec.OIDC.Authority,
+			OIDCClientID:  idp.Spec.OIDC.ClientID,
 		})
 	}
 
