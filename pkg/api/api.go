@@ -33,6 +33,9 @@ type Server struct {
 	config config.Config
 	auth   *AuthHandler
 	log    *zap.Logger
+	// idpReconciler maintains a cache of enabled IdentityProviders
+	// Used by getMultiIDPConfig to avoid querying the Kubernetes APIServer
+	idpReconciler *config.IdentityProviderReconciler
 	// idpConfig caches the loaded IdentityProvider configuration for API responses
 	// This is protected by idpMutex to support safe reloading
 	idpConfig *config.IdentityProviderConfig
@@ -230,6 +233,13 @@ func (s *Server) ReloadIdentityProvider(loader *config.IdentityProviderLoader) e
 	return nil
 }
 
+// SetIdentityProviderReconciler sets the reconciler for accessing cached IDPs
+// This is called after the reconciler is initialized so the API can use
+// its cache to avoid DDoSing the Kubernetes APIServer
+func (s *Server) SetIdentityProviderReconciler(reconciler *config.IdentityProviderReconciler) {
+	s.idpReconciler = reconciler
+}
+
 func (s *Server) RegisterAll(controllers []APIController) error {
 	apiGroup := s.gin.Group("api")
 	for _, c := range controllers {
@@ -410,29 +420,45 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 // - Show available IDPs in IDP selector dropdown
 // - Display which IDPs are allowed for each escalation
 // - Pre-populate IDP field based on escalation selection
+//
+// Uses cached IDPs from the reconciler to avoid querying the Kubernetes APIServer
+// Cache is maintained by the IdentityProviderReconciler and updated whenever
+// IdentityProvider CRs change, preventing DDoS attacks via repeated API queries
 func (s *Server) getMultiIDPConfig(c *gin.Context) {
-	// TODO: query Kubernetes APIServer for:
-	// 1. All IdentityProvider CRs (get name, displayName, issuer, enabled status)
-	// 2. All BreakglassEscalation CRs (get name and allowedIdentityProviders list)
-	//
-	// For MVP, return placeholder structure showing what frontend expects
-
-	resp := MultiIDPConfigResponse{
-		IdentityProviders: []IDPInfo{
-			{
-				Name:        "corporate-idp",
-				DisplayName: "Corporate Identity",
-				Issuer:      "https://auth.corp.com",
-				Enabled:     true,
-			},
-		},
-		EscalationIDPMapping: map[string][]string{
-			"prod-admin": {"corporate-idp"},
-			"dev-admin":  {}, // Empty = all IDPs allowed
-		},
+	// Use cached IDPs from reconciler to avoid APIServer queries
+	// If reconciler not available, return empty config and let frontend fall back
+	if s.idpReconciler == nil {
+		s.log.Sugar().Warnw("idp reconciler not available, returning empty config")
+		resp := MultiIDPConfigResponse{
+			IdentityProviders:    []IDPInfo{},
+			EscalationIDPMapping: map[string][]string{},
+		}
+		c.JSON(http.StatusOK, resp)
+		return
 	}
 
-	s.log.Sugar().Debugw("multi_idp_config_returned", "idp_count", len(resp.IdentityProviders), "escalation_count", len(resp.EscalationIDPMapping))
+	// Get cached IDPs (thread-safe read from reconciler cache)
+	cachedIDPs := s.idpReconciler.GetCachedIdentityProviders()
+
+	// Convert cached IdentityProviders to IDPInfo responses
+	var idpInfos []IDPInfo
+	for _, idp := range cachedIDPs {
+		idpInfos = append(idpInfos, IDPInfo{
+			Name:        idp.Name,
+			DisplayName: idp.Spec.DisplayName,
+			Issuer:      idp.Spec.Issuer,
+			Enabled:     true,
+		})
+	}
+
+	// TODO: Query BreakglassEscalation CRs to build escalation→IDP mapping
+	// For now, return empty mapping (means all IDPs allowed for all escalations)
+	resp := MultiIDPConfigResponse{
+		IdentityProviders:    idpInfos,
+		EscalationIDPMapping: map[string][]string{},
+	}
+
+	s.log.Sugar().Debugw("multi_idp_config_returned", "idp_count", len(idpInfos), "escalation_count", len(resp.EscalationIDPMapping))
 	c.JSON(http.StatusOK, resp)
 }
 

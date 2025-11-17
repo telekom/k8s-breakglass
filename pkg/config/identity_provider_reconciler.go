@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -28,6 +29,12 @@ import (
 // - Backoff strategy: Exponential backoff on errors (controller-runtime built-in)
 // - No thundering herd: Uses work queue to deduplicate rapid changes
 // - Finalization ready: Supports cleanup logic if needed
+//
+// Caching:
+// - Maintains an in-memory cache of enabled IdentityProviders
+// - Cache is updated whenever IdentityProvider CRs change
+// - API calls use the cache to avoid DDoSing the Kubernetes APIServer
+// - Cache is thread-safe using RWMutex
 type IdentityProviderReconciler struct {
 	client   client.Client
 	logger   *zap.SugaredLogger
@@ -39,6 +46,11 @@ type IdentityProviderReconciler struct {
 	onError func(ctx context.Context, err error)
 	// resyncPeriod defines the full list reconciliation interval (default 10m)
 	resyncPeriod time.Duration
+
+	// Cache for enabled IdentityProviders to avoid APIServer queries
+	// Protected by cacheMutex for thread-safe access
+	idpCacheMutex sync.RWMutex
+	idpCache      []*breakglassv1alpha1.IdentityProvider
 }
 
 // NewIdentityProviderReconciler creates a new controller-runtime reconciler for IdentityProvider
@@ -55,7 +67,46 @@ func NewIdentityProviderReconciler(
 		logger:       logger,
 		onReload:     reloadFn,
 		resyncPeriod: 10 * time.Minute, // Full list resync every 10 minutes
+		idpCache:     []*breakglassv1alpha1.IdentityProvider{},
 	}
+}
+
+// GetCachedIdentityProviders returns the cached list of enabled IdentityProviders
+// This is used by the API to avoid querying the Kubernetes APIServer on every request
+// The cache is automatically maintained by the reconciler when IdentityProviders change
+func (r *IdentityProviderReconciler) GetCachedIdentityProviders() []*breakglassv1alpha1.IdentityProvider {
+	r.idpCacheMutex.RLock()
+	defer r.idpCacheMutex.RUnlock()
+	// Return a copy to prevent external modifications
+	result := make([]*breakglassv1alpha1.IdentityProvider, len(r.idpCache))
+	copy(result, r.idpCache)
+	return result
+}
+
+// updateIDPCache updates the cached list of identity providers
+// Called during reconciliation when changes are detected
+func (r *IdentityProviderReconciler) updateIDPCache(ctx context.Context) error {
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
+	if err := r.client.List(ctx, idpList); err != nil {
+		r.logger.Errorw("failed to list identity providers for cache update", "error", err)
+		return err
+	}
+
+	// Filter to only enabled providers
+	var enabledIDPs []*breakglassv1alpha1.IdentityProvider
+	for i := range idpList.Items {
+		if !idpList.Items[i].Spec.Disabled {
+			enabledIDPs = append(enabledIDPs, &idpList.Items[i])
+		}
+	}
+
+	// Update cache atomically
+	r.idpCacheMutex.Lock()
+	r.idpCache = enabledIDPs
+	r.idpCacheMutex.Unlock()
+
+	r.logger.Debugw("updated identity provider cache", "count", len(enabledIDPs))
+	return nil
 }
 
 // WithErrorHandler sets the error callback function
@@ -113,6 +164,11 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 			r.logger.Errorw("failed to update identity provider status after reload failure", "error", err, "name", req.Name)
 		}
 
+		// Update cache anyway - even if reload failed, we should still have the latest list
+		if cacheErr := r.updateIDPCache(ctx); cacheErr != nil {
+			r.logger.Warnw("failed to update IDP cache after reload failure", "error", cacheErr, "name", req.Name)
+		}
+
 		// Emit event on the IdentityProvider CR
 		// Note: Empty namespace for cluster-scoped resources to prevent event reconciliation issues
 		if r.recorder != nil {
@@ -126,6 +182,12 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	}
 
 	r.logger.Infow("identity provider configuration reloaded successfully", "name", req.Name)
+
+	// Update cache with latest IDPs (for API to use)
+	if err := r.updateIDPCache(ctx); err != nil {
+		r.logger.Warnw("failed to update IDP cache after successful reload", "error", err, "name", req.Name)
+		// Continue anyway - cache update failure shouldn't block the reconciliation
+	}
 
 	// Update status to reflect success
 	idp.Status.Phase = "Ready"

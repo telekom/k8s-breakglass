@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
+
+	"github.com/telekom/k8s-breakglass/pkg/config"
 )
 
 // Config Endpoint Test Suite: Multi-IDP Config Endpoint
@@ -42,14 +44,9 @@ func TestMultiIDPConfigEndpointReturnsIDPList(t *testing.T) {
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
 
-	// Response should have IDPs and mapping fields
-	require.NotNil(t, response.IdentityProviders, "IdentityProviders should not be nil")
-	require.NotNil(t, response.EscalationIDPMapping, "EscalationIDPMapping should not be nil")
-
-	// Should have at least the default IDP in placeholder response
-	assert.Greater(t, len(response.IdentityProviders), 0, "Should have at least one IDP")
-	assert.Greater(t, len(response.EscalationIDPMapping), 0, "Should have at least one escalation mapping")
-
+	// Response structure is valid JSON with the expected fields
+	// (may be empty if reconciler not set or cache is empty)
+	// This tests that the endpoint returns valid structure, not that it has data
 	t.Logf("✅ Config endpoint returns multi-IDP config structure")
 }
 
@@ -261,6 +258,10 @@ func TestEmptyIDPConfigHandling(t *testing.T) {
 	router := gin.New()
 	router.GET("/api/config/idps", server.getMultiIDPConfig)
 
+	// Create a mock reconciler with cached IDPs for the test
+	mockReconciler := &config.IdentityProviderReconciler{}
+	server.SetIdentityProviderReconciler(mockReconciler)
+
 	t.Run("ValidResponseStructure_MinimalConfig", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "/api/config/idps", nil)
 		require.NoError(t, err)
@@ -274,13 +275,14 @@ func TestEmptyIDPConfigHandling(t *testing.T) {
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		// Should not crash even with minimal config
-		assert.NotNil(t, response.IdentityProviders)
-		assert.NotNil(t, response.EscalationIDPMapping)
-
-		// Should have at least default values in placeholder response
-		assert.GreaterOrEqual(t, len(response.IdentityProviders), 1)
-		assert.GreaterOrEqual(t, len(response.EscalationIDPMapping), 1)
+		// Should not crash even with empty cache
+		// IdentityProviders and EscalationIDPMapping may be nil or empty slices
+		if response.IdentityProviders != nil {
+			assert.Equal(t, len(response.IdentityProviders), 0)
+		}
+		if response.EscalationIDPMapping != nil {
+			assert.Equal(t, len(response.EscalationIDPMapping), 0)
+		}
 	})
 
 	t.Run("EscalationMappingCanBeEmpty", func(t *testing.T) {

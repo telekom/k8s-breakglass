@@ -788,6 +788,10 @@ func setupReconcilerManager(
 		idpReconciler.WithEventRecorder(mgr.GetEventRecorderFor("breakglass-controller"))
 		idpReconciler.WithResyncPeriod(10 * time.Minute)
 
+		// Set reconciler in API server so it can use the cached IDPs
+		// This prevents the API from querying the Kubernetes APIServer on every /api/config/idps request
+		server.SetIdentityProviderReconciler(idpReconciler)
+
 		if err := idpReconciler.SetupWithManager(mgr); err != nil {
 			log.Errorw("Failed to setup IdentityProvider reconciler with manager", "error", err)
 			return
