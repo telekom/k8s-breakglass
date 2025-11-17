@@ -4,7 +4,7 @@ metadata:
   name: identity-provider-manager-role-binding
 subjects:
 - kind: ServiceAccount
-  name: controller-manager
+  name: manager
   namespace: system
 roleRef:
   kind: ClusterRole
