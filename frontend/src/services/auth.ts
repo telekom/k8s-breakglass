@@ -185,43 +185,47 @@ export default class AuthService {
     
     console.debug('[AuthService] Processing signin callback', { stateParam });
     
-    // Try to find the correct UserManager by matching the stored state
-    if (stateParam) {
-      const storageKeys = Object.keys(localStorage);
-      for (const key of storageKeys) {
-        // Storage key format: oidc.user:<authority>:<client_id>
-        if (key.startsWith('oidc.user:')) {
-          try {
-            const storedData = JSON.parse(localStorage.getItem(key) || '{}');
-            // Check if this storage entry has a matching state
-            if (storedData && storedData.state === stateParam) {
-              console.debug('[AuthService] Found matching UserManager by state', { storageKey: key });
-              // Extract authority and client_id from storage key
-              // Format: oidc.user:<authority>:<client_id>
-              const keyParts = key.substring('oidc.user:'.length);
-              // Split by the last colon to separate authority from client_id
-              const lastColonIndex = keyParts.lastIndexOf(':');
-              if (lastColonIndex > 0) {
-                const authority = keyParts.substring(0, lastColonIndex);
-                const clientId = keyParts.substring(lastColonIndex + 1);
-                
-                console.debug('[AuthService] Using UserManager from storage', { authority, clientId });
-                // Get or create the UserManager with these credentials
-                const manager = this.getOrCreateUserManager(authority, clientId);
-                return await manager.signinCallback();
-              }
-            }
-          } catch (e) {
-            // Continue to next key if parsing fails
-            console.debug('[AuthService] Could not parse storage key:', { key, error: e });
-          }
+    // Try all UserManagers to find one that can process this callback
+    // This is necessary because in multi-IDP mode, different UserManagers are created with different authorities
+    // We try them all and return the first one that succeeds
+    
+    const managers: UserManager[] = [this.userManager, ...Array.from(this.userManagers.values())];
+    
+    for (const manager of managers) {
+      try {
+        console.debug('[AuthService] Attempting signin callback with manager', {
+          authority: manager.settings.authority,
+          client_id: manager.settings.client_id,
+        });
+        const result = await manager.signinCallback();
+        console.debug('[AuthService] Successfully processed signin callback with manager', {
+          authority: manager.settings.authority,
+        });
+        return result;
+      } catch (error) {
+        // Check if this is an authority mismatch error
+        const errorMsg = String(error);
+        if (errorMsg.includes('authority mismatch')) {
+          console.debug('[AuthService] Authority mismatch with this manager, trying next', {
+            authority: manager.settings.authority,
+            error: errorMsg,
+          });
+          // Continue to next manager
+          continue;
+        } else {
+          // This is a different error, re-throw it
+          console.error('[AuthService] Non-authority-mismatch error during callback', {
+            authority: manager.settings.authority,
+            error,
+          });
+          throw error;
         }
       }
     }
     
-    // Fall back to default UserManager if we couldn't find a match
-    console.debug('[AuthService] Using default UserManager for callback');
-    return await this.userManager.signinCallback();
+    // If we get here, no manager worked
+    console.error('[AuthService] No UserManager could process the signin callback');
+    throw new Error('Failed to process signin callback: no matching UserManager found');
   }
 }
 
