@@ -197,11 +197,11 @@ func (s *Server) SetIdentityProvider(idpConfig *config.IdentityProviderConfig) {
 			if u, err := url.Parse(authority); err == nil {
 				s.oidcAuthority = u
 			} else {
-				s.log.Sugar().Warnw("failed_to_parse_oidc_authority", "authority", authority, "error", err)
+				s.log.Sugar().Warnw("failed to parse OIDC authority URL", "authority", authority, "error", err)
 			}
 		}
 
-		s.log.Sugar().Infow("identity_provider_loaded", "type", idpConfig.Type, "authority", authority)
+		s.log.Sugar().Infow("identity provider loaded", "type", idpConfig.Type, "authority", authority, "name", idpConfig.Name)
 		// Record metric for provider type
 		metrics.IdentityProviderLoaded.WithLabelValues(idpConfig.Type).Inc()
 	}
@@ -226,7 +226,7 @@ func (s *Server) ReloadIdentityProvider(loader *config.IdentityProviderLoader) e
 
 	// Update config atomically
 	s.SetIdentityProvider(newConfig)
-	s.log.Sugar().Infow("identity_provider_reloaded", "type", newConfig.Type)
+	s.log.Sugar().Infow("identity provider reloaded successfully", "type", newConfig.Type, "name", newConfig.Name)
 	return nil
 }
 

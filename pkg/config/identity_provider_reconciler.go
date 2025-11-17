@@ -79,7 +79,7 @@ func (r *IdentityProviderReconciler) WithResyncPeriod(period time.Duration) *Ide
 // Reconcile implements the Reconciler interface
 // It reloads the IdentityProvider configuration when changes are detected
 func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	r.logger.Debugw("Reconciling IdentityProvider", "name", req.Name, "namespace", req.Namespace)
+	r.logger.Debugw("reconciling identity provider", "name", req.Name, "namespace", req.Namespace)
 
 	// Load the IdentityProvider to verify it still exists
 	idp := &breakglassv1alpha1.IdentityProvider{}
@@ -87,10 +87,10 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		// Object not found - this is fine, we can ignore it
 		// (controller-runtime handles deletion automatically)
 		if client.IgnoreNotFound(err) == nil {
-			r.logger.Infow("IdentityProvider deleted", "name", req.Name)
+			r.logger.Infow("identity provider deleted", "name", req.Name)
 			return reconcile.Result{}, nil
 		}
-		r.logger.Errorw("Failed to fetch IdentityProvider", "error", err, "name", req.Name)
+		r.logger.Errorw("failed to fetch identity provider", "error", err, "name", req.Name)
 		if r.onError != nil {
 			r.onError(ctx, err)
 		}
@@ -100,7 +100,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 
 	// Reload configuration when IdentityProvider changes
 	if err := r.onReload(ctx); err != nil {
-		r.logger.Errorw("Failed to reload IdentityProvider", "error", err, "name", req.Name)
+		r.logger.Errorw("failed to reload identity provider", "error", err, "name", req.Name)
 		if r.onError != nil {
 			r.onError(ctx, err)
 		}
@@ -110,7 +110,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		idp.Status.Message = fmt.Sprintf("Failed to reload configuration: %v", err)
 		idp.Status.Connected = false
 		if err := r.client.Status().Update(ctx, idp); err != nil {
-			r.logger.Errorw("Failed to update IdentityProvider status", "error", err, "name", req.Name)
+			r.logger.Errorw("failed to update identity provider status after reload failure", "error", err, "name", req.Name)
 		}
 
 		// Emit event on the IdentityProvider CR
@@ -125,7 +125,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	r.logger.Infow("IdentityProvider reloaded successfully", "name", req.Name)
+	r.logger.Infow("identity provider configuration reloaded successfully", "name", req.Name)
 
 	// Update status to reflect success
 	idp.Status.Phase = "Ready"
@@ -133,7 +133,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	idp.Status.Connected = true
 	idp.Status.LastValidation = metav1.NewTime(time.Now())
 	if err := r.client.Status().Update(ctx, idp); err != nil {
-		r.logger.Errorw("Failed to update IdentityProvider status", "error", err, "name", req.Name)
+		r.logger.Errorw("failed to update IdentityProvider status", "error", err, "name", req.Name)
 	}
 
 	// Emit event on the IdentityProvider CR
@@ -152,7 +152,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 // SetupWithManager sets up the controller with the manager (required for controller-runtime)
 // This is called during manager initialization and registers the reconciler
 func (r *IdentityProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.logger.Infow("Setting up IdentityProvider reconciler",
+	r.logger.Infow("setting up IdentityProvider reconciler",
 		"resyncPeriod", r.resyncPeriod,
 		"kind", "IdentityProvider")
 
