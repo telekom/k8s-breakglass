@@ -40,6 +40,8 @@ jobs:
           case "${GITHUB_EVENT_NAME}" in
             pull_request|pull_request_target)
               # Use a semver-compatible pre-release: 0.0.0-pr<number>.<shortsha>
+              # Format: dot separator between PR number and SHA (semver compliant)
+              # Example: 0.0.0-pr123.a1b2c3d4
               VERSION="0.0.0-pr${{ github.event.number }}.${GITHUB_SHA:0:8}"
               ;;
             release)

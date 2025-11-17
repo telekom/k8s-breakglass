@@ -102,7 +102,8 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 	idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
 	if err != nil {
 		a.log.Warnw("failed to load IDP config for issuer", "issuer", issuer, "error", err)
-		return nil, fmt.Errorf("unknown issuer: %s", issuer)
+		// Don't expose the issuer in error message to prevent reconnaissance attacks
+		return nil, fmt.Errorf("invalid or unknown identity provider")
 	}
 
 	// Build JWKS endpoint URL from IDP's authority

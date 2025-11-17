@@ -188,12 +188,15 @@ export function useMultiIDP(
 
   /**
    * Watch escalation name changes and reset selection if needed
+   * Properly wrap getEscalationName as a function to track its return value for reactivity
    */
   watch(
-    getEscalationName,
+    () => getEscalationName(),
     (newEscalationName) => {
+      console.debug("[useMultiIDP] Escalation changed via watch", { newEscalationName });
       // When escalation changes, validate current selection
       if (selectedIDP.value && !validateSelection(selectedIDP.value, newEscalationName)) {
+        console.debug("[useMultiIDP] Current IDP selection invalid for new escalation, clearing");
         clearSelection();
       }
     }

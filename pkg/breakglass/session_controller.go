@@ -634,7 +634,18 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	// Do not try to fetch it again as this can race with informer cache population.
 	// Instead, reuse the bs object that was created.
 
-	approvalTimeout := time.Hour // TODO: make configurable per escalation/cluster
+	// Get approval timeout from escalation spec, or use cluster default
+	approvalTimeout := time.Hour // Default: 1 hour
+	if matchedEsc != nil {
+		if matchedEsc.Spec.ApprovalTimeout != "" {
+			if d, err := time.ParseDuration(matchedEsc.Spec.ApprovalTimeout); err == nil && d > 0 {
+				approvalTimeout = d
+				reqLog.Debugw("Using approval timeout from escalation spec", "approvalTimeout", approvalTimeout)
+			} else {
+				reqLog.Warnw("Invalid ApprovalTimeout in escalation spec; falling back to default", "value", matchedEsc.Spec.ApprovalTimeout, "error", err)
+			}
+		}
+	}
 
 	// Compute retained-until at creation so sessions always expose when they will be cleaned up.
 	var retainFor time.Duration = DefaultRetainForDuration

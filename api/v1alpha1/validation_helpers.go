@@ -105,8 +105,10 @@ func ensureClusterWideUniqueIssuer(
 		return nil
 	}
 
+	// Use provided context, or TODO context if nil (explicit workaround marker)
+	// This indicates validation is being called outside proper request context
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = context.TODO()
 	}
 
 	// List all IdentityProviders and check for issuer conflicts

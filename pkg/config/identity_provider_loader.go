@@ -7,24 +7,39 @@ import (
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+// ConversionErrorMetricsRecorder is a callback to record conversion failure metrics
+// idpName: name of the IdentityProvider that failed conversion
+// failureReason: categorized reason (missing_field, invalid_config, parse_error, etc.)
+type ConversionErrorMetricsRecorder func(idpName, failureReason string)
+
 // IdentityProviderLoader handles loading identity provider configuration from Kubernetes CRs
 type IdentityProviderLoader struct {
-	kubeClient client.Client
-	logger     *zap.SugaredLogger
+	kubeClient      client.Client
+	logger          *zap.SugaredLogger
+	metricsRecorder ConversionErrorMetricsRecorder
 }
 
 // NewIdentityProviderLoader creates a new IdentityProviderLoader
 func NewIdentityProviderLoader(kubeClient client.Client) *IdentityProviderLoader {
 	return &IdentityProviderLoader{
-		kubeClient: kubeClient,
-		logger:     zap.NewNop().Sugar(), // No-op logger by default
+		kubeClient:      kubeClient,
+		logger:          zap.NewNop().Sugar(),                   // No-op logger by default
+		metricsRecorder: func(idpName, failureReason string) {}, // No-op recorder by default
 	}
+}
+
+// WithMetricsRecorder sets the metrics recorder callback
+func (l *IdentityProviderLoader) WithMetricsRecorder(recorder ConversionErrorMetricsRecorder) *IdentityProviderLoader {
+	l.metricsRecorder = recorder
+	return l
 }
 
 // WithLogger sets the logger for debug output
@@ -247,7 +262,15 @@ func (l *IdentityProviderLoader) LoadAllIdentityProviders(ctx context.Context) (
 		if !idp.Spec.Disabled {
 			config, err := l.convertToRuntimeConfig(ctx, idp)
 			if err != nil {
-				l.logger.Warnw("Failed to convert IdentityProvider, skipping", "name", idp.Name, "error", err)
+				// Log conversion error with full context for troubleshooting
+				l.logger.Warnw("Failed to convert IdentityProvider, skipping",
+					"name", idp.Name,
+					"namespace", idp.Namespace,
+					"displayName", idp.Spec.DisplayName,
+					"error", err)
+				// Update the IdentityProvider CR status to mark conversion failure
+				// This makes the error visible in kubectl describe for operators
+				l.updateConversionFailureStatus(ctx, idp, err)
 				conversionErrors = append(conversionErrors, fmt.Sprintf("%s: %v", idp.Name, err))
 				continue // Skip problematic configs
 			}
@@ -256,7 +279,16 @@ func (l *IdentityProviderLoader) LoadAllIdentityProviders(ctx context.Context) (
 	}
 
 	if len(conversionErrors) > 0 {
-		l.logger.Warnw("Some IdentityProviders were skipped due to conversion errors", "count", len(conversionErrors), "errors", conversionErrors)
+		// Log with ERROR level to make skipped IDPs more visible in logs
+		l.logger.Errorw("Some IdentityProviders were skipped due to conversion errors - users may be unable to authenticate with these providers",
+			"count", len(conversionErrors),
+			"skipped_idps", conversionErrors)
+		// TODO: Emit metrics to track IDP conversion failures
+		// Implementation: Add idp_conversion_errors_total counter metric with labels:
+		//   - idp_name: name of failed provider
+		//   - failure_reason: parsing_error|validation_error|network_error, etc.
+		// This enables alerting on repeated failures and tracks trends over time
+		// Reference: See pkg/metrics/metrics.go for metric initialization patterns
 	}
 
 	l.logger.Debugw("Loaded enabled IdentityProviders", "count", len(result))
@@ -354,4 +386,86 @@ func MarshalIdentityProviderToJSON(config *IdentityProviderConfig) (string, erro
 		return "", fmt.Errorf("failed to marshal IdentityProvider config: %w", err)
 	}
 	return string(data), nil
+}
+
+// updateConversionFailureStatus updates the IdentityProvider CR status to mark a conversion failure
+// This makes the error visible in kubectl describe and enables monitoring of failed configurations
+func (l *IdentityProviderLoader) updateConversionFailureStatus(ctx context.Context, idp *breakglassv1alpha1.IdentityProvider, err error) {
+	if idp == nil || err == nil {
+		return
+	}
+
+	// Categorize the error for metrics
+	failureReason := categorizeConversionError(err)
+
+	// Create a new condition for the conversion failure
+	condition := metav1.Condition{
+		Type:               string(breakglassv1alpha1.IdentityProviderConditionConversionFailed),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: idp.Generation,
+		Reason:             "ConversionError",
+		Message:            fmt.Sprintf("Failed to convert IdentityProvider configuration: %v", err),
+		LastTransitionTime: metav1.Now(),
+	}
+
+	// Update the condition on the status
+	apimeta.SetStatusCondition(&idp.Status.Conditions, condition)
+
+	// Try to update the status in Kubernetes
+	if updateErr := l.kubeClient.Status().Update(ctx, idp); updateErr != nil {
+		l.logger.Warnw("Failed to update IdentityProvider status on conversion failure",
+			"name", idp.Name,
+			"conversionError", err,
+			"updateError", updateErr)
+	} else {
+		l.logger.Debugw("Updated IdentityProvider status to mark conversion failure",
+			"name", idp.Name,
+			"error", err)
+	}
+
+	// Emit metric to track conversion failures
+	// This enables alerting and monitoring of repeated conversion failures
+	l.recordConversionFailureMetric(idp.Name, failureReason)
+}
+
+// categorizeConversionError classifies the error type for metrics
+// Returns a metric-friendly label describing the failure category
+func categorizeConversionError(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+
+	errMsg := err.Error()
+
+	// Check for common error patterns and categorize them
+	switch {
+	case stringContains(errMsg, "required"):
+		return "missing_field"
+	case stringContains(errMsg, "invalid"):
+		return "invalid_config"
+	case stringContains(errMsg, "parse"):
+		return "parse_error"
+	case stringContains(errMsg, "secret"):
+		return "secret_error"
+	case stringContains(errMsg, "connection"):
+		return "connection_error"
+	case stringContains(errMsg, "timeout"):
+		return "timeout_error"
+	case stringContains(errMsg, "unauthorized"):
+		return "auth_error"
+	default:
+		return "other_error"
+	}
+}
+
+// stringContains is a helper to check if an error message contains a substring
+func stringContains(s, substr string) bool {
+	return len(s) > 0 && len(substr) > 0 && (s == substr || (len(s) > len(substr) && len(substr) > 0))
+}
+
+// recordConversionFailureMetric calls the metrics recorder callback
+func (l *IdentityProviderLoader) recordConversionFailureMetric(idpName, failureReason string) {
+	if l.metricsRecorder != nil {
+		l.metricsRecorder(idpName, failureReason)
+	}
 }

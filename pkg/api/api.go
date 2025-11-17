@@ -36,6 +36,9 @@ type Server struct {
 	// idpReconciler maintains a cache of enabled IdentityProviders
 	// Used by getMultiIDPConfig to avoid querying the Kubernetes APIServer
 	idpReconciler *config.IdentityProviderReconciler
+	// escalationReconciler maintains a cache of escalation→IDP mappings
+	// Used by getMultiIDPConfig to avoid querying the Kubernetes APIServer
+	escalationReconciler *config.EscalationReconciler
 	// idpConfig caches the loaded IdentityProvider configuration for API responses
 	// This is protected by idpMutex to support safe reloading
 	idpConfig *config.IdentityProviderConfig
@@ -238,6 +241,13 @@ func (s *Server) ReloadIdentityProvider(loader *config.IdentityProviderLoader) e
 // its cache to avoid DDoSing the Kubernetes APIServer
 func (s *Server) SetIdentityProviderReconciler(reconciler *config.IdentityProviderReconciler) {
 	s.idpReconciler = reconciler
+}
+
+// SetEscalationReconciler sets the reconciler for accessing cached escalation→IDP mappings
+// This is called after the reconciler is initialized so the API can use
+// its cache to avoid DDoSing the Kubernetes APIServer
+func (s *Server) SetEscalationReconciler(reconciler *config.EscalationReconciler) {
+	s.escalationReconciler = reconciler
 }
 
 func (s *Server) RegisterAll(controllers []APIController) error {
@@ -451,11 +461,18 @@ func (s *Server) getMultiIDPConfig(c *gin.Context) {
 		})
 	}
 
-	// TODO: Query BreakglassEscalation CRs to build escalation→IDP mapping
-	// For now, return empty mapping (means all IDPs allowed for all escalations)
+	// Get escalation→IDP mapping from reconciler cache
+	escalationIDPMapping := make(map[string][]string)
+	if s.escalationReconciler != nil {
+		escalationIDPMapping = s.escalationReconciler.GetCachedEscalationIDPMapping()
+		s.log.Sugar().Debugw("using cached escalation→IDP mapping", "escalationCount", len(escalationIDPMapping))
+	} else {
+		s.log.Sugar().Debugw("escalation reconciler not available, returning empty escalation→IDP mapping")
+	}
+
 	resp := MultiIDPConfigResponse{
 		IdentityProviders:    idpInfos,
-		EscalationIDPMapping: map[string][]string{},
+		EscalationIDPMapping: escalationIDPMapping,
 	}
 
 	s.log.Sugar().Debugw("multi_idp_config_returned", "idp_count", len(idpInfos), "escalation_count", len(resp.EscalationIDPMapping))

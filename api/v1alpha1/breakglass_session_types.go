@@ -38,11 +38,15 @@ type (
 )
 
 const (
-	SessionConditionTypeIdle               BreakglassSessionConditionType   = "Idle"
-	SessionConditionTypeApproved           BreakglassSessionConditionType   = "Approved"
-	SessionConditionTypeRejected           BreakglassSessionConditionType   = "Rejected"
-	SessionConditionTypeExpired            BreakglassSessionConditionType   = "Expired"
-	SessionConditionTypeCanceled           BreakglassSessionConditionType   = "Canceled"
+	SessionConditionTypeIdle     BreakglassSessionConditionType = "Idle"
+	SessionConditionTypeApproved BreakglassSessionConditionType = "Approved"
+	SessionConditionTypeRejected BreakglassSessionConditionType = "Rejected"
+	SessionConditionTypeExpired  BreakglassSessionConditionType = "Expired"
+	SessionConditionTypeCanceled BreakglassSessionConditionType = "Canceled"
+	// Active indicates the session is currently active and usable for access
+	SessionConditionTypeActive BreakglassSessionConditionType = "Active"
+	// SessionExpired tracks when a session's validity window has ended
+	SessionConditionTypeSessionExpired     BreakglassSessionConditionType   = "SessionExpired"
 	SessionConditionReasonEditedByApprover BreakglassSessionConditionReason = "EditedByApprover"
 
 	SessionStatePending                 BreakglassSessionState = "Pending"
@@ -119,7 +123,9 @@ type BreakglassSessionStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// conditions is an array of current observed BreakglassSession conditions.
-	// todo: implement 'Active' and 'Expired' conditions.
+	// Tracks conditions like Idle, Approved, Rejected, Expired, Canceled, Active, and SessionExpired
+	// Active condition: Set to True when session is approved and within validity window, False otherwise
+	// SessionExpired condition: Set to True when session validity period has ended, False while active
 	Conditions []metav1.Condition `json:"conditions"`
 
 	// approvedAt is the time when the session was approved.

@@ -48,6 +48,12 @@ type BreakglassEscalationSpec struct {
 	// +default="1h"
 	IdleTimeout string `json:"idleTimeout,omitempty"`
 
+	// approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
+	// If this duration elapses without approval, the session expires and transitions to ApprovalTimeout state.
+	// +default="1h"
+	// +optional
+	ApprovalTimeout string `json:"approvalTimeout,omitempty"`
+
 	// clusterConfigRefs lists ClusterConfig object names this escalation applies to (alternative to allowed.clusters).
 	// +optional
 	ClusterConfigRefs []string `json:"clusterConfigRefs,omitempty"`
@@ -119,13 +125,17 @@ type ReasonConfig struct {
 }
 
 // BreakglassEscalationAllowed defines who is allowed to use an escalation.
-// todo: consider how to handle both users and groups being specified - should probably be logical 'or'
+// Current behavior: When both users and groups are specified, the validation requires the user to match ANY of the criteria
+// (logical OR semantics). A user is authorized if they are in the users list OR in any of the specified groups.
+// Future enhancement: Consider explicit configuration for how to combine users and groups (AND vs OR logic).
 type BreakglassEscalationAllowed struct {
 	// clusters is a list of clusters this escalation can be used for.
-	// todo: implement globbing (or regex?) support
+	// Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
+	// Future enhancement: Consider adding globbing (e.g., "prod-*") or regex support for cluster name matching.
 	Clusters []string `json:"clusters,omitempty"`
 	// groups is a list of groups this escalation can be used by.
-	// todo: implement globbing (or regex?) support
+	// Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
+	// Future enhancement: Consider adding globbing (e.g., "admin-*") or regex support for group name matching.
 	Groups []string `json:"groups,omitempty"`
 }
 

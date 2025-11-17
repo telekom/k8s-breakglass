@@ -38,6 +38,18 @@ const (
 	GroupSyncProviderKeycloak GroupSyncProvider = "Keycloak"
 )
 
+// IdentityProviderConditionType defines the type of condition for IdentityProvider status
+type IdentityProviderConditionType string
+
+const (
+	// IdentityProviderConditionReady indicates the IdentityProvider configuration is valid and ready
+	IdentityProviderConditionReady IdentityProviderConditionType = "Ready"
+	// IdentityProviderConditionConversionFailed indicates the IdentityProvider configuration failed to convert
+	IdentityProviderConditionConversionFailed IdentityProviderConditionType = "ConversionFailed"
+	// IdentityProviderConditionValidationFailed indicates the IdentityProvider configuration failed validation
+	IdentityProviderConditionValidationFailed IdentityProviderConditionType = "ValidationFailed"
+)
+
 // OIDCConfig holds mandatory OIDC configuration for identity provider
 // All IdentityProviders require OIDC for user authentication
 type OIDCConfig struct {

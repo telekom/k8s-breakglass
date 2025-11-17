@@ -127,6 +127,14 @@ const allowedIDPs = computed((): IDPInfo[] => {
 });
 
 /**
+ * Check if configuration has been loaded and is valid
+ * Consolidates null checks to avoid scattered validation logic
+ */
+const hasValidConfig = computed((): boolean => {
+  return !!multiIDPConfig.value && multiIDPConfig.value.identityProviders.length > 0;
+});
+
+/**
  * Check if there are multiple IDPs to choose from
  * Single IDP doesn't need a selector
  */

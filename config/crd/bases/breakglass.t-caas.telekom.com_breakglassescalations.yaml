@@ -67,14 +67,16 @@ spec:
                   clusters:
                     description: |-
                       clusters is a list of clusters this escalation can be used for.
-                      todo: implement globbing (or regex?) support
+                      Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
+                      Future enhancement: Consider adding globbing (e.g., "prod-*") or regex support for cluster name matching.
                     items:
                       type: string
                     type: array
                   groups:
                     description: |-
                       groups is a list of groups this escalation can be used by.
-                      todo: implement globbing (or regex?) support
+                      Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
+                      Future enhancement: Consider adding globbing (e.g., "admin-*") or regex support for group name matching.
                     items:
                       type: string
                     type: array
@@ -111,6 +113,12 @@ spec:
                       (true) or optional (false).
                     type: boolean
                 type: object
+              approvalTimeout:
+                default: 1h
+                description: |-
+                  approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
+                  If this duration elapses without approval, the session expires and transitions to ApprovalTimeout state.
+                type: string
               approvers:
                 description: approvers specifies who is allowed to approve this escalation.
                 properties:

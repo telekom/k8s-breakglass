@@ -136,6 +136,11 @@ var (
 		Name: "breakglass_identity_provider_validation_failed_total",
 		Help: "Total number of times IdentityProvider validation failed at startup",
 	}, []string{"reason"})
+	// Conversion error tracking for operator observability
+	IdentityProviderConversionErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_identity_provider_conversion_errors_total",
+		Help: "Total number of IdentityProvider configuration conversion errors (OIDC config parsing, Keycloak setup, etc.)",
+	}, []string{"idp_name", "failure_reason"})
 	// Extended lifecycle metrics for comprehensive monitoring
 	IdentityProviderReloadDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "breakglass_identity_provider_reload_duration_seconds",
@@ -190,6 +195,7 @@ func init() {
 	prometheus.MustRegister(IdentityProviderLoaded)
 	prometheus.MustRegister(IdentityProviderLoadFailed)
 	prometheus.MustRegister(IdentityProviderValidationFailed)
+	prometheus.MustRegister(IdentityProviderConversionErrors)
 	prometheus.MustRegister(IdentityProviderReloadDuration)
 	prometheus.MustRegister(IdentityProviderReloadAttempts)
 	prometheus.MustRegister(IdentityProviderLastReloadTimestamp)

@@ -408,6 +408,11 @@ func main() {
 	idpLoader := config.NewIdentityProviderLoader(kubeClient)
 	idpLoader.WithLogger(log)
 
+	// Set up metrics recorder for conversion failures
+	idpLoader.WithMetricsRecorder(func(idpName, failureReason string) {
+		metrics.IdentityProviderConversionErrors.WithLabelValues(idpName, failureReason).Inc()
+	})
+
 	// Validate IdentityProvider exists (mandatory)
 	ctx := context.Background()
 	if err := idpLoader.ValidateIdentityProviderExists(ctx); err != nil {
@@ -797,6 +802,30 @@ func setupReconcilerManager(
 			return
 		}
 		log.Infow("Successfully registered IdentityProvider reconciler", "resyncPeriod", "10m")
+
+		// Register BreakglassEscalation Reconciler with controller-runtime manager
+		log.Debugw("Setting up BreakglassEscalation reconciler")
+		escalationReconciler := config.NewEscalationReconciler(
+			mgr.GetClient(),
+			log,
+			mgr.GetEventRecorderFor("breakglass-escalation-controller"),
+			nil, // no onReload callback needed for escalations
+			func(ctx context.Context, err error) {
+				log.Errorw("BreakglassEscalation reconciliation error", "error", err)
+				metrics.IdentityProviderLoadFailed.WithLabelValues("escalation_reconciler_error").Inc()
+			},
+			10*time.Minute,
+		)
+
+		// Set reconciler in API server so it can use the cached escalation→IDP mapping
+		// This prevents the API from querying the Kubernetes APIServer on every /api/config/idps request
+		server.SetEscalationReconciler(escalationReconciler)
+
+		if err := escalationReconciler.SetupWithManager(mgr); err != nil {
+			log.Errorw("Failed to setup BreakglassEscalation reconciler with manager", "error", err)
+			return
+		}
+		log.Infow("Successfully registered BreakglassEscalation reconciler", "resyncPeriod", "10m")
 
 		// Note: Leadership election is NOT handled by the manager at this level.
 		// Background loops (cleanup, escalation updater, cluster config checker) use the resourcelock
