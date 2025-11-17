@@ -64,15 +64,20 @@ export interface UseMultiIDPReturn {
  * Vue 3 composable for managing multi-IDP selection
  * Provides reactive state, validation, and control functions
  *
- * @param escalationName Name of the escalation to get allowed IDPs for
+ * @param escalationName Name of the escalation or getter function for reactive escalation names
  * @param options Configuration options
  * @returns Composable functions and reactive state
  */
 export function useMultiIDP(
-  escalationName: string,
+  escalationName: string | (() => string),
   options: UseMultiIDPOptions = {}
 ): UseMultiIDPReturn {
   const { required = false, onSelectionChange } = options;
+
+  // Normalize escalationName to a getter function
+  const getEscalationName = typeof escalationName === "function"
+    ? escalationName
+    : () => escalationName;
 
   // State
   const selectedIDP = ref<string | undefined>();
@@ -85,7 +90,7 @@ export function useMultiIDP(
    */
   const allowedIDPs = computed((): IDPInfo[] => {
     if (!config.value) return [];
-    return getAllowedIDPsForEscalation(escalationName, config.value);
+    return getAllowedIDPsForEscalation(getEscalationName(), config.value);
   });
 
   /**
@@ -149,7 +154,7 @@ export function useMultiIDP(
    */
   function selectIDP(idpName: string): boolean {
     // Validate selection before accepting
-    if (!validateSelection(idpName, escalationName)) {
+    if (!validateSelection(idpName, getEscalationName())) {
       error.value = "Selected IDP is not allowed for this escalation";
       return false;
     }
@@ -185,10 +190,10 @@ export function useMultiIDP(
    * Watch escalation name changes and reset selection if needed
    */
   watch(
-    () => escalationName,
-    () => {
+    getEscalationName,
+    (newEscalationName) => {
       // When escalation changes, validate current selection
-      if (selectedIDP.value && !validateSelection(selectedIDP.value, escalationName)) {
+      if (selectedIDP.value && !validateSelection(selectedIDP.value, newEscalationName)) {
         clearSelection();
       }
     }

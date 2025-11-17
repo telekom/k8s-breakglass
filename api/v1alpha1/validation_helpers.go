@@ -188,6 +188,7 @@ func validateIdentityProviderRefs(
 
 // validateIdentityProviderFields ensures that IDP tracking fields (Name and Issuer) are consistent if both are set.
 // These fields are typically populated during session creation and are optional for manual creation.
+// Note: namePath and issuerPath must be non-nil field paths (typically provided by the webhook framework).
 func validateIdentityProviderFields(
 	ctx context.Context,
 	idpName string,
@@ -197,6 +198,11 @@ func validateIdentityProviderFields(
 ) field.ErrorList {
 	// If both fields are empty, that's valid (IDP not yet set during session lifecycle)
 	if idpName == "" && idpIssuer == "" {
+		return nil
+	}
+
+	// Validate that field paths are provided (required precondition)
+	if namePath == nil || issuerPath == nil {
 		return nil
 	}
 
@@ -302,9 +308,10 @@ func validateSessionIdentityProviderAuthorization(
 	// Check if ANY matching escalation disallows this IDP
 	var errs field.ErrorList
 	for _, esc := range relevantEscalations {
-		// If escalation has no allowed IDPs list, all enabled IDPs are allowed
+		// If escalation has no allowed IDPs list, all enabled IDPs are allowed - short-circuit to success
 		if len(esc.Spec.AllowedIdentityProviders) == 0 {
-			// At least one escalation allows all IDPs, so authorization passes
+			// At least one escalation allows all IDPs (unrestricted), so authorization passes
+			// This is a short-circuit: if any escalation is unrestricted for this user, they're authorized
 			return nil
 		}
 

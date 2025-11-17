@@ -92,11 +92,11 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 
 	// Multi-IDP mode: load JWKS for specific issuer
 	a.jwksMutex.RLock()
-	if cachedJwks, exists := a.jwksCache[issuer]; exists {
-		a.jwksMutex.RUnlock()
+	cachedJwks, exists := a.jwksCache[issuer]
+	a.jwksMutex.RUnlock()
+	if exists {
 		return cachedJwks, nil
 	}
-	a.jwksMutex.RUnlock()
 
 	// Load IDP config by issuer
 	idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
@@ -202,7 +202,12 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 				return
 			}
 			jwks = loadedJwks
-			selectedIDP, _ = a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
+			idpName, err := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
+			if err != nil {
+				a.log.Debugw("failed to get IDP name by issuer", "issuer", issuer, "error", err)
+			} else {
+				selectedIDP = idpName
+			}
 		} else {
 			// Single-IDP mode or issuer not found: use default JWKS
 			jwks = a.jwks
