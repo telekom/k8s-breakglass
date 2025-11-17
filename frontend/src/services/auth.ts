@@ -124,20 +124,29 @@ export default class AuthService {
         });
 
         // Check if we have the OIDC credentials for this IDP
-        const oidcAuthority = (idpConfig as any).oidcAuthority;
+        const directAuthority = (idpConfig as any).oidcAuthority;
         const oidcClientID = (idpConfig as any).oidcClientID;
         
-        if (!oidcAuthority || !oidcClientID) {
+        if (!directAuthority || !oidcClientID) {
           console.error("[AuthService] IDP missing OIDC configuration", idpConfig);
           logError('AuthService', 'IDP missing OIDC config', idpConfig);
           // Fall back to default UserManager
           return this.userManager.signinRedirect({ state });
         }
 
-        // Get or create UserManager for this IDP
-        const manager = this.getOrCreateUserManager(oidcAuthority, oidcClientID);
+        // IMPORTANT: Use the proxy authority path for browser requests, not the direct Keycloak URL
+        // This is the same pattern used by the backend in getConfig() to avoid certificate trust issues
+        // The backend will proxy /api/oidc/authority/* requests to the real Keycloak authority
+        const proxyAuthority = "/api/oidc/authority";
         
-        console.debug("[AuthService] Using UserManager for IDP:", state.idpName);
+        // Get or create UserManager for this IDP with the proxy authority
+        const manager = this.getOrCreateUserManager(proxyAuthority, oidcClientID);
+        
+        console.debug("[AuthService] Using UserManager for IDP:", {
+          idpName: state.idpName,
+          proxyAuthority,
+          oidcClientID,
+        });
         return manager.signinRedirect({ state });
       } catch (err) {
         console.error("[AuthService] Error getting IDP config:", err);
