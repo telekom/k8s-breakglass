@@ -10,6 +10,14 @@ import (
 // IdentityProviderConfig represents the runtime identity provider configuration
 // loaded from IdentityProvider CRD resources
 type IdentityProviderConfig struct {
+	// Name is the name of the IdentityProvider CRD resource (metadata.name)
+	// Used to reference this IDP in ClusterConfig and BreakglassEscalation specs
+	Name string
+
+	// Issuer is the OIDC issuer URL (must match the 'iss' claim in JWT tokens)
+	// Used to identify which IDP authenticated a user based on their JWT
+	Issuer string
+
 	// Type is the provider type (OIDC, Keycloak, LDAP, AzureAD)
 	Type string
 

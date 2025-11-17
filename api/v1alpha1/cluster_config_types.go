@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,6 +47,14 @@ type ClusterConfigSpec struct {
 	// burst configures the client burst against the target cluster.
 	// +optional
 	Burst *int32 `json:"burst,omitempty"`
+
+	// identityProviderRefs specifies which IdentityProvider CRs are allowed to authenticate for this cluster.
+	// If empty or unset, all enabled IdentityProviders are accepted (backward compatible default).
+	// If set, users must authenticate via one of the named providers.
+	// Names should match the metadata.name of IdentityProvider resources.
+	// +optional
+	IdentityProviderRefs []string `json:"identityProviderRefs,omitempty"`
+
 	// blockSelfApproval, if true, prevents users from self-approving their own breakglass sessions for this cluster.
 	// +optional
 	BlockSelfApproval bool `json:"blockSelfApproval,omitempty"`
@@ -101,27 +110,45 @@ type ClusterConfig struct {
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
 func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	clusterConfig, ok := obj.(*ClusterConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected a ClusterConfig object but got %T", obj)
+	}
+
 	var allErrs field.ErrorList
-	if cc.Spec.KubeconfigSecretRef.Name == "" || cc.Spec.KubeconfigSecretRef.Namespace == "" {
+	if clusterConfig.Spec.KubeconfigSecretRef.Name == "" || clusterConfig.Spec.KubeconfigSecretRef.Namespace == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("kubeconfigSecretRef"), "kubeconfigSecretRef name and namespace are required"))
 	}
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, cc.Namespace, cc.Name, field.NewPath("metadata").Child("name"))...)
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
+
+	// Multi-IDP: Validate IdentityProviderRefs (empty refs is valid - means accept all enabled IDPs)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, field.NewPath("spec").Child("identityProviderRefs"))...)
+
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, cc.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, clusterConfig.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	clusterConfig, ok := newObj.(*ClusterConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected a ClusterConfig object but got %T", newObj)
+	}
+
 	var allErrs field.ErrorList
 	// no immutability enforcement for ClusterConfig
 	// still ensure the name is unique across the cluster
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, cc.Namespace, cc.Name, field.NewPath("metadata").Child("name"))...)
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
+
+	// Multi-IDP: Validate IdentityProviderRefs (empty refs is valid - means accept all enabled IDPs)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, field.NewPath("spec").Child("identityProviderRefs"))...)
+
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, cc.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, clusterConfig.Name, allErrs)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type

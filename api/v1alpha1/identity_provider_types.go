@@ -110,8 +110,15 @@ type IdentityProviderSpec struct {
 	// +optional
 	Keycloak *KeycloakGroupSync `json:"keycloak,omitempty"`
 
+	// Issuer is the OIDC issuer URL, which must match the 'iss' claim in JWT tokens
+	// This uniquely identifies the identity provider and is used to determine which provider
+	// authenticated a user based on their JWT token.
+	// Example: https://auth.example.com
+	// +optional
+	Issuer string `json:"issuer,omitempty"`
+
 	// Primary indicates if this is the primary identity provider (used by default)
-	// Only one IdentityProvider should have primary: true per cluster
+	// Deprecated: Primary is kept for backward compatibility. In multi-IDP mode, use ClusterConfig.IdentityProviderRefs instead.
 	// +optional
 	Primary bool `json:"primary,omitempty"`
 
@@ -156,6 +163,7 @@ type IdentityProviderStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Issuer",type=string,JSONPath=`.spec.issuer`
 // +kubebuilder:printcolumn:name="Primary",type=boolean,JSONPath=`.spec.primary`
 // +kubebuilder:printcolumn:name="GroupSync",type=string,JSONPath=`.spec.groupSyncProvider`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
@@ -165,8 +173,9 @@ type IdentityProviderStatus struct {
 // IdentityProvider represents a configured identity provider with OIDC authentication and optional group synchronization
 // IdentityProvider is cluster-scoped, allowing global identity provider configuration.
 // All identity providers use OIDC for user authentication. Group synchronization can be optionally
-// configured using providers like Keycloak. Multiple IdentityProviders can be configured, but only
-// one should be marked as Primary for use as the default.
+// configured using providers like Keycloak. Multiple IdentityProviders can be configured per cluster.
+// The Issuer field must be set to the OIDC issuer URL (matching the 'iss' claim in JWT tokens) to enable
+// multi-IDP support. ClusterConfig and BreakglassEscalation can restrict access to specific IDPs by name.
 type IdentityProvider struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -213,6 +222,9 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 			}
 		}
 	}
+
+	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique and valid URL)
+	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, identityProvider.Spec.Issuer, identityProvider.Name, field.NewPath("spec").Child("issuer"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil

@@ -138,6 +138,19 @@ spec:
               grantedGroup:
                 description: grantedGroup is the group granted by the session.
                 type: string
+              identityProviderIssuer:
+                description: |-
+                  identityProviderIssuer is the OIDC issuer URL (from JWT 'iss' claim) of the IDP that authenticated the user.
+                  Set during session creation for validation and audit purposes.
+                  Must match the IdentityProvider.spec.issuer of the provider that authenticated the user.
+                  Used by webhook handler to validate the user's token is from the same IDP the session was created with.
+                type: string
+              identityProviderName:
+                description: |-
+                  identityProviderName is the name of the IdentityProvider CR that authenticated the user.
+                  Set during session creation based on the JWT issuer claim.
+                  Used for auditing which IDP authenticated the user and for webhook authorization validation.
+                type: string
               idleTimeout:
                 default: 1h
                 description: Max time a session can sit idle without being used by

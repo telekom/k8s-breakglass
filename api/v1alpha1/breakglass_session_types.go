@@ -99,6 +99,19 @@ type BreakglassSessionSpec struct {
 	// Sessions in WaitingForScheduledTime state are not considered valid/active until this time is reached.
 	// +optional
 	ScheduledStartTime *metav1.Time `json:"scheduledStartTime,omitempty"`
+
+	// identityProviderName is the name of the IdentityProvider CR that authenticated the user.
+	// Set during session creation based on the JWT issuer claim.
+	// Used for auditing which IDP authenticated the user and for webhook authorization validation.
+	// +optional
+	IdentityProviderName string `json:"identityProviderName,omitempty"`
+
+	// identityProviderIssuer is the OIDC issuer URL (from JWT 'iss' claim) of the IDP that authenticated the user.
+	// Set during session creation for validation and audit purposes.
+	// Must match the IdentityProvider.spec.issuer of the provider that authenticated the user.
+	// Used by webhook handler to validate the user's token is from the same IDP the session was created with.
+	// +optional
+	IdentityProviderIssuer string `json:"identityProviderIssuer,omitempty"`
 }
 
 // BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
@@ -235,6 +248,12 @@ func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj runtime.Obj
 			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), session.Spec.ScheduledStartTime.Time, "scheduledStartTime must be at least 5 minutes in the future"))
 		}
 	}
+
+	// Multi-IDP: Validate IDP tracking fields if set
+	allErrs = append(allErrs, validateIdentityProviderFields(ctx, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, field.NewPath("spec").Child("identityProviderName"), field.NewPath("spec").Child("identityProviderIssuer"))...)
+
+	// Session Authorization - Validate IDP is allowed by matching escalation
+	allErrs = append(allErrs, validateSessionIdentityProviderAuthorization(ctx, session.Spec.Cluster, session.Spec.GrantedGroup, session.Spec.IdentityProviderName, field.NewPath("spec").Child("identityProviderName"))...)
 
 	nameErrs := ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, bs.Namespace, bs.Name, field.NewPath("metadata").Child("name"))
 	allErrs = append(allErrs, nameErrs...)
