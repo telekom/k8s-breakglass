@@ -86,6 +86,17 @@ spec:
                 items:
                   type: string
                 type: array
+              allowedIdentityProviders:
+                description: |-
+                  allowedIdentityProviders specifies which IdentityProvider CRs can use this escalation.
+                  If empty or unset, the escalation accepts any IdentityProvider allowed by the cluster
+                  (from ClusterConfig.IdentityProviderRefs, or all enabled providers if cluster is unrestricted).
+                  If set, only users authenticated via one of the named providers can use this escalation.
+                  Names should match the metadata.name of IdentityProvider resources.
+                  The intersection of cluster-allowed and escalation-allowed IDPs is used.
+                items:
+                  type: string
+                type: array
               approvalReason:
                 description: |-
                   approvalReason configures an optional free-text reason the approver must or may provide

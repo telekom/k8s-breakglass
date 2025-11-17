@@ -167,6 +167,9 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Identity Provider configuration endpoint (non-secrets)
 	engine.GET("api/identity-provider", s.getIdentityProvider)
 
+	// Multi-IDP configuration endpoint for frontend IDP selection
+	engine.GET("api/config/idps", s.getMultiIDPConfig)
+
 	return s
 }
 
@@ -297,6 +300,28 @@ type KeycloakResponseMetadata struct {
 	Realm string `json:"realm"`
 }
 
+// MultiIDPConfigResponse provides IDP configuration and escalation IDP mappings for frontend UI.
+// This enables the frontend to show available IDPs and which IDPs are allowed for each escalation.
+type MultiIDPConfigResponse struct {
+	// IdentityProviders lists all enabled identity providers
+	IdentityProviders []IDPInfo `json:"identityProviders"`
+	// EscalationIDPMapping maps escalation names to their allowed IDPs
+	// Empty list means all enabled IDPs are allowed for that escalation
+	EscalationIDPMapping map[string][]string `json:"escalationIDPMapping"`
+}
+
+// IDPInfo represents a single Identity Provider in the multi-IDP configuration.
+type IDPInfo struct {
+	// Name is the unique identifier for the IDP
+	Name string `json:"name"`
+	// DisplayName is the human-readable name to show in UI
+	DisplayName string `json:"displayName"`
+	// Issuer is the OIDC issuer URL for this IDP
+	Issuer string `json:"issuer"`
+	// Enabled indicates if this IDP is active
+	Enabled bool `json:"enabled"`
+}
+
 func (s *Server) getConfig(c *gin.Context) {
 	// Expose a frontend-facing OIDC authority that points at the server-side proxy
 	// so the browser performs discovery/JWKS calls against the API server origin
@@ -368,6 +393,41 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 	}
 
 	s.log.Sugar().Debugw("identity_provider_exposed", "type", resp.Type)
+	c.JSON(http.StatusOK, resp)
+}
+
+// getMultiIDPConfig returns multi-IDP configuration for frontend IDP selection.
+// This endpoint provides:
+// 1. List of enabled identity providers with their metadata
+// 2. Mapping of escalations to their allowed IDPs for authorization enforcement
+//
+// Frontend uses this to:
+// - Show available IDPs in IDP selector dropdown
+// - Display which IDPs are allowed for each escalation
+// - Pre-populate IDP field based on escalation selection
+func (s *Server) getMultiIDPConfig(c *gin.Context) {
+	// TODO: query Kubernetes APIServer for:
+	// 1. All IdentityProvider CRs (get name, displayName, issuer, enabled status)
+	// 2. All BreakglassEscalation CRs (get name and allowedIdentityProviders list)
+	//
+	// For MVP, return placeholder structure showing what frontend expects
+
+	resp := MultiIDPConfigResponse{
+		IdentityProviders: []IDPInfo{
+			{
+				Name:        "corporate-idp",
+				DisplayName: "Corporate Identity",
+				Issuer:      "https://auth.corp.com",
+				Enabled:     true,
+			},
+		},
+		EscalationIDPMapping: map[string][]string{
+			"prod-admin": {"corporate-idp"},
+			"dev-admin":  {}, // Empty = all IDPs allowed
+		},
+	}
+
+	s.log.Sugar().Debugw("multi_idp_config_returned", "idp_count", len(resp.IdentityProviders), "escalation_count", len(resp.EscalationIDPMapping))
 	c.JSON(http.StatusOK, resp)
 }
 

@@ -159,6 +159,11 @@ func (in *BreakglassEscalationSpec) DeepCopyInto(out *BreakglassEscalationSpec) 
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.AllowedIdentityProviders != nil {
+		in, out := &in.AllowedIdentityProviders, &out.AllowedIdentityProviders
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.BlockSelfApproval != nil {
 		in, out := &in.BlockSelfApproval, &out.BlockSelfApproval
 		*out = new(bool)
@@ -422,6 +427,11 @@ func (in *ClusterConfigSpec) DeepCopyInto(out *ClusterConfigSpec) {
 		in, out := &in.Burst, &out.Burst
 		*out = new(int32)
 		**out = **in
+	}
+	if in.IdentityProviderRefs != nil {
+		in, out := &in.IdentityProviderRefs, &out.IdentityProviderRefs
+		*out = make([]string, len(*in))
+		copy(*out, *in)
 	}
 	if in.AllowedApproverDomains != nil {
 		in, out := &in.AllowedApproverDomains, &out.AllowedApproverDomains

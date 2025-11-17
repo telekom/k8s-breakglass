@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,6 +70,15 @@ type BreakglassEscalationSpec struct {
 	// If omitted, cluster-level defaults are used.
 	// +optional
 	AllowedApproverDomains []string `json:"allowedApproverDomains,omitempty"`
+
+	// allowedIdentityProviders specifies which IdentityProvider CRs can use this escalation.
+	// If empty or unset, the escalation accepts any IdentityProvider allowed by the cluster
+	// (from ClusterConfig.IdentityProviderRefs, or all enabled providers if cluster is unrestricted).
+	// If set, only users authenticated via one of the named providers can use this escalation.
+	// Names should match the metadata.name of IdentityProvider resources.
+	// The intersection of cluster-allowed and escalation-allowed IDPs is used.
+	// +optional
+	AllowedIdentityProviders []string `json:"allowedIdentityProviders,omitempty"`
 
 	// blockSelfApproval, if set to true, will prevent the session requester from approving their own session for this escalation.
 	// If omitted (nil), the cluster-level setting will be used.
@@ -168,28 +178,44 @@ type BreakglassEscalation struct {
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
 func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	escalation, ok := obj.(*BreakglassEscalation)
+	if !ok {
+		return nil, fmt.Errorf("expected a BreakglassEscalation object but got %T", obj)
+	}
+
 	var allErrs field.ErrorList
-	if be.Spec.EscalatedGroup == "" {
+	if escalation.Spec.EscalatedGroup == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("escalatedGroup"), "escalatedGroup is required"))
 	}
 
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, be.Namespace, be.Name, field.NewPath("metadata").Child("name"))...)
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
+
+	// Multi-IDP: Validate AllowedIdentityProviders (empty list is valid - means inherit from cluster config)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProviders, field.NewPath("spec").Child("allowedIdentityProviders"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, be.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, escalation.Name, allErrs)
 }
 
 func (be *BreakglassEscalation) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	escalation, ok := newObj.(*BreakglassEscalation)
+	if !ok {
+		return nil, fmt.Errorf("expected a BreakglassEscalation object but got %T", newObj)
+	}
+
 	var allErrs field.ErrorList
 	// no immutability enforced
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, be.Namespace, be.Name, field.NewPath("metadata").Child("name"))...)
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
+
+	// Multi-IDP: Validate AllowedIdentityProviders (empty list is valid - means inherit from cluster config)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProviders, field.NewPath("spec").Child("allowedIdentityProviders"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, be.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, escalation.Name, allErrs)
 }
 
 func (be *BreakglassEscalation) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {

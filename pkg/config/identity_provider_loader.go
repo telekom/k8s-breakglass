@@ -137,6 +137,8 @@ func (l *IdentityProviderLoader) convertToRuntimeConfig(ctx context.Context, idp
 	l.logger.Debugw("Converting IdentityProvider to runtime config", "name", idp.Name)
 
 	runtimeConfig := &IdentityProviderConfig{
+		Name:      idp.Name,
+		Issuer:    idp.Spec.Issuer,
 		Type:      "OIDC",
 		Authority: idp.Spec.OIDC.Authority,
 		ClientID:  idp.Spec.OIDC.ClientID,
@@ -144,7 +146,8 @@ func (l *IdentityProviderLoader) convertToRuntimeConfig(ctx context.Context, idp
 
 	l.logger.Debugw("OIDC config loaded",
 		"authority", idp.Spec.OIDC.Authority,
-		"clientID", idp.Spec.OIDC.ClientID)
+		"clientID", idp.Spec.OIDC.ClientID,
+		"issuer", idp.Spec.Issuer)
 
 	// Setup group sync if configured
 	if idp.Spec.GroupSyncProvider == breakglassv1alpha1.GroupSyncProviderKeycloak && idp.Spec.Keycloak != nil {
@@ -222,6 +225,118 @@ func (l *IdentityProviderLoader) getSecretValue(ctx context.Context, secretRef *
 	}
 
 	return string(value), nil
+}
+
+// LoadAllIdentityProviders returns all enabled identity providers as a map of name -> config
+// Only includes providers where Disabled=false
+func (l *IdentityProviderLoader) LoadAllIdentityProviders(ctx context.Context) (map[string]*IdentityProviderConfig, error) {
+	l.logger.Debug("Loading all enabled IdentityProviders")
+
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
+	err := l.kubeClient.List(ctx, idpList)
+	if err != nil {
+		l.logger.Errorw("Failed to list IdentityProvider resources", "error", err)
+		return nil, fmt.Errorf("failed to list IdentityProvider resources: %w", err)
+	}
+
+	result := make(map[string]*IdentityProviderConfig)
+	for i := range idpList.Items {
+		idp := &idpList.Items[i]
+		if !idp.Spec.Disabled {
+			config, err := l.convertToRuntimeConfig(ctx, idp)
+			if err != nil {
+				l.logger.Errorw("Failed to convert IdentityProvider", "name", idp.Name, "error", err)
+				continue // Skip problematic configs
+			}
+			result[idp.Name] = config
+		}
+	}
+
+	l.logger.Debugw("Loaded enabled IdentityProviders", "count", len(result))
+	return result, nil
+}
+
+// LoadIdentityProviderByIssuer loads an IdentityProvider by its issuer URL
+// This is used to determine which provider authenticated a user based on JWT iss claim
+// Returns error if no provider with matching issuer is found
+func (l *IdentityProviderLoader) LoadIdentityProviderByIssuer(ctx context.Context, issuer string) (*IdentityProviderConfig, error) {
+	l.logger.Debugw("Loading IdentityProvider by issuer", "issuer", issuer)
+
+	if issuer == "" {
+		return nil, fmt.Errorf("issuer cannot be empty")
+	}
+
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
+	err := l.kubeClient.List(ctx, idpList)
+	if err != nil {
+		l.logger.Errorw("Failed to list IdentityProvider resources", "error", err)
+		return nil, fmt.Errorf("failed to list IdentityProvider resources: %w", err)
+	}
+
+	for i := range idpList.Items {
+		idp := &idpList.Items[i]
+		if !idp.Spec.Disabled && idp.Spec.Issuer == issuer {
+			l.logger.Debugw("Found IdentityProvider by issuer", "name", idp.Name, "issuer", issuer)
+			return l.convertToRuntimeConfig(ctx, idp)
+		}
+	}
+
+	l.logger.Warnw("No IdentityProvider found for issuer", "issuer", issuer)
+	return nil, fmt.Errorf("no enabled IdentityProvider found for issuer %s", issuer)
+}
+
+// ValidateIdentityProviderRefs checks that all named IdentityProviders exist and are enabled
+// Used for validating ClusterConfig.IdentityProviderRefs and BreakglassEscalation.AllowedIdentityProviders
+// If refs is empty, this is considered valid (means accept all enabled providers)
+func (l *IdentityProviderLoader) ValidateIdentityProviderRefs(ctx context.Context, refs []string) error {
+	if len(refs) == 0 {
+		l.logger.Debug("Empty IdentityProviderRefs - will accept all enabled providers")
+		return nil
+	}
+
+	l.logger.Debugw("Validating IdentityProviderRefs", "count", len(refs), "refs", refs)
+
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
+	err := l.kubeClient.List(ctx, idpList)
+	if err != nil {
+		l.logger.Errorw("Failed to list IdentityProvider resources", "error", err)
+		return fmt.Errorf("failed to validate IdentityProviderRefs: %w", err)
+	}
+
+	// Build map of available providers
+	enabledProviders := make(map[string]bool)
+	for i := range idpList.Items {
+		idp := &idpList.Items[i]
+		if !idp.Spec.Disabled {
+			enabledProviders[idp.Name] = true
+		}
+	}
+
+	// Check that all refs point to valid, enabled providers
+	var missingRefs []string
+	for _, ref := range refs {
+		if !enabledProviders[ref] {
+			missingRefs = append(missingRefs, ref)
+		}
+	}
+
+	if len(missingRefs) > 0 {
+		l.logger.Errorw("IdentityProviderRefs validation failed - providers not found or disabled", "missing", missingRefs)
+		return fmt.Errorf("invalid IdentityProviderRefs: providers not found or disabled: %v", missingRefs)
+	}
+
+	l.logger.Debug("IdentityProviderRefs validation passed")
+	return nil
+}
+
+// GetIDPNameByIssuer returns the name of the IdentityProvider that matches the given issuer
+// Used to convert from JWT issuer claim to IDP name for storage in sessions
+func (l *IdentityProviderLoader) GetIDPNameByIssuer(ctx context.Context, issuer string) (string, error) {
+	config, err := l.LoadIdentityProviderByIssuer(ctx, issuer)
+	if err != nil {
+		return "", err
+	}
+	return config.Name, nil
 }
 
 // MarshalIdentityProviderToJSON marshals an IdentityProviderConfig to JSON

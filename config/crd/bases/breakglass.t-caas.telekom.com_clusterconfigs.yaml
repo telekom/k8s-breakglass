@@ -75,6 +75,15 @@ spec:
               environment:
                 description: environment (e.g. dev, staging, prod) override.
                 type: string
+              identityProviderRefs:
+                description: |-
+                  identityProviderRefs specifies which IdentityProvider CRs are allowed to authenticate for this cluster.
+                  If empty or unset, all enabled IdentityProviders are accepted (backward compatible default).
+                  If set, users must authenticate via one of the named providers.
+                  Names should match the metadata.name of IdentityProvider resources.
+                items:
+                  type: string
+                type: array
               kubeconfigSecretRef:
                 description: |-
                   kubeconfigSecretRef references a secret containing an admin-level kubeconfig for the target cluster.

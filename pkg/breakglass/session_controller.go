@@ -490,6 +490,19 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		DenyPolicyRefs: selectedDenyPolicies,
 		RequestReason:  request.Reason,
 	}
+
+	// Multi-IDP: Populate IDP tracking fields from authentication middleware
+	if idpName, exists := c.Get("identity_provider_name"); exists {
+		if name, ok := idpName.(string); ok && name != "" {
+			spec.IdentityProviderName = name
+		}
+	}
+	if issuer, exists := c.Get("issuer"); exists {
+		if iss, ok := issuer.(string); ok && iss != "" {
+			spec.IdentityProviderIssuer = iss
+		}
+	}
+
 	if matchedEsc != nil {
 		// copy relevant duration-related fields from escalation spec to session spec
 		spec.MaxValidFor = matchedEsc.Spec.MaxValidFor

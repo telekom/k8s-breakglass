@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MicahParks/keyfunc"
@@ -21,8 +22,17 @@ const (
 )
 
 type AuthHandler struct {
+	// Multi-IDP support: map issuer URL to JWKS
+	jwksCache map[string]*keyfunc.JWKS
+	jwksMutex sync.RWMutex
+
+	// Single-IDP fallback (for backward compatibility)
 	jwks *keyfunc.JWKS
-	log  *zap.SugaredLogger
+
+	log *zap.SugaredLogger
+
+	// IDPLoader for multi-IDP mode
+	idpLoader *config.IdentityProviderLoader
 }
 
 func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
@@ -60,9 +70,84 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 	}
 
 	return &AuthHandler{
-		jwks: jwks,
-		log:  log,
+		jwks:      jwks,
+		jwksCache: make(map[string]*keyfunc.JWKS),
+		log:       log,
 	}
+}
+
+// WithIdentityProviderLoader sets the IDP loader for multi-IDP support
+func (a *AuthHandler) WithIdentityProviderLoader(loader *config.IdentityProviderLoader) *AuthHandler {
+	a.idpLoader = loader
+	return a
+}
+
+// getJWKSForIssuer returns the JWKS for a given issuer URL, loading it if necessary
+// For single-IDP mode (no idpLoader), returns the default JWKS
+func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*keyfunc.JWKS, error) {
+	// Single-IDP mode: use default JWKS
+	if a.idpLoader == nil {
+		return a.jwks, nil
+	}
+
+	// Multi-IDP mode: load JWKS for specific issuer
+	a.jwksMutex.RLock()
+	if cachedJwks, exists := a.jwksCache[issuer]; exists {
+		a.jwksMutex.RUnlock()
+		return cachedJwks, nil
+	}
+	a.jwksMutex.RUnlock()
+
+	// Load IDP config by issuer
+	idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
+	if err != nil {
+		a.log.Warnw("failed to load IDP config for issuer", "issuer", issuer, "error", err)
+		return nil, fmt.Errorf("unknown issuer: %s", issuer)
+	}
+
+	// Build JWKS endpoint URL from IDP's authority
+	if idpCfg.Authority == "" {
+		return nil, fmt.Errorf("IDP %s has no authority configured", idpCfg.Name)
+	}
+
+	jwksURL := fmt.Sprintf("%s/.well-known/openid-configuration", strings.TrimRight(idpCfg.Authority, "/"))
+
+	// Create JWKS options
+	options := keyfunc.Options{
+		RefreshInterval: time.Hour,
+		RefreshTimeout:  time.Second * 10,
+		RefreshErrorHandler: func(err error) {
+			a.log.Warnf("failed to refresh JWKS for issuer %s: %v", issuer, err)
+		},
+	}
+
+	// Configure TLS if needed (from IDP config)
+	if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
+		pool := x509.NewCertPool()
+		if ok := pool.AppendCertsFromPEM([]byte(idpCfg.Keycloak.CertificateAuthority)); !ok {
+			return nil, fmt.Errorf("could not parse CA certificate for IDP %s", idpCfg.Name)
+		}
+		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
+		options.Client = &http.Client{Transport: transport}
+	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify {
+		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		options.Client = &http.Client{Transport: transport}
+		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
+	}
+
+	// Fetch JWKS
+	jwks, err := keyfunc.Get(jwksURL, options)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load JWKS for IDP %s (%s): %w", idpCfg.Name, issuer, err)
+	}
+
+	// Cache it
+	a.jwksMutex.Lock()
+	a.jwksCache[issuer] = jwks
+	a.jwksMutex.Unlock()
+
+	a.log.Debugw("loaded JWKS for issuer", "issuer", issuer, "idp_name", idpCfg.Name)
+	return jwks, nil
 }
 
 func (a *AuthHandler) Middleware() gin.HandlerFunc {
@@ -83,14 +168,55 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 		}
 		bearer := authHeader[7:]
 
+		// Parse JWT without verification first to extract issuer and basic claims
+		unverifiedClaims := jwt.MapClaims{}
+		parser := jwt.NewParser()
+		_, _, err := parser.ParseUnverified(bearer, unverifiedClaims)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid JWT format",
+			})
+			c.Abort()
+			return
+		}
+
+		// Extract issuer from claims for multi-IDP mode
+		var issuer string
+		if iss, ok := unverifiedClaims["iss"]; ok {
+			issuer, _ = iss.(string)
+		}
+
+		// Get appropriate JWKS (based on issuer or default)
+		var jwks *keyfunc.JWKS
+		var selectedIDP string
+
+		if issuer != "" && a.idpLoader != nil {
+			// Multi-IDP mode: load JWKS for specific issuer
+			loadedJwks, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
+			if err != nil {
+				a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error": fmt.Sprintf("unable to verify token: %v", err),
+				})
+				c.Abort()
+				return
+			}
+			jwks = loadedJwks
+			selectedIDP, _ = a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
+		} else {
+			// Single-IDP mode or issuer not found: use default JWKS
+			jwks = a.jwks
+		}
+
+		// Verify and parse JWT with selected JWKS
 		claims := jwt.MapClaims{}
-		token, err := jwt.ParseWithClaims(bearer, &claims, a.jwks.Keyfunc)
+		token, err := jwt.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
 		if err != nil {
 			// Attempt single forced JWKS refresh if kid missing
 			if strings.Contains(err.Error(), "key ID") {
 				c.Set("jwks_refresh_attempt", true)
-				if rErr := a.jwks.Refresh(context.Background(), keyfunc.RefreshOptions{}); rErr == nil {
-					token, err = jwt.ParseWithClaims(bearer, &claims, a.jwks.Keyfunc)
+				if rErr := jwks.Refresh(context.Background(), keyfunc.RefreshOptions{}); rErr == nil {
+					token, err = jwt.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
 				}
 			}
 		}
@@ -106,6 +232,14 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 		user_id := claims["sub"]
 		email := claims["email"]
 		username := claims["preferred_username"]
+
+		// Multi-IDP: Store issuer and IDP name for downstream use
+		if issuer != "" {
+			c.Set("issuer", issuer)
+		}
+		if selectedIDP != "" {
+			c.Set("identity_provider_name", selectedIDP)
+		}
 
 		// Attach raw claims for downstream debugging if needed
 		// Note: this is only used for debug logs and should not be exposed to end users.
