@@ -1,6 +1,17 @@
 apiVersion: v2
 name: escalation-config
-description: Helm chart to create BreakglassEscalation and ClusterConfig CRs for testing
+description: |
+  Helm chart to create BreakglassEscalation and ClusterConfig CRs for testing.
+  Supports single and multi-IDP configurations for flexible authentication.
 type: application
-version: 0.2.1
-appVersion: "0.1.0"
+version: 0.2.2
+appVersion: "0.2.0"
+keywords:
+  - breakglass
+  - escalation
+  - multi-idp
+  - oidc
+  - authentication
+maintainers:
+  - name: Telekom OSS
+    url: https://github.com/telekom/k8s-breakglass

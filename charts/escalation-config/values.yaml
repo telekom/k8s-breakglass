@@ -40,3 +40,43 @@ escalations: []
   #   maxValidFor: 1h
   #   retainFor: 24h
   #   idleTimeout: 30m
+  #   # Multi-IDP: Restrict escalation to specific identity providers (optional)
+  #   allowedIdentityProviders:
+  #     - corporate-oidc
+  #     - external-keycloak
+  #   # Note: If allowedIdentityProviders is not set or empty, all IDPs are allowed
+
+# Multi-IDP Identity Provider Configuration Examples:
+#
+# For single-IDP mode (backward compatible):
+# - No IdentityProvider resources needed, uses default auth configuration
+#
+# For multi-IDP mode:
+# - Create IdentityProvider CRs with different authentication providers
+# - Each escalation can restrict to specific IDPs via allowedIdentityProviders
+#
+# Example multi-IDP CRs (create separately, not through this chart):
+#
+#   apiVersion: breakglass.telekom.de/v1alpha1
+#   kind: IdentityProvider
+#   metadata:
+#     name: corporate-oidc
+#   spec:
+#     issuer: https://auth.corp.example.com
+#     clientID: my-client-id
+#     clientSecret:
+#       secretRef:
+#         name: corporate-oidc-secret
+#     disabled: false
+#
+#   apiVersion: breakglass.telekom.de/v1alpha1
+#   kind: IdentityProvider
+#   metadata:
+#     name: external-keycloak
+#   spec:
+#     issuer: https://keycloak.external.example.com/realms/breakglass
+#     clientID: keycloak-client
+#     clientSecret:
+#       secretRef:
+#         name: keycloak-secret
+#     disabled: false

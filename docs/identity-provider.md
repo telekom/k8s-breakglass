@@ -342,11 +342,172 @@ oidc:
   insecureSkipVerify: true
 ```
 
+## Multi-IDP Support (New in v0.2.0)
+
+Breakglass now supports **multiple identity providers** allowing users to authenticate with different OIDC providers. This enables:
+
+- **Flexible Authentication**: Users can choose their preferred identity provider
+- **Gradual Migration**: Transition users from one provider to another
+- **Multi-Tenant Support**: Different escalations can require different IDPs
+- **Backward Compatible**: Single-IDP mode continues to work unchanged
+
+### Multi-IDP Architecture
+
+In multi-IDP mode:
+
+1. **IdentityProvider CRs**: Multiple IdentityProvider resources, each with a unique issuer URL
+2. **JWT Validation**: Each user token is validated against the issuer's JWKS endpoint
+3. **Per-Escalation Control**: Optional `allowedIdentityProviders` field in BreakglassEscalation restricts which IDPs can access each escalation
+4. **Frontend Support**: UI automatically detects multiple IDPs and provides a selection screen
+
+### Enabling Multi-IDP
+
+Create multiple IdentityProvider resources with different issuers:
+
+```yaml
+---
+# Corporate OIDC Provider
+apiVersion: breakglass.telekom.de/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: corporate-oidc
+spec:
+  issuer: "https://auth.corp.example.com"
+  clientID: "breakglass-prod"
+  clientSecret:
+    secretRef:
+      name: corporate-secret
+      namespace: breakglass
+  disabled: false
+
+---
+# External Keycloak Instance
+apiVersion: breakglass.telekom.de/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: external-keycloak
+spec:
+  issuer: "https://keycloak.external.example.com/realms/breakglass"
+  clientID: "breakglass-external"
+  clientSecret:
+    secretRef:
+      name: keycloak-secret
+      namespace: breakglass
+  disabled: false
+```
+
+### Per-Escalation IDP Restrictions
+
+Optionally restrict escalations to specific IDPs:
+
+```yaml
+apiVersion: breakglass.telekom.de/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: prod-access
+spec:
+  escalatedGroup: prod-admins
+  allowedIdentityProviders:
+    - corporate-oidc  # Only corporate IDP can use this escalation
+  approvers:
+    groups:
+      - senior-ops
+
+---
+# Escalation accessible by any IDP (or empty list = all IDPs)
+apiVersion: breakglass.telekom.de/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: dev-access
+spec:
+  escalatedGroup: dev-admins
+  allowedIdentityProviders: []  # Empty = all IDPs allowed
+  approvers:
+    groups:
+      - dev-leads
+```
+
+### Frontend IDP Selection
+
+When multiple IDPs are available, the frontend displays:
+
+- **IDP Selection Screen**: Users select their identity provider before login
+- **Single IDP Mode**: If only one IDP is configured, the selection screen is skipped
+- **IDP Status**: Disabled IDPs are shown as unavailable
+
+### JWKS Caching
+
+For performance, Breakglass caches JWT Key Sets (JWKS) from each provider:
+
+- **Cache Duration**: 24 hours per key (or discovery document TTL)
+- **Automatic Refresh**: Expired keys are fetched on-demand
+- **Per-Issuer Caching**: Each issuer maintains independent cache
+
+### Migration Path: Single → Multi-IDP
+
+If you currently have a single IdentityProvider and want to add another:
+
+1. **Existing Single IDP** (continues working):
+
+   ```yaml
+   apiVersion: breakglass.telekom.de/v1alpha1
+   kind: IdentityProvider
+   metadata:
+     name: primary-idp
+   spec:
+     issuer: "https://existing.example.com"
+     # ... existing configuration
+   ```
+
+2. **Add New IDP** (users can now choose):
+
+   ```yaml
+   apiVersion: breakglass.telekom.de/v1alpha1
+   kind: IdentityProvider
+   metadata:
+     name: new-idp
+   spec:
+     issuer: "https://new.example.com"
+     # ... new provider configuration
+   ```
+
+3. **No escalation changes needed** - all escalations accessible by both IDPs by default
+
+4. **Optionally restrict** - add `allowedIdentityProviders` to specific escalations
+
+### Multi-IDP Best Practices
+
+1. **Unique Issuer URLs**: Each IdentityProvider must have a unique `issuer` field
+2. **Naming Convention**: Use descriptive names (e.g., `corporate-oidc`, `external-keycloak`)
+3. **Secret Management**: Store credentials in separate secrets per provider
+4. **Test Coverage**: Verify each IDP with test escalations before production
+5. **Documentation**: Document which IDPs are used for which purposes
+6. **Monitoring**: Track successful/failed logins per IDP
+
+### Troubleshooting Multi-IDP
+
+**"Unknown issuer" error**:
+
+- Verify JWT token's `iss` claim matches an IdentityProvider's `issuer` field
+- Check JWKS endpoint accessibility from pod
+
+**IDP selection screen not appearing**:
+
+- System detects multi-IDP only if 2+ enabled IdentityProviders exist
+- Verify both providers are `disabled: false`
+
+**Escalation restricted but user still gets "Access Denied"**:
+
+- User's IDP must be in `allowedIdentityProviders` list
+- Check escalation configuration with: `kubectl get breakglassescalation -o yaml`
+
 ## Examples
 
 See `/config/samples/` for complete examples:
+
 - `breakglass_v1alpha1_identityprovider_oidc.yaml` - OIDC-only configuration
 - `breakglass_v1alpha1_identityprovider_keycloak.yaml` - OIDC with Keycloak group sync
+- `breakglass_v1alpha1_breakglass_escalation_multiidp.yaml` - Multi-IDP escalation configuration
 
 ## See Also
 
