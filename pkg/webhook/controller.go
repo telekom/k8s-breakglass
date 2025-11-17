@@ -70,6 +70,67 @@ func (wc *WebhookController) finalizeReason(reason string, allowed bool, cluster
 	return fmt.Sprintf("%s; see %s", reason, link)
 }
 
+// getIDPHintFromIssuer retrieves issuer information from the SAR and returns a helpful
+// hint message about which identity provider authenticated the user, if available.
+// This helps users understand which IDP issued their token when authentication fails.
+func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *authorizationv1.SubjectAccessReview, reqLog *zap.SugaredLogger) string {
+	if sar == nil {
+		return ""
+	}
+
+	// Extract issuer from SAR ObjectMeta annotations
+	// The annotation "identity.t-caas.telekom.com/issuer" contains the OIDC issuer URL
+	// that authenticated this user (extracted from their JWT token's 'iss' claim)
+	issuer := sar.ObjectMeta.Annotations["identity.t-caas.telekom.com/issuer"]
+	if issuer == "" {
+		// Issuer not provided in annotations, skip hint generation
+		return ""
+	}
+
+	reqLog.Debugw("Extracting IDP hint from issuer", "issuer", issuer)
+
+	// Try to find matching IdentityProvider by issuer
+	// This helps users know which provider authenticated them
+	idpList := &v1alpha1.IdentityProviderList{}
+	if err := wc.escalManager.List(ctx, idpList); err != nil {
+		reqLog.With("error", err.Error()).Warn("Failed to list IdentityProviders for IDP hint")
+		// Fallback: just mention the issuer
+		return fmt.Sprintf("(Your token was issued by %s)", issuer)
+	}
+
+	// Find IdentityProvider with matching issuer
+	for _, idp := range idpList.Items {
+		if idp.Spec.Issuer == issuer {
+			displayName := idp.Spec.DisplayName
+			if displayName == "" {
+				displayName = idp.Name
+			}
+			return fmt.Sprintf("(Your token was authenticated by '%s')", displayName)
+		}
+	}
+
+	// Issuer didn't match any configured IDP - provide helpful guidance
+	// List all available providers to help user identify the right one
+	var displayNames []string
+	for _, idp := range idpList.Items {
+		if idp.Spec.Disabled {
+			continue // skip disabled providers
+		}
+		displayName := idp.Spec.DisplayName
+		if displayName == "" {
+			displayName = idp.Name
+		}
+		displayNames = append(displayNames, displayName)
+	}
+
+	if len(displayNames) > 0 {
+		return fmt.Sprintf("(Your token issuer '%s' is not configured. Available providers: %s)", issuer, strings.Join(displayNames, ", "))
+	}
+
+	// Fallback: just mention the issuer
+	return fmt.Sprintf("(Your token was issued by %s)", issuer)
+}
+
 type SubjectAccessReviewResponseStatus struct {
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason"`
@@ -247,6 +308,10 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			} else {
 				reason = fmt.Sprintf("Denied by policy %s; No breakglass flow available for your user", pol)
 			}
+			// Add IDP hint if available
+			if hint := wc.getIDPHintFromIssuer(ctx, &sar, reqLog); hint != "" {
+				reason = fmt.Sprintf("%s %s", reason, hint)
+			}
 			reason = wc.finalizeReason(reason, false, clusterName)
 			c.JSON(http.StatusOK, &SubjectAccessReviewResponse{ApiVersion: sar.APIVersion, Kind: sar.Kind, Status: SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason}})
 			return
@@ -278,6 +343,10 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 					reason = fmt.Sprintf("Denied by policy %s; %d breakglass escalation(s) available", pol, count)
 				} else {
 					reason = fmt.Sprintf("Denied by policy %s; No breakglass flow available for your user", pol)
+				}
+				// Add IDP hint if available
+				if hint := wc.getIDPHintFromIssuer(ctx, &sar, reqLog); hint != "" {
+					reason = fmt.Sprintf("%s %s", reason, hint)
 				}
 				reason = wc.finalizeReason(reason, false, clusterName)
 				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{ApiVersion: sar.APIVersion, Kind: sar.Kind, Status: SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason}})
@@ -440,6 +509,17 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			}
 			// Also log this at info so admins see the mismatch between session state and SAR capabilities
 			reqLog.With("sessions", sessInfo, "error", sessionSARSkippedErr.Error()).Info("Active sessions present but unable to validate them against target cluster")
+		}
+	}
+
+	// Add IDP hint to denial reasons (helps users understand which provider authenticated them)
+	if !allowed {
+		if hint := wc.getIDPHintFromIssuer(ctx, &sar, reqLog); hint != "" {
+			if reason == "" {
+				reason = hint
+			} else {
+				reason = fmt.Sprintf("%s %s", reason, hint)
+			}
 		}
 	}
 

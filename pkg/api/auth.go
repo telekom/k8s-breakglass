@@ -190,13 +190,22 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 		var jwks *keyfunc.JWKS
 		var selectedIDP string
 
-		if issuer != "" && a.idpLoader != nil {
+		if a.idpLoader != nil && issuer != "" {
 			// Multi-IDP mode: load JWKS for specific issuer
 			loadedJwks, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 			if err != nil {
 				a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
+
+				// Try to provide helpful error message with IDP suggestions
+				idpName, idpLookupErr := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
+				errorMsg := fmt.Sprintf("unable to verify token for issuer %s: %v", issuer, err)
+				if idpLookupErr == nil && idpName != "" {
+					errorMsg = fmt.Sprintf("token issuer '%s' is not configured. Please use the '%s' identity provider to log in.", issuer, idpName)
+				}
+
 				c.JSON(http.StatusUnauthorized, gin.H{
-					"error": fmt.Sprintf("unable to verify token: %v", err),
+					"error":  errorMsg,
+					"issuer": issuer,
 				})
 				c.Abort()
 				return
@@ -208,8 +217,15 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			} else {
 				selectedIDP = idpName
 			}
+		} else if a.idpLoader != nil && issuer == "" {
+			// Multi-IDP mode but no issuer in token: require issuer claim
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.",
+			})
+			c.Abort()
+			return
 		} else {
-			// Single-IDP mode or issuer not found: use default JWKS
+			// Single-IDP mode: use default JWKS (issuer claim optional for backward compatibility)
 			jwks = a.jwks
 		}
 
@@ -226,8 +242,14 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			}
 		}
 		if err != nil {
+			errorMsg := "Token verification failed"
+			if issuer != "" {
+				errorMsg = fmt.Sprintf("Token verification failed for issuer '%s'. Please re-authenticate with the correct identity provider.", issuer)
+			}
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": err.Error(),
+				"error":   errorMsg,
+				"issuer":  issuer,
+				"details": err.Error(),
 			})
 			c.Abort()
 			return

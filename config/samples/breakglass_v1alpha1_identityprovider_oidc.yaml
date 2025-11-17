@@ -1,6 +1,14 @@
 # Example IdentityProvider configuration for OIDC only (no group sync)
 # This configuration sets up OpenID Connect as the identity provider for Breakglass
 # The frontend will use this provider for user authentication
+#
+# Key concepts:
+# - Authority: The OIDC provider's base URL where .well-known endpoints are hosted
+# - Issuer: The OIDC issuer URL (usually same as authority). Must match the 'iss' claim in JWT tokens.
+#   This is critical for multi-IDP mode and is used by the SAR webhook to identify which provider
+#   authenticated a user based on their JWT token issuer claim.
+# - ClientID: The OIDC client identifier configured in your OIDC provider
+#
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
@@ -10,13 +18,15 @@ spec:
   oidc:
     # Authority is the OIDC provider authority endpoint
     # This is typically the root URL of your OIDC provider
+    # Example: https://auth.example.com
     authority: "https://auth.example.com"
 
-    # ClientID is the OIDC client ID for user authentication
+    # ClientID is the OIDC client ID for user authentication (frontend/UI)
     clientID: "breakglass-ui"
 
     # JWKSEndpoint (optional) specifies a custom endpoint for fetching JSON Web Key Sets
     # If empty, defaults to Authority/.well-known/openid-configuration
+    # Example: https://auth.example.com/.well-known/jwks.json
     # jwksEndpoint: "https://auth.example.com/.well-known/jwks.json"
 
     # InsecureSkipVerify allows skipping TLS certificate verification
@@ -27,30 +37,48 @@ spec:
     # for validating the TLS certificate presented by the OIDC provider
     # certificateAuthority: |
     #   -----BEGIN CERTIFICATE-----
-    #   ...
+    #   MIIDXTCCAkWgAwIBAgIJAJXuYv...
     #   -----END CERTIFICATE-----
 
+  # Issuer is the OIDC issuer URL that must match the 'iss' claim in JWT tokens.
+  # This is mandatory in multi-IDP mode and is used by the authorization system
+  # to determine which provider authenticated a user. Typically this is the same
+  # as the Authority URL.
+  # In multi-IDP setups, each IdentityProvider must have a unique issuer.
+  issuer: "https://auth.example.com"
+
   # Primary indicates this is the default identity provider
-  # Only one IdentityProvider should have primary: true per cluster
+  # Note: In multi-IDP mode with multiple enabled providers, the "primary"
+  # field is still supported for backward compatibility, but the frontend
+  # will show an IDP selector when 2+ IDPs are available.
   primary: true
 
-  # Display name for this provider (shown in logs)
+  # Display name for this provider (shown in UI and logs)
+  # When multiple IDPs are available, this name appears in the IDP selector
   displayName: "Primary OIDC Provider"
 
-  # Disabled can be set to true to temporarily disable this provider
+  # Disabled can be set to true to temporarily disable this provider without deleting it
   # disabled: false
 
 ---
-# Example: Secondary OIDC provider for fallback/testing
+# Example: Secondary OIDC provider (enables multi-IDP mode)
+# When 2+ enabled IdentityProviders exist, the frontend automatically shows
+# an IDP selector allowing users to choose their authentication provider.
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
-  name: backup-oidc
+  name: secondary-oidc
 spec:
   oidc:
+    # Different OIDC provider authority
     authority: "https://backup-auth.example.com"
     clientID: "breakglass-ui-backup"
 
-  primary: false  # This is not the default provider
+  # IMPORTANT: Each IdentityProvider in multi-IDP mode must have a UNIQUE issuer
+  # This is how the system knows which provider authenticated a user (via JWT iss claim)
+  issuer: "https://backup-auth.example.com"
+
+  # This provider is not the default but is enabled for users to choose
+  primary: false
   displayName: "Backup OIDC Provider"
 

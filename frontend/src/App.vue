@@ -6,9 +6,14 @@ import { useRoute } from "vue-router";
 import { AuthKey } from "@/keys";
 import { BrandingKey } from "@/keys";
 import { useUser } from "@/services/auth";
+import IDPSelector from "@/components/IDPSelector.vue";
+import { getMultiIDPConfig } from "@/services/multiIDP";
+
 const auth = inject(AuthKey);
 const user = useUser();
 const authenticated = computed(() => user.value && !user.value?.expired);
+const selectedIDPName = ref<string | undefined>();
+const hasMultipleIDPs = ref(false);
 
 const route = useRoute();
 
@@ -46,6 +51,19 @@ async function refreshGroups() {
 
 onMounted(refreshGroups);
 
+// Check if multi-IDP is available
+async function checkMultiIDP() {
+  try {
+    const config = await getMultiIDPConfig();
+    hasMultipleIDPs.value = config && config.identityProviders && config.identityProviders.length > 1;
+  } catch (err) {
+    console.debug("Multi-IDP config not available or error:", err);
+    hasMultipleIDPs.value = false;
+  }
+}
+
+onMounted(checkMultiIDP);
+
 const userNav = computed(() => {
   if (authenticated.value) {
   const groups = groupsRef.value;
@@ -68,7 +86,7 @@ const userNav = computed(() => {
 
 
 function login() {
-  auth?.login({ path: route.fullPath });
+  auth?.login({ path: route.fullPath, idpName: selectedIDPName.value });
 }
 
 function logout() {
@@ -98,7 +116,24 @@ function logout() {
         </div>
 
         <div v-if="!authenticated" class="center" style="margin: 2rem 0;">
-          <scale-button @click="login">Log In</scale-button>
+          <!-- Show IDP selector if multiple IDPs available -->
+          <div v-if="hasMultipleIDPs" class="idp-login-section">
+            <IDPSelector 
+              escalationName="default"
+              v-model="selectedIDPName"
+              required
+            />
+            <scale-button 
+              @click="login"
+              :disabled="!selectedIDPName"
+              style="margin-top: 1rem;"
+            >
+              Log In
+            </scale-button>
+          </div>
+          
+          <!-- Show simple login button if single IDP -->
+          <scale-button v-else @click="login">Log In</scale-button>
         </div>
 
         <RouterView v-if="authenticated" />

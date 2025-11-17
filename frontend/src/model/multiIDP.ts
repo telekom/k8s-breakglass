@@ -18,6 +18,10 @@ export interface IDPInfo {
   issuer: string;
   /** Whether this IDP is currently active and available for use */
   enabled: boolean;
+  /** OIDC authority endpoint for this IDP (used for login redirect) */
+  oidcAuthority?: string;
+  /** OIDC client ID for this IDP (used for login redirect) */
+  oidcClientID?: string;
 }
 
 /**

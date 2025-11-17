@@ -320,6 +320,11 @@ type IDPInfo struct {
 	Issuer string `json:"issuer"`
 	// Enabled indicates if this IDP is active
 	Enabled bool `json:"enabled"`
+	// OIDCAuthority is the OIDC authority endpoint for this IDP (used for login redirect)
+	// Will be proxied through /api/oidc/authority if configured
+	OIDCAuthority string `json:"oidcAuthority,omitempty"`
+	// OIDCClientID is the OIDC client ID for this IDP (used for login redirect)
+	OIDCClientID string `json:"oidcClientID,omitempty"`
 }
 
 func (s *Server) getConfig(c *gin.Context) {
