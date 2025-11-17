@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -103,17 +104,44 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		if r.onError != nil {
 			r.onError(ctx, err)
 		}
-		// Emit event on the IdentityProvider CR
-		if r.recorder != nil {
-			r.recorder.Event(idp, "Warning", "ReloadFailed", fmt.Sprintf("Failed to reload configuration: %v", err))
+
+		// Update status to reflect error state
+		idp.Status.Phase = "Error"
+		idp.Status.Message = fmt.Sprintf("Failed to reload configuration: %v", err)
+		idp.Status.Connected = false
+		if err := r.client.Status().Update(ctx, idp); err != nil {
+			r.logger.Errorw("Failed to update IdentityProvider status", "error", err, "name", req.Name)
 		}
+
+		// Emit event on the IdentityProvider CR
+		// Note: Empty namespace for cluster-scoped resources to prevent event reconciliation issues
+		if r.recorder != nil {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("") // Ensure no namespace is set for cluster-scoped events
+			r.recorder.Event(eventIdp, "Warning", "ReloadFailed", fmt.Sprintf("Failed to reload configuration: %v", err))
+		}
+
 		// Requeue with exponential backoff
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
 	r.logger.Infow("IdentityProvider reloaded successfully", "name", req.Name)
+
+	// Update status to reflect success
+	idp.Status.Phase = "Ready"
+	idp.Status.Message = "Configuration reloaded successfully"
+	idp.Status.Connected = true
+	idp.Status.LastValidation = metav1.NewTime(time.Now())
+	if err := r.client.Status().Update(ctx, idp); err != nil {
+		r.logger.Errorw("Failed to update IdentityProvider status", "error", err, "name", req.Name)
+	}
+
+	// Emit event on the IdentityProvider CR
+	// Note: Empty namespace for cluster-scoped resources to prevent event reconciliation issues
 	if r.recorder != nil {
-		r.recorder.Event(idp, "Normal", "ReloadSuccess", "Configuration reloaded successfully")
+		eventIdp := idp.DeepCopy()
+		eventIdp.SetNamespace("") // Ensure no namespace is set for cluster-scoped events
+		r.recorder.Event(eventIdp, "Normal", "ReloadSuccess", "Configuration reloaded successfully")
 	}
 
 	// Requeue periodically for safety (even if no changes detected)
