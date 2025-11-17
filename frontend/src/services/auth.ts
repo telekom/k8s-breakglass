@@ -111,17 +111,16 @@ export default class AuthService {
    * @param directAuthority Optional direct IDP authority URL for backend communication
    */
   private getOrCreateUserManager(authority: string, clientID: string, directAuthority?: string): UserManager {
-    const key = `${authority}:${clientID}`;
+    // Include directAuthority in the cache key so different IDPs get different managers
+    // This is critical for multi-IDP: both may use proxy authority but route to different Keycloaks
+    const key = `${authority}:${clientID}:${directAuthority || 'default'}`;
     if (this.userManagers.has(key)) {
       const existingManager = this.userManagers.get(key)!;
-      // Update the direct authority on the existing manager (for cached managers)
-      if (directAuthority) {
-        (existingManager as any).directAuthority = directAuthority;
-        console.debug("[AuthService] Updated direct authority on cached UserManager:", {
-          key,
-          directAuthority,
-        });
-      }
+      console.debug("[AuthService] Retrieved cached UserManager:", {
+        key,
+        authority,
+        directAuthority,
+      });
       return existingManager;
     }
 
@@ -148,7 +147,7 @@ export default class AuthService {
 
     const manager = new UserManager(settings);
     
-    // Store the direct authority as metadata
+    // Store the direct authority as metadata for callback processing
     if (directAuthority) {
       (manager as any).directAuthority = directAuthority;
       console.debug("[AuthService] Stored directAuthority in UserManager:", {
@@ -162,6 +161,10 @@ export default class AuthService {
     });
 
     this.userManagers.set(key, manager);
+    console.debug("[AuthService] Cached UserManager:", {
+      key,
+      totalManagers: this.userManagers.size,
+    });
     return manager;
   }
 
