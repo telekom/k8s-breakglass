@@ -132,6 +132,10 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	engine.Use(static.Serve("/assets/", static.LocalFile("/frontend/dist/assets", false)))
 	// Serve root-level files like favicon
 	engine.Static("/favicon-oss.svg", "/frontend/dist/favicon-oss.svg")
+	// Also handle trailing slash on favicon requests
+	engine.GET("/favicon-oss.svg/", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "/favicon-oss.svg")
+	})
 
 	// Custom NoRoute: JSON 404 for /api/*, SPA fallback for others
 	engine.NoRoute(func(c *gin.Context) {
@@ -164,6 +168,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// This allows the browser to fetch .well-known/openid-configuration and jwks via the
 	// server origin (avoiding the need to trust the Keycloak cert in the browser).
 	engine.GET("api/oidc/authority/*proxyPath", s.handleOIDCProxy)
+	// Also handle POST for token endpoint
+	engine.POST("api/oidc/authority/*proxyPath", s.handleOIDCProxy)
 
 	// Prometheus metrics endpoint (under /api/metrics)
 	engine.GET("/api/metrics", func(c *gin.Context) {
@@ -576,7 +582,32 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", target, nil)
+	// Support both GET and POST methods
+	var req *http.Request
+	var err error
+
+	if c.Request.Method == "POST" {
+		// For POST requests (e.g., token endpoint), copy the body
+		req, err = http.NewRequestWithContext(c.Request.Context(), c.Request.Method, target, c.Request.Body)
+		if err != nil {
+			s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
+			return
+		}
+		// Forward Content-Type header for POST
+		if contentType := c.Request.Header.Get("Content-Type"); contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+	} else {
+		// For GET requests (default)
+		req, err = http.NewRequestWithContext(c.Request.Context(), "GET", target, nil)
+		if err != nil {
+			s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
+			return
+		}
+	}
+
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
