@@ -639,12 +639,13 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	// The frontend sends this header when using a specific IDP to tell backend which Keycloak to proxy to
 	targetAuthority := s.oidcAuthority
 	if customAuthority := c.Request.Header.Get("X-OIDC-Authority"); customAuthority != "" {
+		s.log.Sugar().Debugw("oidc_proxy_custom_authority_header", "header", customAuthority)
 		// Validate that the custom authority is a valid URL with allowed scheme
 		if parsed, err := url.Parse(customAuthority); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
 			// Verify this is from a known IDP configuration to prevent SSRF attacks
 			if s.isKnownIDPAuthority(customAuthority) {
 				targetAuthority = parsed
-				s.log.Sugar().Debugw("oidc_proxy_using_custom_authority", "authority", parsed.Scheme+"://"+parsed.Host)
+				s.log.Sugar().Debugw("oidc_proxy_using_custom_authority", "authority", parsed.Scheme+"://"+parsed.Host, "path", parsed.Path)
 			} else {
 				s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", customAuthority)
 				metrics.OIDCProxyFailure.WithLabelValues("authority", "unknown_authority").Inc()
