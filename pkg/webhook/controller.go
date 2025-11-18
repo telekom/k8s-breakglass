@@ -719,14 +719,6 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	return out, idpMismatches, nil
 }
 
-// getSessions is a wrapper around getSessionsWithIDPMismatchInfo for backward compatibility
-// If issuer is provided, only returns sessions that match the issuer (multi-IDP mode)
-// If issuer is empty, returns all sessions (single-IDP or backward compatibility mode)
-func (wc *WebhookController) getSessions(ctx context.Context, username, clustername, issuer string) ([]v1alpha1.BreakglassSession, error) {
-	sessions, _, err := wc.getSessionsWithIDPMismatchInfo(ctx, username, clustername, issuer)
-	return sessions, err
-}
-
 // dedupeStrings removes duplicates from a slice of strings while preserving order.
 func dedupeStrings(in []string) []string {
 	out := make([]string, 0, len(in))
