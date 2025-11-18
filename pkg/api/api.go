@@ -540,6 +540,9 @@ func (s *Server) isKnownIDPAuthority(authority string) bool {
 // In multi-IDP setups, the frontend can send X-OIDC-Authority header to specify
 // which Keycloak instance to proxy to. This header is validated against known IDPs
 // to prevent SSRF attacks.
+//
+// Security: This function uses strict whitelist validation on both the path parameter
+// and the authority header to prevent SSRF attacks. Only known OIDC endpoints are allowed.
 func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if s.oidcAuthority == nil {
 		s.log.Sugar().Warnw("oidc_proxy_missing_authority")
@@ -552,36 +555,82 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	metrics.OIDCProxyRequests.WithLabelValues("authority").Inc()
 	proxyPath := c.Param("proxyPath")
 
-	// Validate proxyPath to prevent SSRF attacks and path traversal
-	// Allowed: relative paths like /authorize, /.well-known/openid-configuration
-	// Denied: scheme (https://), network-path (//) or path traversal (..)
-	if strings.Contains(proxyPath, "://") || strings.HasPrefix(proxyPath, "//") || strings.Contains(proxyPath, "..") {
-		s.log.Sugar().Warnw("oidc_proxy_invalid_path", "path", proxyPath)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "invalid_path").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "invalid_path").Inc()
+	// Whitelist of allowed OIDC endpoints - only these paths can be proxied
+	// This prevents SSRF by ensuring only known OIDC discovery and authorization endpoints are accessible
+	allowedPathPrefixes := []string{
+		"/.well-known/openid-configuration",
+		"/.well-known/oauth-authorization-server",
+		"/.well-known/jwks.json",
+		"/auth/realms/", // Keycloak specific
+		"/protocol/openid-connect/auth",
+		"/protocol/openid-connect/token",
+		"/protocol/openid-connect/certs",
+		"/protocol/openid-connect/userinfo",
+		"/protocol/openid-connect/logout",
+		"/certs", // Some OIDC providers use this
+		"/token",
+		"/authorize",
+		"/userinfo",
+		"/revocation",
+		"/introspection",
+	}
+
+	// Normalize the path - remove query string and fragment
+	normalizedPath := proxyPath
+	if idx := strings.Index(normalizedPath, "?"); idx != -1 {
+		normalizedPath = normalizedPath[:idx]
+	}
+	if idx := strings.Index(normalizedPath, "#"); idx != -1 {
+		normalizedPath = normalizedPath[:idx]
+	}
+
+	// Check if path matches any allowed prefix
+	pathAllowed := false
+	for _, prefix := range allowedPathPrefixes {
+		if strings.HasPrefix(normalizedPath, prefix) {
+			pathAllowed = true
+			break
+		}
+	}
+
+	if !pathAllowed {
+		s.log.Sugar().Warnw("oidc_proxy_path_not_whitelisted", "path", proxyPath, "normalized", normalizedPath)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "path_not_allowed").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "path_not_allowed").Inc()
 		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: absolute URLs and path traversal not allowed"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "requested path is not an allowed OIDC endpoint"})
 		return
 	}
 
-	// Parse proxyPath as URL to ensure it's well-formed and doesn't contain suspicious encoding
-	parsedPath, parseErr := url.Parse(proxyPath)
+	// Additional validation: reject suspicious patterns even if they pass the prefix check
+	// This catches encoded attacks and other bypasses
+	if strings.Contains(proxyPath, "://") || strings.HasPrefix(proxyPath, "//") || strings.Contains(proxyPath, "..") {
+		s.log.Sugar().Warnw("oidc_proxy_suspicious_pattern", "path", proxyPath)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "suspicious_pattern").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "suspicious_pattern").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid proxy path: absolute URLs and path traversal not allowed"})
+		return
+	}
+
+	// Validate that the path is still URL-safe after normalization
+	parsedPath, parseErr := url.Parse(normalizedPath)
 	if parseErr != nil {
-		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "error", parseErr)
+		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "normalized", normalizedPath, "error", parseErr)
 		metrics.OIDCProxyFailure.WithLabelValues("authority", "malformed_path").Inc()
 		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "malformed_path").Inc()
 		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: malformed URL"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: malformed"})
 		return
 	}
 
-	// Ensure the parsed path is clean (no fragment, no suspicious components)
-	if parsedPath.Scheme != "" || parsedPath.Host != "" || parsedPath.Fragment != "" {
-		s.log.Sugar().Warnw("oidc_proxy_suspicious_path", "path", proxyPath)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "suspicious_path").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "suspicious_path").Inc()
+	// Ensure the parsed path doesn't contain URL scheme or host (which would indicate an absolute URL)
+	if parsedPath.Scheme != "" || parsedPath.Host != "" {
+		s.log.Sugar().Warnw("oidc_proxy_absolute_url_detected", "path", proxyPath, "scheme", parsedPath.Scheme, "host", parsedPath.Host)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "absolute_url_detected").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "absolute_url_detected").Inc()
 		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: contains URL components"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid proxy path: must be relative"})
 		return
 	}
 
@@ -589,18 +638,18 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	// The frontend sends this header when using a specific IDP to tell backend which Keycloak to proxy to
 	targetAuthority := s.oidcAuthority
 	if customAuthority := c.Request.Header.Get("X-OIDC-Authority"); customAuthority != "" {
-		// Validate that the custom authority is a valid URL
-		if parsed, err := url.Parse(customAuthority); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+		// Validate that the custom authority is a valid URL with allowed scheme
+		if parsed, err := url.Parse(customAuthority); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
 			// Verify this is from a known IDP configuration to prevent SSRF attacks
 			if s.isKnownIDPAuthority(customAuthority) {
-				targetAuthority, _ = url.Parse(customAuthority)
-				s.log.Sugar().Debugw("oidc_proxy_using_custom_authority", "customAuthority", customAuthority)
+				targetAuthority = parsed
+				s.log.Sugar().Debugw("oidc_proxy_using_custom_authority", "authority", parsed.Scheme+"://"+parsed.Host)
 			} else {
 				s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", customAuthority)
 				metrics.OIDCProxyFailure.WithLabelValues("authority", "unknown_authority").Inc()
 				metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "unknown_authority").Inc()
 				metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-				c.JSON(http.StatusBadRequest, gin.H{"error": "unknown OIDC authority"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "unknown OIDC authority"})
 				return
 			}
 		} else {
@@ -613,10 +662,33 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		}
 	}
 
-	// Safe join using parsed authority rather than raw configured string
-	base := strings.TrimRight(targetAuthority.String(), "/")
-	target := base + proxyPath
-	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target", target)
+	// Construct target URL safely using URL.ResolveReference
+	// This ensures we're building a proper URL with the authority as base
+	base := targetAuthority
+	if base.Path != "" {
+		base.Path = strings.TrimRight(base.Path, "/")
+	}
+
+	// Create a URL from the normalized path with the base authority
+	relativeURL := &url.URL{Path: normalizedPath}
+	if idx := strings.Index(proxyPath, "?"); idx != -1 {
+		relativeURL.RawQuery = proxyPath[idx+1:]
+	}
+
+	targetURL := base.ResolveReference(relativeURL)
+
+	// Final validation: ensure the resolved URL has the same scheme and host as our target authority
+	if targetURL.Scheme != base.Scheme || targetURL.Host != base.Host {
+		s.log.Sugar().Warnw("oidc_proxy_url_resolution_attack", "originalPath", proxyPath, "resultScheme", targetURL.Scheme, "resultHost", targetURL.Host, "expectedScheme", base.Scheme, "expectedHost", base.Host)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "url_resolution_attack").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "url_resolution_attack").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid proxy path: resolved to different host"})
+		return
+	}
+
+	target := targetURL.String()
+	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target_scheme", targetURL.Scheme, "target_host", targetURL.Host, "target_path", targetURL.Path)
 
 	// Create HTTP client; trust configured CA if present otherwise skip verify for e2e
 	transport := &http.Transport{}
