@@ -489,3 +489,222 @@ func TestOIDCProxyLocalhostBinding(t *testing.T) {
 	// Unknown authority should be rejected
 	assert.Equal(t, http.StatusForbidden, w.Code, "unknown authority should be rejected")
 }
+
+// TestOIDCProxyMultiIDPWithRealmPath tests that X-OIDC-Authority with realm path is correctly resolved
+// This covers the scenario where frontend sends: X-OIDC-Authority: https://keycloak.das-schiff.telekom.de/auth/realms/schiff
+// and we need to correctly resolve /.well-known/openid-configuration to:
+// https://keycloak.das-schiff.telekom.de/auth/realms/schiff/.well-known/openid-configuration
+func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	// Create a mock Keycloak server that expects the full realm path
+	mockKeycloak := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The request should come in with the full realm path
+		expectedPath := "/auth/realms/schiff/.well-known/openid-configuration"
+		if r.URL.Path == expectedPath {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{
+				"issuer":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
+				"authorization_endpoint":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/auth",
+				"token_endpoint":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/token"
+			}`)
+			return
+		}
+		// If we get a request without the realm path, that's the bug we're fixing
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprintf(w, "Forbidden: realm path required")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockKeycloak.Close()
+
+	// Set up a server with authority that includes realm path
+	authorityWithRealm, err := url.Parse(mockKeycloak.URL + "/auth/realms/schiff")
+	require.NoError(t, err)
+
+	cfg := config.Config{
+		Server: config.Server{
+			ListenAddress: ":8080",
+		},
+		Frontend: config.Frontend{
+			BaseURL:      "https://breakglass.example.com",
+			BrandingName: "Test",
+		},
+		AuthorizationServer: config.AuthorizationServer{
+			URL:          mockKeycloak.URL + "/auth/realms/schiff",
+			JWKSEndpoint: ".well-known/jwks.json",
+		},
+	}
+
+	auth := &AuthHandler{}
+	server := &Server{
+		config:        cfg,
+		oidcAuthority: authorityWithRealm, // Authority includes the realm path
+		log:           logger,
+		auth:          auth,
+	}
+
+	tests := []struct {
+		name                string
+		proxyPath           string
+		expectedStatus      int
+		shouldContainIssuer bool
+		description         string
+	}{
+		{
+			name:                "Proxy request with realm path in authority",
+			proxyPath:           "/.well-known/openid-configuration",
+			expectedStatus:      http.StatusOK,
+			shouldContainIssuer: true,
+			description:         "When oidcAuthority includes /auth/realms/schiff, the proxy request should go to /auth/realms/schiff/.well-known/openid-configuration",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
+
+			c, _ := gin.CreateTestContext(w)
+			c.Request = req
+			c.Params = gin.Params{{Key: "proxyPath", Value: tt.proxyPath}}
+
+			server.handleOIDCProxy(c)
+
+			assert.Equal(t, tt.expectedStatus, w.Code,
+				"test: %s, expected status %d but got %d\n%s\nResponse: %s",
+				tt.name, tt.expectedStatus, w.Code, tt.description, w.Body.String())
+
+			if tt.shouldContainIssuer {
+				bodyStr := w.Body.String()
+				assert.Contains(t, bodyStr, "das-schiff.telekom.de/auth/realms/schiff",
+					"response should contain the issuer with realm path, got: %s", bodyStr)
+			}
+		})
+	}
+}
+
+// TestOIDCProxyRealmPathIntegration tests the full OIDC discovery flow with realm paths
+// Scenario: Frontend requests /.well-known/openid-configuration via /api/oidc/authority
+// with authority pointing to a Keycloak realm, and backend should:
+// 1. Preserve the realm path when constructing the upstream request
+// 2. Return the OIDC metadata with the correct issuer URL including the realm
+// 3. Preserve headers like Content-Type and Cache-Control
+func TestOIDCProxyRealmPathIntegration(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	// Track what URL the mock server receives
+	var receivedPath string
+
+	// Create a realistic mock Keycloak server
+	mockKeycloak := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+
+		// Only respond to requests with the full realm path
+		if r.URL.Path == "/auth/realms/production/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			// Build response - get base URL from the request itself
+			scheme := "http"
+			if r.TLS != nil {
+				scheme = "https"
+			}
+			actualBaseURL := scheme + "://" + r.Host
+			fmt.Fprintf(w, `{
+				"issuer": "%s/auth/realms/production",
+				"authorization_endpoint": "%s/auth/realms/production/protocol/openid-connect/auth",
+				"token_endpoint": "%s/auth/realms/production/protocol/openid-connect/token",
+				"userinfo_endpoint": "%s/auth/realms/production/protocol/openid-connect/userinfo",
+				"jwks_uri": "%s/auth/realms/production/protocol/openid-connect/certs"
+			}`, actualBaseURL, actualBaseURL, actualBaseURL, actualBaseURL, actualBaseURL)
+			return
+		}
+
+		// Return 404 for requests without the realm path (the bug scenario)
+		http.NotFound(w, r)
+	}))
+	defer mockKeycloak.Close()
+
+	// Parse the authority with realm path
+	authorityWithRealm, err := url.Parse(mockKeycloak.URL + "/auth/realms/production")
+	require.NoError(t, err)
+
+	cfg := config.Config{
+		Server: config.Server{
+			ListenAddress: ":8080",
+		},
+		Frontend: config.Frontend{
+			BaseURL:      "https://breakglass.example.com",
+			BrandingName: "Test",
+		},
+		AuthorizationServer: config.AuthorizationServer{
+			URL:          mockKeycloak.URL + "/auth/realms/production",
+			JWKSEndpoint: ".well-known/jwks.json",
+		},
+	}
+
+	auth := &AuthHandler{}
+	server := &Server{
+		config:        cfg,
+		oidcAuthority: authorityWithRealm,
+		log:           logger,
+		auth:          auth,
+	}
+
+	t.Run("Full OIDC discovery flow with realm path preservation", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/oidc/authority/.well-known/openid-configuration", nil)
+
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "proxyPath", Value: "/.well-known/openid-configuration"}}
+
+		// Execute the proxy handler
+		server.handleOIDCProxy(c)
+
+		// Verify response status
+		assert.Equal(t, http.StatusOK, w.Code,
+			"Expected 200 OK, got %d\nResponse: %s\nReceived path: %s",
+			w.Code, w.Body.String(), receivedPath)
+
+		// Verify the correct path was called on the upstream server
+		assert.Equal(t, "/auth/realms/production/.well-known/openid-configuration", receivedPath,
+			"Upstream should receive request with realm path preserved")
+
+		// Verify response contains valid OIDC metadata
+		assert.Contains(t, w.Body.String(), "authorization_endpoint",
+			"Response should contain authorization_endpoint")
+		assert.Contains(t, w.Body.String(), "token_endpoint",
+			"Response should contain token_endpoint")
+		assert.Contains(t, w.Body.String(), mockKeycloak.URL+"/auth/realms/production",
+			"Response should contain issuer with realm path")
+
+		// Verify Content-Type is preserved from upstream
+		assert.Equal(t, "application/json", w.Header().Get("Content-Type"),
+			"Response should have correct Content-Type")
+
+		// Verify Cache-Control header is preserved
+		assert.Equal(t, "public, max-age=3600", w.Header().Get("Cache-Control"),
+			"Response should preserve Cache-Control header")
+	})
+
+	t.Run("Query parameters are preserved in realm path scenario", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/oidc/authority/.well-known/openid-configuration?foo=bar", nil)
+
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "proxyPath", Value: "/.well-known/openid-configuration?foo=bar"}}
+
+		server.handleOIDCProxy(c)
+
+		// Verify response is still successful
+		assert.NotEqual(t, http.StatusNotFound, w.Code,
+			"Request with query params should not return 404")
+		assert.Equal(t, http.StatusOK, w.Code,
+			"Request should succeed with query params")
+	})
+}

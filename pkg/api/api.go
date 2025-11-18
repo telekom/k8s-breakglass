@@ -672,7 +672,15 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	}
 
 	// Create a URL from the normalized path with the base authority
-	relativeURL := &url.URL{Path: normalizedPath}
+	// Important: if normalizedPath is absolute (starts with /), we need to append it to the base path
+	// not use ResolveReference which would replace the base path entirely (per RFC 3986)
+	targetPath := normalizedPath
+	if base.Path != "" && strings.HasPrefix(normalizedPath, "/") {
+		// Append the relative proxy path to the base authority path
+		targetPath = base.Path + normalizedPath
+	}
+
+	relativeURL := &url.URL{Path: targetPath}
 	if idx := strings.Index(proxyPath, "?"); idx != -1 {
 		relativeURL.RawQuery = proxyPath[idx+1:]
 	}
