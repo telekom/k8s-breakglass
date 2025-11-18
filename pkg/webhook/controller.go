@@ -286,13 +286,13 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 	}
 
-	groups, sessions, tenant, err := wc.getUserGroupsAndSessions(ctx, username, clusterName, issuer)
+	groups, sessions, idpMismatches, tenant, err := wc.getUserGroupsAndSessionsWithIDPInfo(ctx, username, clusterName, issuer)
 	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-	reqLog.With("groups", groups, "sessions", len(sessions), "tenant", tenant).Debug("Retrieved user groups for cluster")
+	reqLog.With("groups", groups, "sessions", len(sessions), "tenant", tenant, "idpMismatches", len(idpMismatches)).Debug("Retrieved user groups for cluster")
 
 	// DENY POLICY EVALUATION (phase 1 - cluster/tenant global)
 	if sar.Spec.ResourceAttributes != nil {
@@ -536,6 +536,34 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 	}
 
+	// If we denied the request and there are sessions with IDP issuer mismatches,
+	// provide a helpful error message indicating the user has sessions but from a different IDP
+	if !allowed && len(idpMismatches) > 0 && issuer != "" {
+		// Collect the IDPs from the mismatched sessions (show which IDP should have been used)
+		idpSet := make(map[string]bool)
+		for _, s := range idpMismatches {
+			if s.Spec.IdentityProviderName != "" {
+				idpSet[s.Spec.IdentityProviderName] = true
+			}
+		}
+		var idpNames []string
+		for idp := range idpSet {
+			idpNames = append(idpNames, idp)
+		}
+
+		if len(idpNames) > 0 {
+			idpList := strings.Join(idpNames, ", ")
+			diag := fmt.Sprintf(" Note: %d breakglass session(s) found but from different identity provider(s): %s. Your current token is from a different identity provider. For access with your current identity provider, open a new breakglass request.", len(idpMismatches), idpList)
+			if reason == "" {
+				reason = diag
+			} else {
+				reason = reason + "" + diag
+			}
+			// Log this at info level so admins can see IDP mismatches
+			reqLog.With("currentIssuer", issuer, "sessionsWithMismatch", len(idpMismatches), "sessionIDPs", idpNames).Info("User has valid sessions but from different identity provider")
+		}
+	}
+
 	// Add IDP hint to denial reasons (helps users understand which provider authenticated them)
 	if !allowed {
 		if hint := wc.getIDPHintFromIssuer(ctx, &sar, reqLog); hint != "" {
@@ -634,9 +662,17 @@ func NewWebhookController(log *zap.SugaredLogger,
 // getUserGroupsAndSessions returns groups from active sessions, list of sessions, and a tenant (best-effort from cluster config).
 // It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
 func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string) ([]string, []v1alpha1.BreakglassSession, string, error) {
-	sessions, err := wc.getSessions(ctx, username, clustername, issuer)
+	groups, sessions, _, tenant, err := wc.getUserGroupsAndSessionsWithIDPInfo(ctx, username, clustername, issuer)
+	return groups, sessions, tenant, err
+}
+
+// getUserGroupsAndSessionsWithIDPInfo returns groups from active sessions, list of sessions, IDP mismatch info, and a tenant.
+// It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
+// Returns: (groups, sessions, idpMismatchedSessions, tenant, error)
+func (wc *WebhookController) getUserGroupsAndSessionsWithIDPInfo(ctx context.Context, username, clustername, issuer string) ([]string, []v1alpha1.BreakglassSession, []v1alpha1.BreakglassSession, string, error) {
+	sessions, idpMismatches, err := wc.getSessionsWithIDPMismatchInfo(ctx, username, clustername, issuer)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, "", err
 	}
 	groups := make([]string, 0, len(sessions))
 	for _, s := range sessions {
@@ -649,19 +685,21 @@ func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, usern
 			tenant = cfg.Spec.Tenant
 		}
 	}
-	return groups, sessions, tenant, nil
+	return groups, sessions, idpMismatches, tenant, nil
 }
 
-// getSessions filtered (reuse existing approval logic)
+// getSessionsWithIDPMismatchInfo filtered (reuse existing approval logic)
 // If issuer is provided, only returns sessions that match the issuer (multi-IDP mode)
 // If issuer is empty, returns all sessions (single-IDP or backward compatibility mode)
-func (wc *WebhookController) getSessions(ctx context.Context, username, clustername, issuer string) ([]v1alpha1.BreakglassSession, error) {
+// Also returns a list of sessions that were filtered out due to IDP issuer mismatch
+func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context, username, clustername, issuer string) ([]v1alpha1.BreakglassSession, []v1alpha1.BreakglassSession, error) {
 	selector := fields.SelectorFromSet(fields.Set{"spec.cluster": clustername, "spec.user": username})
 	all, err := wc.sesManager.GetBreakglassSessionsWithSelector(ctx, selector)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := make([]v1alpha1.BreakglassSession, 0, len(all))
+	idpMismatches := make([]v1alpha1.BreakglassSession, 0)
 	now := time.Now()
 	for _, s := range all {
 		if breakglass.IsSessionRetained(s) {
@@ -670,12 +708,22 @@ func (wc *WebhookController) getSessions(ctx context.Context, username, clustern
 		if s.Status.RejectedAt.IsZero() && !s.Status.ExpiresAt.IsZero() && s.Status.ExpiresAt.After(now) {
 			// If issuer is provided, only include sessions that match the issuer
 			if issuer != "" && s.Spec.IdentityProviderIssuer != issuer {
+				// Track sessions filtered out due to IDP mismatch
+				idpMismatches = append(idpMismatches, s)
 				continue
 			}
 			out = append(out, s)
 		}
 	}
-	return out, nil
+	return out, idpMismatches, nil
+}
+
+// getSessions is a wrapper around getSessionsWithIDPMismatchInfo for backward compatibility
+// If issuer is provided, only returns sessions that match the issuer (multi-IDP mode)
+// If issuer is empty, returns all sessions (single-IDP or backward compatibility mode)
+func (wc *WebhookController) getSessions(ctx context.Context, username, clustername, issuer string) ([]v1alpha1.BreakglassSession, error) {
+	sessions, _, err := wc.getSessionsWithIDPMismatchInfo(ctx, username, clustername, issuer)
+	return sessions, err
 }
 
 // dedupeStrings removes duplicates from a slice of strings while preserving order.
