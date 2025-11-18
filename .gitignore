@@ -54,3 +54,4 @@ e2e/kind-setup-single-tdir/tmp-config-with-ca.yaml
 apiserver.log
 .vscode/
 main
+cover.out

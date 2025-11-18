@@ -509,6 +509,35 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		spec.RetainFor = matchedEsc.Spec.RetainFor
 		spec.IdleTimeout = matchedEsc.Spec.IdleTimeout
 
+		// Determine AllowIDPMismatch flag: set to true when neither escalation nor cluster have IDP restrictions
+		// This ensures backward compatibility for single-IDP deployments
+		escalationHasIDPRestriction := len(matchedEsc.Spec.AllowedIdentityProviders) > 0
+		clusterHasIDPRestriction := false
+
+		// Try to fetch cluster config to check for IDP restrictions
+		if wc.clusterConfigManager != nil {
+			if clusterConfig, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, request.Clustername); err == nil {
+				clusterHasIDPRestriction = len(clusterConfig.Spec.IdentityProviderRefs) > 0
+				reqLog.Debugw("Fetched cluster config for IDP restriction check",
+					"cluster", request.Clustername,
+					"clusterHasIDPRestriction", clusterHasIDPRestriction,
+					"escalationHasIDPRestriction", escalationHasIDPRestriction)
+			} else {
+				reqLog.Debugw("Could not fetch cluster config for IDP check (will default to false for restriction)",
+					"cluster", request.Clustername,
+					"error", err)
+			}
+		}
+
+		// AllowIDPMismatch=true means: ignore IDP checks during authorization
+		// This is set when BOTH escalation and cluster have no IDP restrictions
+		// This enables backward compatibility for deployments not using multi-IDP
+		spec.AllowIDPMismatch = !escalationHasIDPRestriction && !clusterHasIDPRestriction
+		reqLog.Debugw("Set AllowIDPMismatch flag for session",
+			"allowIDPMismatch", spec.AllowIDPMismatch,
+			"escalationHasIDPRestriction", escalationHasIDPRestriction,
+			"clusterHasIDPRestriction", clusterHasIDPRestriction)
+
 		// Validate and apply custom duration if provided
 		if request.Duration > 0 {
 			// Parse max allowed duration from string (e.g., "1h", "3600s")
