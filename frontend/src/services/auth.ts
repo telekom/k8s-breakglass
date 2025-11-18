@@ -322,7 +322,6 @@ export default class AuthService {
     
     // Build the list of managers to try, prioritizing by issuer match
     let managers: UserManager[] = [];
-    let matchedIDPName: string | undefined;
     
     // If we have an issuer in the callback, try to find a matching manager first
     if (issuerParam) {
@@ -343,7 +342,7 @@ export default class AuthService {
           // Extract IDP name from cache key: format is "/api/oidc/authority:clientID:directAuthority"
           // We can infer which IDP this is from the directAuthority
           // Try to match it with known IDPs by checking our cache
-          for (const [otherKey, otherManager] of this.userManagers.entries()) {
+          for (const [, otherManager] of this.userManagers.entries()) {
             const otherAuth = (otherManager as any).directAuthority;
             if (otherAuth === directAuthority) {
               // Found matching manager, now get its IDP name
