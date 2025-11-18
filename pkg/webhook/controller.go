@@ -814,6 +814,10 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			}
 			if resp != nil && resp.Status.Allowed {
 				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName, s.Name, g).Inc()
+				// Track IDP-based authorization if session has IDP specified
+				if s.Spec.IdentityProviderName != "" {
+					metrics.EscalationIDPAuthorizationChecks.WithLabelValues(s.Spec.GrantedGroup, s.Spec.IdentityProviderName, "allowed").Inc()
+				}
 				return true, s.Spec.GrantedGroup, s.Name, g
 			}
 			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName, s.Name, g).Inc()

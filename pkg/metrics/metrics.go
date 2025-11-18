@@ -163,6 +163,126 @@ var (
 		Name: "breakglass_identity_provider_status",
 		Help: "Current status of IdentityProvider (1=Active, 0=Error, -1=Disabled)",
 	}, []string{"provider_name", "provider_type"})
+
+	// JWT Validation and Multi-IDP metrics
+	JWTValidationRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_jwt_validation_requests_total",
+		Help: "Total number of JWT validation requests",
+	}, []string{"issuer", "mode"})
+	JWTValidationSuccess = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_jwt_validation_success_total",
+		Help: "Total number of successful JWT validations",
+	}, []string{"issuer"})
+	JWTValidationFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_jwt_validation_failure_total",
+		Help: "Total number of failed JWT validations",
+	}, []string{"issuer", "reason"})
+	JWTValidationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_jwt_validation_duration_seconds",
+		Help:    "Time taken to validate JWT token",
+		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5},
+	}, []string{"issuer"})
+
+	// JWKS Caching metrics
+	JWKSCacheHits = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_jwks_cache_hits_total",
+		Help: "Total number of JWKS cache hits",
+	}, []string{"issuer"})
+	JWKSCacheMisses = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_jwks_cache_misses_total",
+		Help: "Total number of JWKS cache misses (requiring fetch)",
+	}, []string{"issuer"})
+	JWKSFetchRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_jwks_fetch_requests_total",
+		Help: "Total number of JWKS endpoint fetch requests",
+	}, []string{"issuer", "status"})
+	JWKSFetchDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_jwks_fetch_duration_seconds",
+		Help:    "Time taken to fetch JWKS from endpoint",
+		Buckets: []float64{.01, .05, .1, .25, .5, 1, 2.5, 5},
+	}, []string{"issuer"})
+	JWKSCacheSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_jwks_cache_size",
+		Help: "Number of JWKS entries currently in cache",
+	}, []string{"issuer"})
+
+	// IDP Selection metrics (Multi-IDP UI flow)
+	MultiIDPConfigRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_multi_idp_config_requests_total",
+		Help: "Total requests for multi-IDP configuration",
+	}, []string{})
+	MultiIDPConfigSuccess = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_multi_idp_config_success_total",
+		Help: "Total successful multi-IDP config fetches",
+	}, []string{})
+	MultiIDPConfigFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_multi_idp_config_failure_total",
+		Help: "Total failed multi-IDP config fetches",
+	}, []string{"reason"})
+	IDPSelectorUsed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_idp_selector_used_total",
+		Help: "Total times IDP selector was used in session creation",
+	}, []string{})
+	IDPSelectionValidations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_idp_selection_validations_total",
+		Help: "Total IDP selection validations (success/failure)",
+	}, []string{"result"})
+
+	// OIDC Proxy metrics
+	OIDCProxyRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_oidc_proxy_requests_total",
+		Help: "Total OIDC proxy requests",
+	}, []string{"endpoint"})
+	OIDCProxySuccess = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_oidc_proxy_success_total",
+		Help: "Total successful OIDC proxy requests",
+	}, []string{"endpoint"})
+	OIDCProxyFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_oidc_proxy_failure_total",
+		Help: "Total failed OIDC proxy requests",
+	}, []string{"endpoint", "reason"})
+	OIDCProxyDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_oidc_proxy_duration_seconds",
+		Help:    "Time taken to proxy OIDC request",
+		Buckets: []float64{.01, .05, .1, .25, .5, 1, 2.5, 5},
+	}, []string{"endpoint"})
+	OIDCProxyPathValidationFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_oidc_proxy_path_validation_failure_total",
+		Help: "Total OIDC proxy path validation failures",
+	}, []string{"reason"})
+
+	// Session-IDP Association metrics
+	SessionCreatedWithIDP = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_created_with_idp_total",
+		Help: "Total sessions created with explicit IDP selection",
+	}, []string{"idp"})
+	SessionApprovedWithIDP = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_approved_with_idp_total",
+		Help: "Total sessions approved (tracked with IDP if applicable)",
+	}, []string{"idp"})
+	EscalationIDPAuthorizationChecks = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_escalation_idp_authorization_checks_total",
+		Help: "Total escalation-IDP authorization checks",
+	}, []string{"escalation", "result"})
+	EscalationAllowedIDPsCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_escalation_allowed_idps_count",
+		Help: "Number of IDPs allowed for an escalation",
+	}, []string{"escalation"})
+
+	// Frontend API endpoint metrics
+	APIEndpointRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_api_endpoint_requests_total",
+		Help: "Total API endpoint requests",
+	}, []string{"endpoint"})
+	APIEndpointErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_api_endpoint_errors_total",
+		Help: "Total API endpoint errors",
+	}, []string{"endpoint", "status_code"})
+	APIEndpointDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_api_endpoint_duration_seconds",
+		Help:    "Duration of API endpoint requests",
+		Buckets: []float64{.01, .05, .1, .25, .5, 1},
+	}, []string{"endpoint"})
 )
 
 func init() {
@@ -201,6 +321,42 @@ func init() {
 	prometheus.MustRegister(IdentityProviderLastReloadTimestamp)
 	prometheus.MustRegister(IdentityProviderConfigVersion)
 	prometheus.MustRegister(IdentityProviderStatus)
+
+	// Register JWT and JWKS metrics
+	prometheus.MustRegister(JWTValidationRequests)
+	prometheus.MustRegister(JWTValidationSuccess)
+	prometheus.MustRegister(JWTValidationFailure)
+	prometheus.MustRegister(JWTValidationDuration)
+	prometheus.MustRegister(JWKSCacheHits)
+	prometheus.MustRegister(JWKSCacheMisses)
+	prometheus.MustRegister(JWKSFetchRequests)
+	prometheus.MustRegister(JWKSFetchDuration)
+	prometheus.MustRegister(JWKSCacheSize)
+
+	// Register multi-IDP UI flow metrics
+	prometheus.MustRegister(MultiIDPConfigRequests)
+	prometheus.MustRegister(MultiIDPConfigSuccess)
+	prometheus.MustRegister(MultiIDPConfigFailure)
+	prometheus.MustRegister(IDPSelectorUsed)
+	prometheus.MustRegister(IDPSelectionValidations)
+
+	// Register OIDC proxy metrics
+	prometheus.MustRegister(OIDCProxyRequests)
+	prometheus.MustRegister(OIDCProxySuccess)
+	prometheus.MustRegister(OIDCProxyFailure)
+	prometheus.MustRegister(OIDCProxyDuration)
+	prometheus.MustRegister(OIDCProxyPathValidationFailure)
+
+	// Register session-IDP association metrics
+	prometheus.MustRegister(SessionCreatedWithIDP)
+	prometheus.MustRegister(SessionApprovedWithIDP)
+	prometheus.MustRegister(EscalationIDPAuthorizationChecks)
+	prometheus.MustRegister(EscalationAllowedIDPsCount)
+
+	// Register frontend API metrics
+	prometheus.MustRegister(APIEndpointRequests)
+	prometheus.MustRegister(APIEndpointErrors)
+	prometheus.MustRegister(APIEndpointDuration)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.

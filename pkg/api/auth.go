@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 )
 
@@ -171,6 +172,13 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+
+		// Record JWT validation request
+		mode := "single-idp"
+		if a.idpLoader != nil {
+			mode = "multi-idp"
+		}
+
 		authHeader := c.GetHeader(AuthHeaderKey)
 		// delete the header to avoid logging it by accident
 		c.Request.Header.Del(AuthHeaderKey)
@@ -201,15 +209,31 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			issuer, _ = iss.(string)
 		}
 
+		// Record validation attempt
+		metrics.JWTValidationRequests.WithLabelValues(issuer, mode).Inc()
+		startTime := time.Now()
+
 		// Get appropriate JWKS (based on issuer or default)
 		var jwks *keyfunc.JWKS
 		var selectedIDP string
 
 		if a.idpLoader != nil && issuer != "" {
 			// Multi-IDP mode: load JWKS for specific issuer
+			// Record cache check
+			a.jwksMutex.RLock()
+			_, cacheHit := a.jwksCache[issuer]
+			a.jwksMutex.RUnlock()
+
+			if cacheHit {
+				metrics.JWKSCacheHits.WithLabelValues(issuer).Inc()
+			} else {
+				metrics.JWKSCacheMisses.WithLabelValues(issuer).Inc()
+			}
+
 			loadedJwks, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 			if err != nil {
 				a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
+				metrics.JWTValidationFailure.WithLabelValues(issuer, "jwks_load_failed").Inc()
 
 				// Try to provide helpful error message with IDP suggestions
 				idpName, idpLookupErr := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
@@ -234,6 +258,7 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			}
 		} else if a.idpLoader != nil && issuer == "" {
 			// Multi-IDP mode but no issuer in token: require issuer claim
+			metrics.JWTValidationFailure.WithLabelValues("", "missing_issuer").Inc()
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.",
 			})
@@ -257,6 +282,17 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			}
 		}
 		if err != nil {
+			// Record failure with reason
+			failureReason := "verification_failed"
+			if strings.Contains(err.Error(), "key ID") {
+				failureReason = "key_id_not_found"
+			} else if strings.Contains(err.Error(), "signature") {
+				failureReason = "invalid_signature"
+			} else if strings.Contains(err.Error(), "expired") {
+				failureReason = "token_expired"
+			}
+			metrics.JWTValidationFailure.WithLabelValues(issuer, failureReason).Inc()
+
 			errorMsg := "Token verification failed"
 			if issuer != "" {
 				errorMsg = fmt.Sprintf("Token verification failed for issuer '%s'. Please re-authenticate with the correct identity provider.", issuer)
@@ -269,6 +305,10 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+
+		// Record successful validation with duration
+		metrics.JWTValidationSuccess.WithLabelValues(issuer).Inc()
+		metrics.JWTValidationDuration.WithLabelValues(issuer).Observe(time.Since(startTime).Seconds())
 
 		// Extract core identity claims
 		user_id := claims["sub"]

@@ -404,6 +404,9 @@ func (s *Server) getConfig(c *gin.Context) {
 // This endpoint is called by the frontend to determine which authentication method to use.
 // IMPORTANT: No secrets (ClientSecret, ServiceAccountToken, etc.) are ever exposed.
 func (s *Server) getIdentityProvider(c *gin.Context) {
+	start := time.Now()
+	metrics.APIEndpointRequests.WithLabelValues("getIdentityProvider").Inc()
+
 	// Thread-safe read of idpConfig with RLock
 	s.idpMutex.RLock()
 	idpCfg := s.idpConfig
@@ -412,6 +415,8 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 	// If no IdentityProvider is loaded, return 404
 	if idpCfg == nil {
 		s.log.Sugar().Warnw("identity_provider_not_loaded")
+		metrics.APIEndpointErrors.WithLabelValues("getIdentityProvider", "not_configured").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("getIdentityProvider").Observe(time.Since(start).Seconds())
 		c.JSON(http.StatusNotFound, gin.H{"error": "Identity provider not configured"})
 		return
 	}
@@ -432,6 +437,7 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 	}
 
 	s.log.Sugar().Debugw("identity_provider_exposed", "type", resp.Type)
+	metrics.APIEndpointDuration.WithLabelValues("getIdentityProvider").Observe(time.Since(start).Seconds())
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -449,10 +455,16 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 // Cache is maintained by the IdentityProviderReconciler and updated whenever
 // IdentityProvider CRs change, preventing DDoS attacks via repeated API queries
 func (s *Server) getMultiIDPConfig(c *gin.Context) {
+	start := time.Now()
+	metrics.MultiIDPConfigRequests.WithLabelValues().Inc()
+
 	// Use cached IDPs from reconciler to avoid APIServer queries
 	// If reconciler not available, return empty config and let frontend fall back
 	if s.idpReconciler == nil {
 		s.log.Sugar().Warnw("idp reconciler not available, returning empty config")
+		metrics.MultiIDPConfigFailure.WithLabelValues("reconciler_unavailable").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("getMultiIDPConfig", "reconciler_unavailable").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("getMultiIDPConfig").Observe(time.Since(start).Seconds())
 		resp := MultiIDPConfigResponse{
 			IdentityProviders:    []IDPInfo{},
 			EscalationIDPMapping: map[string][]string{},
@@ -492,6 +504,9 @@ func (s *Server) getMultiIDPConfig(c *gin.Context) {
 	}
 
 	s.log.Sugar().Debugw("multi_idp_config_returned", "idp_count", len(idpInfos), "escalation_count", len(resp.EscalationIDPMapping))
+	metrics.MultiIDPConfigSuccess.WithLabelValues().Inc()
+	metrics.APIEndpointRequests.WithLabelValues("getMultiIDPConfig").Inc()
+	metrics.APIEndpointDuration.WithLabelValues("getMultiIDPConfig").Observe(time.Since(start).Seconds())
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -528,10 +543,13 @@ func (s *Server) isKnownIDPAuthority(authority string) bool {
 func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if s.oidcAuthority == nil {
 		s.log.Sugar().Warnw("oidc_proxy_missing_authority")
+		metrics.OIDCProxyRequests.WithLabelValues("authority").Inc()
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "missing_authority").Inc()
 		c.JSON(http.StatusNotFound, gin.H{"error": "OIDC authority not configured"})
 		return
 	}
 	start := time.Now()
+	metrics.OIDCProxyRequests.WithLabelValues("authority").Inc()
 	proxyPath := c.Param("proxyPath")
 
 	// Validate proxyPath to prevent SSRF attacks and path traversal
@@ -539,6 +557,9 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	// Denied: scheme (https://), network-path (//) or path traversal (..)
 	if strings.Contains(proxyPath, "://") || strings.HasPrefix(proxyPath, "//") || strings.Contains(proxyPath, "..") {
 		s.log.Sugar().Warnw("oidc_proxy_invalid_path", "path", proxyPath)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "invalid_path").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "invalid_path").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: absolute URLs and path traversal not allowed"})
 		return
 	}
@@ -547,6 +568,9 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	parsedPath, parseErr := url.Parse(proxyPath)
 	if parseErr != nil {
 		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "error", parseErr)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "malformed_path").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "malformed_path").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: malformed URL"})
 		return
 	}
@@ -554,6 +578,9 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	// Ensure the parsed path is clean (no fragment, no suspicious components)
 	if parsedPath.Scheme != "" || parsedPath.Host != "" || parsedPath.Fragment != "" {
 		s.log.Sugar().Warnw("oidc_proxy_suspicious_path", "path", proxyPath)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "suspicious_path").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "suspicious_path").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: contains URL components"})
 		return
 	}
@@ -570,11 +597,17 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 				s.log.Sugar().Debugw("oidc_proxy_using_custom_authority", "customAuthority", customAuthority)
 			} else {
 				s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", customAuthority)
+				metrics.OIDCProxyFailure.WithLabelValues("authority", "unknown_authority").Inc()
+				metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "unknown_authority").Inc()
+				metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 				c.JSON(http.StatusBadRequest, gin.H{"error": "unknown OIDC authority"})
 				return
 			}
 		} else {
 			s.log.Sugar().Warnw("oidc_proxy_invalid_authority_header", "customAuthority", customAuthority)
+			metrics.OIDCProxyFailure.WithLabelValues("authority", "invalid_authority_header").Inc()
+			metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "invalid_authority_header").Inc()
+			metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid X-OIDC-Authority header"})
 			return
 		}
@@ -609,6 +642,9 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		req, err = http.NewRequestWithContext(c.Request.Context(), c.Request.Method, target, c.Request.Body)
 		if err != nil {
 			s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
+			metrics.OIDCProxyFailure.WithLabelValues("authority", "request_build_error").Inc()
+			metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "request_build_error").Inc()
+			metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
 			return
 		}
@@ -621,6 +657,9 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		req, err = http.NewRequestWithContext(c.Request.Context(), "GET", target, nil)
 		if err != nil {
 			s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
+			metrics.OIDCProxyFailure.WithLabelValues("authority", "request_build_error").Inc()
+			metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "request_build_error").Inc()
+			metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
 			return
 		}
@@ -628,6 +667,9 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "request_build_error").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "request_build_error").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
 		return
 	}
@@ -640,6 +682,9 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	resp, err := client.Do(req)
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_upstream_error", "error", err, "target", target, "elapsed", time.Since(start))
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "upstream_error").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "upstream_error").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch from authority", "detail": err.Error(), "target": target})
 		return
 	}
@@ -655,7 +700,14 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	c.Status(resp.StatusCode)
 	if _, err := io.Copy(c.Writer, resp.Body); err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_copy_error", "error", err, "target", target)
+		metrics.OIDCProxyFailure.WithLabelValues("authority", "response_copy_error").Inc()
+		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "response_copy_error").Inc()
+		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to stream response from authority", "detail": err.Error(), "target": target})
 		return
 	}
+
+	// Record successful proxy completion
+	metrics.OIDCProxySuccess.WithLabelValues("authority").Inc()
+	metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 }

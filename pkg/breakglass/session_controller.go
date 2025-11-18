@@ -993,6 +993,10 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	switch sesCondition {
 	case v1alpha1.SessionConditionTypeApproved:
 		metrics.SessionApproved.WithLabelValues(bs.Spec.Cluster).Inc()
+		// Track if session was approved with specific IDP
+		if bs.Spec.IdentityProviderName != "" {
+			metrics.SessionApprovedWithIDP.WithLabelValues(bs.Spec.IdentityProviderName).Inc()
+		}
 		// Also track if it was a scheduled session that got approved
 		if bs.Spec.ScheduledStartTime != nil && !bs.Spec.ScheduledStartTime.IsZero() {
 			metrics.SessionScheduled.WithLabelValues(bs.Spec.Cluster).Inc()

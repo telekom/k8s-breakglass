@@ -190,6 +190,12 @@ func (c SessionManager) AddBreakglassSession(ctx context.Context, bs *v1alpha1.B
 	zap.S().Infow("BreakglassSession created successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	// Emit metric for created session (cluster may be in spec)
 	metrics.SessionCreated.WithLabelValues(bs.Spec.Cluster).Inc()
+
+	// Track session creation with IDP if specified
+	if bs.Spec.IdentityProviderName != "" {
+		metrics.SessionCreatedWithIDP.WithLabelValues(bs.Spec.IdentityProviderName).Inc()
+	}
+
 	return nil
 }
 
