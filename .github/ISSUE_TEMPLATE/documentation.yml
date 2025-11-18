@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Documentation
+description: 'Submit a documentation issue related to a docstring or the docs to improve our documentation.'
+title : '[DOCUMENTATION] <Please write a short and informative title>'
+labels: ['documentation']
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to file a documentation issue. Before creating a new documentation issue, please make 
+        sure to take a few minutes to check the issue tracker for existing documentation issues.
+        In addition, please first discuss your documentation issue informally, e.g. in GitHub dicussions, before
+        you formally submit one.
+
+  - type: dropdown
+    attributes:
+      label: To which part is the documentation issue related?
+      description: The issue is either related to a documentation within the code (docstring), or not (docs)
+      options: 
+        - docstring
+        - docs
+
+  - type: textarea
+    attributes:
+      label: What is the issue linked to the documentation?
+      description: | 
+        Tell us about the mistake, confusion, or enhancement.
+        Make sure to leave a reference to the documentation you are referring to.
+
+  - type: textarea
+    attributes:
+      label: What is a fix for the documentation issue?
+      description: |
+        Tell us how the documentation issue can be addressed.
