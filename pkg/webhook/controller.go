@@ -706,8 +706,9 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 			continue
 		}
 		if s.Status.RejectedAt.IsZero() && !s.Status.ExpiresAt.IsZero() && s.Status.ExpiresAt.After(now) {
-			// If issuer is provided, only include sessions that match the issuer
-			if issuer != "" && s.Spec.IdentityProviderIssuer != issuer {
+			// If issuer is provided and session does NOT allow IDP mismatch,
+			// only include sessions that match the issuer (multi-IDP mode)
+			if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
 				// Track sessions filtered out due to IDP mismatch
 				idpMismatches = append(idpMismatches, s)
 				continue

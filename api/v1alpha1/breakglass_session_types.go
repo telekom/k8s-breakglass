@@ -116,6 +116,15 @@ type BreakglassSessionSpec struct {
 	// Used by webhook handler to validate the user's token is from the same IDP the session was created with.
 	// +optional
 	IdentityProviderIssuer string `json:"identityProviderIssuer,omitempty"`
+
+	// allowIDPMismatch indicates that this session should accept authorization requests from any IDP.
+	// Set to true when both the cluster and escalation do NOT specify IDP requirements.
+	// When false (default), the webhook will enforce that the requesting user's IDP matches
+	// the IDP that created the session (via identityProviderIssuer matching).
+	// This allows gradual migration to multi-IDP mode: sessions created before IDP tracking
+	// can continue to work with any IDP until explicitly migrated.
+	// +optional
+	AllowIDPMismatch bool `json:"allowIDPMismatch,omitempty"`
 }
 
 // BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
