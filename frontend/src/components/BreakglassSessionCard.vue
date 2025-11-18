@@ -148,6 +148,12 @@ const ownerActionLabel = computed(() => {
       <p>
         <b>Cluster:</b> {{ breakglass.spec.cluster }}
       </p>
+      <p v-if="breakglass.spec.identityProviderName">
+        <b>IDP:</b> {{ breakglass.spec.identityProviderName }}
+      </p>
+      <p v-if="breakglass.spec.identityProviderIssuer">
+        <b>Issuer:</b> {{ breakglass.spec.identityProviderIssuer }}
+      </p>
       <p>
         <b>State:</b> <span :class="'state state-' + (breakglass.status.state || 'unknown').toLowerCase()">{{ breakglass.status.state || 'Unknown' }}</span>
       </p>

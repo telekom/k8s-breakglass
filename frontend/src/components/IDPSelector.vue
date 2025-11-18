@@ -1,16 +1,17 @@
 <script setup lang="ts">
 /**
- * Phase 9: IDP Selector Component
+ * Phase 9: IDP Selector Component (Refactored to Button UI)
  *
- * Provides a dropdown for selecting which identity provider to use for the session.
+ * Provides individual login buttons for each available identity provider.
  * Integrates with multi-IDP configuration endpoint to show:
  * - Only IDPs allowed for the selected escalation
  * - Human-readable IDP names (displayName)
- * - Validation that selection is allowed
+ * - Individual login button per IDP
  *
  * Features:
  * - Loads multi-IDP config on mount
  * - Filters IDPs based on selected escalation
+ * - Renders individual login buttons per IDP
  * - Handles missing/unavailable IDP config gracefully
  * - Optional IDP selection (backward compatible with single-IDP mode)
  */
@@ -164,27 +165,15 @@ const isSelectionValid = computed((): boolean => {
 });
 
 /**
- * Handle IDP selection change
+ * Handle IDP button click for login
  */
-function handleIDPChange(event: Event) {
-  const target = event.target as HTMLSelectElement;
-  const newValue = target.value || undefined;
-  console.debug("[IDPSelector] IDP selection changed", {
-    newValue,
+function handleIDPButtonClick(idpName: string) {
+  console.debug("[IDPSelector] IDP button clicked for login", {
+    idpName,
     escalation: props.escalationName,
-    isValid: newValue ? true : !props.required,
   });
-  selectedIDPName.value = newValue;
-  emit("update:modelValue", newValue);
-}
-
-/**
- * Clear IDP selection
- */
-function clearSelection() {
-  console.debug("[IDPSelector] IDP selection cleared");
-  selectedIDPName.value = undefined;
-  emit("update:modelValue", undefined);
+  selectedIDPName.value = idpName;
+  emit("update:modelValue", idpName);
 }
 </script>
 
@@ -196,62 +185,29 @@ function clearSelection() {
         <p class="idp-single-message">
           Using <strong>{{ allowedIDPs[0]?.displayName }}</strong> for authentication
         </p>
+        <!-- Auto-login button for single IDP -->
+        <button
+          type="button"
+          class="idp-button idp-button-auto"
+          @click="allowedIDPs[0] && handleIDPButtonClick(allowedIDPs[0].name)"
+          :disabled="disabled || loading"
+        >
+          Log In
+        </button>
       </div>
       <div v-else-if="allowedIDPs.length === 0" class="idp-no-available">
         <p class="warning">No identity providers available for this escalation</p>
       </div>
     </template>
 
-    <!-- Show selector if multiple IDPs available -->
+    <!-- Show individual buttons if multiple IDPs available -->
     <template v-if="hasMultipleIDPs">
       <div class="idp-selector-group">
-        <label for="idp-select" class="idp-label">
+        <label class="idp-label">
           Select Identity Provider
           <span v-if="required" class="required">*</span>
         </label>
         
-        <div class="idp-select-wrapper">
-          <select
-            id="idp-select"
-            :value="selectedIDPName || ''"
-            :disabled="disabled || loading || error !== undefined"
-            :class="{
-              'idp-select': true,
-              'idp-select--invalid': !isSelectionValid && selectedIDPName !== undefined,
-              'idp-select--loading': loading,
-            }"
-            @change="handleIDPChange"
-          >
-            <option value="" :disabled="required">
-              {{ loading ? "Loading providers..." : "Choose an identity provider" }}
-            </option>
-
-            <option
-              v-for="idp in allowedIDPs"
-              :key="idp.name"
-              :value="idp.name"
-            >
-              {{ idp.displayName }}{{ !idp.enabled ? " (disabled)" : "" }}
-            </option>
-          </select>
-
-          <!-- Clear button if selection can be cleared -->
-          <button
-            v-if="selectedIDPName && !required"
-            type="button"
-            class="idp-clear-btn"
-            @click="clearSelection"
-            title="Clear IDP selection"
-          >
-            ✕
-          </button>
-        </div>
-
-        <!-- Error message if validation failed -->
-        <div v-if="!isSelectionValid && selectedIDPName !== undefined" class="idp-error">
-          Selected identity provider is not allowed for this escalation
-        </div>
-
         <!-- Loading state -->
         <div v-if="loading" class="idp-loading">
           <span class="spinner" />Loading identity providers...
@@ -262,8 +218,29 @@ function clearSelection() {
           ⚠️ {{ error }}
         </div>
 
+        <!-- Individual login buttons for each IDP -->
+        <div v-if="!loading && !error" class="idp-buttons-container">
+          <button
+            v-for="idp in allowedIDPs"
+            :key="idp.name"
+            type="button"
+            class="idp-button"
+            :class="{
+              'idp-button--selected': selectedIDPName === idp.name,
+              'idp-button--disabled': !idp.enabled,
+            }"
+            :disabled="disabled || !idp.enabled"
+            :title="!idp.enabled ? 'This provider is currently disabled' : `Log in with ${idp.displayName}`"
+            @click="handleIDPButtonClick(idp.name)"
+          >
+            <span class="idp-button-name">{{ idp.displayName }}</span>
+            <span v-if="!idp.enabled" class="idp-button-status">(disabled)</span>
+            <span v-if="selectedIDPName === idp.name" class="idp-button-check">✓</span>
+          </button>
+        </div>
+
         <!-- Info about selected IDP -->
-        <div v-if="selectedIDPName" class="idp-info">
+        <div v-if="selectedIDPName && !loading && !error" class="idp-info">
           <p class="idp-info-text">
             Authenticated requests will be routed through
             <strong>{{
@@ -287,6 +264,10 @@ function clearSelection() {
   border: 1px solid var(--scale-color-blue-30, #b3d9ff);
   border-radius: 4px;
   margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: flex-start;
 }
 
 .idp-single-message {
@@ -305,7 +286,7 @@ function clearSelection() {
 .idp-selector-group {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
 .idp-label {
@@ -319,72 +300,126 @@ function clearSelection() {
   color: var(--scale-color-red-70, #cc0000);
 }
 
-.idp-select-wrapper {
-  position: relative;
-  display: flex;
-  gap: 0.5rem;
+/* IDP Buttons Container */
+.idp-buttons-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  width: 100%;
 }
 
-.idp-select {
-  flex: 1;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--scale-color-gray-40, #ccc);
-  border-radius: 4px;
-  font-size: 1rem;
+/* IDP Button Styles */
+.idp-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 1rem;
+  border: 2px solid var(--scale-color-gray-40, #ccc);
+  border-radius: 8px;
   background-color: white;
   color: var(--scale-color-gray-80, #333);
   cursor: pointer;
-  transition: border-color 0.2s;
+  font-weight: 500;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+  position: relative;
+  min-height: 80px;
 }
 
-.idp-select option {
-  color: var(--scale-color-gray-80, #333);
-  background-color: white;
+.idp-button:hover:not(:disabled) {
+  border-color: var(--scale-color-blue-60, #0052cc);
+  background-color: var(--scale-color-blue-5, #f8fbff);
+  box-shadow: 0 2px 8px rgba(0, 82, 204, 0.15);
+  transform: translateY(-1px);
 }
 
-.idp-select:hover:not(:disabled) {
-  border-color: var(--scale-color-gray-60, #999);
-}
-
-.idp-select:focus {
+.idp-button:focus {
   outline: none;
   border-color: var(--scale-color-blue-60, #0052cc);
-  box-shadow: 0 0 0 2px rgba(0, 82, 204, 0.1);
+  box-shadow: 0 0 0 3px rgba(0, 82, 204, 0.1);
 }
 
-.idp-select:disabled {
+.idp-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(0, 82, 204, 0.1);
+}
+
+/* Selected state */
+.idp-button--selected {
+  border-color: var(--scale-color-green-60, #28a745);
+  background-color: var(--scale-color-green-5, #f0f9f5);
+  color: var(--scale-color-green-80, #1a6934);
+}
+
+.idp-button--selected:hover {
+  border-color: var(--scale-color-green-60, #28a745);
+  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.15);
+}
+
+/* Disabled state */
+.idp-button:disabled,
+.idp-button--disabled {
   background-color: var(--scale-color-gray-10, #f5f5f5);
   color: var(--scale-color-gray-60, #999);
+  border-color: var(--scale-color-gray-30, #e0e0e0);
   cursor: not-allowed;
+  opacity: 0.7;
 }
 
-.idp-select--invalid {
-  border-color: var(--scale-color-red-60, #ff4444);
+.idp-button--disabled {
+  border-style: dashed;
 }
 
-.idp-select--loading {
-  opacity: 0.6;
-  cursor: not-allowed;
+/* Auto login button (single IDP mode) */
+.idp-button-auto {
+  grid-column: 1 / -1;
+  max-width: 200px;
+  min-height: auto;
+  padding: 0.75rem 1.5rem;
+  background-color: var(--scale-color-blue-60, #0052cc);
+  color: white;
+  border-color: var(--scale-color-blue-60, #0052cc);
+  font-weight: 600;
 }
 
-.idp-clear-btn {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--scale-color-gray-40, #ccc);
-  border-radius: 4px;
-  background-color: white;
-  cursor: pointer;
+.idp-button-auto:hover:not(:disabled) {
+  background-color: var(--scale-color-blue-80, #003d99);
+  border-color: var(--scale-color-blue-80, #003d99);
+  box-shadow: 0 2px 8px rgba(0, 82, 204, 0.3);
+}
+
+/* Button text and status components */
+.idp-button-name {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.idp-button-status {
+  font-size: 0.75rem;
+  color: var(--scale-color-gray-60, #999);
+  font-weight: normal;
+}
+
+/* Check mark for selected button */
+.idp-button-check {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background-color: var(--scale-color-green-60, #28a745);
+  color: white;
+  border-radius: 50%;
+  font-size: 0.8rem;
   font-weight: bold;
-  color: var(--scale-color-gray-70, #666);
-  transition: all 0.2s;
-  flex-shrink: 0;
 }
 
-.idp-clear-btn:hover {
-  border-color: var(--scale-color-red-60, #ff4444);
-  color: var(--scale-color-red-60, #ff4444);
-  background-color: var(--scale-color-red-10, #ffe6e6);
-}
-
+/* Error messages */
 .idp-error {
   padding: 0.5rem 0.75rem;
   background-color: var(--scale-color-red-10, #ffe6e6);
@@ -403,6 +438,7 @@ function clearSelection() {
   font-size: 0.9rem;
 }
 
+/* Loading state */
 .idp-loading {
   display: flex;
   align-items: center;
@@ -428,6 +464,7 @@ function clearSelection() {
   }
 }
 
+/* Info box */
 .idp-info {
   padding: 0.75rem 1rem;
   background-color: var(--scale-color-blue-5, #f8fbff);
@@ -445,5 +482,46 @@ function clearSelection() {
   margin: 0;
   color: var(--scale-color-yellow-80, #664d00);
   font-weight: 500;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .idp-buttons-container {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.5rem;
+  }
+
+  .idp-button {
+    padding: 0.75rem;
+    min-height: 70px;
+    font-size: 0.9rem;
+  }
+
+  .idp-button-auto {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .idp-buttons-container {
+    grid-template-columns: 1fr;
+  }
+
+  .idp-button {
+    flex-direction: row;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    min-height: auto;
+  }
+
+  .idp-button-name {
+    flex: 1;
+    text-align: left;
+  }
+
+  .idp-button-check {
+    position: static;
+    margin-left: 0.5rem;
+  }
 }
 </style>

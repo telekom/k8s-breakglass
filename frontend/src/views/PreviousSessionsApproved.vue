@@ -118,6 +118,14 @@ const approverSessions = computed(() =>
             <span class="actor-label">👤 User:</span>
             <span class="actor-value">{{ (s.spec && (s.spec.user || s.spec.requester)) || '-' }}</span>
           </div>
+          <div v-if="s.spec && s.spec.identityProviderName" class="actor-item">
+            <span class="actor-label">🔐 IDP:</span>
+            <span class="actor-value">{{ s.spec.identityProviderName }}</span>
+          </div>
+          <div v-if="s.spec && s.spec.identityProviderIssuer" class="actor-item">
+            <span class="actor-label">🔗 Issuer:</span>
+            <span class="actor-value" style="font-family: 'Courier New', monospace; font-size: 0.9rem;">{{ s.spec.identityProviderIssuer }}</span>
+          </div>
           <div class="actor-item">
             <span class="actor-label">✓ Approved by:</span>
             <span class="actor-value">{{ s.status && (s.status.approver || (s.status.approvers && s.status.approvers.length ? s.status.approvers[s.status.approvers.length-1] : null)) || '-' }}</span>

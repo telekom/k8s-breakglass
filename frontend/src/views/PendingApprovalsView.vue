@@ -307,6 +307,12 @@ onMounted(fetchPendingApprovals);
       <h3>Approve request</h3>
       <p><b>User:</b> {{ modalSession.spec.user }}</p>
       <p><b>Group:</b> {{ modalSession.spec.grantedGroup }} @ {{ modalSession.spec.cluster }}</p>
+      <p v-if="modalSession.spec.identityProviderName">
+        <b>IDP:</b> {{ modalSession.spec.identityProviderName }}
+      </p>
+      <p v-if="modalSession.spec.identityProviderIssuer">
+        <b>Issuer:</b> {{ modalSession.spec.identityProviderIssuer }}
+      </p>
       
       <!-- Duration information -->
       <div v-if="modalSession.spec && modalSession.spec.maxValidFor" style="margin-top:0.5rem; padding: 8px; background-color: #e8f4f8; border-left: 3px solid #0288d1; border-radius: 3px;">

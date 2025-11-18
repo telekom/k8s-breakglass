@@ -94,6 +94,12 @@ function reasonEndedLabel(s: any): string {
         <!-- User info -->
         <div class="user-info">
           <strong>User:</strong> {{ (s.spec && (s.spec.user || s.spec.requester)) || s.user || s.requester || '-' }}
+          <span v-if="s.spec && s.spec.identityProviderName" class="idp-info">
+            | <strong>IDP:</strong> {{ s.spec.identityProviderName }}
+          </span>
+          <span v-if="s.spec && s.spec.identityProviderIssuer" class="idp-issuer">
+            | <strong>Issuer:</strong> {{ s.spec.identityProviderIssuer }}
+          </span>
         </div>
 
         <!-- Timeline -->
@@ -285,10 +291,37 @@ h2 {
   padding: 0.75rem 0;
   color: #333;
   font-size: 0.95rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
 }
 
 .user-info strong {
   color: #0070b8;
+}
+
+.idp-info {
+  display: inline-flex;
+  gap: 0.25rem;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.idp-info strong {
+  color: #d9006c;
+}
+
+.idp-issuer {
+  display: inline-flex;
+  gap: 0.25rem;
+  color: #666;
+  font-size: 0.9rem;
+  font-family: 'Courier New', monospace;
+}
+
+.idp-issuer strong {
+  color: #d9006c;
 }
 
 /* Timeline */

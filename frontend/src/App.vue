@@ -7,6 +7,7 @@ import { AuthKey } from "@/keys";
 import { BrandingKey } from "@/keys";
 import { useUser, currentIDPName } from "@/services/auth";
 import IDPSelector from "@/components/IDPSelector.vue";
+import DebugPanel from "@/components/DebugPanel.vue";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 
 const auth = inject(AuthKey);
@@ -25,28 +26,46 @@ const brandingFromBackend = inject(BrandingKey) as string | undefined;
 const brandingTitle = computed(() => brandingFromBackend ?? "Breakglass");
 
 async function refreshGroups() {
+  console.debug("[App.refreshGroups] Starting groups and IDP refresh");
   try {
     const at = await auth?.getAccessToken();
     if (at) {
       const decoded: any = decodeJwt(at);
-      // Debug output: log the decoded access token
-      console.debug("Decoded access token:", decoded);
-      let g = decoded?.groups || decoded?.group || [];
+      console.debug("[App.refreshGroups] Decoded access token keys:", Object.keys(decoded));
+      console.debug("[App.refreshGroups] Full decoded access token:", decoded);
+      
+      // Extract groups from various possible locations
+      let g = decoded?.groups || decoded?.group || decoded?.realm_access?.roles || [];
+      console.debug("[App.refreshGroups] Extracted groups from token:", g);
+      
       if (typeof g === "string") g = [g];
       if (Array.isArray(g)) groupsRef.value = g as string[]; else groupsRef.value = [];
-      console.debug("Groups from access token:", groupsRef.value);
+      console.debug("[App.refreshGroups] Final groups from access token:", groupsRef.value);
+      
+      // Also extract IDP info from token if available
+      if (decoded?.iss) {
+        console.debug("[App.refreshGroups] Found issuer in token:", decoded.iss);
+      }
+      
       return;
     }
+    console.warn("[App.refreshGroups] No access token available");
   } catch (err) {
-    console.warn("Error decoding access token for groups:", err);
+    console.warn("[App.refreshGroups] Error decoding access token for groups:", err);
   }
+  
+  // Fallback to user profile claims
   const claims: any = user.value?.profile || {};
-  // Debug output: log the user profile claims
-  console.debug("User profile claims:", claims);
-  let g = claims["groups"] || claims["group"] || [];
+  console.debug("[App.refreshGroups] User profile available:", !!user.value?.profile);
+  console.debug("[App.refreshGroups] User profile keys:", Object.keys(claims));
+  console.debug("[App.refreshGroups] User profile claims:", claims);
+  
+  let g = claims["groups"] || claims["group"] || claims["realm_access"]?.roles || [];
+  console.debug("[App.refreshGroups] Extracted groups from user profile:", g);
+  
   if (typeof g === "string") g = [g];
   groupsRef.value = Array.isArray(g) ? g : [];
-  console.debug("Groups from user profile claims:", groupsRef.value);
+  console.debug("[App.refreshGroups] Final groups from user profile:", groupsRef.value);
 }
 
 onMounted(refreshGroups);
@@ -180,6 +199,7 @@ function logout() {
 
       <ErrorToasts />
       <AutoLogoutWarning />
+      <DebugPanel />
     </scale-telekom-app-shell>
   </main>
 </template>
@@ -214,5 +234,5 @@ function logout() {
 <script lang="ts">
 import ErrorToasts from "@/components/ErrorToasts.vue";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
-export default { components: { ErrorToasts, AutoLogoutWarning } };
+export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 </script>
