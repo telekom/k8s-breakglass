@@ -106,12 +106,26 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		return nil, fmt.Errorf("invalid or unknown identity provider")
 	}
 
-	// Build JWKS endpoint URL from IDP's authority
+	// Build JWKS endpoint URL from IDP's configuration
 	if idpCfg.Authority == "" {
 		return nil, fmt.Errorf("IDP %s has no authority configured", idpCfg.Name)
 	}
 
-	jwksURL := fmt.Sprintf("%s/.well-known/jwks.json", strings.TrimRight(idpCfg.Authority, "/"))
+	// For Keycloak IDPs, use the Keycloak-specific JWKS endpoint
+	// This avoids relying on .well-known discovery which may not be available at the realm URL
+	var jwksURL string
+	if idpCfg.Keycloak != nil && idpCfg.Keycloak.BaseURL != "" && idpCfg.Keycloak.Realm != "" {
+		// Keycloak: {baseURL}/realms/{realm}/protocol/openid-connect/certs
+		baseURL := strings.TrimRight(idpCfg.Keycloak.BaseURL, "/")
+		jwksURL = fmt.Sprintf("%s/realms/%s/protocol/openid-connect/certs", baseURL, idpCfg.Keycloak.Realm)
+	} else {
+		// Standard OIDC: use .well-known/openid-configuration discovery
+		// If the authority is the realm URL, we need to go up one level to the OIDC discovery endpoint
+		// For standard OIDC providers, this should work: {authority}/.well-known/openid-configuration
+		// But for some providers, we may need to extract just the base authority
+		// Try appending /.well-known/jwks.json directly to authority first (common for many OIDC providers)
+		jwksURL = fmt.Sprintf("%s/.well-known/jwks.json", strings.TrimRight(idpCfg.Authority, "/"))
+	}
 
 	// Create JWKS options
 	options := keyfunc.Options{

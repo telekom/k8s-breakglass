@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -316,6 +317,22 @@ func (l *IdentityProviderLoader) LoadIdentityProviderByIssuer(ctx context.Contex
 		idp := &idpList.Items[i]
 		if !idp.Spec.Disabled && idp.Spec.Issuer == issuer {
 			l.logger.Debugw("Found IdentityProvider by issuer", "name", idp.Name, "issuer", issuer)
+			return l.convertToRuntimeConfig(ctx, idp)
+		}
+	}
+
+	// Fallback: if no exact issuer match, try matching by authority
+	// This handles cases where Spec.Issuer is not set or doesn't match JWT iss claim exactly
+	// Many OIDC providers (including Keycloak) use the realm URL as both authority and issuer
+	l.logger.Debugw("No exact issuer match found, trying authority fallback", "issuer", issuer)
+	for i := range idpList.Items {
+		idp := &idpList.Items[i]
+		// Normalize both URLs for comparison (trim trailing slashes)
+		authority := strings.TrimRight(idp.Spec.OIDC.Authority, "/")
+		issuerNorm := strings.TrimRight(issuer, "/")
+
+		if !idp.Spec.Disabled && authority == issuerNorm {
+			l.logger.Debugw("Found IdentityProvider by authority fallback", "name", idp.Name, "authority", authority, "issuer", issuer)
 			return l.convertToRuntimeConfig(ctx, idp)
 		}
 	}
