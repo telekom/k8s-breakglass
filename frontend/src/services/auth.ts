@@ -288,22 +288,79 @@ export default class AuthService {
 
   /**
    * Handle OIDC signin callback after redirect from authorization server
-   * This method intelligently finds the correct UserManager based on the stored state
-   * to properly validate the signin response, especially important in multi-IDP scenarios
+   * In multi-IDP scenarios, we use the 'iss' (issuer) parameter from the callback URL to identify
+   * which Keycloak instance issued the authorization code, then use the matching UserManager
+   * to process the callback. This is much more reliable than trying managers sequentially.
    */
   public async handleSigninCallback() {
-    // Get the state parameter from URL
+    // Get parameters from URL
     const urlParams = new URLSearchParams(window.location.search);
     const stateParam = urlParams.get('state');
+    const issuerParam = urlParams.get('iss'); // The Keycloak instance that issued the auth code
     
-    console.debug('[AuthService] Processing signin callback', { stateParam });
+    console.debug('[AuthService] Processing signin callback', { 
+      stateParam,
+      issuerParam,
+      hasIssuer: !!issuerParam,
+    });
     
-    // Try all UserManagers to find one that can process this callback
-    // This is necessary because in multi-IDP mode, different UserManagers are created with different authorities
-    // We try them all and return the first one that succeeds
+    // Build the list of managers to try, prioritizing by issuer match
+    let managers: UserManager[] = [];
+    let matchedIDPName: string | undefined;
     
-    const managers: UserManager[] = [this.userManager, ...Array.from(this.userManagers.values())];
+    // If we have an issuer in the callback, try to find a matching manager first
+    if (issuerParam) {
+      console.debug('[AuthService] Looking for manager matching issuer:', { issuerParam });
+      
+      // Check all IDP-specific managers to find one with matching issuer/directAuthority
+      // Also look through the cache keys to find the IDP name
+      for (const [cacheKey, manager] of this.userManagers.entries()) {
+        const directAuthority = (manager as any).directAuthority;
+        if (directAuthority && directAuthority.startsWith(issuerParam)) {
+          console.debug('[AuthService] Found matching manager for issuer:', {
+            issuerParam,
+            directAuthority,
+            cacheKey,
+          });
+          managers.push(manager);
+          
+          // Extract IDP name from cache key: format is "/api/oidc/authority:clientID:directAuthority"
+          // We can infer which IDP this is from the directAuthority
+          // Try to match it with known IDPs by checking our cache
+          for (const [otherKey, otherManager] of this.userManagers.entries()) {
+            const otherAuth = (otherManager as any).directAuthority;
+            if (otherAuth === directAuthority) {
+              // Found matching manager, now get its IDP name
+              // Unfortunately the cache key doesn't store the IDP name, but we can try to deduce it
+              // from the fact that this manager has this specific directAuthority
+              console.debug('[AuthService] Cache key for matched manager:', { cacheKey, directAuthority });
+            }
+          }
+          break; // Found the right one, use it first
+        }
+      }
+    }
     
+    // If we didn't find a specific match (or no issuer), try all managers
+    // Specific IDP managers first (with directAuthority), then default
+    if (managers.length === 0) {
+      const specificIDPManagers = Array.from(this.userManagers.values());
+      managers = [...specificIDPManagers, this.userManager];
+      console.debug('[AuthService] No issuer match found, trying all managers in order:', {
+        totalManagers: managers.length,
+        specificIDPCount: specificIDPManagers.length,
+        hasIssuer: !!issuerParam,
+      });
+    } else {
+      // Add fallback managers in case the issuer match fails
+      const specificIDPManagers = Array.from(this.userManagers.values()).filter(m => managers.indexOf(m) === -1);
+      managers = [...managers, ...specificIDPManagers, this.userManager];
+      console.debug('[AuthService] Using issuer-matched manager with fallbacks:', {
+        totalManagers: managers.length,
+        issuerMatched: true,
+      });
+    }
+
     for (const manager of managers) {
       try {
         const directAuthority = (manager as any).directAuthority;
@@ -312,6 +369,7 @@ export default class AuthService {
           client_id: manager.settings.client_id,
           hasDirectAuthority: !!directAuthority,
           directAuthority,
+          issuerParam,
         });
 
         // Set the direct authority for this manager so header injection works during callback
@@ -336,6 +394,28 @@ export default class AuthService {
             idpName: this.currentIDPName,
             directAuthority,
           });
+        } else if (directAuthority) {
+          // If IDP name not in state, try to deduce from directAuthority
+          console.debug('[AuthService] No IDP name in state, attempting to deduce from directAuthority:', {
+            directAuthority,
+          });
+          
+          // Try to fetch multi-IDP config and find which IDP has this directAuthority
+          try {
+            const { getMultiIDPConfig } = await import("@/services/multiIDP");
+            const config = await getMultiIDPConfig();
+            const matchedIdp = config?.identityProviders.find(idp => (idp as any).oidcAuthority === directAuthority);
+            if (matchedIdp) {
+              this.currentIDPName = matchedIdp.name;
+              currentIDPName.value = matchedIdp.name;
+              console.debug('[AuthService] Deduced IDP name from directAuthority:', {
+                idpName: this.currentIDPName,
+                directAuthority,
+              });
+            }
+          } catch (err) {
+            console.debug('[AuthService] Could not deduce IDP name from directAuthority:', { err });
+          }
         }
         
         return result;
