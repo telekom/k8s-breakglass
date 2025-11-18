@@ -5,40 +5,48 @@ import { ref } from "vue";
 import { info as logInfo, error as logError } from "@/services/logger";
 
 // Store the current direct authority for header injection during OIDC requests
-let currentDirectAuthority: string | undefined = undefined;
+// We use sessionStorage so it persists across page reloads during OAuth redirect flow
+const DIRECT_AUTHORITY_STORAGE_KEY = 'oidc_direct_authority';
 
 /**
  * Set the current direct authority for the active OIDC session
  * This is used to inject the X-OIDC-Authority header in fetch requests
+ * Stored in sessionStorage to survive page reloads during OAuth redirects
  */
 function setCurrentDirectAuthority(authority: string | undefined) {
   console.debug("[AuthService] Setting current direct authority for header injection:", {
     newAuthority: authority,
-    previousAuthority: currentDirectAuthority,
+    previousAuthority: getCurrentDirectAuthority(),
   });
-  currentDirectAuthority = authority;
+  if (authority) {
+    sessionStorage.setItem(DIRECT_AUTHORITY_STORAGE_KEY, authority);
+  } else {
+    sessionStorage.removeItem(DIRECT_AUTHORITY_STORAGE_KEY);
+  }
 }
 
 /**
- * Get the current direct authority
+ * Get the current direct authority from sessionStorage
+ * This survives page reloads during OAuth redirect flow
  */
 function getCurrentDirectAuthority(): string | undefined {
-  return currentDirectAuthority;
+  return sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
 }
 
 // Wrap the global fetch to inject X-OIDC-Authority header
 const originalFetch = window.fetch.bind(window);
 window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === "string" ? input : input.toString();
+  const directAuthority = getCurrentDirectAuthority();
   
   // For OIDC proxy requests, inject the direct authority header
-  if (url.includes("/api/oidc/authority") && currentDirectAuthority) {
+  if (url.includes("/api/oidc/authority") && directAuthority) {
     const headers = new Headers(init?.headers || {});
     console.debug("[GlobalFetch] Injecting X-OIDC-Authority header for OIDC proxy request:", {
       url,
-      directAuthority: currentDirectAuthority,
+      directAuthority,
     });
-    headers.set("X-OIDC-Authority", currentDirectAuthority);
+    headers.set("X-OIDC-Authority", directAuthority);
     
     const modifiedInit: RequestInit = {
       ...init,
@@ -224,6 +232,14 @@ export default class AuthService {
         this.currentIDPName = state.idpName;
         currentIDPName.value = state.idpName;
         
+        // Also store IDP name in sessionStorage so it survives the OAuth redirect
+        if (state.idpName) {
+          sessionStorage.setItem('oidc_idp_name', state.idpName);
+          console.debug("[AuthService] Stored IDP name in sessionStorage:", {
+            idpName: state.idpName,
+          });
+        }
+        
         // Get or create UserManager for this IDP with the proxy authority
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
         const manager = this.getOrCreateUserManager(proxyAuthority, oidcClientID, directAuthority);
@@ -394,27 +410,39 @@ export default class AuthService {
             idpName: this.currentIDPName,
             directAuthority,
           });
-        } else if (directAuthority) {
-          // If IDP name not in state, try to deduce from directAuthority
-          console.debug('[AuthService] No IDP name in state, attempting to deduce from directAuthority:', {
-            directAuthority,
-          });
-          
-          // Try to fetch multi-IDP config and find which IDP has this directAuthority
-          try {
-            const { getMultiIDPConfig } = await import("@/services/multiIDP");
-            const config = await getMultiIDPConfig();
-            const matchedIdp = config?.identityProviders.find(idp => (idp as any).oidcAuthority === directAuthority);
-            if (matchedIdp) {
-              this.currentIDPName = matchedIdp.name;
-              currentIDPName.value = matchedIdp.name;
-              console.debug('[AuthService] Deduced IDP name from directAuthority:', {
-                idpName: this.currentIDPName,
-                directAuthority,
-              });
+        } else {
+          // Try to restore IDP name from sessionStorage (set before OAuth redirect)
+          const storedIdpName = sessionStorage.getItem('oidc_idp_name');
+          if (storedIdpName) {
+            this.currentIDPName = storedIdpName;
+            currentIDPName.value = storedIdpName;
+            console.debug('[AuthService] Restored IDP name from sessionStorage:', {
+              idpName: this.currentIDPName,
+              directAuthority,
+            });
+            sessionStorage.removeItem('oidc_idp_name');
+          } else if (directAuthority) {
+            // If IDP name not in state or storage, try to deduce from directAuthority
+            console.debug('[AuthService] No IDP name in state or storage, attempting to deduce from directAuthority:', {
+              directAuthority,
+            });
+            
+            // Try to fetch multi-IDP config and find which IDP has this directAuthority
+            try {
+              const { getMultiIDPConfig } = await import("@/services/multiIDP");
+              const config = await getMultiIDPConfig();
+              const matchedIdp = config?.identityProviders.find(idp => (idp as any).oidcAuthority === directAuthority);
+              if (matchedIdp) {
+                this.currentIDPName = matchedIdp.name;
+                currentIDPName.value = matchedIdp.name;
+                console.debug('[AuthService] Deduced IDP name from directAuthority:', {
+                  idpName: this.currentIDPName,
+                  directAuthority,
+                });
+              }
+            } catch (err) {
+              console.debug('[AuthService] Could not deduce IDP name from directAuthority:', { err });
             }
-          } catch (err) {
-            console.debug('[AuthService] Could not deduce IDP name from directAuthority:', { err });
           }
         }
         
