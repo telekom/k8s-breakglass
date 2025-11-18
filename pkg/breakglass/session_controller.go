@@ -1001,6 +1001,11 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		if bs.Spec.ScheduledStartTime != nil && !bs.Spec.ScheduledStartTime.IsZero() {
 			metrics.SessionScheduled.WithLabelValues(bs.Spec.Cluster).Inc()
 		}
+
+		// Send approval notification email to requester
+		if !wc.disableEmail && wc.mailQueue != nil && bs.Spec.User != "" {
+			wc.sendSessionApprovalEmail(reqLog, bs)
+		}
 	case v1alpha1.SessionConditionTypeRejected:
 		metrics.SessionRejected.WithLabelValues(bs.Spec.Cluster).Inc()
 	}
@@ -2307,6 +2312,64 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	}
 
 	return ctrl
+}
+
+// sendSessionApprovalEmail sends an approval notification to the requester
+func (wc BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
+	if wc.mailQueue == nil {
+		log.Warnw("mail queue is nil, cannot send approval email", "session", session.Name)
+		return
+	}
+
+	// Prepare email parameters
+	params := mail.RequestBreakglassSessionMailParams{
+		SubjectEmail:       session.Spec.User,
+		SubjectFullName:    session.Spec.User, // Could be enhanced to include display name if available
+		RequestingUsername: session.Spec.User,
+		RequestedCluster:   session.Spec.Cluster,
+		RequestedUsername:  session.Spec.User, // The user the session grants access for
+		RequestedGroup:     session.Spec.GrantedGroup,
+		Approver:           session.Status.Approver,
+		URL:                wc.config.Frontend.BaseURL,
+		BrandingName: func() string {
+			if wc.config.Frontend.BrandingName != "" {
+				return wc.config.Frontend.BrandingName
+			}
+			return "Breakglass"
+		}(),
+	}
+
+	// Format scheduled start time if present
+	if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
+		params.ScheduledStartTime = session.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05")
+	}
+
+	// Add expiration time
+	if !session.Status.ExpiresAt.IsZero() {
+		params.CalculatedExpiresAt = session.Status.ExpiresAt.Format("2006-01-02 15:04:05")
+	}
+
+	// Render the approval email body
+	body, err := mail.RenderBreakglassSessionNotification(params)
+	if err != nil {
+		log.Errorw("failed to render approval email template", "error", err, "session", session.Name)
+		return
+	}
+
+	// Enqueue the email for sending
+	subject := fmt.Sprintf("Breakglass Session Approved - %s access to %s", session.Spec.GrantedGroup, session.Spec.Cluster)
+	err = wc.mailQueue.Enqueue(
+		"session-approval-"+session.Name,
+		[]string{session.Spec.User},
+		subject,
+		body,
+	)
+	if err != nil {
+		log.Errorw("failed to enqueue approval email", "error", err, "session", session.Name, "to", session.Spec.User)
+		return
+	}
+
+	log.Infow("approval email enqueued for sending", "session", session.Name, "to", session.Spec.User)
 }
 
 // WithQueue sets the mail queue for asynchronous email sending
