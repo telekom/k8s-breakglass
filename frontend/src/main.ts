@@ -45,6 +45,12 @@ async function initializeApp() {
       }
       document.head.appendChild(link);
     }
+    // Preload the favicon to avoid unnecessary requests
+    const faviconLink = document.getElementById("app-favicon") as HTMLLinkElement;
+    if (faviconLink && faviconLink.href && !faviconLink.href.endsWith("/")) {
+      // Ensure href doesn't have trailing slash
+      faviconLink.href = faviconLink.href.replace(/\/$/, "");
+    }
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn("[favicon] swap failed", e);

@@ -130,9 +130,11 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	// Serve static assets (must be before NoRoute handler)
 	engine.Use(static.Serve("/assets/", static.LocalFile("/frontend/dist/assets", false)))
-	// Serve root-level files like favicon
-	engine.Static("/favicon-oss.svg", "/frontend/dist/favicon-oss.svg")
-	// Also handle trailing slash on favicon requests
+
+	// Serve root-level files like favicon - use route handler to normalize trailing slashes
+	engine.GET("/favicon-oss.svg", func(c *gin.Context) {
+		c.File("/frontend/dist/favicon-oss.svg")
+	})
 	engine.GET("/favicon-oss.svg/", func(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/favicon-oss.svg")
 	})
