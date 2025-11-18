@@ -78,12 +78,25 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 		return ""
 	}
 
-	// Extract issuer from SAR ObjectMeta annotations
-	// The annotation "identity.t-caas.telekom.com/issuer" contains the OIDC issuer URL
+	// Extract issuer from SAR.Spec.Extra field
+	// The "identity.t-caas.telekom.com/issuer" extra field contains the OIDC issuer URL
 	// that authenticated this user (extracted from their JWT token's 'iss' claim)
-	issuer := sar.ObjectMeta.Annotations["identity.t-caas.telekom.com/issuer"]
+	// Note: Extra fields in Kubernetes SubjectAccessReview are slice of strings, not single values
+	var issuer string
+	if sar.Spec.Extra != nil {
+		issuerValues := sar.Spec.Extra["identity.t-caas.telekom.com/issuer"]
+		if len(issuerValues) > 0 {
+			issuer = issuerValues[0]
+		}
+	}
+
+	// Fallback: also check annotations (for backward compatibility)
+	if issuer == "" && sar.ObjectMeta.Annotations != nil {
+		issuer = sar.ObjectMeta.Annotations["identity.t-caas.telekom.com/issuer"]
+	}
+
 	if issuer == "" {
-		// Issuer not provided in annotations, skip hint generation
+		// Issuer not provided, skip hint generation
 		return ""
 	}
 
