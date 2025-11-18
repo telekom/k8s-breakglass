@@ -276,7 +276,17 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		metrics.WebhookSARRequestsByAction.WithLabelValues(clusterName, "", "", "unknown", "", "").Inc()
 	}
 
-	groups, sessions, tenant, err := wc.getUserGroupsAndSessions(ctx, username, clusterName)
+	// Extract issuer from SAR for multi-IDP session filtering
+	var issuer string
+	if sar.Spec.Extra != nil {
+		issuerValues := sar.Spec.Extra["identity.t-caas.telekom.com/issuer"]
+		if len(issuerValues) > 0 {
+			issuer = issuerValues[0]
+			reqLog.Debugw("Extracted issuer from SAR for session matching", "issuer", issuer)
+		}
+	}
+
+	groups, sessions, tenant, err := wc.getUserGroupsAndSessions(ctx, username, clusterName, issuer)
 	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
 		c.Status(http.StatusInternalServerError)
@@ -441,7 +451,8 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 
 		// Get user groups from active sessions
-		activeUserGroups, _, _, err := wc.getUserGroupsAndSessions(ctx, username, clusterName)
+		// Pass empty issuer string since we're just counting available escalations, not filtering by IDP
+		activeUserGroups, _, _, err := wc.getUserGroupsAndSessions(ctx, username, clusterName, "")
 		if err != nil {
 			reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
 			c.Status(http.StatusInternalServerError)
@@ -621,8 +632,9 @@ func NewWebhookController(log *zap.SugaredLogger,
 }
 
 // getUserGroupsAndSessions returns groups from active sessions, list of sessions, and a tenant (best-effort from cluster config).
-func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername string) ([]string, []v1alpha1.BreakglassSession, string, error) {
-	sessions, err := wc.getSessions(ctx, username, clustername)
+// It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
+func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string) ([]string, []v1alpha1.BreakglassSession, string, error) {
+	sessions, err := wc.getSessions(ctx, username, clustername, issuer)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -641,7 +653,9 @@ func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, usern
 }
 
 // getSessions filtered (reuse existing approval logic)
-func (wc *WebhookController) getSessions(ctx context.Context, username, clustername string) ([]v1alpha1.BreakglassSession, error) {
+// If issuer is provided, only returns sessions that match the issuer (multi-IDP mode)
+// If issuer is empty, returns all sessions (single-IDP or backward compatibility mode)
+func (wc *WebhookController) getSessions(ctx context.Context, username, clustername, issuer string) ([]v1alpha1.BreakglassSession, error) {
 	selector := fields.SelectorFromSet(fields.Set{"spec.cluster": clustername, "spec.user": username})
 	all, err := wc.sesManager.GetBreakglassSessionsWithSelector(ctx, selector)
 	if err != nil {
@@ -654,6 +668,10 @@ func (wc *WebhookController) getSessions(ctx context.Context, username, clustern
 			continue
 		}
 		if s.Status.RejectedAt.IsZero() && !s.Status.ExpiresAt.IsZero() && s.Status.ExpiresAt.After(now) {
+			// If issuer is provided, only include sessions that match the issuer
+			if issuer != "" && s.Spec.IdentityProviderIssuer != issuer {
+				continue
+			}
 			out = append(out, s)
 		}
 	}
