@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -501,6 +502,9 @@ func TestAuthMiddleware_RefreshOnMissingKid(t *testing.T) {
 	requestReceived := make(chan struct{}, 1)
 	allowResponse := make(chan struct{})
 
+	// Track if we've closed allowResponse to avoid double-close panic
+	var closedOnce sync.Once
+
 	// Atomic counter for requests
 	var reqCount int32
 
@@ -559,13 +563,15 @@ func TestAuthMiddleware_RefreshOnMissingKid(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		// If no refresh attempted within 5 seconds, force close the allowResponse channel
 		// This prevents the test from hanging indefinitely
-		if len(allowResponse) == 0 {
+		closedOnce.Do(func() {
 			close(allowResponse)
-		}
+		})
 	}
 
 	// Allow the refresh handler to respond with the JWKS that includes the key
-	close(allowResponse)
+	closedOnce.Do(func() {
+		close(allowResponse)
+	})
 
 	// Wait for request to finish (with timeout)
 	select {

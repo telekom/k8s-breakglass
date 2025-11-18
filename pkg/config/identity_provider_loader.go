@@ -456,28 +456,23 @@ func categorizeConversionError(err error) string {
 
 	// Check for common error patterns and categorize them
 	switch {
-	case stringContains(errMsg, "required"):
+	case strings.Contains(errMsg, "required"):
 		return "missing_field"
-	case stringContains(errMsg, "invalid"):
+	case strings.Contains(errMsg, "invalid"):
 		return "invalid_config"
-	case stringContains(errMsg, "parse"):
+	case strings.Contains(errMsg, "parse"):
 		return "parse_error"
-	case stringContains(errMsg, "secret"):
+	case strings.Contains(errMsg, "secret"):
 		return "secret_error"
-	case stringContains(errMsg, "connection"):
+	case strings.Contains(errMsg, "connection"):
 		return "connection_error"
-	case stringContains(errMsg, "timeout"):
+	case strings.Contains(errMsg, "timeout"):
 		return "timeout_error"
-	case stringContains(errMsg, "unauthorized"):
+	case strings.Contains(errMsg, "unauthorized"):
 		return "auth_error"
 	default:
 		return "other_error"
 	}
-}
-
-// stringContains is a helper to check if an error message contains a substring
-func stringContains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && (s == substr || (len(s) > len(substr) && len(substr) > 0))
 }
 
 // recordConversionFailureMetric calls the metrics recorder callback

@@ -594,7 +594,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			if reason == "" {
 				reason = diag
 			} else {
-				reason = reason + "" + diag
+				reason = reason + " " + diag
 			}
 			// Also log this at info so admins see the mismatch between session state and SAR capabilities
 			reqLog.With("sessions", sessInfo, "error", sessionSARSkippedErr.Error()).Info("Active sessions present but unable to validate them against target cluster")
@@ -622,7 +622,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			if reason == "" {
 				reason = diag
 			} else {
-				reason = reason + "" + diag
+				reason = reason + " " + diag
 			}
 			// Log this at info level so admins can see IDP mismatches
 			reqLog.With("currentIssuer", issuer, "sessionsWithMismatch", len(idpMismatches), "sessionIDPs", idpNames).Info("User has valid sessions but from different identity provider")

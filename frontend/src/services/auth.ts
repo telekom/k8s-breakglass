@@ -33,16 +33,19 @@ function getCurrentDirectAuthority(): string | undefined {
   return sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
 }
 
-// Wrap the global fetch to inject X-OIDC-Authority header
-const originalFetch = window.fetch.bind(window);
-window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+/**
+ * Helper to inject X-OIDC-Authority header for OIDC proxy requests.
+ * This wraps the target fetch function rather than globally overriding window.fetch
+ * to avoid side effects with third-party libraries.
+ */
+async function fetchWithOIDCAuthority(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === "string" ? input : input.toString();
   const directAuthority = getCurrentDirectAuthority();
   
   // For OIDC proxy requests, inject the direct authority header
   if (url.includes("/api/oidc/authority") && directAuthority) {
     const headers = new Headers(init?.headers || {});
-    console.debug("[GlobalFetch] Injecting X-OIDC-Authority header for OIDC proxy request:", {
+    console.debug("[FetchWithOIDCAuthority] Injecting X-OIDC-Authority header for OIDC proxy request:", {
       url,
       directAuthority,
     });
@@ -53,11 +56,11 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Pr
       headers,
     };
     
-    return originalFetch(url, modifiedInit);
+    return fetch(url, modifiedInit);
   }
   
-  return originalFetch(input, init);
-} as any;
+  return fetch(input, init);
+}
 
 // Direct oidc-client logs into our logger
 Log.setLogger({

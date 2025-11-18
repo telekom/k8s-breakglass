@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -710,8 +711,19 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	var err error
 
 	if c.Request.Method == "POST" {
-		// For POST requests (e.g., token endpoint), copy the body
-		req, err = http.NewRequestWithContext(c.Request.Context(), c.Request.Method, target, c.Request.Body)
+		// For POST requests (e.g., token endpoint), buffer the body to allow re-reading.
+		// c.Request.Body can only be read once, so we must buffer it first.
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			s.log.Sugar().Errorw("oidc_proxy_read_body_error", "error", err, "target", target)
+			metrics.OIDCProxyFailure.WithLabelValues("authority", "read_body_error").Inc()
+			metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "read_body_error").Inc()
+			metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read request body", "detail": err.Error()})
+			return
+		}
+		// Create a new request with a buffered body
+		req, err = http.NewRequestWithContext(c.Request.Context(), c.Request.Method, target, io.NopCloser(bytes.NewReader(bodyBytes)))
 		if err != nil {
 			s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
 			metrics.OIDCProxyFailure.WithLabelValues("authority", "request_build_error").Inc()
