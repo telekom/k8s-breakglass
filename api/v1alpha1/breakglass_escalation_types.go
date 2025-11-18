@@ -83,8 +83,25 @@ type BreakglassEscalationSpec struct {
 	// If set, only users authenticated via one of the named providers can use this escalation.
 	// Names should match the metadata.name of IdentityProvider resources.
 	// The intersection of cluster-allowed and escalation-allowed IDPs is used.
+	// NOTE: This field is mutually exclusive with AllowedIdentityProvidersForRequests and AllowedIdentityProvidersForApprovers.
 	// +optional
 	AllowedIdentityProviders []string `json:"allowedIdentityProviders,omitempty"`
+
+	// allowedIdentityProvidersForRequests specifies which IdentityProvider CRs can REQUEST this escalation.
+	// If empty, defaults to AllowedIdentityProviders (or cluster defaults if that is also unset).
+	// If set, only users authenticated via one of the named providers can request this escalation.
+	// This field is mutually exclusive with AllowedIdentityProviders.
+	// When set, AllowedIdentityProvidersForApprovers must also be set (or both can be left empty).
+	// +optional
+	AllowedIdentityProvidersForRequests []string `json:"allowedIdentityProvidersForRequests,omitempty"`
+
+	// allowedIdentityProvidersForApprovers specifies which IdentityProvider CRs can APPROVE this escalation.
+	// If empty, defaults to AllowedIdentityProviders (or cluster defaults if that is also unset).
+	// If set, only users authenticated via one of the named providers can approve this escalation.
+	// This field is mutually exclusive with AllowedIdentityProviders.
+	// When set, AllowedIdentityProvidersForRequests must also be set (or both can be left empty).
+	// +optional
+	AllowedIdentityProvidersForApprovers []string `json:"allowedIdentityProvidersForApprovers,omitempty"`
 
 	// blockSelfApproval, if set to true, will prevent the session requester from approving their own session for this escalation.
 	// If omitted (nil), the cluster-level setting will be used.
@@ -159,6 +176,23 @@ type BreakglassEscalationStatus struct {
 	// +optional
 	ApproverGroupMembers map[string][]string `json:"approverGroupMembers,omitempty"`
 
+	// idpGroupMemberships stores the per-IDP group membership hierarchy (before deduplication).
+	// Structure: map[idpName]map[groupName][]memberList
+	// This preserves full visibility into which users came from which IDP for debugging and auditing.
+	// +optional
+	IDPGroupMemberships map[string]map[string][]string `json:"idpGroupMemberships,omitempty"`
+
+	// groupSyncStatus indicates the current status of group member synchronization from IDPs.
+	// Possible values: "Success" (all IDPs synced), "PartialFailure" (some IDPs failed), "Failed" (all IDPs failed)
+	// +optional
+	GroupSyncStatus string `json:"groupSyncStatus,omitempty"`
+
+	// groupSyncErrors contains error messages from failed IDP group syncs.
+	// Each entry describes which IDP failed and why.
+	// Empty if GroupSyncStatus is "Success".
+	// +optional
+	GroupSyncErrors []string `json:"groupSyncErrors,omitempty"`
+
 	// Counters for tracking requests and approvals
 	RequestCount  int `json:"requestCount,omitempty"`
 	ApprovalCount int `json:"approvalCount,omitempty"`
@@ -203,6 +237,11 @@ func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.
 	// Multi-IDP: Validate AllowedIdentityProviders (empty list is valid - means inherit from cluster config)
 	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProviders, field.NewPath("spec").Child("allowedIdentityProviders"))...)
 
+	// Multi-IDP: Validate AllowedIdentityProvidersForRequests and AllowedIdentityProvidersForApprovers
+	allErrs = append(allErrs, validateIDPFieldCombinations(&escalation.Spec, field.NewPath("spec"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForRequests, field.NewPath("spec").Child("allowedIdentityProvidersForRequests"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForApprovers, field.NewPath("spec").Child("allowedIdentityProvidersForApprovers"))...)
+
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
@@ -221,6 +260,11 @@ func (be *BreakglassEscalation) ValidateUpdate(ctx context.Context, oldObj, newO
 
 	// Multi-IDP: Validate AllowedIdentityProviders (empty list is valid - means inherit from cluster config)
 	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProviders, field.NewPath("spec").Child("allowedIdentityProviders"))...)
+
+	// Multi-IDP: Validate AllowedIdentityProvidersForRequests and AllowedIdentityProvidersForApprovers
+	allErrs = append(allErrs, validateIDPFieldCombinations(&escalation.Spec, field.NewPath("spec"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForRequests, field.NewPath("spec").Child("allowedIdentityProvidersForRequests"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForApprovers, field.NewPath("spec").Child("allowedIdentityProvidersForApprovers"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil

@@ -259,6 +259,101 @@ blockSelfApproval: true    # Prevent self-approval for this escalation
 
 If not specified, the cluster-level `blockSelfApproval` setting from `ClusterConfig` is used.
 
+### Multi-IDP Fields (Identity Provider Restriction)
+
+When multiple identity providers are configured, you can restrict which IDPs can use an escalation:
+
+```yaml
+# Restrict which IDPs can REQUEST this escalation
+allowedIdentityProvidersForRequests:
+- "corp-oidc"
+- "keycloak-idp"
+
+# Restrict which IDPs can APPROVE this escalation
+allowedIdentityProvidersForApprovers:
+- "corp-oidc"
+- "keycloak-idp"
+```
+
+**Requirements:**
+- Both fields must be set together (mutual requirement)
+- Cannot be mixed with legacy `allowedIdentityProviders` field
+- All referenced IdentityProviders must exist
+
+**Behavior:**
+- If `allowedIdentityProvidersForRequests` is empty, all IDPs can request (default)
+- If `allowedIdentityProvidersForApprovers` is empty, all IDPs can approve (default)
+- Users can only request via their authenticated IDP
+- Approvers can only approve if their IDP is in the allowed list
+
+**Example: Restrict to Corporate OIDC only**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: corp-prod-access
+spec:
+  escalatedGroup: "cluster-admin"
+  allowed:
+    clusters: ["prod-cluster"]
+    groups: ["platform-team"]
+  approvers:
+    groups: ["security-team"]
+  # Only corporate OIDC users can request and approve
+  allowedIdentityProvidersForRequests:
+  - "corp-oidc"
+  allowedIdentityProvidersForApprovers:
+  - "corp-oidc"
+```
+
+**Example: Multiple IDPs**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: multi-idp-access
+spec:
+  escalatedGroup: "developer"
+  allowed:
+    clusters: ["dev-cluster"]
+    groups: ["developers"]
+  approvers:
+    groups: ["tech-leads"]
+  # Both corporate OIDC and Keycloak users can access
+  allowedIdentityProvidersForRequests:
+  - "corp-oidc"
+  - "keycloak-idp"
+  allowedIdentityProvidersForApprovers:
+  - "corp-oidc"
+  - "keycloak-idp"
+```
+
+**Status Fields** (Read-Only):
+
+The system automatically updates these status fields during group synchronization:
+
+```yaml
+status:
+  # Per-IDP group membership (for debugging)
+  idpGroupMemberships:
+    corp-oidc:
+      approvers: ["alice@example.com", "bob@example.com"]
+    keycloak-idp:
+      approvers: ["alice@example.com", "charlie@example.com"]
+  
+  # Deduplicated members across all IDPs (PRIMARY STORAGE)
+  approverGroupMembers:
+    approvers: ["alice@example.com", "bob@example.com", "charlie@example.com"]
+  
+  # Sync status: "Success", "PartialFailure", or "Failed"
+  groupSyncStatus: "Success"
+  
+  # Detailed error messages if sync failed
+  groupSyncErrors: []
+```
+
 ### clusterConfigRefs
 
 Alternative to `allowed.clusters` - list specific `ClusterConfig` resource names:

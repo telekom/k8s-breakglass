@@ -188,6 +188,53 @@ func validateIdentityProviderRefs(
 	return errs
 }
 
+// validateIDPFieldCombinations ensures that the new multi-IDP fields are used correctly.
+// Rules:
+// 1. Cannot mix AllowedIdentityProviders with AllowedIdentityProvidersForRequests (mutually exclusive)
+// 2. Cannot mix AllowedIdentityProviders with AllowedIdentityProvidersForApprovers (mutually exclusive)
+// 3. If AllowedIdentityProvidersForRequests is set, AllowedIdentityProvidersForApprovers must also be set (or both empty)
+func validateIDPFieldCombinations(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+
+	hasOldField := len(spec.AllowedIdentityProviders) > 0
+	hasRequestField := len(spec.AllowedIdentityProvidersForRequests) > 0
+	hasApproverField := len(spec.AllowedIdentityProvidersForApprovers) > 0
+
+	// Check mutual exclusivity: can't mix old field with new fields
+	if hasOldField && hasRequestField {
+		errs = append(errs, field.Invalid(
+			specPath.Child("allowedIdentityProvidersForRequests"),
+			spec.AllowedIdentityProvidersForRequests,
+			"cannot use allowedIdentityProvidersForRequests together with allowedIdentityProviders (use one or the other)",
+		))
+	}
+
+	if hasOldField && hasApproverField {
+		errs = append(errs, field.Invalid(
+			specPath.Child("allowedIdentityProvidersForApprovers"),
+			spec.AllowedIdentityProvidersForApprovers,
+			"cannot use allowedIdentityProvidersForApprovers together with allowedIdentityProviders (use one or the other)",
+		))
+	}
+
+	// Check symmetry: if one of the new fields is set, the other must be set too
+	if hasRequestField && !hasApproverField {
+		errs = append(errs, field.Required(
+			specPath.Child("allowedIdentityProvidersForApprovers"),
+			"allowedIdentityProvidersForApprovers must be set when allowedIdentityProvidersForRequests is set (or leave both empty)",
+		))
+	}
+
+	if hasApproverField && !hasRequestField {
+		errs = append(errs, field.Required(
+			specPath.Child("allowedIdentityProvidersForRequests"),
+			"allowedIdentityProvidersForRequests must be set when allowedIdentityProvidersForApprovers is set (or leave both empty)",
+		))
+	}
+
+	return errs
+}
+
 // validateIdentityProviderFields ensures that IDP tracking fields (Name and Issuer) are consistent if both are set.
 // These fields are typically populated during session creation and are optional for manual creation.
 // Note: namePath and issuerPath must be non-nil field paths (typically provided by the webhook framework).

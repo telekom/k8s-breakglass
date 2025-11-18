@@ -11,6 +11,7 @@ import (
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -420,6 +421,8 @@ type EscalationStatusUpdater struct {
 	Resolver      GroupMemberResolver
 	Interval      time.Duration
 	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
+	EventRecorder record.EventRecorder
+	IDPLoader     *cfgpkg.IdentityProviderLoader // For multi-IDP group fetching
 }
 
 func (u EscalationStatusUpdater) Start(ctx context.Context) {
@@ -480,54 +483,262 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		if updated.Status.ApproverGroupMembers == nil {
 			updated.Status.ApproverGroupMembers = map[string][]string{}
 		}
+
+		// Check if multi-IDP fields are set (Phase 2 feature)
+		hasMultiIDPFields := len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0
+
 		changed := false
-		for _, g := range groups {
-			log.Debugw("Resolving group for escalation", "escalation", esc.Name, "group", g, "resolverType", fmt.Sprintf("%T", u.Resolver))
-			var norm []string
-			if u.Resolver != nil {
-				log.Debugw("Calling group member resolver", "group", g, "escalation", esc.Name, "resolverType", fmt.Sprintf("%T", u.Resolver))
-				members, err := u.Resolver.Members(ctx, g)
-				if err != nil {
-					log.Errorw("Failed resolving group members from resolver", "group", g, "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
-					// record resolution error in status
+
+		if hasMultiIDPFields {
+			// Phase 2: Use multi-IDP group sync with IDP hierarchy storage
+			log.Debugw("Using multi-IDP group sync", "escalation", esc.Name, "idps", esc.Spec.AllowedIdentityProvidersForApprovers)
+
+			hierarchy, syncStatus, syncErrors := u.fetchGroupMembersFromMultipleIDPs(
+				ctx,
+				&esc,
+				esc.Spec.AllowedIdentityProvidersForApprovers,
+				groups,
+				log,
+			)
+
+			// Store full IDP hierarchy in status (NOT deduplicated)
+			if !equalIDPHierarchy(hierarchy, updated.Status.IDPGroupMemberships) {
+				updated.Status.IDPGroupMemberships = hierarchy
+				changed = true
+			}
+
+			// Store sync status
+			if updated.Status.GroupSyncStatus != syncStatus {
+				updated.Status.GroupSyncStatus = syncStatus
+				changed = true
+			}
+
+			// Store sync errors
+			if !equalStringSlices(syncErrors, updated.Status.GroupSyncErrors) {
+				updated.Status.GroupSyncErrors = syncErrors
+				changed = true
+			}
+
+			// Store deduplicated members in ApproverGroupMembers for immediate use
+			// These are deduplicated across all IDPs by email/username and ready for:
+			// - Email notifications (approvers list)
+			// - Session approval validation
+			// - Request validation
+			// The full per-IDP hierarchy is preserved in IDPGroupMemberships for debugging/auditing
+			for _, g := range groups {
+				dedupMembers := deduplicateMembersFromHierarchy(hierarchy, g)
+				if !equalStringSlices(dedupMembers, updated.Status.ApproverGroupMembers[g]) {
+					updated.Status.ApproverGroupMembers[g] = dedupMembers
+					changed = true
+				}
+			}
+		} else {
+			// Legacy single-resolver mode for backward compatibility
+			log.Debugw("Using legacy single resolver mode", "escalation", esc.Name)
+
+			for _, g := range groups {
+				log.Debugw("Resolving group for escalation", "escalation", esc.Name, "group", g, "resolverType", fmt.Sprintf("%T", u.Resolver))
+				var norm []string
+				if u.Resolver != nil {
+					log.Debugw("Calling group member resolver", "group", g, "escalation", esc.Name, "resolverType", fmt.Sprintf("%T", u.Resolver))
+					members, err := u.Resolver.Members(ctx, g)
+					if err != nil {
+						log.Errorw("Failed resolving group members from resolver", "group", g, "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
+						// record resolution error in status
+						if updated.Status.GroupResolutionStatus == nil {
+							updated.Status.GroupResolutionStatus = map[string]string{}
+						}
+						updated.Status.GroupResolutionStatus[g] = fmt.Sprintf("error: %v", err)
+						continue
+					}
+					log.Debugw("Group member resolver returned members", "group", g, "escalation", esc.Name, "rawMemberCount", len(members), "members", members)
+					norm = normalizeMembers(members)
+					log.Infow("Resolved approver group members (normalized)", "group", g, "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm), "normalizedMembers", norm)
+					// mark group resolution ok in status
 					if updated.Status.GroupResolutionStatus == nil {
 						updated.Status.GroupResolutionStatus = map[string]string{}
 					}
-					updated.Status.GroupResolutionStatus[g] = fmt.Sprintf("error: %v", err)
+					updated.Status.GroupResolutionStatus[g] = "ok"
+				} else {
+					log.Warnw("No group member resolver configured; skipping group resolution", "group", g, "escalation", esc.Name)
+					if updated.Status.GroupResolutionStatus == nil {
+						updated.Status.GroupResolutionStatus = map[string]string{}
+					}
+					updated.Status.GroupResolutionStatus[g] = "disabled"
 					continue
 				}
-				log.Debugw("Group member resolver returned members", "group", g, "escalation", esc.Name, "rawMemberCount", len(members), "members", members)
-				norm = normalizeMembers(members)
-				log.Infow("Resolved approver group members (normalized)", "group", g, "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm), "normalizedMembers", norm)
-				// mark group resolution ok in status
-				if updated.Status.GroupResolutionStatus == nil {
-					updated.Status.GroupResolutionStatus = map[string]string{}
+				if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
+					log.Debugw("Group members changed; marking for update", "group", g, "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
+					updated.Status.ApproverGroupMembers[g] = norm
+					changed = true
 				}
-				updated.Status.GroupResolutionStatus[g] = "ok"
-			} else {
-				log.Warnw("No group member resolver configured; skipping group resolution", "group", g, "escalation", esc.Name)
-				if updated.Status.GroupResolutionStatus == nil {
-					updated.Status.GroupResolutionStatus = map[string]string{}
-				}
-				updated.Status.GroupResolutionStatus[g] = "disabled"
-				continue
-			}
-			if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
-				log.Debugw("Group members changed; marking for update", "group", g, "escalation", esc.Name, "oldCount", len(updated.Status.ApproverGroupMembers[g]), "newCount", len(norm))
-				updated.Status.ApproverGroupMembers[g] = norm
-				changed = true
 			}
 		}
+
 		if changed {
 			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
 			if err := u.K8sClient.Status().Update(ctx, updated); err != nil {
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
 			} else {
-				log.Debugw("Updated escalation approverGroupMembers successfully", "escalation", esc.Name, "groups", groups)
+				log.Debugw("Updated escalation successfully", "escalation", esc.Name, "groups", groups)
 			}
 		}
 	}
 	log.Debugw("Completed escalation status update cycle")
+}
+
+// fetchGroupMembersFromMultipleIDPs fetches group members from multiple IDPs and stores in IDP hierarchy structure.
+// Returns: map[idpName]map[groupName][]memberList, syncStatus, and error list (never blocks escalation creation)
+func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
+	ctx context.Context,
+	escalation *telekomv1alpha1.BreakglassEscalation,
+	idpNames []string,
+	groups []string,
+	log *zap.SugaredLogger,
+) (map[string]map[string][]string, string, []string) {
+	// Structure: map[idpName]map[groupName][]memberList
+	hierarchy := make(map[string]map[string][]string)
+	var syncErrors []string
+	successCount := 0
+	failureCount := 0
+
+	if u.IDPLoader == nil {
+		log.Debugw("IDPLoader not configured; using single resolver fallback", "escalation", escalation.Name)
+		// Fallback: use legacy single resolver for backward compatibility
+		groupMembers := make(map[string][]string)
+		for _, g := range groups {
+			if u.Resolver != nil {
+				members, err := u.Resolver.Members(ctx, g)
+				if err != nil {
+					log.Errorw("Failed to resolve group members", "escalation", escalation.Name, "group", g, "error", err)
+					continue
+				}
+				groupMembers[g] = normalizeMembers(members)
+			}
+		}
+		// Store in hierarchy under empty IDP name for backward compat
+		if len(groupMembers) > 0 {
+			hierarchy[""] = groupMembers
+		}
+		return hierarchy, "Success", nil
+	}
+
+	// Multi-IDP sync: fetch from each IDP for each group
+	for _, idpName := range idpNames {
+		log.Debugw("Fetching group members from IDP", "escalation", escalation.Name, "idp", idpName, "groups", groups)
+
+		idpConfig, err := u.IDPLoader.LoadIdentityProviderByName(ctx, idpName)
+		if err != nil {
+			errorMsg := fmt.Sprintf("Failed to load IDP config: %v", err)
+			log.Errorw("Failed to load IDP configuration", "escalation", escalation.Name, "idp", idpName, "error", err)
+			syncErrors = append(syncErrors, errorMsg)
+			failureCount++
+
+			// Emit event on IdentityProvider resource
+			if u.EventRecorder != nil {
+				idp := &telekomv1alpha1.IdentityProvider{}
+				idp.SetName(idpName)
+				u.EventRecorder.Eventf(idp, "Warning", "GroupSyncConfigLoadFailed",
+					"Failed to load IDP config for escalation %s/%s: %v",
+					escalation.Namespace, escalation.Name, err)
+			}
+			continue
+		}
+
+		// Create resolver for this IDP
+		resolver := u.createResolverForIDP(idpConfig, log)
+		if resolver == nil {
+			errorMsg := fmt.Sprintf("Failed to create resolver for IDP: %s", idpName)
+			log.Warnw("Failed to create resolver for IDP", "escalation", escalation.Name, "idp", idpName)
+			syncErrors = append(syncErrors, errorMsg)
+			failureCount++
+
+			// Emit event on IdentityProvider resource
+			if u.EventRecorder != nil {
+				idp := &telekomv1alpha1.IdentityProvider{}
+				idp.SetName(idpName)
+				u.EventRecorder.Eventf(idp, "Warning", "GroupSyncResolverCreationFailed",
+					"Failed to create group sync resolver for escalation %s/%s",
+					escalation.Namespace, escalation.Name)
+			}
+			continue
+		}
+
+		// Fetch group members for this IDP
+		idpGroupMembers := make(map[string][]string)
+		idpSuccess := true
+
+		for _, g := range groups {
+			members, err := resolver.Members(ctx, g)
+			if err != nil {
+				errorMsg := fmt.Sprintf("IDP %s: timeout/error fetching group %s: %v", idpName, g, err)
+				log.Warnw("Failed to resolve group members from IDP", "escalation", escalation.Name, "idp", idpName, "group", g, "error", err)
+				syncErrors = append(syncErrors, errorMsg)
+				idpSuccess = false
+
+				// Emit event on IdentityProvider resource
+				if u.EventRecorder != nil {
+					idp := &telekomv1alpha1.IdentityProvider{}
+					idp.SetName(idpName)
+					u.EventRecorder.Eventf(idp, "Warning", "GroupFetchFailed",
+						"Failed to fetch group %s for escalation %s/%s: %v",
+						g, escalation.Namespace, escalation.Name, err)
+				}
+				continue
+			}
+			idpGroupMembers[g] = normalizeMembers(members)
+		}
+
+		if idpSuccess {
+			successCount++
+		} else {
+			failureCount++
+		}
+
+		// Store members under IDP name in hierarchy
+		hierarchy[idpName] = idpGroupMembers
+	}
+
+	// Determine sync status
+	var syncStatus string
+	if failureCount == 0 {
+		syncStatus = "Success"
+	} else if successCount > 0 && failureCount > 0 {
+		syncStatus = "PartialFailure"
+	} else {
+		syncStatus = "Failed"
+	}
+
+	log.Infow("Multi-IDP group sync completed",
+		"escalation", escalation.Name,
+		"idpCount", len(idpNames),
+		"successCount", successCount,
+		"failureCount", failureCount,
+		"syncStatus", syncStatus,
+		"errorCount", len(syncErrors))
+
+	// Emit event on BreakglassEscalation if there were failures
+	if failureCount > 0 && u.EventRecorder != nil {
+		u.EventRecorder.Eventf(escalation, "Warning", "GroupSyncPartialFailure",
+			"Multi-IDP group sync partially failed: %d IDPs succeeded, %d failed. See status.groupSyncErrors for details.",
+			successCount, failureCount)
+	}
+
+	return hierarchy, syncStatus, syncErrors
+}
+
+// createResolverForIDP creates an appropriate resolver for the given IDP config
+func (u EscalationStatusUpdater) createResolverForIDP(idpConfig *cfgpkg.IdentityProviderConfig, log *zap.SugaredLogger) GroupMemberResolver {
+	if idpConfig == nil {
+		return nil
+	}
+
+	// Currently only Keycloak is supported
+	if idpConfig.Keycloak == nil {
+		return nil
+	}
+
+	return NewKeycloakGroupMemberResolver(log, *idpConfig.Keycloak)
 }
 
 func normalizeMembers(in []string) []string {
@@ -568,4 +779,56 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// equalIDPHierarchy compares two IDP hierarchies for equality
+func equalIDPHierarchy(a, b map[string]map[string][]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for idpName, groupMembers := range a {
+		bGroupMembers, ok := b[idpName]
+		if !ok {
+			return false
+		}
+		if len(groupMembers) != len(bGroupMembers) {
+			return false
+		}
+		for groupName, members := range groupMembers {
+			bMembers, ok := bGroupMembers[groupName]
+			if !ok {
+				return false
+			}
+			if !equalStringSlices(members, bMembers) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// deduplicateMembersFromHierarchy extracts and deduplicates members from IDP hierarchy for a specific group
+// Returns the deduplicated list of members for that group from all IDPs
+func deduplicateMembersFromHierarchy(hierarchy map[string]map[string][]string, group string) []string {
+	seen := make(map[string]struct{})
+	var result []string
+
+	// Iterate through each IDP in hierarchy
+	for _, groupMembers := range hierarchy {
+		if members, ok := groupMembers[group]; ok {
+			for _, member := range members {
+				// Normalize and deduplicate
+				normalized := strings.TrimSpace(strings.ToLower(member))
+				if normalized == "" {
+					continue
+				}
+				if _, alreadySeen := seen[normalized]; !alreadySeen {
+					seen[normalized] = struct{}{}
+					result = append(result, normalized)
+				}
+			}
+		}
+	}
+
+	return result
 }

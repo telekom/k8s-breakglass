@@ -164,6 +164,16 @@ func (in *BreakglassEscalationSpec) DeepCopyInto(out *BreakglassEscalationSpec) 
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.AllowedIdentityProvidersForRequests != nil {
+		in, out := &in.AllowedIdentityProvidersForRequests, &out.AllowedIdentityProvidersForRequests
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.AllowedIdentityProvidersForApprovers != nil {
+		in, out := &in.AllowedIdentityProvidersForApprovers, &out.AllowedIdentityProvidersForApprovers
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.BlockSelfApproval != nil {
 		in, out := &in.BlockSelfApproval, &out.BlockSelfApproval
 		*out = new(bool)
@@ -209,6 +219,38 @@ func (in *BreakglassEscalationStatus) DeepCopyInto(out *BreakglassEscalationStat
 			}
 			(*out)[key] = outVal
 		}
+	}
+	if in.IDPGroupMemberships != nil {
+		in, out := &in.IDPGroupMemberships, &out.IDPGroupMemberships
+		*out = make(map[string]map[string][]string, len(*in))
+		for key, val := range *in {
+			var outVal map[string][]string
+			if val == nil {
+				(*out)[key] = nil
+			} else {
+				inVal := (*in)[key]
+				in, out := &inVal, &outVal
+				*out = make(map[string][]string, len(*in))
+				for key, val := range *in {
+					var outVal []string
+					if val == nil {
+						(*out)[key] = nil
+					} else {
+						inVal := (*in)[key]
+						in, out := &inVal, &outVal
+						*out = make([]string, len(*in))
+						copy(*out, *in)
+					}
+					(*out)[key] = outVal
+				}
+			}
+			(*out)[key] = outVal
+		}
+	}
+	if in.GroupSyncErrors != nil {
+		in, out := &in.GroupSyncErrors, &out.GroupSyncErrors
+		*out = make([]string, len(*in))
+		copy(*out, *in)
 	}
 	if in.GroupResolutionStatus != nil {
 		in, out := &in.GroupResolutionStatus, &out.GroupResolutionStatus

@@ -407,6 +407,126 @@ spec:
   burst: 400
 ```
 
+## Multi-IDP Issues
+
+### Unknown Issuer Error
+
+**Symptoms:** "Token issued by unknown issuer, please authenticate using one of the configured identity providers"
+
+**Causes:**
+- IdentityProvider's `issuer` field doesn't match token's `iss` claim
+- Token from unconfigured provider
+- Issuer URL has trailing slash mismatch
+
+**Solutions:**
+
+1. Extract the actual issuer from the token
+
+```bash
+TOKEN=$(your-token-here)
+echo $TOKEN | cut -d'.' -f2 | base64 -d | jq .iss
+```
+
+2. Compare with configured IdentityProviders
+
+```bash
+kubectl get identityprovider -o yaml | grep -E "name:|issuer:"
+```
+
+3. Update the issuer if it doesn't match
+
+```bash
+kubectl patch identityprovider <name> -p '{"spec":{"issuer":"https://correct-issuer.example.com"}}'
+```
+
+### IDP Selection Screen Not Appearing
+
+**Symptoms:** Only showing direct login, not IDP selector screen
+
+**Causes:**
+- Less than 2 IdentityProviders configured
+- Only 1 provider has `disabled: false`
+
+**Solutions:**
+
+1. Check how many providers are enabled
+
+```bash
+kubectl get identityprovider -o yaml | grep -E "name:|disabled:"
+```
+
+2. Create or enable a second provider if needed
+
+```bash
+kubectl patch identityprovider <name> -p '{"spec":{"disabled":false}}'
+```
+
+### User Can't Access Multi-IDP Escalation
+
+**Symptoms:** "Access denied" even though user has the escalation
+
+**Causes:**
+- Escalation restricted to different IDPs
+- User's token from different IDP than expected
+
+**Solutions:**
+
+1. Check escalation's allowed IDPs
+
+```bash
+kubectl get breakglassescalation <name> -o yaml | grep -A 5 allowedIdentityProviders
+```
+
+2. Verify user's token IDP
+
+```bash
+TOKEN=$(your-token-here)
+echo $TOKEN | cut -d'.' -f2 | base64 -d | jq .iss
+```
+
+3. Update escalation to allow user's IDP
+
+```bash
+kubectl patch breakglassescalation <name> -p '{"spec":{"allowedIdentityProvidersForRequests":["corp-oidc","keycloak-idp"]}}'
+```
+
+### Group Sync Failing for One IDP
+
+**Symptoms:** GroupSyncStatus shows "PartialFailure" or "Failed"
+
+**Causes:**
+- IDP connection timeout
+- Invalid Keycloak credentials
+- Network issues
+
+**Solutions:**
+
+1. Check sync status and errors
+
+```bash
+kubectl get breakglassescalation <name> -o yaml | grep -A 10 "groupSync"
+```
+
+2. Check IdentityProvider events
+
+```bash
+kubectl describe identityprovider <name> | grep -A 5 "Events:"
+```
+
+3. Verify IDP is reachable
+
+```bash
+kubectl run -it debug --image=curlimages/curl --restart=Never -- \
+  curl https://keycloak.example.com/health
+```
+
+4. Check credentials and permissions
+
+```bash
+kubectl get secret <secret-name> -o yaml
+# Verify it has the right clientID and clientSecret
+```
+
 ## General Debug Commands
 
 View all resources:

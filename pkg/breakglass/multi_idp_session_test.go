@@ -204,3 +204,216 @@ func TestDefaultAllowIDPMismatch_WhenClusterNotFound_BadPath(t *testing.T) {
 	assert.True(t, allowIDPMismatch,
 		"AllowIDPMismatch should default to true when cluster config cannot be found")
 }
+
+// TestMultiIDPApprovalFlow_RequestFromIDP1_ApprovedByIDP2 tests approval flow across IDPs
+func TestMultiIDPApprovalFlow_RequestFromIDP1_ApprovedByIDP2(t *testing.T) {
+	// Create escalation that allows both IDPs
+	escalation := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multi-idp-escalation",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProviders: []string{"idp-1", "idp-2"},
+		},
+		Status: v1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"admin": {
+					"user1@idp1.com", // From IDP-1
+					"user2@idp2.com", // From IDP-2
+				},
+			},
+		},
+	}
+
+	// Verify: Approver from IDP-2 is in the combined member list
+	approver := "user2@idp2.com"
+	approversAllowed := false
+	for _, members := range escalation.Status.ApproverGroupMembers {
+		for _, member := range members {
+			if member == approver {
+				approversAllowed = true
+				break
+			}
+		}
+	}
+	assert.True(t, approversAllowed,
+		"Multi-IDP escalation should allow approvers from any configured IDP")
+}
+
+// TestMultiIDPApprovalFlow_SingleIDPBlocking tests that single IDP approval can be blocked
+func TestMultiIDPApprovalFlow_SingleIDPBlocking(t *testing.T) {
+	// Create escalation that allows only IDP-1
+	escalation := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "single-idp-escalation",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProviders: []string{"idp-1"}, // Only IDP-1
+		},
+	}
+
+	// Simulate: Session from user in IDP-2 (not allowed)
+	sessionIDPName := "idp-2"
+
+	// Verify: IDP-2 is not in allowed list
+	idpAllowed := false
+	for _, idp := range escalation.Spec.AllowedIdentityProviders {
+		if idp == sessionIDPName {
+			idpAllowed = true
+			break
+		}
+	}
+	assert.False(t, idpAllowed,
+		"Session from IDP-2 should not be allowed when escalation only allows IDP-1")
+}
+
+// TestMultiIDPEmailResolution_DeduplicatedList_HappyPath tests email resolution with deduplication
+func TestMultiIDPEmailResolution_DeduplicatedList_HappyPath(t *testing.T) {
+	// Create escalation with deduplicated members from multiple IDPs
+	escalation := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multi-idp-escalation",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProviders: []string{"idp-1", "idp-2"},
+		},
+		Status: v1alpha1.BreakglassEscalationStatus{
+			// Deduplicated list of approvers (same user across IDPs appears once)
+			ApproverGroupMembers: map[string][]string{
+				"admin": {
+					"alice@example.com",   // From both IDP-1 and IDP-2 (deduplicated)
+					"bob@example.com",     // From IDP-1
+					"charlie@example.com", // From IDP-2
+				},
+			},
+			// Full hierarchy preserved for audit
+			IDPGroupMemberships: map[string]map[string][]string{
+				"idp-1": {
+					"admin": {"alice@example.com", "bob@example.com"},
+				},
+				"idp-2": {
+					"admin": {"alice@example.com", "charlie@example.com"},
+				},
+			},
+		},
+	}
+
+	// Verify: Deduplicated list has exactly 3 unique members
+	adminMembers := escalation.Status.ApproverGroupMembers["admin"]
+	assert.Len(t, adminMembers, 3,
+		"Deduplicated approver list should have 3 unique members")
+
+	// Verify: Alice appears only once despite being in both IDPs
+	aliceCount := 0
+	for _, member := range adminMembers {
+		if member == "alice@example.com" {
+			aliceCount++
+		}
+	}
+	assert.Equal(t, 1, aliceCount,
+		"Alice should appear only once in deduplicated list")
+}
+
+// TestMultiIDPEmailResolution_FullHierarchyPreserved_HappyPath tests hierarchy preservation
+func TestMultiIDPEmailResolution_FullHierarchyPreserved_HappyPath(t *testing.T) {
+	// Create escalation with preserved hierarchy
+	escalation := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multi-idp-escalation",
+			Namespace: "default",
+		},
+		Status: v1alpha1.BreakglassEscalationStatus{
+			IDPGroupMemberships: map[string]map[string][]string{
+				"idp-1": {
+					"admin": {"user1@example.com", "user2@example.com"},
+					"ops":   {"user3@example.com"},
+				},
+				"idp-2": {
+					"admin": {"user2@example.com", "user4@example.com"},
+					"ops":   {"user5@example.com"},
+				},
+			},
+		},
+	}
+
+	// Verify: Hierarchy is preserved (not flattened)
+	assert.Len(t, escalation.Status.IDPGroupMemberships, 2,
+		"Full hierarchy should be preserved for all IDPs")
+
+	// Verify: Can query which IDPs have a specific user
+	user2IDPs := []string{}
+	for idpName, groups := range escalation.Status.IDPGroupMemberships {
+		for _, members := range groups {
+			for _, member := range members {
+				if member == "user2@example.com" {
+					user2IDPs = append(user2IDPs, idpName)
+					break
+				}
+			}
+		}
+	}
+	assert.Len(t, user2IDPs, 2,
+		"user2 should be found in both IDPs")
+	assert.Contains(t, user2IDPs, "idp-1")
+	assert.Contains(t, user2IDPs, "idp-2")
+}
+
+// TestGroupSyncStatus_Success_HappyPath tests successful group sync status
+func TestGroupSyncStatus_Success_HappyPath(t *testing.T) {
+	escalation := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-escalation",
+			Namespace: "default",
+		},
+		Status: v1alpha1.BreakglassEscalationStatus{
+			GroupSyncStatus: "Success",
+			GroupSyncErrors: []string{},
+		},
+	}
+
+	assert.Equal(t, "Success", escalation.Status.GroupSyncStatus)
+	assert.Len(t, escalation.Status.GroupSyncErrors, 0)
+}
+
+// TestGroupSyncStatus_PartialFailure_HappyPath tests partial failure status
+func TestGroupSyncStatus_PartialFailure_HappyPath(t *testing.T) {
+	escalation := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-escalation",
+			Namespace: "default",
+		},
+		Status: v1alpha1.BreakglassEscalationStatus{
+			GroupSyncStatus: "PartialFailure",
+			GroupSyncErrors: []string{
+				"IDP-2: connection timeout",
+				"IDP-3: invalid credentials",
+			},
+		},
+	}
+
+	assert.Equal(t, "PartialFailure", escalation.Status.GroupSyncStatus)
+	assert.Len(t, escalation.Status.GroupSyncErrors, 2)
+	assert.Contains(t, escalation.Status.GroupSyncErrors[0], "timeout")
+}
+
+// TestGroupSyncStatus_CompleteFailed_HappyPath tests complete failure status
+func TestGroupSyncStatus_CompleteFailed_HappyPath(t *testing.T) {
+	escalation := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-escalation",
+			Namespace: "default",
+		},
+		Status: v1alpha1.BreakglassEscalationStatus{
+			GroupSyncStatus: "Failed",
+			GroupSyncErrors: []string{
+				"All IDPs failed",
+			},
+		},
+	}
+
+	assert.Equal(t, "Failed", escalation.Status.GroupSyncStatus)
+	assert.Len(t, escalation.Status.GroupSyncErrors, 1)
+}

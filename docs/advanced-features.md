@@ -510,6 +510,435 @@ curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/breakglass/breakglassSessions?state=rejected,withdrawn,expired,timeout"
 ```
 
+## Multi-IDP Configuration Guide
+
+### Overview
+
+Multi-IDP (multiple Identity Provider) support allows your Breakglass deployment to accept users authenticated by multiple independent OIDC providers. This is useful for:
+
+- **Organizations with multiple auth systems**: Corporate OIDC + Keycloak, or Auth0 + Azure AD
+- **Gradual migration**: Transition users from one provider to another without downtime
+- **Federated access**: Multiple business units using different providers
+- **Guest/contractor access**: Different providers for external users
+- **High availability**: Use provider A as primary, provider B as fallback
+
+### Basic Multi-IDP Setup
+
+Create multiple `IdentityProvider` resources, each with a unique issuer:
+
+```yaml
+---
+# Provider 1: Corporate Identity System
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: corp-oidc
+spec:
+  primary: true
+  oidc:
+    authority: "https://auth-corp.example.com"
+    clientID: "breakglass-prod"
+  issuer: "https://auth-corp.example.com"
+  displayName: "Corporate OIDC"
+
+---
+# Provider 2: Keycloak (Backup/Alternative)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: keycloak-idp
+spec:
+  primary: false
+  oidc:
+    authority: "https://keycloak.example.com"
+    clientID: "breakglass-prod"
+  issuer: "https://keycloak.example.com/realms/master"
+  displayName: "Keycloak Authentication"
+
+---
+# Provider 3: Azure AD (Optional - Enterprise)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: azure-ad
+spec:
+  primary: false
+  oidc:
+    authority: "https://login.microsoftonline.com/common/v2.0"
+    clientID: "breakglass-azure-app-id"
+  issuer: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+  displayName: "Microsoft Azure AD"
+```
+
+**Key Points:**
+
+- **Unique Issuer**: Each provider must have a different `issuer` URL
+- **Primary Flag**: At least one provider should be `primary: true`
+- **Display Name**: User-friendly name shown in UI and error messages
+
+### Frontend Auto-Detection
+
+When you have multiple IdentityProviders configured, the frontend automatically:
+
+1. **Detects all providers**: Scans for enabled IdentityProvider CRs
+2. **Shows selection screen**: If 2+ providers exist, displays IDP selector
+3. **Skips selector for single IDP**: If only 1 provider, redirects directly
+4. **Honors disabled state**: Excludes providers with `disabled: true`
+
+### Per-Escalation IDP Restrictions
+
+Optionally restrict specific escalations to certain IDPs:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: prod-admin-access
+spec:
+  escalatedGroup: "prod-admins"
+  
+  # Only corp-oidc can use this escalation
+  allowedIdentityProviders:
+  - corp-oidc
+  
+  approvers:
+    groups:
+    - senior-platform-engineers
+```
+
+If `allowedIdentityProviders` is empty or omitted, all IDPs can access the escalation.
+
+### IDP-Specific Escalations
+
+Create different escalation paths for different IDPs:
+
+```yaml
+---
+# Only for corporate users
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: corp-prod-access
+spec:
+  escalatedGroup: "prod-admins"
+  allowedIdentityProviders:
+  - corp-oidc
+  approvers:
+    groups:
+    - corp-ops-team
+
+---
+# Only for external/contractor users
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: external-sandbox-access
+spec:
+  escalatedGroup: "sandbox-users"
+  allowedIdentityProviders:
+  - keycloak-idp
+  approvers:
+    groups:
+    - contractors-approvers
+```
+
+### Migration: Single IDP → Multi-IDP
+
+If you currently have a single IdentityProvider and want to add another:
+
+**Before (Single IDP):**
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: primary-idp
+spec:
+  primary: true
+  oidc:
+    authority: "https://existing-auth.example.com"
+    clientID: "breakglass-prod"
+  issuer: "https://existing-auth.example.com"
+```
+
+**After (Add Second IDP):**
+```yaml
+# Keep existing provider as-is
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: primary-idp
+spec:
+  primary: true
+  oidc:
+    authority: "https://existing-auth.example.com"
+    clientID: "breakglass-prod"
+  issuer: "https://existing-auth.example.com"
+
+# Add new provider
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: secondary-idp
+spec:
+  primary: false
+  oidc:
+    authority: "https://new-auth.example.com"
+    clientID: "breakglass-prod"
+  issuer: "https://new-auth.example.com"
+```
+
+**Result**: Users can now authenticate with either IDP. No escalation changes needed (all escalations accessible by default).
+
+### Email Notifications in Multi-IDP
+
+When users receive approval emails in multi-IDP mode, the email includes IDP information:
+
+```html
+<!-- In email template -->
+{{ if .IDPName }}
+<div class="idp-notice">
+    <strong>⚠️ You authenticated using: {{ .IDPName }}</strong>
+    <p>To access your escalated privileges, please authenticate using the same IDP.</p>
+</div>
+{{ end }}
+```
+
+This helps users understand which IDP they used and ensures they consistently authenticate with the same provider.
+
+### Best Practices for Multi-IDP
+
+#### 1. **Naming Convention**
+
+Use clear, descriptive names for IdentityProviders:
+
+✅ Good:
+
+- `corp-oidc` - Describes the provider
+- `keycloak-prod` - Includes deployment stage
+- `azure-ad-enterprise` - Specifies type and scope
+
+❌ Poor:
+
+- `idp1`, `idp2` - Unclear which is which
+- `test` - Ambiguous purpose
+
+#### 2. **Unique Issuer URLs**
+
+Always ensure issuer URLs are unique across all providers:
+
+```yaml
+# ✅ Good
+---
+name: provider-a
+issuer: "https://auth-a.example.com"
+---
+name: provider-b
+issuer: "https://auth-b.example.com"
+
+# ❌ Bad - Duplicate issuer
+---
+name: provider-a
+issuer: "https://auth.example.com"
+---
+name: provider-b
+issuer: "https://auth.example.com"  # ← Same issuer!
+```
+
+
+#### 3. **Secret Management**
+
+Store each provider's credentials in separate secrets:
+
+```yaml
+# Separate secrets per provider
+apiVersion: v1
+kind: Secret
+metadata:
+  name: corp-oidc-client-secret
+  namespace: breakglass
+type: Opaque
+data:
+  clientSecret: <base64-secret>
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-client-secret
+  namespace: breakglass
+type: Opaque
+data:
+  clientSecret: <base64-secret>
+```
+
+Then reference each in the IdentityProvider:
+
+```yaml
+spec:
+  oidc:
+    clientID: "breakglass-corp"
+    clientSecretRef:
+      name: corp-oidc-client-secret
+      key: clientSecret
+```
+
+#### 4. **Gradual Rollout**
+
+When introducing a new IDP:
+
+1. Create IdentityProvider with `primary: false`
+2. Test with a non-critical escalation
+3. Verify users can authenticate
+4. Gradually enable for more escalations
+5. Only set `primary: true` after validation
+
+#### 5. **Fallback Planning**
+
+Configure at least 2 providers for high availability:
+
+```yaml
+# Primary - used first
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: primary-provider
+spec:
+  primary: true
+  oidc:
+    authority: "https://auth-primary.example.com"
+    clientID: "breakglass"
+  issuer: "https://auth-primary.example.com"
+
+# Fallback - used if primary fails
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: fallback-provider
+spec:
+  primary: false
+  oidc:
+    authority: "https://auth-fallback.example.com"
+    clientID: "breakglass"
+  issuer: "https://auth-fallback.example.com"
+```
+
+#### 6. **Documentation**
+
+Document your multi-IDP setup:
+
+```yaml
+# comment-or-separate-doc.md
+# Multi-IDP Configuration
+
+## Providers in Use
+
+| Name | Authority | Issuer | Purpose | Group Sync |
+|------|-----------|--------|---------|-----------|
+| corp-oidc | auth-corp.example.com | auth-corp.example.com | Internal employees | LDAP |
+| keycloak | keycloak.example.com | keycloak.example.com/realms/master | Contractors | Keycloak |
+| azure-ad | login.microsoftonline.com | ... | Enterprise integrations | Azure AD |
+
+## Escalation → IDP Mapping
+
+| Escalation | Corp-OIDC | Keycloak | Azure-AD |
+|------------|-----------|----------|----------|
+| prod-admin | ✅ | ❌ | ✅ |
+| dev-sandbox | ✅ | ✅ | ❌ |
+| contractor-tools | ❌ | ✅ | ❌ |
+```
+
+### Troubleshooting Multi-IDP Issues
+
+#### Issue: "Unknown issuer" Error
+
+**Symptom**: User sees "Token issued by unknown issuer, please authenticate using one of the configured identity providers"
+
+**Causes**:
+
+1. IdentityProvider's `issuer` doesn't match token's `iss` claim
+2. Token from unconfigured provider
+3. Issuer URL has trailing slash mismatch
+
+**Solution**:
+
+```bash
+# Get the actual issuer from the token
+jwt decode <token> | grep iss
+
+# Compare with IdentityProvider
+kubectl get identityprovider <name> -o yaml | grep issuer
+
+# Fix if mismatch
+kubectl patch identityprovider <name> -p '{"spec":{"issuer":"<correct-issuer>"}}'
+```
+
+
+#### Issue: IDP Selection Screen Not Appearing
+
+**Symptom**: Only showing direct login, not IDP selector
+
+**Causes**:
+
+1. Less than 2 IdentityProviders configured
+2. Only 1 provider has `disabled: false`
+
+**Solution**:
+
+```bash
+# Check available providers
+kubectl get identityprovider -o yaml | grep -E "^metadata:|name:|disabled:"
+
+# Enable additional providers if needed
+kubectl patch identityprovider <name> -p '{"spec":{"disabled":false}}'
+```
+
+
+#### Issue: User Can't Access Specific Escalation
+
+**Symptom**: User sees "Access denied" even though they have the escalation
+
+**Causes**:
+
+1. Escalation restricted to different IDPs
+2. User's token from different IDP than expected
+
+**Solution**:
+
+```bash
+# Check escalation's allowed IDPs
+kubectl get breakglassescalation <name> -o yaml | grep -A 5 allowedIdentityProviders
+
+# Update to allow user's IDP
+kubectl patch breakglassescalation <name> -p '{"spec":{"allowedIdentityProviders":["corp-oidc","keycloak-idp"]}}'
+```
+
+
+### Monitoring Multi-IDP
+
+Track authentication patterns by IDP:
+
+```bash
+# Count successful logins by issuer
+kubectl logs deployment/breakglass-controller -n breakglass \
+  | grep "iss" | sort | uniq -c
+
+# Monitor token validation failures
+kubectl logs deployment/breakglass-controller -n breakglass \
+  | grep -i "token.*invalid\|issuer.*unknown"
+
+# Check IDP configuration status
+kubectl get identityprovider -o wide
+```
+
+### See Also
+
+- [Identity Provider Configuration](./identity-provider.md) - Detailed IDP setup
+- [Email Templates](./email-templates.md) - Multi-IDP email customization
+- [API Reference](./api-reference.md) - IdentityProvider API docs
+
 ## Related Documentation
 
 - [API Reference](./api-reference.md) - Complete API endpoint documentation
@@ -517,5 +946,6 @@ curl -H "Authorization: Bearer <token>" \
 - [DenyPolicy](./deny-policy.md) - Access restriction policies
 - [ClusterConfig](./cluster-config.md) - Cluster connection setup
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
+
 
 ````

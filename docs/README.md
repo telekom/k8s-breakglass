@@ -17,6 +17,12 @@ Complete documentation for the breakglass privilege escalation system.
 - **[CLI Flags Reference](./cli-flags-reference.md)** - All controller flags and environment variables
 - **[Configuration Reference](./configuration-reference.md)** - config.yaml settings and examples
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
+- **[Email Templates](./email-templates.md)** - Customize and override email notification templates
+
+## Identity & Authentication
+
+- **[Identity Provider](./identity-provider.md)** - OIDC configuration and multi-IDP setup
+- **[Advanced Features - Multi-IDP Guide](./advanced-features.md#multi-idp-configuration-guide)** - Multiple identity provider configuration and best practices
 
 ## Quick Reference
 

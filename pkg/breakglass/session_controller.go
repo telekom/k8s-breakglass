@@ -380,31 +380,53 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			reqLog.Debugw("Resolving approver group members",
 				"group", group,
 				"escalation", p.Name)
-			if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
-				members, err := wc.escalationManager.Resolver.Members(ctx, group)
-				if err != nil {
-					reqLog.Warnw("Failed to resolve approver group members", "group", group, "error", err)
-					// Continue with other groups even if one fails
+
+			var members []string
+			var err error
+
+			// Multi-IDP mode: use deduplicated members from status if available
+			if len(p.Spec.AllowedIdentityProvidersForApprovers) > 0 && p.Status.ApproverGroupMembers != nil {
+				if statusMembers, ok := p.Status.ApproverGroupMembers[group]; ok {
+					members = statusMembers
+					reqLog.Debugw("Using deduplicated members from status (multi-IDP mode)",
+						"group", group,
+						"escalation", p.Name,
+						"memberCount", len(members))
+				} else {
+					reqLog.Debugw("No members found in status for group (multi-IDP mode)",
+						"group", group,
+						"escalation", p.Name)
 					continue
 				}
-				reqLog.Debugw("Resolved approver group members",
-					"group", group,
-					"escalation", p.Name,
-					"memberCount", len(members),
-					"members", members)
-				countBefore := len(allApprovers)
-				for _, member := range members {
-					allApprovers = addIfNotPresent(allApprovers, member)
-					// Track member as belonging to this group
-					approversByGroup[group] = addIfNotPresent(approversByGroup[group], member)
+			} else {
+				// Legacy mode: resolve from single IDP
+				if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
+					members, err = wc.escalationManager.Resolver.Members(ctx, group)
+					if err != nil {
+						reqLog.Warnw("Failed to resolve approver group members", "group", group, "error", err)
+						// Continue with other groups even if one fails
+						continue
+					}
+					reqLog.Debugw("Resolved approver group members from legacy resolver",
+						"group", group,
+						"escalation", p.Name,
+						"memberCount", len(members),
+						"members", members)
 				}
-				countAdded := len(allApprovers) - countBefore
-				reqLog.Debugw("Added group members to approvers",
-					"group", group,
-					"escalation", p.Name,
-					"newMembersAdded", countAdded,
-					"totalApproversNow", len(allApprovers))
 			}
+
+			countBefore := len(allApprovers)
+			for _, member := range members {
+				allApprovers = addIfNotPresent(allApprovers, member)
+				// Track member as belonging to this group
+				approversByGroup[group] = addIfNotPresent(approversByGroup[group], member)
+			}
+			countAdded := len(allApprovers) - countBefore
+			reqLog.Debugw("Added group members to approvers",
+				"group", group,
+				"escalation", p.Name,
+				"newMembersAdded", countAdded,
+				"totalApproversNow", len(allApprovers))
 		}
 
 		// Check if this is the matched escalation
@@ -2179,15 +2201,48 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 			reqLog.Debugw("User is session approver (direct user)", "session", session.Name, "escalation", esc.Name, "user", email)
 			return true
 		}
-		// Group approver intersection
-		for _, g := range approverGroups {
-			if slices.Contains(esc.Spec.Approvers.Groups, g) {
-				reqLog.Debugw("User is session approver (group)", "session", session.Name, "escalation", esc.Name, "group", g)
-				return true
+
+		// Multi-IDP aware group checking: use deduplicated members from status if available
+		approverGroupsToCheck := esc.Spec.Approvers.Groups
+		var dedupMembers []string
+
+		// If multi-IDP fields are set, use pre-computed deduplicated members from status
+		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 && esc.Status.ApproverGroupMembers != nil {
+			// Multi-IDP mode: check against deduplicated members directly
+			for _, g := range approverGroupsToCheck {
+				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
+					dedupMembers = append(dedupMembers, members...)
+					reqLog.Debugw("Using deduplicated members from multi-IDP status",
+						"escalation", esc.Name, "group", g, "memberCount", len(members))
+				}
+			}
+
+			// Check if approver's email is in the deduplicated member list
+			for _, member := range dedupMembers {
+				if strings.EqualFold(member, email) {
+					reqLog.Debugw("User is session approver (multi-IDP deduplicated group member)",
+						"session", session.Name, "escalation", esc.Name, "member", email)
+					return true
+				}
+			}
+		} else {
+			// Legacy mode: check against user's groups
+			for _, g := range approverGroupsToCheck {
+				if slices.Contains(approverGroups, g) {
+					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", g)
+					return true
+				}
 			}
 		}
+
 		// This escalation did not grant approver rights to the caller; continue checking other escalations
-		reqLog.Debugw("Escalation found but user not in approvers (continuing)", "session", session.Name, "escalation", esc.Name, "user", email, "userGroups", approverGroups, "approverUsers", esc.Spec.Approvers.Users, "approverGroups", esc.Spec.Approvers.Groups)
+		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+			reqLog.Debugw("Escalation found but user not in deduplicated approvers (continuing)",
+				"session", session.Name, "escalation", esc.Name, "user", email, "dedupMemberCount", len(dedupMembers))
+		} else {
+			reqLog.Debugw("Escalation found but user not in approvers (continuing)",
+				"session", session.Name, "escalation", esc.Name, "user", email, "userGroups", approverGroups, "approverUsers", esc.Spec.Approvers.Users, "approverGroups", esc.Spec.Approvers.Groups)
+		}
 		continue
 	}
 	// No matching escalation granting approver rights found. Log details for debugging.

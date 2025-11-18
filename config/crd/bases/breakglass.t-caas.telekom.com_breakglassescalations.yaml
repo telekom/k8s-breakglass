@@ -96,6 +96,27 @@ spec:
                   If set, only users authenticated via one of the named providers can use this escalation.
                   Names should match the metadata.name of IdentityProvider resources.
                   The intersection of cluster-allowed and escalation-allowed IDPs is used.
+                  NOTE: This field is mutually exclusive with AllowedIdentityProvidersForRequests and AllowedIdentityProvidersForApprovers.
+                items:
+                  type: string
+                type: array
+              allowedIdentityProvidersForApprovers:
+                description: |-
+                  allowedIdentityProvidersForApprovers specifies which IdentityProvider CRs can APPROVE this escalation.
+                  If empty, defaults to AllowedIdentityProviders (or cluster defaults if that is also unset).
+                  If set, only users authenticated via one of the named providers can approve this escalation.
+                  This field is mutually exclusive with AllowedIdentityProviders.
+                  When set, AllowedIdentityProvidersForRequests must also be set (or both can be left empty).
+                items:
+                  type: string
+                type: array
+              allowedIdentityProvidersForRequests:
+                description: |-
+                  allowedIdentityProvidersForRequests specifies which IdentityProvider CRs can REQUEST this escalation.
+                  If empty, defaults to AllowedIdentityProviders (or cluster defaults if that is also unset).
+                  If set, only users authenticated via one of the named providers can request this escalation.
+                  This field is mutually exclusive with AllowedIdentityProviders.
+                  When set, AllowedIdentityProvidersForApprovers must also be set (or both can be left empty).
                 items:
                   type: string
                 type: array
@@ -237,6 +258,31 @@ spec:
                 additionalProperties:
                   type: string
                 description: Status of group resolution
+                type: object
+              groupSyncErrors:
+                description: |-
+                  groupSyncErrors contains error messages from failed IDP group syncs.
+                  Each entry describes which IDP failed and why.
+                  Empty if GroupSyncStatus is "Success".
+                items:
+                  type: string
+                type: array
+              groupSyncStatus:
+                description: |-
+                  groupSyncStatus indicates the current status of group member synchronization from IDPs.
+                  Possible values: "Success" (all IDPs synced), "PartialFailure" (some IDPs failed), "Failed" (all IDPs failed)
+                type: string
+              idpGroupMemberships:
+                additionalProperties:
+                  additionalProperties:
+                    items:
+                      type: string
+                    type: array
+                  type: object
+                description: |-
+                  idpGroupMemberships stores the per-IDP group membership hierarchy (before deduplication).
+                  Structure: map[idpName]map[groupName][]memberList
+                  This preserves full visibility into which users came from which IDP for debugging and auditing.
                 type: object
               requestCount:
                 description: Counters for tracking requests and approvals

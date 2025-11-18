@@ -144,6 +144,57 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 	return fmt.Sprintf("(Your token was issued by %s)", issuer)
 }
 
+// isRequestFromAllowedIDP checks if a requestor from a specific issuer (IDP) is allowed to use a specific escalation.
+// If the escalation has AllowedIdentityProvidersForRequests, the issuer must match one of those.
+// If AllowedIdentityProvidersForRequests is empty, the request is allowed from any IDP (backward compatible).
+// This function maps IDP issuer URLs to IDP names for matching.
+func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer string, esc *v1alpha1.BreakglassEscalation, reqLog *zap.SugaredLogger) bool {
+	// If no IDP restrictions, request is allowed from any IDP
+	if len(esc.Spec.AllowedIdentityProvidersForRequests) == 0 {
+		return true
+	}
+
+	// If multi-IDP mode is enabled but no issuer provided, deny by default
+	if issuer == "" {
+		reqLog.Debugw("Request missing issuer information required for multi-IDP validation", "escalation", esc.Name)
+		return false
+	}
+
+	// Find matching IdentityProvider by issuer
+	idpList := &v1alpha1.IdentityProviderList{}
+	if err := wc.escalManager.List(ctx, idpList); err != nil {
+		reqLog.With("error", err.Error()).Warn("Failed to list IdentityProviders for request validation")
+		// Fail open: if we can't load IDPs, don't block the request
+		return true
+	}
+
+	// Map issuer to IDP name
+	var matchedIDPName string
+	for _, idp := range idpList.Items {
+		if idp.Spec.Issuer == issuer && !idp.Spec.Disabled {
+			matchedIDPName = idp.Name
+			break
+		}
+	}
+
+	// If issuer doesn't match any enabled IDP, deny
+	if matchedIDPName == "" {
+		reqLog.Debugw("Request from unknown or disabled IDP issuer", "issuer", issuer, "escalation", esc.Name)
+		return false
+	}
+
+	// Check if the matched IDP is in the escalation's allowed list
+	for _, allowedIDPName := range esc.Spec.AllowedIdentityProvidersForRequests {
+		if allowedIDPName == matchedIDPName {
+			reqLog.Debugw("Request allowed: IDP in AllowedIdentityProvidersForRequests", "idp", matchedIDPName, "escalation", esc.Name)
+			return true
+		}
+	}
+
+	reqLog.Debugw("Request denied: IDP not in AllowedIdentityProvidersForRequests", "idp", matchedIDPName, "allowedIDPs", esc.Spec.AllowedIdentityProvidersForRequests, "escalation", esc.Name)
+	return false
+}
+
 type SubjectAccessReviewResponseStatus struct {
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason"`
@@ -492,6 +543,20 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 		escals = append(escals, groupescals...)
 		reqLog.With("totalEscalations", len(escals)).Debug("Total available escalation paths")
+
+		// Filter escalations based on requestor's IDP (multi-IDP awareness)
+		// If an escalation has AllowedIdentityProvidersForRequests, the requestor's IDP must be in that list
+		var idpFilteredEscals []v1alpha1.BreakglassEscalation
+		for _, esc := range escals {
+			if wc.isRequestFromAllowedIDP(ctx, issuer, &esc, reqLog) {
+				idpFilteredEscals = append(idpFilteredEscals, esc)
+			}
+		}
+
+		if len(idpFilteredEscals) < len(escals) {
+			reqLog.Debugw("Escalations filtered by requestor IDP", "beforeFilter", len(escals), "afterFilter", len(idpFilteredEscals), "issuer", issuer)
+		}
+		escals = idpFilteredEscals
 
 		if len(escals) > 0 {
 			reqLog.Debugw("Escalation paths available", "count", len(escals))
