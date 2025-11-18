@@ -75,7 +75,7 @@ export interface State {
 }
 
 const user = ref<User>();
-const currentIDPName = ref<string | undefined>();
+export const currentIDPName = ref<string | undefined>();
 
 export default class AuthService {
   public userManager: UserManager;

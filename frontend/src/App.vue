@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { inject, computed, ref, onMounted } from "vue";
+import { inject, computed, ref, onMounted, watch } from "vue";
 import { decodeJwt } from "jose";
 import { useRoute } from "vue-router";
 
 import { AuthKey } from "@/keys";
 import { BrandingKey } from "@/keys";
-import { useUser } from "@/services/auth";
+import { useUser, currentIDPName } from "@/services/auth";
 import IDPSelector from "@/components/IDPSelector.vue";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 
@@ -51,6 +51,12 @@ async function refreshGroups() {
 
 onMounted(refreshGroups);
 
+// Watch for user changes and refresh groups when user logs in/changes
+watch(() => user.value, () => {
+  console.debug("[App] User changed, refreshing groups and IDP info");
+  refreshGroups();
+}, { deep: true });
+
 // Check if multi-IDP is available
 async function checkMultiIDP() {
   try {
@@ -73,7 +79,7 @@ onMounted(checkMultiIDP);
 const userNav = computed(() => {
   if (authenticated.value) {
   const groups = groupsRef.value;
-  const idpName = auth?.getIdentityProviderName?.();
+  const idpName = currentIDPName.value;
   const descriptions: string[] = [];
   if (idpName) {
     descriptions.push(`Provider: ${idpName}`);
