@@ -170,9 +170,9 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// OIDC proxy endpoint: proxies discovery and JWKS calls to the configured OIDC authority
 	// This allows the browser to fetch .well-known/openid-configuration and jwks via the
 	// server origin (avoiding the need to trust the Keycloak cert in the browser).
-	engine.GET("api/oidc/authority/*proxyPath", s.handleOIDCProxy)
+	engine.GET("/api/oidc/authority/*proxyPath", s.handleOIDCProxy)
 	// Also handle POST for token endpoint
-	engine.POST("api/oidc/authority/*proxyPath", s.handleOIDCProxy)
+	engine.POST("/api/oidc/authority/*proxyPath", s.handleOIDCProxy)
 
 	// Prometheus metrics endpoint (under /api/metrics)
 	engine.GET("/api/metrics", func(c *gin.Context) {
