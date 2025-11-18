@@ -534,11 +534,27 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	start := time.Now()
 	proxyPath := c.Param("proxyPath")
 
-	// Validate proxyPath to prevent SSRF attacks: must be a relative path
-	// Check that it doesn't contain a scheme (://) or absolute URL
-	if strings.Contains(proxyPath, "://") || strings.HasPrefix(proxyPath, "//") {
+	// Validate proxyPath to prevent SSRF attacks and path traversal
+	// Allowed: relative paths like /authorize, /.well-known/openid-configuration
+	// Denied: scheme (https://), network-path (//) or path traversal (..)
+	if strings.Contains(proxyPath, "://") || strings.HasPrefix(proxyPath, "//") || strings.Contains(proxyPath, "..") {
 		s.log.Sugar().Warnw("oidc_proxy_invalid_path", "path", proxyPath)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: absolute URLs not allowed"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: absolute URLs and path traversal not allowed"})
+		return
+	}
+
+	// Parse proxyPath as URL to ensure it's well-formed and doesn't contain suspicious encoding
+	parsedPath, parseErr := url.Parse(proxyPath)
+	if parseErr != nil {
+		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "error", parseErr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: malformed URL"})
+		return
+	}
+
+	// Ensure the parsed path is clean (no fragment, no suspicious components)
+	if parsedPath.Scheme != "" || parsedPath.Host != "" || parsedPath.Fragment != "" {
+		s.log.Sugar().Warnw("oidc_proxy_suspicious_path", "path", proxyPath)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: contains URL components"})
 		return
 	}
 
