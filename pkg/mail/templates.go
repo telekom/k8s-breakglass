@@ -21,6 +21,20 @@ type ApprovedMailParams struct {
 	ApproverFullName string
 	ApproverEmail    string
 	BrandingName     string
+
+	// Additional tracking and scheduling info
+	ApprovedAt     string // When the approval was granted
+	ActivationTime string // When access becomes active (may be scheduled)
+	ExpirationTime string // When access expires
+	IsScheduled    bool   // Whether this is a pre-scheduled approval
+	SessionID      string // Reference to the session ID
+	Cluster        string // Cluster name
+	Username       string // Username for the access
+	ApprovalReason string // Why this was approved (optional approver notes)
+
+	// IDP information for multi-IDP setups
+	IDPName   string // Name of the identity provider to use
+	IDPIssuer string // OIDC issuer URL for the IDP
 }
 
 type RequestBreakglassSessionMailParams struct {

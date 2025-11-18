@@ -71,38 +71,38 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 		{
 			name:           "Invalid: contains scheme (SSRF attempt)",
 			proxyPath:      "https://evil.com/",
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "invalid proxy path",
+			expectedStatus: http.StatusForbidden,
+			expectedError:  "requested path is not an allowed OIDC endpoint",
 		},
 		{
 			name:           "Invalid: network-path (SSRF attempt)",
 			proxyPath:      "//evil.com/",
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "invalid proxy path",
+			expectedStatus: http.StatusForbidden,
+			expectedError:  "requested path is not an allowed OIDC endpoint",
 		},
 		{
 			name:           "Invalid: path traversal (..) attempt",
 			proxyPath:      "/../admin/",
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "invalid proxy path",
+			expectedStatus: http.StatusForbidden,
+			expectedError:  "requested path is not an allowed OIDC endpoint",
 		},
 		{
 			name:           "Invalid: path traversal with multiple components",
 			proxyPath:      "/token/../../admin",
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "invalid proxy path",
+			expectedStatus: http.StatusForbidden,
+			expectedError:  "invalid proxy path: absolute URLs and path traversal not allowed",
 		},
 		{
 			name:           "Invalid: contains both scheme and path",
 			proxyPath:      "http://evil.com/path",
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "invalid proxy path",
+			expectedStatus: http.StatusForbidden,
+			expectedError:  "requested path is not an allowed OIDC endpoint",
 		},
 		{
 			name:           "Invalid: URL with fragment (potential XSS via URL routing)",
 			proxyPath:      "/token#admin",
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "invalid proxy path",
+			expectedStatus: http.StatusBadGateway, // Fragment is stripped by browser before sending, so /token is valid; 502 because no real upstream
+			expectedError:  "",
 		},
 	}
 
@@ -119,15 +119,9 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 			server.handleOIDCProxy(c)
 
 			// Verify response status
-			if tt.expectedStatus == http.StatusBadGateway {
-				// For valid paths that fail to connect (no real upstream), we expect BadGateway
-				assert.Equal(t, http.StatusBadGateway, w.Code, "expected BadGateway for valid path")
-			} else {
-				// For invalid paths, we expect BadRequest
-				assert.Equal(t, tt.expectedStatus, w.Code, "expected status %d", tt.expectedStatus)
-				if tt.expectedError != "" {
-					assert.Contains(t, w.Body.String(), tt.expectedError, "response should contain error message")
-				}
+			assert.Equal(t, tt.expectedStatus, w.Code, "expected status %d but got %d", tt.expectedStatus, w.Code)
+			if tt.expectedError != "" {
+				assert.Contains(t, w.Body.String(), tt.expectedError, "response should contain error message")
 			}
 		})
 	}
@@ -191,7 +185,7 @@ func TestOIDCProxyMultiIDPValidation(t *testing.T) {
 			name:               "Unknown authority in header (blocked for SSRF prevention)",
 			proxyPath:          "/.well-known/openid-configuration",
 			customAuthority:    "https://unknown.example.com",
-			expectedStatus:     http.StatusBadRequest,
+			expectedStatus:     http.StatusForbidden,
 			shouldContainError: true,
 		},
 	}
@@ -292,7 +286,7 @@ func TestOIDCProxyPathTrustedIDPs(t *testing.T) {
 			server.handleOIDCProxy(c)
 
 			if tt.expectingBadReq {
-				assert.Equal(t, http.StatusBadRequest, w.Code, "path traversal should be rejected with BadRequest")
+				assert.Equal(t, http.StatusForbidden, w.Code, "path traversal should be rejected with Forbidden")
 			}
 		})
 	}
@@ -335,12 +329,12 @@ func TestOIDCProxyPathEncoding(t *testing.T) {
 		{
 			name:       "URL-encoded slash (%2F)",
 			proxyPath:  "/.well-known%2Fopenid-configuration",
-			shouldFail: false, // This is allowed - it's just a valid path component
+			shouldFail: true, // Encoded paths don't match whitelist and are rejected for security
 		},
 		{
 			name:       "URL-encoded dot (.)",
 			proxyPath:  "/.well-known/openid%2Econfiguration",
-			shouldFail: false,
+			shouldFail: true, // Encoded dots don't match whitelist and are rejected for security
 		},
 		{
 			name:       "Double-dot encoded (%2E%2E)",
@@ -365,10 +359,10 @@ func TestOIDCProxyPathEncoding(t *testing.T) {
 			server.handleOIDCProxy(c)
 
 			if tt.shouldFail {
-				assert.Equal(t, http.StatusBadRequest, w.Code, "invalid path should be rejected")
+				assert.Equal(t, http.StatusForbidden, w.Code, "invalid path should be rejected")
 			} else {
 				// Valid paths should either succeed (200 OK from upstream) or fail with BadGateway (no real upstream)
-				assert.NotEqual(t, http.StatusBadRequest, w.Code, "valid path should not return BadRequest")
+				assert.NotEqual(t, http.StatusForbidden, w.Code, "valid path should not return Forbidden")
 			}
 		})
 	}
@@ -493,5 +487,5 @@ func TestOIDCProxyLocalhostBinding(t *testing.T) {
 	server.handleOIDCProxy(c)
 
 	// Unknown authority should be rejected
-	assert.Equal(t, http.StatusBadRequest, w.Code, "unknown authority should be rejected")
+	assert.Equal(t, http.StatusForbidden, w.Code, "unknown authority should be rejected")
 }

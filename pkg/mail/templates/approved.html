@@ -8,99 +8,108 @@
       font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
       color: #333;
       line-height: 1.6;
+      background-color: #f5f5f5;
     }
 
     .container {
-      max-width: 600px;
+      max-width: 650px;
       margin: 0 auto;
-      padding: 0;
+      padding: 20px;
+      background-color: white;
     }
 
     .header {
-      background-color: #4CAF50;
+      background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
       color: white;
-      padding: 20px;
+      padding: 30px 20px;
       text-align: center;
+      border-radius: 12px 12px 0 0;
+      margin: -20px -20px 0 -20px;
     }
 
     .header h1 {
       margin: 0;
-      font-size: 24px;
-    }
-
-    .header p {
-      margin: 5px 0 0 0;
-      font-size: 0.95rem;
-      opacity: 0.9;
-    }
-
-    .card {
-      box-shadow: rgba(0, 0, 0, 0.1) 0px 8px 32px 0px, rgba(0, 0, 0, 0.1) 0px 4px 8px 0px;
-      border: 1px solid rgba(0, 0, 0, 0.1);
-      border-radius: 12px;
-      margin: 20px auto;
-      padding: 20px;
-      max-width: 500px;
-    }
-
-    .requester-box {
-      background: #f8f9fa;
-      padding: 15px;
-      border-left: 4px solid #4CAF50;
-      margin-bottom: 20px;
-      border-radius: 4px;
-    }
-
-    .requester-name {
-      font-size: 1.3rem;
+      font-size: 28px;
       font-weight: bold;
-      color: #4CAF50;
     }
 
-    .requester-email {
+    .header-subtitle {
+      margin: 10px 0 0 0;
       font-size: 0.95rem;
-      color: #666;
+      opacity: 0.95;
     }
 
-    .approval-banner {
-      background-color: #c8e6c9;
-      border-left: 4px solid #4CAF50;
-      padding: 15px;
-      margin: 15px 0;
-      border-radius: 4px;
-      text-align: center;
-    }
-
-    .approval-badge {
+    .success-badge {
       display: inline-block;
-      background-color: #4CAF50;
+      background-color: rgba(255, 255, 255, 0.3);
       color: white;
-      padding: 8px 16px;
+      padding: 4px 12px;
       border-radius: 20px;
-      font-weight: bold;
-      font-size: 0.95rem;
-      margin-bottom: 10px;
+      font-size: 0.85rem;
+      margin-top: 10px;
     }
 
-    .approval-title {
+    .section {
+      margin: 25px 0;
+      padding: 20px;
+      border-radius: 8px;
+      border-left: 4px solid #4CAF50;
+    }
+
+    .section.primary {
+      background-color: #f0f8f0;
+      border-left-color: #4CAF50;
+    }
+
+    .section.info {
+      background-color: #f8f9fa;
+      border-left-color: #2196F3;
+    }
+
+    .section-title {
       font-size: 1.1rem;
       font-weight: bold;
-      color: #2e7d32;
-      margin: 10px 0;
+      margin: 0 0 15px 0;
+      color: #1b5e20;
     }
 
-    .approver-box {
-      background: #e8f5e9;
-      padding: 15px;
-      border-left: 4px solid #4CAF50;
+    .section.info .section-title {
+      color: #1565c0;
+    }
+
+    .detail-row {
+      display: flex;
+      margin: 12px 0;
+      font-size: 0.95rem;
+    }
+
+    .detail-label {
+      font-weight: 600;
+      color: #555;
+      min-width: 140px;
+      flex-shrink: 0;
+    }
+
+    .detail-value {
+      color: #333;
+      word-break: break-word;
+      flex: 1;
+    }
+
+    .approver-card {
+      background-color: #e8f5e9;
+      border: 1px solid #c8e6c9;
+      border-radius: 8px;
+      padding: 16px;
       margin: 15px 0;
-      border-radius: 4px;
     }
 
     .approver-label {
-      font-size: 0.9rem;
-      font-weight: bold;
+      font-size: 0.85rem;
+      font-weight: 600;
       color: #2e7d32;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
       margin-bottom: 8px;
     }
 
@@ -108,75 +117,102 @@
       font-size: 1.1rem;
       font-weight: bold;
       color: #1b5e20;
-      margin-bottom: 4px;
+      margin: 4px 0;
     }
 
     .approver-email {
       font-size: 0.9rem;
       color: #666;
+      margin: 0;
     }
 
-    .request-details {
-      background-color: #fafafa;
-      border-left: 4px solid #2196F3;
-      padding: 12px;
-      margin: 15px 0;
-      border-radius: 4px;
-      font-size: 0.9rem;
-    }
-
-    .request-details-title {
-      font-weight: bold;
-      color: #1976D2;
-      margin-bottom: 8px;
-    }
-
-    .detail-row {
-      margin: 6px 0;
-      padding: 4px 0;
-    }
-
-    .detail-label {
-      font-weight: 600;
-      color: #555;
-      display: inline-block;
-      min-width: 100px;
-    }
-
-    .detail-value {
-      color: #333;
-      word-break: break-word;
-    }
-
-    .btn {
-      background-color: #4CAF50;
+    .next-steps {
+      background-color: #fff3cd;
+      border-left-color: #ffc107;
+      border-left: 4px solid #ffc107;
+      padding: 16px;
       border-radius: 8px;
-      padding: 12px 32px;
-      line-height: 22.4px;
-      display: inline-block;
-      color: white;
-      text-decoration: none;
-      font-weight: bold;
       margin: 20px 0;
     }
 
-    .btn:hover {
-      background-color: #45a049;
-      text-decoration: none;
+    .next-steps-title {
+      font-weight: bold;
+      color: #856404;
+      margin: 0 0 10px 0;
+      font-size: 1rem;
     }
 
-    .footer {
-      background-color: #f5f5f5;
-      border-top: 1px solid #ddd;
-      padding: 15px;
-      margin-top: 20px;
-      font-size: 0.85rem;
-      color: #666;
-      text-align: left;
+    .next-steps ul {
+      margin: 10px 0 0 0;
+      padding-left: 20px;
+      color: #856404;
     }
 
-    .footer-text {
-      margin: 0;
+    .next-steps li {
+      margin: 6px 0;
+      font-size: 0.95rem;
+    }
+
+    .highlight {
+      font-weight: bold;
+      color: #1b5e20;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #e0e0e0;
+      margin: 20px 0;
+    }
+
+    .disclaimer {
+      background-color: #fff3e0;
+      border-left: 4px solid #ff9800;
+      padding: 16px;
+      border-radius: 8px;
+      margin: 20px 0;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .disclaimer-title {
+      font-weight: bold;
+      color: #e65100;
+      margin: 0 0 10px 0;
+      font-size: 1rem;
+    }
+
+    .disclaimer-item {
+      margin: 8px 0;
+      color: #bf360c;
+    }
+
+    .disclaimer-item::before {
+      content: "⚠ ";
+      font-weight: bold;
+    }
+
+    .audit-notice {
+      background-color: #f3e5f5;
+      border-left: 4px solid #9c27b0;
+      padding: 16px;
+      border-radius: 8px;
+      margin: 20px 0;
+      font-size: 0.9rem;
+    }
+
+    .audit-notice-title {
+      font-weight: bold;
+      color: #6a1b9a;
+      margin: 0 0 8px 0;
+    }
+
+    .audit-notice-text {
+      color: #4a148c;
+      line-height: 1.5;
+    }
+
+    .icon {
+      margin-right: 6px;
     }
   </style>
 </head>
@@ -184,43 +220,176 @@
 <body>
   <div class="container">
     <div class="header">
-      <h1>✓ Request Approved</h1>
-      <p>Your breakglass access request has been approved</p>
+      <h1>✓ Access Request Approved</h1>
+      <p class="header-subtitle">Your breakglass escalation request has been approved</p>
+      <div class="success-badge">✓ APPROVED</div>
     </div>
 
-    <div class="card">
-      <div class="requester-box">
-        <p style="margin: 0 0 8px 0;">
-          <span class="requester-name">{{ .SubjectFullName }}</span>
-        </p>
-        <p style="margin: 0;">
-          <span class="requester-email">{{ .SubjectEmail }}</span>
-        </p>
-      </div>
-
-      <div class="approval-banner">
-        <div class="approval-badge">✓ APPROVED</div>
-        <p class="approval-title">Your access request has been approved</p>
-      </div>
-
-      <div class="approver-box">
-        <p class="approver-label">Approved by:</p>
-        <p class="approver-name">{{ .ApproverFullName }}</p>
-        <p class="approver-email">{{ .ApproverEmail }}</p>
-      </div>
-
-      <div class="request-details">
-        <p class="request-details-title">📋 Access Details:</p>
-        <div class="detail-row">
-          <span class="detail-label">Role:</span>
-          <span class="detail-value">{{ .RequestedRole }}</span>
+    <!-- Requester Section -->
+    <div class="section primary">
+      <div class="detail-row">
+        <div class="detail-label"><span class="icon">👤</span> Requestor:</div>
+        <div>
+          <div class="detail-value" style="font-weight: bold; font-size: 1rem;">{{ .SubjectFullName }}</div>
+          <div class="detail-value" style="font-size: 0.9rem; color: #666;">{{ .SubjectEmail }}</div>
         </div>
       </div>
     </div>
 
+    <!-- Approval Details Section -->
+    <div class="section info">
+      <div class="section-title"><span class="icon">✓</span> Approval Details</div>
+      
+      <div class="detail-row">
+        <div class="detail-label">Role/Scope:</div>
+        <div class="detail-value"><span class="highlight">{{ .RequestedRole }}</span></div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Cluster:</div>
+        <div class="detail-value">{{ .Cluster }}</div>
+      </div>
+
+      {{ if .Username }}
+      <div class="detail-row">
+        <div class="detail-label">Username:</div>
+        <div class="detail-value">{{ .Username }}</div>
+      </div>
+      {{ end }}
+
+      <div class="detail-row">
+        <div class="detail-label">Session ID:</div>
+        <div class="detail-value" style="font-family: monospace; font-size: 0.9rem;">{{ .SessionID }}</div>
+      </div>
+
+      <div class="approver-card">
+        <div class="approver-label">Approved By</div>
+        <div class="approver-name">{{ .ApproverFullName }}</div>
+        <div class="approver-email">{{ .ApproverEmail }}</div>
+      </div>
+
+      {{ if .ApprovalReason }}
+      <div class="detail-row">
+        <div class="detail-label">Approver Notes:</div>
+        <div class="detail-value" style="font-style: italic;">{{ .ApprovalReason }}</div>
+      </div>
+      {{ end }}
+    </div>
+
+    <!-- IDP Information (if required) -->
+    {{ if .IDPName }}
+    <div class="section info" style="border-left-color: #ff6f00;">
+      <div class="section-title"><span class="icon">🔐</span> Identity Provider Information</div>
+      
+      <div class="detail-row">
+        <div class="detail-label">IDP to Use:</div>
+        <div class="detail-value"><span class="highlight" style="color: #e65100;">{{ .IDPName }}</span></div>
+      </div>
+
+      {{ if .IDPIssuer }}
+      <div style="background-color: #fff3e0; padding: 12px; border-radius: 4px; margin-top: 12px; font-size: 0.85rem;">
+        <div style="font-weight: 600; color: #e65100; margin-bottom: 4px;">Important:</div>
+        <div style="color: #bf360c;">You must use the <strong>{{ .IDPName }}</strong> identity provider when logging in to access this cluster. Other identity providers will not grant you access to these resources.</div>
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+
+    <!-- Scheduling Information -->
+    <div class="section info">
+      <div class="section-title"><span class="icon">📅</span> Timing Information</div>
+      
+      {{ if .IsScheduled }}
+      <div class="detail-row">
+        <div class="detail-label">Status:</div>
+        <div class="detail-value"><span style="background-color: #fff9c4; padding: 2px 6px; border-radius: 4px; font-weight: bold;">SCHEDULED</span></div>
+      </div>
+      {{ else }}
+      <div class="detail-row">
+        <div class="detail-label">Status:</div>
+        <div class="detail-value"><span style="background-color: #c8e6c9; padding: 2px 6px; border-radius: 4px; font-weight: bold;">ACTIVE NOW</span></div>
+      </div>
+      {{ end }}
+
+      <div class="detail-row">
+        <div class="detail-label">Approved At:</div>
+        <div class="detail-value">{{ .ApprovedAt }}</div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Activation Time:</div>
+        <div class="detail-value"><span class="highlight">{{ .ActivationTime }}</span></div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Expiration Time:</div>
+        <div class="detail-value"><span class="highlight">{{ .ExpirationTime }}</span></div>
+      </div>
+    </div>
+
+    <!-- Audit & Compliance Notice -->
+    <div class="audit-notice">
+      <div class="audit-notice-title">🔐 Audit & Compliance Notice</div>
+      <div class="audit-notice-text">
+        <strong>All your actions are being recorded and audited.</strong><br>
+        Every command, file access, and operation you perform during this session will be logged and stored for compliance and security purposes. These logs are monitored and may be reviewed by:
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>Security team for incident response</li>
+          <li>Compliance team for audit trails</li>
+          <li>Management and authorized personnel as needed</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Disclaimer Section -->
+    <div class="disclaimer">
+      <div class="disclaimer-title">⚠️ Important Disclaimer & Responsibilities</div>
+      <div class="disclaimer-item">All actions during this session are <strong>permanent and auditable</strong></div>
+      <div class="disclaimer-item">You are <strong>personally responsible</strong> for all actions performed</div>
+      <div class="disclaimer-item">Misuse of escalated privileges may result in disciplinary action</div>
+      <div class="disclaimer-item">Access will <strong>automatically expire</strong> at {{ .ExpirationTime }}</div>
+      <div class="disclaimer-item">Never share your session or use it on behalf of others</div>
+      <div class="disclaimer-item">This privilege is for <strong>emergency use only</strong></div>
+    </div>
+
+    <!-- Next Steps -->
+    <div class="next-steps">
+      {{ if .IsScheduled }}
+      <div class="next-steps-title">📋 What Happens Next?</div>
+      <ul>
+        <li>Your access is <span class="highlight">scheduled</span> and will become active at {{ .ActivationTime }}</li>
+        <li>You will receive another notification when your access is activated</li>
+        <li>All your actions will be audited and logged starting from activation</li>
+        <li>Keep the activation window active time to a minimum for security</li>
+        <li>Contact your administrator if you need to cancel or reschedule this approval</li>
+      </ul>
+      {{ else }}
+      <div class="next-steps-title">📋 What Happens Next?</div>
+      <ul>
+        <li>Your access has been <span class="highlight">granted immediately</span></li>
+        <li>You can now access the requested resources with the approved role</li>
+        <li>All your actions will be audited and logged</li>
+        <li>Keep your session active time to a minimum for security</li>
+        <li>Your access will automatically expire at {{ .ExpirationTime }}</li>
+      </ul>
+      {{ end }}
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Support Section -->
+    <div style="text-align: center; font-size: 0.9rem; color: #666; margin-top: 20px;">
+      <p style="margin: 0;">
+        <strong>Questions?</strong> Contact your cluster administrator or escalation team.
+      </p>
+      <p style="margin: 5px 0 0 0; font-size: 0.85rem; color: #999;">
+        This is an automated notification from {{ .BrandingName }}. Do not reply to this email.
+      </p>
+    </div>
+
     <div class="footer">
       <p class="footer-text">
-        This is an automated notification. Do not reply to this email. For support, contact your cluster administrator.
+        This approval grants you temporary escalated privileges. Please ensure you follow your organization's breakglass procedures and policies.
       </p>
     </div>
   </div>

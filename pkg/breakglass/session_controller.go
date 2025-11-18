@@ -2350,43 +2350,59 @@ func (wc BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredL
 		return
 	}
 
-	// Prepare email parameters
-	params := mail.RequestBreakglassSessionMailParams{
-		SubjectEmail:       session.Spec.User,
-		SubjectFullName:    session.Spec.User, // Could be enhanced to include display name if available
-		RequestingUsername: session.Spec.User,
-		RequestedCluster:   session.Spec.Cluster,
-		RequestedUsername:  session.Spec.User, // The user the session grants access for
-		RequestedGroup:     session.Spec.GrantedGroup,
-		Approver:           session.Status.Approver,
-		URL:                wc.config.Frontend.BaseURL,
-		BrandingName: func() string {
-			if wc.config.Frontend.BrandingName != "" {
-				return wc.config.Frontend.BrandingName
+	brandingName := "Breakglass"
+	if wc.config.Frontend.BrandingName != "" {
+		brandingName = wc.config.Frontend.BrandingName
+	}
+
+	// Determine if this is a scheduled session
+	isScheduled := session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero()
+
+	// Determine activation time (either now or scheduled time)
+	activationTime := time.Now().Format("2006-01-02 15:04:05")
+	if isScheduled {
+		activationTime = session.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05")
+	}
+
+	// Prepare email parameters with comprehensive approval info
+	params := mail.ApprovedMailParams{
+		SubjectFullName: session.Spec.User,
+		SubjectEmail:    session.Spec.User,
+		RequestedRole:   session.Spec.GrantedGroup,
+		ApproverFullName: func() string {
+			// Try to extract approver name from email or use as-is
+			if session.Status.Approver != "" {
+				return session.Status.Approver
 			}
-			return "Breakglass"
+			return "Approver"
 		}(),
+		ApproverEmail: session.Status.Approver,
+		BrandingName:  brandingName,
+
+		// Tracking and scheduling information
+		ApprovedAt:     time.Now().Format("2006-01-02 15:04:05"),
+		ActivationTime: activationTime,
+		ExpirationTime: session.Status.ExpiresAt.Format("2006-01-02 15:04:05"),
+		IsScheduled:    isScheduled,
+		SessionID:      session.Name,
+		Cluster:        session.Spec.Cluster,
+		Username:       session.Spec.User,
+		ApprovalReason: "", // Could be populated from session.Status.ApprovalReason if available
+
+		// IDP information for multi-IDP setups
+		IDPName:   session.Spec.IdentityProviderName,
+		IDPIssuer: session.Spec.IdentityProviderIssuer,
 	}
 
-	// Format scheduled start time if present
-	if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
-		params.ScheduledStartTime = session.Spec.ScheduledStartTime.Format("2006-01-02 15:04:05")
-	}
-
-	// Add expiration time
-	if !session.Status.ExpiresAt.IsZero() {
-		params.CalculatedExpiresAt = session.Status.ExpiresAt.Format("2006-01-02 15:04:05")
-	}
-
-	// Render the approval email body
-	body, err := mail.RenderBreakglassSessionNotification(params)
+	// Render the approval email body using the enhanced template
+	body, err := mail.RenderApproved(params)
 	if err != nil {
 		log.Errorw("failed to render approval email template", "error", err, "session", session.Name)
 		return
 	}
 
 	// Enqueue the email for sending
-	subject := fmt.Sprintf("Breakglass Session Approved - %s access to %s", session.Spec.GrantedGroup, session.Spec.Cluster)
+	subject := fmt.Sprintf("Breakglass Access Approved - %s on %s", session.Spec.GrantedGroup, session.Spec.Cluster)
 	err = wc.mailQueue.Enqueue(
 		"session-approval-"+session.Name,
 		[]string{session.Spec.User},
