@@ -434,6 +434,10 @@ func main() {
 		log.Infow("identity_provider_set_on_api_server", "type", idpConfig.Type)
 	}
 
+	// Enable multi-IDP support in auth handler for token verification
+	// This allows the backend to verify tokens from any configured IDP, not just the default one
+	auth.WithIdentityProviderLoader(idpLoader)
+
 	// Setup GroupMemberResolver for escalation approver expansion
 	var resolver breakglass.GroupMemberResolver
 	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" {
