@@ -57,18 +57,7 @@ spec:
       key: clientSecret
 ```
 
-### config.yaml Reference
-
-The breakglass `config.yaml` must reference an IdentityProvider:
-
-```yaml
-frontend:
-  identityProviderName: "production-idp"  # REQUIRED
-  baseURL: "https://breakglass.example.com"
-  brandingName: "Das SCHIFF Breakglass"
-```
-
-If the referenced IdentityProvider is not found, breakglass will fail to start.
+**Note:** The legacy `config.yaml` fields `authorizationserver` and `frontend.identityProviderName` have been removed. All OIDC/IDP configuration is now managed via IdentityProvider CRDs. See [Identity Provider documentation](identity-provider.md).
 
 ## Session State and Validation
 

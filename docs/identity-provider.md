@@ -232,18 +232,18 @@ spec:
   disabled: true
 ```
 
-## Configuration via config.yaml
+## Configuration Integration
 
-The Frontend config in `config.yaml` now references the IdentityProvider by name:
+The IdentityProvider CRD is the **sole source** of OIDC/IDP configuration. No additional config.yaml settings are required.
 
-```yaml
-frontend:
-  identityProviderName: "production-idp"  # REQUIRED - name of the IdentityProvider CR
-  baseURL: "https://breakglass.example.com"
-  brandingName: "Das SCHIFF Breakglass"
-```
+**Legacy config.yaml fields removed:**
+- `authorizationserver.url` - Now in `spec.oidc.authority`
+- `authorizationserver.jwksEndpoint` - Auto-discovered from authority
+- `frontend.identityProviderName` - No longer needed, all IDPs auto-discovered
+- `frontend.oidcAuthority` - Now in `spec.oidc.authority`
+- `frontend.oidcClientID` - Now in `spec.oidc.clientID`
 
-**Note:** Individual OIDC fields (`oidcAuthority`, `oidcClientID`) are no longer supported. All identity configuration must be in the IdentityProvider CRD.
+The system automatically discovers and uses all enabled IdentityProvider CRDs in the cluster.
 
 ## RBAC Permissions
 
@@ -274,11 +274,14 @@ The Breakglass controller requires the following permissions for IdentityProvide
   - get
 ```
 
-## Migration from Old Configuration
+## Migration from Legacy Configuration
 
-### Before (Deprecated)
+**Note:** As of this version, migration is complete. The following legacy fields have been **removed** from config.yaml:
+
+### Removed (No Longer Supported)
 
 ```yaml
+# These fields are NO LONGER supported in config.yaml:
 authorizationServer:
   url: "https://auth.example.com"
   jwksEndpoint: "https://auth.example.com/.well-known/openid-configuration"
@@ -286,6 +289,7 @@ authorizationServer:
 frontend:
   oidcAuthority: "https://auth.example.com"
   oidcClientID: "breakglass-ui"
+  identityProviderName: "production-idp"  # REMOVED
 
 keycloak:
   baseURL: "https://keycloak.example.com"
@@ -294,10 +298,10 @@ keycloak:
   clientSecret: "secret"
 ```
 
-### After (Current)
+### Current (CRD-Only)
 
 ```yaml
-# config.yaml - minimal, just reference the CRD
+# config.yaml - No IDP configuration needed
 frontend:
   identityProviderName: "production-idp"
   baseURL: "https://breakglass.example.com"

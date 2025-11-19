@@ -26,12 +26,8 @@ kubernetes:
   oidcPrefixes:
     - "keycloak:"
     - "oidc:"
-authorizationServer:
-  url: "http://localhost:8080"
-  jwksEndpoint: "certs"
 frontend:
   baseURL: "http://localhost:3000"
-  identityProviderName: "default"
 mail:
   host: "localhost"
   port: 587
@@ -47,12 +43,8 @@ server:
   listenAddress: ":9090"
 kubernetes:
   context: "test-context"
-authorizationServer:
-  url: "http://localhost:8080"
-  jwksEndpoint: "certs"
 frontend:
   baseURL: "http://localhost:3000"
-  identityProviderName: "default"
 mail:
   host: "localhost"
   port: 587
@@ -66,11 +58,8 @@ mail:
 			configContent: `
 server:
   listenAddress: ":3000"
-authorizationServer:
-  url: "http://localhost:8080"
-  jwksEndpoint: "certs"
 frontend:
-  identityProviderName: "default"
+  baseURL: "http://localhost:3000"
 mail:
   host: "localhost"
   port: 587

@@ -153,11 +153,12 @@ func (l *IdentityProviderLoader) convertToRuntimeConfig(ctx context.Context, idp
 	l.logger.Debugw("Converting IdentityProvider to runtime config", "name", idp.Name)
 
 	runtimeConfig := &IdentityProviderConfig{
-		Name:      idp.Name,
-		Issuer:    idp.Spec.Issuer,
-		Type:      "OIDC",
-		Authority: idp.Spec.OIDC.Authority,
-		ClientID:  idp.Spec.OIDC.ClientID,
+		Name:                 idp.Name,
+		Issuer:               idp.Spec.Issuer,
+		Type:                 "OIDC",
+		Authority:            idp.Spec.OIDC.Authority,
+		ClientID:             idp.Spec.OIDC.ClientID,
+		CertificateAuthority: idp.Spec.OIDC.CertificateAuthority,
 	}
 
 	l.logger.Debugw("OIDC config loaded",

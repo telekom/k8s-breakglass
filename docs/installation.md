@@ -42,14 +42,10 @@ server:
   tlsCertFile: /etc/breakglass/tls/tls.crt
   tlsKeyFile: /etc/breakglass/tls/tls.key
 
-authorizationserver:
-  url: https://keycloak.example.com/realms/master
-  jwksEndpoint: "protocol/openid-connect/certs"
-
 frontend:
-  identityProviderName: production-idp  # REQUIRED - name of IdentityProvider CR
   baseURL: https://breakglass.example.com
   brandingName: "Das SCHIFF Breakglass"
+  uiFlavour: "oss"  # optional: "oss", "telekom", or "neutral"
 
 mail:
   host: smtp.example.com
@@ -64,7 +60,7 @@ kubernetes:
     - "oidc:"
 ```
 
-**Important:** The `identityProviderName` field in `frontend` section is **REQUIRED**. It must reference a valid IdentityProvider resource that will be created in the next step.
+**Note:** OIDC/IDP configuration is now managed via IdentityProvider CRDs (see next step). The legacy `authorizationserver` and `frontend.identityProviderName` fields have been removed.
 
 For complete configuration options, see [Configuration Reference](./configuration-reference.md).
 

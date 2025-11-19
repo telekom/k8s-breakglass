@@ -30,6 +30,10 @@ type IdentityProviderConfig struct {
 	// ClientSecret for Keycloak (loaded from secret reference)
 	ClientSecret string
 
+	// CertificateAuthority contains a PEM encoded CA certificate for TLS validation
+	// Loaded from spec.oidc.certificateAuthority
+	CertificateAuthority string
+
 	// Other provider-specific fields (BaseURL for Keycloak, etc.)
 	Keycloak *KeycloakRuntimeConfig
 
@@ -50,18 +54,6 @@ type KeycloakRuntimeConfig struct {
 	CertificateAuthority string
 }
 
-type AuthorizationServer struct {
-	URL          string `yaml:"url"`
-	JWKSEndpoint string `yaml:"jwksEndpoint"`
-	// InsecureSkipVerify allows opting into skipping TLS verification for the
-	// authorization server. This must be explicitly enabled in non-production
-	// setups. Default is false.
-	InsecureSkipVerify bool `yaml:"insecureSkipVerify"`
-	// CertificateAuthority contains a PEM encoded CA certificate to validate the
-	// TLS certificate presented by the authorization server (optional).
-	CertificateAuthority string `yaml:"certificateAuthority"`
-}
-
 type Frontend struct {
 	BaseURL string `yaml:"baseURL"`
 	// BrandingName optionally overrides the UI product name shown in the frontend
@@ -72,11 +64,6 @@ type Frontend struct {
 	// If empty, defaults to "oss". This allows the UI appearance to be configured server-side
 	// without requiring a rebuild.
 	UIFlavour string `yaml:"uiFlavour"`
-
-	// IdentityProviderName is the name of the IdentityProvider CR to use for frontend config
-	// This is REQUIRED and must reference a valid IdentityProvider resource
-	// Example: "production-idp"
-	IdentityProviderName string `yaml:"identityProviderName"`
 }
 
 type Mail struct {
@@ -115,11 +102,10 @@ type Kubernetes struct {
 }
 
 type Config struct {
-	Server              Server
-	AuthorizationServer AuthorizationServer `yaml:"authorizationServer"`
-	Mail                Mail
-	Frontend            Frontend
-	Kubernetes          Kubernetes
+	Server     Server
+	Mail       Mail
+	Frontend   Frontend
+	Kubernetes Kubernetes
 }
 
 // Load loads the breakglass configuration from a file path.

@@ -25,10 +25,6 @@ func TestNewServer(t *testing.T) {
 			BaseURL:      "https://example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          "https://auth.example.com",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	tests := []struct {
@@ -68,10 +64,6 @@ func TestServer_getConfig(t *testing.T) {
 			BaseURL:      "https://example.com",
 			BrandingName: "Das SCHIFF Breakglass",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          "https://auth.example.com",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	server := &Server{
@@ -99,8 +91,6 @@ func TestServer_getConfig(t *testing.T) {
 	assert.Equal(t, "test-client-id", response.Frontend.OIDCClientID)
 	// Branding should be propagated to the public config
 	assert.Equal(t, cfg.Frontend.BrandingName, response.Frontend.BrandingName)
-	assert.Equal(t, cfg.AuthorizationServer.URL, response.AuthorizationServer.URL)
-	assert.Equal(t, cfg.AuthorizationServer.JWKSEndpoint, response.AuthorizationServer.JWKSEndpoint)
 }
 
 func TestServer_getIdentityProvider(t *testing.T) {
@@ -239,10 +229,6 @@ func TestServer_getConfig_WithoutIdentityProvider(t *testing.T) {
 	cfg := config.Config{
 		Frontend: config.Frontend{
 			BrandingName: "Test Brand",
-		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          "https://auth.example.com",
-			JWKSEndpoint: ".well-known/jwks.json",
 		},
 	}
 

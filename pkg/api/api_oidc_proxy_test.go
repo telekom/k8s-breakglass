@@ -26,10 +26,6 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 			BaseURL:      "https://example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          "https://keycloak.example.com/auth/realms/master",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	// Create a test OIDC authority URL
@@ -42,6 +38,9 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 		oidcAuthority: keycloakURL,
 		log:           logger,
 		auth:          auth,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: "https://keycloak.example.com/auth/realms/master",
+		},
 	}
 
 	tests := []struct {
@@ -153,10 +152,6 @@ func TestOIDCProxyMultiIDPValidation(t *testing.T) {
 			BaseURL:      "https://example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          mockKeycloak.URL,
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	auth := &AuthHandler{}
@@ -165,6 +160,9 @@ func TestOIDCProxyMultiIDPValidation(t *testing.T) {
 		oidcAuthority: mockKeycloakURL,
 		log:           logger,
 		auth:          auth,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: mockKeycloak.URL,
+		},
 	}
 
 	tests := []struct {
@@ -226,10 +224,6 @@ func TestOIDCProxyPathTrustedIDPs(t *testing.T) {
 			BaseURL:      "https://example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          "https://keycloak.example.com/auth/realms/master",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	defaultKeycloakURL, err := url.Parse("https://keycloak.example.com")
@@ -241,6 +235,9 @@ func TestOIDCProxyPathTrustedIDPs(t *testing.T) {
 		oidcAuthority: defaultKeycloakURL,
 		log:           logger,
 		auth:          auth,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: "https://keycloak.example.com/auth/realms/master",
+		},
 	}
 
 	tests := []struct {
@@ -307,10 +304,6 @@ func TestOIDCProxyPathEncoding(t *testing.T) {
 			BaseURL:      "https://example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          "https://keycloak.example.com/auth/realms/master",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	auth := &AuthHandler{}
@@ -319,6 +312,9 @@ func TestOIDCProxyPathEncoding(t *testing.T) {
 		oidcAuthority: keycloakURL,
 		log:           logger,
 		auth:          auth,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: "https://keycloak.example.com/auth/realms/master",
+		},
 	}
 
 	tests := []struct {
@@ -383,10 +379,6 @@ func TestOIDCProxyPortBinding(t *testing.T) {
 			BaseURL:      "https://example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          "https://keycloak.example.com:8443/auth/realms/master",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	auth := &AuthHandler{}
@@ -395,6 +387,9 @@ func TestOIDCProxyPortBinding(t *testing.T) {
 		oidcAuthority: keycloakURL,
 		log:           logger,
 		auth:          auth,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: "https://keycloak.example.com:8443/auth/realms/master",
+		},
 	}
 
 	tests := []struct {
@@ -460,10 +455,6 @@ func TestOIDCProxyLocalhostBinding(t *testing.T) {
 			BaseURL:      "https://example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          "https://localhost:8443/auth/realms/master",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	auth := &AuthHandler{}
@@ -472,6 +463,9 @@ func TestOIDCProxyLocalhostBinding(t *testing.T) {
 		oidcAuthority: keycloakURL,
 		log:           logger,
 		auth:          auth,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: "https://localhost:8443/auth/realms/master",
+		},
 	}
 
 	// Test that localhost authority is configured and won't be overridden
@@ -533,10 +527,6 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 			BaseURL:      "https://breakglass.example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          mockKeycloak.URL + "/auth/realms/schiff",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	auth := &AuthHandler{}
@@ -545,6 +535,9 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 		oidcAuthority: authorityWithRealm, // Authority includes the realm path
 		log:           logger,
 		auth:          auth,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: mockKeycloak.URL + "/auth/realms/schiff",
+		},
 	}
 
 	tests := []struct {
@@ -640,10 +633,6 @@ func TestOIDCProxyRealmPathIntegration(t *testing.T) {
 			BaseURL:      "https://breakglass.example.com",
 			BrandingName: "Test",
 		},
-		AuthorizationServer: config.AuthorizationServer{
-			URL:          mockKeycloak.URL + "/auth/realms/production",
-			JWKSEndpoint: ".well-known/jwks.json",
-		},
 	}
 
 	auth := &AuthHandler{}
@@ -652,6 +641,9 @@ func TestOIDCProxyRealmPathIntegration(t *testing.T) {
 		oidcAuthority: authorityWithRealm,
 		log:           logger,
 		auth:          auth,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: mockKeycloak.URL + "/auth/realms/production",
+		},
 	}
 
 	t.Run("Full OIDC discovery flow with realm path preservation", func(t *testing.T) {

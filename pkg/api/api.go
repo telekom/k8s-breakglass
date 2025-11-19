@@ -175,12 +175,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		log:    log,
 	}
 
-	// parse configured authorization server URL for proxying requests when possible
-	if cfg.AuthorizationServer.URL != "" {
-		if u, err := url.Parse(cfg.AuthorizationServer.URL); err == nil {
-			s.oidcAuthority = u
-		}
-	}
+	// Note: oidcAuthority is set dynamically when IdentityProvider is loaded via SetIdentityProvider()
+	// No need to parse from config.AuthorizationServer since we now use IdentityProvider CRD
 
 	// OIDC proxy endpoint: proxies discovery and JWKS calls to the configured OIDC authority
 	// This allows the browser to fetch .well-known/openid-configuration and jwks via the
@@ -318,14 +314,8 @@ type FrontendConfig struct {
 	UIFlavour     string `json:"uiFlavour,omitempty"`
 }
 
-type AuthorizationServerConfig struct {
-	URL          string `json:"url"`
-	JWKSEndpoint string `json:"jwksEndpoint"`
-}
-
 type PublicConfig struct {
-	Frontend            FrontendConfig            `json:"frontend"`
-	AuthorizationServer AuthorizationServerConfig `json:"authorizationServer"`
+	Frontend FrontendConfig `json:"frontend"`
 }
 
 // IdentityProviderResponse exposes the configured IdentityProvider details to the frontend.
@@ -408,10 +398,6 @@ func (s *Server) getConfig(c *gin.Context) {
 			OIDCClientID:  clientID,
 			BrandingName:  s.config.Frontend.BrandingName,
 			UIFlavour:     s.config.Frontend.UIFlavour,
-		},
-		AuthorizationServer: AuthorizationServerConfig{
-			URL:          s.config.AuthorizationServer.URL,
-			JWKSEndpoint: s.config.AuthorizationServer.JWKSEndpoint,
 		},
 	})
 }
@@ -715,12 +701,18 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	target := targetURL.String()
 	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target_scheme", targetURL.Scheme, "target_host", targetURL.Host, "target_path", targetURL.Path)
 
-	// Create HTTP client; trust configured CA if present otherwise skip verify for e2e
+	// Create HTTP client; get TLS config from IdentityProvider if available
 	transport := &http.Transport{}
-	// If an authorization server CA is embedded in config, use it
-	if s.config.AuthorizationServer.CertificateAuthority != "" {
+
+	// Thread-safe read of idpConfig for TLS settings
+	s.idpMutex.RLock()
+	idpCfg := s.idpConfig
+	s.idpMutex.RUnlock()
+
+	// If an IdentityProvider CA is configured, use it; otherwise skip verify for e2e
+	if idpCfg != nil && idpCfg.CertificateAuthority != "" {
 		roots := x509.NewCertPool()
-		ok := roots.AppendCertsFromPEM([]byte(s.config.AuthorizationServer.CertificateAuthority))
+		ok := roots.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority))
 		if ok {
 			transport.TLSClientConfig = &tls.Config{RootCAs: roots}
 		}

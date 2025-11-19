@@ -23,13 +23,9 @@ Edit `config.yaml` with your settings:
 server:
   listenAddress: :8080
 
-authorizationserver:
-  url: https://keycloak.example.com
-  jwksEndpoint: "realms/master/protocol/openid-connect/certs"
-
 frontend:
-  identityProviderName: "production-idp"  # REQUIRED
   baseURL: https://breakglass.example.com
+  brandingName: "My Breakglass"  # optional
 
 mail:
   host: smtp.example.com
@@ -41,6 +37,8 @@ kubernetes:
   oidcPrefixes:
     - "oidc:"
 ```
+
+**Note:** OIDC/IDP configuration is now managed via IdentityProvider CRDs (see next step).
 
 ## 2. Create IdentityProvider Resource
 

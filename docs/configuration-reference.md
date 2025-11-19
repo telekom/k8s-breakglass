@@ -9,10 +9,11 @@ Complete reference for the breakglass configuration file (`config.yaml`).
 
 The breakglass configuration file controls:
 - Server and TLS settings
-- OIDC authentication
 - Frontend UI behavior
 - Email notifications
 - Kubernetes cluster settings
+
+**Note:** OIDC/IDP authentication is now configured via **IdentityProvider CRDs** instead of config.yaml. See [Identity Provider documentation](identity-provider.md) for details.
 
 ## Configuration File Format
 
@@ -20,13 +21,10 @@ The breakglass configuration file controls:
 server:
   listenAddress: :8080
 
-authorizationserver:
-  url: https://keycloak.example.com/realms/master
-  jwksEndpoint: "protocol/openid-connect/certs"
-
 frontend:
-  identityProviderName: "production-idp"
   baseURL: https://breakglass.example.com
+  brandingName: "Das SCHIFF Breakglass"  # optional
+  uiFlavour: "oss"  # optional
 
 mail:
   host: smtp.example.com
@@ -90,88 +88,9 @@ Path to TLS private key file for HTTPS.
 
 ---
 
-### `authorizationserver`
-
-OIDC authentication provider configuration.
-
-#### `url`
-
-Base URL of the OIDC provider.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `string` |
-| **Required** | Yes |
-| **Example** | `https://keycloak.example.com/realms/master` |
-
-```yaml
-authorizationserver:
-  url: https://keycloak.example.com/realms/master
-```
-
-#### `jwksEndpoint`
-
-Relative path to the JWKS (JSON Web Key Set) endpoint.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `string` |
-| **Required** | Yes |
-| **Example** | `protocol/openid-connect/certs` (Keycloak), `oauth/discovery/keys` (other providers) |
-
-```yaml
-authorizationserver:
-  url: https://keycloak.example.com/realms/master
-  jwksEndpoint: "protocol/openid-connect/certs"
-```
-
-The full JWKS URL will be: `{url}/{jwksEndpoint}`
-
-**For common OIDC providers:**
-
-| Provider | URL | JWKS Endpoint |
-|----------|-----|---------------|
-| Keycloak | `https://keycloak.example.com/realms/master` | `protocol/openid-connect/certs` |
-| Azure AD | `https://login.microsoftonline.com/{tenant}/v2.0` | `.well-known/openid-configuration` |
-| Okta | `https://yourorgname.okta.com/oauth2/default` | `v1/keys` |
-| Google | `https://accounts.google.com` | `.well-known/openid-configuration` |
-
----
-
 ### `frontend`
 
-Frontend UI and authentication configuration.
-
-#### `identityProviderName` (REQUIRED)
-
-Name of the IdentityProvider Kubernetes resource to use.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `string` |
-| **Required** | Yes |
-| **Example** | `production-idp` |
-
-```yaml
-frontend:
-  identityProviderName: "production-idp"
-```
-
-This must reference an existing IdentityProvider CR:
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: IdentityProvider
-metadata:
-  name: production-idp
-spec:
-  primary: true
-  oidc:
-    authority: "https://keycloak.example.com/realms/master"
-    clientID: "breakglass-ui"
-```
-
-**Important**: Breakglass will fail to start if the referenced IdentityProvider doesn't exist.
+Frontend UI configuration.
 
 #### `baseURL`
 
@@ -475,14 +394,8 @@ server:
   tlsCertFile: /etc/breakglass/tls.crt
   tlsKeyFile: /etc/breakglass/tls.key
 
-# OIDC authentication provider
-authorizationserver:
-  url: https://keycloak.example.com/realms/master
-  jwksEndpoint: "protocol/openid-connect/certs"
-
 # Frontend UI configuration
 frontend:
-  identityProviderName: "production-idp"  # REQUIRED
   baseURL: https://breakglass.example.com
   brandingName: "Das SCHIFF Breakglass"
   uiFlavour: "telekom"
@@ -507,6 +420,8 @@ kubernetes:
     - "oidc:"
     - "keycloak:"
 ```
+
+**Note:** OIDC/IDP configuration (authority, clientID, JWKS, etc.) is now managed via **IdentityProvider CRDs**. See [Identity Provider documentation](identity-provider.md).
 
 ## Environment Variables
 
@@ -546,16 +461,14 @@ Breakglass loads configuration in this order:
 
 Breakglass validates configuration on startup:
 
-- **REQUIRED**: `authorizationserver.url`
-- **REQUIRED**: `authorizationserver.jwksEndpoint`
-- **REQUIRED**: `frontend.identityProviderName` (must exist as Kubernetes resource)
 - **REQUIRED**: `frontend.baseURL`
 - **REQUIRED**: `mail.host` (unless `--disable-email` flag set)
+- **REQUIRED**: At least one IdentityProvider CRD must exist in the cluster
 
 **If validation fails**: Controller exits with error message.
 
 ```
-Fatal error: missing required configuration field 'frontend.identityProviderName'
+Fatal error: IdentityProvider validation failed: no IdentityProvider resources found
 ```
 
 ## Secrets and Sensitive Data

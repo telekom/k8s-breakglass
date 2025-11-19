@@ -2,12 +2,7 @@ server:
   listenAddress: :8080
   tlsCertFile: /some/file.crt # optional
   tlsKeyFile: /some/file.key # optional for https
-authorizationserver:
-  url: http://127.0.0.1:8080
-  jwksEndpoint: "realms/master/protocol/openid-connect/certs" # sample for keycloak
 frontend:
-  oidcAuthority: http://127.0.0.1:8080/realms/master
-  oidcClientID: breakglass-ui
   baseURL: http://localhost:5173
   # Optional: brandingName controls the product name shown in the UI header and
   # page title. Example: "Das SCHIFF Breakglass". If omitted, the frontend will
