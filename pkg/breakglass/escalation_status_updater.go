@@ -485,18 +485,39 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			updated.Status.ApproverGroupMembers = map[string][]string{}
 		}
 
-		// Check if multi-IDP fields are set (Phase 2 feature)
-		hasMultiIDPFields := len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0
+		// Determine which IDPs to use for group resolution
+		// If allowedIdentityProvidersForApprovers is explicitly set, use those IDPs
+		// Otherwise, if IDPLoader is available and has multiple enabled IDPs, use all of them (auto multi-IDP mode)
+		// Otherwise, fall back to legacy single-resolver mode
+		var idpsToUse []string
+		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+			// Explicitly configured IDPs
+			idpsToUse = esc.Spec.AllowedIdentityProvidersForApprovers
+			log.Debugw("Using explicitly configured IDPs", "escalation", esc.Name, "idps", idpsToUse)
+		} else if u.IDPLoader != nil {
+			// Auto-detect: use all enabled IDPs
+			allIDPs, err := u.IDPLoader.LoadAllIdentityProviders(ctx)
+			if err != nil {
+				log.Warnw("Failed to load IDPs for auto-detection, falling back to legacy mode", "error", err, "escalation", esc.Name)
+			} else if len(allIDPs) > 0 {
+				idpsToUse = make([]string, 0, len(allIDPs))
+				for name := range allIDPs {
+					idpsToUse = append(idpsToUse, name)
+				}
+				log.Debugw("Auto-detected multiple IDPs, using multi-IDP mode", "escalation", esc.Name, "idpCount", len(idpsToUse), "idps", idpsToUse)
+			}
+		}
+
 		changed := false
 
-		if hasMultiIDPFields {
-			// Phase 2: Use multi-IDP group sync with IDP hierarchy storage
-			log.Debugw("Using multi-IDP group sync", "escalation", esc.Name, "idps", esc.Spec.AllowedIdentityProvidersForApprovers)
+		if len(idpsToUse) > 0 {
+			// Multi-IDP mode: Use multi-IDP group sync with IDP hierarchy storage
+			log.Debugw("Using multi-IDP group sync", "escalation", esc.Name, "idps", idpsToUse)
 
 			hierarchy, _, _ := u.fetchGroupMembersFromMultipleIDPs(
 				ctx,
 				&esc,
-				esc.Spec.AllowedIdentityProvidersForApprovers,
+				idpsToUse,
 				groups,
 				log,
 			)
@@ -562,9 +583,10 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				log.Debugw("Updated escalation successfully", "escalation", esc.Name, "groups", groups)
 				// Emit success event with details about what was synced
 				if u.EventRecorder != nil {
-					if hasMultiIDPFields {
+					if len(idpsToUse) > 0 {
+						// Multi-IDP mode
 						eventMsg := fmt.Sprintf("Group members synced successfully from %d IDPs. Updated %d group(s) with approvers.",
-							len(esc.Spec.AllowedIdentityProvidersForApprovers), len(groups))
+							len(idpsToUse), len(groups))
 						u.EventRecorder.Eventf(updated, "Normal", "GroupMembersSynced", eventMsg)
 					} else {
 						// Legacy single resolver mode
