@@ -146,13 +146,14 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	log := k.log
 	if k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
 		if log != nil {
-			log.Debugw("Keycloak resolver missing configuration; skipping group lookup",
+			log.Errorw("Keycloak resolver has incomplete configuration; cannot resolve groups",
 				"group", group,
 				"baseURL", k.cfg.BaseURL,
 				"realm", k.cfg.Realm,
 				"clientID", k.cfg.ClientID)
 		}
-		return nil, nil // gracefully skip when not configured
+		return nil, fmt.Errorf("keycloak resolver incomplete config: baseURL=%s, realm=%s, clientID=%s",
+			k.cfg.BaseURL, k.cfg.Realm, k.cfg.ClientID)
 	}
 	if v, ok := k.cache.get(group); ok {
 		if log != nil {
@@ -579,8 +580,43 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
 			if err := u.K8sClient.Status().Update(ctx, updated); err != nil {
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
+				// Emit error event
+				if u.EventRecorder != nil {
+					u.EventRecorder.Eventf(updated, "Warning", "GroupSyncStatusUpdateFailed",
+						"Failed to update group sync status: %v", err)
+				}
 			} else {
 				log.Debugw("Updated escalation successfully", "escalation", esc.Name, "groups", groups)
+				// Emit success event with details about what was synced
+				if u.EventRecorder != nil {
+					if hasMultiIDPFields {
+						successIDPs := 0
+						failedIDPs := 0
+						for _, syncErr := range updated.Status.GroupSyncErrors {
+							if strings.Contains(syncErr, "Failed") {
+								failedIDPs++
+							}
+						}
+						successIDPs = len(esc.Spec.AllowedIdentityProvidersForApprovers) - failedIDPs
+
+						eventMsg := fmt.Sprintf("Group members synced successfully from %d IDPs (%d succeeded, %d failed). Updated %d group(s) with approvers.",
+							len(esc.Spec.AllowedIdentityProvidersForApprovers), successIDPs, failedIDPs, len(groups))
+						if updated.Status.GroupSyncStatus == "Success" {
+							u.EventRecorder.Eventf(updated, "Normal", "GroupMembersSynced", eventMsg)
+						} else if updated.Status.GroupSyncStatus == "PartialFailure" {
+							u.EventRecorder.Eventf(updated, "Warning", "GroupMembersPartiallyUpdated", eventMsg)
+						}
+					} else {
+						// Legacy single resolver mode
+						totalMembers := 0
+						for _, members := range updated.Status.ApproverGroupMembers {
+							totalMembers += len(members)
+						}
+						u.EventRecorder.Eventf(updated, "Normal", "GroupMembersSynced",
+							"Group members resolved successfully. Total approvers from %d group(s): %d members.",
+							len(groups), totalMembers)
+					}
+				}
 			}
 		}
 	}

@@ -195,8 +195,20 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	idp.Status.Connected = true
 	idp.Status.LastValidation = metav1.NewTime(time.Now())
 	if err := r.client.Status().Update(ctx, idp); err != nil {
-		// Return error and requeue after a fixed interval (overrides controller-runtime's exponential backoff)
-		r.logger.Warnw("failed to update IdentityProvider status (will retry in 5s)", "error", err, "name", req.Name)
+		// Status update failed - mark as error since status persistence is critical
+		r.logger.Errorw("failed to update IdentityProvider status after successful reload (will retry)", "error", err, "name", req.Name)
+		idp.Status.Phase = "Error"
+		idp.Status.Message = fmt.Sprintf("Failed to persist status: %v", err)
+		if err := r.client.Status().Update(ctx, idp); err != nil {
+			r.logger.Errorw("failed to update error status on IdentityProvider (will retry in 5s)", "error", err, "name", req.Name)
+		}
+		// Emit warning event about status update failure
+		if r.recorder != nil {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "StatusUpdateFailed", fmt.Sprintf("Failed to persist status after successful reload: %v", err))
+		}
+		// Requeue with exponential backoff
 		return reconcile.Result{RequeueAfter: 5 * time.Second}, err
 	}
 

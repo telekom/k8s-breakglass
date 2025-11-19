@@ -2393,9 +2393,9 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groups", groups)
 				return groups, nil
 			}
-			log.Debugw("Falling back to legacy GetUserGroups (kube context)", "cluster", cug.Clustername)
+			log.Debugw("Falling back to legacy GetUserGroupsWithConfig (kube context)", "cluster", cug.Clustername)
 		}
-		return GetUserGroups(ctx, cug)
+		return GetUserGroupsWithConfig(ctx, cug, ctrl.configPath)
 	}
 
 	return ctrl
