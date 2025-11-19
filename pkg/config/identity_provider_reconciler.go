@@ -146,8 +146,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		if r.onError != nil {
 			r.onError(ctx, err)
 		}
-		// Requeue with exponential backoff (handled by controller-runtime)
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		// Return error to trigger controller-runtime's exponential backoff
+		return reconcile.Result{}, err
 	}
 
 	// Reload configuration when IdentityProvider changes
@@ -199,8 +199,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 				fmt.Sprintf("Failed to reload configuration: %v", err))
 		}
 
-		// Requeue with exponential backoff
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		// Return error to trigger controller-runtime's exponential backoff
+		return reconcile.Result{}, err
 	}
 
 	r.logger.Infow("identity provider configuration reloaded successfully", "name", req.Name)
@@ -264,7 +264,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		idp.SetCondition(errorCondition)
 
 		if statusErr := r.client.Status().Update(ctx, idp); statusErr != nil {
-			r.logger.Errorw("failed to update error status on IdentityProvider (will retry in 5s)", "error", statusErr, "name", req.Name)
+			r.logger.Errorw("failed to update error status on IdentityProvider (will retry via exponential backoff)", "error", statusErr, "name", req.Name)
 		}
 		// Emit warning event about status update failure
 		if r.recorder != nil {
@@ -273,8 +273,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 			r.recorder.Event(eventIdp, "Warning", "StatusUpdateFailed",
 				fmt.Sprintf("Failed to persist status after successful reload: %v", err))
 		}
-		// Requeue with exponential backoff
-		return reconcile.Result{RequeueAfter: 5 * time.Second}, err
+		// Return error to trigger controller-runtime's exponential backoff
+		return reconcile.Result{}, err
 	}
 
 	// Emit event on the IdentityProvider CR

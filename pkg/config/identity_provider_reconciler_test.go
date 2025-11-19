@@ -180,10 +180,10 @@ func TestIdentityProviderReconciler_ReconcileReloadError(t *testing.T) {
 
 	result, err := reconciler.Reconcile(context.Background(), req)
 
-	// Should return error and requeue
+	// Should return error (controller-runtime handles exponential backoff automatically)
 	assert.Error(t, err)
 	assert.Equal(t, reloadErr, err)
-	assert.Equal(t, 30*time.Second, result.RequeueAfter)
+	assert.Equal(t, time.Duration(0), result.RequeueAfter, "RequeueAfter should be 0 when returning error (controller-runtime handles backoff)")
 	assert.Equal(t, 1, errorCallCount)
 }
 
