@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -282,7 +283,70 @@ func validateIdentityProviderFields(
 	return errs
 }
 
-// validateSessionIdentityProviderAuthorization ensures that the IdentityProvider used to create
+// validateTimeoutRelationships ensures that timeout values have proper relationships:
+// - approvalTimeout must be less than maxValidFor (if both are set)
+// - idleTimeout must be less than maxValidFor (if both are set)
+// - All timeout values must be positive durations
+func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+
+	// Get durations - these have defaults ("1h") in the spec comments
+	maxValidFor := spec.MaxValidFor
+	approvalTimeout := spec.ApprovalTimeout
+	idleTimeout := spec.IdleTimeout
+
+	// Helper to parse and validate duration string
+	parseDuration := func(durationStr string, fieldName string, path *field.Path) (time.Duration, *field.Error) {
+		if durationStr == "" {
+			return 0, nil // Not set, return zero
+		}
+
+		duration, err := time.ParseDuration(durationStr)
+		if err != nil {
+			return 0, field.Invalid(path, durationStr, fmt.Sprintf("invalid duration format: %v", err))
+		}
+
+		if duration <= 0 {
+			return 0, field.Invalid(path, durationStr, fieldName+" must be greater than 0")
+		}
+
+		return duration, nil
+	}
+
+	// Parse and validate maxValidFor
+	maxValidForDuration, maxValidForErr := parseDuration(maxValidFor, "maxValidFor", specPath.Child("maxValidFor"))
+	if maxValidForErr != nil {
+		errs = append(errs, maxValidForErr)
+		return errs // Can't compare if maxValidFor is invalid
+	}
+
+	// Parse and validate approvalTimeout
+	approvalTimeoutDuration, approvalTimeoutErr := parseDuration(approvalTimeout, "approvalTimeout", specPath.Child("approvalTimeout"))
+	if approvalTimeoutErr != nil {
+		errs = append(errs, approvalTimeoutErr)
+	} else if approvalTimeout != "" && approvalTimeoutDuration >= maxValidForDuration {
+		errs = append(errs, field.Invalid(
+			specPath.Child("approvalTimeout"),
+			approvalTimeout,
+			fmt.Sprintf("approvalTimeout (%v) must be less than maxValidFor (%v)", approvalTimeout, maxValidFor),
+		))
+	}
+
+	// Parse and validate idleTimeout
+	idleTimeoutDuration, idleTimeoutErr := parseDuration(idleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
+	if idleTimeoutErr != nil {
+		errs = append(errs, idleTimeoutErr)
+	} else if idleTimeout != "" && idleTimeoutDuration >= maxValidForDuration {
+		errs = append(errs, field.Invalid(
+			specPath.Child("idleTimeout"),
+			idleTimeout,
+			fmt.Sprintf("idleTimeout (%v) must be less than maxValidFor (%v)", idleTimeout, maxValidFor),
+		))
+	}
+
+	return errs
+}
+
 // the session is allowed by the associated escalation rule.
 // This is Session Authorization Webhook validation.
 //
@@ -380,6 +444,177 @@ func validateSessionIdentityProviderAuthorization(
 				fmt.Sprintf("IdentityProvider %q is not allowed by escalation %q (allowed IDPs: %v)",
 					sessionIDPName, esc.Name, esc.Spec.AllowedIdentityProviders),
 			))
+		}
+	}
+
+	return errs
+}
+
+// validateIdentifierFormat validates that an identifier (like group name, user email, cluster name) follows reasonable patterns
+func validateIdentifierFormat(value string, fieldPath *field.Path) field.ErrorList {
+	if value == "" {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Check length limits
+	if len(value) > 253 {
+		errs = append(errs, field.TooLong(fieldPath, value, 253))
+	}
+
+	// Check for valid characters (alphanumeric, dots, dashes, underscores, @)
+	// Allows email-like formats and standard identifiers
+	validChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-@:/"
+	for _, ch := range value {
+		found := false
+		for _, valid := range validChars {
+			if ch == valid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Check if it's another allowed special character
+			if !isValidSpecialCharForID(ch) {
+				errs = append(errs, field.Invalid(fieldPath, value, "contains invalid characters"))
+				break
+			}
+		}
+	}
+
+	return errs
+}
+
+// isValidSpecialCharForID validates special characters allowed in identifiers
+func isValidSpecialCharForID(ch rune) bool {
+	validSpecial := []rune{'*', '?', '[', ']', '(', ')', '+', '|', '^', '$', '\\'}
+	for _, v := range validSpecial {
+		if ch == v {
+			return true
+		}
+	}
+	return false
+}
+
+// validateURLFormat validates that a string is a valid URL
+func validateURLFormat(urlStr string, fieldPath *field.Path) field.ErrorList {
+	if urlStr == "" {
+		return nil
+	}
+
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return field.ErrorList{field.Invalid(fieldPath, urlStr, fmt.Sprintf("invalid URL format: %v", err))}
+	}
+
+	var errs field.ErrorList
+
+	// Require scheme
+	if u.Scheme == "" {
+		errs = append(errs, field.Invalid(fieldPath, urlStr, "URL must include scheme (http or https)"))
+	}
+
+	// Only allow http and https
+	if u.Scheme != "http" && u.Scheme != "https" {
+		errs = append(errs, field.Invalid(fieldPath, urlStr, "only http and https schemes are allowed"))
+	}
+
+	// Require host
+	if u.Host == "" {
+		errs = append(errs, field.Invalid(fieldPath, urlStr, "URL must include a host"))
+	}
+
+	return errs
+}
+
+// validateEmailDomainList validates that email domains are reasonable
+func validateEmailDomainList(domains []string, fieldPath *field.Path) field.ErrorList {
+	if len(domains) == 0 {
+		return nil
+	}
+
+	var errs field.ErrorList
+	seenDomains := make(map[string]bool)
+
+	for i, domain := range domains {
+		// Check for duplicates
+		if seenDomains[domain] {
+			errs = append(errs, field.Duplicate(fieldPath.Index(i), domain))
+			continue
+		}
+		seenDomains[domain] = true
+
+		// Validate domain format
+		if len(domain) == 0 || len(domain) > 253 {
+			errs = append(errs, field.Invalid(fieldPath.Index(i), domain, "domain must be between 1 and 253 characters"))
+			continue
+		}
+
+		// Basic domain validation - should have at least one dot
+		if !containsDot(domain) && domain != "localhost" {
+			errs = append(errs, field.Invalid(fieldPath.Index(i), domain, "domain should include a dot (e.g., example.com)"))
+		}
+
+		// Check for valid characters in domain
+		for _, ch := range domain {
+			if !isValidDomainChar(ch) {
+				errs = append(errs, field.Invalid(fieldPath.Index(i), domain, "domain contains invalid characters"))
+				break
+			}
+		}
+	}
+
+	return errs
+}
+
+// containsDot checks if a string contains a dot
+func containsDot(s string) bool {
+	for _, ch := range s {
+		if ch == '.' {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidDomainChar checks if a character is valid in a domain name
+func isValidDomainChar(ch rune) bool {
+	return (ch >= 'a' && ch <= 'z') ||
+		(ch >= 'A' && ch <= 'Z') ||
+		(ch >= '0' && ch <= '9') ||
+		ch == '.' || ch == '-'
+}
+
+// validateStringListNoDuplicates validates that a string list has no duplicates
+func validateStringListNoDuplicates(values []string, fieldPath *field.Path) field.ErrorList {
+	if len(values) == 0 {
+		return nil
+	}
+
+	var errs field.ErrorList
+	seen := make(map[string]bool)
+
+	for i, val := range values {
+		if seen[val] {
+			errs = append(errs, field.Duplicate(fieldPath.Index(i), val))
+		}
+		seen[val] = true
+	}
+
+	return errs
+}
+
+// validateNonEmptyStringList validates that a list is not empty and contains non-empty strings
+func validateNonEmptyStringList(values []string, fieldPath *field.Path, minItems int) field.ErrorList {
+	if len(values) < minItems {
+		return field.ErrorList{field.Required(fieldPath, fmt.Sprintf("must have at least %d items", minItems))}
+	}
+
+	var errs field.ErrorList
+	for i, val := range values {
+		if val == "" {
+			errs = append(errs, field.Required(fieldPath.Index(i), "string cannot be empty"))
 		}
 	}
 

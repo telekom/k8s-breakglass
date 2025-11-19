@@ -111,6 +111,8 @@ type KeycloakGroupSync struct {
 }
 
 // IdentityProviderSpec defines the desired state of an IdentityProvider
+// +kubebuilder:validation:XValidation:rule="has(self.groupSyncProvider) && self.groupSyncProvider == 'Keycloak' ? has(self.keycloak) : true",message="keycloak must be specified when groupSyncProvider is 'Keycloak'"
+// +kubebuilder:validation:XValidation:rule="!has(self.groupSyncProvider) || self.groupSyncProvider != 'Keycloak' || (has(self.keycloak) && self.keycloak != null)",message="keycloak must be specified when groupSyncProvider is set to 'Keycloak'"
 type IdentityProviderSpec struct {
 	// OIDC holds mandatory OIDC configuration for user authentication
 	// This is the base authentication mechanism for all identity providers
@@ -204,9 +206,21 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 	// Validate mandatory OIDC configuration
 	if identityProvider.Spec.OIDC.Authority == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("authority"), "authority is required"))
+	} else {
+		// Validate OIDC authority URL format
+		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.Authority, field.NewPath("spec").Child("oidc").Child("authority"))...)
 	}
+
 	if identityProvider.Spec.OIDC.ClientID == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("clientID"), "clientID is required"))
+	} else {
+		// Validate clientID format (should not contain spaces or special chars)
+		allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.OIDC.ClientID, field.NewPath("spec").Child("oidc").Child("clientID"))...)
+	}
+
+	// Validate JWKS endpoint if provided
+	if identityProvider.Spec.OIDC.JWKSEndpoint != "" {
+		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.JWKSEndpoint, field.NewPath("spec").Child("oidc").Child("jwksEndpoint"))...)
 	}
 
 	// Validate Keycloak configuration if group sync is enabled
@@ -216,13 +230,25 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 		} else {
 			if identityProvider.Spec.Keycloak.BaseURL == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("baseURL"), "baseURL is required"))
+			} else {
+				// Validate Keycloak URL format
+				allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.Keycloak.BaseURL, field.NewPath("spec").Child("keycloak").Child("baseURL"))...)
 			}
+
 			if identityProvider.Spec.Keycloak.Realm == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("realm"), "realm is required"))
+			} else {
+				// Validate realm format
+				allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.Keycloak.Realm, field.NewPath("spec").Child("keycloak").Child("realm"))...)
 			}
+
 			if identityProvider.Spec.Keycloak.ClientID == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientID"), "clientID is required"))
+			} else {
+				// Validate Keycloak client ID format
+				allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.Keycloak.ClientID, field.NewPath("spec").Child("keycloak").Child("clientID"))...)
 			}
+
 			if identityProvider.Spec.Keycloak.ClientSecretRef.Name == "" || identityProvider.Spec.Keycloak.ClientSecretRef.Namespace == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientSecretRef"), "clientSecretRef name and namespace are required"))
 			}

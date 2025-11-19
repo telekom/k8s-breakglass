@@ -30,6 +30,7 @@ const (
 	WeekDuration             = time.Hour * 24 * 7
 	DefaultValidForDuration  = time.Hour
 	DefaultRetainForDuration = MonthDuration
+	APIContextTimeout        = 30 * time.Second // Timeout for API operations like session listing
 )
 
 var ErrSessionNotFound error = errors.New("session not found")
@@ -1084,8 +1085,8 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	// "context canceled" errors when client closes connection during rapid refreshes.
 	// The Kubernetes API List operation needs to complete even if the HTTP client
 	// disconnects, otherwise users see errors on rapid tab switches in the UI.
-	// We use a timeout to prevent indefinite hangs.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// We use a timeout to prevent indefinite hangs. Timeout is configurable via APIContextTimeout.
+	ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
 	defer cancel()
 
 	// Support server-side filtering when cluster/user/group query params are provided
@@ -2047,7 +2048,7 @@ func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 
 	// Use background context with timeout instead of request context to prevent
 	// "context canceled" errors when client closes connection.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
 	defer cancel()
 
 	sessions, err := wc.sessionManager.GetAllBreakglassSessions(ctx)

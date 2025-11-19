@@ -135,6 +135,7 @@ spec:
                 description: |-
                   approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
                   If this duration elapses without approval, the session expires and transitions to ApprovalTimeout state.
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
               approvers:
                 description: approvers specifies who is allowed to approve this escalation.
@@ -185,16 +186,20 @@ spec:
                 type: boolean
               escalatedGroup:
                 description: escalatedGroup is the group to be granted by this escalation.
+                minLength: 1
+                pattern: ^[a-zA-Z0-9._-]+$
                 type: string
               idleTimeout:
                 default: 1h
                 description: idleTimeout is the maximum amount of time a session for
                   this escalation can sit idle without being used.
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
               maxValidFor:
                 default: 1h
                 description: maxValidFor is the maximum amount of time a session for
                   this escalation will be active for after it is approved.
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
               notificationExclusions:
                 description: |-
@@ -231,10 +236,29 @@ spec:
               retainFor:
                 description: retainFor is the amount of time to wait before removing
                   a session for this escalation after it expired
+                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
             required:
             - allowed
             type: object
+            x-kubernetes-validations:
+            - message: either allowed.groups or allowed.clusters must be specified
+                and non-empty
+              rule: 'has(self.allowed.groups) || has(self.allowed.clusters) ? (self.allowed.groups.size()
+                > 0 || self.allowed.clusters.size() > 0) : false'
+            - message: approvers must specify at least one user or group
+              rule: 'has(self.approvers) && (has(self.approvers.users) || has(self.approvers.groups))
+                ? (self.approvers.users.size() > 0 || self.approvers.groups.size()
+                > 0) : true'
+            - message: allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests
+              rule: '!(has(self.allowedIdentityProviders) && self.allowedIdentityProviders.size()
+                > 0) || !(has(self.allowedIdentityProvidersForRequests) && self.allowedIdentityProvidersForRequests.size()
+                > 0)'
+            - message: allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers
+                must both be set or both be empty
+              rule: (has(self.allowedIdentityProvidersForRequests) && self.allowedIdentityProvidersForRequests.size()
+                > 0) == (has(self.allowedIdentityProvidersForApprovers) && self.allowedIdentityProvidersForApprovers.size()
+                > 0)
           status:
             description: BreakglassEscalationStatus defines the observed state of
               BreakglassEscalation.

@@ -67,10 +67,15 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	// Configure trusted proxies for X-Forwarded-For headers
 	// Only trust proxies that are explicitly configured (typically the ingress/load balancer)
-	// Empty slice means don't trust any proxies - safe default if no reverse proxy is used
-	// For production with reverse proxy, set to specific IP addresses like:
-	// engine.SetTrustedProxies([]string{"10.0.0.0/8", "127.0.0.1"})
-	if err := engine.SetTrustedProxies([]string{}); err != nil {
+	// Empty/nil slice means don't trust any proxies - safe default if no reverse proxy is used
+	// For production with reverse proxy, configure in config.yaml:
+	//   server:
+	//     trustedProxies: ["10.0.0.0/8", "127.0.0.1"]
+	trustedProxies := cfg.Server.TrustedProxies
+	if trustedProxies == nil {
+		trustedProxies = []string{}
+	}
+	if err := engine.SetTrustedProxies(trustedProxies); err != nil {
 		log.Warn("Failed to set trusted proxies", zap.Error(err))
 	}
 

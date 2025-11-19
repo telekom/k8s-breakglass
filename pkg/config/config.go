@@ -100,9 +100,10 @@ type Mail struct {
 }
 
 type Server struct {
-	ListenAddress string `yaml:"listenAddress"`
-	TLSCertFile   string `yaml:"tlsCertFile"`
-	TLSKeyFile    string `yaml:"tlsKeyFile"`
+	ListenAddress  string   `yaml:"listenAddress"`
+	TLSCertFile    string   `yaml:"tlsCertFile"`
+	TLSKeyFile     string   `yaml:"tlsKeyFile"`
+	TrustedProxies []string `yaml:"trustedProxies"` // IPs/CIDRS to trust for X-Forwarded-For headers (e.g., ["10.0.0.0/8", "127.0.0.1"])
 }
 
 type Kubernetes struct {

@@ -21,6 +21,7 @@ func TestBreakglassEscalation_ValidateCreate_Success(t *testing.T) {
 		Spec: BreakglassEscalationSpec{
 			EscalatedGroup: "some-group",
 			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
 		},
 	}
 	_, err := be.ValidateCreate(context.Background(), be)
@@ -35,6 +36,7 @@ func TestBreakglassEscalation_ValidateUpdate_Immutable(t *testing.T) {
 		Spec: BreakglassEscalationSpec{
 			EscalatedGroup: "g1",
 			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"c1"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
 		},
 	}
 	modified := old.DeepCopy()
