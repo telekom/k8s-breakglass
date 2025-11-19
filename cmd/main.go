@@ -464,7 +464,7 @@ func main() {
 	log.Infow("Mail queue initialized and started", "retryCount", cfg.Mail.RetryCount, "retryBackoffMs", cfg.Mail.RetryBackoffMs, "queueSize", cfg.Mail.QueueSize)
 
 	// Setup session controller with all dependencies
-	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), ccProvider, escalationManager.Client, disableEmail).WithQueue(mailQueue)
+	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), configPath, ccProvider, escalationManager.Client, disableEmail).WithQueue(mailQueue)
 
 	// Register API controllers based on component flags
 	// Both frontend and API share the same HTTP server, so we check both flags
@@ -477,7 +477,7 @@ func main() {
 
 	if enableAPI {
 		apiControllers = append(apiControllers, sessionController)
-		apiControllers = append(apiControllers, breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware()))
+		apiControllers = append(apiControllers, breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware(), configPath))
 		log.Infow("API controllers enabled", "components", "BreakglassSession, BreakglassEscalation")
 	}
 
@@ -513,18 +513,6 @@ func main() {
 	managerCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Determine escalation status update interval from CLI flag (fallback to 10m)
-	escalationInterval := 10 * time.Minute
-	if escalationStatusUpdateInt != "" {
-		if d, err := time.ParseDuration(escalationStatusUpdateInt); err == nil {
-			escalationInterval = d
-		} else {
-			log.Warnw("Invalid escalation-status-update-interval; using default 10m", "value", escalationStatusUpdateInt, "error", err)
-		}
-	}
-
-	go breakglass.EscalationStatusUpdater{Log: log, K8sClient: escalationManager.Client, Resolver: escalationManager.Resolver, Interval: escalationInterval, LeaderElected: leaderElectedCh}.Start(managerCtx)
-
 	// Event recorder for emitting Kubernetes events (persisted to API server)
 	restCfg := ctrl.GetConfigOrDie()
 	kubeClientset, err := kubernetes.NewForConfig(restCfg)
@@ -535,6 +523,29 @@ func main() {
 	// Now create the leader election resourcelock using the kubeClientset
 	eventBroadcaster := record.NewBroadcaster()
 	eventRecorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-controller"})
+
+	// Determine escalation status update interval from CLI flag (fallback to 10m)
+	escalationInterval := 10 * time.Minute
+	if escalationStatusUpdateInt != "" {
+		if d, err := time.ParseDuration(escalationStatusUpdateInt); err == nil {
+			escalationInterval = d
+		} else {
+			log.Warnw("Invalid escalation-status-update-interval; using default 10m", "value", escalationStatusUpdateInt, "error", err)
+		}
+	}
+
+	// Start the escalation status updater with EventRecorder and IDPLoader so it can:
+	// - Emit events when IDP group sync fails (surfaced via kubectl describe identityprovider)
+	// - Fetch group members from multiple IDPs for status.groupSyncErrors and status.IDPGroupMemberships
+	go breakglass.EscalationStatusUpdater{
+		Log:           log,
+		K8sClient:     escalationManager.Client,
+		Resolver:      escalationManager.Resolver,
+		EventRecorder: eventRecorder,
+		IDPLoader:     idpLoader,
+		Interval:      escalationInterval,
+		LeaderElected: leaderElectedCh,
+	}.Start(managerCtx)
 
 	// Determine the namespace for the lease
 	// If not specified via flag, use the pod's namespace from the environment

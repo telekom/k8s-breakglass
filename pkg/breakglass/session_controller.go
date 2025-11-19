@@ -39,6 +39,7 @@ var ErrSessionNotFound error = errors.New("session not found")
 type BreakglassSessionController struct {
 	log               *zap.SugaredLogger
 	config            config.Config
+	configPath        string // Path to breakglass config file for OIDC prefix stripping
 	sessionManager    *SessionManager
 	escalationManager *EscalationManager
 	middleware        gin.HandlerFunc
@@ -304,7 +305,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		}
 	}
 	// Strip OIDC prefixes if configured (cluster retrieval might include them; token groups usually not)
-	if cfg, cerr := config.Load(); cerr == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
+	if cfg, cerr := config.Load(wc.configPath); cerr == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
 		userGroups = stripOIDCPrefixes(userGroups, cfg.Kubernetes.OIDCPrefixes)
 	} else if cerr != nil {
 		reqLog.With("error", errors.Wrap(cerr, "config load failed for OIDC prefix stripping")).Debug("Continuing without OIDC prefix stripping")
@@ -2339,6 +2340,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	sessionManager *SessionManager,
 	escalationManager *EscalationManager,
 	middleware gin.HandlerFunc,
+	configPath string,
 	ccProvider interface {
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 	},
@@ -2364,6 +2366,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		mail:                 mail.NewSender(cfg),
 		mailQueue:            nil,
 		disableEmail:         disableEmailFlag,
+		configPath:           configPath,
 		ccProvider:           ccProvider,
 		clusterConfigManager: NewClusterConfigManager(clusterConfigClient),
 	}
@@ -2383,7 +2386,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 				}
 				ui := res.Status.UserInfo
 				groups := ui.Groups
-				cfgLoaded, lerr := config.Load()
+				cfgLoaded, lerr := config.Load(ctrl.configPath)
 				if lerr == nil && len(cfgLoaded.Kubernetes.OIDCPrefixes) > 0 {
 					groups = stripOIDCPrefixes(groups, cfgLoaded.Kubernetes.OIDCPrefixes)
 				}

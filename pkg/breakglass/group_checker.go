@@ -184,6 +184,70 @@ func GetUserGroups(ctx context.Context, cug ClusterUserGroup) ([]string, error) 
 	return finalGroups, nil
 }
 
+// GetUserGroupsWithConfig returns users groups assigned in cluster with custom config path for OIDC prefix stripping.
+func GetUserGroupsWithConfig(ctx context.Context, cug ClusterUserGroup, configPath string) ([]string, error) {
+	zap.S().Debugw("Getting user groups for cluster user group with custom config", "cluster", cug.Clustername, "username", cug.Username, "configPath", configPath)
+
+	// Load config with provided path to get OIDC prefixes
+	cfg, err := pkgconfig.Load(configPath)
+	if err != nil {
+		zap.S().Errorw("Failed to load config for OIDC prefixes", "error", err.Error())
+		// Continue without OIDC prefix stripping if config loading fails
+	}
+
+	kubeCfg, err := getConfigForClusterName(cug.Clustername)
+	if err != nil {
+		zap.S().Errorw("GetUserGroupsWithConfig: rest.Config load failed", "cluster", cug.Clustername, "error", err.Error())
+		return nil, errors.Wrap(err, "failed to get config")
+	}
+
+	kubeCfg.Impersonate = rest.ImpersonationConfig{
+		UserName: cug.Username,
+	}
+
+	client, err := kubernetes.NewForConfig(kubeCfg)
+	if err != nil {
+		zap.S().Errorw("GetUserGroupsWithConfig: client construction failed", "cluster", cug.Clustername, "error", err.Error())
+		return nil, errors.Wrap(err, "failed to create client")
+	}
+
+	var res runtime.Object
+	res, err = client.AuthenticationV1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
+
+	if err != nil && k8serrors.IsNotFound(err) {
+		zap.S().Warn("Falling back to Beta API for SelfSubjectReview")
+		res, err = client.AuthenticationV1beta1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1beta1.SelfSubjectReview{}, metav1.CreateOptions{})
+		if err != nil && k8serrors.IsNotFound(err) {
+			zap.S().Warn("Falling back to Alpha API for SelfSubjectReview")
+			res, err = client.AuthenticationV1alpha1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1alpha1.SelfSubjectReview{}, metav1.CreateOptions{})
+		}
+	}
+
+	if err != nil {
+		zap.S().Errorw("Failed to get user's subject review", "error", err.Error())
+		return nil, errors.Wrap(err, "failed to get users subject review")
+	}
+
+	ui, err := getUserInfo(res)
+	if err != nil {
+		zap.S().Errorw("Failed to get user info from response", "error", err.Error())
+		return nil, errors.Wrap(err, "failed to get user info from response")
+	}
+
+	// Apply OIDC prefix stripping if config was loaded successfully
+	originalGroups := ui.Groups
+	finalGroups := originalGroups
+	if len(cfg.Kubernetes.OIDCPrefixes) > 0 {
+		finalGroups = stripOIDCPrefixes(originalGroups, cfg.Kubernetes.OIDCPrefixes)
+		zap.S().Infow("Applied OIDC prefix stripping", "originalGroups", originalGroups, "finalGroups", finalGroups, "oidcPrefixes", cfg.Kubernetes.OIDCPrefixes)
+	} else {
+		zap.S().Debug("No OIDC prefixes configured, using original groups")
+	}
+
+	zap.S().Infow("GetUserGroupsWithConfig complete", "cluster", cug.Clustername, "username", cug.Username, "groups", finalGroups, "count", len(finalGroups))
+	return finalGroups, nil
+}
+
 func getUserInfo(obj runtime.Object) (authenticationv1.UserInfo, error) {
 	switch val := obj.(type) {
 	case *authenticationv1alpha1.SelfSubjectReview:

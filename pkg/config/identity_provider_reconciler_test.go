@@ -93,7 +93,7 @@ func TestIdentityProviderReconciler_ReconcileSuccess(t *testing.T) {
 		},
 	}
 
-	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build()
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp).WithStatusSubresource(idp).Build()
 	reloadCalled := false
 	reloadFn := func(ctx context.Context) error {
 		reloadCalled = true
@@ -160,7 +160,7 @@ func TestIdentityProviderReconciler_ReconcileReloadError(t *testing.T) {
 		},
 	}
 
-	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build()
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp).WithStatusSubresource(idp).Build()
 	reloadErr := fmt.Errorf("reload failed")
 	reloadFn := func(ctx context.Context) error {
 		return reloadErr
@@ -218,7 +218,7 @@ func TestIdentityProviderReconciler_ReconcileWithMultipleIDPs(t *testing.T) {
 		},
 	}
 
-	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp1, idp2).Build()
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp1, idp2).WithStatusSubresource(idp1, idp2).Build()
 	reloadCalls := 0
 	reloadFn := func(ctx context.Context) error {
 		reloadCalls++
