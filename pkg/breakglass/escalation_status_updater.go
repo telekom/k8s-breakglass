@@ -590,14 +590,18 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				// Emit success event with details about what was synced
 				if u.EventRecorder != nil {
 					if hasMultiIDPFields {
-						successIDPs := 0
-						failedIDPs := 0
+						// Count unique IDP failures from error messages, assuming format "idpName: error message"
+						idpFailures := make(map[string]struct{})
 						for _, syncErr := range updated.Status.GroupSyncErrors {
-							if strings.Contains(syncErr, "Failed") {
-								failedIDPs++
+							// Parse error message to extract IDP name
+							parts := strings.SplitN(syncErr, ":", 2)
+							if len(parts) > 1 {
+								idpName := strings.TrimSpace(parts[0])
+								idpFailures[idpName] = struct{}{}
 							}
 						}
-						successIDPs = len(esc.Spec.AllowedIdentityProvidersForApprovers) - failedIDPs
+						failedIDPs := len(idpFailures)
+						successIDPs := len(esc.Spec.AllowedIdentityProvidersForApprovers) - failedIDPs
 
 						eventMsg := fmt.Sprintf("Group members synced successfully from %d IDPs (%d succeeded, %d failed). Updated %d group(s) with approvers.",
 							len(esc.Spec.AllowedIdentityProvidersForApprovers), successIDPs, failedIDPs, len(groups))

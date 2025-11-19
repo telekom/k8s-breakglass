@@ -118,9 +118,8 @@ func stripOIDCPrefixes(groups []string, oidcPrefixes []string) []string {
 	return strippedGroups
 }
 
-// Returns users groups assigned in cluster by duplicating kubectl auth whoami logic.
 // getUserGroupsInternal is a shared helper function for GetUserGroups and GetUserGroupsWithConfig.
-// It performs the common logic of fetching user groups from a cluster, with optional OIDC prefix stripping.
+// It fetches user groups assigned in a cluster (duplicating kubectl auth whoami logic) with optional OIDC prefix stripping.
 // If configPath is empty, uses the default config path.
 func getUserGroupsInternal(ctx context.Context, cug ClusterUserGroup, configPath string) ([]string, error) {
 	// Load config to get OIDC prefixes

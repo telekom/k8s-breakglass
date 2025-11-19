@@ -197,9 +197,11 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	if err := r.client.Status().Update(ctx, idp); err != nil {
 		// Status update failed - mark as error since status persistence is critical
 		r.logger.Errorw("failed to update IdentityProvider status after successful reload (will retry)", "error", err, "name", req.Name)
-		idp.Status.Phase = "Error"
-		idp.Status.Message = fmt.Sprintf("Failed to persist status: %v", err)
-		if err := r.client.Status().Update(ctx, idp); err != nil {
+		// Use a fresh copy to ensure consistency if the second update also fails
+		errorIdp := idp.DeepCopy()
+		errorIdp.Status.Phase = "Error"
+		errorIdp.Status.Message = fmt.Sprintf("Failed to persist status: %v", err)
+		if err := r.client.Status().Update(ctx, errorIdp); err != nil {
 			r.logger.Errorw("failed to update error status on IdentityProvider (will retry in 5s)", "error", err, "name", req.Name)
 		}
 		// Emit warning event about status update failure
