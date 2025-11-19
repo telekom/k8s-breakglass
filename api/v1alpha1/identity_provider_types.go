@@ -50,6 +50,8 @@ const (
 	IdentityProviderConditionValidationFailed IdentityProviderConditionType = "ValidationFailed"
 	// IdentityProviderConditionGroupSyncHealthy indicates the GroupSync provider is healthy and reachable
 	IdentityProviderConditionGroupSyncHealthy IdentityProviderConditionType = "GroupSyncHealthy"
+	// IdentityProviderConditionCacheUpdated indicates the provider cache has been successfully updated
+	IdentityProviderConditionCacheUpdated IdentityProviderConditionType = "CacheUpdated"
 )
 
 // OIDCConfig holds mandatory OIDC configuration for identity provider
@@ -157,6 +159,7 @@ type IdentityProviderStatus struct {
 	// - ConversionFailed: Configuration conversion failed
 	// - ValidationFailed: Configuration validation failed
 	// - GroupSyncHealthy: Group sync provider is healthy and reachable
+	// - CacheUpdated: Provider cache has been successfully updated
 	// +optional
 	// +patchMergeKey=type
 	// +patchStrategy=merge

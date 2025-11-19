@@ -188,6 +188,7 @@ spec:
                   - ConversionFailed: Configuration conversion failed
                   - ValidationFailed: Configuration validation failed
                   - GroupSyncHealthy: Group sync provider is healthy and reachable
+                  - CacheUpdated: Provider cache has been successfully updated
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

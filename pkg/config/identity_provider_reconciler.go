@@ -208,7 +208,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		r.logger.Warnw("failed to update IDP cache after successful reload", "error", err, "name", req.Name)
 		// Expose cache failure even on successful config reload via condition
 		cacheCondition := metav1.Condition{
-			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionCacheUpdated),
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: idp.Generation,
 			Reason:             "CacheUpdateFailed",
@@ -232,11 +232,11 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	} else {
 		// Cache update successful - update condition
 		readyCondition := metav1.Condition{
-			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionCacheUpdated),
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: idp.Generation,
-			Reason:             "ConfigurationValid",
-			Message:            "IdentityProvider configuration is valid and operational",
+			Reason:             "CacheUpdated",
+			Message:            "Provider cache updated successfully",
 		}
 		idp.SetCondition(readyCondition)
 		idp.Status.ObservedGeneration = idp.Generation
@@ -245,17 +245,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	// Check group sync provider health if configured
 	r.updateGroupSyncHealth(ctx, idp)
 
-	// Update status to reflect success via condition
-	readyCondition := metav1.Condition{
-		Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
-		Status:             metav1.ConditionTrue,
-		ObservedGeneration: idp.Generation,
-		Reason:             "ConfigurationValid",
-		Message:            "Configuration reloaded successfully",
-	}
-	idp.SetCondition(readyCondition)
-	idp.Status.ObservedGeneration = idp.Generation
-
+	// Persist status to API server
 	if err := r.client.Status().Update(ctx, idp); err != nil {
 		// Status update failed - mark as error via condition since status persistence is critical
 		r.logger.Errorw("failed to update IdentityProvider status after successful reload (will retry)", "error", err, "name", req.Name)
