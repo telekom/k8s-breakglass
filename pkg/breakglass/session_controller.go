@@ -662,26 +662,6 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-
-	// If escalationManager is available, increment the matched escalation's request counter in status for observability
-	if wc.escalationManager != nil {
-		// fetch latest escalation object
-		if esc, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, matchedEsc.Spec.Allowed.Clusters[0], []string{}); err == nil && len(esc) > 0 {
-			// Try to find by name
-			for _, e := range esc {
-				if e.Name == matchedEsc.Name {
-					if e.Status.RequestCount == 0 {
-						e.Status.RequestCount = 1
-					} else {
-						e.Status.RequestCount = e.Status.RequestCount + 1
-					}
-					_ = wc.escalationManager.UpdateBreakglassEscalationStatus(context.Background(), e)
-					break
-				}
-			}
-		}
-	}
-
 	// Note: bs already has its Name populated by AddBreakglassSession (passed as pointer).
 	// Do not try to fetch it again as this can race with informer cache population.
 	// Instead, reuse the bs object that was created.
@@ -954,28 +934,6 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 				"session", bs.Name,
 				"expiresAt", bs.Status.ExpiresAt.Time,
 			)
-		}
-		// increment escalation approval count if escalation manager available and owner reference points to an escalation
-		if wc.escalationManager != nil && len(bs.OwnerReferences) > 0 {
-			for _, or := range bs.OwnerReferences {
-				if or.Kind == "BreakglassEscalation" {
-					// try to fetch escalation by name
-					escs, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(context.Background(), bs.Spec.Cluster, []string{})
-					if err == nil {
-						for _, ee := range escs {
-							if ee.Name == or.Name {
-								if ee.Status.ApprovalCount == 0 {
-									ee.Status.ApprovalCount = 1
-								} else {
-									ee.Status.ApprovalCount = ee.Status.ApprovalCount + 1
-								}
-								_ = wc.escalationManager.UpdateBreakglassEscalationStatus(context.Background(), ee)
-								break
-							}
-						}
-					}
-				}
-			}
 		}
 		// record approver
 		approverEmail, _ := wc.identityProvider.GetEmail(c)

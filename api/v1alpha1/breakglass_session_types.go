@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -298,6 +299,16 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 func (bs *BreakglassSession) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	// no-op; allow deletes
 	return nil, nil
+}
+
+// SetCondition updates or adds a condition in the BreakglassSession status
+func (bs *BreakglassSession) SetCondition(condition metav1.Condition) {
+	apimeta.SetStatusCondition(&bs.Status.Conditions, condition)
+}
+
+// GetCondition retrieves a condition from the BreakglassSession status by type
+func (bs *BreakglassSession) GetCondition(condType string) *metav1.Condition {
+	return apimeta.FindStatusCondition(bs.Status.Conditions, condType)
 }
 
 // SetupWebhookWithManager registers the webhooks with the controller manager

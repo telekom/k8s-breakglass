@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -156,25 +157,44 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 			r.onError(ctx, err)
 		}
 
-		// Update status to reflect error state
-		idp.Status.Phase = "Error"
-		idp.Status.Message = fmt.Sprintf("Failed to reload configuration: %v", err)
-		idp.Status.Connected = false
-		if err := r.client.Status().Update(ctx, idp); err != nil {
-			r.logger.Errorw("failed to update identity provider status after reload failure", "error", err, "name", req.Name)
+		// Update status to reflect error state via conditions
+		condition := metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "ConfigReloadFailed",
+			Message:            fmt.Sprintf("Failed to reload configuration: %v", err),
+		}
+		idp.SetCondition(condition)
+		idp.Status.ObservedGeneration = idp.Generation
+
+		if statusErr := r.client.Status().Update(ctx, idp); statusErr != nil {
+			r.logger.Errorw("failed to update identity provider status after reload failure", "error", statusErr, "name", req.Name)
 		}
 
 		// Update cache anyway - even if reload failed, we should still have the latest list
 		if cacheErr := r.updateIDPCache(ctx); cacheErr != nil {
 			r.logger.Warnw("failed to update IDP cache after reload failure", "error", cacheErr, "name", req.Name)
+			// Update condition with cache error
+			cacheCondition := metav1.Condition{
+				Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: idp.Generation,
+				Reason:             "CacheUpdateFailed",
+				Message:            fmt.Sprintf("Failed to update provider cache: %v", cacheErr),
+			}
+			idp.SetCondition(cacheCondition)
+			if cacheStatusErr := r.client.Status().Update(ctx, idp); cacheStatusErr != nil {
+				r.logger.Errorw("failed to update IDP cache error status", "error", cacheStatusErr, "name", req.Name)
+			}
 		}
 
-		// Emit event on the IdentityProvider CR
-		// Note: Empty namespace for cluster-scoped resources to prevent event reconciliation issues
+		// Emit events for each failure type
 		if r.recorder != nil {
 			eventIdp := idp.DeepCopy()
-			eventIdp.SetNamespace("") // Ensure no namespace is set for cluster-scoped events
-			r.recorder.Event(eventIdp, "Warning", "ReloadFailed", fmt.Sprintf("Failed to reload configuration: %v", err))
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "ConfigReloadFailed",
+				fmt.Sprintf("Failed to reload configuration: %v", err))
 		}
 
 		// Requeue with exponential backoff
@@ -186,29 +206,77 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	// Update cache with latest IDPs (for API to use)
 	if err := r.updateIDPCache(ctx); err != nil {
 		r.logger.Warnw("failed to update IDP cache after successful reload", "error", err, "name", req.Name)
-		// Continue anyway - cache update failure shouldn't block the reconciliation
+		// Expose cache failure even on successful config reload via condition
+		cacheCondition := metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "CacheUpdateFailed",
+			Message:            fmt.Sprintf("Failed to update provider cache: %v", err),
+		}
+		idp.SetCondition(cacheCondition)
+		idp.Status.ObservedGeneration = idp.Generation
+
+		// Try to persist this cache error in status
+		if cacheStatusErr := r.client.Status().Update(ctx, idp); cacheStatusErr != nil {
+			r.logger.Errorw("failed to update IDP cache error status", "error", cacheStatusErr, "name", req.Name)
+		}
+
+		// Emit event for cache failure
+		if r.recorder != nil {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "CacheUpdateFailed",
+				fmt.Sprintf("Failed to update provider cache: %v", err))
+		}
+	} else {
+		// Cache update successful - update condition
+		readyCondition := metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: idp.Generation,
+			Reason:             "ConfigurationValid",
+			Message:            "IdentityProvider configuration is valid and operational",
+		}
+		idp.SetCondition(readyCondition)
+		idp.Status.ObservedGeneration = idp.Generation
 	}
 
-	// Update status to reflect success
-	idp.Status.Phase = "Ready"
-	idp.Status.Message = "Configuration reloaded successfully"
-	idp.Status.Connected = true
-	idp.Status.LastValidation = metav1.NewTime(time.Now())
+	// Check group sync provider health if configured
+	r.updateGroupSyncHealth(ctx, idp)
+
+	// Update status to reflect success via condition
+	readyCondition := metav1.Condition{
+		Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: idp.Generation,
+		Reason:             "ConfigurationValid",
+		Message:            "Configuration reloaded successfully",
+	}
+	idp.SetCondition(readyCondition)
+	idp.Status.ObservedGeneration = idp.Generation
+
 	if err := r.client.Status().Update(ctx, idp); err != nil {
-		// Status update failed - mark as error since status persistence is critical
+		// Status update failed - mark as error via condition since status persistence is critical
 		r.logger.Errorw("failed to update IdentityProvider status after successful reload (will retry)", "error", err, "name", req.Name)
-		// Use a fresh copy to ensure consistency if the second update also fails
-		errorIdp := idp.DeepCopy()
-		errorIdp.Status.Phase = "Error"
-		errorIdp.Status.Message = fmt.Sprintf("Failed to persist status: %v", err)
-		if err := r.client.Status().Update(ctx, errorIdp); err != nil {
-			r.logger.Errorw("failed to update error status on IdentityProvider (will retry in 5s)", "error", err, "name", req.Name)
+		errorCondition := metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "StatusUpdateFailed",
+			Message:            fmt.Sprintf("Failed to persist status: %v", err),
+		}
+		idp.SetCondition(errorCondition)
+
+		if statusErr := r.client.Status().Update(ctx, idp); statusErr != nil {
+			r.logger.Errorw("failed to update error status on IdentityProvider (will retry in 5s)", "error", statusErr, "name", req.Name)
 		}
 		// Emit warning event about status update failure
 		if r.recorder != nil {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "StatusUpdateFailed", fmt.Sprintf("Failed to persist status after successful reload: %v", err))
+			r.recorder.Event(eventIdp, "Warning", "StatusUpdateFailed",
+				fmt.Sprintf("Failed to persist status after successful reload: %v", err))
 		}
 		// Requeue with exponential backoff
 		return reconcile.Result{RequeueAfter: 5 * time.Second}, err
@@ -218,13 +286,189 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	// Note: Empty namespace for cluster-scoped resources to prevent event reconciliation issues
 	if r.recorder != nil {
 		eventIdp := idp.DeepCopy()
-		eventIdp.SetNamespace("") // Ensure no namespace is set for cluster-scoped events
-		r.recorder.Event(eventIdp, "Normal", "ReloadSuccess", "Configuration reloaded successfully")
+		eventIdp.SetNamespace("")
+		r.recorder.Event(eventIdp, "Normal", "ConfigReloadSuccess",
+			"Configuration reloaded successfully and cached")
 	}
 
 	// Requeue periodically for safety (even if no changes detected)
 	// This ensures we recover from transient failures
 	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
+}
+
+// updateGroupSyncHealth checks the health of the group sync provider (if configured)
+// and updates the conditions accordingly. It also emits events on health status changes.
+func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, idp *breakglassv1alpha1.IdentityProvider) {
+	// Get current GroupSyncHealthy condition to detect changes
+	oldCondition := idp.GetCondition(string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy))
+
+	if idp.Spec.GroupSyncProvider == "" {
+		// GroupSync not configured - remove condition if it exists
+		if oldCondition != nil {
+			newConditions := make([]metav1.Condition, 0)
+			for _, c := range idp.Status.Conditions {
+				if c.Type != string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy) {
+					newConditions = append(newConditions, c)
+				}
+			}
+			idp.Status.Conditions = newConditions
+		}
+		return
+	}
+
+	if idp.Spec.GroupSyncProvider != breakglassv1alpha1.GroupSyncProviderKeycloak {
+		// Unknown provider
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "UnknownProvider",
+			Message:            fmt.Sprintf("Unknown group sync provider: %s", idp.Spec.GroupSyncProvider),
+		})
+		// Emit event for unknown provider
+		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "GroupSyncUnknownProvider",
+				fmt.Sprintf("Unknown group sync provider: %s", idp.Spec.GroupSyncProvider))
+		}
+		return
+	}
+
+	// Check Keycloak configuration
+	if idp.Spec.Keycloak == nil {
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "KeycloakMissing",
+			Message:            "Keycloak configuration is required when groupSyncProvider is Keycloak",
+		})
+		// Emit event for missing Keycloak config
+		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "GroupSyncKeycloakMissing",
+				"Keycloak configuration is required when groupSyncProvider is Keycloak")
+		}
+		return
+	}
+
+	// Check for incomplete Keycloak configuration
+	if idp.Spec.Keycloak.BaseURL == "" || idp.Spec.Keycloak.Realm == "" || idp.Spec.Keycloak.ClientID == "" {
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "KeycloakIncomplete",
+			Message:            "Keycloak configuration incomplete: missing baseURL, realm, or clientID",
+		})
+		// Emit event for incomplete config
+		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "GroupSyncKeycloakConfigIncomplete",
+				"Keycloak configuration incomplete: missing baseURL, realm, or clientID")
+		}
+		return
+	}
+
+	// Check Keycloak client secret reference
+	if idp.Spec.Keycloak.ClientSecretRef.Name == "" || idp.Spec.Keycloak.ClientSecretRef.Namespace == "" {
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "ClientSecretRefInvalid",
+			Message:            "Keycloak configuration incomplete: missing clientSecretRef name or namespace",
+		})
+		// Emit event for missing client secret ref
+		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "GroupSyncClientSecretRefMissing",
+				"Keycloak configuration incomplete: missing clientSecretRef name or namespace")
+		}
+		return
+	}
+
+	// Verify the client secret exists and is readable
+	secretRef := idp.Spec.Keycloak.ClientSecretRef
+	secret := &corev1.Secret{}
+	secretKey := types.NamespacedName{
+		Namespace: secretRef.Namespace,
+		Name:      secretRef.Name,
+	}
+
+	if err := r.client.Get(ctx, secretKey, secret); err != nil {
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "SecretNotFound",
+			Message: fmt.Sprintf("Failed to read client secret '%s' in namespace '%s': %v",
+				secretRef.Name, secretRef.Namespace, err),
+		})
+
+		// Emit warning event for secret retrieval failure
+		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "GroupSyncSecretNotFound",
+				fmt.Sprintf("Failed to read Keycloak client secret '%s' in namespace '%s': %v",
+					secretRef.Name, secretRef.Namespace, err))
+		}
+		return
+	}
+
+	// Check if the secret has the client secret key
+	secretDataKey := secretRef.Key
+	if secretDataKey == "" {
+		secretDataKey = "value" // Default key if not specified
+	}
+	if _, exists := secret.Data[secretDataKey]; !exists {
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			Reason:             "SecretKeyNotFound",
+			Message: fmt.Sprintf("Keycloak client secret key '%s' not found in secret '%s'",
+				secretDataKey, secretRef.Name),
+		})
+
+		// Emit warning event for missing secret key
+		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "GroupSyncSecretKeyMissing",
+				fmt.Sprintf("Keycloak client secret key '%s' not found in secret '%s'",
+					secretDataKey, secretRef.Name))
+		}
+		return
+	}
+
+	// All checks passed - mark as healthy
+	idp.SetCondition(metav1.Condition{
+		Type:               string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: idp.Generation,
+		Reason:             "GroupSyncOperational",
+		Message:            "Group sync provider is operational",
+	})
+
+	// Emit event if health status changed from unhealthy to healthy
+	if oldCondition != nil && oldCondition.Status == metav1.ConditionFalse {
+		if r.recorder != nil {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Normal", "GroupSyncHealthy",
+				"Group sync provider is now healthy and reachable")
+		}
+		r.logger.Infow("group sync provider recovered to healthy state",
+			"name", idp.Name, "provider", idp.Spec.GroupSyncProvider)
+	}
+
+	r.logger.Debugw("group sync provider health check passed", "name", idp.Name, "provider", idp.Spec.GroupSyncProvider)
 }
 
 // SetupWithManager sets up the controller with the manager (required for controller-runtime)

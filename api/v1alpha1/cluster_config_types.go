@@ -5,12 +5,22 @@ import (
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+)
+
+// ClusterConfigConditionType defines condition types for ClusterConfig resources.
+type ClusterConfigConditionType string
+
+const (
+	// ClusterConfigConditionReady indicates the ClusterConfig is ready for use.
+	// Condition fails when kubeconfig is invalid, cluster is unreachable, or other checks fail.
+	ClusterConfigConditionReady ClusterConfigConditionType = "Ready"
 )
 
 // ClusterConfigSpec defines metadata and secret reference for a managed tenant cluster.
@@ -81,15 +91,18 @@ type SecretKeyReference struct {
 
 // ClusterConfigStatus captures readiness of the cluster configuration.
 type ClusterConfigStatus struct {
-	// phase indicates readiness.
+	// ObservedGeneration reflects the generation of the most recently observed ClusterConfig
 	// +optional
-	Phase string `json:"phase,omitempty"`
-	// message provides details in case of failure.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions track ClusterConfig state (kubeconfig validation, connection status, etc.)
+	// All status information is conveyed through conditions.
 	// +optional
-	Message string `json:"message,omitempty"`
-	// lastCheckTime is when connectivity / secret was last verified.
-	// +optional
-	LastCheckTime metav1.Time `json:"lastCheckTime,omitempty"`
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -97,7 +110,7 @@ type ClusterConfigStatus struct {
 // +kubebuilder:resource:scope=Namespaced,shortName=ccfg
 // +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="ClusterID",type=string,JSONPath=`.spec.clusterID`
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 type ClusterConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -155,6 +168,16 @@ func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runt
 func (cc *ClusterConfig) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	// allow deletes
 	return nil, nil
+}
+
+// SetCondition updates or adds a condition in the ClusterConfig status
+func (cc *ClusterConfig) SetCondition(condition metav1.Condition) {
+	apimeta.SetStatusCondition(&cc.Status.Conditions, condition)
+}
+
+// GetCondition retrieves a condition from the ClusterConfig status by type
+func (cc *ClusterConfig) GetCondition(condType string) *metav1.Condition {
+	return apimeta.FindStatusCondition(cc.Status.Conditions, condType)
 }
 
 // SetupWebhookWithManager registers webhooks for ClusterConfig

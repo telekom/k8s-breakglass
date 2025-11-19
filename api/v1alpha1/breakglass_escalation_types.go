@@ -29,6 +29,24 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
+// BreakglassEscalationConditionType defines the type of condition for BreakglassEscalation status
+type BreakglassEscalationConditionType string
+
+const (
+	// BreakglassEscalationConditionReady indicates the escalation configuration is valid and ready
+	BreakglassEscalationConditionReady BreakglassEscalationConditionType = "Ready"
+	// BreakglassEscalationConditionApprovalGroupMembersResolved indicates all approval group members have been resolved
+	BreakglassEscalationConditionApprovalGroupMembersResolved BreakglassEscalationConditionType = "ApprovalGroupMembersResolved"
+	// BreakglassEscalationConditionConfigValidated indicates the escalation configuration is valid
+	BreakglassEscalationConditionConfigValidated BreakglassEscalationConditionType = "ConfigValidated"
+	// BreakglassEscalationConditionClusterRefsValid indicates cluster references are valid
+	BreakglassEscalationConditionClusterRefsValid BreakglassEscalationConditionType = "ClusterRefsValid"
+	// BreakglassEscalationConditionIDPRefsValid indicates IDP references are valid
+	BreakglassEscalationConditionIDPRefsValid BreakglassEscalationConditionType = "IDPRefsValid"
+	// BreakglassEscalationConditionDenyPolicyRefsValid indicates deny policy references are valid
+	BreakglassEscalationConditionDenyPolicyRefsValid BreakglassEscalationConditionType = "DenyPolicyRefsValid"
+)
+
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
@@ -182,31 +200,25 @@ type BreakglassEscalationStatus struct {
 	// +optional
 	IDPGroupMemberships map[string]map[string][]string `json:"idpGroupMemberships,omitempty"`
 
-	// groupSyncStatus indicates the current status of group member synchronization from IDPs.
-	// Possible values: "Success" (all IDPs synced), "PartialFailure" (some IDPs failed), "Failed" (all IDPs failed)
+	// ObservedGeneration reflects the generation of the most recently observed BreakglassEscalation
 	// +optional
-	GroupSyncStatus string `json:"groupSyncStatus,omitempty"`
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// groupSyncErrors contains error messages from failed IDP group syncs.
-	// Each entry describes which IDP failed and why.
-	// Empty if GroupSyncStatus is "Success".
+	// Conditions track validation state (config validation, cluster/IDP/deny policy references, group sync, etc.)
+	// All status information about validation, references, and health is conveyed through conditions.
 	// +optional
-	GroupSyncErrors []string `json:"groupSyncErrors,omitempty"`
-
-	// Counters for tracking requests and approvals
-	RequestCount  int `json:"requestCount,omitempty"`
-	ApprovalCount int `json:"approvalCount,omitempty"`
-
-	// Status of group resolution
-	GroupResolutionStatus map[string]string `json:"groupResolutionStatus,omitempty"`
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Namespaced,shortName=bge
 // +kubebuilder:printcolumn:name="Clusters",type=string,JSONPath=".spec.allowed.clusters",description="Clusters this escalation applies to"
 // +kubebuilder:printcolumn:name="Groups",type=string,JSONPath=".spec.allowed.groups",description="Groups allowed to request this escalation"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type==\"Ready\")].status",description="Ready status"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the escalation"
-// +kubebuilder:printcolumn:name="Requests",type=integer,JSONPath=".status.requestCount",description="Number of requests for this escalation"
-// +kubebuilder:printcolumn:name="Approvals",type=integer,JSONPath=".status.approvalCount",description="Number of approvals for this escalation"
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 type BreakglassEscalation struct {
@@ -219,6 +231,37 @@ type BreakglassEscalation struct {
 }
 
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglassescalation,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglassescalations,verbs=create;update,versions=v1alpha1,name=breakglassescalation.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
+
+// SetCondition updates or adds a condition in the BreakglassEscalation status
+func (be *BreakglassEscalation) SetCondition(condition metav1.Condition) {
+	if be.Status.Conditions == nil {
+		be.Status.Conditions = []metav1.Condition{}
+	}
+
+	// Find and update existing condition, or append new one
+	found := false
+	for i, c := range be.Status.Conditions {
+		if c.Type == condition.Type {
+			be.Status.Conditions[i] = condition
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		be.Status.Conditions = append(be.Status.Conditions, condition)
+	}
+}
+
+// GetCondition retrieves a condition by type from the BreakglassEscalation status
+func (be *BreakglassEscalation) GetCondition(condType string) *metav1.Condition {
+	for i := range be.Status.Conditions {
+		if be.Status.Conditions[i].Type == condType {
+			return &be.Status.Conditions[i]
+		}
+	}
+	return nil
+}
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
 func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {

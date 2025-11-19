@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -76,6 +78,145 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 	r.logger.Debugw("Reconciling BreakglassEscalation",
 		"name", req.Name,
 		"namespace", req.Namespace)
+
+	// Fetch and validate the specific escalation resource
+	escalation := &breakglassv1alpha1.BreakglassEscalation{}
+	if err := r.client.Get(ctx, req.NamespacedName, escalation); err != nil {
+		r.logger.Warnw("Failed to fetch BreakglassEscalation for validation",
+			"error", err)
+		return reconcile.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Validate escalation configuration and references
+	now := metav1.Now()
+
+	// Track validation errors to report all at once
+	var validationErrors []struct {
+		conditionType string
+		reason        string
+		message       string
+		error         error
+	}
+
+	// Validate config structure
+	if configErr := r.validateEscalationConfig(escalation); configErr != nil {
+		validationErrors = append(validationErrors, struct {
+			conditionType string
+			reason        string
+			message       string
+			error         error
+		}{
+			conditionType: string(breakglassv1alpha1.BreakglassEscalationConditionConfigValidated),
+			reason:        "ConfigValidationFailed",
+			message:       configErr.Error(),
+			error:         configErr,
+		})
+	}
+
+	// Validate cluster reference
+	if clusterErr := r.validateClusterRef(ctx, escalation); clusterErr != nil {
+		validationErrors = append(validationErrors, struct {
+			conditionType string
+			reason        string
+			message       string
+			error         error
+		}{
+			conditionType: string(breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid),
+			reason:        "ClusterRefValidationFailed",
+			message:       clusterErr.Error(),
+			error:         clusterErr,
+		})
+	}
+
+	// Validate IDP references
+	if idpErr := r.validateIDPRefs(ctx, escalation); idpErr != nil {
+		validationErrors = append(validationErrors, struct {
+			conditionType string
+			reason        string
+			message       string
+			error         error
+		}{
+			conditionType: string(breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid),
+			reason:        "IDPRefValidationFailed",
+			message:       idpErr.Error(),
+			error:         idpErr,
+		})
+	}
+
+	// Validate deny policy references
+	if denyPolicyErr := r.validateDenyPolicyRefs(ctx, escalation); denyPolicyErr != nil {
+		validationErrors = append(validationErrors, struct {
+			conditionType string
+			reason        string
+			message       string
+			error         error
+		}{
+			conditionType: string(breakglassv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid),
+			reason:        "DenyPolicyRefValidationFailed",
+			message:       denyPolicyErr.Error(),
+			error:         denyPolicyErr,
+		})
+	}
+
+	// Update conditions based on validation results
+	if len(validationErrors) > 0 {
+		// Set failed conditions
+		for _, ve := range validationErrors {
+			condition := metav1.Condition{
+				Type:               ve.conditionType,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: escalation.Generation,
+				Reason:             ve.reason,
+				Message:            ve.message,
+				LastTransitionTime: now,
+			}
+			apimeta.SetStatusCondition(&escalation.Status.Conditions, condition)
+
+			if r.recorder != nil {
+				r.recorder.Event(escalation, "Warning", ve.reason, ve.message)
+			}
+			r.logger.Warnw("Escalation validation failed",
+				"escalation", escalation.Name,
+				"conditionType", ve.conditionType,
+				"error", ve.error)
+		}
+
+		if err := r.client.Status().Update(ctx, escalation); err != nil {
+			r.logger.Warnw("Failed to update escalation status with validation errors",
+				"escalation", escalation.Name,
+				"error", err)
+		}
+		return reconcile.Result{}, validationErrors[0].error
+	}
+
+	// All validations passed - set all conditions to true
+	for _, condType := range []breakglassv1alpha1.BreakglassEscalationConditionType{
+		breakglassv1alpha1.BreakglassEscalationConditionConfigValidated,
+		breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid,
+	} {
+		condition := metav1.Condition{
+			Type:               string(condType),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: escalation.Generation,
+			Reason:             "ValidationSucceeded",
+			Message:            "Validation passed",
+			LastTransitionTime: now,
+		}
+		apimeta.SetStatusCondition(&escalation.Status.Conditions, condition)
+	}
+
+	if r.recorder != nil {
+		r.recorder.Event(escalation, "Normal", "ValidationSucceeded", "All escalation validations passed successfully")
+	}
+
+	if err := r.client.Status().Update(ctx, escalation); err != nil {
+		r.logger.Warnw("Failed to update escalation status with success state",
+			"escalation", escalation.Name,
+			"error", err)
+		return reconcile.Result{}, err
+	}
 
 	// Update the escalation→IDP mapping cache
 	if err := r.updateEscalationIDPMapping(ctx); err != nil {
@@ -187,4 +328,63 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}).
 		WithEventFilter(specChangePredicate).
 		Complete(r)
+}
+
+// validateEscalationConfig validates the escalation's configuration
+func (r *EscalationReconciler) validateEscalationConfig(esc *breakglassv1alpha1.BreakglassEscalation) error {
+	// IdentityProviders are optional - escalation will use cluster defaults if not specified
+	return nil
+}
+
+// validateClusterRef validates that the referenced clusters exist and are accessible
+func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) error {
+	// Validate ClusterConfigRefs if specified
+	for _, clusterName := range esc.Spec.ClusterConfigRefs {
+		clusterKey := client.ObjectKey{Name: clusterName}
+		cluster := &breakglassv1alpha1.ClusterConfig{}
+		if err := r.client.Get(ctx, clusterKey, cluster); err != nil {
+			return fmt.Errorf("referenced ClusterConfig '%s' not found: %w", clusterName, err)
+		}
+	}
+	return nil
+}
+
+// validateIDPRefs validates that all referenced IDPs exist
+func (r *EscalationReconciler) validateIDPRefs(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) error {
+	// Helper to validate a list of IDP names
+	validateIDPList := func(idpNames []string) error {
+		for _, idpName := range idpNames {
+			idpKey := client.ObjectKey{Name: idpName}
+			idp := &breakglassv1alpha1.IdentityProvider{}
+			if err := r.client.Get(ctx, idpKey, idp); err != nil {
+				return fmt.Errorf("referenced IdentityProvider '%s' not found: %w", idpName, err)
+			}
+		}
+		return nil
+	}
+
+	// Validate all IDP references
+	if err := validateIDPList(esc.Spec.AllowedIdentityProviders); err != nil {
+		return err
+	}
+	if err := validateIDPList(esc.Spec.AllowedIdentityProvidersForRequests); err != nil {
+		return err
+	}
+	if err := validateIDPList(esc.Spec.AllowedIdentityProvidersForApprovers); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateDenyPolicyRefs validates deny policy references if they exist
+func (r *EscalationReconciler) validateDenyPolicyRefs(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) error {
+	// Only validate if deny policies are configured
+	for _, policyName := range esc.Spec.DenyPolicyRefs {
+		policyKey := client.ObjectKey{Name: policyName}
+		policy := &breakglassv1alpha1.DenyPolicy{}
+		if err := r.client.Get(ctx, policyKey, policy); err != nil {
+			return fmt.Errorf("referenced DenyPolicy '%s' not found: %w", policyName, err)
+		}
+	}
+	return nil
 }

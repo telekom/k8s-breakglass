@@ -1,6 +1,18 @@
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// DenyPolicyConditionType defines condition types for DenyPolicy resources.
+type DenyPolicyConditionType string
+
+const (
+	// DenyPolicyConditionReady indicates the DenyPolicy is ready for evaluation.
+	// Condition fails when the policy has invalid rules or compilation errors.
+	DenyPolicyConditionReady DenyPolicyConditionType = "Ready"
+)
 
 // DenyPolicySpec defines deny rules applicable to sessions / clusters / tenants.
 type DenyPolicySpec struct {
@@ -49,31 +61,43 @@ type DenyRule struct {
 	Subresources []string `json:"subresources,omitempty"`
 }
 
-// DenyPolicyStatus holds compiled metadata.
+// DenyPolicyStatus holds policy evaluation state tracked via conditions.
 type DenyPolicyStatus struct {
-	// ruleCount is the number of rules.
+	// ObservedGeneration reflects the generation of the most recently observed DenyPolicy
 	// +optional
-	RuleCount int32 `json:"ruleCount,omitempty"`
-	// compiled indicates evaluator is ready.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions track DenyPolicy state (compilation status, validation errors, etc.)
+	// All status information is conveyed through conditions.
 	// +optional
-	Compiled bool `json:"compiled,omitempty"`
-	// lastCompile time.
-	// +optional
-	LastCompile metav1.Time `json:"lastCompile,omitempty"`
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=dpolicy
 // +kubebuilder:printcolumn:name="Precedence",type=integer,JSONPath=`.spec.precedence`
-// +kubebuilder:printcolumn:name="Rules",type=integer,JSONPath=`.status.ruleCount`
-// +kubebuilder:printcolumn:name="Compiled",type=boolean,JSONPath=`.status.compiled`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 type DenyPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec   DenyPolicySpec   `json:"spec"`
 	Status DenyPolicyStatus `json:"status,omitempty"`
+}
+
+// SetCondition updates or adds a condition in the DenyPolicy status
+func (dp *DenyPolicy) SetCondition(condition metav1.Condition) {
+	apimeta.SetStatusCondition(&dp.Status.Conditions, condition)
+}
+
+// GetCondition retrieves a condition from the DenyPolicy status by type
+func (dp *DenyPolicy) GetCondition(condType string) *metav1.Condition {
+	return apimeta.FindStatusCondition(dp.Status.Conditions, condType)
 }
 
 // +kubebuilder:object:root=true

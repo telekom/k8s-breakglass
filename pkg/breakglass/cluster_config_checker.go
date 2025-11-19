@@ -2,12 +2,15 @@ package breakglass
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
@@ -165,11 +168,49 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 
 func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
 
-	// update status
+	// update status with conditions
 	now := metav1.Now()
-	cc.Status.Phase = phase
-	cc.Status.Message = message
-	cc.Status.LastCheckTime = now
+
+	// Determine condition type based on phase
+	isSuccess := phase == "Ready"
+	failureType := ""
+	if !isSuccess {
+		failureType = determineClusterConfigFailureType(message)
+	}
+
+	// Determine condition status and reason
+	var conditionStatus metav1.ConditionStatus
+	var conditionReason string
+
+	if isSuccess {
+		conditionStatus = metav1.ConditionTrue
+		conditionReason = "KubeconfigValidated"
+	} else {
+		conditionStatus = metav1.ConditionFalse
+		switch failureType {
+		case "secret_missing", "secret_key_missing":
+			conditionReason = "SecretMissing"
+		case "parse":
+			conditionReason = "KubeconfigParseFailed"
+		case "connection":
+			conditionReason = "ClusterUnreachable"
+		default:
+			conditionReason = "ValidationFailed"
+		}
+	}
+
+	// Update condition with typed constant
+	condition := metav1.Condition{
+		Type:               string(telekomv1alpha1.ClusterConfigConditionReady),
+		Status:             conditionStatus,
+		ObservedGeneration: cc.Generation,
+		Reason:             conditionReason,
+		Message:            message,
+		LastTransitionTime: now,
+	}
+	apimeta.SetStatusCondition(&cc.Status.Conditions, condition)
+	cc.Status.ObservedGeneration = cc.Generation
+
 	// persist status: try full Update first (fake client often requires this), fallback to status update
 	if err := ccc.Client.Update(ctx, cc); err != nil {
 		lg.Warnw("ClusterConfig full Update failed; attempting Status().Update", "cluster", cc.Name, "error", err)
@@ -184,13 +225,14 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 	}
 	// emit event if recorder present
 	if ccc.Recorder != nil {
-		if eventType == corev1.EventTypeNormal {
+		eventReason := "ClusterConfigValidationFailed"
+		if isSuccess {
+			eventReason = "ClusterConfigValidationSucceeded"
 			lg.Debugw("Emitting Normal event for ClusterConfig", "cluster", cc.Name, "message", message)
-			ccc.Recorder.Event(cc, eventType, "ClusterConfigValidationSucceeded", message)
 		} else {
 			lg.Debugw("Emitting Warning event for ClusterConfig", "cluster", cc.Name, "message", message)
-			ccc.Recorder.Event(cc, eventType, "ClusterConfigValidationFailed", message)
 		}
+		ccc.Recorder.Event(cc, eventType, eventReason, message)
 	} else {
 		lg.Warnw("No Event recorder configured; skipping Kubernetes Event emission", "cluster", cc.Name)
 	}
@@ -205,6 +247,56 @@ func checkClusterReachable(cfg *rest.Config) error {
 	}
 	_, err = d.ServerVersion()
 	return err
+}
+
+// StatusUpdateHelper provides methods to update ClusterConfig status with complete state exposure
+type StatusUpdateHelper struct {
+	message   string
+	eventType string // "Normal" or "Warning"
+	phase     string // "Ready" or "Failed"
+}
+
+// NewStatusUpdateHelper creates a new helper for standardized status updates
+func NewStatusUpdateHelper(phase, message, eventType string) *StatusUpdateHelper {
+	return &StatusUpdateHelper{
+		phase:     phase,
+		message:   message,
+		eventType: eventType,
+	}
+}
+
+// DescribeFailure provides a human-readable description of what failed and why
+func DescribeFailure(failureType, message string) (failureCategory, advice string) {
+	switch failureType {
+	case "connection":
+		return "connection_failed", fmt.Sprintf("Cluster is unreachable. Check network connectivity and cluster status. Error: %s", message)
+	case "parse":
+		return "kubeconfig_parse_error", fmt.Sprintf("Kubeconfig is invalid or malformed. Verify the secret data. Error: %s", message)
+	case "secret_missing":
+		return "secret_not_found", "Referenced kubeconfig secret doesn't exist or is inaccessible. Check secret name and namespace."
+	case "secret_key_missing":
+		return "secret_key_missing", "Kubeconfig secret exists but is missing the required key. Check secret data keys."
+	case "not_configured":
+		return "not_configured", "ClusterConfig.spec.kubeconfigSecretRef is not configured. Configure the secret reference."
+	default:
+		return "validation_failed", fmt.Sprintf("Configuration validation failed: %s", message)
+	}
+}
+
+// determineClusterConfigFailureType categorizes the failure message to populate appropriate status fields
+func determineClusterConfigFailureType(message string) string {
+	switch {
+	case strings.Contains(message, "secret missing") || strings.Contains(message, "not found"):
+		return "secret_missing"
+	case strings.Contains(message, "missing key"):
+		return "secret_key_missing"
+	case strings.Contains(message, "parse failed"):
+		return "parse"
+	case strings.Contains(message, "unreachable") || strings.Contains(message, "dial"):
+		return "connection"
+	default:
+		return "validation"
+	}
 }
 
 // overridable function variables for unit testing
