@@ -1122,7 +1122,14 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 	reqLog.Debug("Handling GET /status for breakglass session")
-	ctx := c.Request.Context()
+	// Use background context with timeout instead of request context to prevent
+	// "context canceled" errors when client closes connection during rapid refreshes.
+	// The Kubernetes API List operation needs to complete even if the HTTP client
+	// disconnects, otherwise users see errors on rapid tab switches in the UI.
+	// We use a timeout to prevent indefinite hangs.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// Support server-side filtering when cluster/user/group query params are provided
 	// to avoid fetching all sessions when unnecessary.
 	clusterQ := c.Query("cluster")
@@ -2080,7 +2087,12 @@ func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 
-	sessions, err := wc.sessionManager.GetAllBreakglassSessions(c.Request.Context())
+	// Use background context with timeout instead of request context to prevent
+	// "context canceled" errors when client closes connection.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sessions, err := wc.sessionManager.GetAllBreakglassSessions(ctx)
 	if err != nil {
 		reqLog.Error("Error getting access reviews", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, "Failed to extract cluster group access information")
