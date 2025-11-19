@@ -146,13 +146,14 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	log := k.log
 	if k.cfg.BaseURL == "" || k.cfg.Realm == "" || k.cfg.ClientID == "" {
 		if log != nil {
-			log.Debugw("Keycloak resolver missing configuration; skipping group lookup",
+			log.Errorw("Keycloak resolver has incomplete configuration; cannot resolve groups",
 				"group", group,
 				"baseURL", k.cfg.BaseURL,
 				"realm", k.cfg.Realm,
 				"clientID", k.cfg.ClientID)
 		}
-		return nil, nil // gracefully skip when not configured
+		return nil, fmt.Errorf("keycloak resolver incomplete config: baseURL=%s, realm=%s, clientID=%s",
+			k.cfg.BaseURL, k.cfg.Realm, k.cfg.ClientID)
 	}
 	if v, ok := k.cache.get(group); ok {
 		if log != nil {
@@ -484,19 +485,39 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			updated.Status.ApproverGroupMembers = map[string][]string{}
 		}
 
-		// Check if multi-IDP fields are set (Phase 2 feature)
-		hasMultiIDPFields := len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0
+		// Determine which IDPs to use for group resolution
+		// If allowedIdentityProvidersForApprovers is explicitly set, use those IDPs
+		// Otherwise, if IDPLoader is available and has multiple enabled IDPs, use all of them (auto multi-IDP mode)
+		// Otherwise, fall back to legacy single-resolver mode
+		var idpsToUse []string
+		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+			// Explicitly configured IDPs
+			idpsToUse = esc.Spec.AllowedIdentityProvidersForApprovers
+			log.Debugw("Using explicitly configured IDPs", "escalation", esc.Name, "idps", idpsToUse)
+		} else if u.IDPLoader != nil {
+			// Auto-detect: use all enabled IDPs
+			allIDPs, err := u.IDPLoader.LoadAllIdentityProviders(ctx)
+			if err != nil {
+				log.Warnw("Failed to load IDPs for auto-detection, falling back to legacy mode", "error", err, "escalation", esc.Name)
+			} else if len(allIDPs) > 0 {
+				idpsToUse = make([]string, 0, len(allIDPs))
+				for name := range allIDPs {
+					idpsToUse = append(idpsToUse, name)
+				}
+				log.Debugw("Auto-detected multiple IDPs, using multi-IDP mode", "escalation", esc.Name, "idpCount", len(idpsToUse), "idps", idpsToUse)
+			}
+		}
 
 		changed := false
 
-		if hasMultiIDPFields {
-			// Phase 2: Use multi-IDP group sync with IDP hierarchy storage
-			log.Debugw("Using multi-IDP group sync", "escalation", esc.Name, "idps", esc.Spec.AllowedIdentityProvidersForApprovers)
+		if len(idpsToUse) > 0 {
+			// Multi-IDP mode: Use multi-IDP group sync with IDP hierarchy storage
+			log.Debugw("Using multi-IDP group sync", "escalation", esc.Name, "idps", idpsToUse)
 
-			hierarchy, syncStatus, syncErrors := u.fetchGroupMembersFromMultipleIDPs(
+			hierarchy, _, _ := u.fetchGroupMembersFromMultipleIDPs(
 				ctx,
 				&esc,
-				esc.Spec.AllowedIdentityProvidersForApprovers,
+				idpsToUse,
 				groups,
 				log,
 			)
@@ -504,18 +525,6 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			// Store full IDP hierarchy in status (NOT deduplicated)
 			if !equalIDPHierarchy(hierarchy, updated.Status.IDPGroupMemberships) {
 				updated.Status.IDPGroupMemberships = hierarchy
-				changed = true
-			}
-
-			// Store sync status
-			if updated.Status.GroupSyncStatus != syncStatus {
-				updated.Status.GroupSyncStatus = syncStatus
-				changed = true
-			}
-
-			// Store sync errors
-			if !equalStringSlices(syncErrors, updated.Status.GroupSyncErrors) {
-				updated.Status.GroupSyncErrors = syncErrors
 				changed = true
 			}
 
@@ -544,27 +553,13 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 					members, err := u.Resolver.Members(ctx, g)
 					if err != nil {
 						log.Errorw("Failed resolving group members from resolver", "group", g, "escalation", esc.Name, "error", err, "resolverType", fmt.Sprintf("%T", u.Resolver))
-						// record resolution error in status
-						if updated.Status.GroupResolutionStatus == nil {
-							updated.Status.GroupResolutionStatus = map[string]string{}
-						}
-						updated.Status.GroupResolutionStatus[g] = fmt.Sprintf("error: %v", err)
 						continue
 					}
 					log.Debugw("Group member resolver returned members", "group", g, "escalation", esc.Name, "rawMemberCount", len(members), "members", members)
 					norm = normalizeMembers(members)
 					log.Infow("Resolved approver group members (normalized)", "group", g, "escalation", esc.Name, "rawCount", len(members), "normalizedCount", len(norm), "normalizedMembers", norm)
-					// mark group resolution ok in status
-					if updated.Status.GroupResolutionStatus == nil {
-						updated.Status.GroupResolutionStatus = map[string]string{}
-					}
-					updated.Status.GroupResolutionStatus[g] = "ok"
 				} else {
 					log.Warnw("No group member resolver configured; skipping group resolution", "group", g, "escalation", esc.Name)
-					if updated.Status.GroupResolutionStatus == nil {
-						updated.Status.GroupResolutionStatus = map[string]string{}
-					}
-					updated.Status.GroupResolutionStatus[g] = "disabled"
 					continue
 				}
 				if !equalStringSlices(norm, updated.Status.ApproverGroupMembers[g]) {
@@ -579,8 +574,31 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
 			if err := u.K8sClient.Status().Update(ctx, updated); err != nil {
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
+				// Emit error event
+				if u.EventRecorder != nil {
+					u.EventRecorder.Eventf(updated, "Warning", "GroupMembersUpdateFailed",
+						"Failed to update group members: %v", err)
+				}
 			} else {
 				log.Debugw("Updated escalation successfully", "escalation", esc.Name, "groups", groups)
+				// Emit success event with details about what was synced
+				if u.EventRecorder != nil {
+					if len(idpsToUse) > 0 {
+						// Multi-IDP mode
+						eventMsg := fmt.Sprintf("Group members synced successfully from %d IDPs. Updated %d group(s) with approvers.",
+							len(idpsToUse), len(groups))
+						u.EventRecorder.Eventf(updated, "Normal", "GroupMembersSynced", eventMsg)
+					} else {
+						// Legacy single resolver mode
+						totalMembers := 0
+						for _, members := range updated.Status.ApproverGroupMembers {
+							totalMembers += len(members)
+						}
+						u.EventRecorder.Eventf(updated, "Normal", "GroupMembersSynced",
+							"Group members resolved successfully. Total approvers from %d group(s): %d members.",
+							len(groups), totalMembers)
+					}
+				}
 			}
 		}
 	}
@@ -832,3 +850,5 @@ func deduplicateMembersFromHierarchy(hierarchy map[string]map[string][]string, g
 
 	return result
 }
+
+// End of EscalationStatusUpdater methods

@@ -18,18 +18,12 @@ spec:
     - jsonPath: .spec.issuer
       name: Issuer
       type: string
-    - jsonPath: .spec.primary
-      name: Primary
-      type: boolean
     - jsonPath: .spec.groupSyncProvider
       name: GroupSync
       type: string
-    - jsonPath: .status.phase
-      name: Phase
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
       type: string
-    - jsonPath: .status.connected
-      name: Connected
-      type: boolean
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -183,12 +177,26 @@ spec:
             required:
             - oidc
             type: object
+            x-kubernetes-validations:
+            - message: keycloak must be specified when groupSyncProvider is 'Keycloak'
+              rule: 'has(self.groupSyncProvider) && self.groupSyncProvider == ''Keycloak''
+                ? has(self.keycloak) : true'
+            - message: keycloak must be specified when groupSyncProvider is set to
+                'Keycloak'
+              rule: '!has(self.groupSyncProvider) || self.groupSyncProvider != ''Keycloak''
+                || (has(self.keycloak) && self.keycloak != null)'
           status:
             description: IdentityProviderStatus defines the observed state of an IdentityProvider
             properties:
               conditions:
-                description: Conditions represent the latest available observations
-                  of the IdentityProvider's state
+                description: |-
+                  Conditions represent the latest available observations of the IdentityProvider's state.
+                  All status information is conveyed through conditions:
+                  - Ready: Configuration is valid and provider is operational
+                  - ConversionFailed: Configuration conversion failed
+                  - ValidationFailed: Configuration validation failed
+                  - GroupSyncHealthy: Group sync provider is healthy and reachable
+                  - CacheUpdated: Provider cache has been successfully updated
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -244,24 +252,14 @@ spec:
                   - type
                   type: object
                 type: array
-              configHash:
-                description: ConfigHash is a hash of the current configuration for
-                  change detection
-                type: string
-              connected:
-                description: Connected indicates if the provider is currently reachable
-                type: boolean
-              lastValidation:
-                description: LastValidation is when the provider was last validated
-                format: date-time
-                type: string
-              message:
-                description: Message provides details about the current phase
-                type: string
-              phase:
-                description: 'Phase indicates the current phase: Ready, Validating,
-                  Error'
-                type: string
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most
+                  recently observed IdentityProvider
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

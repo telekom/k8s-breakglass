@@ -118,15 +118,17 @@ func stripOIDCPrefixes(groups []string, oidcPrefixes []string) []string {
 	return strippedGroups
 }
 
-// Returns users groups assigned in cluster by duplicating kubectl auth whoami logic.
-func GetUserGroups(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
-	zap.S().Debugw("Getting user groups for cluster user group", "cluster", cug.Clustername, "username", cug.Username)
-
+// getUserGroupsInternal is a shared helper function for GetUserGroups and GetUserGroupsWithConfig.
+// It fetches user groups assigned in a cluster (duplicating kubectl auth whoami logic) with optional OIDC prefix stripping.
+// If configPath is empty, uses the default config path.
+func getUserGroupsInternal(ctx context.Context, cug ClusterUserGroup, configPath string) ([]string, error) {
 	// Load config to get OIDC prefixes
-	cfg, err := pkgconfig.Load()
+	cfg, err := pkgconfig.Load(configPath)
+	configLoaded := true
 	if err != nil {
 		zap.S().Errorw("Failed to load config for OIDC prefixes", "error", err.Error())
 		// Continue without OIDC prefix stripping if config loading fails
+		configLoaded = false
 	}
 
 	kubeCfg, err := getConfigForClusterName(cug.Clustername)
@@ -146,14 +148,14 @@ func GetUserGroups(ctx context.Context, cug ClusterUserGroup) ([]string, error) 
 	}
 
 	var res runtime.Object
-	res, err = client.AuthenticationV1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
+	res, err = client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
 
 	if err != nil && k8serrors.IsNotFound(err) {
 		zap.S().Warn("Falling back to Beta API for SelfSubjectReview")
-		res, err = client.AuthenticationV1beta1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1beta1.SelfSubjectReview{}, metav1.CreateOptions{})
+		res, err = client.AuthenticationV1beta1().SelfSubjectReviews().Create(ctx, &authenticationv1beta1.SelfSubjectReview{}, metav1.CreateOptions{})
 		if err != nil && k8serrors.IsNotFound(err) {
 			zap.S().Warn("Falling back to Alpha API for SelfSubjectReview")
-			res, err = client.AuthenticationV1alpha1().SelfSubjectReviews().Create(context.TODO(), &authenticationv1alpha1.SelfSubjectReview{}, metav1.CreateOptions{})
+			res, err = client.AuthenticationV1alpha1().SelfSubjectReviews().Create(ctx, &authenticationv1alpha1.SelfSubjectReview{}, metav1.CreateOptions{})
 		}
 	}
 
@@ -171,16 +173,40 @@ func GetUserGroups(ctx context.Context, cug ClusterUserGroup) ([]string, error) 
 	// Apply OIDC prefix stripping if config was loaded successfully
 	originalGroups := ui.Groups
 	finalGroups := originalGroups
-	if len(cfg.Kubernetes.OIDCPrefixes) > 0 {
+	if configLoaded && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
 		finalGroups = stripOIDCPrefixes(originalGroups, cfg.Kubernetes.OIDCPrefixes)
 		zap.S().Infow("Applied OIDC prefix stripping", "originalGroups", originalGroups, "finalGroups", finalGroups, "oidcPrefixes", cfg.Kubernetes.OIDCPrefixes)
 	} else {
 		zap.S().Debug("No OIDC prefixes configured, using original groups")
 	}
 
+	return finalGroups, nil
+}
+
+func GetUserGroups(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+	zap.S().Debugw("Getting user groups for cluster user group", "cluster", cug.Clustername, "username", cug.Username)
+
+	finalGroups, err := getUserGroupsInternal(ctx, cug, "")
+	if err != nil {
+		return nil, err
+	}
+
 	// Removed BREAKGLASS_E2E_ASSUME_GROUPS fallback to ensure real cluster auth is always required.
 
 	zap.S().Infow("GetUserGroups complete", "cluster", cug.Clustername, "username", cug.Username, "groups", finalGroups, "count", len(finalGroups))
+	return finalGroups, nil
+}
+
+// GetUserGroupsWithConfig returns users groups assigned in cluster with custom config path for OIDC prefix stripping.
+func GetUserGroupsWithConfig(ctx context.Context, cug ClusterUserGroup, configPath string) ([]string, error) {
+	zap.S().Debugw("Getting user groups for cluster user group with custom config", "cluster", cug.Clustername, "username", cug.Username, "configPath", configPath)
+
+	finalGroups, err := getUserGroupsInternal(ctx, cug, configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	zap.S().Infow("GetUserGroupsWithConfig complete", "cluster", cug.Clustername, "username", cug.Username, "groups", finalGroups, "count", len(finalGroups))
 	return finalGroups, nil
 }
 

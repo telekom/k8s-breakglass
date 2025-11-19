@@ -527,7 +527,8 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 		// Check for target group escalations if we have a specific group request
 		var groupescals []v1alpha1.BreakglassEscalation
-		if sar.Spec.ResourceAttributes.Group != "" {
+		// SECURITY FIX: Check if ResourceAttributes is not nil before accessing its fields
+		if sar.Spec.ResourceAttributes != nil && sar.Spec.ResourceAttributes.Group != "" {
 			groupescals, err = wc.escalManager.GetClusterGroupTargetBreakglassEscalation(ctx,
 				clusterName,
 				uniqueGroups,

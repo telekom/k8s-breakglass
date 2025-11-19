@@ -332,26 +332,99 @@ spec:
 
 **Status Fields** (Read-Only):
 
-The system automatically updates these status fields during group synchronization:
+The system automatically updates these status fields:
 
 ```yaml
 status:
-  # Per-IDP group membership (for debugging)
+  # Observed generation (standard Kubernetes pattern)
+  observedGeneration: 2
+  
+  # Per-IDP group membership cache (for performance and debugging)
   idpGroupMemberships:
     corp-oidc:
       approvers: ["alice@example.com", "bob@example.com"]
     keycloak-idp:
       approvers: ["alice@example.com", "charlie@example.com"]
   
-  # Deduplicated members across all IDPs (PRIMARY STORAGE)
+  # Deduplicated members across all IDPs (used for notifications)
   approverGroupMembers:
     approvers: ["alice@example.com", "bob@example.com", "charlie@example.com"]
   
-  # Sync status: "Success", "PartialFailure", or "Failed"
-  groupSyncStatus: "Success"
-  
-  # Detailed error messages if sync failed
-  groupSyncErrors: []
+  # Conditions tracking validation, configuration, and health
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: "ConfigurationValid"
+    message: "BreakglassEscalation is valid and operational"
+    observedGeneration: 2
+    lastTransitionTime: "2024-01-15T10:30:00Z"
+```
+
+### Understanding Status
+
+The `status` section includes **cached group memberships** for performance and a **Conditions array** for status tracking:
+
+- **idpGroupMemberships**: Per-IDP resolved group members (cached for performance)
+- **approverGroupMembers**: Deduplicated approvers across all IDPs (used for notifications)
+- **Conditions**: Kubernetes-standard conditions tracking validation, references, and health
+
+### Conditions
+
+All status information is tracked via **Kubernetes conditions**. Use `kubectl describe` to view them:
+
+```bash
+kubectl describe breakglassescalation <name>
+# Shows Conditions section with Type, Status, Reason, Message, and timestamps
+```
+
+#### Ready Condition
+
+Indicates the BreakglassEscalation is fully valid and operational.
+
+```yaml
+conditions:
+- type: Ready
+  status: "True"
+  reason: "ConfigurationValid"
+  message: "All references and configurations validated successfully"
+```
+
+When `False`:
+```yaml
+- type: Ready
+  status: "False"
+  reason: "ClusterReferenceInvalid"
+  message: "Referenced cluster 'missing-cluster' does not exist"
+```
+
+#### Condition Reasons
+
+| Reason | Status | Description |
+|--------|--------|-------------|
+| `ConfigurationValid` | True | All specifications are valid |
+| `ClusterReferenceInvalid` | False | Referenced cluster doesn't exist |
+| `IdentityProviderReferenceInvalid` | False | Referenced IDP doesn't exist or is disabled |
+| `DenyPolicyReferenceInvalid` | False | Referenced deny policy doesn't exist |
+| `GroupSyncFailed` | False | Failed to sync approver groups from IDP |
+| `ValidationInProgress` | Unknown | Configuration being validated |
+
+### Viewing Status
+
+Check escalation status and conditions:
+
+```bash
+# Quick status check
+kubectl get breakglassescalation
+# Output columns: NAME | CLUSTERS | GROUPS | READY | AGE
+
+# Detailed conditions
+kubectl describe breakglassescalation <name>
+
+# View specific condition
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="Ready")]}'
+
+# Monitor changes
+kubectl get breakglassescalation -w
 ```
 
 ### clusterConfigRefs
@@ -477,6 +550,185 @@ An escalation request can be approved by:
 5. **Approval Process**: Route to approvers or auto-approve based on policy
 6. **Session Activation**: Activate once approved, or reject if denied
 7. **Webhook Authorization**: Token grants temporary group membership during webhook evaluation
+
+## Troubleshooting
+
+### Checking Escalation Status
+
+Always check conditions first to diagnose issues:
+
+```bash
+# Get all escalations with status
+kubectl get breakglassescalation -o wide
+
+# Detailed view with conditions
+kubectl describe breakglassescalation <name>
+
+# View specific condition
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions}'
+
+# Export full status
+kubectl get breakglassescalation <name> -o yaml | grep -A 20 status:
+```
+
+### Common Issues
+
+#### Ready Condition: False (ClusterReferenceInvalid)
+
+**Cause:** Referenced cluster in `allowed.clusters` or `clusterConfigRefs` doesn't exist.
+
+**Diagnosis:**
+```bash
+# List available clusters
+kubectl get clusterconfig
+
+# Check which cluster is referenced in escalation
+kubectl get breakglassescalation <name> -o jsonpath='{.spec.allowed.clusters}'
+```
+
+**Solution:**
+- Verify cluster names in `allowed.clusters` match existing `ClusterConfig` names
+- Use exact names as shown in `kubectl get clusterconfig`
+- If using `clusterConfigRefs`, ensure those `ClusterConfig` resources exist
+
+#### Ready Condition: False (IdentityProviderReferenceInvalid)
+
+**Cause:** Referenced identity provider doesn't exist or is disabled.
+
+**Diagnosis:**
+```bash
+# List available IDPs
+kubectl get identityprovider
+
+# Check referenced IDP
+kubectl get identityprovider <name> -o yaml | grep -E '(name:|disabled:)'
+```
+
+**Solution:**
+- Verify IDP names in `allowedIdentityProvidersForRequests/Approvers` exist
+- Check if referenced IDP is disabled (`spec.disabled: true`)
+- Enable the IDP or update the escalation references
+
+#### Ready Condition: False (GroupSyncFailed)
+
+**Cause:** Failed to synchronize approver groups from identity provider.
+
+**Diagnosis:**
+```bash
+# Check sync error details
+kubectl describe breakglassescalation <name> | grep -A 3 "GroupSyncFailed"
+
+# Check related IdentityProvider status
+kubectl describe identityprovider <idp-name>
+```
+
+**Solution:**
+- Verify identity provider is healthy (check `Ready` condition)
+- Ensure approver groups exist in configured IDP
+- Check IDP connectivity and credentials
+- Review events for more details: `kubectl get events --field-selector involvedObject.name=<escalation-name>`
+
+#### Ready Condition: False (DenyPolicyReferenceInvalid)
+
+**Cause:** Referenced deny policy doesn't exist.
+
+**Diagnosis:**
+```bash
+# List available deny policies
+kubectl get denypolicy
+
+# Check referenced policies
+kubectl get breakglassescalation <name> -o jsonpath='{.spec.denyPolicyRefs}'
+```
+
+**Solution:**
+- Verify all deny policy names in `denyPolicyRefs` exist
+- Create missing deny policies or remove invalid references
+
+### Approver Group Issues
+
+#### Users can't see escalation as an option
+
+**Check user group membership:**
+```bash
+# User must belong to one of the groups in allowed.groups or users list
+# Verify in your identity provider that user belongs to:
+# - allowed.groups
+# - OR listed in allowed.users
+```
+
+**Check cluster configuration:**
+```bash
+# Verify the cluster they're requesting is in allowed.clusters
+kubectl get breakglassescalation <name> -o jsonpath='{.spec.allowed.clusters}'
+```
+
+#### Approvals not working
+
+**Check approver configuration:**
+```bash
+# Verify approvers exist
+kubectl get breakglassescalation <name> -o yaml | grep -A 10 'approvers:'
+```
+
+**Verify approver group membership:**
+```bash
+# If using group-based approvals, ensure approvers belong to those groups
+# in the configured identity provider
+```
+
+### Session Creation Issues
+
+#### Sessions not created from escalations
+
+**Check if escalation is Ready:**
+```bash
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="Ready")]}'
+# Should show status: True
+```
+
+**Check webhook authorization:**
+```bash
+# Ensure webhook is properly configured and accessible
+# Review breakglass controller logs for details
+```
+
+### Group Membership Sync
+
+#### Approver groups not resolved
+
+**Check sync status in status section:**
+```bash
+kubectl get breakglassescalation <name> -o jsonpath='{.status.approverGroupMembers}'
+# Should show resolved email addresses
+```
+
+**If empty or missing:**
+- Verify identity provider is healthy
+- Check IDP group names exist
+- Review IDP reconciler logs for sync errors
+
+### Debugging Commands
+
+```bash
+# Show all escalations with sync status
+kubectl get breakglassescalation -o wide
+
+# Watch for status changes
+kubectl get breakglassescalation -w
+
+# Export for analysis
+kubectl get breakglassescalation <name> -o json | jq '.status'
+
+# Get only conditions
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions}' | jq '.'
+
+# Monitor events
+kubectl get events --field-selector involvedObject.kind=BreakglassEscalation
+
+# Check controller logs (if accessible)
+kubectl logs -n breakglass deployment/breakglass-controller -f --grep=escalation
+```
 
 ## Best Practices
 

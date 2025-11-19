@@ -368,14 +368,16 @@ func TestGroupSyncStatus_Success_HappyPath(t *testing.T) {
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
-			GroupSyncStatus: "Success",
-			GroupSyncErrors: []string{},
-		},
 	}
+	escalation.SetCondition(metav1.Condition{
+		Type:   string(v1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved),
+		Status: metav1.ConditionTrue,
+		Reason: "GroupMembersResolved",
+	})
 
-	assert.Equal(t, "Success", escalation.Status.GroupSyncStatus)
-	assert.Len(t, escalation.Status.GroupSyncErrors, 0)
+	condition := escalation.GetCondition(string(v1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+	assert.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionTrue, condition.Status)
 }
 
 // TestGroupSyncStatus_PartialFailure_HappyPath tests partial failure status
@@ -385,18 +387,18 @@ func TestGroupSyncStatus_PartialFailure_HappyPath(t *testing.T) {
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
-			GroupSyncStatus: "PartialFailure",
-			GroupSyncErrors: []string{
-				"IDP-2: connection timeout",
-				"IDP-3: invalid credentials",
-			},
-		},
 	}
+	escalation.SetCondition(metav1.Condition{
+		Type:    string(v1alpha1.BreakglassEscalationConditionReady),
+		Status:  metav1.ConditionFalse,
+		Reason:  "PartialFailure",
+		Message: "Some IDPs failed to resolve members",
+	})
 
-	assert.Equal(t, "PartialFailure", escalation.Status.GroupSyncStatus)
-	assert.Len(t, escalation.Status.GroupSyncErrors, 2)
-	assert.Contains(t, escalation.Status.GroupSyncErrors[0], "timeout")
+	condition := escalation.GetCondition(string(v1alpha1.BreakglassEscalationConditionReady))
+	assert.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "PartialFailure", condition.Reason)
 }
 
 // TestGroupSyncStatus_CompleteFailed_HappyPath tests complete failure status
@@ -406,14 +408,16 @@ func TestGroupSyncStatus_CompleteFailed_HappyPath(t *testing.T) {
 			Name:      "test-escalation",
 			Namespace: "default",
 		},
-		Status: v1alpha1.BreakglassEscalationStatus{
-			GroupSyncStatus: "Failed",
-			GroupSyncErrors: []string{
-				"All IDPs failed",
-			},
-		},
 	}
+	escalation.SetCondition(metav1.Condition{
+		Type:    string(v1alpha1.BreakglassEscalationConditionReady),
+		Status:  metav1.ConditionFalse,
+		Reason:  "CompleteFailed",
+		Message: "All IDPs failed to resolve members",
+	})
 
-	assert.Equal(t, "Failed", escalation.Status.GroupSyncStatus)
-	assert.Len(t, escalation.Status.GroupSyncErrors, 1)
+	condition := escalation.GetCondition(string(v1alpha1.BreakglassEscalationConditionReady))
+	assert.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "CompleteFailed", condition.Reason)
 }

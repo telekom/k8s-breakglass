@@ -48,6 +48,10 @@ const (
 	IdentityProviderConditionConversionFailed IdentityProviderConditionType = "ConversionFailed"
 	// IdentityProviderConditionValidationFailed indicates the IdentityProvider configuration failed validation
 	IdentityProviderConditionValidationFailed IdentityProviderConditionType = "ValidationFailed"
+	// IdentityProviderConditionGroupSyncHealthy indicates the GroupSync provider is healthy and reachable
+	IdentityProviderConditionGroupSyncHealthy IdentityProviderConditionType = "GroupSyncHealthy"
+	// IdentityProviderConditionCacheUpdated indicates the provider cache has been successfully updated
+	IdentityProviderConditionCacheUpdated IdentityProviderConditionType = "CacheUpdated"
 )
 
 // OIDCConfig holds mandatory OIDC configuration for identity provider
@@ -107,6 +111,8 @@ type KeycloakGroupSync struct {
 }
 
 // IdentityProviderSpec defines the desired state of an IdentityProvider
+// +kubebuilder:validation:XValidation:rule="has(self.groupSyncProvider) && self.groupSyncProvider == 'Keycloak' ? has(self.keycloak) : true",message="keycloak must be specified when groupSyncProvider is 'Keycloak'"
+// +kubebuilder:validation:XValidation:rule="!has(self.groupSyncProvider) || self.groupSyncProvider != 'Keycloak' || (has(self.keycloak) && self.keycloak != null)",message="keycloak must be specified when groupSyncProvider is set to 'Keycloak'"
 type IdentityProviderSpec struct {
 	// OIDC holds mandatory OIDC configuration for user authentication
 	// This is the base authentication mechanism for all identity providers
@@ -145,30 +151,22 @@ type IdentityProviderSpec struct {
 
 // IdentityProviderStatus defines the observed state of an IdentityProvider
 type IdentityProviderStatus struct {
-	// Phase indicates the current phase: Ready, Validating, Error
+	// ObservedGeneration reflects the generation of the most recently observed IdentityProvider
 	// +optional
-	Phase string `json:"phase,omitempty"`
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// Message provides details about the current phase
-	// +optional
-	Message string `json:"message,omitempty"`
-
-	// LastValidation is when the provider was last validated
-	// +optional
-	LastValidation metav1.Time `json:"lastValidation,omitempty"`
-
-	// Connected indicates if the provider is currently reachable
-	// +optional
-	Connected bool `json:"connected,omitempty"`
-
-	// ConfigHash is a hash of the current configuration for change detection
-	// +optional
-	ConfigHash string `json:"configHash,omitempty"`
-
-	// Conditions represent the latest available observations of the IdentityProvider's state
+	// Conditions represent the latest available observations of the IdentityProvider's state.
+	// All status information is conveyed through conditions:
+	// - Ready: Configuration is valid and provider is operational
+	// - ConversionFailed: Configuration conversion failed
+	// - ValidationFailed: Configuration validation failed
+	// - GroupSyncHealthy: Group sync provider is healthy and reachable
+	// - CacheUpdated: Provider cache has been successfully updated
 	// +optional
 	// +patchMergeKey=type
 	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
@@ -176,10 +174,8 @@ type IdentityProviderStatus struct {
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Issuer",type=string,JSONPath=`.spec.issuer`
-// +kubebuilder:printcolumn:name="Primary",type=boolean,JSONPath=`.spec.primary`
 // +kubebuilder:printcolumn:name="GroupSync",type=string,JSONPath=`.spec.groupSyncProvider`
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Connected",type=boolean,JSONPath=`.status.connected`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // IdentityProvider represents a configured identity provider with OIDC authentication and optional group synchronization
@@ -210,9 +206,21 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 	// Validate mandatory OIDC configuration
 	if identityProvider.Spec.OIDC.Authority == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("authority"), "authority is required"))
+	} else {
+		// Validate OIDC authority URL format
+		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.Authority, field.NewPath("spec").Child("oidc").Child("authority"))...)
 	}
+
 	if identityProvider.Spec.OIDC.ClientID == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("clientID"), "clientID is required"))
+	} else {
+		// Validate clientID format (should not contain spaces or special chars)
+		allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.OIDC.ClientID, field.NewPath("spec").Child("oidc").Child("clientID"))...)
+	}
+
+	// Validate JWKS endpoint if provided
+	if identityProvider.Spec.OIDC.JWKSEndpoint != "" {
+		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.JWKSEndpoint, field.NewPath("spec").Child("oidc").Child("jwksEndpoint"))...)
 	}
 
 	// Validate Keycloak configuration if group sync is enabled
@@ -222,13 +230,25 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 		} else {
 			if identityProvider.Spec.Keycloak.BaseURL == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("baseURL"), "baseURL is required"))
+			} else {
+				// Validate Keycloak URL format
+				allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.Keycloak.BaseURL, field.NewPath("spec").Child("keycloak").Child("baseURL"))...)
 			}
+
 			if identityProvider.Spec.Keycloak.Realm == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("realm"), "realm is required"))
+			} else {
+				// Validate realm format
+				allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.Keycloak.Realm, field.NewPath("spec").Child("keycloak").Child("realm"))...)
 			}
+
 			if identityProvider.Spec.Keycloak.ClientID == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientID"), "clientID is required"))
+			} else {
+				// Validate Keycloak client ID format
+				allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.Keycloak.ClientID, field.NewPath("spec").Child("keycloak").Child("clientID"))...)
 			}
+
 			if identityProvider.Spec.Keycloak.ClientSecretRef.Name == "" || identityProvider.Spec.Keycloak.ClientSecretRef.Namespace == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientSecretRef"), "clientSecretRef name and namespace are required"))
 			}

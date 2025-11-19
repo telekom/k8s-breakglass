@@ -1,6 +1,7 @@
 package breakglass
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,7 @@ type BreakglassEscalationController struct {
 	middleware       gin.HandlerFunc
 	identityProvider IdentityProvider
 	getUserGroupsFn  GetUserGroupsFunction
+	configPath       string // Path to breakglass config file for OIDC prefix stripping
 }
 
 // dropK8sInternalFieldsEscalation removes K8s internal fields from BreakglassEscalation for API response
@@ -82,7 +84,7 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	}
 
 	// Apply OIDC prefix stripping if configured (token groups will not have the prefix; cluster groups might)
-	if cfg, cerr := config.Load(); cerr == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
+	if cfg, cerr := config.Load(ec.configPath); cerr == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
 		userGroups = stripOIDCPrefixes(userGroups, cfg.Kubernetes.OIDCPrefixes)
 	} else if cerr != nil {
 		// Avoid logging wrapped errors (which may include stack traces). Log a concise message only.
@@ -158,6 +160,7 @@ func (b BreakglassEscalationController) Handlers() []gin.HandlerFunc {
 func NewBreakglassEscalationController(log *zap.SugaredLogger,
 	manager *EscalationManager,
 	middleware gin.HandlerFunc,
+	configPath string,
 ) *BreakglassEscalationController {
 
 	log.Debug("Initializing BreakglassEscalationController with Keycloak identity provider")
@@ -170,7 +173,10 @@ func NewBreakglassEscalationController(log *zap.SugaredLogger,
 		manager:          manager,
 		middleware:       middleware,
 		identityProvider: identityProvider,
-		getUserGroupsFn:  GetUserGroups,
+		getUserGroupsFn: func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return GetUserGroupsWithConfig(ctx, cug, configPath)
+		},
+		configPath: configPath,
 	}
 
 	log.Debug("BreakglassEscalationController initialization completed successfully")

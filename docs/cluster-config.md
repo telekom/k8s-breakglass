@@ -76,15 +76,81 @@ qps: 100    # Maximum queries per second to target cluster
 burst: 200  # Maximum burst capacity for API calls
 ```
 
-## Status Fields
+## Status and Conditions
 
-The `ClusterConfig` status provides information about connectivity and health:
+The `ClusterConfig` status uses **Kubernetes conditions** to convey all state information. This provides a rich, standardized way to track cluster configuration and connectivity.
+
+### Understanding Conditions
+
+Each condition has:
+- **Type**: The type of condition (e.g., `Ready`)
+- **Status**: `True`, `False`, or `Unknown`
+- **Reason**: A programmatic identifier for the state (e.g., `ConfigurationValid`, `ConnectionFailed`)
+- **Message**: Human-readable explanation
+- **LastTransitionTime**: When the condition last changed
+
+### Standard Conditions
+
+#### Ready
+Indicates the ClusterConfig is fully operational with valid kubeconfig and established cluster connection.
 
 ```yaml
 status:
-  phase: "Ready"                           # Ready, Failed, Unknown
-  message: "Successfully connected"        # Details about current state
-  lastCheckTime: "2024-01-15T10:30:00Z"  # Last connectivity check
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: "ConfigurationValid"
+    message: "ClusterConfig is valid and cluster connection verified"
+    lastTransitionTime: "2024-01-15T10:30:00Z"
+```
+
+When `False`:
+```yaml
+  - type: Ready
+    status: "False"
+    reason: "KubeconfigValidationFailed"
+    message: "Kubeconfig secret contains invalid data: invalid certificate"
+    lastTransitionTime: "2024-01-15T10:30:00Z"
+```
+
+### Viewing Status
+
+Check the status with `kubectl`:
+
+```bash
+# Quick status check
+kubectl get clusterconfig
+# Output columns: NAME | READY | AGE
+
+# Detailed conditions
+kubectl describe clusterconfig <name>
+
+# View specific condition
+kubectl get clusterconfig <name> -o jsonpath='{.status.conditions[?(@.type=="Ready")]}'
+```
+
+### Condition Reasons
+
+| Reason | Status | Description |
+|--------|--------|-------------|
+| `ConfigurationValid` | True | All configuration is valid and verified |
+| `KubeconfigValidationFailed` | False | Referenced kubeconfig secret is invalid or missing |
+| `ConnectionFailed` | False | Cannot connect to target cluster |
+| `AuthorizationCheckFailed` | False | Cluster connection lacks required permissions |
+| `ReconciliationInProgress` | Unknown | Configuration is being validated |
+
+### Example Status Output
+
+```yaml
+status:
+  observedGeneration: 2
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: "ConfigurationValid"
+    message: "ClusterConfig verified and operational"
+    observedGeneration: 2
+    lastTransitionTime: "2024-01-15T10:30:00Z"
 ```
 
 ## Complete Example
@@ -216,39 +282,108 @@ current-context: webhook
 
 ## Troubleshooting
 
+### Checking Cluster Status
+
+Always check the conditions first to diagnose issues:
+
+```bash
+# Get detailed status with conditions
+kubectl describe clusterconfig <name>
+
+# Export full status
+kubectl get clusterconfig <name> -o yaml
+```
+
 ### Common Issues
 
-#### ClusterConfig Phase: "Failed"
+#### Ready Condition: False (KubeconfigValidationFailed)
 
-- Check if the referenced Secret exists and contains valid kubeconfig
+**Cause:** The referenced kubeconfig secret doesn't exist or contains invalid data.
+
+**Diagnosis:**
+```bash
+# Check if secret exists
+kubectl get secret <secret-name> -n <namespace>
+
+# Verify secret format
+kubectl get secret <secret-name> -n <namespace> -o yaml | grep kubeconfig
+```
+
+**Solution:**
+- Ensure the Secret exists in the specified namespace
+- Verify the kubeconfig key name (defaults to `kubeconfig`)
+- Validate kubeconfig syntax with `kubectl config view`
+
+#### Ready Condition: False (ConnectionFailed)
+
+**Cause:** Cannot establish connection to the target cluster.
+
+**Diagnosis:**
+```bash
+# Test kubeconfig connectivity
+kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.kubeconfig}' | base64 -d > /tmp/test.kubeconfig
+kubectl --kubeconfig=/tmp/test.kubeconfig cluster-info
+```
+
+**Solution:**
 - Verify network connectivity between hub and tenant clusters
-- Ensure kubeconfig provides sufficient permissions for SAR operations
+- Check DNS resolution for cluster endpoints
+- Ensure firewall rules allow API server access
+- Verify kubeconfig server URL is correct
 
-#### Connection Timeouts
+#### Ready Condition: False (AuthorizationCheckFailed)
 
-- Increase `qps` and `burst` values if cluster is under heavy load
-- Check network latency and firewall rules
-- Verify DNS resolution for cluster endpoints
+**Cause:** Kubeconfig has insufficient permissions.
 
-#### Permission Denied
+**Diagnosis:**
+```bash
+# Test authorization on target cluster
+kubectl --kubeconfig=/tmp/test.kubeconfig auth can-i '*' '*'
+```
 
-- Ensure kubeconfig contains admin-level permissions
-- Check if RBAC is properly configured on target cluster
-- Verify service account tokens are not expired
+**Solution:**
+- Ensure kubeconfig provides admin or cluster-admin permissions
+- Verify RBAC roles/bindings are correctly configured
+- Check if service account tokens have expired
 
 ### Debugging Commands
 
 ```bash
-# Check ClusterConfig status
-kubectl get clusterconfig <name> -o yaml
+# Show all ClusterConfigs with status
+kubectl get clusterconfig -o wide
 
-# Verify referenced secret exists
-kubectl get secret <secret-name> -n <namespace>
+# Watch for status changes
+kubectl get clusterconfig -w
 
-# Extract and test kubeconfig
-kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.kubeconfig}' | base64 -d > /tmp/test.kubeconfig
-kubectl --kubeconfig=/tmp/test.kubeconfig auth can-i '*' '*'
+# Export for analysis
+kubectl get clusterconfig <name> -o json | jq '.status'
+
+# Get only conditions
+kubectl get clusterconfig <name> -o jsonpath='{.status.conditions}'
+
+# Monitor events related to ClusterConfig
+kubectl get events --field-selector involvedObject.name=<name>,involvedObject.kind=ClusterConfig
 ```
+
+### Performance Tuning
+
+If you notice slow API calls:
+
+1. **Check QPS settings:**
+   ```bash
+   kubectl get clusterconfig <name> -o jsonpath='{.spec.qps}'
+   ```
+
+2. **Increase burst capacity if needed:**
+   ```yaml
+   spec:
+     qps: 200    # Increase from default
+     burst: 400  # Increase from default
+   ```
+
+3. **Monitor actual usage:**
+   - Watch for API rate limiting errors in ClusterConfig conditions
+   - Adjust based on workload patterns
 
 ## Related Resources
 

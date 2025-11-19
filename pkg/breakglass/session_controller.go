@@ -30,6 +30,7 @@ const (
 	WeekDuration             = time.Hour * 24 * 7
 	DefaultValidForDuration  = time.Hour
 	DefaultRetainForDuration = MonthDuration
+	APIContextTimeout        = 30 * time.Second // Timeout for API operations like session listing
 )
 
 var ErrSessionNotFound error = errors.New("session not found")
@@ -39,6 +40,7 @@ var ErrSessionNotFound error = errors.New("session not found")
 type BreakglassSessionController struct {
 	log               *zap.SugaredLogger
 	config            config.Config
+	configPath        string // Path to breakglass config file for OIDC prefix stripping
 	sessionManager    *SessionManager
 	escalationManager *EscalationManager
 	middleware        gin.HandlerFunc
@@ -304,7 +306,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		}
 	}
 	// Strip OIDC prefixes if configured (cluster retrieval might include them; token groups usually not)
-	if cfg, cerr := config.Load(); cerr == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
+	if cfg, cerr := config.Load(wc.configPath); cerr == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
 		userGroups = stripOIDCPrefixes(userGroups, cfg.Kubernetes.OIDCPrefixes)
 	} else if cerr != nil {
 		reqLog.With("error", errors.Wrap(cerr, "config load failed for OIDC prefix stripping")).Debug("Continuing without OIDC prefix stripping")
@@ -661,26 +663,6 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-
-	// If escalationManager is available, increment the matched escalation's request counter in status for observability
-	if wc.escalationManager != nil {
-		// fetch latest escalation object
-		if esc, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, matchedEsc.Spec.Allowed.Clusters[0], []string{}); err == nil && len(esc) > 0 {
-			// Try to find by name
-			for _, e := range esc {
-				if e.Name == matchedEsc.Name {
-					if e.Status.RequestCount == 0 {
-						e.Status.RequestCount = 1
-					} else {
-						e.Status.RequestCount = e.Status.RequestCount + 1
-					}
-					_ = wc.escalationManager.UpdateBreakglassEscalationStatus(context.Background(), e)
-					break
-				}
-			}
-		}
-	}
-
 	// Note: bs already has its Name populated by AddBreakglassSession (passed as pointer).
 	// Do not try to fetch it again as this can race with informer cache population.
 	// Instead, reuse the bs object that was created.
@@ -954,28 +936,6 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 				"expiresAt", bs.Status.ExpiresAt.Time,
 			)
 		}
-		// increment escalation approval count if escalation manager available and owner reference points to an escalation
-		if wc.escalationManager != nil && len(bs.OwnerReferences) > 0 {
-			for _, or := range bs.OwnerReferences {
-				if or.Kind == "BreakglassEscalation" {
-					// try to fetch escalation by name
-					escs, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(context.Background(), bs.Spec.Cluster, []string{})
-					if err == nil {
-						for _, ee := range escs {
-							if ee.Name == or.Name {
-								if ee.Status.ApprovalCount == 0 {
-									ee.Status.ApprovalCount = 1
-								} else {
-									ee.Status.ApprovalCount = ee.Status.ApprovalCount + 1
-								}
-								_ = wc.escalationManager.UpdateBreakglassEscalationStatus(context.Background(), ee)
-								break
-							}
-						}
-					}
-				}
-			}
-		}
 		// record approver
 		approverEmail, _ := wc.identityProvider.GetEmail(c)
 		if approverEmail != "" {
@@ -1121,7 +1081,14 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 	reqLog.Debug("Handling GET /status for breakglass session")
-	ctx := c.Request.Context()
+	// Use background context with timeout instead of request context to prevent
+	// "context canceled" errors when client closes connection during rapid refreshes.
+	// The Kubernetes API List operation needs to complete even if the HTTP client
+	// disconnects, otherwise users see errors on rapid tab switches in the UI.
+	// We use a timeout to prevent indefinite hangs. Timeout is configurable via APIContextTimeout.
+	ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
+	defer cancel()
+
 	// Support server-side filtering when cluster/user/group query params are provided
 	// to avoid fetching all sessions when unnecessary.
 	clusterQ := c.Query("cluster")
@@ -2079,7 +2046,12 @@ func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 
-	sessions, err := wc.sessionManager.GetAllBreakglassSessions(c.Request.Context())
+	// Use background context with timeout instead of request context to prevent
+	// "context canceled" errors when client closes connection.
+	ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
+	defer cancel()
+
+	sessions, err := wc.sessionManager.GetAllBreakglassSessions(ctx)
 	if err != nil {
 		reqLog.Error("Error getting access reviews", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, "Failed to extract cluster group access information")
@@ -2339,6 +2311,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	sessionManager *SessionManager,
 	escalationManager *EscalationManager,
 	middleware gin.HandlerFunc,
+	configPath string,
 	ccProvider interface {
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 	},
@@ -2364,6 +2337,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		mail:                 mail.NewSender(cfg),
 		mailQueue:            nil,
 		disableEmail:         disableEmailFlag,
+		configPath:           configPath,
 		ccProvider:           ccProvider,
 		clusterConfigManager: NewClusterConfigManager(clusterConfigClient),
 	}
@@ -2383,16 +2357,16 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 				}
 				ui := res.Status.UserInfo
 				groups := ui.Groups
-				cfgLoaded, lerr := config.Load()
+				cfgLoaded, lerr := config.Load(ctrl.configPath)
 				if lerr == nil && len(cfgLoaded.Kubernetes.OIDCPrefixes) > 0 {
 					groups = stripOIDCPrefixes(groups, cfgLoaded.Kubernetes.OIDCPrefixes)
 				}
 				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groups", groups)
 				return groups, nil
 			}
-			log.Debugw("Falling back to legacy GetUserGroups (kube context)", "cluster", cug.Clustername)
+			log.Debugw("Falling back to legacy GetUserGroupsWithConfig (kube context)", "cluster", cug.Clustername)
 		}
-		return GetUserGroups(ctx, cug)
+		return GetUserGroupsWithConfig(ctx, cug, ctrl.configPath)
 	}
 
 	return ctrl

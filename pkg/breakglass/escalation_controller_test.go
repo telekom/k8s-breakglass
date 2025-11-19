@@ -59,7 +59,7 @@ func TestNewBreakglassEscalationController(t *testing.T) {
 
 	middleware := func(c *gin.Context) {}
 
-	controller := NewBreakglassEscalationController(logger.Sugar(), &manager, middleware)
+	controller := NewBreakglassEscalationController(logger.Sugar(), &manager, middleware, "/config/config.yaml")
 
 	assert.NotNil(t, controller)
 	assert.Equal(t, logger.Sugar(), controller.log)

@@ -31,7 +31,10 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 	// read updated CC from client
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
-	require.Equal(t, "Failed", got.Status.Phase)
+	// Check Ready condition is False
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
 }
 
 func TestClusterConfigChecker_MissingKey(t *testing.T) {
@@ -44,7 +47,10 @@ func TestClusterConfigChecker_MissingKey(t *testing.T) {
 	checker.runOnce(context.Background(), checker.Log)
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
-	require.Equal(t, "Failed", got.Status.Phase)
+	// Check Ready condition is False
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
 }
 
 func TestClusterConfigChecker_ParseFail(t *testing.T) {
@@ -61,7 +67,10 @@ func TestClusterConfigChecker_ParseFail(t *testing.T) {
 	checker.runOnce(context.Background(), checker.Log)
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
-	require.Equal(t, "Failed", got.Status.Phase)
+	// Check Ready condition is False
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
 }
 
 func TestClusterConfigChecker_Unreachable(t *testing.T) {
@@ -82,10 +91,24 @@ func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	checker.runOnce(context.Background(), checker.Log)
 	got := &telekomv1alpha1.ClusterConfig{}
 	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
-	require.Equal(t, "Failed", got.Status.Phase)
+	// Check Ready condition is False
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
 }
 
 // helper: construct a client.ObjectKey for a ClusterConfig stored in the fake client
 func clientKey(cc *telekomv1alpha1.ClusterConfig) client.ObjectKey {
 	return client.ObjectKey{Namespace: cc.Namespace, Name: cc.Name}
+}
+
+// helper: get condition by type from a ClusterConfig
+func getCondition(cc *telekomv1alpha1.ClusterConfig, condType string) *metav1.Condition {
+	for i := range cc.Status.Conditions {
+		if cc.Status.Conditions[i].Type == condType {
+			return &cc.Status.Conditions[i]
+		}
+	}
+	return nil
+
 }

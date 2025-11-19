@@ -29,29 +29,57 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
+// BreakglassEscalationConditionType defines the type of condition for BreakglassEscalation status
+type BreakglassEscalationConditionType string
+
+const (
+	// BreakglassEscalationConditionReady indicates the escalation configuration is valid and ready
+	BreakglassEscalationConditionReady BreakglassEscalationConditionType = "Ready"
+	// BreakglassEscalationConditionApprovalGroupMembersResolved indicates all approval group members have been resolved
+	BreakglassEscalationConditionApprovalGroupMembersResolved BreakglassEscalationConditionType = "ApprovalGroupMembersResolved"
+	// BreakglassEscalationConditionConfigValidated indicates the escalation configuration is valid
+	BreakglassEscalationConditionConfigValidated BreakglassEscalationConditionType = "ConfigValidated"
+	// BreakglassEscalationConditionClusterRefsValid indicates cluster references are valid
+	BreakglassEscalationConditionClusterRefsValid BreakglassEscalationConditionType = "ClusterRefsValid"
+	// BreakglassEscalationConditionIDPRefsValid indicates IDP references are valid
+	BreakglassEscalationConditionIDPRefsValid BreakglassEscalationConditionType = "IDPRefsValid"
+	// BreakglassEscalationConditionDenyPolicyRefsValid indicates deny policy references are valid
+	BreakglassEscalationConditionDenyPolicyRefsValid BreakglassEscalationConditionType = "DenyPolicyRefsValid"
+)
+
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
+// +kubebuilder:validation:XValidation:rule="has(self.allowed.groups) || has(self.allowed.clusters) ? (self.allowed.groups.size() > 0 || self.allowed.clusters.size() > 0) : false",message="either allowed.groups or allowed.clusters must be specified and non-empty"
+// +kubebuilder:validation:XValidation:rule="has(self.approvers) && (has(self.approvers.users) || has(self.approvers.groups)) ? (self.approvers.users.size() > 0 || self.approvers.groups.size() > 0) : true",message="approvers must specify at least one user or group"
+// +kubebuilder:validation:XValidation:rule="!(has(self.allowedIdentityProviders) && self.allowedIdentityProviders.size() > 0) || !(has(self.allowedIdentityProvidersForRequests) && self.allowedIdentityProvidersForRequests.size() > 0)",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests"
+// +kubebuilder:validation:XValidation:rule="(has(self.allowedIdentityProvidersForRequests) && self.allowedIdentityProvidersForRequests.size() > 0) == (has(self.allowedIdentityProvidersForApprovers) && self.allowedIdentityProvidersForApprovers.size() > 0)",message="allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
 	// approvers specifies who is allowed to approve this escalation.
 	Approvers BreakglassEscalationApprovers `json:"approvers,omitempty"`
 	// escalatedGroup is the group to be granted by this escalation.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^[a-zA-Z0-9._-]+$"
 	EscalatedGroup string `json:"escalatedGroup,omitempty"`
 
 	// maxValidFor is the maximum amount of time a session for this escalation will be active for after it is approved.
 	// +default="1h"
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	MaxValidFor string `json:"maxValidFor,omitempty"`
 	// retainFor is the amount of time to wait before removing a session for this escalation after it expired
 	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	RetainFor string `json:"retainFor,omitempty"`
 	// idleTimeout is the maximum amount of time a session for this escalation can sit idle without being used.
 	// +default="1h"
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	IdleTimeout string `json:"idleTimeout,omitempty"`
 
 	// approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
 	// If this duration elapses without approval, the session expires and transitions to ApprovalTimeout state.
 	// +default="1h"
 	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	ApprovalTimeout string `json:"approvalTimeout,omitempty"`
 
 	// clusterConfigRefs lists ClusterConfig object names this escalation applies to (alternative to allowed.clusters).
@@ -182,31 +210,25 @@ type BreakglassEscalationStatus struct {
 	// +optional
 	IDPGroupMemberships map[string]map[string][]string `json:"idpGroupMemberships,omitempty"`
 
-	// groupSyncStatus indicates the current status of group member synchronization from IDPs.
-	// Possible values: "Success" (all IDPs synced), "PartialFailure" (some IDPs failed), "Failed" (all IDPs failed)
+	// ObservedGeneration reflects the generation of the most recently observed BreakglassEscalation
 	// +optional
-	GroupSyncStatus string `json:"groupSyncStatus,omitempty"`
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// groupSyncErrors contains error messages from failed IDP group syncs.
-	// Each entry describes which IDP failed and why.
-	// Empty if GroupSyncStatus is "Success".
+	// Conditions track validation state (config validation, cluster/IDP/deny policy references, group sync, etc.)
+	// All status information about validation, references, and health is conveyed through conditions.
 	// +optional
-	GroupSyncErrors []string `json:"groupSyncErrors,omitempty"`
-
-	// Counters for tracking requests and approvals
-	RequestCount  int `json:"requestCount,omitempty"`
-	ApprovalCount int `json:"approvalCount,omitempty"`
-
-	// Status of group resolution
-	GroupResolutionStatus map[string]string `json:"groupResolutionStatus,omitempty"`
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Namespaced,shortName=bge
 // +kubebuilder:printcolumn:name="Clusters",type=string,JSONPath=".spec.allowed.clusters",description="Clusters this escalation applies to"
 // +kubebuilder:printcolumn:name="Groups",type=string,JSONPath=".spec.allowed.groups",description="Groups allowed to request this escalation"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type==\"Ready\")].status",description="Ready status"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the escalation"
-// +kubebuilder:printcolumn:name="Requests",type=integer,JSONPath=".status.requestCount",description="Number of requests for this escalation"
-// +kubebuilder:printcolumn:name="Approvals",type=integer,JSONPath=".status.approvalCount",description="Number of approvals for this escalation"
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 type BreakglassEscalation struct {
@@ -220,6 +242,37 @@ type BreakglassEscalation struct {
 
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglassescalation,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglassescalations,verbs=create;update,versions=v1alpha1,name=breakglassescalation.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
+// SetCondition updates or adds a condition in the BreakglassEscalation status
+func (be *BreakglassEscalation) SetCondition(condition metav1.Condition) {
+	if be.Status.Conditions == nil {
+		be.Status.Conditions = []metav1.Condition{}
+	}
+
+	// Find and update existing condition, or append new one
+	found := false
+	for i, c := range be.Status.Conditions {
+		if c.Type == condition.Type {
+			be.Status.Conditions[i] = condition
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		be.Status.Conditions = append(be.Status.Conditions, condition)
+	}
+}
+
+// GetCondition retrieves a condition by type from the BreakglassEscalation status
+func (be *BreakglassEscalation) GetCondition(condType string) *metav1.Condition {
+	for i := range be.Status.Conditions {
+		if be.Status.Conditions[i].Type == condType {
+			return &be.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
 func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	escalation, ok := obj.(*BreakglassEscalation)
@@ -228,9 +281,57 @@ func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.
 	}
 
 	var allErrs field.ErrorList
+
+	// Validate escalatedGroup format and content
 	if escalation.Spec.EscalatedGroup == "" {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("escalatedGroup"), "escalatedGroup is required"))
+	} else {
+		allErrs = append(allErrs, validateIdentifierFormat(escalation.Spec.EscalatedGroup, field.NewPath("spec").Child("escalatedGroup"))...)
 	}
+
+	// Validate allowed groups and clusters are not empty
+	if len(escalation.Spec.Allowed.Groups) == 0 && len(escalation.Spec.Allowed.Clusters) == 0 {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("allowed"), "either groups or clusters must be specified"))
+	}
+
+	// Validate all allowed groups have valid format
+	for i, grp := range escalation.Spec.Allowed.Groups {
+		allErrs = append(allErrs, validateIdentifierFormat(grp, field.NewPath("spec").Child("allowed").Child("groups").Index(i))...)
+	}
+
+	// Validate all allowed clusters have valid format
+	for i, cluster := range escalation.Spec.Allowed.Clusters {
+		allErrs = append(allErrs, validateIdentifierFormat(cluster, field.NewPath("spec").Child("allowed").Child("clusters").Index(i))...)
+	}
+
+	// Validate approvers groups are not empty and have valid format
+	if len(escalation.Spec.Approvers.Groups) == 0 && len(escalation.Spec.Approvers.Users) == 0 {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("approvers"), "either users or groups must be specified as approvers"))
+	}
+
+	// Validate approver groups format
+	for i, grp := range escalation.Spec.Approvers.Groups {
+		allErrs = append(allErrs, validateIdentifierFormat(grp, field.NewPath("spec").Child("approvers").Child("groups").Index(i))...)
+	}
+
+	// Validate approver users format (should be email-like)
+	for i, user := range escalation.Spec.Approvers.Users {
+		allErrs = append(allErrs, validateIdentifierFormat(user, field.NewPath("spec").Child("approvers").Child("users").Index(i))...)
+	}
+
+	// Validate no duplicates in lists
+	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Groups, field.NewPath("spec").Child("allowed").Child("groups"))...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Clusters, field.NewPath("spec").Child("allowed").Child("clusters"))...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Groups, field.NewPath("spec").Child("approvers").Child("groups"))...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Users, field.NewPath("spec").Child("approvers").Child("users"))...)
+
+	// Validate email domains
+	if len(escalation.Spec.AllowedApproverDomains) > 0 {
+		allErrs = append(allErrs, validateEmailDomainList(escalation.Spec.AllowedApproverDomains, field.NewPath("spec").Child("allowedApproverDomains"))...)
+	}
+
+	// Validate timeout relationships
+	allErrs = append(allErrs, validateTimeoutRelationships(&escalation.Spec, field.NewPath("spec"))...)
 
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
 
