@@ -195,9 +195,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	idp.Status.Connected = true
 	idp.Status.LastValidation = metav1.NewTime(time.Now())
 	if err := r.client.Status().Update(ctx, idp); err != nil {
-		// Return error and let controller-runtime handle exponential backoff
-		// This is cleaner than manual retry logic
-		r.logger.Warnw("failed to update IdentityProvider status (will retry)", "error", err, "name", req.Name)
+		// Return error and requeue after a fixed interval (overrides controller-runtime's exponential backoff)
+		r.logger.Warnw("failed to update IdentityProvider status (will retry in 5s)", "error", err, "name", req.Name)
 		return reconcile.Result{RequeueAfter: 5 * time.Second}, err
 	}
 
