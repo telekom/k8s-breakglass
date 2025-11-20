@@ -116,6 +116,8 @@ type ClusterConfigStatus struct {
 // +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="ClusterID",type=string,JSONPath=`.spec.clusterID`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:validation:XValidation:rule="has(self.spec.kubeconfigSecretRef.name) && self.spec.kubeconfigSecretRef.name != ”",message="kubeconfigSecretRef.name must not be empty"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.kubeconfigSecretRef.namespace) && self.spec.kubeconfigSecretRef.namespace != ”",message="kubeconfigSecretRef.namespace must not be empty"
 type ClusterConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

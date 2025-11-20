@@ -102,13 +102,42 @@ func (r *MailProviderReconciler) performHealthCheck(ctx context.Context, mp *bre
 	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// Perform health check in a goroutine to respect context cancellation
+	type healthCheckResult struct {
+		healthy bool
+		err     error
+	}
+	resultCh := make(chan healthCheckResult, 1)
+
+	go func() {
+		healthy, err := r.performHealthCheckSync(checkCtx, mp, password, log)
+		resultCh <- healthCheckResult{healthy: healthy, err: err}
+	}()
+
+	select {
+	case <-checkCtx.Done():
+		log.Warn("Health check timeout")
+		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "timeout").Inc()
+		return false, fmt.Errorf("health check timeout: %w", checkCtx.Err())
+	case result := <-resultCh:
+		return result.healthy, result.err
+	}
+}
+
+// performHealthCheckSync performs the actual SMTP health check synchronously
+func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp *breakglassv1alpha1.MailProvider, password string, log *zap.SugaredLogger) (bool, error) {
+	// Try to connect to SMTP server
+	addr := fmt.Sprintf("%s:%d", mp.Spec.SMTP.Host, mp.Spec.SMTP.Port)
+
+	log.Debugw("Performing SMTP health check", "addr", addr)
+
 	// Create dialer with timeout
 	dialer := &net.Dialer{
 		Timeout: 10 * time.Second,
 	}
 
 	// Connect with timeout
-	conn, err := dialer.DialContext(checkCtx, "tcp", addr)
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		log.Warnw("SMTP connection failed", "error", err)
 		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "connection_failed").Inc()
@@ -165,14 +194,6 @@ func (r *MailProviderReconciler) performHealthCheck(ctx context.Context, mp *bre
 			metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "auth_failed").Inc()
 			return false, fmt.Errorf("authentication failed: %w", err)
 		}
-	}
-
-	select {
-	case <-checkCtx.Done():
-		log.Warn("Health check timeout")
-		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "timeout").Inc()
-		return false, fmt.Errorf("health check timeout")
-	default:
 	}
 
 	log.Info("Health check passed")
@@ -288,14 +309,18 @@ func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *b
 	return reconcile.Result{}, nil
 }
 
-// updateCondition updates or adds a condition to the conditions list
+// updateCondition updates or adds a condition to the conditions list.
+// It always updates Message, Reason, and ObservedGeneration, but only updates
+// LastTransitionTime when the Status actually changes.
 func (r *MailProviderReconciler) updateCondition(conditions []metav1.Condition, newCondition metav1.Condition) []metav1.Condition {
 	for i, condition := range conditions {
 		if condition.Type == newCondition.Type {
-			// Only update if status changed
-			if condition.Status != newCondition.Status {
-				conditions[i] = newCondition
+			// Preserve LastTransitionTime if status hasn't changed
+			if condition.Status == newCondition.Status {
+				newCondition.LastTransitionTime = condition.LastTransitionTime
 			}
+			// Always update the condition (message, reason, observedGeneration may have changed)
+			conditions[i] = newCondition
 			return conditions
 		}
 	}

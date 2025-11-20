@@ -288,6 +288,14 @@ func (l *MailProviderLoader) getSecretValue(ctx context.Context, ref *breakglass
 		return "", fmt.Errorf("secret reference is nil")
 	}
 
+	if ref.Namespace == "" {
+		return "", fmt.Errorf("secret reference namespace is empty")
+	}
+
+	if ref.Name == "" {
+		return "", fmt.Errorf("secret reference name is empty")
+	}
+
 	var secret corev1.Secret
 	secretKey := client.ObjectKey{
 		Namespace: ref.Namespace,

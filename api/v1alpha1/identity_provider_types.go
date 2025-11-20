@@ -177,6 +177,8 @@ type IdentityProviderStatus struct {
 // +kubebuilder:printcolumn:name="GroupSync",type=string,JSONPath=`.spec.groupSyncProvider`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef.name) && self.spec.keycloak.clientSecretRef.name != '')",message="keycloak.clientSecretRef.name must not be empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef.namespace) && self.spec.keycloak.clientSecretRef.namespace != '')",message="keycloak.clientSecretRef.namespace must not be empty"
 
 // IdentityProvider represents a configured identity provider with OIDC authentication and optional group synchronization
 // IdentityProvider is cluster-scoped, allowing global identity provider configuration.

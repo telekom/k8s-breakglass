@@ -262,6 +262,13 @@ spec:
                 type: integer
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: keycloak.clientSecretRef.name must not be empty
+          rule: '!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef.name)
+            && self.spec.keycloak.clientSecretRef.name != '''')'
+        - message: keycloak.clientSecretRef.namespace must not be empty
+          rule: '!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef.namespace)
+            && self.spec.keycloak.clientSecretRef.namespace != '''')'
     served: true
     storage: true
     subresources:

@@ -706,17 +706,16 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 
 	// Thread-safe read of idpConfig for TLS settings
 	s.idpMutex.RLock()
-	idpCfg := s.idpConfig
-	s.idpMutex.RUnlock()
-
 	// If an IdentityProvider CA is configured, use it; otherwise skip verify for e2e
-	if idpCfg != nil && idpCfg.CertificateAuthority != "" {
+	if s.idpConfig != nil && s.idpConfig.CertificateAuthority != "" {
 		roots := x509.NewCertPool()
-		ok := roots.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority))
+		ok := roots.AppendCertsFromPEM([]byte(s.idpConfig.CertificateAuthority))
+		s.idpMutex.RUnlock()
 		if ok {
 			transport.TLSClientConfig = &tls.Config{RootCAs: roots}
 		}
 	} else {
+		s.idpMutex.RUnlock()
 		// For convenience in e2e local setups, allow insecure TLS to the authority
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}

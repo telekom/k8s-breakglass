@@ -41,8 +41,9 @@ func TestMailProviderValidation(t *testing.T) {
 						Port:     587,
 						Username: "user@example.com",
 						PasswordRef: &SecretKeyReference{
-							Name: "smtp-secret",
-							Key:  "password",
+							Name:      "smtp-secret",
+							Namespace: "default",
+							Key:       "password",
 						},
 					},
 					Sender: SenderConfig{
@@ -77,8 +78,9 @@ func TestMailProviderValidation(t *testing.T) {
 						Port:     587,
 						Username: "user@example.com",
 						PasswordRef: &SecretKeyReference{
-							Name: "smtp-secret",
-							Key:  "password",
+							Name:      "smtp-secret",
+							Namespace: "default",
+							Key:       "password",
 						},
 					},
 					Sender: SenderConfig{
@@ -175,8 +177,9 @@ func TestMailProviderValidation(t *testing.T) {
 						Host: "smtp.example.com",
 						Port: 587,
 						PasswordRef: &SecretKeyReference{
-							Name: "smtp-secret",
-							Key:  "password",
+							Name:      "smtp-secret",
+							Namespace: "default",
+							Key:       "password",
 						},
 					},
 					Sender: SenderConfig{
@@ -915,8 +918,9 @@ func TestMailProviderSecretReference(t *testing.T) {
 			name:     "both username and password",
 			username: "user@example.com",
 			passwordRef: &SecretKeyReference{
-				Name: "smtp-secret",
-				Key:  "password",
+				Name:      "smtp-secret",
+				Namespace: "default",
+				Key:       "password",
 			},
 			wantErr: false,
 		},
@@ -936,8 +940,9 @@ func TestMailProviderSecretReference(t *testing.T) {
 			name:     "password without username",
 			username: "",
 			passwordRef: &SecretKeyReference{
-				Name: "smtp-secret",
-				Key:  "password",
+				Name:      "smtp-secret",
+				Namespace: "default",
+				Key:       "password",
 			},
 			wantErr: true,
 		},
@@ -1103,8 +1108,9 @@ func TestMailProviderUpdateScenarios(t *testing.T) {
 						Port:     587,
 						Username: "user@example.com",
 						PasswordRef: &SecretKeyReference{
-							Name: "smtp-secret",
-							Key:  "password",
+							Name:      "smtp-secret",
+							Namespace: "default",
+							Key:       "password",
 						},
 					},
 					Sender: SenderConfig{Address: "test@example.com"},
@@ -1121,8 +1127,9 @@ func TestMailProviderUpdateScenarios(t *testing.T) {
 						Port:     587,
 						Username: "user@example.com",
 						PasswordRef: &SecretKeyReference{
-							Name: "smtp-secret",
-							Key:  "password",
+							Name:      "smtp-secret",
+							Namespace: "default",
+							Key:       "password",
 						},
 					},
 					Sender: SenderConfig{Address: "test@example.com"},
@@ -1204,8 +1211,9 @@ func TestMailProviderRealWorldConfigurations(t *testing.T) {
 						Port:     587,
 						Username: "user@gmail.com",
 						PasswordRef: &SecretKeyReference{
-							Name: "gmail-secret",
-							Key:  "app-password",
+							Name:      "gmail-secret",
+							Namespace: "default",
+							Key:       "app-password",
 						},
 					},
 					Sender: SenderConfig{
@@ -1225,8 +1233,9 @@ func TestMailProviderRealWorldConfigurations(t *testing.T) {
 						Port:     587,
 						Username: "user@company.com",
 						PasswordRef: &SecretKeyReference{
-							Name: "o365-secret",
-							Key:  "password",
+							Name:      "o365-secret",
+							Namespace: "default",
+							Key:       "password",
 						},
 					},
 					Sender: SenderConfig{
@@ -1261,8 +1270,9 @@ func TestMailProviderRealWorldConfigurations(t *testing.T) {
 						Port:     587,
 						Username: "AKIAIOSFODNN7EXAMPLE",
 						PasswordRef: &SecretKeyReference{
-							Name: "ses-secret",
-							Key:  "smtp-password",
+							Name:      "ses-secret",
+							Namespace: "default",
+							Key:       "smtp-password",
 						},
 					},
 					Sender: SenderConfig{
@@ -1282,8 +1292,9 @@ func TestMailProviderRealWorldConfigurations(t *testing.T) {
 						Port:     587,
 						Username: "apikey",
 						PasswordRef: &SecretKeyReference{
-							Name: "sendgrid-secret",
-							Key:  "api-key",
+							Name:      "sendgrid-secret",
+							Namespace: "default",
+							Key:       "api-key",
 						},
 					},
 					Sender: SenderConfig{
