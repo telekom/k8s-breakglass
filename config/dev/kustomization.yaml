@@ -18,6 +18,8 @@ resources:
 - ../crd
 - ../rbac
 - ../deployment
+# [CERT-CONTROLLER] webhook should be enabled if automated webhook certificate generation is to be used
+# - ../webhook
 - ./resources/keycloak.yaml
 - ./resources/mailhog.yaml
 - ./resources/crs/cluster-configs-test.yaml
@@ -25,6 +27,12 @@ resources:
 - ./resources/crs/escalations-test.yaml
 - ./resources/rbac/rbac-hub-test.yaml
 - ./resources/rbac/tenant-rbac-test.yaml
+- ./resources/idp.yaml
+
+images:
+ - name: breakglass
+   newName: breakglass
+   newTag: dev
 
 patches:
 - target:
@@ -32,21 +40,67 @@ patches:
     version: v1
     kind: Deployment
     name: manager
-  path: ./resources/cert_volumes_patch.yaml
-- target:
-    group: apps
-    version: v1
-    kind: Deployment
-    name: manager
   path: ./resources/keycloak_wait_initcontainer.yaml
+# [CERT_CONTROLLER] this target should be commented if automated webhook certificate generation is to be used
 - target:
     group: apps
     version: v1
     kind: Deployment
     name: manager
-  path: ./resources/manager_debug_patch.yaml
+  path: ./resources/cert_volumes_patch.yaml
 
 
+patchesJson6902:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: manager
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: breakglass:dev
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --debug
+  # [CERT-CONTROLLER] this target should be enabled if automated webhook certificate generation is to be used 
+  # - target:
+  #     group: apps
+  #     version: v1
+  #     kind: Deployment
+  #     name: manager
+  #   patch: |- 
+  #     - op: add
+  #       path: /spec/template/spec/containers/0/args/-
+  #       value: --webhook-cert-generation=true
+  #     - op: add
+  #       path: /spec/template/spec/containers/0/args/-
+  #       value: --webhook-service-name=breakglass-dev-breakglass-webhook-service
+  #     - op: add
+  #       path: /spec/template/spec/containers/0/args/-
+  #       value: --webhook-validating-config-name=breakglass-dev-breakglass-validating-webhook-configuration
+  #     - op: add
+  #       path: /spec/template/spec/containers/0/args/-
+  #       value: --breakglass-namespace=$(POD_NAMESPACE)
+  #     - op: add
+  #       path: /spec/template/spec/containers/0/args/-
+  #       value: --webhooks-metrics-secure=true
+  #     - op: add
+  #       path: /spec/template/spec/containers/0/volumeMounts/-
+  #       value:
+  #         mountPath: /tmp/k8s-webhook-server/serving-certs
+  #         name: webhook-cert
+  #         readOnly: true
+  #     - op: add
+  #       path: /spec/template/spec/volumes/-
+  #       value:
+  #         name: webhook-cert
+  #         secret:
+  #           defaultMode: 420
+  #           secretName: breakglass-dev-breakglass-webhook-service
 
 configMapGenerator:
 - name: config
@@ -55,6 +109,18 @@ configMapGenerator:
 - name: keycloak-realm
   files:
   - breakglass-e2e.json=./resources/keycloak-realm.json
+- name: breakglass-dev-certs
+  files:
+  - certs/kind-setup-single-tls/ca.crt
+
+
+secretGenerator:
+- name: keycloak-tls
+  files:
+  - tls.crt=certs/kind-setup-single-tls/server.crt
+  - tls.key=certs/kind-setup-single-tls/server.key
+  type: "kubernetes.io/tls"
+
         
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
 # Uncomment the following replacements to add the cert-manager CA injection annotations

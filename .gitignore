@@ -55,3 +55,4 @@ apiserver.log
 .vscode/
 main
 cover.out
+config/dev/certs

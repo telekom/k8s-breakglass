@@ -82,6 +82,10 @@ docker-build-oss: ## Build OSS (neutral UI) image
 docker-build-telekom: ## Build Telekom branded UI image
 	docker build --build-arg UI_FLAVOUR=telekom -t ${IMG:-breakglass:telekom} .
 
+.PHONY: docker-build-dev
+docker-build-dev: ## Build docker image with controller.
+	docker build -t breakglass:dev .
+
 ##@ Deployment
 
 ifndef ignore-not-found
@@ -107,6 +111,7 @@ undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.
 
 .PHONY: deploy_dev # deploy dev environment with predefined config, service and dev keycloak
 deploy_dev: kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+	cd config/dev && ./generate-certs.sh && cd ../..
 	cd config/deployment && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/dev | $(KUBECTL) apply -f -
 

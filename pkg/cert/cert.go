@@ -1,0 +1,126 @@
+package cert
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/open-policy-agent/cert-controller/pkg/rotator"
+	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+)
+
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;update
+
+const (
+	DefaultWebhookPath = "/tmp/k8s-webhook-server/serving-certs"
+	DefaultTLSCertFile = "tls.crt"
+	DefaultTLSKeyFile  = "tls.key"
+
+	DefaultValidatingWebhookConfigurationName = "breakglass-validating-webhook-configuration"
+)
+
+type Manager struct {
+	name                               string
+	namespace                          string
+	path                               string
+	validatingWebhookConfigurationName string
+	certsReady                         chan struct{}
+	leaderElected                      <-chan struct{}
+	log                                *zap.SugaredLogger
+}
+
+func NewManager(name, namespace, path, validatingWebhookConfigurationName string,
+	certsReady chan struct{}, leaderElected <-chan struct{}, log *zap.SugaredLogger) *Manager {
+	if path == "" {
+		path = DefaultWebhookPath
+	}
+
+	if validatingWebhookConfigurationName == "" {
+		validatingWebhookConfigurationName = DefaultValidatingWebhookConfigurationName
+	}
+
+	return &Manager{
+		name:                               name,
+		namespace:                          namespace,
+		path:                               path,
+		validatingWebhookConfigurationName: validatingWebhookConfigurationName,
+		certsReady:                         certsReady,
+		leaderElected:                      leaderElected,
+		log:                                log.With("component", "CertControllerManager"),
+	}
+}
+
+func (m *Manager) setupRotator(mgr ctrl.Manager) error {
+	cr := &rotator.CertRotator{
+		SecretKey: types.NamespacedName{
+			Namespace: m.namespace,
+			Name:      m.name,
+		},
+		CertDir:               m.path,
+		CAName:                fmt.Sprintf("%s-ca", m.name),
+		CAOrganization:        "breakglass",
+		DNSName:               fmt.Sprintf("%s.%s.svc", m.name, m.namespace),
+		ExtraDNSNames:         []string{fmt.Sprintf("%s.%s.svc.cluster.local", m.name, m.namespace), m.name},
+		IsReady:               m.certsReady,
+		RequireLeaderElection: false,
+		Webhooks: []rotator.WebhookInfo{
+			{
+				Name: m.validatingWebhookConfigurationName,
+				Type: rotator.Validating,
+			},
+		},
+		RestartOnSecretRefresh: false,
+	}
+
+	if err := rotator.AddRotator(mgr, cr); err != nil {
+		return fmt.Errorf("unable to setup cert rotation: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Manager) Start(ctx context.Context, scheme *runtime.Scheme) error {
+	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
+	if m.leaderElected != nil {
+		m.log.Info("Cert-controller's manager waiting for leadership signal before starting...")
+		select {
+		case <-ctx.Done():
+			m.log.Infow("Cert-controller's manager stopping before acquiring leadership (context cancelled)")
+			return fmt.Errorf("context error: %w", ctx.Err())
+		case <-m.leaderElected:
+			m.log.Info("Leadership acquired - cert-controller's manager")
+		}
+	}
+
+	m.log.Infow("Configuring cert-controller's manager")
+	// Create a manager for cert-controller
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:           scheme,
+		LeaderElection:   false,
+		LeaderElectionID: "",
+		Metrics: metricsserver.Options{
+			BindAddress: "0", // disable metrics server
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to start cert-controller: %w", err)
+	}
+
+	m.log.Infow("Setting up cert-controller's rotator", "webhook-service-name", m.name, "namespace", m.namespace,
+		"webhook-cert-path", m.path, "webhook-validating-config-name", m.validatingWebhookConfigurationName)
+	if err := m.setupRotator(mgr); err != nil {
+		return fmt.Errorf("failed to setup cert-controller's rotator: %w", err)
+	}
+
+	m.log.Infow("Starting cert-controller's manager")
+	// Start the manager in a blocking call (in goroutine) that will also handle cache synchronization
+	if err := mgr.Start(ctx); err != nil {
+		return fmt.Errorf("cert-controller's manager failed to start or exited with error: %w", err)
+	}
+
+	return nil
+}
