@@ -2327,6 +2327,21 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		disableEmailFlag = disableEmail[0]
 	}
 
+	// Create stub mail sender (will be replaced with MailProvider loader)
+	stubMailConfig := &config.MailProviderConfig{
+		Name:           "stub-provider",
+		Host:           "localhost",
+		Port:           1025,
+		SenderAddress:  "noreply@breakglass.local",
+		SenderName:     "Breakglass",
+		RetryCount:     3,
+		RetryBackoffMs: 100,
+		QueueSize:      1000,
+	}
+	if cfg.Frontend.BrandingName != "" {
+		stubMailConfig.SenderName = cfg.Frontend.BrandingName
+	}
+
 	ctrl := &BreakglassSessionController{
 		log:                  log,
 		config:               cfg,
@@ -2334,7 +2349,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		escalationManager:    escalationManager,
 		middleware:           middleware,
 		identityProvider:     ip,
-		mail:                 mail.NewSender(cfg),
+		mail:                 mail.NewSenderFromMailProvider(stubMailConfig, cfg.Frontend.BrandingName),
 		mailQueue:            nil,
 		disableEmail:         disableEmailFlag,
 		configPath:           configPath,

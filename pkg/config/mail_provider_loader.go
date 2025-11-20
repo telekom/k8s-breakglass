@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"sync"
 
@@ -332,10 +333,19 @@ func (l *MailProviderLoader) InvalidateCache(providerName string) {
 
 // GetTLSConfig returns TLS configuration for the mail provider
 func (c *MailProviderConfig) GetTLSConfig() *tls.Config {
-	if c.InsecureSkipVerify {
-		return &tls.Config{InsecureSkipVerify: true}
+	tlsConfig := &tls.Config{
+		ServerName:         c.Host,
+		InsecureSkipVerify: c.InsecureSkipVerify,
 	}
 
-	// TODO: Implement custom CA certificate support
-	return nil
+	// Add custom CA certificate if provided
+	if c.CertificateAuthority != "" {
+		certPool := x509.NewCertPool()
+		if ok := certPool.AppendCertsFromPEM([]byte(c.CertificateAuthority)); ok {
+			tlsConfig.RootCAs = certPool
+		}
+		// If parsing fails, we'll fall back to system certificates
+	}
+
+	return tlsConfig
 }

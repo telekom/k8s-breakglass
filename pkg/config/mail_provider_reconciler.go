@@ -2,7 +2,10 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net"
 	"net/smtp"
 	"time"
 
@@ -99,20 +102,58 @@ func (r *MailProviderReconciler) performHealthCheck(ctx context.Context, mp *bre
 	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// Simple connection test
-	client, err := smtp.Dial(addr)
+	// Create dialer with timeout
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
+
+	// Connect with timeout
+	conn, err := dialer.DialContext(checkCtx, "tcp", addr)
 	if err != nil {
 		log.Warnw("SMTP connection failed", "error", err)
 		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "connection_failed").Inc()
 		return false, fmt.Errorf("connection failed: %w", err)
 	}
+	defer conn.Close()
+
+	// Create SMTP client from connection
+	client, err := smtp.NewClient(conn, mp.Spec.SMTP.Host)
+	if err != nil {
+		log.Warnw("SMTP client creation failed", "error", err)
+		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "connection_failed").Inc()
+		return false, fmt.Errorf("client creation failed: %w", err)
+	}
 	defer client.Close()
 
-	// Try STARTTLS if not using insecure
+	// Try STARTTLS with proper TLS config
 	if !mp.Spec.SMTP.InsecureSkipVerify {
-		if err := client.StartTLS(nil); err != nil {
+		tlsConfig := &tls.Config{
+			ServerName:         mp.Spec.SMTP.Host,
+			InsecureSkipVerify: false,
+		}
+
+		// Add custom CA certificate if provided
+		if mp.Spec.SMTP.CertificateAuthority != "" {
+			certPool := x509.NewCertPool()
+			if ok := certPool.AppendCertsFromPEM([]byte(mp.Spec.SMTP.CertificateAuthority)); !ok {
+				log.Warnw("Failed to parse CA certificate")
+			} else {
+				tlsConfig.RootCAs = certPool
+			}
+		}
+
+		if err := client.StartTLS(tlsConfig); err != nil {
 			// STARTTLS might not be supported, log but don't fail
-			log.Debugw("STARTTLS not available", "error", err)
+			log.Debugw("STARTTLS not available or failed", "error", err)
+		}
+	} else {
+		// Only use insecure TLS if explicitly configured
+		tlsConfig := &tls.Config{
+			ServerName:         mp.Spec.SMTP.Host,
+			InsecureSkipVerify: true,
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			log.Debugw("STARTTLS not available or failed (insecure mode)", "error", err)
 		}
 	}
 

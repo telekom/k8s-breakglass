@@ -457,16 +457,29 @@ func main() {
 	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
-	// Initialize mail queue for non-blocking async email sending
-	// TODO: Replace with MailProvider CRD-based initialization
-	mailSender := mail.NewSender(cfg)
-	// Use default retry/queue settings since config.Mail is removed
-	retryCount := 3
-	retryBackoffMs := 100
-	queueSize := 1000
-	mailQueue := mail.NewQueue(mailSender, log, retryCount, retryBackoffMs, queueSize)
-	mailQueue.Start()
-	log.Infow("Mail queue initialized and started", "retryCount", retryCount, "retryBackoffMs", retryBackoffMs, "queueSize", queueSize)
+	// Initialize MailProviderLoader and load default provider from cluster
+	mailProviderLoader := config.NewMailProviderLoader(escalationManager.Client).WithLogger(log)
+	var mailQueue *mail.Queue
+
+	defaultProvider, err := mailProviderLoader.GetDefaultMailProvider(ctx)
+	if err != nil {
+		log.Warnw("No default mail provider found in cluster - mail notifications will be disabled", "error", err)
+		mailQueue = nil
+		disableEmail = true
+	} else {
+		log.Infow("Using default mail provider from cluster",
+			"provider", defaultProvider.Name,
+			"host", defaultProvider.Host,
+			"port", defaultProvider.Port)
+		mailSender := mail.NewSenderFromMailProvider(defaultProvider, cfg.Frontend.BrandingName)
+		mailQueue = mail.NewQueue(mailSender, log, defaultProvider.RetryCount, defaultProvider.RetryBackoffMs, defaultProvider.QueueSize)
+		mailQueue.Start()
+		log.Infow("Mail queue initialized and started",
+			"provider", defaultProvider.Name,
+			"retryCount", defaultProvider.RetryCount,
+			"retryBackoffMs", defaultProvider.RetryBackoffMs,
+			"queueSize", defaultProvider.QueueSize)
+	}
 
 	// Setup session controller with all dependencies
 	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), configPath, ccProvider, escalationManager.Client, disableEmail).WithQueue(mailQueue)

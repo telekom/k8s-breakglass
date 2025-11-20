@@ -26,36 +26,6 @@ type sender struct {
 	retryBackoffMs int
 }
 
-func NewSender(cfg config.Config) Sender {
-	// TODO: Refactor to use MailProviderLoader instead of config
-	// This is a temporary stub that will be replaced when integrating MailProvider CRD
-	log.Printf("[mail] WARNING: Using deprecated config-based mail sender. Migrate to MailProvider CRD.")
-	log.Printf("[mail] Initializing new mail sender - temporary stub")
-
-	// Create a basic dialer with defaults (will be replaced with MailProvider)
-	d := gomail.NewDialer("localhost", 1025, "", "")
-	d.TLSConfig = &tls.Config{InsecureSkipVerify: true}
-
-	senderAddr := "noreply@breakglass.local"
-	senderName := "Breakglass"
-	if cfg.Frontend.BrandingName != "" {
-		senderName = cfg.Frontend.BrandingName
-	}
-
-	retryCount := 3
-	retryBackoffMs := 100
-
-	log.Printf("[mail] Retry configuration: count=%d, initialBackoffMs=%d", retryCount, retryBackoffMs)
-
-	return &sender{
-		dialer:         d,
-		senderAddress:  senderAddr,
-		senderName:     senderName,
-		retryCount:     retryCount,
-		retryBackoffMs: retryBackoffMs,
-	}
-}
-
 // NewSenderFromMailProvider creates a mail sender from MailProvider configuration
 func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName string) Sender {
 	log.Printf("[mail] Initializing mail sender from MailProvider: %s (host: %s, port: %d)",

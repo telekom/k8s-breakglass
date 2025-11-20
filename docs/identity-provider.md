@@ -303,7 +303,6 @@ keycloak:
 ```yaml
 # config.yaml - No IDP configuration needed
 frontend:
-  identityProviderName: "production-idp"
   baseURL: "https://breakglass.example.com"
 ```
 

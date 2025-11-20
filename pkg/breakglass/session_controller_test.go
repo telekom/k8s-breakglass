@@ -137,8 +137,6 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 		return []string{"system:authenticated", "breakglass-standard-user"}, nil
 	}
 
-	ctrl.mail = &FakeMailSender{}
-
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -301,8 +299,6 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated", "breakglass-standard-user"}, nil
 	}
-
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -733,7 +729,6 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -835,7 +830,6 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated", "breakglass-standard-user"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -989,7 +983,6 @@ func TestTerminalStateImmutability(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -1095,7 +1088,6 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -1236,7 +1228,6 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -1346,7 +1337,6 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -1408,7 +1398,6 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -1470,7 +1459,6 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -1543,7 +1531,6 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -1634,7 +1621,6 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -1705,7 +1691,6 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -1820,7 +1805,6 @@ func TestLongReasonStored(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -1885,7 +1869,6 @@ func TestWhitespaceReasonRejectedWhenMandatory(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -1934,7 +1917,6 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -2018,7 +2000,6 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -2079,7 +2060,6 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -2140,7 +2120,6 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -2236,7 +2215,6 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
@@ -2322,7 +2300,6 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -2375,7 +2352,6 @@ func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
 	ctrl.identityProvider = ErrIdentityProvider{}
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) { return []string{}, nil }
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -2443,7 +2419,6 @@ func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -2516,7 +2491,6 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
@@ -2598,7 +2572,6 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
 	}
-	ctrl.mail = &FakeMailSender{}
 
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
