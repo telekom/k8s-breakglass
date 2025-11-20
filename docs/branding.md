@@ -51,29 +51,38 @@ Behavior:
 
 This runtime configuration is the recommended approach as it eliminates the need for build-time configuration and allows easy theme switching in different deployment environments.
 
-Mail sender configuration
+## Mail Sender Configuration
 
-You can also configure the From address and display name used for outgoing emails by setting `mail.senderAddress` and `mail.senderName` in your controller configuration file. The sender name will default to the frontend branding when present, and finally to a generic placeholder.
+Email sender information (From address and display name) is now configured via **MailProvider CRDs** instead of config.yaml.
 
-Example:
+Example MailProvider with custom sender:
 
 ```yaml
-mail:
-  host: smtp.example.com
-  port: 587
-  user: mailbot@example.com
-  password: s3cr3t
-  # Optional sender address used in the From header
-  senderAddress: noreply@example.com
-  # Optional sender display name. If empty, the server will use frontend.brandingName
-  # (if set) or fall back to a neutral default like "Breakglass".
-  senderName: "Das SCHIFF Breakglass"
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: production-smtp
+spec:
+  displayName: "Production SMTP"
+  default: true
+  smtp:
+    host: smtp.example.com
+    port: 587
+    username: mailbot@example.com
+    passwordRef:
+      name: smtp-credentials
+      key: password
+  sender:
+    address: noreply@example.com
+    name: "Das SCHIFF Breakglass"  # Optional: Falls back to frontend.brandingName
 ```
 
-Behavior:
+**Behavior:**
 
-- If `mail.senderName` is set, it will be used as the display name in the email From header.
-- If `mail.senderName` is empty but `frontend.brandingName` is set, the branding name is used for the From display name.
-- If neither is set, a generic placeholder ("Breakglass") is used so emails always have a sensible From name.
+- If `sender.name` is set in the MailProvider, it will be used as the display name in the email From header
+- If `sender.name` is empty but `frontend.brandingName` is set in config.yaml, the branding name is used for the From display name
+- If neither is set, a generic placeholder ("Breakglass") is used so emails always have a sensible From name
 
-This keeps UI branding and outgoing email sender names consistent while allowing fine-grained overrides where needed.
+This keeps UI branding and outgoing email sender names consistent while allowing fine-grained overrides per mail provider.
+
+For complete MailProvider configuration options, see [Mail Provider documentation](./mail-provider.md).

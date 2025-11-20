@@ -195,6 +195,11 @@ spec:
                   this escalation can sit idle without being used.
                 pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
+              mailProvider:
+                description: |-
+                  mailProvider specifies which MailProvider to use for email notifications for this escalation.
+                  If empty, falls back to the cluster's MailProvider, then to the default MailProvider.
+                type: string
               maxValidFor:
                 default: 1h
                 description: maxValidFor is the maximum amount of time a session for

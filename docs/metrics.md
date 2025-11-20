@@ -384,16 +384,21 @@ scrape_configs:
 - Check firewall rules between Prometheus and breakglass service
 
 **High denial rate:**
+
 - Check for policy misconfigurations
 - Review `DenyPolicy` rules
 - Examine webhook logs for details
 
 **Mail delivery failures:**
-- Check mail server connectivity
-- Verify SMTP credentials in config
-- Check firewall rules to mail server
+
+- Check mail server connectivity via `kubectl get mailproviders`
+- Verify MailProvider status shows `Ready`
+- Check SMTP credentials secret exists and is accessible
+- Verify firewall rules to mail server
+- Review mail provider metrics (`breakglass_mail_provider_*`)
 
 **Session SAR errors:**
+
 - Review ClusterConfig health
 - Check if clusters are reachable
 - Look for webhook timeout errors

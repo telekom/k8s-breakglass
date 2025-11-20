@@ -7,10 +7,7 @@ frontend:
   oidcAuthority: http://127.0.0.1:8080/realms/master
   oidcClientID: breakglass-ui
   baseURL: http://localhost:5173
-mail:
-  host: 172.18.0.2
-  port: 1025
-  insecureSkipVerify: true
+# NOTE: Mail configuration moved to MailProvider CRD - see config/samples/breakglass_v1alpha1_mailprovider.yaml
 kubernetes:
   context: ""
   oidcPrefixes: 

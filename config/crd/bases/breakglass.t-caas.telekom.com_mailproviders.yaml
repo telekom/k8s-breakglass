@@ -1,0 +1,262 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.4
+  name: mailproviders.breakglass.t-caas.telekom.com
+spec:
+  group: breakglass.t-caas.telekom.com
+  names:
+    kind: MailProvider
+    listKind: MailProviderList
+    plural: mailproviders
+    singular: mailprovider
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.smtp.host
+      name: Host
+      type: string
+    - jsonPath: .spec.smtp.port
+      name: Port
+      type: integer
+    - jsonPath: .spec.default
+      name: Default
+      type: boolean
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MailProvider is the Schema for the mailproviders API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MailProviderSpec defines the desired state of MailProvider
+            properties:
+              default:
+                description: |-
+                  Default indicates this is the default mail provider when no specific provider is selected
+                  Only one MailProvider should have Default=true
+                type: boolean
+              disabled:
+                description: |-
+                  Disabled allows temporarily disabling a mail provider without deleting it
+                  When disabled, emails will not be sent through this provider
+                type: boolean
+              displayName:
+                description: DisplayName is a human-readable name for this mail provider
+                type: string
+              retry:
+                description: Retry contains retry and queue configuration
+                properties:
+                  count:
+                    default: 3
+                    description: |-
+                      Count is the number of retry attempts after initial send fails
+                      Default: 3
+                    maximum: 10
+                    minimum: 0
+                    type: integer
+                  initialBackoffMs:
+                    default: 100
+                    description: |-
+                      InitialBackoffMs is the initial backoff duration in milliseconds for exponential backoff
+                      Subsequent retries double the backoff time
+                      Default: 100ms
+                    maximum: 60000
+                    minimum: 10
+                    type: integer
+                  queueSize:
+                    default: 1000
+                    description: |-
+                      QueueSize is the maximum number of pending emails in the queue
+                      Default: 1000
+                    maximum: 10000
+                    minimum: 10
+                    type: integer
+                type: object
+              sender:
+                description: Sender contains email sender configuration
+                properties:
+                  address:
+                    description: |-
+                      Address is the email address used in the From header
+                      Example: noreply@example.com
+                    maxLength: 254
+                    minLength: 3
+                    pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+                    type: string
+                  name:
+                    description: |-
+                      Name is the display name used in the From header
+                      Example: "Platform Breakglass", "Das SCHIFF Breakglass"
+                    maxLength: 100
+                    type: string
+                required:
+                - address
+                type: object
+              smtp:
+                description: SMTP contains SMTP server configuration
+                properties:
+                  certificateAuthority:
+                    description: CertificateAuthority contains a PEM encoded CA certificate
+                      for TLS validation
+                    type: string
+                  host:
+                    description: |-
+                      Host is the SMTP server hostname
+                      Example: smtp.gmail.com, smtp.example.com
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  insecureSkipVerify:
+                    description: |-
+                      InsecureSkipVerify allows skipping TLS certificate verification
+                      WARNING: Only use for testing/development!
+                    type: boolean
+                  passwordRef:
+                    description: PasswordRef references a Secret containing the SMTP
+                      password
+                    properties:
+                      key:
+                        description: Key is the data key in the secret (defaults to
+                          "value" if not specified)
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace containing the secret
+                          (supports cross-namespace references)
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  port:
+                    description: |-
+                      Port is the SMTP server port
+                      Common values: 587 (STARTTLS), 465 (TLS), 25 (plain)
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  username:
+                    description: Username for SMTP authentication
+                    type: string
+                required:
+                - host
+                - port
+                type: object
+            required:
+            - sender
+            - smtp
+            type: object
+          status:
+            description: MailProviderStatus defines the observed state of MailProvider
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the MailProvider's state
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastHealthCheck:
+                description: LastHealthCheck is the timestamp of the last successful
+                  health check
+                format: date-time
+                type: string
+              lastSendAttempt:
+                description: LastSendAttempt is the timestamp of the last email send
+                  attempt
+                format: date-time
+                type: string
+              lastSendError:
+                description: LastSendError contains the error message from the last
+                  failed send attempt
+                type: string
+            type: object
+        type: object
+        x-kubernetes-validations:
+        - message: passwordRef must be specified when username is provided
+          rule: '!has(self.spec.smtp.username) || has(self.spec.smtp.passwordRef)'
+        - message: username must be specified when passwordRef is provided
+          rule: 'has(self.spec.smtp.passwordRef) ? has(self.spec.smtp.username) &&
+            self.spec.smtp.username != '''' : true'
+    served: true
+    storage: true
+    subresources:
+      status: {}

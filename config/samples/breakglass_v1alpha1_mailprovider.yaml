@@ -1,0 +1,30 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: default-mail
+spec:
+  displayName: "Default SMTP Server"
+  default: true
+  smtp:
+    host: smtp.example.com
+    port: 587
+    username: breakglass@example.com
+    passwordRef:
+      name: smtp-credentials
+      key: password
+    insecureSkipVerify: false
+  sender:
+    address: noreply@example.com
+    name: "Breakglass System"
+  retry:
+    count: 3
+    initialBackoffMs: 100
+    queueSize: 1000
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: smtp-credentials
+type: Opaque
+stringData:
+  password: "your-smtp-password-here"

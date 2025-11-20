@@ -12,61 +12,81 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 )
 
-func TestNewSender(t *testing.T) {
+func TestNewSenderFromMailProvider(t *testing.T) {
 	tests := []struct {
-		name        string
-		config      config.Config
-		description string
+		name         string
+		mpConfig     *config.MailProviderConfig
+		brandingName string
+		description  string
 	}{
 		{
 			name: "Basic mail configuration",
-			config: config.Config{
-				Mail: config.Mail{
-					Host:     "smtp.example.com",
-					Port:     587,
-					User:     "test@example.com",
-					Password: "password123",
-				},
+			mpConfig: &config.MailProviderConfig{
+				Name:          "test-provider",
+				Host:          "smtp.example.com",
+				Port:          587,
+				Username:      "test@example.com",
+				Password:      "password123",
+				SenderAddress: "noreply@example.com",
+				SenderName:    "Test Sender",
 			},
-			description: "Should create sender with basic SMTP configuration",
+			brandingName: "My App",
+			description:  "Should create sender with basic SMTP configuration",
 		},
 		{
 			name: "Mail configuration with InsecureSkipVerify",
-			config: config.Config{
-				Mail: config.Mail{
-					Host:               "smtp.internal.com",
-					Port:               25,
-					User:               "internal@company.com",
-					Password:           "internal123",
-					InsecureSkipVerify: true,
-				},
+			mpConfig: &config.MailProviderConfig{
+				Name:               "insecure-provider",
+				Host:               "smtp.internal.com",
+				Port:               25,
+				Username:           "internal@company.com",
+				Password:           "internal123",
+				InsecureSkipVerify: true,
+				SenderAddress:      "internal@company.com",
 			},
-			description: "Should create sender with TLS verification disabled",
+			brandingName: "Internal App",
+			description:  "Should create sender with TLS verification disabled",
 		},
 		{
 			name: "Mail configuration with different port",
-			config: config.Config{
-				Mail: config.Mail{
-					Host:     "smtp.gmail.com",
-					Port:     465,
-					User:     "user@gmail.com",
-					Password: "apppassword",
-				},
+			mpConfig: &config.MailProviderConfig{
+				Name:          "gmail-provider",
+				Host:          "smtp.gmail.com",
+				Port:          465,
+				Username:      "user@gmail.com",
+				Password:      "apppassword",
+				SenderAddress: "user@gmail.com",
+				SenderName:    "Gmail Sender",
 			},
-			description: "Should create sender with SSL port configuration",
+			brandingName: "",
+			description:  "Should create sender with SSL port configuration",
 		},
 		{
-			name: "Empty mail configuration",
-			config: config.Config{
-				Mail: config.Mail{},
+			name: "Minimal configuration with defaults",
+			mpConfig: &config.MailProviderConfig{
+				Name: "minimal-provider",
+				Host: "smtp.minimal.com",
+				Port: 25,
 			},
-			description: "Should handle empty mail configuration",
+			brandingName: "Breakglass",
+			description:  "Should handle minimal configuration with defaults",
+		},
+		{
+			name: "Unauthenticated SMTP",
+			mpConfig: &config.MailProviderConfig{
+				Name:          "relay-provider",
+				Host:          "smtp-relay.internal",
+				Port:          25,
+				SenderAddress: "noreply@internal.com",
+			},
+			brandingName: "",
+			description:  "Should create sender for unauthenticated SMTP relay",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sender := NewSender(tt.config)
+			sender := NewSenderFromMailProvider(tt.mpConfig, tt.brandingName)
 
 			assert.NotNil(t, sender, tt.description)
 			assert.Implements(t, (*Sender)(nil), sender, "Should implement Sender interface")
@@ -76,15 +96,15 @@ func TestNewSender(t *testing.T) {
 
 func TestSender_Send(t *testing.T) {
 	// Create a sender for testing
-	cfg := config.Config{
-		Mail: config.Mail{
-			Host:     "localhost",
-			Port:     1025, // Use a non-standard port to avoid actual mail sending
-			User:     "test@example.com",
-			Password: "test123",
-		},
+	mpConfig := &config.MailProviderConfig{
+		Name:          "test-provider",
+		Host:          "localhost",
+		Port:          1025, // Use a non-standard port to avoid actual mail sending
+		Username:      "test@example.com",
+		Password:      "test123",
+		SenderAddress: "sender@example.com",
 	}
-	sender := NewSender(cfg)
+	sender := NewSenderFromMailProvider(mpConfig, "")
 
 	tests := []struct {
 		name        string
@@ -158,15 +178,15 @@ func TestSender_Send(t *testing.T) {
 }
 
 func TestSender_Interface(t *testing.T) {
-	cfg := config.Config{
-		Mail: config.Mail{
-			Host: "test.example.com",
-			Port: 587,
-			User: "test@example.com",
-		},
+	mpConfig := &config.MailProviderConfig{
+		Name:          "test-provider",
+		Host:          "test.example.com",
+		Port:          587,
+		Username:      "test@example.com",
+		SenderAddress: "sender@example.com",
 	}
 
-	sender := NewSender(cfg)
+	sender := NewSenderFromMailProvider(mpConfig, "")
 
 	// Verify that the sender implements the Sender interface
 	var _ = sender
@@ -176,59 +196,59 @@ func TestSender_Interface(t *testing.T) {
 
 func TestSender_Configuration_Edge_Cases(t *testing.T) {
 	tests := []struct {
-		name   string
-		config config.Config
+		name     string
+		mpConfig *config.MailProviderConfig
 	}{
 		{
-			name: "Zero port",
-			config: config.Config{
-				Mail: config.Mail{
-					Host: "smtp.example.com",
-					Port: 0,
-					User: "test@example.com",
-				},
+			name: "Minimum port",
+			mpConfig: &config.MailProviderConfig{
+				Name:          "low-port",
+				Host:          "smtp.example.com",
+				Port:          1,
+				Username:      "test@example.com",
+				SenderAddress: "sender@example.com",
 			},
 		},
 		{
 			name: "High port number",
-			config: config.Config{
-				Mail: config.Mail{
-					Host: "smtp.example.com",
-					Port: 65535,
-					User: "test@example.com",
-				},
+			mpConfig: &config.MailProviderConfig{
+				Name:          "high-port",
+				Host:          "smtp.example.com",
+				Port:          65535,
+				Username:      "test@example.com",
+				SenderAddress: "sender@example.com",
 			},
 		},
 		{
 			name: "Special characters in credentials",
-			config: config.Config{
-				Mail: config.Mail{
-					Host:     "smtp.example.com",
-					Port:     587,
-					User:     "test+tag@example.com",
-					Password: "p@ssw0rd!@#$%^&*()",
-				},
+			mpConfig: &config.MailProviderConfig{
+				Name:          "special-chars",
+				Host:          "smtp.example.com",
+				Port:          587,
+				Username:      "test+tag@example.com",
+				Password:      "p@ssw0rd!@#$%^&*()",
+				SenderAddress: "sender@example.com",
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sender := NewSender(tt.config)
+			sender := NewSenderFromMailProvider(tt.mpConfig, "")
 			assert.NotNil(t, sender, "Should create sender even with edge case configuration")
 		})
 	}
 }
 
 func TestSender_Send_Edge_Cases(t *testing.T) {
-	cfg := config.Config{
-		Mail: config.Mail{
-			Host: "localhost",
-			Port: 1025,
-			User: "test@example.com",
-		},
+	mpConfig := &config.MailProviderConfig{
+		Name:          "edge-test",
+		Host:          "localhost",
+		Port:          1025,
+		Username:      "test@example.com",
+		SenderAddress: "sender@example.com",
 	}
-	sender := NewSender(cfg)
+	sender := NewSenderFromMailProvider(mpConfig, "")
 
 	t.Run("Very long subject", func(t *testing.T) {
 		longSubject := "This is a very long subject line that exceeds typical email subject length limits and should still be handled properly by the mail sender implementation without causing any issues or truncation problems"
@@ -344,14 +364,14 @@ func TestSender_Send_HappyPath(t *testing.T) {
 	host, port, stop := startTestSMTPServer(t)
 	defer stop()
 
-	cfg := config.Config{
-		Mail: config.Mail{
-			Host: host,
-			Port: port,
-			User: "", // no auth for our test server
-		},
+	mpConfig := &config.MailProviderConfig{
+		Name:          "happy-path",
+		Host:          host,
+		Port:          port,
+		Username:      "", // no auth for our test server
+		SenderAddress: "sender@example.com",
 	}
-	sender := NewSender(cfg)
+	sender := NewSenderFromMailProvider(mpConfig, "")
 
 	err := sender.Send([]string{"recipient@example.com"}, "Hello", "<p>body</p>")
 	assert.NoError(t, err, "expected Send to succeed against test SMTP server")

@@ -71,11 +71,6 @@ frontend:
   brandingName: "My Breakglass"       # optional
   uiFlavour: "oss"                    # optional: "oss", "telekom", or "neutral"
 
-mail:
-  host: smtp.example.com              # Mail server for notifications
-  port: 587
-  insecureSkipVerify: false
-
 kubernetes:
   context: ""                         # kubectl config context (empty = default)
   oidcPrefixes:                       # Prefixes to strip from OIDC groups
@@ -83,7 +78,10 @@ kubernetes:
     - "oidc:"
 ```
 
-**Note:** OIDC/IDP configuration is now managed via IdentityProvider CRDs instead of config.yaml. See [Identity Provider documentation](docs/identity-provider.md) for details.
+**Notes:**
+
+- **OIDC/IDP authentication** is managed via **IdentityProvider CRDs**. See [Identity Provider documentation](docs/identity-provider.md) for details.
+- **Email notifications** are managed via **MailProvider CRDs**. See [Mail Provider documentation](docs/mail-provider.md) for details.
 
 ### OIDC Group Prefix Handling
 

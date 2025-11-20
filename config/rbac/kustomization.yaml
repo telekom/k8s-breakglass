@@ -10,5 +10,7 @@ resources:
 - secrets_reader_role_binding.yaml
 - identityprovider_role.yaml
 - identityprovider_role_binding.yaml
+- mailprovider_role.yaml
+- mailprovider_role_binding.yaml
 - leader_election_role.yaml
 - leader_election_role_binding.yaml

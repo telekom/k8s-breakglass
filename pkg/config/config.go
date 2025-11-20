@@ -66,26 +66,6 @@ type Frontend struct {
 	UIFlavour string `yaml:"uiFlavour"`
 }
 
-type Mail struct {
-	Host               string
-	Port               int
-	User               string
-	Password           string
-	InsecureSkipVerify bool `yaml:"insecureSkipVerify"`
-	// SenderAddress is the email address used in the From header for outgoing mails.
-	// Example: noreply@example.com
-	SenderAddress string `yaml:"senderAddress"`
-	// SenderName is the display name used in the From header for outgoing mails.
-	// If empty, the application will fall back to the frontend branding name or a generic placeholder.
-	SenderName string `yaml:"senderName"`
-	// RetryCount is the number of times to retry failed mail sends (default: 5 for conservative backoff)
-	RetryCount int `yaml:"retryCount"`
-	// RetryBackoffMs is the initial backoff duration in milliseconds for exponential backoff (default: 10000 = 10s)
-	RetryBackoffMs int `yaml:"retryBackoffMs"`
-	// QueueSize is the maximum number of pending emails in the queue (default: 1000)
-	QueueSize int `yaml:"queueSize"`
-}
-
 type Server struct {
 	ListenAddress  string   `yaml:"listenAddress"`
 	TLSCertFile    string   `yaml:"tlsCertFile"`
@@ -103,7 +83,6 @@ type Kubernetes struct {
 
 type Config struct {
 	Server     Server
-	Mail       Mail
 	Frontend   Frontend
 	Kubernetes Kubernetes
 }

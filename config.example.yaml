@@ -12,18 +12,9 @@ frontend:
   # Supported values: "oss" (default, neutral), "telekom" (branded), or "neutral".
   # This allows the UI look-and-feel to be configured server-side without requiring a rebuild.
   # uiFlavour: "telekom"
-mail:
-  host: 127.0.0.1
-  port: 1025
-  insecureSkipVerify: false
-  # Optional: sender address and display name for outgoing mails
-  # senderAddress: noreply@example.com
-  # senderName: "Das SCHIFF Breakglass"
-  # Optional: retry configuration for failed mail sends
-  # retryCount: number of retry attempts after initial send fails (default: 3, total attempts = 1 + retryCount)
-  # retryBackoffMs: initial backoff duration in milliseconds for exponential backoff (default: 100)
-  retryCount: 3
-  retryBackoffMs: 100
+# NOTE: Mail configuration has been moved to MailProvider CRD.
+# See config/samples/breakglass_v1alpha1_mailprovider.yaml for examples.
+# Documentation: docs/mail-provider.md
 kubernetes:
   context: "" # kubectl config context if empty default will be used
   oidcPrefixes: # List of prefixes to strip from user groups for cluster matching

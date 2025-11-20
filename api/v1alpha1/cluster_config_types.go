@@ -73,6 +73,11 @@ type ClusterConfigSpec struct {
 	// If set, an approver must have an email address ending with one of these domains.
 	// +optional
 	AllowedApproverDomains []string `json:"allowedApproverDomains,omitempty"`
+
+	// mailProvider specifies which MailProvider to use for email notifications for this cluster.
+	// If empty, falls back to the default MailProvider.
+	// +optional
+	MailProvider string `json:"mailProvider,omitempty"`
 }
 
 // SecretKeyReference is a namespaced secret key reference supporting cross-namespace references.

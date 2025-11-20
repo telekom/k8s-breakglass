@@ -13,11 +13,7 @@ frontend:
   oidcAuthority: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e
   oidcClientID: breakglass-ui
   baseURL: http://localhost:8080
-mail:
-  # Rendered MailHog service in dev overlay
-  host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
-  port: 1025
-  insecureSkipVerify: true
+# NOTE: Mail configuration moved to MailProvider CRD - see config/dev/resources/ for dev mail provider
 kubernetes:
   context: ""
   oidcPrefixes:

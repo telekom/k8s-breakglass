@@ -88,3 +88,24 @@ webhooks:
     resources:
     - identityproviders
   sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-mailprovider
+  failurePolicy: Fail
+  name: mailprovider.validation.breakglass.t-caas.telekom.com
+  rules:
+  - apiGroups:
+    - breakglass.t-caas.telekom.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mailproviders
+  sideEffects: None

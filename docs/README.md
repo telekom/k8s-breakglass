@@ -17,12 +17,18 @@ Complete documentation for the breakglass privilege escalation system.
 - **[CLI Flags Reference](./cli-flags-reference.md)** - All controller flags and environment variables
 - **[Configuration Reference](./configuration-reference.md)** - config.yaml settings and examples
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
+- **[Mail Provider](./mail-provider.md)** - SMTP configuration for email notifications
 - **[Email Templates](./email-templates.md)** - Customize and override email notification templates
 
 ## Identity & Authentication
 
 - **[Identity Provider](./identity-provider.md)** - OIDC configuration and multi-IDP setup
 - **[Advanced Features - Multi-IDP Guide](./advanced-features.md#multi-idp-configuration-guide)** - Multiple identity provider configuration and best practices
+
+## Email Notifications
+
+- **[Mail Provider](./mail-provider.md)** - SMTP configuration for email notifications
+- **[Email Templates](./email-templates.md)** - Customize and override email notification templates
 
 ## Quick Reference
 
@@ -37,6 +43,8 @@ Complete documentation for the breakglass privilege escalation system.
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions
+- **[IdentityProvider](./identity-provider.md)** - OIDC identity provider configuration
+- **[MailProvider](./mail-provider.md)** - SMTP mail provider configuration
 - **[Webhook Setup](./webhook-setup.md)** - Authorization webhook configuration
 - **[API Reference](./api-reference.md)** - REST API endpoints and usage
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring

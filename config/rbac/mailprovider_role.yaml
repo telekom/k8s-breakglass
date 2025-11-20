@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mailprovider-role
+rules:
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - mailproviders
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - mailproviders/status
+  verbs:
+  - get
+  - update
+  - patch

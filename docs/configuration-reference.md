@@ -8,12 +8,15 @@ Complete reference for the breakglass configuration file (`config.yaml`).
 ## Overview
 
 The breakglass configuration file controls:
+
 - Server and TLS settings
 - Frontend UI behavior
-- Email notifications
 - Kubernetes cluster settings
 
-**Note:** OIDC/IDP authentication is now configured via **IdentityProvider CRDs** instead of config.yaml. See [Identity Provider documentation](identity-provider.md) for details.
+**Note:** The following are **NOT** configured in config.yaml:
+
+- **OIDC/IDP authentication** - Configured via **IdentityProvider CRDs**. See [Identity Provider documentation](identity-provider.md).
+- **Email notifications** - Configured via **MailProvider CRDs**. See [Mail Provider documentation](mail-provider.md).
 
 ## Configuration File Format
 
@@ -26,16 +29,16 @@ frontend:
   brandingName: "Das SCHIFF Breakglass"  # optional
   uiFlavour: "oss"  # optional
 
-mail:
-  host: smtp.example.com
-  port: 587
-  senderAddress: breakglass@example.com
-
 kubernetes:
   context: ""
   oidcPrefixes:
     - "oidc:"
 ```
+
+**Notes:**
+
+- Email configuration has been moved to **MailProvider CRDs** - see [Mail Provider documentation](mail-provider.md)
+- OIDC/IDP configuration has been moved to **IdentityProvider CRDs** - see [Identity Provider documentation](identity-provider.md)
 
 ## Section Reference
 
@@ -161,161 +164,47 @@ frontend:
 
 ---
 
-### `mail`
+### `mail` (DEPRECATED - REMOVED)
 
-Email notification configuration.
+⚠️ **DEPRECATED**: The `mail` configuration section has been **removed** in favor of **MailProvider CRDs**.
 
-#### `host`
+**Migration Required**: Email configuration is now managed via Kubernetes Custom Resources. This provides:
 
-SMTP server hostname.
+- Multiple SMTP provider support
+- Per-escalation provider selection
+- Dynamic reconfiguration without restarts
+- Secret-based credential management
+- Built-in health checking and status reporting
+- Provider-specific metrics
 
-| Property | Value |
-|----------|-------|
-| **Type** | `string` |
-| **Required** | Yes (unless emails disabled) |
-| **Example** | `smtp.gmail.com`, `mail.example.com`, `127.0.0.1` |
-
-```yaml
-mail:
-  host: smtp.example.com
-```
-
-#### `port`
-
-SMTP server port.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `int` |
-| **Required** | Yes (unless emails disabled) |
-| **Default** | `587` (typical for SMTP with TLS) |
-| **Example** | `587`, `25`, `465` |
+**New Approach**: Create a **MailProvider** resource:
 
 ```yaml
-mail:
-  host: smtp.example.com
-  port: 587
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: production-smtp
+spec:
+  displayName: "Production SMTP"
+  default: true
+  smtp:
+    host: smtp.example.com
+    port: 587
+    username: breakglass@example.com
+    passwordRef:
+      name: smtp-credentials
+      namespace: breakglass-system
+      key: password
+  sender:
+    address: noreply@example.com
+    name: "Breakglass System"
+  retry:
+    count: 3
+    initialBackoffMs: 100
+    queueSize: 1000
 ```
 
-**Common ports:**
-- `25` - SMTP (unencrypted, rarely used)
-- `587` - SMTP with STARTTLS (recommended)
-- `465` - SMTP with TLS (implicit)
-
-#### `insecureSkipVerify` (Optional)
-
-Skip TLS certificate verification (for testing only).
-
-| Property | Value |
-|----------|-------|
-| **Type** | `bool` |
-| **Default** | `false` |
-| **Example** | `true` |
-
-```yaml
-mail:
-  insecureSkipVerify: true  # Only for development/testing!
-```
-
-⚠️ **Security Warning**: Only use in development. Never enable in production.
-
-#### `username` (Optional)
-
-SMTP authentication username.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `string` |
-| **Default** | `` (no authentication) |
-| **Example** | `breakglass@example.com`, `smtp-user` |
-
-```yaml
-mail:
-  username: breakglass@example.com
-```
-
-#### `password` (Optional)
-
-SMTP authentication password.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `string` |
-| **Default** | `` (no authentication) |
-| **Example** | `secure-password-123` |
-
-```yaml
-mail:
-  password: secure-password-123
-```
-
-#### `senderAddress` (Optional)
-
-Email address for the "From" header.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `string` |
-| **Default** | `` (generated) |
-| **Example** | `noreply@example.com`, `breakglass@example.com` |
-
-```yaml
-mail:
-  senderAddress: noreply@example.com
-```
-
-If not set, generated from `senderName` and hostname.
-
-#### `senderName` (Optional)
-
-Display name for the "From" header.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `string` |
-| **Default** | `Das SCHIFF Breakglass` (if `brandingName` set) |
-| **Example** | `Das SCHIFF Breakglass` |
-
-```yaml
-mail:
-  senderName: "Das SCHIFF Breakglass"
-```
-
-Example email header: `Das SCHIFF Breakglass <noreply@example.com>`
-
-#### `retryCount` (Optional)
-
-Number of retry attempts for failed emails.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `int` |
-| **Default** | `3` |
-| **Example** | `1`, `3`, `5` |
-
-```yaml
-mail:
-  retryCount: 3
-```
-
-Total send attempts = 1 + retryCount
-
-#### `retryBackoffMs` (Optional)
-
-Initial backoff duration in milliseconds for exponential backoff.
-
-| Property | Value |
-|----------|-------|
-| **Type** | `int` |
-| **Default** | `100` |
-| **Example** | `100`, `500`, `1000` |
-
-```yaml
-mail:
-  retryBackoffMs: 100
-```
-
-Backoff sequence: 100ms, 200ms, 400ms, ...
+See [Mail Provider Documentation](./mail-provider.md) for complete configuration options, validation rules, and examples.
 
 ---
 
@@ -400,18 +289,6 @@ frontend:
   brandingName: "Das SCHIFF Breakglass"
   uiFlavour: "telekom"
 
-# Email notification settings
-mail:
-  host: smtp.example.com
-  port: 587
-  username: breakglass@example.com
-  password: "secure-password"
-  insecureSkipVerify: false
-  senderAddress: noreply@example.com
-  senderName: "Das SCHIFF Breakglass"
-  retryCount: 3
-  retryBackoffMs: 100
-
 # Kubernetes cluster settings
 kubernetes:
   context: ""
@@ -421,7 +298,10 @@ kubernetes:
     - "keycloak:"
 ```
 
-**Note:** OIDC/IDP configuration (authority, clientID, JWKS, etc.) is now managed via **IdentityProvider CRDs**. See [Identity Provider documentation](identity-provider.md).
+**Notes:**
+
+- **OIDC/IDP configuration** (authority, clientID, JWKS, etc.) is now managed via **IdentityProvider CRDs**. See [Identity Provider documentation](identity-provider.md).
+- **Email notifications** are now managed via **MailProvider CRDs**. See [Mail Provider documentation](mail-provider.md).
 
 ## Environment Variables
 

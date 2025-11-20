@@ -146,6 +146,11 @@ type BreakglassEscalationSpec struct {
 	// This is useful for excluding automated users or specific groups from notification spam.
 	// +optional
 	NotificationExclusions *NotificationExclusions `json:"notificationExclusions,omitempty"`
+
+	// mailProvider specifies which MailProvider to use for email notifications for this escalation.
+	// If empty, falls back to the cluster's MailProvider, then to the default MailProvider.
+	// +optional
+	MailProvider string `json:"mailProvider,omitempty"`
 }
 
 // NotificationExclusions defines which users/groups should be excluded from email notifications

@@ -1,0 +1,18 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: dev-mailhog
+spec:
+  displayName: "Development MailHog"
+  default: true
+  smtp:
+    host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
+    port: 1025
+    insecureSkipVerify: true
+  sender:
+    address: noreply@breakglass-dev.local
+    name: "Breakglass Dev"
+  retry:
+    count: 3
+    initialBackoffMs: 100
+    queueSize: 1000

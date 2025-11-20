@@ -458,10 +458,15 @@ func main() {
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
 	// Initialize mail queue for non-blocking async email sending
+	// TODO: Replace with MailProvider CRD-based initialization
 	mailSender := mail.NewSender(cfg)
-	mailQueue := mail.NewQueue(mailSender, log, cfg.Mail.RetryCount, cfg.Mail.RetryBackoffMs, cfg.Mail.QueueSize)
+	// Use default retry/queue settings since config.Mail is removed
+	retryCount := 3
+	retryBackoffMs := 100
+	queueSize := 1000
+	mailQueue := mail.NewQueue(mailSender, log, retryCount, retryBackoffMs, queueSize)
 	mailQueue.Start()
-	log.Infow("Mail queue initialized and started", "retryCount", cfg.Mail.RetryCount, "retryBackoffMs", cfg.Mail.RetryBackoffMs, "queueSize", cfg.Mail.QueueSize)
+	log.Infow("Mail queue initialized and started", "retryCount", retryCount, "retryBackoffMs", retryBackoffMs, "queueSize", queueSize)
 
 	// Setup session controller with all dependencies
 	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), configPath, ccProvider, escalationManager.Client, disableEmail).WithQueue(mailQueue)

@@ -123,6 +123,33 @@ var (
 		Help: "Total number of emails failed after all retries",
 	}, []string{"host"})
 
+	// MailProvider metrics
+	MailProviderConfigured = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_mailprovider_configured",
+		Help: "Whether a MailProvider is configured (1=enabled, 0=disabled)",
+	}, []string{"provider", "status"})
+	MailProviderHealthCheck = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_mailprovider_health_check_total",
+		Help: "Total number of MailProvider health checks performed",
+	}, []string{"provider", "result"})
+	MailProviderHealthCheckDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_mailprovider_health_check_duration_seconds",
+		Help:    "Duration of MailProvider health checks",
+		Buckets: []float64{.1, .5, 1, 2, 5, 10},
+	}, []string{"provider"})
+	MailProviderStatus = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_mailprovider_status",
+		Help: "Current status of MailProvider (1=Healthy, 0=Unhealthy, -1=Disabled)",
+	}, []string{"provider"})
+	MailProviderEmailsSent = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_mailprovider_emails_sent_total",
+		Help: "Total number of emails successfully sent via each MailProvider",
+	}, []string{"provider"})
+	MailProviderEmailsFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_mailprovider_emails_failed_total",
+		Help: "Total number of emails that failed to send via each MailProvider",
+	}, []string{"provider", "reason"})
+
 	// Identity Provider metrics
 	IdentityProviderLoaded = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_identity_provider_loaded_total",
@@ -312,6 +339,12 @@ func init() {
 	prometheus.MustRegister(MailSent)
 	prometheus.MustRegister(MailRetryScheduled)
 	prometheus.MustRegister(MailFailed)
+	prometheus.MustRegister(MailProviderConfigured)
+	prometheus.MustRegister(MailProviderHealthCheck)
+	prometheus.MustRegister(MailProviderHealthCheckDuration)
+	prometheus.MustRegister(MailProviderStatus)
+	prometheus.MustRegister(MailProviderEmailsSent)
+	prometheus.MustRegister(MailProviderEmailsFailed)
 	prometheus.MustRegister(IdentityProviderLoaded)
 	prometheus.MustRegister(IdentityProviderLoadFailed)
 	prometheus.MustRegister(IdentityProviderValidationFailed)

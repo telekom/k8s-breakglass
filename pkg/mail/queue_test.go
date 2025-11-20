@@ -354,16 +354,16 @@ func TestQueue_Length(t *testing.T) {
 }
 
 func TestNewSenderWithQueue(t *testing.T) {
-	cfg := config.Config{
-		Mail: config.Mail{
-			Host:           "localhost",
-			Port:           1025,
-			User:           "test@example.com",
-			Password:       "password",
-			RetryCount:     5,
-			RetryBackoffMs: 10000,
-			QueueSize:      1000,
-		},
+	mpConfig := &config.MailProviderConfig{
+		Name:           "test-provider",
+		Host:           "localhost",
+		Port:           1025,
+		Username:       "test@example.com",
+		Password:       "password",
+		RetryCount:     5,
+		RetryBackoffMs: 10000,
+		QueueSize:      1000,
+		SenderAddress:  "sender@example.com",
 	}
 
 	logger, _ := zap.NewProduction()
@@ -374,10 +374,10 @@ func TestNewSenderWithQueue(t *testing.T) {
 	}()
 	sugar := logger.Sugar()
 
-	sender := NewSender(cfg)
+	sender := NewSenderFromMailProvider(mpConfig, "")
 	assert.NotNil(t, sender)
 
-	queue := NewQueue(sender, sugar, cfg.Mail.RetryCount, cfg.Mail.RetryBackoffMs, cfg.Mail.QueueSize)
+	queue := NewQueue(sender, sugar, mpConfig.RetryCount, mpConfig.RetryBackoffMs, mpConfig.QueueSize)
 	assert.NotNil(t, queue)
 	assert.Equal(t, 5, queue.maxRetries)
 	assert.Equal(t, 10000, queue.initialBackoffMs)
