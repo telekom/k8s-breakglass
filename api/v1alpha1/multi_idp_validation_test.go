@@ -425,6 +425,18 @@ func TestValidateIdentityProviderRefsHelper(t *testing.T) {
 			expectError: true,
 			expectCount: 1,
 		},
+		{
+			name:        "duplicate refs rejected",
+			refs:        []string{"enabled-idp", "enabled-idp"},
+			expectError: true,
+			expectCount: 1,
+		},
+		{
+			name:        "empty ref entries rejected",
+			refs:        []string{"enabled-idp", ""},
+			expectError: true,
+			expectCount: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -519,6 +531,53 @@ func TestValidateIdentityProviderFieldsHelper(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errs := validateIdentityProviderFields(context.Background(), tt.idpName, tt.idpIssuer, field.NewPath("spec").Child("identityProviderName"), field.NewPath("spec").Child("identityProviderIssuer"))
+			if tt.expectError {
+				require.NotEmpty(t, errs, "expected errors but got none")
+			} else {
+				require.Empty(t, errs, "expected no errors but got %v", errs)
+			}
+		})
+	}
+}
+
+func TestValidateMailProviderReference(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	enabledMail := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail-enabled"},
+		Spec: MailProviderSpec{
+			SMTP:   SMTPConfig{Host: "smtp.example.com", Port: 587},
+			Sender: SenderConfig{Address: "noreply@example.com"},
+		},
+	}
+
+	disabledMail := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail-disabled"},
+		Spec: MailProviderSpec{
+			Disabled: true,
+			SMTP:     SMTPConfig{Host: "smtp.disabled.example.com", Port: 587},
+			Sender:   SenderConfig{Address: "noreply-disabled@example.com"},
+		},
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(enabledMail, disabledMail).Build()
+	webhookClient = client
+
+	tests := []struct {
+		name         string
+		mailProvider string
+		expectError  bool
+	}{
+		{name: "empty value allowed", mailProvider: "", expectError: false},
+		{name: "enabled provider", mailProvider: "mail-enabled", expectError: false},
+		{name: "missing provider", mailProvider: "missing", expectError: true},
+		{name: "disabled provider", mailProvider: "mail-disabled", expectError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateMailProviderReference(context.Background(), tt.mailProvider, field.NewPath("spec").Child("mailProvider"))
 			if tt.expectError {
 				require.NotEmpty(t, errs, "expected errors but got none")
 			} else {

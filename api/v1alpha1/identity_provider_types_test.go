@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -421,6 +422,56 @@ func TestIdentityProviderValidateCreateValidSpec(t *testing.T) {
 	assert.NotNil(t, idp)
 	_ = err // Error is expected in unit test without full webhook setup
 	_ = warnings
+}
+
+func TestIdentityProviderValidateCreateRejectsNonHTTPSURLs(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-url-idp",
+		},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "http://auth.example.com",
+				ClientID:  "client-id",
+			},
+			Issuer: "https://issuer.example.com",
+		},
+	}
+
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsInvalid(err))
+}
+
+func TestIdentityProviderValidateCreateRejectsInvalidKeycloakDurations(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-duration-idp",
+		},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			Issuer:            "https://issuer.example.com",
+			GroupSyncProvider: GroupSyncProviderKeycloak,
+			Keycloak: &KeycloakGroupSync{
+				BaseURL:  "https://keycloak.example.com",
+				Realm:    "master",
+				ClientID: "sync-client",
+				ClientSecretRef: SecretKeyReference{
+					Name:      "keycloak-secret",
+					Namespace: "default",
+				},
+				CacheTTL:       "10x",
+				RequestTimeout: "5m",
+			},
+		},
+	}
+
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsInvalid(err))
 }
 
 // TestIdentityProviderValidateUpdateValidSpec verifies update validation

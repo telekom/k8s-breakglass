@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestClusterConfig_ValidateCreate_MissingSecretRef(t *testing.T) {
@@ -25,6 +27,101 @@ func TestClusterConfig_ValidateCreate_Success(t *testing.T) {
 	_, err := cc.ValidateCreate(context.Background(), cc)
 	if err != nil {
 		t.Fatalf("expected ValidateCreate to succeed, got %v", err)
+	}
+}
+
+func TestClusterConfig_ValidateCreate_DuplicateIdentityProviderRefs(t *testing.T) {
+	cc := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-dup"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef:  SecretKeyReference{Name: "k", Namespace: "ns"},
+			IdentityProviderRefs: []string{"idp-a", "idp-a"},
+		},
+	}
+
+	_, err := cc.ValidateCreate(context.Background(), cc)
+	if err == nil {
+		t.Fatalf("expected ValidateCreate to fail due to duplicate identityProviderRefs")
+	}
+}
+
+func TestClusterConfig_ValidateCreate_InvalidApproverDomains(t *testing.T) {
+	cc := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-domain"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef:    SecretKeyReference{Name: "k", Namespace: "ns"},
+			AllowedApproverDomains: []string{"invalid_domain"},
+		},
+	}
+
+	_, err := cc.ValidateCreate(context.Background(), cc)
+	if err == nil {
+		t.Fatalf("expected ValidateCreate to fail due to invalid approver domain")
+	}
+}
+
+func TestClusterConfig_ValidateCreate_MailProviderReference(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	enabledMail := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail-enabled"},
+		Spec: MailProviderSpec{
+			SMTP:   SMTPConfig{Host: "smtp.example.com", Port: 587},
+			Sender: SenderConfig{Address: "noreply@example.com"},
+		},
+	}
+
+	disabledMail := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail-disabled"},
+		Spec: MailProviderSpec{
+			Disabled: true,
+			SMTP:     SMTPConfig{Host: "smtp.disabled.com", Port: 587},
+			Sender:   SenderConfig{Address: "noreply-disabled@example.com"},
+		},
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(enabledMail, disabledMail).Build()
+	webhookClient = client
+	defer func() {
+		webhookClient = nil
+		webhookCache = nil
+	}()
+
+	valid := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-valid"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			MailProvider:        "mail-enabled",
+		},
+	}
+
+	if _, err := valid.ValidateCreate(context.Background(), valid); err != nil {
+		t.Fatalf("expected valid mail provider reference, got error: %v", err)
+	}
+
+	disabled := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-disabled"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			MailProvider:        "mail-disabled",
+		},
+	}
+
+	if _, err := disabled.ValidateCreate(context.Background(), disabled); err == nil {
+		t.Fatalf("expected error when referencing disabled MailProvider")
+	}
+
+	missing := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-missing"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			MailProvider:        "does-not-exist",
+		},
+	}
+
+	if _, err := missing.ValidateCreate(context.Background(), missing); err == nil {
+		t.Fatalf("expected error when referencing non-existent MailProvider")
 	}
 }
 

@@ -146,10 +146,12 @@ spec:
                         type: string
                       name:
                         description: Name is the name of the secret
+                        minLength: 1
                         type: string
                       namespace:
                         description: Namespace is the namespace containing the secret
                           (supports cross-namespace references)
+                        minLength: 1
                         type: string
                     required:
                     - name
@@ -257,14 +259,11 @@ spec:
           rule: 'has(self.spec.smtp.passwordRef) ? has(self.spec.smtp.username) &&
             self.spec.smtp.username != '''' : true'
         - message: passwordRef.name must not be empty when passwordRef is specified
-          rule: '!has(self.spec.smtp.passwordRef) || (self.spec.smtp.passwordRef.name
-            != '''')'
-        - message: passwordRef.namespace must not be empty when passwordRef is specified
-          rule: '!has(self.spec.smtp.passwordRef) || (self.spec.smtp.passwordRef.namespace
-            != '''')'
+          rule: '!has(self.spec.smtp.passwordRef) || (has(self.spec.smtp.passwordRef)
+            ? self.spec.smtp.passwordRef.name.size() > 0 : true)'
         - message: passwordRef.key must not be empty when passwordRef is specified
-          rule: '!has(self.spec.smtp.passwordRef) || (self.spec.smtp.passwordRef.key
-            != '''')'
+          rule: '!has(self.spec.smtp.passwordRef) || (has(self.spec.smtp.passwordRef)
+            ? self.spec.smtp.passwordRef.key.size() > 0 : true)'
     served: true
     storage: true
     subresources:

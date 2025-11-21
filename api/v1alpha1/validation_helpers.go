@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -96,9 +97,9 @@ func ensureClusterWideUniqueIssuer(
 		return nil
 	}
 
-	// Validate issuer is a valid URL format
-	if _, err := url.Parse(issuer); err != nil {
-		return field.ErrorList{field.Invalid(path, issuer, "issuer must be a valid URL")}
+	// Validate issuer is a valid HTTPS URL
+	if errs := validateHTTPSURL(issuer, path); len(errs) > 0 {
+		return errs
 	}
 
 	reader := getWebhookReader()
@@ -154,9 +155,18 @@ func validateIdentityProviderRefs(
 		return nil
 	}
 
+	var errs field.ErrorList
+	errs = append(errs, validateStringListNoDuplicates(refs, path)...)
+
+	for i, ref := range refs {
+		if ref == "" {
+			errs = append(errs, field.Required(path.Index(i), "identity provider reference cannot be empty"))
+		}
+	}
+
 	reader := getWebhookReader()
 	if reader == nil || path == nil {
-		return nil
+		return errs
 	}
 
 	if ctx == nil {
@@ -166,7 +176,8 @@ func validateIdentityProviderRefs(
 	// List all IdentityProviders
 	idpList := &IdentityProviderList{}
 	if err := reader.List(ctx, idpList); err != nil {
-		return field.ErrorList{field.InternalError(path, err)}
+		errs = append(errs, field.InternalError(path, err))
+		return errs
 	}
 
 	// Build map of available enabled providers
@@ -179,14 +190,46 @@ func validateIdentityProviderRefs(
 	}
 
 	// Check that all refs point to valid, enabled providers
-	var errs field.ErrorList
 	for i, ref := range refs {
+		if ref == "" {
+			continue
+		}
 		if !enabledProviders[ref] {
 			errs = append(errs, field.NotFound(path.Index(i), ref))
 		}
 	}
 
 	return errs
+}
+
+// validateMailProviderReference ensures that referenced MailProviders exist and are enabled
+func validateMailProviderReference(ctx context.Context, mailProvider string, path *field.Path) field.ErrorList {
+	if mailProvider == "" || path == nil {
+		return nil
+	}
+
+	reader := getWebhookReader()
+	if reader == nil {
+		return nil
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	mailProviderObj := &MailProvider{}
+	if err := reader.Get(ctx, client.ObjectKey{Name: mailProvider}, mailProviderObj); err != nil {
+		if apierrors.IsNotFound(err) {
+			return field.ErrorList{field.NotFound(path, mailProvider)}
+		}
+		return field.ErrorList{field.InternalError(path, err)}
+	}
+
+	if mailProviderObj.Spec.Disabled {
+		return field.ErrorList{field.Invalid(path, mailProvider, "referenced MailProvider is disabled")}
+	}
+
+	return nil
 }
 
 // validateIDPFieldCombinations ensures that the new multi-IDP fields are used correctly.
@@ -523,6 +566,29 @@ func validateURLFormat(urlStr string, fieldPath *field.Path) field.ErrorList {
 	// Require host
 	if u.Host == "" {
 		errs = append(errs, field.Invalid(fieldPath, urlStr, "URL must include a host"))
+	}
+
+	return errs
+}
+
+// validateHTTPSURL ensures a URL is valid and uses HTTPS scheme
+func validateHTTPSURL(urlStr string, fieldPath *field.Path) field.ErrorList {
+	if urlStr == "" {
+		return nil
+	}
+
+	if errs := validateURLFormat(urlStr, fieldPath); len(errs) > 0 {
+		return errs
+	}
+
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return field.ErrorList{field.Invalid(fieldPath, urlStr, fmt.Sprintf("invalid URL format: %v", err))}
+	}
+
+	var errs field.ErrorList
+	if u.Scheme != "https" {
+		errs = append(errs, field.Invalid(fieldPath, urlStr, "only https scheme is allowed"))
 	}
 
 	return errs

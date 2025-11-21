@@ -77,6 +77,33 @@ func TestValidateURLFormat(t *testing.T) {
 	}
 }
 
+// TestValidateHTTPSURL tests HTTPS URL validation
+func TestValidateHTTPSURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		url        string
+		shouldFail bool
+	}{
+		{name: "https URL", url: "https://secure.example.com", shouldFail: false},
+		{name: "http URL", url: "http://insecure.example.com", shouldFail: true},
+		{name: "empty string", url: "", shouldFail: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateHTTPSURL(tc.url, field.NewPath("test"))
+			hasError := len(errs) > 0
+
+			if tc.shouldFail && !hasError {
+				t.Errorf("expected error for URL %q, got none", tc.url)
+			}
+			if !tc.shouldFail && hasError {
+				t.Errorf("unexpected error for URL %q: %v", tc.url, errs)
+			}
+		})
+	}
+}
+
 // TestValidateEmailDomainList tests email domain list validation
 func TestValidateEmailDomainList(t *testing.T) {
 	tests := []struct {

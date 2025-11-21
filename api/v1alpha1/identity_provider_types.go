@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,14 +60,22 @@ const (
 type OIDCConfig struct {
 	// Authority is the OIDC provider authority endpoint
 	// Example: https://auth.example.com
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^https://.+`
 	Authority string `json:"authority"`
 
 	// JWKSEndpoint is the endpoint for fetching JSON Web Key Sets
 	// If empty, defaults to Authority/.well-known/openid-configuration
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^https://.+`
 	JWKSEndpoint string `json:"jwksEndpoint,omitempty"`
 
 	// ClientID is the OIDC client ID for user authentication (frontend/UI)
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^\S+$`
 	ClientID string `json:"clientID"`
 
 	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
@@ -82,12 +91,20 @@ type OIDCConfig struct {
 type KeycloakGroupSync struct {
 	// BaseURL is the Keycloak server URL
 	// Example: https://keycloak.example.com
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^https://.+`
 	BaseURL string `json:"baseURL"`
 
 	// Realm is the Keycloak realm name
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	Realm string `json:"realm"`
 
 	// ClientID is the service account client ID for group/user queries (should have view-users/view-groups only)
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^\S+$`
 	ClientID string `json:"clientID"`
 
 	// ClientSecretRef references a Secret containing the client secret
@@ -95,10 +112,12 @@ type KeycloakGroupSync struct {
 
 	// CacheTTL is the duration to cache user/group memberships (default: 10m)
 	// +optional
+	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
 	CacheTTL string `json:"cacheTTL,omitempty"`
 
 	// RequestTimeout is the timeout for Keycloak API requests (default: 10s)
 	// +optional
+	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
 	RequestTimeout string `json:"requestTimeout,omitempty"`
 
 	// InsecureSkipVerify allows skipping TLS verification (NOT for production!)
@@ -113,6 +132,11 @@ type KeycloakGroupSync struct {
 // IdentityProviderSpec defines the desired state of an IdentityProvider
 // +kubebuilder:validation:XValidation:rule="has(self.groupSyncProvider) && self.groupSyncProvider == 'Keycloak' ? has(self.keycloak) : true",message="keycloak must be specified when groupSyncProvider is 'Keycloak'"
 // +kubebuilder:validation:XValidation:rule="!has(self.groupSyncProvider) || self.groupSyncProvider != 'Keycloak' || (has(self.keycloak) && self.keycloak != null)",message="keycloak must be specified when groupSyncProvider is set to 'Keycloak'"
+// +kubebuilder:validation:XValidation:rule="!has(self.keycloak) || (has(self.groupSyncProvider) && self.groupSyncProvider == 'Keycloak')",message="groupSyncProvider must be 'Keycloak' when keycloak configuration is provided"
+// +kubebuilder:validation:XValidation:rule="self.oidc.authority.startsWith('https://')",message="oidc.authority must start with https://"
+// +kubebuilder:validation:XValidation:rule="!has(self.oidc.jwksEndpoint) || self.oidc.jwksEndpoint.startsWith('https://')",message="oidc.jwksEndpoint must start with https:// when set"
+// +kubebuilder:validation:XValidation:rule="!has(self.issuer) || self.issuer.startsWith('https://')",message="issuer must start with https:// when set"
+// +kubebuilder:validation:XValidation:rule="!has(self.keycloak) || self.keycloak.baseURL.startsWith('https://')",message="keycloak.baseURL must start with https://"
 type IdentityProviderSpec struct {
 	// OIDC holds mandatory OIDC configuration for user authentication
 	// This is the base authentication mechanism for all identity providers
@@ -133,6 +157,8 @@ type IdentityProviderSpec struct {
 	// authenticated a user based on their JWT token.
 	// Example: https://auth.example.com
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^https://.+`
 	Issuer string `json:"issuer,omitempty"`
 
 	// Primary indicates if this is the primary identity provider (used by default)
@@ -142,6 +168,7 @@ type IdentityProviderSpec struct {
 
 	// DisplayName is a human-readable name for this provider (shown in UI/logs)
 	// +optional
+	// +kubebuilder:validation:MaxLength=100
 	DisplayName string `json:"displayName,omitempty"`
 
 	// Disabled can be set to true to temporarily disable this provider without deleting it
@@ -177,8 +204,8 @@ type IdentityProviderStatus struct {
 // +kubebuilder:printcolumn:name="GroupSync",type=string,JSONPath=`.spec.groupSyncProvider`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef.name) && self.spec.keycloak.clientSecretRef.name != '')",message="keycloak.clientSecretRef.name must not be empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef.namespace) && self.spec.keycloak.clientSecretRef.namespace != '')",message="keycloak.clientSecretRef.namespace must not be empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef) ? self.spec.keycloak.clientSecretRef.name.size() > 0 : true)",message="keycloak.clientSecretRef.name must not be empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef) ? self.spec.keycloak.clientSecretRef.namespace.size() > 0 : true)",message="keycloak.clientSecretRef.namespace must not be empty"
 
 // IdentityProvider represents a configured identity provider with OIDC authentication and optional group synchronization
 // IdentityProvider is cluster-scoped, allowing global identity provider configuration.
@@ -210,7 +237,9 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("authority"), "authority is required"))
 	} else {
 		// Validate OIDC authority URL format
-		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.Authority, field.NewPath("spec").Child("oidc").Child("authority"))...)
+		authorityPath := field.NewPath("spec").Child("oidc").Child("authority")
+		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.Authority, authorityPath)...)
+		allErrs = append(allErrs, validateHTTPSURL(identityProvider.Spec.OIDC.Authority, authorityPath)...)
 	}
 
 	if identityProvider.Spec.OIDC.ClientID == "" {
@@ -222,7 +251,9 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 
 	// Validate JWKS endpoint if provided
 	if identityProvider.Spec.OIDC.JWKSEndpoint != "" {
-		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.JWKSEndpoint, field.NewPath("spec").Child("oidc").Child("jwksEndpoint"))...)
+		jwksPath := field.NewPath("spec").Child("oidc").Child("jwksEndpoint")
+		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.JWKSEndpoint, jwksPath)...)
+		allErrs = append(allErrs, validateHTTPSURL(identityProvider.Spec.OIDC.JWKSEndpoint, jwksPath)...)
 	}
 
 	// Validate Keycloak configuration if group sync is enabled
@@ -234,7 +265,9 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("baseURL"), "baseURL is required"))
 			} else {
 				// Validate Keycloak URL format
-				allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.Keycloak.BaseURL, field.NewPath("spec").Child("keycloak").Child("baseURL"))...)
+				keycloakBasePath := field.NewPath("spec").Child("keycloak").Child("baseURL")
+				allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.Keycloak.BaseURL, keycloakBasePath)...)
+				allErrs = append(allErrs, validateHTTPSURL(identityProvider.Spec.Keycloak.BaseURL, keycloakBasePath)...)
 			}
 
 			if identityProvider.Spec.Keycloak.Realm == "" {
@@ -254,7 +287,27 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 			if identityProvider.Spec.Keycloak.ClientSecretRef.Name == "" || identityProvider.Spec.Keycloak.ClientSecretRef.Namespace == "" {
 				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientSecretRef"), "clientSecretRef name and namespace are required"))
 			}
+
+			// Validate cacheTTL duration if provided
+			if identityProvider.Spec.Keycloak.CacheTTL != "" {
+				if _, err := time.ParseDuration(identityProvider.Spec.Keycloak.CacheTTL); err != nil {
+					allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("keycloak").Child("cacheTTL"), identityProvider.Spec.Keycloak.CacheTTL, fmt.Sprintf("invalid duration: %v", err)))
+				}
+			}
+
+			// Validate requestTimeout duration if provided
+			if identityProvider.Spec.Keycloak.RequestTimeout != "" {
+				if _, err := time.ParseDuration(identityProvider.Spec.Keycloak.RequestTimeout); err != nil {
+					allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("keycloak").Child("requestTimeout"), identityProvider.Spec.Keycloak.RequestTimeout, fmt.Sprintf("invalid duration: %v", err)))
+				}
+			}
 		}
+	}
+
+	if identityProvider.Spec.Issuer != "" {
+		issuerPath := field.NewPath("spec").Child("issuer")
+		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.Issuer, issuerPath)...)
+		allErrs = append(allErrs, validateHTTPSURL(identityProvider.Spec.Issuer, issuerPath)...)
 	}
 
 	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique and valid URL)

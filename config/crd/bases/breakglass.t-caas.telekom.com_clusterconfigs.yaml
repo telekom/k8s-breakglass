@@ -67,13 +67,16 @@ spec:
                 description: burst configures the client burst against the target
                   cluster.
                 format: int32
+                minimum: 1
                 type: integer
               clusterID:
                 description: clusterID is the canonical identifier of the cluster.
                   Defaults to metadata.name if empty.
+                maxLength: 253
                 type: string
               environment:
                 description: environment (e.g. dev, staging, prod) override.
+                maxLength: 253
                 type: string
               identityProviderRefs:
                 description: |-
@@ -95,10 +98,12 @@ spec:
                     type: string
                   name:
                     description: Name is the name of the secret
+                    minLength: 1
                     type: string
                   namespace:
                     description: Namespace is the namespace containing the secret
                       (supports cross-namespace references)
+                    minLength: 1
                     type: string
                 required:
                 - name
@@ -106,22 +111,28 @@ spec:
                 type: object
               location:
                 description: location / region override.
+                maxLength: 253
                 type: string
               mailProvider:
                 description: |-
                   mailProvider specifies which MailProvider to use for email notifications for this cluster.
                   If empty, falls back to the default MailProvider.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               qps:
                 description: qps configures the client QPS against the target cluster.
                 format: int32
+                minimum: 1
                 type: integer
               site:
                 description: site override.
+                maxLength: 253
                 type: string
               tenant:
                 description: tenant override; if omitted tenant can be parsed from
                   the clusterID.
+                maxLength: 253
                 type: string
             required:
             - kubeconfigSecretRef
@@ -202,11 +213,14 @@ spec:
         type: object
         x-kubernetes-validations:
         - message: kubeconfigSecretRef.name must not be empty
-          rule: 'has(self.spec.kubeconfigSecretRef.name) ? self.spec.kubeconfigSecretRef.name.size()
+          rule: 'has(self.spec.kubeconfigSecretRef) ? self.spec.kubeconfigSecretRef.name.size()
             > 0 : true'
         - message: kubeconfigSecretRef.namespace must not be empty
-          rule: 'has(self.spec.kubeconfigSecretRef.namespace) ? self.spec.kubeconfigSecretRef.namespace.size()
+          rule: 'has(self.spec.kubeconfigSecretRef) ? self.spec.kubeconfigSecretRef.namespace.size()
             > 0 : true'
+        - message: identityProviderRefs entries must be non-empty
+          rule: '!has(self.spec.identityProviderRefs) || self.spec.identityProviderRefs.all(idp,
+            idp.size() > 0)'
     served: true
     storage: true
     subresources:

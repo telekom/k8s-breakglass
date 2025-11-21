@@ -28,22 +28,27 @@ const (
 type ClusterConfigSpec struct {
 	// clusterID is the canonical identifier of the cluster. Defaults to metadata.name if empty.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	ClusterID string `json:"clusterID,omitempty"`
 
 	// tenant override; if omitted tenant can be parsed from the clusterID.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	Tenant string `json:"tenant,omitempty"`
 
 	// environment (e.g. dev, staging, prod) override.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	Environment string `json:"environment,omitempty"`
 
 	// site override.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	Site string `json:"site,omitempty"`
 
 	// location / region override.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	Location string `json:"location,omitempty"`
 
 	// kubeconfigSecretRef references a secret containing an admin-level kubeconfig for the target cluster.
@@ -52,10 +57,12 @@ type ClusterConfigSpec struct {
 
 	// qps configures the client QPS against the target cluster.
 	// +optional
+	// +kubebuilder:validation:Minimum=1
 	QPS *int32 `json:"qps,omitempty"`
 
 	// burst configures the client burst against the target cluster.
 	// +optional
+	// +kubebuilder:validation:Minimum=1
 	Burst *int32 `json:"burst,omitempty"`
 
 	// identityProviderRefs specifies which IdentityProvider CRs are allowed to authenticate for this cluster.
@@ -77,6 +84,8 @@ type ClusterConfigSpec struct {
 	// mailProvider specifies which MailProvider to use for email notifications for this cluster.
 	// If empty, falls back to the default MailProvider.
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	MailProvider string `json:"mailProvider,omitempty"`
 }
 
@@ -84,9 +93,11 @@ type ClusterConfigSpec struct {
 // This allows cluster-scoped resources (like IdentityProvider) to reference Secrets in any namespace.
 type SecretKeyReference struct {
 	// Name is the name of the secret
+	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
 	// Namespace is the namespace containing the secret (supports cross-namespace references)
+	// +kubebuilder:validation:MinLength=1
 	Namespace string `json:"namespace"`
 
 	// Key is the data key in the secret (defaults to "value" if not specified)
@@ -116,8 +127,9 @@ type ClusterConfigStatus struct {
 // +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="ClusterID",type=string,JSONPath=`.spec.clusterID`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
-// +kubebuilder:validation:XValidation:rule="has(self.spec.kubeconfigSecretRef.name) ? self.spec.kubeconfigSecretRef.name.size() > 0 : true",message="kubeconfigSecretRef.name must not be empty"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.kubeconfigSecretRef.namespace) ? self.spec.kubeconfigSecretRef.namespace.size() > 0 : true",message="kubeconfigSecretRef.namespace must not be empty"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.kubeconfigSecretRef) ? self.spec.kubeconfigSecretRef.name.size() > 0 : true",message="kubeconfigSecretRef.name must not be empty"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.kubeconfigSecretRef) ? self.spec.kubeconfigSecretRef.namespace.size() > 0 : true",message="kubeconfigSecretRef.namespace must not be empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.identityProviderRefs) || self.spec.identityProviderRefs.all(idp, idp.size() > 0)",message="identityProviderRefs entries must be non-empty"
 type ClusterConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -136,13 +148,22 @@ func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object)
 	}
 
 	var allErrs field.ErrorList
+	specPath := field.NewPath("spec")
+
 	if clusterConfig.Spec.KubeconfigSecretRef.Name == "" || clusterConfig.Spec.KubeconfigSecretRef.Namespace == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("kubeconfigSecretRef"), "kubeconfigSecretRef name and namespace are required"))
+		allErrs = append(allErrs, field.Required(specPath.Child("kubeconfigSecretRef"), "kubeconfigSecretRef name and namespace are required"))
 	}
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
 
 	// Multi-IDP: Validate IdentityProviderRefs (empty refs is valid - means accept all enabled IDPs)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, field.NewPath("spec").Child("identityProviderRefs"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
+
+	// Validate approver domains format and duplicates
+	allErrs = append(allErrs, validateEmailDomainList(clusterConfig.Spec.AllowedApproverDomains, specPath.Child("allowedApproverDomains"))...)
+
+	// Validate optional mail provider reference
+	allErrs = append(allErrs, validateIdentifierFormat(clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
+	allErrs = append(allErrs, validateMailProviderReference(ctx, clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil
@@ -158,12 +179,16 @@ func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runt
 	}
 
 	var allErrs field.ErrorList
+	specPath := field.NewPath("spec")
 	// no immutability enforcement for ClusterConfig
 	// still ensure the name is unique across the cluster
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
 
 	// Multi-IDP: Validate IdentityProviderRefs (empty refs is valid - means accept all enabled IDPs)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, field.NewPath("spec").Child("identityProviderRefs"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
+	allErrs = append(allErrs, validateEmailDomainList(clusterConfig.Spec.AllowedApproverDomains, specPath.Child("allowedApproverDomains"))...)
+	allErrs = append(allErrs, validateIdentifierFormat(clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
+	allErrs = append(allErrs, validateMailProviderReference(ctx, clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil

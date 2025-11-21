@@ -52,6 +52,19 @@ const (
 // +kubebuilder:validation:XValidation:rule="has(self.approvers) && (has(self.approvers.users) || has(self.approvers.groups)) ? (self.approvers.users.size() > 0 || self.approvers.groups.size() > 0) : true",message="approvers must specify at least one user or group"
 // +kubebuilder:validation:XValidation:rule="!(has(self.allowedIdentityProviders) && self.allowedIdentityProviders.size() > 0) || !(has(self.allowedIdentityProvidersForRequests) && self.allowedIdentityProvidersForRequests.size() > 0)",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests"
 // +kubebuilder:validation:XValidation:rule="(has(self.allowedIdentityProvidersForRequests) && self.allowedIdentityProvidersForRequests.size() > 0) == (has(self.allowedIdentityProvidersForApprovers) && self.allowedIdentityProvidersForApprovers.size() > 0)",message="allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.clusterConfigRefs) || self.clusterConfigRefs.all(ref, ref.size() > 0)",message="clusterConfigRefs entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.denyPolicyRefs) || self.denyPolicyRefs.all(ref, ref.size() > 0)",message="denyPolicyRefs entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProviders) || self.allowedIdentityProviders.all(idp, idp.size() > 0)",message="allowedIdentityProviders entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProvidersForRequests) || self.allowedIdentityProvidersForRequests.all(idp, idp.size() > 0)",message="allowedIdentityProvidersForRequests entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProvidersForApprovers) || self.allowedIdentityProvidersForApprovers.all(idp, idp.size() > 0)",message="allowedIdentityProvidersForApprovers entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowed.clusters) || self.allowed.clusters.all(cluster, cluster.size() > 0)",message="allowed.clusters entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowed.groups) || self.allowed.groups.all(group, group.size() > 0)",message="allowed.groups entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.approvers.users) || self.approvers.users.all(user, user.size() > 0)",message="approvers.users entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.approvers.groups) || self.approvers.groups.all(group, group.size() > 0)",message="approvers.groups entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.approvers.hiddenFromUI) || self.approvers.hiddenFromUI.all(group, group.size() > 0)",message="approvers.hiddenFromUI entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowedApproverDomains) || self.allowedApproverDomains.all(domain, domain.size() > 0)",message="allowedApproverDomains entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.notificationExclusions) || !has(self.notificationExclusions.users) || self.notificationExclusions.users.all(user, user.size() > 0)",message="notificationExclusions.users entries must be non-empty"
+// +kubebuilder:validation:XValidation:rule="!has(self.notificationExclusions) || !has(self.notificationExclusions.groups) || self.notificationExclusions.groups.all(group, group.size() > 0)",message="notificationExclusions.groups entries must be non-empty"
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
@@ -150,6 +163,8 @@ type BreakglassEscalationSpec struct {
 	// mailProvider specifies which MailProvider to use for email notifications for this escalation.
 	// If empty, falls back to the cluster's MailProvider, then to the default MailProvider.
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	MailProvider string `json:"mailProvider,omitempty"`
 }
 
@@ -329,6 +344,7 @@ func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.
 	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Clusters, field.NewPath("spec").Child("allowed").Child("clusters"))...)
 	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Groups, field.NewPath("spec").Child("approvers").Child("groups"))...)
 	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Users, field.NewPath("spec").Child("approvers").Child("users"))...)
+	allErrs = append(allErrs, validateBreakglassEscalationAdditionalLists(&escalation.Spec, field.NewPath("spec"))...)
 
 	// Validate email domains
 	if len(escalation.Spec.AllowedApproverDomains) > 0 {
@@ -347,6 +363,7 @@ func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.
 	allErrs = append(allErrs, validateIDPFieldCombinations(&escalation.Spec, field.NewPath("spec"))...)
 	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForRequests, field.NewPath("spec").Child("allowedIdentityProvidersForRequests"))...)
 	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForApprovers, field.NewPath("spec").Child("allowedIdentityProvidersForApprovers"))...)
+	allErrs = append(allErrs, validateBreakglassEscalationAdditionalLists(&escalation.Spec, field.NewPath("spec"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil
@@ -380,6 +397,25 @@ func (be *BreakglassEscalation) ValidateUpdate(ctx context.Context, oldObj, newO
 
 func (be *BreakglassEscalation) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	return nil, nil
+}
+
+func validateBreakglassEscalationAdditionalLists(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {
+	if spec == nil || specPath == nil {
+		return nil
+	}
+
+	var allErrs field.ErrorList
+
+	allErrs = append(allErrs, validateStringListNoDuplicates(spec.Approvers.HiddenFromUI, specPath.Child("approvers").Child("hiddenFromUI"))...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(spec.ClusterConfigRefs, specPath.Child("clusterConfigRefs"))...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(spec.DenyPolicyRefs, specPath.Child("denyPolicyRefs"))...)
+
+	if spec.NotificationExclusions != nil {
+		allErrs = append(allErrs, validateStringListNoDuplicates(spec.NotificationExclusions.Users, specPath.Child("notificationExclusions").Child("users"))...)
+		allErrs = append(allErrs, validateStringListNoDuplicates(spec.NotificationExclusions.Groups, specPath.Child("notificationExclusions").Child("groups"))...)
+	}
+
+	return allErrs
 }
 
 func (be *BreakglassEscalation) SetupWebhookWithManager(mgr ctrl.Manager) error {

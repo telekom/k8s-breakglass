@@ -65,6 +65,7 @@ spec:
               displayName:
                 description: DisplayName is a human-readable name for this provider
                   (shown in UI/logs)
+                maxLength: 100
                 type: string
               groupSyncProvider:
                 description: |-
@@ -79,6 +80,8 @@ spec:
                   This uniquely identifies the identity provider and is used to determine which provider
                   authenticated a user based on their JWT token.
                   Example: https://auth.example.com
+                maxLength: 253
+                pattern: ^https://.+
                 type: string
               keycloak:
                 description: |-
@@ -89,10 +92,14 @@ spec:
                     description: |-
                       BaseURL is the Keycloak server URL
                       Example: https://keycloak.example.com
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^https://.+
                     type: string
                   cacheTTL:
                     description: 'CacheTTL is the duration to cache user/group memberships
                       (default: 10m)'
+                    pattern: ^([0-9]+(ns|us|µs|ms|s|m|h))+$
                     type: string
                   certificateAuthority:
                     description: CertificateAuthority contains a PEM encoded CA certificate
@@ -101,6 +108,9 @@ spec:
                   clientID:
                     description: ClientID is the service account client ID for group/user
                       queries (should have view-users/view-groups only)
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^\S+$
                     type: string
                   clientSecretRef:
                     description: ClientSecretRef references a Secret containing the
@@ -112,10 +122,12 @@ spec:
                         type: string
                       name:
                         description: Name is the name of the secret
+                        minLength: 1
                         type: string
                       namespace:
                         description: Namespace is the namespace containing the secret
                           (supports cross-namespace references)
+                        minLength: 1
                         type: string
                     required:
                     - name
@@ -127,10 +139,13 @@ spec:
                     type: boolean
                   realm:
                     description: Realm is the Keycloak realm name
+                    maxLength: 253
+                    minLength: 1
                     type: string
                   requestTimeout:
                     description: 'RequestTimeout is the timeout for Keycloak API requests
                       (default: 10s)'
+                    pattern: ^([0-9]+(ns|us|µs|ms|s|m|h))+$
                     type: string
                 required:
                 - baseURL
@@ -147,6 +162,9 @@ spec:
                     description: |-
                       Authority is the OIDC provider authority endpoint
                       Example: https://auth.example.com
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^https://.+
                     type: string
                   certificateAuthority:
                     description: CertificateAuthority contains a PEM encoded CA certificate
@@ -155,6 +173,9 @@ spec:
                   clientID:
                     description: ClientID is the OIDC client ID for user authentication
                       (frontend/UI)
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^\S+$
                     type: string
                   insecureSkipVerify:
                     description: InsecureSkipVerify allows skipping TLS verification
@@ -164,6 +185,8 @@ spec:
                     description: |-
                       JWKSEndpoint is the endpoint for fetching JSON Web Key Sets
                       If empty, defaults to Authority/.well-known/openid-configuration
+                    maxLength: 253
+                    pattern: ^https://.+
                     type: string
                 required:
                 - authority
@@ -185,6 +208,18 @@ spec:
                 'Keycloak'
               rule: '!has(self.groupSyncProvider) || self.groupSyncProvider != ''Keycloak''
                 || (has(self.keycloak) && self.keycloak != null)'
+            - message: groupSyncProvider must be 'Keycloak' when keycloak configuration
+                is provided
+              rule: '!has(self.keycloak) || (has(self.groupSyncProvider) && self.groupSyncProvider
+                == ''Keycloak'')'
+            - message: oidc.authority must start with https://
+              rule: self.oidc.authority.startsWith('https://')
+            - message: oidc.jwksEndpoint must start with https:// when set
+              rule: '!has(self.oidc.jwksEndpoint) || self.oidc.jwksEndpoint.startsWith(''https://'')'
+            - message: issuer must start with https:// when set
+              rule: '!has(self.issuer) || self.issuer.startsWith(''https://'')'
+            - message: keycloak.baseURL must start with https://
+              rule: '!has(self.keycloak) || self.keycloak.baseURL.startsWith(''https://'')'
           status:
             description: IdentityProviderStatus defines the observed state of an IdentityProvider
             properties:
@@ -264,11 +299,11 @@ spec:
         type: object
         x-kubernetes-validations:
         - message: keycloak.clientSecretRef.name must not be empty
-          rule: '!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef.name)
-            && self.spec.keycloak.clientSecretRef.name != '''')'
+          rule: '!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef)
+            ? self.spec.keycloak.clientSecretRef.name.size() > 0 : true)'
         - message: keycloak.clientSecretRef.namespace must not be empty
-          rule: '!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef.namespace)
-            && self.spec.keycloak.clientSecretRef.namespace != '''')'
+          rule: '!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef)
+            ? self.spec.keycloak.clientSecretRef.namespace.size() > 0 : true)'
     served: true
     storage: true
     subresources:
