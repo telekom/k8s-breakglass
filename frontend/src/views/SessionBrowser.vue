@@ -191,11 +191,28 @@ function applyPreset(preset: "mine" | "approved") {
   } else {
     filters.mine = false;
     filters.approver = false;
-    filters.states = ["approved", "timeout"];
+    filters.states = ["approved", "active", "timeout"];
     filters.onlyApprovedByMe = true;
   }
   activePreset.value = preset;
   fetchSessions();
+}
+
+function onStateToggle(state: string, event: Event) {
+  const input = event.target as HTMLInputElement | null;
+  const checked = !!input?.checked;
+  if (checked) {
+    if (state === "active") {
+      filters.states = ["active"];
+      return;
+    }
+    const next = new Set(filters.states);
+    next.delete("active");
+    next.add(state);
+    filters.states = Array.from(next);
+    return;
+  }
+  filters.states = filters.states.filter((value) => value !== state);
 }
 
 const visibleSessions = computed(() => {
@@ -225,7 +242,7 @@ const activeFiltersDescription = computed(() => {
 
 const presetCopy = {
   mine: "Shows every session associated with your account (approved, timeouts, withdrawn, rejected).",
-  approved: "Shows sessions you have approved along with approvals that timed out.",
+  approved: "Shows sessions you have approved, including ones that are currently active or timed out.",
 };
 
 const approvedFilterDisabled = computed(() => !currentUserEmail.value && filters.onlyApprovedByMe);
@@ -285,8 +302,17 @@ onMounted(() => {
       <div class="state-chooser">
         <span class="section-label">States</span>
         <div class="state-options">
-          <label v-for="option in stateOptions" :key="option.value" class="state-pill">
-            <input v-model="filters.states" type="checkbox" :value="option.value" />
+          <label
+            v-for="option in stateOptions"
+            :key="option.value"
+            class="state-pill"
+            :title="option.value === 'active' ? 'Shows only currently active sessions' : undefined"
+          >
+            <input
+              type="checkbox"
+              :checked="filters.states.includes(option.value)"
+              @change="(event) => onStateToggle(option.value, event)"
+            />
             <span>{{ option.label }}</span>
           </label>
         </div>
@@ -404,6 +430,13 @@ onMounted(() => {
   grid-template-columns: minmax(320px, 380px) 1fr;
   gap: 2rem;
   align-items: flex-start;
+  color: var(--telekom-color-text-and-icon-standard, #0f172a);
+  --session-surface: var(--telekom-color-background-surface, #ffffff);
+  --session-border: var(--telekom-color-border-subtle, #e0e0e0);
+  --session-muted: var(--telekom-color-text-and-icon-weak, #4b5563);
+  --session-tag-bg: var(--telekom-color-background-interactive, #eef2ff);
+  --session-tag-text: var(--telekom-color-text-and-icon-strong, #1b3763);
+  --session-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
 }
 
 @media (max-width: 960px) {
@@ -414,11 +447,11 @@ onMounted(() => {
 
 .filters-card,
 .results-card {
-  background: #fff;
-  border: 1px solid #e0e0e0;
+  background: var(--session-surface);
+  border: 1px solid var(--session-border);
   border-radius: 12px;
   padding: 1.5rem;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--session-shadow);
 }
 
 header h2,
@@ -428,7 +461,7 @@ header h3 {
 
 header p {
   margin: 0 0 0.75rem 0;
-  color: #555;
+  color: var(--session-muted);
 }
 
 .preset-row {
@@ -439,13 +472,13 @@ header p {
 }
 
 .preset-btn {
-  border: 1px solid #c5d7f2;
+  border: 1px solid var(--telekom-color-border-accent, #c5d7f2);
   border-radius: 10px;
   padding: 0.75rem 1rem;
-  background: #f8fbff;
+  background: var(--telekom-color-background-canvas-highlight, #f8fbff);
   text-align: left;
   font-weight: 600;
-  color: #0b3d60;
+  color: var(--telekom-color-text-and-icon-strong, #0b3d60);
   transition:
     border-color 0.15s,
     box-shadow 0.15s;
@@ -454,12 +487,12 @@ header p {
 .preset-btn small {
   display: block;
   font-weight: 400;
-  color: #4a4a4a;
+  color: var(--session-muted);
 }
 
 .preset-btn.active {
-  border-color: #d9006c;
-  box-shadow: 0 0 0 2px rgba(217, 0, 108, 0.15);
+  border-color: var(--telekom-color-border-brand, #d9006c);
+  box-shadow: 0 0 0 2px rgba(217, 0, 108, 0.25);
 }
 
 .filters-grid {
@@ -474,7 +507,7 @@ header p {
   align-items: center;
   gap: 0.35rem;
   font-weight: 600;
-  color: #333;
+  color: var(--telekom-color-text-and-icon-strong, #1f2937);
 }
 
 .filter-flag.disabled {
@@ -500,13 +533,15 @@ header p {
 }
 
 .state-pill {
-  border: 1px solid #dfe7f5;
+  border: 1px solid var(--telekom-color-border-subtle, #dfe7f5);
   border-radius: 999px;
   padding: 0.25rem 0.75rem;
   display: inline-flex;
   gap: 0.35rem;
   align-items: center;
   font-size: 0.9rem;
+  background: var(--session-tag-bg);
+  color: var(--session-tag-text);
 }
 
 .text-filters {
@@ -516,20 +551,23 @@ header p {
   margin-bottom: 1rem;
 }
 
+
 .text-filters label {
   display: flex;
   flex-direction: column;
   font-size: 0.85rem;
-  color: #444;
+  color: var(--telekom-color-text-and-icon-strong, #1f2937);
   font-weight: 600;
 }
 
 .text-filters input {
   margin-top: 0.35rem;
   padding: 0.45rem 0.6rem;
-  border: 1px solid #ccd5e0;
+  border: 1px solid var(--telekom-color-border-subtle, #ccd5e0);
   border-radius: 6px;
   font-size: 0.95rem;
+  background: var(--telekom-color-background-canvas, #ffffff);
+  color: var(--telekom-color-text-and-icon-standard, #0f172a);
 }
 
 .filters-actions {
@@ -542,20 +580,20 @@ header p {
 .link-reset {
   border: none;
   background: none;
-  color: #d9006c;
+  color: var(--telekom-color-text-and-icon-brand, #d9006c);
   font-weight: 600;
   cursor: pointer;
 }
 
 .filters-meta {
   font-size: 0.85rem;
-  color: #555;
+  color: var(--session-muted);
   line-height: 1.4;
 }
 
 .hint {
   font-size: 0.8rem;
-  color: #a94442;
+  color: var(--telekom-color-text-and-icon-warning, #a94442);
   margin-top: 0.25rem;
 }
 
@@ -567,11 +605,11 @@ header p {
 }
 
 .session-card {
-  border: 1px solid #e5eaf4;
+  border: 1px solid var(--session-border);
   border-radius: 12px;
   padding: 1.25rem;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-  background: #fff;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+  background: var(--session-surface);
 }
 
 .card-header {
@@ -584,7 +622,7 @@ header p {
 .session-name {
   font-size: 1.1rem;
   font-weight: 700;
-  color: #0f3c64;
+  color: var(--telekom-color-text-and-icon-strong, #0f3c64);
 }
 
 .cluster-group {
@@ -595,16 +633,16 @@ header p {
 
 .cluster-tag,
 .group-tag {
-  background: #f0f4ff;
+  background: var(--session-tag-bg);
   border-radius: 999px;
   padding: 0.2rem 0.75rem;
   font-size: 0.85rem;
-  color: #1b3763;
+  color: var(--session-tag-text);
 }
 
 .group-tag {
-  background: #f5fdf7;
-  color: #1f5c3f;
+  background: var(--telekom-color-background-success, #f5fdf7);
+  color: var(--telekom-color-text-and-icon-success, #1f5c3f);
 }
 
 .status-badge {
@@ -613,8 +651,8 @@ header p {
   font-weight: 600;
   text-transform: uppercase;
   font-size: 0.75rem;
-  background: #eceff1;
-  color: #34495e;
+  background: var(--telekom-color-background-neutral, #eceff1);
+  color: var(--telekom-color-text-and-icon-strong, #34495e);
 }
 
 .actors {
@@ -622,7 +660,7 @@ header p {
   flex-wrap: wrap;
   gap: 1rem;
   font-size: 0.9rem;
-  color: #333;
+  color: var(--telekom-color-text-and-icon-standard, #1f2937);
   margin-bottom: 0.75rem;
 }
 
@@ -632,15 +670,15 @@ header p {
   gap: 1rem;
   margin: 1rem 0;
   padding: 0.75rem 0;
-  border-top: 1px solid #f0f0f0;
-  border-bottom: 1px solid #f0f0f0;
+  border-top: 1px solid var(--session-border);
+  border-bottom: 1px solid var(--session-border);
 }
 
 .timeline .label {
   font-weight: 600;
   display: block;
   font-size: 0.85rem;
-  color: #555;
+  color: var(--session-muted);
 }
 
 .reasons {
@@ -649,7 +687,7 @@ header p {
 }
 
 .reason-box {
-  background: #f5f6fb;
+  background: var(--telekom-color-background-canvas-highlight, #f5f6fb);
   border-left: 3px solid #4c8bf5;
   padding: 0.75rem;
   border-radius: 6px;
@@ -661,7 +699,7 @@ header p {
 }
 
 .end-reason {
-  background: #fff2f5;
+  background: var(--telekom-color-background-critical-subtle, #fff2f5);
   border-left: 3px solid #d9006c;
   padding: 0.75rem;
   border-radius: 6px;
