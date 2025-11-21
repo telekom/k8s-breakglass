@@ -4,16 +4,14 @@
       <template v-if="remaining > 0">
         {{ formatted }}
       </template>
-      <template v-else>
-        Expired
-      </template>
+      <template v-else> Expired </template>
     </span>
   </span>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { format24Hour, debugLogDateTime } from '@/utils/dateTime';
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
 
 const props = defineProps<{
   expiresAt: string | Date;
@@ -23,8 +21,8 @@ const remaining = ref(0);
 const interval = ref<number | null>(null);
 
 const fullTime = computed(() => {
-  const dateStr = typeof props.expiresAt === 'string' ? props.expiresAt : props.expiresAt.toISOString();
-  debugLogDateTime('CountdownTimer', dateStr);
+  const dateStr = typeof props.expiresAt === "string" ? props.expiresAt : props.expiresAt.toISOString();
+  debugLogDateTime("CountdownTimer", dateStr);
   return format24Hour(dateStr);
 });
 
@@ -63,7 +61,9 @@ watch(() => props.expiresAt, updateRemaining);
   padding: 0.1em 0.5em;
   margin-left: 0.5em;
   cursor: pointer;
-  transition: color 0.2s, background 0.2s;
+  transition:
+    color 0.2s,
+    background 0.2s;
 }
 .countdown.expired {
   color: #888;

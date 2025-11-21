@@ -1,12 +1,12 @@
 export interface Breakglass extends AvailableBreakglass, ActiveBreakglass {}
 
 export interface AvailableBreakglass {
-  from: string;            // source role/group user has (base role for escalation)
-  cluster: string;         // cluster name escalation applies to
-  to: string;              // escalated (granted) group
-  duration: number;        // seconds
-  selfApproval: boolean;   // true if no approvers defined
-  approvalGroups: string[];// approver groups (if any)
+  from: string; // source role/group user has (base role for escalation)
+  cluster: string; // cluster name escalation applies to
+  to: string; // escalated (granted) group
+  duration: number; // seconds
+  selfApproval: boolean; // true if no approvers defined
+  approvalGroups: string[]; // approver groups (if any)
   // optional reason configuration shown to requesters
   requestReason?: { mandatory?: boolean; description?: string };
   // optional reason configuration shown to approvers
@@ -14,10 +14,10 @@ export interface AvailableBreakglass {
 }
 
 export interface ActiveBreakglass {
-  group: string;           // active session granted group (mirror of 'to')
-  expiry: number;          // unix epoch seconds (0 if inactive)
-  cluster: string;         // cluster name the active session applies to
-  state: string;           // session state (e.g., Active, Available, etc.)
+  group: string; // active session granted group (mirror of 'to')
+  expiry: number; // unix epoch seconds (0 if inactive)
+  cluster: string; // cluster name the active session applies to
+  state: string; // session state (e.g., Active, Available, etc.)
   // optional full session objects for more advanced UI actions
   sessionActive?: SessionCR;
   sessionPending?: SessionCR;

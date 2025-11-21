@@ -62,15 +62,11 @@ onMounted(async () => {
         enabled: idp.enabled,
       })),
     });
-    
+
     // If no config returned, log it but don't treat as fatal error
     if (!multiIDPConfig.value || multiIDPConfig.value.identityProviders.length === 0) {
       console.warn("[IDPSelector] No IDPs available in multi-IDP config");
-      logError(
-        "IDPSelector",
-        "No IDPs available in multi-IDP config",
-        multiIDPConfig.value
-      );
+      logError("IDPSelector", "No IDPs available in multi-IDP config", multiIDPConfig.value);
       error.value = "No identity providers available";
     }
   } catch (err) {
@@ -88,7 +84,7 @@ watch(
   (newValue) => {
     console.debug("[IDPSelector] modelValue prop changed", { newValue });
     selectedIDPName.value = newValue;
-  }
+  },
 );
 
 // Watch for escalation changes and reset selection
@@ -102,9 +98,7 @@ watch(
     // Escalation changed, potentially allowed IDPs changed
     // Check if current selection is still valid
     if (selectedIDPName.value && allowedIDPs.value) {
-      const stillAllowed = allowedIDPs.value.some(
-        (idp) => idp.name === selectedIDPName.value
-      );
+      const stillAllowed = allowedIDPs.value.some((idp) => idp.name === selectedIDPName.value);
       if (!stillAllowed) {
         // Current selection not allowed for new escalation, clear it
         console.debug("[IDPSelector] Current IDP selection no longer allowed, clearing", {
@@ -115,7 +109,7 @@ watch(
         emit("update:modelValue", undefined);
       }
     }
-  }
+  },
 );
 
 /**
@@ -128,40 +122,11 @@ const allowedIDPs = computed((): IDPInfo[] => {
 });
 
 /**
- * Check if configuration has been loaded and is valid
- * Consolidates null checks to avoid scattered validation logic
- */
-const hasValidConfig = computed((): boolean => {
-  return !!multiIDPConfig.value && multiIDPConfig.value.identityProviders.length > 0;
-});
-
-/**
  * Check if there are multiple IDPs to choose from
  * Single IDP doesn't need a selector
  */
 const hasMultipleIDPs = computed((): boolean => {
   return allowedIDPs.value.length > 1;
-});
-
-/**
- * Check if current selection is valid
- * False if: selection required but not set, or selection not in allowed list
- */
-const isSelectionValid = computed((): boolean => {
-  if (props.required && !selectedIDPName.value) {
-    return false;
-  }
-  
-  if (selectedIDPName.value && allowedIDPs.value) {
-    const isAllowed = allowedIDPs.value.some(
-      (idp) => idp.name === selectedIDPName.value
-    );
-    if (!isAllowed) {
-      return false; // Selection not in allowed list
-    }
-  }
-  
-  return true;
 });
 
 /**
@@ -189,8 +154,8 @@ function handleIDPButtonClick(idpName: string) {
         <button
           type="button"
           class="idp-button idp-button-auto"
-          @click="allowedIDPs[0] && handleIDPButtonClick(allowedIDPs[0].name)"
           :disabled="disabled || loading"
+          @click="allowedIDPs[0] && handleIDPButtonClick(allowedIDPs[0].name)"
         >
           Log In
         </button>
@@ -207,16 +172,12 @@ function handleIDPButtonClick(idpName: string) {
           Select Identity Provider
           <span v-if="required" class="required">*</span>
         </label>
-        
+
         <!-- Loading state -->
-        <div v-if="loading" class="idp-loading">
-          <span class="spinner" />Loading identity providers...
-        </div>
+        <div v-if="loading" class="idp-loading"><span class="spinner" />Loading identity providers...</div>
 
         <!-- Error message if config fetch failed -->
-        <div v-if="error" class="idp-error-message">
-          ⚠️ {{ error }}
-        </div>
+        <div v-if="error" class="idp-error-message">⚠️ {{ error }}</div>
 
         <!-- Individual login buttons for each IDP -->
         <div v-if="!loading && !error" class="idp-buttons-container">
@@ -243,9 +204,7 @@ function handleIDPButtonClick(idpName: string) {
         <div v-if="selectedIDPName && !loading && !error" class="idp-info">
           <p class="idp-info-text">
             Authenticated requests will be routed through
-            <strong>{{
-              allowedIDPs.find((idp) => idp.name === selectedIDPName)?.displayName
-            }}</strong>
+            <strong>{{ allowedIDPs.find((idp) => idp.name === selectedIDPName)?.displayName }}</strong>
           </p>
         </div>
       </div>

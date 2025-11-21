@@ -4,11 +4,11 @@
  */
 
 // Detect browser locale and log it for debugging
-const browserLocale = navigator.language || 'en-US';
+const browserLocale = navigator.language || "en-US";
 const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const use12Hour = /^en-US|^en-PH|^ja-JP|^ko-KR/.test(browserLocale);
 
-console.log('[DateTime] Initialization:');
+console.log("[DateTime] Initialization:");
 console.log(`  Browser locale: ${browserLocale}`);
 console.log(`  User timezone: ${userTimeZone}`);
 console.log(`  Browser prefers 12-hour format: ${use12Hour}`);
@@ -21,28 +21,31 @@ console.log(`  Using 24-hour format override: true`);
  * @param options Optional formatting options
  * @returns Formatted date string in 24-hour format
  */
-export function format24Hour(isoString: string | null | undefined, options?: Partial<Intl.DateTimeFormatOptions>): string {
-  if (!isoString) return '';
-  
+export function format24Hour(
+  isoString: string | null | undefined,
+  options?: Partial<Intl.DateTimeFormatOptions>,
+): string {
+  if (!isoString) return "";
+
   try {
     const date = new Date(isoString);
-    
+
     const defaultOptions: Intl.DateTimeFormatOptions = {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
       hour12: false, // Force 24-hour format
     };
-    
+
     const mergedOptions = { ...defaultOptions, ...options };
     const formatted = date.toLocaleString(browserLocale, mergedOptions);
-    
+
     return formatted;
   } catch (e) {
-    console.error('[DateTime] Error formatting date:', isoString, e);
+    console.error("[DateTime] Error formatting date:", isoString, e);
     return isoString;
   }
 }
@@ -53,18 +56,18 @@ export function format24Hour(isoString: string | null | undefined, options?: Par
  * @returns Formatted date string
  */
 export function formatDate(isoString: string | null | undefined): string {
-  if (!isoString) return '';
-  
+  if (!isoString) return "";
+
   try {
     const date = new Date(isoString);
     return date.toLocaleString(browserLocale, {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
       hour12: false,
     });
   } catch (e) {
-    console.error('[DateTime] Error formatting date:', isoString, e);
+    console.error("[DateTime] Error formatting date:", isoString, e);
     return isoString;
   }
 }
@@ -75,18 +78,18 @@ export function formatDate(isoString: string | null | undefined): string {
  * @returns Formatted time string (HH:mm:ss)
  */
 export function formatTime(isoString: string | null | undefined): string {
-  if (!isoString) return '';
-  
+  if (!isoString) return "";
+
   try {
     const date = new Date(isoString);
     return date.toLocaleString(browserLocale, {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
       hour12: false,
     });
   } catch (e) {
-    console.error('[DateTime] Error formatting time:', isoString, e);
+    console.error("[DateTime] Error formatting time:", isoString, e);
     return isoString;
   }
 }
@@ -97,17 +100,17 @@ export function formatTime(isoString: string | null | undefined): string {
  * @returns Formatted time string (HH:mm)
  */
 export function formatTimeShort(isoString: string | null | undefined): string {
-  if (!isoString) return '';
-  
+  if (!isoString) return "";
+
   try {
     const date = new Date(isoString);
     return date.toLocaleString(browserLocale, {
-      hour: '2-digit',
-      minute: '2-digit',
+      hour: "2-digit",
+      minute: "2-digit",
       hour12: false,
     });
   } catch (e) {
-    console.error('[DateTime] Error formatting time:', isoString, e);
+    console.error("[DateTime] Error formatting time:", isoString, e);
     return isoString;
   }
 }
@@ -118,24 +121,24 @@ export function formatTimeShort(isoString: string | null | undefined): string {
  * @returns Formatted string with timezone
  */
 export function format24HourWithTZ(isoString: string | null | undefined): string {
-  if (!isoString) return '';
-  
+  if (!isoString) return "";
+
   try {
     const date = new Date(isoString);
     const formatted = date.toLocaleString(browserLocale, {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
       hour12: false,
-      timeZoneName: 'short',
+      timeZoneName: "short",
     });
-    
+
     return formatted;
   } catch (e) {
-    console.error('[DateTime] Error formatting date with TZ:', isoString, e);
+    console.error("[DateTime] Error formatting date with TZ:", isoString, e);
     return isoString;
   }
 }
@@ -160,11 +163,11 @@ export function debugLogDateTime(label: string, isoString: string | null | undef
     console.debug(`[DateTime] ${label}: (empty)`);
     return;
   }
-  
+
   const date = new Date(isoString);
   const formatted24hr = format24Hour(isoString);
   const withTZ = format24HourWithTZ(isoString);
-  
+
   console.debug(`[DateTime] ${label}:`, {
     isoString,
     formatted24hr,

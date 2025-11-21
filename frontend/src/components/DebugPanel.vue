@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
  * Debug Panel Component
- * 
+ *
  * Displays diagnostic information about the current authentication state,
  * including JWT claims, groups, IDP info, and session details.
- * 
+ *
  * Can be toggled with a debug button in the UI.
  */
 
@@ -38,15 +38,17 @@ const debugInfo = ref<DebugInfo>({
 async function collectDebugInfo() {
   try {
     console.debug("[DebugPanel] Collecting debug information...");
-    
+
     // Get user info
-    debugInfo.value.user = user.value ? { 
-      email: user.value.profile?.email,
-      name: user.value.profile?.name,
-      expired: user.value.expired,
-      expiresAt: user.value.expires_at,
-    } : null;
-    
+    debugInfo.value.user = user.value
+      ? {
+          email: user.value.profile?.email,
+          name: user.value.profile?.name,
+          expired: user.value.expired,
+          expiresAt: user.value.expires_at,
+        }
+      : null;
+
     // Get access token claims
     try {
       const at = await auth?.getAccessToken();
@@ -58,7 +60,7 @@ async function collectDebugInfo() {
       console.warn("[DebugPanel] Error decoding access token:", err);
       debugInfo.value.error = `Failed to decode access token: ${String(err)}`;
     }
-    
+
     // Get ID token claims
     try {
       if (user.value?.id_token) {
@@ -68,20 +70,20 @@ async function collectDebugInfo() {
     } catch (err) {
       console.warn("[DebugPanel] Error decoding ID token:", err);
     }
-    
+
     // Get current IDP
     debugInfo.value.currentIDP = currentIDPName.value;
-    
+
     // Extract groups from access token
     const atClaims = debugInfo.value.accessTokenClaims;
     if (atClaims) {
       const groups: Set<string> = new Set();
-      
+
       if (atClaims.groups && Array.isArray(atClaims.groups)) {
         atClaims.groups.forEach((g: string) => groups.add(g));
       }
-      if (atClaims.group && (typeof atClaims.group === 'string' || Array.isArray(atClaims.group))) {
-        if (typeof atClaims.group === 'string') {
+      if (atClaims.group && (typeof atClaims.group === "string" || Array.isArray(atClaims.group))) {
+        if (typeof atClaims.group === "string") {
           groups.add(atClaims.group);
         } else {
           atClaims.group.forEach((g: string) => groups.add(g));
@@ -90,10 +92,10 @@ async function collectDebugInfo() {
       if (atClaims.realm_access?.roles && Array.isArray(atClaims.realm_access.roles)) {
         atClaims.realm_access.roles.forEach((r: string) => groups.add(r));
       }
-      
+
       debugInfo.value.groups = Array.from(groups);
     }
-    
+
     console.debug("[DebugPanel] Debug info collected:", debugInfo.value);
   } catch (err) {
     console.error("[DebugPanel] Error collecting debug info:", err);
@@ -124,23 +126,17 @@ const groupsDisplay = computed(() => {
   <div class="debug-panel-container">
     <button
       class="debug-toggle"
-      @click="showDebug = !showDebug"
       title="Toggle debug panel"
       aria-label="Toggle debug information"
+      @click="showDebug = !showDebug"
     >
       🔧
     </button>
-    
+
     <div v-if="showDebug" class="debug-panel">
       <div class="debug-header">
         <h3>Debug Information</h3>
-        <button
-          class="close-btn"
-          @click="showDebug = false"
-          aria-label="Close debug panel"
-        >
-          ✕
-        </button>
+        <button class="close-btn" aria-label="Close debug panel" @click="showDebug = false">✕</button>
       </div>
 
       <div class="debug-section">
@@ -201,9 +197,7 @@ const groupsDisplay = computed(() => {
       </div>
 
       <div class="debug-actions">
-        <button class="btn-refresh" @click="collectDebugInfo">
-          Refresh
-        </button>
+        <button class="btn-refresh" @click="collectDebugInfo">Refresh</button>
       </div>
     </div>
   </div>

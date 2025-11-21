@@ -4,11 +4,11 @@
     "env.d.ts",
     "src/**/*",
     "src/**/*.vue",
-    "src/**/*.test.ts",
-    "src/components/AutoLogoutWarning.vue",
-    "src/services/auth.ts",
-    "src/keys.ts",
-    "tests/unit/BreakglassCard.spec.ts"
+  "src/**/*.test.ts",
+  "src/components/AutoLogoutWarning.vue",
+  "src/services/auth.ts",
+  "src/keys.ts",
+  "tests/unit/**/*.spec.ts"
   ],
   "compilerOptions": {
     "module": "ESNext", // Use ESNext module syntax

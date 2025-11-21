@@ -6,13 +6,13 @@ const { errors } = useErrors();
 <template>
   <div class="toast-container" aria-live="polite" aria-atomic="true">
     <transition-group name="toast" tag="div">
-  <div v-for="e in errors" :key="e.id" class="toast" :class="[e.type || 'error']">
-  <div class="msg">
+      <div v-for="e in errors" :key="e.id" class="toast" :class="[e.type || 'error']">
+        <div class="msg">
           <strong v-if="e.status">[{{ e.status }}]</strong>
           {{ e.message }}
           <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
         </div>
-  <button class="close" @click="dismissError(e.id)" aria-label="Dismiss">×</button>
+        <button class="close" aria-label="Dismiss" @click="dismissError(e.id)">×</button>
       </div>
     </transition-group>
   </div>
@@ -26,11 +26,18 @@ const { errors } = useErrors();
   z-index: 10000;
   display: flex;
   flex-direction: column;
-  gap: .5rem;
+  gap: 0.5rem;
   max-width: 340px;
 }
-.toast-enter-active, .toast-leave-active { transition: all .25s ease; }
-.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-6px); }
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.25s ease;
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
 .toast {
   background: #fbe9e9;
   border-left: 4px solid #d90000;
@@ -40,18 +47,36 @@ const { errors } = useErrors();
     border: 1px solid #b6f5c6;
     color: #155724;
   }
-  padding: .8rem 1rem .8rem 1rem;
-  font-size: .9rem;
+  padding: 0.8rem 1rem 0.8rem 1rem;
+  font-size: 0.9rem;
   line-height: 1.4;
-  box-shadow: 0 4px 8px rgba(0,0,0,.25);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
   border-radius: 6px;
   display: flex;
   align-items: flex-start;
   color: #333;
   border: 1px solid #f5c6c6;
 }
-.msg { flex: 1; color: #333; font-weight: 500; }
-.cid { display:block; font-size: .75rem; opacity: .8; margin-top: .2rem; }
-.close { background: none; border: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 .25rem; }
-.close:hover { color: #900; }
+.msg {
+  flex: 1;
+  color: #333;
+  font-weight: 500;
+}
+.cid {
+  display: block;
+  font-size: 0.75rem;
+  opacity: 0.8;
+  margin-top: 0.2rem;
+}
+.close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+.close:hover {
+  color: #900;
+}
 </style>

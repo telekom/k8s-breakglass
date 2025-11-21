@@ -26,9 +26,18 @@ export function error(tag: string, ...args: any[]) {
 export function handleAxiosError(tag: string, err: any, userMessage?: string) {
   const r = err?.response;
   const cid = r?.data?.cid || r?.headers?.["x-request-id"] || r?.headers?.["X-Request-ID"];
-  const msg = r?.data?.error || (typeof r?.data === 'string' ? r.data : undefined) || err.message || userMessage || "Request failed";
+  const msg =
+    r?.data?.error ||
+    (typeof r?.data === "string" ? r.data : undefined) ||
+    err.message ||
+    userMessage ||
+    "Request failed";
   // Push sanitized message to global error UI
-  try { pushError(String(msg), r?.status, cid); } catch (e) { console.error(ts(), "[logger.handleAxiosError] pushError failed", e); }
+  try {
+    pushError(String(msg), r?.status, cid);
+  } catch (e) {
+    console.error(ts(), "[logger.handleAxiosError] pushError failed", e);
+  }
   console.error(ts(), formatTag(tag), msg, err);
   return { message: String(msg), status: r?.status, cid };
 }

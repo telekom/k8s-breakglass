@@ -26,38 +26,45 @@ onMounted(async () => {
 
 function formatDate(ts: string | number) {
   if (!ts) return "-";
-  debugLogDateTime('formatDate', typeof ts === 'string' ? ts : new Date(ts).toISOString());
-  return format24Hour(typeof ts === 'string' ? ts : new Date(ts).toISOString());
+  debugLogDateTime("formatDate", typeof ts === "string" ? ts : new Date(ts).toISOString());
+  return format24Hour(typeof ts === "string" ? ts : new Date(ts).toISOString());
 }
 
 function startedForDisplay(s: any) {
-  return s.started || (s.status && s.status.startedAt) || s.metadata?.creationTimestamp || s.createdAt || s.creationTimestamp || null;
+  return (
+    s.started ||
+    (s.status && s.status.startedAt) ||
+    s.metadata?.creationTimestamp ||
+    s.createdAt ||
+    s.creationTimestamp ||
+    null
+  );
 }
 
 function endedForDisplay(s: any) {
-  const st = (s.status && s.status.state) ? s.status.state.toString().toLowerCase() : (s.state || '').toLowerCase();
-  if (st === 'approved' || st === 'active') return null;
+  const st = s.status && s.status.state ? s.status.state.toString().toLowerCase() : (s.state || "").toLowerCase();
+  if (st === "approved" || st === "active") return null;
   return s.ended || (s.status && (s.status.endedAt || s.status.expiresAt)) || s.expiry || null;
 }
 
 function reasonEndedLabel(s: any): string {
   if (s.reasonEnded) return s.reasonEnded;
   if (s.terminationReason) return s.terminationReason;
-  switch ((s.state || '').toLowerCase()) {
-    case 'withdrawn':
-      return 'Withdrawn by user';
-    case 'approvaltimeout':
-      return 'Approval timed out';
-    case 'rejected':
-      return 'Rejected';
-    case 'expired':
-      return 'Session expired';
-    case 'approved':
-      return 'Active';
-    case 'pending':
-      return 'Pending';
+  switch ((s.state || "").toLowerCase()) {
+    case "withdrawn":
+      return "Withdrawn by user";
+    case "approvaltimeout":
+      return "Approval timed out";
+    case "rejected":
+      return "Rejected";
+    case "expired":
+      return "Session expired";
+    case "approved":
+      return "Active";
+    case "pending":
+      return "Pending";
     default:
-      return s.state || '-';
+      return s.state || "-";
   }
 }
 
@@ -71,18 +78,19 @@ onMounted(async () => {
 
 const approverSessions = computed(() =>
   // Prefer explicit status.approver / status.approvers set by backend; fall back to scanning conditions
-  sessions.value.filter(s => {
+  sessions.value.filter((s) => {
     if (!s || !s.status) return false;
     // explicit approver field
     if (s.status.approver && authEmail.value && s.status.approver === authEmail.value) return true;
     // explicit approvers array
-    if (Array.isArray(s.status.approvers) && authEmail.value && s.status.approvers.includes(authEmail.value)) return true;
+    if (Array.isArray(s.status.approvers) && authEmail.value && s.status.approvers.includes(authEmail.value))
+      return true;
     // fallback: scan conditions for approver email in message
     if (Array.isArray(s.status.conditions)) {
-      return s.status.conditions.some((c: any) => typeof c.message === 'string' && c.message.includes(authEmail.value));
+      return s.status.conditions.some((c: any) => typeof c.message === "string" && c.message.includes(authEmail.value));
     }
     return false;
-  })
+  }),
 );
 </script>
 
@@ -107,7 +115,7 @@ const approverSessions = computed(() =>
           </div>
           <div class="header-right">
             <span :class="['status-badge', 'status-' + (s.state || '').toLowerCase()]">
-              {{ s.state || '-' }}
+              {{ s.state || "-" }}
             </span>
           </div>
         </div>
@@ -116,7 +124,7 @@ const approverSessions = computed(() =>
         <div class="actors-section">
           <div class="actor-item">
             <span class="actor-label">👤 User:</span>
-            <span class="actor-value">{{ (s.spec && (s.spec.user || s.spec.requester)) || '-' }}</span>
+            <span class="actor-value">{{ (s.spec && (s.spec.user || s.spec.requester)) || "-" }}</span>
           </div>
           <div v-if="s.spec && s.spec.identityProviderName" class="actor-item">
             <span class="actor-label">🔐 IDP:</span>
@@ -124,11 +132,20 @@ const approverSessions = computed(() =>
           </div>
           <div v-if="s.spec && s.spec.identityProviderIssuer" class="actor-item">
             <span class="actor-label">🔗 Issuer:</span>
-            <span class="actor-value" style="font-family: 'Courier New', monospace; font-size: 0.9rem;">{{ s.spec.identityProviderIssuer }}</span>
+            <span class="actor-value" style="font-family: &quot;Courier New&quot;, monospace; font-size: 0.9rem">{{
+              s.spec.identityProviderIssuer
+            }}</span>
           </div>
           <div class="actor-item">
             <span class="actor-label">✓ Approved by:</span>
-            <span class="actor-value">{{ s.status && (s.status.approver || (s.status.approvers && s.status.approvers.length ? s.status.approvers[s.status.approvers.length-1] : null)) || '-' }}</span>
+            <span class="actor-value">{{
+              (s.status &&
+                (s.status.approver ||
+                  (s.status.approvers && s.status.approvers.length
+                    ? s.status.approvers[s.status.approvers.length - 1]
+                    : null))) ||
+              "-"
+            }}</span>
           </div>
         </div>
 
@@ -136,11 +153,17 @@ const approverSessions = computed(() =>
         <div class="timeline">
           <div class="timeline-item">
             <span class="timeline-label">Scheduled:</span>
-            <span class="timeline-value">{{ s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : '-' }}</span>
+            <span class="timeline-value">{{
+              s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : "-"
+            }}</span>
           </div>
           <div class="timeline-item">
             <span class="timeline-label">Started:</span>
-            <span class="timeline-value">{{ s.status && s.status.actualStartTime ? formatDate(s.status.actualStartTime) : formatDate(startedForDisplay(s)) }}</span>
+            <span class="timeline-value">{{
+              s.status && s.status.actualStartTime
+                ? formatDate(s.status.actualStartTime)
+                : formatDate(startedForDisplay(s))
+            }}</span>
           </div>
           <div class="timeline-item">
             <span class="timeline-label">Ended:</span>
@@ -161,9 +184,7 @@ const approverSessions = computed(() =>
         </div>
 
         <!-- End reason -->
-        <div v-if="reasonEndedLabel(s)" class="end-reason">
-          <strong>Ended:</strong> {{ reasonEndedLabel(s) }}
-        </div>
+        <div v-if="reasonEndedLabel(s)" class="end-reason"><strong>Ended:</strong> {{ reasonEndedLabel(s) }}</div>
       </div>
     </div>
   </main>
@@ -217,7 +238,7 @@ h2 {
 
 .session-card:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  border-color: #4CAF50;
+  border-color: #4caf50;
 }
 
 /* Header section */
@@ -238,9 +259,9 @@ h2 {
 .session-name {
   font-size: 1.2rem;
   font-weight: bold;
-  color: #4CAF50;
+  color: #4caf50;
   margin-bottom: 0.5rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .cluster-group {
@@ -265,7 +286,7 @@ h2 {
 }
 
 .group-tag {
-  border-left: 3px solid #4CAF50;
+  border-left: 3px solid #4caf50;
 }
 
 /* Status badge */
@@ -283,7 +304,7 @@ h2 {
 .status-active {
   background-color: #c8e6c9;
   color: #2e7d32;
-  border: 1px solid #4CAF50;
+  border: 1px solid #4caf50;
 }
 
 .status-rejected {
@@ -307,7 +328,7 @@ h2 {
 .status-pending {
   background-color: #e3f2fd;
   color: #1565c0;
-  border: 1px solid #2196F3;
+  border: 1px solid #2196f3;
 }
 
 .status-approvaltimeout {
@@ -338,7 +359,7 @@ h2 {
 
 .actor-value {
   color: #333;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 /* Timeline */
@@ -369,7 +390,7 @@ h2 {
   color: #333;
   display: block;
   font-size: 0.85rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 /* Reasons section */
@@ -382,17 +403,17 @@ h2 {
 
 .reason-box {
   background-color: #f5f5f5;
-  border-left: 3px solid #2196F3;
+  border-left: 3px solid #2196f3;
   padding: 1rem;
   border-radius: 4px;
 }
 
 .reason-box.approval-reason {
-  border-left-color: #4CAF50;
+  border-left-color: #4caf50;
 }
 
 .reason-title {
-  color: #1976D2;
+  color: #1976d2;
   display: block;
   margin-bottom: 0.5rem;
   font-size: 0.9rem;

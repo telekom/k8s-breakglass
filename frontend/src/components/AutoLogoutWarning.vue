@@ -2,18 +2,21 @@
   <div v-if="show" class="auto-logout-warning">
     <div class="warning-content">
       <h2>Session Expiring Soon</h2>
-      <p>Your session will expire in less than a minute. Please interact with the app to stay logged in, or <button @click="logout">Log out now</button>.</p>
+      <p>
+        Your session will expire in less than a minute. Please interact with the app to stay logged in, or
+        <button @click="logout">Log out now</button>.
+      </p>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { inject, onMounted, onUnmounted, ref } from 'vue';
-import AuthService from '@/services/auth';
-import { AuthKey } from '@/keys';
+import { inject, onMounted, onUnmounted, ref } from "vue";
+import AuthService from "@/services/auth";
+import { AuthKey } from "@/keys";
 
 export default {
-  name: 'AutoLogoutWarning',
+  name: "AutoLogoutWarning",
   setup() {
     const show = ref(false);
     let timer: number | null = null;
@@ -24,7 +27,9 @@ export default {
     }
 
     function checkExpiring() {
-      const userStr = localStorage.getItem('oidc.user:' + auth?.userManager.settings.authority + ':' + auth?.userManager.settings.client_id);
+      const userStr = localStorage.getItem(
+        "oidc.user:" + auth?.userManager.settings.authority + ":" + auth?.userManager.settings.client_id,
+      );
       if (userStr) {
         try {
           const parsed = JSON.parse(userStr);
@@ -44,7 +49,7 @@ export default {
     });
 
     return { show, logout };
-  }
+  },
 };
 </script>
 
@@ -55,7 +60,7 @@ export default {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0,0,0,0.4);
+  background: rgba(0, 0, 0, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -66,7 +71,7 @@ export default {
   border: 2px solid #ffb300;
   border-radius: 10px;
   padding: 2rem 2.5rem;
-  box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.12);
   text-align: center;
   color: #222; /* ensure readable text on all themes */
 }

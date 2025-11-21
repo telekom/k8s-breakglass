@@ -10,7 +10,7 @@ import useCurrentTime from "@/util/currentTime";
 import type { Breakglass } from "@/model/breakglass";
 
 const auth = inject(AuthKey);
-const breakglassService = new BreakglassService(auth!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+const breakglassService = new BreakglassService(auth!);
 
 const route = useRoute();
 const token = route.query.token;
@@ -47,7 +47,7 @@ onMounted(async () => {
       ...res.data,
       valid: true,
     };
-  } catch (e) {
+  } catch {
     validation.value = {
       canApprove: false,
       alreadyActive: false,
@@ -143,18 +143,28 @@ async function approve() {
           </scale-notification-message>
         </div>
         <div v-else-if="validation.valid" class="center">
-            <button class="modal-close" @click="$router.back()" aria-label="Close">×</button>
+          <button class="modal-close" aria-label="Close" @click="$router.back()">×</button>
           <scale-textarea
             :value="approverReason"
-            @scaleChange="(ev: any) => approverReason = ev.target.value"
             :placeholder="(validation as any)?.approvalReason?.description || 'Optional approver note'"
+            @scaleChange="(ev: any) => (approverReason = ev.target.value)"
           ></scale-textarea>
-            <div v-if="(validation as any)?.requestReason?.description || (validation as any)?.request?.reason" style="margin-top:0.5rem">
-              <strong>Request reason:</strong>
-              <div class="reason-text">{{ (validation as any)?.request?.reason || (validation as any)?.requestReason?.description }}</div>
+          <div
+            v-if="(validation as any)?.requestReason?.description || (validation as any)?.request?.reason"
+            style="margin-top: 0.5rem"
+          >
+            <strong>Request reason:</strong>
+            <div class="reason-text">
+              {{ (validation as any)?.request?.reason || (validation as any)?.requestReason?.description }}
             </div>
-          <p v-if="(validation as any)?.approvalReason?.mandatory && !(approverReason || '').trim()" style="color:#c62828;margin-top:0.5rem">This field is required.</p>
-          <div style="margin-top:0.5rem">
+          </div>
+          <p
+            v-if="(validation as any)?.approvalReason?.mandatory && !(approverReason || '').trim()"
+            style="color: #c62828; margin-top: 0.5rem"
+          >
+            This field is required.
+          </p>
+          <div style="margin-top: 0.5rem">
             <scale-button :disabled="!canApprove || approveLoading" @click="approve">
               <scale-loading-spinner v-if="approveLoading" text="Approving..." />
               {{ !approveLoading ? "Approve" : "" }}
@@ -227,7 +237,7 @@ scale-notification-message[variant="success"] {
   padding: 0.75rem 1rem;
   border-radius: 6px;
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 scale-notification-message[variant="error"] {
   display: block;
@@ -236,7 +246,7 @@ scale-notification-message[variant="error"] {
   padding: 0.75rem 1rem;
   border-radius: 6px;
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 /* Ensure the scale-card background doesn't clash with popup content */
@@ -257,7 +267,9 @@ scale-card.centered {
   cursor: pointer;
   color: #666;
 }
-.modal-close:hover { color: #222; }
+.modal-close:hover {
+  color: #222;
+}
 
 .reason-text {
   margin-top: 0.25rem;

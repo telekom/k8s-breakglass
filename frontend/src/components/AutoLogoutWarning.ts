@@ -1,12 +1,12 @@
-import { inject, onMounted, onUnmounted, ref } from 'vue';
-import AuthService from '@/services/auth';
-import { AuthKey } from '@/keys';
+import { inject, onMounted, onUnmounted, ref } from "vue";
+import AuthService from "@/services/auth";
+import { AuthKey } from "@/keys";
 
 const show = ref(false);
 let timer: number | null = null;
 
 export default {
-  name: 'AutoLogoutWarning',
+  name: "AutoLogoutWarning",
   setup() {
     const auth = inject(AuthKey) as AuthService;
 
@@ -15,7 +15,9 @@ export default {
     }
 
     function checkExpiring() {
-      const userStr = localStorage.getItem('oidc.user:' + auth?.userManager.settings.authority + ':' + auth?.userManager.settings.client_id);
+      const userStr = localStorage.getItem(
+        "oidc.user:" + auth?.userManager.settings.authority + ":" + auth?.userManager.settings.client_id,
+      );
       if (userStr) {
         try {
           const parsed = JSON.parse(userStr);
@@ -35,5 +37,5 @@ export default {
     });
 
     return { show, logout };
-  }
+  },
 };

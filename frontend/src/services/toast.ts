@@ -13,7 +13,14 @@ const state = reactive<{ errors: AppError[] }>({ errors: [] });
 
 export function pushError(message: string, status?: number, cid?: string) {
   const id = Math.random().toString(36).slice(2);
-  state.errors.push({ id, message, status, cid, ts: Date.now(), type: status && status >= 200 && status < 300 ? "success" : "error" });
+  state.errors.push({
+    id,
+    message,
+    status,
+    cid,
+    ts: Date.now(),
+    type: status && status >= 200 && status < 300 ? "success" : "error",
+  });
   setTimeout(() => dismissError(id), 10000);
 }
 

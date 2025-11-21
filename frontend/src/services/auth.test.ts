@@ -12,34 +12,34 @@ describe("AuthService", () => {
     authService = new AuthService(mockConfig);
   });
 
-  describe('Constructor', () => {
-    it('should initialize with valid config', () => {
+  describe("Constructor", () => {
+    it("should initialize with valid config", () => {
       expect(authService.userManager).toBeDefined();
     });
 
-    it('should set correct authority', () => {
+    it("should set correct authority", () => {
       expect(authService.userManager.settings.authority).toBe("https://example.com");
     });
 
-    it('should set correct client ID', () => {
+    it("should set correct client ID", () => {
       expect(authService.userManager.settings.client_id).toBe("test-client");
     });
 
-    it('should include redirect URI', () => {
+    it("should include redirect URI", () => {
       expect(authService.userManager.settings.redirect_uri).toContain(AuthRedirect);
     });
 
-    it('should use localStorage for user store', () => {
+    it("should use localStorage for user store", () => {
       expect(authService.userManager.settings.userStore).toBeDefined();
     });
 
-    it('should enable automatic silent renew', () => {
+    it("should enable automatic silent renew", () => {
       expect(authService.userManager.settings.automaticSilentRenew).toBe(true);
     });
   });
 
-  describe('getUser()', () => {
-    it('should retrieve the current user', async () => {
+  describe("getUser()", () => {
+    it("should retrieve the current user", async () => {
       const mockUser: Partial<User> = {
         profile: {
           email: "test@example.com",
@@ -58,7 +58,7 @@ describe("AuthService", () => {
       expect(user).toEqual(mockUser);
     });
 
-    it('should return null if no user is logged in', async () => {
+    it("should return null if no user is logged in", async () => {
       jest.spyOn(authService.userManager, "getUser").mockResolvedValue(null);
 
       const user = await authService.getUser();
@@ -66,7 +66,7 @@ describe("AuthService", () => {
     });
   });
 
-  describe('getUserEmail()', () => {
+  describe("getUserEmail()", () => {
     it("should retrieve the user's email", async () => {
       const mockUser: User = {
         profile: {
@@ -132,8 +132,8 @@ describe("AuthService", () => {
     });
   });
 
-  describe('getAccessToken()', () => {
-    it('should retrieve access token', async () => {
+  describe("getAccessToken()", () => {
+    it("should retrieve access token", async () => {
       const mockUser: Partial<User> = {
         access_token: "access-token-123",
       };
@@ -143,14 +143,14 @@ describe("AuthService", () => {
       expect(token).toBe("access-token-123");
     });
 
-    it('should return empty string if no token exists', async () => {
+    it("should return empty string if no token exists", async () => {
       jest.spyOn(authService.userManager, "getUser").mockResolvedValue(null);
 
       const token = await authService.getAccessToken();
       expect(token).toBe("");
     });
 
-    it('should return empty string if user has no access token', async () => {
+    it("should return empty string if user has no access token", async () => {
       const mockUser: Partial<User> = {
         access_token: undefined,
       };
@@ -161,15 +161,15 @@ describe("AuthService", () => {
     });
   });
 
-  describe('login()', () => {
-    it('should call userManager.signinRedirect', async () => {
+  describe("login()", () => {
+    it("should call userManager.signinRedirect", async () => {
       const signinSpy = jest.spyOn(authService.userManager, "signinRedirect").mockResolvedValue(undefined);
 
       await authService.login();
       expect(signinSpy).toHaveBeenCalled();
     });
 
-    it('should pass state to signinRedirect', async () => {
+    it("should pass state to signinRedirect", async () => {
       const signinSpy = jest.spyOn(authService.userManager, "signinRedirect").mockResolvedValue(undefined);
       const state = { path: "/protected" };
 
@@ -178,8 +178,8 @@ describe("AuthService", () => {
     });
   });
 
-  describe('logout()', () => {
-    it('should call userManager.signoutRedirect', async () => {
+  describe("logout()", () => {
+    it("should call userManager.signoutRedirect", async () => {
       const signoutSpy = jest.spyOn(authService.userManager, "signoutRedirect").mockResolvedValue(undefined);
 
       await authService.logout();
@@ -187,17 +187,17 @@ describe("AuthService", () => {
     });
   });
 
-  describe('useUser()', () => {
-    it('should return user ref', () => {
+  describe("useUser()", () => {
+    it("should return user ref", () => {
       const userRef = useUser();
       expect(userRef).toBeDefined();
       // userRef.value is initially undefined until user logs in
-      expect(userRef.value === undefined || typeof userRef.value === 'object').toBe(true);
+      expect(userRef.value === undefined || typeof userRef.value === "object").toBe(true);
     });
   });
 
-  describe('AuthRedirect constant', () => {
-    it('should be defined', () => {
+  describe("AuthRedirect constant", () => {
+    it("should be defined", () => {
       expect(AuthRedirect).toBe("/auth/callback");
     });
   });
