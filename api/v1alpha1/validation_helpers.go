@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -666,6 +667,22 @@ func validateStringListNoDuplicates(values []string, fieldPath *field.Path) fiel
 			errs = append(errs, field.Duplicate(fieldPath.Index(i), val))
 		}
 		seen[val] = true
+	}
+
+	return errs
+}
+
+// validateStringListEntriesNotEmpty ensures that when a list is provided, none of the entries are empty or only whitespace.
+func validateStringListEntriesNotEmpty(values []string, fieldPath *field.Path) field.ErrorList {
+	if len(values) == 0 {
+		return nil
+	}
+
+	var errs field.ErrorList
+	for i, val := range values {
+		if strings.TrimSpace(val) == "" {
+			errs = append(errs, field.Required(fieldPath.Index(i), "value cannot be empty"))
+		}
 	}
 
 	return errs

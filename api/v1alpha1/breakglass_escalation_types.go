@@ -48,23 +48,6 @@ const (
 )
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
-// +kubebuilder:validation:XValidation:rule="has(self.allowed.groups) || has(self.allowed.clusters) ? (self.allowed.groups.size() > 0 || self.allowed.clusters.size() > 0) : false",message="either allowed.groups or allowed.clusters must be specified and non-empty"
-// +kubebuilder:validation:XValidation:rule="has(self.approvers) && (has(self.approvers.users) || has(self.approvers.groups)) ? (self.approvers.users.size() > 0 || self.approvers.groups.size() > 0) : true",message="approvers must specify at least one user or group"
-// +kubebuilder:validation:XValidation:rule="!(has(self.allowedIdentityProviders) && self.allowedIdentityProviders.size() > 0) || !(has(self.allowedIdentityProvidersForRequests) && self.allowedIdentityProvidersForRequests.size() > 0)",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests"
-// +kubebuilder:validation:XValidation:rule="(has(self.allowedIdentityProvidersForRequests) && self.allowedIdentityProvidersForRequests.size() > 0) == (has(self.allowedIdentityProvidersForApprovers) && self.allowedIdentityProvidersForApprovers.size() > 0)",message="allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.clusterConfigRefs) || self.clusterConfigRefs.all(ref, ref.size() > 0)",message="clusterConfigRefs entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.denyPolicyRefs) || self.denyPolicyRefs.all(ref, ref.size() > 0)",message="denyPolicyRefs entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProviders) || self.allowedIdentityProviders.all(idp, idp.size() > 0)",message="allowedIdentityProviders entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProvidersForRequests) || self.allowedIdentityProvidersForRequests.all(idp, idp.size() > 0)",message="allowedIdentityProvidersForRequests entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProvidersForApprovers) || self.allowedIdentityProvidersForApprovers.all(idp, idp.size() > 0)",message="allowedIdentityProvidersForApprovers entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.allowed.clusters) || self.allowed.clusters.all(cluster, cluster.size() > 0)",message="allowed.clusters entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.allowed.groups) || self.allowed.groups.all(group, group.size() > 0)",message="allowed.groups entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.approvers.users) || self.approvers.users.all(user, user.size() > 0)",message="approvers.users entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.approvers.groups) || self.approvers.groups.all(group, group.size() > 0)",message="approvers.groups entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.approvers.hiddenFromUI) || self.approvers.hiddenFromUI.all(group, group.size() > 0)",message="approvers.hiddenFromUI entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.allowedApproverDomains) || self.allowedApproverDomains.all(domain, domain.size() > 0)",message="allowedApproverDomains entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.notificationExclusions) || !has(self.notificationExclusions.users) || self.notificationExclusions.users.all(user, user.size() > 0)",message="notificationExclusions.users entries must be non-empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.notificationExclusions) || !has(self.notificationExclusions.groups) || self.notificationExclusions.groups.all(group, group.size() > 0)",message="notificationExclusions.groups entries must be non-empty"
 type BreakglassEscalationSpec struct {
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
@@ -301,69 +284,8 @@ func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.
 	}
 
 	var allErrs field.ErrorList
-
-	// Validate escalatedGroup format and content
-	if escalation.Spec.EscalatedGroup == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("escalatedGroup"), "escalatedGroup is required"))
-	} else {
-		allErrs = append(allErrs, validateIdentifierFormat(escalation.Spec.EscalatedGroup, field.NewPath("spec").Child("escalatedGroup"))...)
-	}
-
-	// Validate allowed groups and clusters are not empty
-	if len(escalation.Spec.Allowed.Groups) == 0 && len(escalation.Spec.Allowed.Clusters) == 0 {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("allowed"), "either groups or clusters must be specified"))
-	}
-
-	// Validate all allowed groups have valid format
-	for i, grp := range escalation.Spec.Allowed.Groups {
-		allErrs = append(allErrs, validateIdentifierFormat(grp, field.NewPath("spec").Child("allowed").Child("groups").Index(i))...)
-	}
-
-	// Validate all allowed clusters have valid format
-	for i, cluster := range escalation.Spec.Allowed.Clusters {
-		allErrs = append(allErrs, validateIdentifierFormat(cluster, field.NewPath("spec").Child("allowed").Child("clusters").Index(i))...)
-	}
-
-	// Validate approvers groups are not empty and have valid format
-	if len(escalation.Spec.Approvers.Groups) == 0 && len(escalation.Spec.Approvers.Users) == 0 {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("approvers"), "either users or groups must be specified as approvers"))
-	}
-
-	// Validate approver groups format
-	for i, grp := range escalation.Spec.Approvers.Groups {
-		allErrs = append(allErrs, validateIdentifierFormat(grp, field.NewPath("spec").Child("approvers").Child("groups").Index(i))...)
-	}
-
-	// Validate approver users format (should be email-like)
-	for i, user := range escalation.Spec.Approvers.Users {
-		allErrs = append(allErrs, validateIdentifierFormat(user, field.NewPath("spec").Child("approvers").Child("users").Index(i))...)
-	}
-
-	// Validate no duplicates in lists
-	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Groups, field.NewPath("spec").Child("allowed").Child("groups"))...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Clusters, field.NewPath("spec").Child("allowed").Child("clusters"))...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Groups, field.NewPath("spec").Child("approvers").Child("groups"))...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Users, field.NewPath("spec").Child("approvers").Child("users"))...)
-	allErrs = append(allErrs, validateBreakglassEscalationAdditionalLists(&escalation.Spec, field.NewPath("spec"))...)
-
-	// Validate email domains
-	if len(escalation.Spec.AllowedApproverDomains) > 0 {
-		allErrs = append(allErrs, validateEmailDomainList(escalation.Spec.AllowedApproverDomains, field.NewPath("spec").Child("allowedApproverDomains"))...)
-	}
-
-	// Validate timeout relationships
-	allErrs = append(allErrs, validateTimeoutRelationships(&escalation.Spec, field.NewPath("spec"))...)
-
+	allErrs = append(allErrs, validateBreakglassEscalationSpec(ctx, escalation)...)
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
-
-	// Multi-IDP: Validate AllowedIdentityProviders (empty list is valid - means inherit from cluster config)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProviders, field.NewPath("spec").Child("allowedIdentityProviders"))...)
-
-	// Multi-IDP: Validate AllowedIdentityProvidersForRequests and AllowedIdentityProvidersForApprovers
-	allErrs = append(allErrs, validateIDPFieldCombinations(&escalation.Spec, field.NewPath("spec"))...)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForRequests, field.NewPath("spec").Child("allowedIdentityProvidersForRequests"))...)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForApprovers, field.NewPath("spec").Child("allowedIdentityProvidersForApprovers"))...)
-	allErrs = append(allErrs, validateBreakglassEscalationAdditionalLists(&escalation.Spec, field.NewPath("spec"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil
@@ -378,16 +300,8 @@ func (be *BreakglassEscalation) ValidateUpdate(ctx context.Context, oldObj, newO
 	}
 
 	var allErrs field.ErrorList
-	// no immutability enforced
+	allErrs = append(allErrs, validateBreakglassEscalationSpec(ctx, escalation)...)
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
-
-	// Multi-IDP: Validate AllowedIdentityProviders (empty list is valid - means inherit from cluster config)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProviders, field.NewPath("spec").Child("allowedIdentityProviders"))...)
-
-	// Multi-IDP: Validate AllowedIdentityProvidersForRequests and AllowedIdentityProvidersForApprovers
-	allErrs = append(allErrs, validateIDPFieldCombinations(&escalation.Spec, field.NewPath("spec"))...)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForRequests, field.NewPath("spec").Child("allowedIdentityProvidersForRequests"))...)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForApprovers, field.NewPath("spec").Child("allowedIdentityProvidersForApprovers"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil
@@ -399,6 +313,83 @@ func (be *BreakglassEscalation) ValidateDelete(ctx context.Context, obj runtime.
 	return nil, nil
 }
 
+func validateBreakglassEscalationSpec(ctx context.Context, escalation *BreakglassEscalation) field.ErrorList {
+	if escalation == nil {
+		return nil
+	}
+
+	specPath := field.NewPath("spec")
+	var allErrs field.ErrorList
+
+	// Validate escalatedGroup format and content
+	if escalation.Spec.EscalatedGroup == "" {
+		allErrs = append(allErrs, field.Required(specPath.Child("escalatedGroup"), "escalatedGroup is required"))
+	} else {
+		allErrs = append(allErrs, validateIdentifierFormat(escalation.Spec.EscalatedGroup, specPath.Child("escalatedGroup"))...)
+	}
+
+	allowedGroupsPath := specPath.Child("allowed").Child("groups")
+	allowedClustersPath := specPath.Child("allowed").Child("clusters")
+
+	// Validate allowed groups and clusters are not both empty
+	if len(escalation.Spec.Allowed.Groups) == 0 && len(escalation.Spec.Allowed.Clusters) == 0 {
+		allErrs = append(allErrs, field.Required(specPath.Child("allowed"), "either groups or clusters must be specified"))
+	}
+
+	// Validate allowed groups
+	allErrs = append(allErrs, validateStringListEntriesNotEmpty(escalation.Spec.Allowed.Groups, allowedGroupsPath)...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Groups, allowedGroupsPath)...)
+	for i, grp := range escalation.Spec.Allowed.Groups {
+		allErrs = append(allErrs, validateIdentifierFormat(grp, allowedGroupsPath.Index(i))...)
+	}
+
+	// Validate allowed clusters
+	allErrs = append(allErrs, validateStringListEntriesNotEmpty(escalation.Spec.Allowed.Clusters, allowedClustersPath)...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Clusters, allowedClustersPath)...)
+	for i, cluster := range escalation.Spec.Allowed.Clusters {
+		allErrs = append(allErrs, validateIdentifierFormat(cluster, allowedClustersPath.Index(i))...)
+	}
+
+	approverGroupsPath := specPath.Child("approvers").Child("groups")
+	approverUsersPath := specPath.Child("approvers").Child("users")
+
+	// Validate approvers definition
+	if len(escalation.Spec.Approvers.Groups) == 0 && len(escalation.Spec.Approvers.Users) == 0 {
+		allErrs = append(allErrs, field.Required(specPath.Child("approvers"), "either users or groups must be specified as approvers"))
+	}
+
+	allErrs = append(allErrs, validateStringListEntriesNotEmpty(escalation.Spec.Approvers.Groups, approverGroupsPath)...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Groups, approverGroupsPath)...)
+	for i, grp := range escalation.Spec.Approvers.Groups {
+		allErrs = append(allErrs, validateIdentifierFormat(grp, approverGroupsPath.Index(i))...)
+	}
+
+	allErrs = append(allErrs, validateStringListEntriesNotEmpty(escalation.Spec.Approvers.Users, approverUsersPath)...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Users, approverUsersPath)...)
+	for i, user := range escalation.Spec.Approvers.Users {
+		allErrs = append(allErrs, validateIdentifierFormat(user, approverUsersPath.Index(i))...)
+	}
+
+	// Validate additional list fields (approvers.hiddenFromUI, clusterConfigRefs, denyPolicyRefs, notificationExclusions)
+	allErrs = append(allErrs, validateBreakglassEscalationAdditionalLists(&escalation.Spec, specPath)...)
+
+	// Validate email domains
+	if len(escalation.Spec.AllowedApproverDomains) > 0 {
+		allErrs = append(allErrs, validateEmailDomainList(escalation.Spec.AllowedApproverDomains, specPath.Child("allowedApproverDomains"))...)
+	}
+
+	// Validate timeout relationships
+	allErrs = append(allErrs, validateTimeoutRelationships(&escalation.Spec, specPath)...)
+
+	// Multi-IDP validations
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProviders, specPath.Child("allowedIdentityProviders"))...)
+	allErrs = append(allErrs, validateIDPFieldCombinations(&escalation.Spec, specPath)...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForRequests, specPath.Child("allowedIdentityProvidersForRequests"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForApprovers, specPath.Child("allowedIdentityProvidersForApprovers"))...)
+
+	return allErrs
+}
+
 func validateBreakglassEscalationAdditionalLists(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {
 	if spec == nil || specPath == nil {
 		return nil
@@ -406,13 +397,25 @@ func validateBreakglassEscalationAdditionalLists(spec *BreakglassEscalationSpec,
 
 	var allErrs field.ErrorList
 
-	allErrs = append(allErrs, validateStringListNoDuplicates(spec.Approvers.HiddenFromUI, specPath.Child("approvers").Child("hiddenFromUI"))...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(spec.ClusterConfigRefs, specPath.Child("clusterConfigRefs"))...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(spec.DenyPolicyRefs, specPath.Child("denyPolicyRefs"))...)
+	hiddenFromUIPath := specPath.Child("approvers").Child("hiddenFromUI")
+	allErrs = append(allErrs, validateStringListEntriesNotEmpty(spec.Approvers.HiddenFromUI, hiddenFromUIPath)...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(spec.Approvers.HiddenFromUI, hiddenFromUIPath)...)
+
+	clusterConfigRefsPath := specPath.Child("clusterConfigRefs")
+	allErrs = append(allErrs, validateStringListEntriesNotEmpty(spec.ClusterConfigRefs, clusterConfigRefsPath)...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(spec.ClusterConfigRefs, clusterConfigRefsPath)...)
+
+	denyPolicyRefsPath := specPath.Child("denyPolicyRefs")
+	allErrs = append(allErrs, validateStringListEntriesNotEmpty(spec.DenyPolicyRefs, denyPolicyRefsPath)...)
+	allErrs = append(allErrs, validateStringListNoDuplicates(spec.DenyPolicyRefs, denyPolicyRefsPath)...)
 
 	if spec.NotificationExclusions != nil {
-		allErrs = append(allErrs, validateStringListNoDuplicates(spec.NotificationExclusions.Users, specPath.Child("notificationExclusions").Child("users"))...)
-		allErrs = append(allErrs, validateStringListNoDuplicates(spec.NotificationExclusions.Groups, specPath.Child("notificationExclusions").Child("groups"))...)
+		usersPath := specPath.Child("notificationExclusions").Child("users")
+		groupsPath := specPath.Child("notificationExclusions").Child("groups")
+		allErrs = append(allErrs, validateStringListEntriesNotEmpty(spec.NotificationExclusions.Users, usersPath)...)
+		allErrs = append(allErrs, validateStringListEntriesNotEmpty(spec.NotificationExclusions.Groups, groupsPath)...)
+		allErrs = append(allErrs, validateStringListNoDuplicates(spec.NotificationExclusions.Users, usersPath)...)
+		allErrs = append(allErrs, validateStringListNoDuplicates(spec.NotificationExclusions.Groups, groupsPath)...)
 	}
 
 	return allErrs

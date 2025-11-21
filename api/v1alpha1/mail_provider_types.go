@@ -171,11 +171,6 @@ const (
 // +kubebuilder:printcolumn:name="Default",type=boolean,JSONPath=`.spec.default`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.smtp.username) || has(self.spec.smtp.passwordRef)",message="passwordRef must be specified when username is provided"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.smtp.passwordRef) ? has(self.spec.smtp.username) && self.spec.smtp.username != '' : true",message="username must be specified when passwordRef is provided"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.smtp.passwordRef) || (has(self.spec.smtp.passwordRef) ? self.spec.smtp.passwordRef.name.size() > 0 : true)",message="passwordRef.name must not be empty when passwordRef is specified"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.smtp.passwordRef) || (has(self.spec.smtp.passwordRef) ? self.spec.smtp.passwordRef.key.size() > 0 : true)",message="passwordRef.key must not be empty when passwordRef is specified"
-
 // MailProvider is the Schema for the mailproviders API
 type MailProvider struct {
 	metav1.TypeMeta   `json:",inline"`

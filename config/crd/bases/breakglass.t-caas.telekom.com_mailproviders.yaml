@@ -252,18 +252,6 @@ spec:
                 type: string
             type: object
         type: object
-        x-kubernetes-validations:
-        - message: passwordRef must be specified when username is provided
-          rule: '!has(self.spec.smtp.username) || has(self.spec.smtp.passwordRef)'
-        - message: username must be specified when passwordRef is provided
-          rule: 'has(self.spec.smtp.passwordRef) ? has(self.spec.smtp.username) &&
-            self.spec.smtp.username != '''' : true'
-        - message: passwordRef.name must not be empty when passwordRef is specified
-          rule: '!has(self.spec.smtp.passwordRef) || (has(self.spec.smtp.passwordRef)
-            ? self.spec.smtp.passwordRef.name.size() > 0 : true)'
-        - message: passwordRef.key must not be empty when passwordRef is specified
-          rule: '!has(self.spec.smtp.passwordRef) || (has(self.spec.smtp.passwordRef)
-            ? self.spec.smtp.passwordRef.key.size() > 0 : true)'
     served: true
     storage: true
     subresources:

@@ -224,7 +224,6 @@ type BreakglassSession struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// +required
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="session spec is immutable"
 	Spec   BreakglassSessionSpec   `json:"spec"`
 	Status BreakglassSessionStatus `json:"status,omitempty"`
 

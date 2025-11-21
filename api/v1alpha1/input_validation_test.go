@@ -171,6 +171,34 @@ func TestValidateStringListNoDuplicates(t *testing.T) {
 	}
 }
 
+// TestValidateStringListEntriesNotEmpty ensures blank values are rejected when present in lists
+func TestValidateStringListEntriesNotEmpty(t *testing.T) {
+	tests := []struct {
+		name       string
+		values     []string
+		shouldFail bool
+	}{
+		{name: "all populated", values: []string{"a", "b"}, shouldFail: false},
+		{name: "empty list", values: []string{}, shouldFail: false},
+		{name: "with empty", values: []string{"a", ""}, shouldFail: true},
+		{name: "with whitespace", values: []string{"  ", "b"}, shouldFail: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateStringListEntriesNotEmpty(tc.values, field.NewPath("test"))
+			hasError := len(errs) > 0
+
+			if tc.shouldFail && !hasError {
+				t.Errorf("expected error for values %v, got none", tc.values)
+			}
+			if !tc.shouldFail && hasError {
+				t.Errorf("unexpected error for values %v: %v", tc.values, errs)
+			}
+		})
+	}
+}
+
 // TestValidateNonEmptyStringList tests minimum items validation
 func TestValidateNonEmptyStringList(t *testing.T) {
 	tests := []struct {

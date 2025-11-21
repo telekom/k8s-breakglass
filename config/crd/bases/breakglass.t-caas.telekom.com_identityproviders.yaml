@@ -200,26 +200,6 @@ spec:
             required:
             - oidc
             type: object
-            x-kubernetes-validations:
-            - message: keycloak must be specified when groupSyncProvider is 'Keycloak'
-              rule: 'has(self.groupSyncProvider) && self.groupSyncProvider == ''Keycloak''
-                ? has(self.keycloak) : true'
-            - message: keycloak must be specified when groupSyncProvider is set to
-                'Keycloak'
-              rule: '!has(self.groupSyncProvider) || self.groupSyncProvider != ''Keycloak''
-                || (has(self.keycloak) && self.keycloak != null)'
-            - message: groupSyncProvider must be 'Keycloak' when keycloak configuration
-                is provided
-              rule: '!has(self.keycloak) || (has(self.groupSyncProvider) && self.groupSyncProvider
-                == ''Keycloak'')'
-            - message: oidc.authority must start with https://
-              rule: self.oidc.authority.startsWith('https://')
-            - message: oidc.jwksEndpoint must start with https:// when set
-              rule: '!has(self.oidc.jwksEndpoint) || self.oidc.jwksEndpoint.startsWith(''https://'')'
-            - message: issuer must start with https:// when set
-              rule: '!has(self.issuer) || self.issuer.startsWith(''https://'')'
-            - message: keycloak.baseURL must start with https://
-              rule: '!has(self.keycloak) || self.keycloak.baseURL.startsWith(''https://'')'
           status:
             description: IdentityProviderStatus defines the observed state of an IdentityProvider
             properties:
@@ -297,13 +277,6 @@ spec:
                 type: integer
             type: object
         type: object
-        x-kubernetes-validations:
-        - message: keycloak.clientSecretRef.name must not be empty
-          rule: '!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef)
-            ? self.spec.keycloak.clientSecretRef.name.size() > 0 : true)'
-        - message: keycloak.clientSecretRef.namespace must not be empty
-          rule: '!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef)
-            ? self.spec.keycloak.clientSecretRef.namespace.size() > 0 : true)'
     served: true
     storage: true
     subresources:

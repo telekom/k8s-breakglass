@@ -130,13 +130,6 @@ type KeycloakGroupSync struct {
 }
 
 // IdentityProviderSpec defines the desired state of an IdentityProvider
-// +kubebuilder:validation:XValidation:rule="has(self.groupSyncProvider) && self.groupSyncProvider == 'Keycloak' ? has(self.keycloak) : true",message="keycloak must be specified when groupSyncProvider is 'Keycloak'"
-// +kubebuilder:validation:XValidation:rule="!has(self.groupSyncProvider) || self.groupSyncProvider != 'Keycloak' || (has(self.keycloak) && self.keycloak != null)",message="keycloak must be specified when groupSyncProvider is set to 'Keycloak'"
-// +kubebuilder:validation:XValidation:rule="!has(self.keycloak) || (has(self.groupSyncProvider) && self.groupSyncProvider == 'Keycloak')",message="groupSyncProvider must be 'Keycloak' when keycloak configuration is provided"
-// +kubebuilder:validation:XValidation:rule="self.oidc.authority.startsWith('https://')",message="oidc.authority must start with https://"
-// +kubebuilder:validation:XValidation:rule="!has(self.oidc.jwksEndpoint) || self.oidc.jwksEndpoint.startsWith('https://')",message="oidc.jwksEndpoint must start with https:// when set"
-// +kubebuilder:validation:XValidation:rule="!has(self.issuer) || self.issuer.startsWith('https://')",message="issuer must start with https:// when set"
-// +kubebuilder:validation:XValidation:rule="!has(self.keycloak) || self.keycloak.baseURL.startsWith('https://')",message="keycloak.baseURL must start with https://"
 type IdentityProviderSpec struct {
 	// OIDC holds mandatory OIDC configuration for user authentication
 	// This is the base authentication mechanism for all identity providers
@@ -204,8 +197,6 @@ type IdentityProviderStatus struct {
 // +kubebuilder:printcolumn:name="GroupSync",type=string,JSONPath=`.spec.groupSyncProvider`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef) ? self.spec.keycloak.clientSecretRef.name.size() > 0 : true)",message="keycloak.clientSecretRef.name must not be empty"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.keycloak) || (has(self.spec.keycloak.clientSecretRef) ? self.spec.keycloak.clientSecretRef.namespace.size() > 0 : true)",message="keycloak.clientSecretRef.namespace must not be empty"
 
 // IdentityProvider represents a configured identity provider with OIDC authentication and optional group synchronization
 // IdentityProvider is cluster-scoped, allowing global identity provider configuration.
@@ -302,6 +293,8 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 				}
 			}
 		}
+	} else if identityProvider.Spec.Keycloak != nil {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("keycloak"), identityProvider.Spec.Keycloak, "groupSyncProvider must be set to 'Keycloak' when keycloak configuration is provided"))
 	}
 
 	if identityProvider.Spec.Issuer != "" {

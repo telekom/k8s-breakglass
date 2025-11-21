@@ -196,9 +196,6 @@ spec:
             - grantedGroup
             - user
             type: object
-            x-kubernetes-validations:
-            - message: session spec is immutable
-              rule: self == oldSelf
           status:
             description: BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
             properties:
