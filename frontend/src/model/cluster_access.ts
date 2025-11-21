@@ -1,6 +1,6 @@
 export interface ClusterAccessReview {
   name: string;
-  uid: string
+  uid: string;
   cluster: string;
   subject: ClusterAccessReviewSubject;
   duration: string;

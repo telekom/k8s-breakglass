@@ -2,7 +2,7 @@
 import humanizeDuration from "humanize-duration";
 import { computed, ref, watch } from "vue";
 import { pushError } from "@/services/toast";
-import { format24Hour, format24HourWithTZ, debugLogDateTime } from "@/utils/dateTime";
+import { format24HourWithTZ } from "@/utils/dateTime";
 
 const humanizeConfig = { round: true, largest: 2 };
 const props = defineProps<{ breakglass: any; time: number }>();
@@ -10,8 +10,8 @@ const emit = defineEmits(["request", "drop", "withdraw"]);
 
 // Sanitization utility: escape HTML special characters to prevent XSS
 function sanitizeReason(text: string): string {
-  if (!text) return '';
-  const div = document.createElement('div');
+  if (!text) return "";
+  const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
 }
@@ -25,7 +25,10 @@ function validateDuration(seconds: number | null, maxAllowed: number): { valid: 
     return { valid: false, error: "Duration must be at least 1 minute" };
   }
   if (seconds > maxAllowed) {
-    return { valid: false, error: `Duration exceeds maximum allowed time of ${humanizeDuration(maxAllowed * 1000, humanizeConfig)}` };
+    return {
+      valid: false,
+      error: `Duration exceeds maximum allowed time of ${humanizeDuration(maxAllowed * 1000, humanizeConfig)}`,
+    };
   }
   return { valid: true };
 }
@@ -38,9 +41,9 @@ const scheduledStartTime = ref<string | null>(null);
 const showScheduleOptions = ref(false);
 const showDurationHints = ref(false);
 
-function closeRequestModal() { 
-  showRequestModal.value = false; 
-  requestReason.value = ""; 
+function closeRequestModal() {
+  showRequestModal.value = false;
+  requestReason.value = "";
   selectedDuration.value = null;
   durationInput.value = "";
   scheduledStartTime.value = null;
@@ -49,65 +52,68 @@ function closeRequestModal() {
 }
 
 // Clear reason when breakglass changes
-watch(() => props.breakglass, () => { 
-  requestReason.value = ""; 
-  selectedDuration.value = null;
-  durationInput.value = "";
-  scheduledStartTime.value = null;
-  showScheduleOptions.value = false;
-  showDurationHints.value = false;
-});
+watch(
+  () => props.breakglass,
+  () => {
+    requestReason.value = "";
+    selectedDuration.value = null;
+    durationInput.value = "";
+    scheduledStartTime.value = null;
+    showScheduleOptions.value = false;
+    showDurationHints.value = false;
+  },
+);
 
 // Parse duration input string to seconds
 function parseDurationInput(input: string): number | null {
   if (!input.trim()) return null;
-  
+
   const trimmed = input.toLowerCase().trim();
-  
+
   // Try parsing direct number (assume seconds if just a number)
   const directNum = parseFloat(trimmed);
   if (!isNaN(directNum) && trimmed.match(/^\d+(\.\d+)?$/)) {
     return directNum;
   }
-  
+
   // Try parsing "30m", "1h", "2h 30m" format
   let totalSeconds = 0;
-  
+
   // Match hours
   const hoursMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*h/);
   if (hoursMatch && hoursMatch[1]) {
     totalSeconds += parseFloat(hoursMatch[1]) * 3600;
   }
-  
+
   // Match minutes
   const minutesMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*m/);
   if (minutesMatch && minutesMatch[1]) {
     totalSeconds += parseFloat(minutesMatch[1]) * 60;
   }
-  
+
   // Match seconds
   const secondsMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*s/);
   if (secondsMatch && secondsMatch[1]) {
     totalSeconds += parseFloat(secondsMatch[1]);
   }
-  
+
   return totalSeconds > 0 ? totalSeconds : null;
 }
 
 // Format seconds to readable duration format
 function formatDurationSeconds(seconds: number): string {
-  if (!seconds) return '';
-  
+  if (!seconds) return "";
+
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const secs = Math.floor(seconds % 60);
-  
+
   const parts = [];
   if (hours > 0) parts.push(`${hours}h`);
   if (minutes > 0) parts.push(`${minutes}m`);
   if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
-  
-  return parts.join(' ');
+
+  return parts.join(" ");
 }
 
 const reasonCharLimit = 1024;
@@ -125,16 +131,16 @@ const minDateTime = computed(() => {
 // We must treat it as local time and convert to UTC for ISO 8601 storage
 const scheduleDateTimeLocal = computed({
   get() {
-    if (!scheduledStartTime.value) return '';
+    if (!scheduledStartTime.value) return "";
     // scheduledStartTime is stored as ISO 8601 (UTC)
     // Convert to local time for display in datetime-local input
     const dt = new Date(scheduledStartTime.value);
     // Format as YYYY-MM-DDTHH:mm for datetime-local input
     const year = dt.getFullYear();
-    const month = String(dt.getMonth() + 1).padStart(2, '0');
-    const day = String(dt.getDate()).padStart(2, '0');
-    const hours = String(dt.getHours()).padStart(2, '0');
-    const minutes = String(dt.getMinutes()).padStart(2, '0');
+    const month = String(dt.getMonth() + 1).padStart(2, "0");
+    const day = String(dt.getDate()).padStart(2, "0");
+    const hours = String(dt.getHours()).padStart(2, "0");
+    const minutes = String(dt.getMinutes()).padStart(2, "0");
     return `${year}-${month}-${day}T${hours}:${minutes}`;
   },
   set(value: string) {
@@ -143,47 +149,31 @@ const scheduleDateTimeLocal = computed({
     } else {
       // value is in format "YYYY-MM-DDTHH:mm" and represents LOCAL time
       // Parse it as local time and convert to UTC ISO 8601
-      const parts = value.split('T');
+      const parts = value.split("T");
       if (parts.length !== 2) return;
-      
+
       const datePart = parts[0]!;
       const timePart = parts[1]!;
-      
-      const dateParts = datePart.split('-').map(Number);
-      const timeParts = timePart.split(':').map(Number);
-      
+
+      const dateParts = datePart.split("-").map(Number);
+      const timeParts = timePart.split(":").map(Number);
+
       if (dateParts.length !== 3 || timeParts.length !== 2) return;
-      
+
       const year = dateParts[0]!;
       const month = dateParts[1]!;
       const day = dateParts[2]!;
       const hours = timeParts[0]!;
       const minutes = timeParts[1]!;
-      
+
       // Create date in LOCAL timezone (not UTC!)
       const dt = new Date(year, month - 1, day, hours, minutes, 0, 0);
-      
+
       // Convert to ISO 8601 UTC string
       scheduledStartTime.value = dt.toISOString();
     }
   },
 });
-
-// Format timestamp for display
-function formatDateTime(isoString: string | null | undefined): string {
-  if (!isoString) return '';
-  debugLogDateTime('formatDateTime', isoString);
-  return format24Hour(isoString);
-}
-
-// Predefined duration options (in seconds)
-const durationOptions = [
-  { label: "30 minutes", value: 1800 },
-  { label: "1 hour", value: 3600 },
-  { label: "2 hours", value: 7200 },
-  { label: "4 hours", value: 14400 },
-  { label: "8 hours", value: 28800 },
-];
 
 const canRequest = computed(() => {
   const cfg = props.breakglass?.requestReason;
@@ -195,7 +185,44 @@ const canRequest = computed(() => {
 
 const sessionPending = computed(() => props.breakglass.sessionPending);
 const sessionActive = computed(() => props.breakglass.sessionActive);
-const expired = computed(() => !sessionActive.value && !sessionPending.value);
+
+const requesterGroups = computed(() => {
+  const provided = Array.isArray(props.breakglass?.requestingGroups)
+    ? props.breakglass.requestingGroups
+    : props.breakglass?.from
+      ? [props.breakglass.from]
+      : [];
+  const uniq = Array.from(new Set((provided as string[]).filter((g) => typeof g === "string" && g.trim().length > 0)));
+  return uniq;
+});
+
+const requesterGroupsLabel = computed(() => (requesterGroups.value.length ? requesterGroups.value.join(", ") : "—"));
+
+const reasonDescription = computed(() => {
+  const desc = props.breakglass?.requestReason?.description;
+  return typeof desc === "string" ? desc.trim() : "";
+});
+
+const metaBadges = computed(() => {
+  const badges: { label: string; variant: string }[] = [];
+  if (sessionActive.value) {
+    badges.push({ label: "Active", variant: "success" });
+  } else if (sessionPending.value) {
+    badges.push({ label: "Pending", variant: "warning" });
+  } else {
+    badges.push({ label: "Available", variant: "neutral" });
+  }
+  if (props.breakglass?.requestReason?.mandatory) {
+    badges.push({ label: "Reason required", variant: "danger" });
+  }
+  if (!props.breakglass?.selfApproval && props.breakglass?.approvalGroups?.length) {
+    badges.push({ label: "Needs approval", variant: "info" });
+  }
+  if (requesterGroups.value.length > 1) {
+    badges.push({ label: `${requesterGroups.value.length} requester groups`, variant: "neutral" });
+  }
+  return badges;
+});
 
 const expiryHumanized = computed(() => {
   if (sessionActive.value && sessionActive.value.expiry) {
@@ -215,7 +242,40 @@ const timeoutHumanized = computed(() => {
   return "";
 });
 
-function openRequest() { 
+const hourCyclePreference = computed(() => {
+  try {
+    const resolved = new Intl.DateTimeFormat(browserLocale.value, {
+      hour: "numeric",
+    }).resolvedOptions() as Intl.ResolvedDateTimeFormatOptions & { hourCycle?: string };
+    return resolved.hourCycle;
+  } catch {
+    return undefined;
+  }
+});
+
+const prefers24HourFormat = computed(() => hourCyclePreference.value === "h23" || hourCyclePreference.value === "h24");
+const browserLocale = computed(() => {
+  try {
+    if (typeof navigator !== "undefined") {
+      return navigator.language || (navigator.languages && navigator.languages[0]) || "en-GB";
+    }
+  } catch {
+    /* noop */
+  }
+  return "en-GB";
+});
+
+const dateTimeInputLang = computed(() => browserLocale.value || (prefers24HourFormat.value ? "en-GB" : "en-US"));
+const scheduleLabel = computed(() =>
+  prefers24HourFormat.value ? "Scheduled Start Date/Time (24-hour)" : "Scheduled Start Date/Time (12-hour)",
+);
+const localizedFormatHint = computed(() =>
+  prefers24HourFormat.value
+    ? "Use 24-hour time, e.g., 2024-05-18 16:30"
+    : "Use 12-hour time, e.g., 05/18/2024 04:30 PM",
+);
+
+function openRequest() {
   showRequestModal.value = true;
   // Set default duration to the escalation's predefined duration
   selectedDuration.value = props.breakglass.duration || 7200; // default to 2 hours
@@ -231,14 +291,14 @@ function toggleScheduleOptions() {
   }
 }
 
-function request() { 
+function request() {
   // Validate and parse duration from input
   const parsedDuration = parseDurationInput(durationInput.value);
   if (!parsedDuration) {
     pushError("Please enter a valid duration (e.g., '1h', '30m', '3600')");
     return;
   }
-  
+
   // Validate duration against maximum allowed
   const maxAllowed = props.breakglass.duration || 7200;
   const validation = validateDuration(parsedDuration, maxAllowed);
@@ -246,7 +306,7 @@ function request() {
     pushError(validation.error || "Invalid duration");
     return;
   }
-  
+
   // Validate reason field is not empty if required
   const cfg = props.breakglass?.requestReason;
   if (cfg && cfg.mandatory) {
@@ -255,35 +315,56 @@ function request() {
       return;
     }
   }
-  
+
   // Sanitize reason before sending
   const sanitizedReason = sanitizeReason(requestReason.value);
-  
-  emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value); 
-  requestReason.value = ""; 
+
+  emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value);
+  requestReason.value = "";
   selectedDuration.value = null;
   durationInput.value = "";
   scheduledStartTime.value = null;
-  showRequestModal.value = false; 
+  showRequestModal.value = false;
 }
-function withdraw() { emit("withdraw"); }
-function drop() { emit("drop"); }
+function withdraw() {
+  emit("withdraw");
+}
+function drop() {
+  emit("drop");
+}
 </script>
 
 <template>
   <scale-card>
     <h2 class="to">{{ breakglass.to }}</h2>
-    <p>From <b>{{ breakglass.from }}</b></p>
-    <p v-if="breakglass.cluster">Cluster <b>{{ breakglass.cluster }}</b></p>
-    <p>For <b>{{ durationHumanized }}</b></p>
+    <div class="meta-tags" aria-label="Session status and requirements">
+      <span v-for="badge in metaBadges" :key="badge.label" class="badge" :class="badge.variant">
+        {{ badge.label }}
+      </span>
+    </div>
+    <p>
+      From <b>{{ requesterGroupsLabel }}</b>
+    </p>
+    <p v-if="requesterGroups.length > 1" class="meta-subtle">
+      Available through {{ requesterGroups.length }} of your groups
+    </p>
+    <p v-if="breakglass.cluster">
+      Cluster <b>{{ breakglass.cluster }}</b>
+    </p>
+    <p>
+      For <b>{{ durationHumanized }}</b>
+    </p>
     <p v-if="breakglass.approvalGroups && breakglass.approvalGroups.length > 0">
       Requires approval from {{ breakglass.approvalGroups.join(", ") }}
     </p>
     <p v-else>No approvers defined.</p>
+    <p v-if="reasonDescription" class="meta-subtle">{{ reasonDescription }}</p>
 
     <template v-if="sessionPending">
       <p class="pending">Request pending approval.</p>
-      <p v-if="timeoutHumanized">Timeout in: <b>{{ timeoutHumanized }}</b></p>
+      <p v-if="timeoutHumanized">
+        Timeout in: <b>{{ timeoutHumanized }}</b>
+      </p>
       <p v-if="breakglass.approvalGroups && breakglass.approvalGroups.length > 0">
         Approvers: {{ breakglass.approvalGroups.join(", ") }}
       </p>
@@ -293,7 +374,9 @@ function drop() { emit("drop"); }
     </template>
     <template v-else-if="sessionActive">
       <p class="active">Session active.</p>
-      <p v-if="expiryHumanized">Expires in: <b>{{ expiryHumanized }}</b></p>
+      <p v-if="expiryHumanized">
+        Expires in: <b>{{ expiryHumanized }}</b>
+      </p>
       <p class="actions">
         <scale-button variant="secondary" @click="drop">Drop</scale-button>
       </p>
@@ -304,16 +387,23 @@ function drop() { emit("drop"); }
         <!-- Always allow opening the modal so the user can fill a required reason. Only the Confirm button is disabled when the reason is missing. -->
         <scale-button @click="openRequest">Request</scale-button>
       </p>
-      <p v-if="props.breakglass && props.breakglass.requestReason && props.breakglass.requestReason.mandatory && !canRequest" style="color:#c62828;margin-top:0.5rem">This Escalation requires a reason.</p>
+      <p
+        v-if="
+          props.breakglass && props.breakglass.requestReason && props.breakglass.requestReason.mandatory && !canRequest
+        "
+        style="color: #c62828; margin-top: 0.5rem"
+      >
+        This Escalation requires a reason.
+      </p>
 
-    <div v-if="showRequestModal" class="request-modal-overlay">
-      <div class="request-modal">
-          <button class="modal-close" @click="closeRequestModal" aria-label="Close">×</button>
+      <div v-if="showRequestModal" class="request-modal-overlay">
+        <div class="request-modal">
+          <button class="modal-close" aria-label="Close" @click="closeRequestModal">×</button>
           <h3>Request breakglass</h3>
-          
+
           <!-- Duration Input (Freeform) -->
-          <div class="duration-selector" style="margin-bottom: 1rem;">
-            <label for="duration-input" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">
+          <div class="duration-selector" style="margin-bottom: 1rem">
+            <label for="duration-input" style="display: block; margin-bottom: 0.5rem; font-weight: 500">
               Duration (default: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}, min: 1m):
             </label>
             <input
@@ -321,52 +411,125 @@ function drop() { emit("drop"); }
               v-model="durationInput"
               type="text"
               :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
-              style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; box-sizing: border-box;"
+              style="
+                width: 100%;
+                padding: 0.5rem;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 14px;
+                box-sizing: border-box;
+              "
             />
-            <p style="font-size: 0.85em; color: #666; margin-top: 0.25rem;">
-              Enter a shorter duration if needed. Defaults to maximum allowed ({{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
+            <p style="font-size: 0.85em; color: #666; margin-top: 0.25rem">
+              Enter a shorter duration if needed. Defaults to maximum allowed ({{
+                humanizeDuration(breakglass.duration * 1000, humanizeConfig)
+              }})
             </p>
-            <p v-if="durationInput" style="font-size: 0.9em; color: #555; margin-top: 0.25rem;">
+            <p v-if="durationInput" style="font-size: 0.9em; color: #555; margin-top: 0.25rem">
               Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
             </p>
-            <button 
-              type="button" 
+            <button
+              type="button"
+              style="
+                background: none;
+                border: none;
+                cursor: pointer;
+                color: #0066cc;
+                text-decoration: underline;
+                padding: 0;
+                font-size: 12px;
+                margin-top: 0.25rem;
+              "
               @click="showDurationHints = !showDurationHints"
-              style="background: none; border: none; cursor: pointer; color: #0066cc; text-decoration: underline; padding: 0; font-size: 12px; margin-top: 0.25rem;"
             >
-              {{ showDurationHints ? '⊖ Hide' : '⊕ Show' }} common durations
+              {{ showDurationHints ? "⊖ Hide" : "⊕ Show" }} common durations
             </button>
-            <div v-if="showDurationHints" style="margin-top: 0.5rem; padding: 0.5rem; background-color: #f5f5f5; border-radius: 4px; font-size: 12px;">
-              <p style="margin: 0.25rem 0;">Examples: 30m, 1h, 2h, 4h (all less than max {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})</p>
+            <div
+              v-if="showDurationHints"
+              style="
+                margin-top: 0.5rem;
+                padding: 0.5rem;
+                background-color: #f5f5f5;
+                border-radius: 4px;
+                font-size: 12px;
+              "
+            >
+              <p style="margin: 0.25rem 0">
+                Examples: 30m, 1h, 2h, 4h (all less than max
+                {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
+              </p>
             </div>
           </div>
           <!-- Schedule Options Toggle -->
-          <div class="schedule-section" style="margin-bottom: 1rem; border-top: 1px solid #ddd; padding-top: 0.75rem;">
-            <button type="button" class="toggle-schedule" @click="toggleScheduleOptions" 
-              style="background: none; border: none; cursor: pointer; color: #0066cc; text-decoration: underline; padding: 0; font-size: 14px;">
+          <div class="schedule-section" style="margin-bottom: 1rem; border-top: 1px solid #ddd; padding-top: 0.75rem">
+            <button
+              type="button"
+              class="toggle-schedule"
+              style="
+                background: none;
+                border: none;
+                cursor: pointer;
+                color: #0066cc;
+                text-decoration: underline;
+                padding: 0;
+                font-size: 14px;
+              "
+              @click="toggleScheduleOptions"
+            >
               <span v-if="!showScheduleOptions">⊕ Schedule for future date (optional)</span>
               <span v-else>⊖ Schedule for future date (optional)</span>
             </button>
 
-            <div v-if="showScheduleOptions" class="schedule-details" style="margin-top: 0.75rem; margin-left: 15px; 
-              padding: 0.75rem; border-left: 2px solid #0066cc; background-color: #f9f9f9;">
-              <div style="margin-bottom: 0.75rem;">
-                <label for="scheduled_date_escalation" style="width: auto; display: block; text-align: left; margin-bottom: 0.25rem; font-size: 14px; font-weight: 500;">Scheduled Start Date/Time (24-hour):</label>
+            <div
+              v-if="showScheduleOptions"
+              class="schedule-details"
+              style="
+                margin-top: 0.75rem;
+                margin-left: 15px;
+                padding: 0.75rem;
+                border-left: 2px solid #0066cc;
+                background-color: #f9f9f9;
+              "
+            >
+              <div style="margin-bottom: 0.75rem">
+                <label
+                  for="scheduled_date_escalation"
+                  style="
+                    width: auto;
+                    display: block;
+                    text-align: left;
+                    margin-bottom: 0.25rem;
+                    font-size: 14px;
+                    font-weight: 500;
+                  "
+                  >{{ scheduleLabel }}:</label
+                >
                 <input
                   id="scheduled_date_escalation"
-                  type="datetime-local"
                   v-model="scheduleDateTimeLocal"
+                  type="datetime-local"
                   :min="minDateTime"
-                  style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; font-family: monospace;"
+                  :lang="dateTimeInputLang"
+                  :class="['schedule-datetime-input', { 'prefer-24h': prefers24HourFormat }]"
+                  inputmode="numeric"
+                  :aria-describedby="'schedule-time-hint-' + breakglass.to"
+                  :title="localizedFormatHint"
                   step="60"
                 />
+                <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
+                  Following your locale ({{ dateTimeInputLang }}). {{ localizedFormatHint }}.
+                </p>
               </div>
-              
-              <div v-if="scheduledStartTime" class="schedule-preview" style="font-size: 0.9em; color: #555; margin-top: 0.5rem;">
-                <p style="margin: 0.25rem 0;">
+
+              <div
+                v-if="scheduledStartTime"
+                class="schedule-preview"
+                style="font-size: 0.9em; color: #555; margin-top: 0.5rem"
+              >
+                <p style="margin: 0.25rem 0">
                   <strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}
                 </p>
-                <p style="margin: 0.25rem 0; color: #888; font-size: 0.85em;">
+                <p style="margin: 0.25rem 0; color: #888; font-size: 0.85em">
                   Your local time: {{ format24HourWithTZ(scheduledStartTime) }}
                 </p>
               </div>
@@ -374,27 +537,61 @@ function drop() { emit("drop"); }
           </div>
 
           <!-- Reason Field with Character Limit -->
-          <div style="margin-bottom: 1rem;">
-            <label for="reason-field" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">
+          <div style="margin-bottom: 1rem">
+            <label for="reason-field" style="display: block; margin-bottom: 0.5rem; font-weight: 500">
               Reason {{ reasonCharCount }}/{{ reasonCharLimit }}:
             </label>
             <textarea
               id="reason-field"
               v-model="requestReason"
               :maxlength="reasonCharLimit"
-              :placeholder="(breakglass.requestReason && breakglass.requestReason.description) || 'Optional reason (max 1024 characters)'"
+              :placeholder="
+                (breakglass.requestReason && breakglass.requestReason.description) ||
+                'Optional reason (max 1024 characters)'
+              "
               rows="4"
-              style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; font-family: inherit; box-sizing: border-box; resize: vertical;"
+              style="
+                width: 100%;
+                padding: 0.5rem;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 14px;
+                font-family: inherit;
+                box-sizing: border-box;
+                resize: vertical;
+              "
             ></textarea>
-            <p v-if="reasonCharCount >= reasonCharLimit * 0.9" style="font-size: 0.85em; color: #ff6b6b; margin-top: 0.25rem;">
+            <p
+              v-if="reasonCharCount >= reasonCharLimit * 0.9"
+              style="font-size: 0.85em; color: #ff6b6b; margin-top: 0.25rem"
+            >
               ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
             </p>
-            <p v-if="props.breakglass && props.breakglass.requestReason && props.breakglass.requestReason.mandatory && !(requestReason || '').trim()" style="color:#c62828;margin-top:0.5rem">This field is required.</p>
+            <p
+              v-if="
+                props.breakglass &&
+                props.breakglass.requestReason &&
+                props.breakglass.requestReason.mandatory &&
+                !(requestReason || '').trim()
+              "
+              style="color: #c62828; margin-top: 0.5rem"
+            >
+              This field is required.
+            </p>
           </div>
-          
+
           <!-- Action Buttons -->
           <p class="actions">
-            <scale-button :disabled="props.breakglass && props.breakglass.requestReason && props.breakglass.requestReason.mandatory && !(requestReason || '').trim()" @click="request">Confirm Request</scale-button>
+            <scale-button
+              :disabled="
+                props.breakglass &&
+                props.breakglass.requestReason &&
+                props.breakglass.requestReason.mandatory &&
+                !(requestReason || '').trim()
+              "
+              @click="request"
+              >Confirm Request</scale-button
+            >
             <scale-button variant="secondary" @click="closeRequestModal">Cancel</scale-button>
           </p>
         </div>
@@ -402,7 +599,6 @@ function drop() { emit("drop"); }
     </template>
   </scale-card>
 </template>
-
 
 <style scoped>
 scale-card {
@@ -412,6 +608,86 @@ scale-card {
 
 scale-button {
   margin: 0 0.4rem;
+}
+
+.meta-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge.success {
+  background: #e0f6ec;
+  color: #0f8a4b;
+}
+
+.badge.warning {
+  background: #fff7e6;
+  color: #c47f00;
+}
+
+.badge.neutral {
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.badge.info {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.badge.danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.meta-subtle {
+  margin-top: -0.35rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  color: #5c6b86;
+}
+
+.schedule-datetime-input {
+  width: min(100%, 320px);
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #99a1b7;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-variant-numeric: tabular-nums;
+  background: #fff;
+  color: #111827;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.schedule-datetime-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+.schedule-datetime-input.prefer-24h {
+  letter-spacing: 0.04em;
+}
+
+.schedule-locale-hint {
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  color: #4b5563;
 }
 
 .actions {
@@ -463,7 +739,7 @@ scale-button {
 .request-modal select:focus {
   outline: none !important;
   border-color: #3b82f6 !important; /* blue focus ring */
-  box-shadow: 0 0 0 4px rgba(59,130,246,0.12) !important;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12) !important;
 }
 
 /* Placeholder should be visible */
@@ -504,19 +780,18 @@ scale-button {
   right: 0.6rem;
   /* high-contrast visible close button */
   background: #ffffff !important;
-  border: 1px solid rgba(2,6,23,0.08) !important;
+  border: 1px solid rgba(2, 6, 23, 0.08) !important;
   font-size: 1.15rem;
   line-height: 1;
   cursor: pointer;
   color: #0b0b0b !important;
   padding: 0.2rem 0.5rem !important;
   border-radius: 6px !important;
-  box-shadow: 0 2px 6px rgba(2,6,23,0.12) !important;
+  box-shadow: 0 2px 6px rgba(2, 6, 23, 0.12) !important;
   z-index: 2100;
 }
 .modal-close:hover {
   color: #111 !important;
   background: #f3f4f6 !important;
 }
-
 </style>

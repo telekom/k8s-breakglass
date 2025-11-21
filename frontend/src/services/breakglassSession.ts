@@ -1,5 +1,4 @@
-
-import axios, { type AxiosResponse, AxiosHeaders } from "axios";
+import axios, { AxiosHeaders } from "axios";
 import { handleAxiosError } from "@/services/logger";
 
 import type AuthService from "@/services/auth";
@@ -26,21 +25,23 @@ export default class BreakglassSessionService {
         // Use a window-scoped flag for dev logging to avoid bundler/node type issues
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
-        if (typeof window !== 'undefined' && (window.__DEV_TOKEN_LOG === true || window.__DEV_TOKEN_LOG === 'true')) {
-          // eslint-disable-next-line no-console
-          console.debug('[BreakglassSessionService] Authorization header:', req.headers['Authorization']);
+        if (typeof window !== "undefined" && (window.__DEV_TOKEN_LOG === true || window.__DEV_TOKEN_LOG === "true")) {
+          console.debug("[BreakglassSessionService] Authorization header:", req.headers["Authorization"]);
         }
-      } catch (e) {
+      } catch {
         // ignore in non-browser or hardened environments
       }
       return req;
     });
 
-    this.client.interceptors.response.use((resp) => resp, (error) => {
-      // normalize and record error
-      handleAxiosError("BreakglassSessionService", error);
-      return Promise.reject(error);
-    });
+    this.client.interceptors.response.use(
+      (resp) => resp,
+      (error) => {
+        // normalize and record error
+        handleAxiosError("BreakglassSessionService", error);
+        return Promise.reject(error);
+      },
+    );
   }
 
   public async requestSession(request: BreakglassSessionRequest) {
@@ -84,65 +85,65 @@ export default class BreakglassSessionService {
 
   public async getClusterAccessReviews(): Promise<ClusterAccessReview[]> {
     try {
-      const reviews = await this.client.get<ClusterAccessReview[]>('/reviews');
+      const reviews = await this.client.get<ClusterAccessReview[]>("/reviews");
       return reviews.data;
     } catch (e) {
-      handleAxiosError('BreakglassSessionService.getClusterAccessReviews', e, 'Failed to fetch cluster access reviews');
+      handleAxiosError("BreakglassSessionService.getClusterAccessReviews", e, "Failed to fetch cluster access reviews");
       return [];
     }
   }
 
   public async approveReview(review: BreakglassSessionRequest) {
     // RESTful: POST /breakglassSessions/:name/approve
-    if (!review.name) throw new Error('Missing session name for approve');
+    if (!review.name) throw new Error("Missing session name for approve");
     try {
       return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/approve`);
     } catch (e) {
-      handleAxiosError('BreakglassSessionService.approveReview', e, 'Failed to approve session');
+      handleAxiosError("BreakglassSessionService.approveReview", e, "Failed to approve session");
       throw e;
     }
   }
 
   public async rejectReview(review: BreakglassSessionRequest) {
     // RESTful: POST /breakglassSessions/:name/reject
-    if (!review.name) throw new Error('Missing session name for reject');
+    if (!review.name) throw new Error("Missing session name for reject");
     try {
       return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/reject`);
     } catch (e) {
-      handleAxiosError('BreakglassSessionService.rejectReview', e, 'Failed to reject session');
+      handleAxiosError("BreakglassSessionService.rejectReview", e, "Failed to reject session");
       throw e;
     }
   }
 
   public async withdrawSession(review: BreakglassSessionRequest) {
     // RESTful: POST /breakglassSessions/:name/withdraw
-    if (!review.name) throw new Error('Missing session name for withdraw');
+    if (!review.name) throw new Error("Missing session name for withdraw");
     try {
       return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/withdraw`, {});
     } catch (e) {
-      handleAxiosError('BreakglassSessionService.withdrawSession', e, 'Failed to withdraw session');
+      handleAxiosError("BreakglassSessionService.withdrawSession", e, "Failed to withdraw session");
       throw e;
     }
   }
 
   public async dropSession(review: BreakglassSessionRequest) {
     // RESTful: POST /breakglassSessions/:name/drop
-    if (!review.name) throw new Error('Missing session name for drop');
+    if (!review.name) throw new Error("Missing session name for drop");
     try {
       return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/drop`, {});
     } catch (e) {
-      handleAxiosError('BreakglassSessionService.dropSession', e, 'Failed to drop session');
+      handleAxiosError("BreakglassSessionService.dropSession", e, "Failed to drop session");
       throw e;
     }
   }
 
   public async cancelSession(review: BreakglassSessionRequest) {
     // RESTful: POST /breakglassSessions/:name/cancel (approver cancels running session)
-    if (!review.name) throw new Error('Missing session name for cancel');
+    if (!review.name) throw new Error("Missing session name for cancel");
     try {
       return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/cancel`, {});
     } catch (e) {
-      handleAxiosError('BreakglassSessionService.cancelSession', e, 'Failed to cancel session');
+      handleAxiosError("BreakglassSessionService.cancelSession", e, "Failed to cancel session");
       throw e;
     }
   }

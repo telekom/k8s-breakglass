@@ -6,7 +6,7 @@ import { info as logInfo, error as logError } from "@/services/logger";
 
 // Store the current direct authority for header injection during OIDC requests
 // We use sessionStorage so it persists across page reloads during OAuth redirect flow
-const DIRECT_AUTHORITY_STORAGE_KEY = 'oidc_direct_authority';
+const DIRECT_AUTHORITY_STORAGE_KEY = "oidc_direct_authority";
 
 /**
  * Set the current direct authority for the active OIDC session
@@ -40,7 +40,7 @@ const originalFetch = window.fetch.bind(window);
 window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === "string" ? input : input.toString();
   const directAuthority = getCurrentDirectAuthority();
-  
+
   // For OIDC proxy requests, inject the direct authority header
   if (url.includes("/api/oidc/authority") && directAuthority) {
     const headers = new Headers(init?.headers || {});
@@ -49,24 +49,24 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Pr
       directAuthority,
     });
     headers.set("X-OIDC-Authority", directAuthority);
-    
+
     const modifiedInit: RequestInit = {
       ...init,
       headers,
     };
-    
+
     return originalFetch(url, modifiedInit);
   }
-  
+
   return originalFetch(input, init);
 } as any;
 
 // Direct oidc-client logs into our logger
 Log.setLogger({
-  debug: (...args: any[]) => logInfo('oidc-client', ...args),
-  info: (...args: any[]) => logInfo('oidc-client', ...args),
-  warn: (...args: any[]) => logInfo('oidc-client', ...args),
-  error: (...args: any[]) => logError('oidc-client', ...args),
+  debug: (...args: any[]) => logInfo("oidc-client", ...args),
+  info: (...args: any[]) => logInfo("oidc-client", ...args),
+  warn: (...args: any[]) => logInfo("oidc-client", ...args),
+  error: (...args: any[]) => logError("oidc-client", ...args),
 } as any);
 
 export const AuthRedirect = "/auth/callback";
@@ -86,7 +86,7 @@ export default class AuthService {
 
   constructor(config: Config) {
     const baseURL = `${window.location.protocol}//${window.location.host}`;
-    logInfo('AuthService', 'baseURL', baseURL);
+    logInfo("AuthService", "baseURL", baseURL);
     const settings: UserManagerSettings = {
       userStore: new WebStorageStateStore({ store: window.localStorage }),
       authority: config.oidcAuthority,
@@ -123,7 +123,7 @@ export default class AuthService {
   private getOrCreateUserManager(authority: string, clientID: string, directAuthority?: string): UserManager {
     // Include directAuthority in the cache key so different IDPs get different managers
     // This is critical for multi-IDP: both may use proxy authority but route to different Keycloaks
-    const key = `${authority}:${clientID}:${directAuthority || 'default'}`;
+    const key = `${authority}:${clientID}:${directAuthority || "default"}`;
     if (this.userManagers.has(key)) {
       const existingManager = this.userManagers.get(key)!;
       console.debug("[AuthService] Retrieved cached UserManager:", {
@@ -156,7 +156,7 @@ export default class AuthService {
     };
 
     const manager = new UserManager(settings);
-    
+
     // Store the direct authority as metadata for callback processing
     if (directAuthority) {
       (manager as any).directAuthority = directAuthority;
@@ -165,7 +165,7 @@ export default class AuthService {
         directAuthority,
       });
     }
-    
+
     manager.events.addUserLoaded((loadedUser) => {
       user.value = loadedUser;
     });
@@ -189,19 +189,19 @@ export default class AuthService {
         idpName: state.idpName,
         redirectPath: state.path,
       });
-      
+
       try {
         // Import here to avoid circular dependency
         const { getMultiIDPConfig } = await import("@/services/multiIDP");
         const config = await getMultiIDPConfig();
-        
+
         // Find the IDP config by name
-        const idpConfigFound = config?.identityProviders.find(idp => idp.name === state.idpName);
+        const idpConfigFound = config?.identityProviders.find((idp) => idp.name === state.idpName);
         const idpConfig = idpConfigFound as IDPInfo | undefined;
-        
+
         if (!idpConfig) {
           console.error("[AuthService] IDP not found in config:", state.idpName);
-          logError('AuthService', 'IDP not found', state.idpName);
+          logError("AuthService", "IDP not found", state.idpName);
           // Fall back to default UserManager
           return this.userManager.signinRedirect({ state });
         }
@@ -217,10 +217,10 @@ export default class AuthService {
         // Check if we have the OIDC credentials for this IDP
         const directAuthority = (idpConfig as any).oidcAuthority;
         const oidcClientID = (idpConfig as any).oidcClientID;
-        
+
         if (!directAuthority || !oidcClientID) {
           console.error("[AuthService] IDP missing OIDC configuration", idpConfig);
-          logError('AuthService', 'IDP missing OIDC config', idpConfig);
+          logError("AuthService", "IDP missing OIDC config", idpConfig);
           // Fall back to default UserManager
           return this.userManager.signinRedirect({ state });
         }
@@ -229,23 +229,23 @@ export default class AuthService {
         // This is the same pattern used by the backend in getConfig() to avoid certificate trust issues
         // The backend will proxy /api/oidc/authority/* requests to the real Keycloak authority
         const proxyAuthority = "/api/oidc/authority";
-        
+
         // Store the current IDP name for later retrieval
         this.currentIDPName = state.idpName;
         currentIDPName.value = state.idpName;
-        
+
         // Also store IDP name in sessionStorage so it survives the OAuth redirect
         if (state.idpName) {
-          sessionStorage.setItem('oidc_idp_name', state.idpName);
+          sessionStorage.setItem("oidc_idp_name", state.idpName);
           console.debug("[AuthService] Stored IDP name in sessionStorage:", {
             idpName: state.idpName,
           });
         }
-        
+
         // Get or create UserManager for this IDP with the proxy authority
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
         const manager = this.getOrCreateUserManager(proxyAuthority, oidcClientID, directAuthority);
-        
+
         console.debug("[AuthService] About to initiate signin redirect for IDP:", {
           idpName: state.idpName,
           proxyAuthority,
@@ -263,12 +263,12 @@ export default class AuthService {
         return manager.signinRedirect({ state });
       } catch (err) {
         console.error("[AuthService] Error getting IDP config:", err);
-        logError('AuthService', 'Error getting IDP config', err);
+        logError("AuthService", "Error getting IDP config", err);
         // Fall back to default UserManager
         return this.userManager.signinRedirect({ state });
       }
     }
-    
+
     console.debug("[AuthService] Logging in with default IDP (no specific IDP selected)");
     // Clear any previously set direct authority for default login
     setCurrentDirectAuthority(undefined);
@@ -313,34 +313,34 @@ export default class AuthService {
   public async handleSigninCallback() {
     // Get parameters from URL
     const urlParams = new URLSearchParams(window.location.search);
-    const stateParam = urlParams.get('state');
-    const issuerParam = urlParams.get('iss'); // The Keycloak instance that issued the auth code
-    
-    console.debug('[AuthService] Processing signin callback', { 
+    const stateParam = urlParams.get("state");
+    const issuerParam = urlParams.get("iss"); // The Keycloak instance that issued the auth code
+
+    console.debug("[AuthService] Processing signin callback", {
       stateParam,
       issuerParam,
       hasIssuer: !!issuerParam,
     });
-    
+
     // Build the list of managers to try, prioritizing by issuer match
     let managers: UserManager[] = [];
-    
+
     // If we have an issuer in the callback, try to find a matching manager first
     if (issuerParam) {
-      console.debug('[AuthService] Looking for manager matching issuer:', { issuerParam });
-      
+      console.debug("[AuthService] Looking for manager matching issuer:", { issuerParam });
+
       // Check all IDP-specific managers to find one with matching issuer/directAuthority
       // Also look through the cache keys to find the IDP name
       for (const [cacheKey, manager] of this.userManagers.entries()) {
         const directAuthority = (manager as any).directAuthority;
         if (directAuthority && directAuthority.startsWith(issuerParam)) {
-          console.debug('[AuthService] Found matching manager for issuer:', {
+          console.debug("[AuthService] Found matching manager for issuer:", {
             issuerParam,
             directAuthority,
             cacheKey,
           });
           managers.push(manager);
-          
+
           // Extract IDP name from cache key: format is "/api/oidc/authority:clientID:directAuthority"
           // We can infer which IDP this is from the directAuthority
           // Try to match it with known IDPs by checking our cache
@@ -350,29 +350,29 @@ export default class AuthService {
               // Found matching manager, now get its IDP name
               // Unfortunately the cache key doesn't store the IDP name, but we can try to deduce it
               // from the fact that this manager has this specific directAuthority
-              console.debug('[AuthService] Cache key for matched manager:', { cacheKey, directAuthority });
+              console.debug("[AuthService] Cache key for matched manager:", { cacheKey, directAuthority });
             }
           }
           break; // Found the right one, use it first
         }
       }
     }
-    
+
     // If we didn't find a specific match (or no issuer), try all managers
     // Specific IDP managers first (with directAuthority), then default
     if (managers.length === 0) {
       const specificIDPManagers = Array.from(this.userManagers.values());
       managers = [...specificIDPManagers, this.userManager];
-      console.debug('[AuthService] No issuer match found, trying all managers in order:', {
+      console.debug("[AuthService] No issuer match found, trying all managers in order:", {
         totalManagers: managers.length,
         specificIDPCount: specificIDPManagers.length,
         hasIssuer: !!issuerParam,
       });
     } else {
       // Add fallback managers in case the issuer match fails
-      const specificIDPManagers = Array.from(this.userManagers.values()).filter(m => managers.indexOf(m) === -1);
+      const specificIDPManagers = Array.from(this.userManagers.values()).filter((m) => managers.indexOf(m) === -1);
       managers = [...managers, ...specificIDPManagers, this.userManager];
-      console.debug('[AuthService] Using issuer-matched manager with fallbacks:', {
+      console.debug("[AuthService] Using issuer-matched manager with fallbacks:", {
         totalManagers: managers.length,
         issuerMatched: true,
       });
@@ -381,7 +381,7 @@ export default class AuthService {
     for (const manager of managers) {
       try {
         const directAuthority = (manager as any).directAuthority;
-        console.debug('[AuthService] Attempting signin callback with manager', {
+        console.debug("[AuthService] Attempting signin callback with manager", {
           authority: manager.settings.authority,
           client_id: manager.settings.client_id,
           hasDirectAuthority: !!directAuthority,
@@ -392,67 +392,69 @@ export default class AuthService {
         // Set the direct authority for this manager so header injection works during callback
         if (directAuthority) {
           setCurrentDirectAuthority(directAuthority);
-          console.debug('[AuthService] Set directAuthority for callback processing:', {
+          console.debug("[AuthService] Set directAuthority for callback processing:", {
             directAuthority,
           });
         }
 
         const result = await manager.signinCallback();
-        console.debug('[AuthService] Successfully processed signin callback with manager', {
+        console.debug("[AuthService] Successfully processed signin callback with manager", {
           authority: manager.settings.authority,
           directAuthority,
         });
-        
+
         // Restore IDP name from the state if available
-        if (result && result.state && typeof result.state === 'object' && 'idpName' in result.state) {
+        if (result && result.state && typeof result.state === "object" && "idpName" in result.state) {
           this.currentIDPName = (result.state as any).idpName;
           currentIDPName.value = (result.state as any).idpName;
-          console.debug('[AuthService] Restored IDP name from state:', { 
+          console.debug("[AuthService] Restored IDP name from state:", {
             idpName: this.currentIDPName,
             directAuthority,
           });
         } else {
           // Try to restore IDP name from sessionStorage (set before OAuth redirect)
-          const storedIdpName = sessionStorage.getItem('oidc_idp_name');
+          const storedIdpName = sessionStorage.getItem("oidc_idp_name");
           if (storedIdpName) {
             this.currentIDPName = storedIdpName;
             currentIDPName.value = storedIdpName;
-            console.debug('[AuthService] Restored IDP name from sessionStorage:', {
+            console.debug("[AuthService] Restored IDP name from sessionStorage:", {
               idpName: this.currentIDPName,
               directAuthority,
             });
-            sessionStorage.removeItem('oidc_idp_name');
+            sessionStorage.removeItem("oidc_idp_name");
           } else if (directAuthority) {
             // If IDP name not in state or storage, try to deduce from directAuthority
-            console.debug('[AuthService] No IDP name in state or storage, attempting to deduce from directAuthority:', {
+            console.debug("[AuthService] No IDP name in state or storage, attempting to deduce from directAuthority:", {
               directAuthority,
             });
-            
+
             // Try to fetch multi-IDP config and find which IDP has this directAuthority
             try {
               const { getMultiIDPConfig } = await import("@/services/multiIDP");
               const config = await getMultiIDPConfig();
-              const matchedIdp = config?.identityProviders.find(idp => (idp as any).oidcAuthority === directAuthority);
+              const matchedIdp = config?.identityProviders.find(
+                (idp) => (idp as any).oidcAuthority === directAuthority,
+              );
               if (matchedIdp) {
                 this.currentIDPName = matchedIdp.name;
                 currentIDPName.value = matchedIdp.name;
-                console.debug('[AuthService] Deduced IDP name from directAuthority:', {
+                console.debug("[AuthService] Deduced IDP name from directAuthority:", {
                   idpName: this.currentIDPName,
                   directAuthority,
                 });
               }
             } catch (err) {
-              console.debug('[AuthService] Could not deduce IDP name from directAuthority:', { err });
+              console.debug("[AuthService] Could not deduce IDP name from directAuthority:", { err });
             }
           }
         }
-        
+
         return result;
       } catch (error) {
         // Check if this is an authority mismatch error
         const errorMsg = String(error);
-        if (errorMsg.includes('authority mismatch')) {
-          console.debug('[AuthService] Authority mismatch with this manager, trying next', {
+        if (errorMsg.includes("authority mismatch")) {
+          console.debug("[AuthService] Authority mismatch with this manager, trying next", {
             authority: manager.settings.authority,
             error: errorMsg,
           });
@@ -460,7 +462,7 @@ export default class AuthService {
           continue;
         } else {
           // This is a different error, re-throw it
-          console.error('[AuthService] Non-authority-mismatch error during callback', {
+          console.error("[AuthService] Non-authority-mismatch error during callback", {
             authority: manager.settings.authority,
             error,
           });
@@ -468,10 +470,10 @@ export default class AuthService {
         }
       }
     }
-    
+
     // If we get here, no manager worked
-    console.error('[AuthService] No UserManager could process the signin callback');
-    throw new Error('Failed to process signin callback: no matching UserManager found');
+    console.error("[AuthService] No UserManager could process the signin callback");
+    throw new Error("Failed to process signin callback: no matching UserManager found");
   }
 }
 

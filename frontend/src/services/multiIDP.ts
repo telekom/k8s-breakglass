@@ -61,7 +61,11 @@ export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
     const config = res.data || { identityProviders: [], escalationIDPMapping: {} };
     console.debug("[MultiIDP] Successfully fetched config:", {
       idpCount: config.identityProviders.length,
-      idps: config.identityProviders.map((idp) => ({ name: idp.name, displayName: idp.displayName, enabled: idp.enabled })),
+      idps: config.identityProviders.map((idp) => ({
+        name: idp.name,
+        displayName: idp.displayName,
+        enabled: idp.enabled,
+      })),
       escalationMappings: config.escalationIDPMapping,
     });
     return config;
@@ -81,10 +85,7 @@ export async function getMultiIDPConfig(): Promise<MultiIDPConfig> {
  * @param config The multi-IDP configuration from backend
  * @returns Array of allowed IDP names, or all IDPs if unrestricted
  */
-export function getAllowedIDPsForEscalation(
-  escalationName: string,
-  config: MultiIDPConfig
-): IDPInfo[] {
+export function getAllowedIDPsForEscalation(escalationName: string, config: MultiIDPConfig): IDPInfo[] {
   const allowedIDPNames = config.escalationIDPMapping[escalationName];
   console.debug(`[MultiIDP] Getting allowed IDPs for escalation "${escalationName}":`, {
     escalationMapping: allowedIDPNames,
@@ -93,15 +94,18 @@ export function getAllowedIDPsForEscalation(
 
   // Empty array [] means all IDPs allowed (backward compatibility)
   if (allowedIDPNames === undefined || allowedIDPNames.length === 0) {
-    console.debug(`[MultiIDP] No restrictions for escalation "${escalationName}", returning all ${config.identityProviders.length} IDPs`);
+    console.debug(
+      `[MultiIDP] No restrictions for escalation "${escalationName}", returning all ${config.identityProviders.length} IDPs`,
+    );
     return config.identityProviders;
   }
 
   // Filter to only allowed IDPs
-  const filtered = config.identityProviders.filter((idp) =>
-    allowedIDPNames.includes(idp.name)
+  const filtered = config.identityProviders.filter((idp) => allowedIDPNames.includes(idp.name));
+  console.debug(
+    `[MultiIDP] Filtered to ${filtered.length} allowed IDPs for escalation "${escalationName}":`,
+    filtered.map((idp) => idp.name),
   );
-  console.debug(`[MultiIDP] Filtered to ${filtered.length} allowed IDPs for escalation "${escalationName}":`, filtered.map((idp) => idp.name));
   return filtered;
 }
 
@@ -114,11 +118,7 @@ export function getAllowedIDPsForEscalation(
  * @param config The multi-IDP configuration
  * @returns true if IDP is allowed for escalation, false otherwise
  */
-export function isIDPAllowedForEscalation(
-  idpName: string,
-  escalationName: string,
-  config: MultiIDPConfig
-): boolean {
+export function isIDPAllowedForEscalation(idpName: string, escalationName: string, config: MultiIDPConfig): boolean {
   const allowedIDPNames = config.escalationIDPMapping[escalationName];
 
   // Empty array [] means all IDPs allowed

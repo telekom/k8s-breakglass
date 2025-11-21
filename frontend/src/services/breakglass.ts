@@ -4,14 +4,26 @@ import { handleAxiosError } from "@/services/logger";
 import type AuthService from "@/services/auth";
 import type { ActiveBreakglass, AvailableBreakglass, Breakglass, SessionCR } from "@/model/breakglass";
 
+export type SessionSearchParams = {
+  mine?: boolean;
+  approver?: boolean;
+  state?: string;
+  cluster?: string;
+  user?: string;
+  group?: string;
+  name?: string;
+};
+
 export default class BreakglassService {
   public async fetchMyOutstandingRequests(): Promise<SessionCR[]> {
     // Use RESTful endpoint with filtering
     try {
-      const r = await this.client.get('/breakglassSessions', { params: { mine: true, approver: false, state: 'pending' } });
-      return Array.isArray(r.data) ? r.data as SessionCR[] : [];
+      const r = await this.client.get("/breakglassSessions", {
+        params: { mine: true, approver: false, state: "pending" },
+      });
+      return Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
     } catch (e) {
-      handleAxiosError('BreakglassService.fetchMyOutstandingRequests', e, 'Failed to fetch outstanding requests');
+      handleAxiosError("BreakglassService.fetchMyOutstandingRequests", e, "Failed to fetch outstanding requests");
       return [];
     }
   }
@@ -31,10 +43,13 @@ export default class BreakglassService {
       return req;
     });
 
-    this.client.interceptors.response.use((resp) => resp, (error) => {
-      handleAxiosError('BreakglassService', error);
-      return Promise.reject(error);
-    });
+    this.client.interceptors.response.use(
+      (resp) => resp,
+      (error) => {
+        handleAxiosError("BreakglassService", error);
+        return Promise.reject(error);
+      },
+    );
   }
 
   // Backend endpoints:
@@ -46,7 +61,7 @@ export default class BreakglassService {
     // We explode multi-cluster escalations into individual entries per cluster so UI can show sessions per cluster.
     const data = Array.isArray(r.data) ? r.data : [];
     const output: AvailableBreakglass[] = [];
-  data.forEach((item: Record<string, any>) => {
+    data.forEach((item: Record<string, any>) => {
       const spec = item?.spec || {};
       const allowed = spec.allowed || {};
       const approvers = spec.approvers || {};
@@ -59,8 +74,12 @@ export default class BreakglassService {
         duration: parseDuration(spec.maxValidFor) || 3600,
         selfApproval: !hasApprovers(approvers),
         approvalGroups: Array.isArray(approvers.groups) ? approvers.groups : [],
-        requestReason: spec.requestReason ? { mandatory: !!spec.requestReason.mandatory, description: spec.requestReason.description || "" } : undefined,
-        approvalReason: spec.approvalReason ? { mandatory: !!spec.approvalReason.mandatory, description: spec.approvalReason.description || "" } : undefined,
+        requestReason: spec.requestReason
+          ? { mandatory: !!spec.requestReason.mandatory, description: spec.requestReason.description || "" }
+          : undefined,
+        approvalReason: spec.approvalReason
+          ? { mandatory: !!spec.approvalReason.mandatory, description: spec.approvalReason.description || "" }
+          : undefined,
       };
       if (clusters.length === 0) {
         output.push({ ...basePartial, cluster: "" });
@@ -73,8 +92,10 @@ export default class BreakglassService {
 
   public async fetchActiveSessions(): Promise<ActiveBreakglass[]> {
     try {
-      const r = await this.client.get('/breakglassSessions', { params: { state: 'approved', mine: true, approver: false } });
-      const data = Array.isArray(r.data) ? r.data as SessionCR[] : [];
+      const r = await this.client.get("/breakglassSessions", {
+        params: { state: "approved", mine: true, approver: false },
+      });
+      const data = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
       // Normalize approved sessions to a shape that includes metadata/spec/status so
       // callers (getBreakglasses) can build sessionActive/sessionPending consistently.
       return data.map((ses: SessionCR) => ({
@@ -84,14 +105,15 @@ export default class BreakglassService {
         status: ses?.status || {},
         // canonical convenience fields used by matching logic
         group: (ses?.spec && ses.spec.grantedGroup) || ses?.group || "",
-        expiry: ses?.status && ses.status.expiresAt ? new Date(ses.status.expiresAt).getTime() / 1000 : (ses?.expiry || 0),
+        expiry:
+          ses?.status && ses.status.expiresAt ? new Date(ses.status.expiresAt).getTime() / 1000 : ses?.expiry || 0,
         cluster: (ses?.spec && ses.spec.cluster) || ses?.cluster || "",
-  state: (ses?.status && ses.status.state) || "Approved",
+        state: (ses?.status && ses.status.state) || "Approved",
         // include full session object for downstream UI
         sessionActive: ses,
       }));
     } catch (e) {
-      handleAxiosError('BreakglassService.fetchActiveSessions', e, 'Failed to fetch active sessions');
+      handleAxiosError("BreakglassService.fetchActiveSessions", e, "Failed to fetch active sessions");
       return [];
     }
   }
@@ -99,21 +121,25 @@ export default class BreakglassService {
   // Fetch sessions in pending state that the current user can approve
   public async fetchPendingSessionsForApproval(): Promise<SessionCR[]> {
     try {
-      const r = await this.client.get('/breakglassSessions', { params: { state: 'pending', approver: true, mine: false } });
-      const data = Array.isArray(r.data) ? r.data as SessionCR[] : [];
+      const r = await this.client.get("/breakglassSessions", {
+        params: { state: "pending", approver: true, mine: false },
+      });
+      const data = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
       // Fetch available escalations to enrich pending sessions with approvalReason config (if any)
-  let escalations: AvailableBreakglass[] = [];
+      let escalations: AvailableBreakglass[] = [];
       try {
         escalations = await this.fetchAvailableEscalations();
-      } catch (e) {
+      } catch {
         // ignore; we can proceed without config
         escalations = [];
       }
       // Map pending sessions to include approvalReason based on cluster+grantedGroup
-  return data.map((p: SessionCR) => {
+      return data.map((p: SessionCR) => {
         const cluster = (p.spec && p.spec.cluster) || p.cluster || "";
         const group = (p.spec && p.spec.grantedGroup) || p.group || "";
-  const match = escalations.find((e: AvailableBreakglass) => e.cluster === cluster && (e.to === group || (e as any).group === group));
+        const match = escalations.find(
+          (e: AvailableBreakglass) => e.cluster === cluster && (e.to === group || (e as any).group === group),
+        );
         if (match && match.approvalReason) {
           // augment copy with approvalReason
           const out = { ...p } as SessionCR & { approvalReason?: any };
@@ -123,23 +149,47 @@ export default class BreakglassService {
         return p;
       });
     } catch (e) {
-      handleAxiosError('BreakglassService.fetchPendingSessionsForApproval', e, 'Failed to fetch pending sessions');
+      handleAxiosError("BreakglassService.fetchPendingSessionsForApproval", e, "Failed to fetch pending sessions");
       return [];
     }
   }
 
-  public async requestBreakglass(transition: Breakglass, reason?: string, duration?: number, scheduledStartTime?: string): Promise<AxiosResponse> {
+  public async searchSessions(params: SessionSearchParams = {}): Promise<SessionCR[]> {
+    try {
+      const response = await this.client.get("/breakglassSessions", {
+        params,
+      });
+      return Array.isArray(response.data) ? (response.data as SessionCR[]) : [];
+    } catch (e) {
+      handleAxiosError("BreakglassService.searchSessions", e, "Failed to search sessions");
+      return [];
+    }
+  }
+
+  public async requestBreakglass(
+    transition: Breakglass,
+    reason?: string,
+    duration?: number,
+    scheduledStartTime?: string,
+  ): Promise<AxiosResponse> {
     // Backend expects POST /api/breakglassSessions with body { cluster, user, group, reason, duration, scheduledStartTime }
     try {
       const username = await this.auth.getUserEmail(); // Derive username from auth service
       // backend expects short schema keys: cluster, user, group
-  const body: { cluster: string; group: string; user: string; reason?: string; duration?: number; scheduledStartTime?: string } = { cluster: transition.cluster, group: transition.to, user: username };
-  if (reason && reason.trim().length > 0) body.reason = reason;
-  if (duration && duration > 0) body.duration = Math.floor(duration);
-  if (scheduledStartTime) body.scheduledStartTime = scheduledStartTime;
-  return await this.client.post('/breakglassSessions', body);
+      const body: {
+        cluster: string;
+        group: string;
+        user: string;
+        reason?: string;
+        duration?: number;
+        scheduledStartTime?: string;
+      } = { cluster: transition.cluster, group: transition.to, user: username };
+      if (reason && reason.trim().length > 0) body.reason = reason;
+      if (duration && duration > 0) body.duration = Math.floor(duration);
+      if (scheduledStartTime) body.scheduledStartTime = scheduledStartTime;
+      return await this.client.post("/breakglassSessions", body);
     } catch (e) {
-      handleAxiosError('BreakglassService.requestBreakglass', e, 'Failed to request breakglass');
+      handleAxiosError("BreakglassService.requestBreakglass", e, "Failed to request breakglass");
       throw e;
     }
   }
@@ -147,9 +197,9 @@ export default class BreakglassService {
   public async validateBreakglassRequest(token: string): Promise<AxiosResponse> {
     // RESTful: GET /breakglassSessions?token=...
     try {
-      return await this.client.get('/breakglassSessions', { params: { token } });
+      return await this.client.get("/breakglassSessions", { params: { token } });
     } catch (e) {
-      handleAxiosError('BreakglassService.validateBreakglassRequest', e, 'Failed to validate breakglass request');
+      handleAxiosError("BreakglassService.validateBreakglassRequest", e, "Failed to validate breakglass request");
       throw e;
     }
   }
@@ -158,11 +208,11 @@ export default class BreakglassService {
   public async approveBreakglass(sessionName: string, reason?: string): Promise<AxiosResponse> {
     // RESTful: POST /api/breakglassSessions/:sessionName/approve
     try {
-  const body: Record<string, any> = {};
-  if (reason && reason.trim().length > 0) body.reason = reason;
-  return await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/approve`, body);
+      const body: Record<string, any> = {};
+      if (reason && reason.trim().length > 0) body.reason = reason;
+      return await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/approve`, body);
     } catch (e) {
-      handleAxiosError('BreakglassService.approveBreakglass', e, 'Failed to approve breakglass');
+      handleAxiosError("BreakglassService.approveBreakglass", e, "Failed to approve breakglass");
       throw e;
     }
   }
@@ -171,33 +221,38 @@ export default class BreakglassService {
   public async rejectBreakglass(sessionName: string, reason?: string): Promise<AxiosResponse> {
     // RESTful: POST /api/breakglassSessions/:sessionName/reject
     try {
-  const body: Record<string, any> = {};
-  if (reason && reason.trim().length > 0) body.reason = reason;
-  return await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/reject`, body);
+      const body: Record<string, any> = {};
+      if (reason && reason.trim().length > 0) body.reason = reason;
+      return await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/reject`, body);
     } catch (e) {
-      handleAxiosError('BreakglassService.rejectBreakglass', e, 'Failed to reject breakglass');
+      handleAxiosError("BreakglassService.rejectBreakglass", e, "Failed to reject breakglass");
       throw e;
     }
   }
 
   public async testButton(user_name: string, cluster_name: string): Promise<AxiosResponse> {
     try {
-      return await this.client.post('/test', { user: user_name, cluster: cluster_name });
+      return await this.client.post("/test", { user: user_name, cluster: cluster_name });
     } catch (e) {
-      handleAxiosError('BreakglassService.testButton', e, 'Test call failed');
+      handleAxiosError("BreakglassService.testButton", e, "Test call failed");
       throw e;
     }
   }
 
   public async dropBreakglass(breakglass: Breakglass): Promise<AxiosResponse> {
     // Call backend drop endpoint: POST /api/breakglassSessions/:name/drop
-  const bg: Breakglass = breakglass;
-  const name = bg.sessionActive?.metadata?.name || bg.sessionPending?.metadata?.name || bg.name || bg.sessionActive?.name || bg.sessionPending?.name;
-    if (!name) throw new Error('Missing session name for drop');
+    const bg: Breakglass = breakglass;
+    const name =
+      bg.sessionActive?.metadata?.name ||
+      bg.sessionPending?.metadata?.name ||
+      bg.name ||
+      bg.sessionActive?.name ||
+      bg.sessionPending?.name;
+    if (!name) throw new Error("Missing session name for drop");
     try {
       return await this.client.post(`/breakglassSessions/${encodeURIComponent(name)}/drop`, {});
     } catch (e) {
-      handleAxiosError('BreakglassService.dropBreakglass', e, 'Failed to drop breakglass session');
+      handleAxiosError("BreakglassService.dropBreakglass", e, "Failed to drop breakglass session");
       throw e;
     }
   }
@@ -207,7 +262,7 @@ export default class BreakglassService {
     const [rejectedResp, withdrawnResp] = await Promise.all([
       // Historical lists for "My previous sessions" should be scoped to the authenticated user
       this.client.get("/breakglassSessions", { params: { state: "rejected", mine: true, approver: false } }),
-      this.client.get("/breakglassSessions", { params: { state: "withdrawn", mine: true, approver: false } })
+      this.client.get("/breakglassSessions", { params: { state: "withdrawn", mine: true, approver: false } }),
     ]);
     const rejected = Array.isArray(rejectedResp.data) ? rejectedResp.data : [];
     const withdrawn = Array.isArray(withdrawnResp.data) ? withdrawnResp.data : [];
@@ -228,13 +283,13 @@ export default class BreakglassService {
   public async fetchMySessions(): Promise<ActiveBreakglass[]> {
     try {
       const [approvedResp, timedOutResp, historical] = await Promise.all([
-        this.client.get('/breakglassSessions', { params: { mine: true, approver: false, state: 'approved' } }),
-        this.client.get('/breakglassSessions', { params: { mine: true, approver: false, state: 'timeout' } }),
+        this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "approved" } }),
+        this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "timeout" } }),
         this.fetchHistoricalSessions(),
       ]);
       const approved = Array.isArray(approvedResp.data) ? approvedResp.data : [];
       const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
-      
+
       const normalizeSession = (ses: any) => ({
         name: ses?.metadata?.name || ses.name || "",
         group: ses?.spec?.grantedGroup || "",
@@ -245,11 +300,11 @@ export default class BreakglassService {
         spec: ses?.spec || {},
         status: ses?.status || {},
       });
-      
+
       // Normalize entries to ActiveBreakglass shape
       const approvedNormalized = approved.map(normalizeSession);
       const timedOutNormalized = timedOut.map(normalizeSession);
-      
+
       // Merge all session sources (approved + timed-out + historical) and dedupe by session name
       const combined = [...approvedNormalized, ...timedOutNormalized, ...historical];
       const seen = new Map<string, ActiveBreakglass>();
@@ -259,7 +314,7 @@ export default class BreakglassService {
       }
       return Array.from(seen.values());
     } catch (e) {
-      handleAxiosError('BreakglassService.fetchMySessions', e, 'Failed to fetch my sessions');
+      handleAxiosError("BreakglassService.fetchMySessions", e, "Failed to fetch my sessions");
       return [];
     }
   }
@@ -268,12 +323,12 @@ export default class BreakglassService {
   public async fetchSessionsIApproved(): Promise<ActiveBreakglass[]> {
     try {
       const [approvedResp, timedOutResp] = await Promise.all([
-        this.client.get('/breakglassSessions', { params: { state: 'approved', mine: false, approver: false } }),
-        this.client.get('/breakglassSessions', { params: { state: 'timeout', mine: false, approver: false } }),
+        this.client.get("/breakglassSessions", { params: { state: "approved", mine: false, approver: false } }),
+        this.client.get("/breakglassSessions", { params: { state: "timeout", mine: false, approver: false } }),
       ]);
       const approved = Array.isArray(approvedResp.data) ? approvedResp.data : [];
       const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
-      
+
       const normalizeSession = (ses: any) => ({
         name: ses?.metadata?.name || "",
         group: ses?.spec?.grantedGroup || "",
@@ -284,7 +339,7 @@ export default class BreakglassService {
         spec: ses?.spec || {},
         status: ses?.status || {},
       });
-      
+
       // Combine approved and timed-out sessions, then dedupe by session name
       const combined = [...approved.map(normalizeSession), ...timedOut.map(normalizeSession)];
       const seen = new Map<string, ActiveBreakglass>();
@@ -294,7 +349,7 @@ export default class BreakglassService {
       }
       return Array.from(seen.values());
     } catch (e) {
-      handleAxiosError('BreakglassService.fetchSessionsIApproved', e, 'Failed to fetch sessions I approved');
+      handleAxiosError("BreakglassService.fetchSessionsIApproved", e, "Failed to fetch sessions I approved");
       return [];
     }
   }
@@ -312,21 +367,27 @@ export default class BreakglassService {
       const historyMatch = historical.find((h) => h.group === av.to && h.cluster === av.cluster);
       // Ensure sessionActive is a full session object with metadata/spec for drop/withdraw
       let sessionActive = null;
-      if (match && typeof match === 'object') {
+      if (match && typeof match === "object") {
         const m: any = match;
         sessionActive = {
-          metadata: { name: m.metadata?.name || m.name || m.group || "", creationTimestamp: m.metadata?.creationTimestamp || "" },
+          metadata: {
+            name: m.metadata?.name || m.name || m.group || "",
+            creationTimestamp: m.metadata?.creationTimestamp || "",
+          },
           spec: { grantedGroup: m.spec?.grantedGroup || m.group, cluster: m.spec?.cluster || m.cluster },
-          status: { expiresAt: m.status?.expiresAt || m.expiry, state: (m.status?.state || m.state) },
+          status: { expiresAt: m.status?.expiresAt || m.expiry, state: m.status?.state || m.state },
         };
       }
       let sessionPending = null;
-      if (pendingMatch && typeof pendingMatch === 'object') {
+      if (pendingMatch && typeof pendingMatch === "object") {
         const p: any = pendingMatch;
         sessionPending = {
-          metadata: { name: p.metadata?.name || p.name || p.spec?.grantedGroup || p.group || "", creationTimestamp: p.metadata?.creationTimestamp || "" },
+          metadata: {
+            name: p.metadata?.name || p.name || p.spec?.grantedGroup || p.group || "",
+            creationTimestamp: p.metadata?.creationTimestamp || "",
+          },
           spec: { grantedGroup: p.spec?.grantedGroup || p.group, cluster: p.spec?.cluster || p.cluster },
-          status: { expiresAt: p.status?.expiresAt || p.expiry, state: (p.status?.state || p.state) },
+          status: { expiresAt: p.status?.expiresAt || p.expiry, state: p.status?.state || p.state },
         };
       }
       return {
@@ -345,13 +406,13 @@ export default class BreakglassService {
   public async withdrawMyRequest(req: SessionCR): Promise<void> {
     // Use the new RESTful withdraw endpoint
     // RESTful: POST /api/breakglassSessions/:name/withdraw
-  const sessionName = req.metadata?.name;
-    if (!sessionName) throw new Error('Missing session name');
+    const sessionName = req.metadata?.name;
+    if (!sessionName) throw new Error("Missing session name");
     try {
-  // backend withdraw endpoint requires only the session name path; additional body is optional
-  await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/withdraw`, {});
+      // backend withdraw endpoint requires only the session name path; additional body is optional
+      await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/withdraw`, {});
     } catch (e) {
-      handleAxiosError('BreakglassService.withdrawMyRequest', e, 'Failed to withdraw request');
+      handleAxiosError("BreakglassService.withdrawMyRequest", e, "Failed to withdraw request");
       throw e;
     }
   }
@@ -368,11 +429,16 @@ function parseDuration(input: string | undefined): number | undefined {
   const val = raw ? parseInt(raw, 10) : NaN;
   if (Number.isNaN(val)) return undefined;
   switch (unit) {
-    case "s": return val;
-    case "m": return val * 60;
-    case "h": return val * 3600;
-    case "d": return val * 86400;
-    default: return undefined;
+    case "s":
+      return val;
+    case "m":
+      return val * 60;
+    case "h":
+      return val * 3600;
+    case "d":
+      return val * 86400;
+    default:
+      return undefined;
   }
 }
 

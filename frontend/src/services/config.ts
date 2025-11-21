@@ -41,14 +41,23 @@ export default async function getConfig(): Promise<Config> {
   });
   if (data.oidcAuthority && data.oidcClientID) {
     console.debug("[ConfigService] Using flat config structure");
-    return { oidcAuthority: data.oidcAuthority, oidcClientID: data.oidcClientID, brandingName: data.brandingName, uiFlavour: data.uiFlavour };
+    return {
+      oidcAuthority: data.oidcAuthority,
+      oidcClientID: data.oidcClientID,
+      brandingName: data.brandingName,
+      uiFlavour: data.uiFlavour,
+    };
   }
   if (data.frontend && data.frontend.oidcAuthority && data.frontend.oidcClientID) {
     console.debug("[ConfigService] Using nested config structure");
-    return { oidcAuthority: data.frontend.oidcAuthority, oidcClientID: data.frontend.oidcClientID, brandingName: data.frontend.brandingName, uiFlavour: data.frontend.uiFlavour };
+    return {
+      oidcAuthority: data.frontend.oidcAuthority,
+      oidcClientID: data.frontend.oidcClientID,
+      brandingName: data.frontend.brandingName,
+      uiFlavour: data.frontend.uiFlavour,
+    };
   }
-  logError('ConfigService', 'Config missing OIDC fields', data);
-  console.error('[ConfigService] Config missing required OIDC fields', data);
+  logError("ConfigService", "Config missing OIDC fields", data);
+  console.error("[ConfigService] Config missing required OIDC fields", data);
   return { oidcAuthority: "", oidcClientID: "", brandingName: undefined, uiFlavour: undefined };
 }
-

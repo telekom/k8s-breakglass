@@ -6,23 +6,19 @@
  *
  * Usage:
  * ```typescript
- * const { 
- *   selectedIDP, 
- *   allowedIDPs, 
- *   isValid, 
+ * const {
+ *   selectedIDP,
+ *   allowedIDPs,
+ *   isValid,
  *   selectIDP,
- *   validateSelection 
+ *   validateSelection
  * } = useMultiIDP(escalationName);
  * ```
  */
 
 import { computed, ref, watch } from "vue";
 import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
-import {
-  getMultiIDPConfig,
-  getAllowedIDPsForEscalation,
-  isIDPAllowedForEscalation,
-} from "@/services/multiIDP";
+import { getMultiIDPConfig, getAllowedIDPsForEscalation, isIDPAllowedForEscalation } from "@/services/multiIDP";
 import { error as logError } from "@/services/logger";
 import type { Ref, ComputedRef } from "vue";
 import { onMounted } from "vue";
@@ -70,14 +66,12 @@ export interface UseMultiIDPReturn {
  */
 export function useMultiIDP(
   escalationName: string | (() => string),
-  options: UseMultiIDPOptions = {}
+  options: UseMultiIDPOptions = {},
 ): UseMultiIDPReturn {
   const { required = false, onSelectionChange } = options;
 
   // Normalize escalationName to a getter function
-  const getEscalationName = typeof escalationName === "function"
-    ? escalationName
-    : () => escalationName;
+  const getEscalationName = typeof escalationName === "function" ? escalationName : () => escalationName;
 
   // State
   const selectedIDP = ref<string | undefined>();
@@ -106,9 +100,7 @@ export function useMultiIDP(
     }
 
     if (selectedIDP.value) {
-      const isAllowed = allowedIDPs.value.some(
-        (idp) => idp.name === selectedIDP.value
-      );
+      const isAllowed = allowedIDPs.value.some((idp) => idp.name === selectedIDP.value);
       return isAllowed;
     }
 
@@ -134,11 +126,7 @@ export function useMultiIDP(
 
       if (!config.value || config.value.identityProviders.length === 0) {
         error.value = "No identity providers available";
-        logError(
-          "useMultiIDP",
-          "No IDPs in configuration",
-          config.value
-        );
+        logError("useMultiIDP", "No IDPs in configuration", config.value);
       }
     } catch (err) {
       error.value = "Failed to load identity provider configuration";
@@ -199,7 +187,7 @@ export function useMultiIDP(
         console.debug("[useMultiIDP] Current IDP selection invalid for new escalation, clearing");
         clearSelection();
       }
-    }
+    },
   );
 
   /**

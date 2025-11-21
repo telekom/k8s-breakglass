@@ -14,7 +14,12 @@ const time = useCurrentTime();
 
 type BreakglassWithSession = any; // Use 'any' for now, or define a merged type if desired
 const route = useRoute();
-const state = reactive<{ breakglasses: BreakglassWithSession[]; loading: boolean; refreshing: boolean; search: string }>({
+const state = reactive<{
+  breakglasses: BreakglassWithSession[];
+  loading: boolean;
+  refreshing: boolean;
+  search: string;
+}>({
   breakglasses: [],
   loading: true,
   refreshing: false,
@@ -47,8 +52,70 @@ async function refresh() {
   state.refreshing = false;
 }
 
+const dedupedBreakglasses = computed(() => {
+  const map = new Map<string, BreakglassWithSession>();
+
+  const collectRequesterGroups = (bg: BreakglassWithSession): string[] => {
+    const groups = new Set<string>();
+    const provided = Array.isArray((bg as any).requestingGroups) ? (bg as any).requestingGroups : [];
+    provided.filter(Boolean).forEach((g: string) => groups.add(g));
+    if (bg.from) {
+      groups.add(bg.from);
+    }
+    return Array.from(groups);
+  };
+
+  state.breakglasses.forEach((bg) => {
+    const key = `${bg.cluster || "global"}::${bg.to}`;
+    const existing = map.get(key);
+    if (!existing) {
+      const groups = collectRequesterGroups(bg);
+      const clone = {
+        ...bg,
+        requestingGroups: groups,
+      };
+      if (groups.length > 0) {
+        clone.from = groups[0];
+      }
+      map.set(key, clone);
+      return;
+    }
+
+    const mergedGroups = new Set<string>([...(existing.requestingGroups || []), ...collectRequesterGroups(bg)]);
+    existing.requestingGroups = Array.from(mergedGroups);
+    if (existing.requestingGroups.length > 0) {
+      existing.from = existing.requestingGroups[0];
+    }
+
+    if (!existing.sessionActive && bg.sessionActive) {
+      existing.sessionActive = bg.sessionActive;
+      existing.state = bg.state;
+    } else if (bg.state === "Active") {
+      existing.state = "Active";
+      existing.sessionActive = bg.sessionActive || existing.sessionActive;
+    }
+
+    if (!existing.sessionPending && bg.sessionPending) {
+      existing.sessionPending = bg.sessionPending;
+      if (!existing.state || existing.state === "Available") {
+        existing.state = "Pending";
+      }
+    }
+
+    if (
+      (!existing.approvalGroups || existing.approvalGroups.length === 0) &&
+      Array.isArray(bg.approvalGroups) &&
+      bg.approvalGroups.length > 0
+    ) {
+      existing.approvalGroups = bg.approvalGroups;
+    }
+  });
+
+  return Array.from(map.values());
+});
+
 const filteredBreakglasses = computed(() => {
-  let bgs = state.breakglasses;
+  let bgs = dedupedBreakglasses.value;
   if (state.search !== "") {
     const s = state.search.toLowerCase();
     bgs = bgs.filter((bg) => {
@@ -65,7 +132,7 @@ const filteredBreakglasses = computed(() => {
 
 async function onRequest(bg: any, reason?: string, duration?: number, scheduledStartTime?: string) {
   try {
-  const resp = await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime);
+    await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime);
     // Success path: created/ok
     pushSuccess(`Requested group '${bg.to}' for cluster '${bg.cluster}': request submitted successfully!`);
     await refresh();
@@ -75,30 +142,34 @@ async function onRequest(bg: any, reason?: string, duration?: number, scheduledS
     if (resp && resp.status === 409) {
       const data = resp.data;
       // Expecting { error: '<code>', message: '...', session: { ... } } OR legacy plain string like 'already requested'
-      if (data && typeof data === 'object') {
+      if (data && typeof data === "object") {
         const code = data.error;
         const session = data.session;
-        if (code === 'already requested') {
+        if (code === "already requested") {
           // Show informative toast linking to existing request
           if (session && session.metadata && session.metadata.name) {
-            pushError(`You already requested '${bg.to}' on '${bg.cluster}' (session ${session.metadata.name}, state=${session.status?.state || 'unknown'}).`);
+            pushError(
+              `You already requested '${bg.to}' on '${bg.cluster}' (session ${session.metadata.name}, state=${session.status?.state || "unknown"}).`,
+            );
           } else {
             pushError(`You have already requested group '${bg.to}' for cluster '${bg.cluster}'.`);
           }
-        } else if (code === 'already approved') {
+        } else if (code === "already approved") {
           if (session && session.metadata && session.metadata.name) {
-            pushError(`A session for '${bg.to}' on '${bg.cluster}' is already approved (session ${session.metadata.name}).`);
+            pushError(
+              `A session for '${bg.to}' on '${bg.cluster}' is already approved (session ${session.metadata.name}).`,
+            );
           } else {
             pushError(`A session for group '${bg.to}' on cluster '${bg.cluster}' is already approved.`);
           }
         } else {
           pushError(data.message || `Request conflict for group '${bg.to}' on cluster '${bg.cluster}'.`);
         }
-      } else if (typeof data === 'string') {
+      } else if (typeof data === "string") {
         // legacy simple string response
-        if (data === 'already requested') {
+        if (data === "already requested") {
           pushError(`You have already requested group '${bg.to}' for cluster '${bg.cluster}'.`);
-        } else if (data === 'already approved') {
+        } else if (data === "already approved") {
           pushError(`A session for group '${bg.to}' on cluster '${bg.cluster}' is already approved.`);
         } else {
           pushError(data);
@@ -107,13 +178,17 @@ async function onRequest(bg: any, reason?: string, duration?: number, scheduledS
         pushError(`Request conflict for group '${bg.to}' on cluster '${bg.cluster}'.`);
       }
       // refresh data after handling conflict to reflect current server state
-      try { await refresh(); } catch {/* noop */}
+      try {
+        await refresh();
+      } catch {
+        /* noop */
+      }
       return;
     }
 
     // Fallback for other errors
-    handleAxiosError('BreakglassView.onRequest', e, 'Failed to request breakglass');
-    pushError(e?.message || 'Failed to create request');
+    handleAxiosError("BreakglassView.onRequest", e, "Failed to request breakglass");
+    pushError(e?.message || "Failed to create request");
   }
 }
 
@@ -128,12 +203,14 @@ async function onWithdraw(bg: any) {
     pushSuccess(`Withdrawn request for group '${bg.to}' on cluster '${bg.cluster}'.`);
     await refresh();
   } catch (e: any) {
-    if (e?.response?.data && typeof e.response.data === 'object' && e.response.data.session) {
-      pushError(`Withdraw failed: ${e.response.data.message || e.message}. Session: ${JSON.stringify(e.response.data.session)}`);
+    if (e?.response?.data && typeof e.response.data === "object" && e.response.data.session) {
+      pushError(
+        `Withdraw failed: ${e.response.data.message || e.message}. Session: ${JSON.stringify(e.response.data.session)}`,
+      );
     } else {
-      pushError(e?.message || 'Failed to withdraw request');
+      pushError(e?.message || "Failed to withdraw request");
     }
-    handleAxiosError('BreakglassView.onWithdraw', e, 'Withdraw failed');
+    handleAxiosError("BreakglassView.onWithdraw", e, "Withdraw failed");
   }
 }
 
@@ -154,7 +231,7 @@ async function onDrop(bg: any) {
           label="Search"
           class="search-field"
           :value="state.search"
-          @scaleChange="(ev: any) => state.search = ev.target.value"
+          @scaleChange="(ev: any) => (state.search = ev.target.value)"
         ></scale-text-field>
         <div class="refresh">
           <scale-loading-spinner v-if="state.refreshing"></scale-loading-spinner>
@@ -164,17 +241,33 @@ async function onDrop(bg: any) {
         </div>
       </div>
       <div class="breakglass-list">
-  <BreakglassCard
-      v-for="bg in filteredBreakglasses"
-      :key="(bg.sessionActive && bg.sessionActive.metadata && bg.sessionActive.metadata.name) || (bg.sessionPending && bg.sessionPending.metadata && bg.sessionPending.metadata.name) || (bg.to + ':' + bg.cluster)"
-      class="card"
-      :breakglass="bg"
-      :time="time"
-    @request="(reason: string, duration: number, scheduledStartTime?: string) => { onRequest(bg, reason, duration, scheduledStartTime); }"
-      @drop="() => { onDrop(bg); }"
-      @withdraw="() => { onWithdraw(bg); }"
-    >
-    </BreakglassCard>
+        <BreakglassCard
+          v-for="bg in filteredBreakglasses"
+          :key="
+            (bg.sessionActive && bg.sessionActive.metadata && bg.sessionActive.metadata.name) ||
+            (bg.sessionPending && bg.sessionPending.metadata && bg.sessionPending.metadata.name) ||
+            bg.to + ':' + bg.cluster
+          "
+          class="card"
+          :breakglass="bg"
+          :time="time"
+          @request="
+            (reason: string, duration: number, scheduledStartTime?: string) => {
+              onRequest(bg, reason, duration, scheduledStartTime);
+            }
+          "
+          @drop="
+            () => {
+              onDrop(bg);
+            }
+          "
+          @withdraw="
+            () => {
+              onWithdraw(bg);
+            }
+          "
+        >
+        </BreakglassCard>
       </div>
     </div>
     <div v-else class="not-found">No requestable Breakglass groups found.</div>

@@ -25,19 +25,26 @@ onMounted(async () => {
 
 function formatDate(ts: string | number) {
   if (!ts) return "-";
-  debugLogDateTime('formatDate', typeof ts === 'string' ? ts : new Date(ts).toISOString());
-  return format24Hour(typeof ts === 'string' ? ts : new Date(ts).toISOString());
+  debugLogDateTime("formatDate", typeof ts === "string" ? ts : new Date(ts).toISOString());
+  return format24Hour(typeof ts === "string" ? ts : new Date(ts).toISOString());
 }
 
 function startedForDisplay(s: any) {
   // prefer explicit started fields from status, then metadata creation timestamp
-  return s.started || (s.status && s.status.startedAt) || s.metadata?.creationTimestamp || s.createdAt || s.creationTimestamp || null;
+  return (
+    s.started ||
+    (s.status && s.status.startedAt) ||
+    s.metadata?.creationTimestamp ||
+    s.createdAt ||
+    s.creationTimestamp ||
+    null
+  );
 }
 
 function endedForDisplay(s: any) {
   // Only show an ended timestamp when the session is not active/approved
-  const st = (s.status && s.status.state) ? s.status.state.toString().toLowerCase() : (s.state || '').toLowerCase();
-  if (st === 'approved' || st === 'active') return null;
+  const st = s.status && s.status.state ? s.status.state.toString().toLowerCase() : (s.state || "").toLowerCase();
+  if (st === "approved" || st === "active") return null;
   return s.ended || (s.status && (s.status.endedAt || s.status.expiresAt)) || s.expiry || null;
 }
 
@@ -46,21 +53,21 @@ function reasonEndedLabel(s: any): string {
   if (s.status && s.status.reason) return s.status.reason;
   if (s.reasonEnded) return s.reasonEnded;
   if (s.terminationReason) return s.terminationReason;
-  switch ((s.state || '').toLowerCase()) {
-    case 'withdrawn':
-      return 'Withdrawn by user';
-    case 'approvaltimeout':
-      return 'Approval timed out';
-    case 'rejected':
-      return 'Rejected';
-    case 'expired':
-      return 'Session expired';
-    case 'approved':
-      return 'Active';
-    case 'pending':
-      return 'Pending';
+  switch ((s.state || "").toLowerCase()) {
+    case "withdrawn":
+      return "Withdrawn by user";
+    case "approvaltimeout":
+      return "Approval timed out";
+    case "rejected":
+      return "Rejected";
+    case "expired":
+      return "Session expired";
+    case "approved":
+      return "Active";
+    case "pending":
+      return "Pending";
     default:
-      return s.state || '-';
+      return s.state || "-";
   }
 }
 </script>
@@ -86,14 +93,14 @@ function reasonEndedLabel(s: any): string {
           </div>
           <div class="header-right">
             <span :class="['status-badge', 'status-' + (s.state || '').toLowerCase()]">
-              {{ s.state || '-' }}
+              {{ s.state || "-" }}
             </span>
           </div>
         </div>
 
         <!-- User info -->
         <div class="user-info">
-          <strong>User:</strong> {{ (s.spec && (s.spec.user || s.spec.requester)) || s.user || s.requester || '-' }}
+          <strong>User:</strong> {{ (s.spec && (s.spec.user || s.spec.requester)) || s.user || s.requester || "-" }}
           <span v-if="s.spec && s.spec.identityProviderName" class="idp-info">
             | <strong>IDP:</strong> {{ s.spec.identityProviderName }}
           </span>
@@ -106,11 +113,17 @@ function reasonEndedLabel(s: any): string {
         <div class="timeline">
           <div class="timeline-item">
             <span class="timeline-label">Scheduled:</span>
-            <span class="timeline-value">{{ s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : '-' }}</span>
+            <span class="timeline-value">{{
+              s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : "-"
+            }}</span>
           </div>
           <div class="timeline-item">
             <span class="timeline-label">Started:</span>
-            <span class="timeline-value">{{ s.status && s.status.actualStartTime ? formatDate(s.status.actualStartTime) : formatDate(startedForDisplay(s)) }}</span>
+            <span class="timeline-value">{{
+              s.status && s.status.actualStartTime
+                ? formatDate(s.status.actualStartTime)
+                : formatDate(startedForDisplay(s))
+            }}</span>
           </div>
           <div class="timeline-item">
             <span class="timeline-label">Ended:</span>
@@ -131,9 +144,7 @@ function reasonEndedLabel(s: any): string {
         </div>
 
         <!-- End reason -->
-        <div v-if="reasonEndedLabel(s)" class="end-reason">
-          <strong>Ended:</strong> {{ reasonEndedLabel(s) }}
-        </div>
+        <div v-if="reasonEndedLabel(s)" class="end-reason"><strong>Ended:</strong> {{ reasonEndedLabel(s) }}</div>
       </div>
     </div>
   </main>
@@ -210,7 +221,7 @@ h2 {
   font-weight: bold;
   color: #0070b8;
   margin-bottom: 0.5rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .cluster-group {
@@ -235,7 +246,7 @@ h2 {
 }
 
 .group-tag {
-  border-left: 3px solid #4CAF50;
+  border-left: 3px solid #4caf50;
 }
 
 /* Status badge */
@@ -253,7 +264,7 @@ h2 {
 .status-active {
   background-color: #c8e6c9;
   color: #2e7d32;
-  border: 1px solid #4CAF50;
+  border: 1px solid #4caf50;
 }
 
 .status-rejected {
@@ -277,7 +288,7 @@ h2 {
 .status-pending {
   background-color: #e3f2fd;
   color: #1565c0;
-  border: 1px solid #2196F3;
+  border: 1px solid #2196f3;
 }
 
 .status-approvaltimeout {
@@ -317,7 +328,7 @@ h2 {
   gap: 0.25rem;
   color: #666;
   font-size: 0.9rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .idp-issuer strong {
@@ -352,7 +363,7 @@ h2 {
   color: #333;
   display: block;
   font-size: 0.85rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 /* Reasons section */
@@ -365,13 +376,13 @@ h2 {
 
 .reason-box {
   background-color: #f5f5f5;
-  border-left: 3px solid #2196F3;
+  border-left: 3px solid #2196f3;
   padding: 1rem;
   border-radius: 4px;
 }
 
 .reason-title {
-  color: #1976D2;
+  color: #1976d2;
   display: block;
   margin-bottom: 0.5rem;
   font-size: 0.9rem;

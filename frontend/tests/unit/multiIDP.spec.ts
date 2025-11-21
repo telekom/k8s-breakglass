@@ -26,10 +26,7 @@ interface MultiIDPConfig {
 }
 
 // Service implementations (simulated from multiIDP.ts)
-function getAllowedIDPsForEscalation(
-  escalationName: string,
-  config: MultiIDPConfig
-): IDPInfo[] {
+function getAllowedIDPsForEscalation(escalationName: string, config: MultiIDPConfig): IDPInfo[] {
   const allowedIDPNames = config.escalationIDPMapping[escalationName];
 
   // Empty array [] means all IDPs allowed (backward compatibility)
@@ -38,16 +35,10 @@ function getAllowedIDPsForEscalation(
   }
 
   // Filter to only allowed IDPs
-  return config.identityProviders.filter((idp) =>
-    allowedIDPNames.includes(idp.name)
-  );
+  return config.identityProviders.filter((idp) => allowedIDPNames.includes(idp.name));
 }
 
-function isIDPAllowedForEscalation(
-  idpName: string,
-  escalationName: string,
-  config: MultiIDPConfig
-): boolean {
+function isIDPAllowedForEscalation(idpName: string, escalationName: string, config: MultiIDPConfig): boolean {
   const allowedIDPNames = config.escalationIDPMapping[escalationName];
 
   // Empty array [] means all IDPs allowed
@@ -162,11 +153,7 @@ describe("Frontend Multi-IDP: Multi-IDP Configuration Service Functions", () => 
     });
 
     it("should allow any IDP for unknown escalation (backward compat)", () => {
-      const allowed = isIDPAllowedForEscalation(
-        "idp1",
-        "unknown-escalation",
-        config
-      );
+      const allowed = isIDPAllowedForEscalation("idp1", "unknown-escalation", config);
 
       expect(allowed).toBe(true);
     });
@@ -198,19 +185,12 @@ describe("Frontend Multi-IDP: Multi-IDP Configuration Service Functions", () => 
       };
 
       // Should treat empty mapping as all allowed
-      const prodIDPs = getAllowedIDPsForEscalation(
-        "prod-admin",
-        singleIDPConfig
-      );
+      const prodIDPs = getAllowedIDPsForEscalation("prod-admin", singleIDPConfig);
       expect(prodIDPs).toHaveLength(1);
       expect(prodIDPs[0]!.name).toBe("default-idp");
 
       // Should allow any selection in single-IDP mode
-      const allowed = isIDPAllowedForEscalation(
-        "default-idp",
-        "prod-admin",
-        singleIDPConfig
-      );
+      const allowed = isIDPAllowedForEscalation("default-idp", "prod-admin", singleIDPConfig);
       expect(allowed).toBe(true);
     });
 
@@ -240,11 +220,7 @@ describe("Frontend Multi-IDP: Multi-IDP Configuration Service Functions", () => 
       expect(allowed).toHaveLength(2);
 
       // Disabled IDPs should still be allowed (backend enforces the real policy)
-      const enabledAllowed = isIDPAllowedForEscalation(
-        "disabled-idp",
-        "prod-admin",
-        mixedConfig
-      );
+      const enabledAllowed = isIDPAllowedForEscalation("disabled-idp", "prod-admin", mixedConfig);
       expect(enabledAllowed).toBe(true);
     });
 
@@ -260,7 +236,7 @@ describe("Frontend Multi-IDP: Multi-IDP Configuration Service Functions", () => 
           Array.from({ length: 20 }, (_, i) => [
             `escalation-${i}`,
             Array.from({ length: 3 }, (_, j) => `idp-${(i * 2 + j) % 50}`),
-          ])
+          ]),
         ),
       };
 
@@ -269,11 +245,7 @@ describe("Frontend Multi-IDP: Multi-IDP Configuration Service Functions", () => 
       expect(allowed.length).toBeGreaterThan(0);
 
       // Validation should work
-      const isAllowed = isIDPAllowedForEscalation(
-        "idp-0",
-        "escalation-0",
-        largeConfig
-      );
+      const isAllowed = isIDPAllowedForEscalation("idp-0", "escalation-0", largeConfig);
       expect(typeof isAllowed).toBe("boolean");
     });
 
@@ -470,11 +442,7 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
       const escalation = "api-admin";
 
       // Component should validate before allowing form submission
-      const isValid = isIDPAllowedForEscalation(
-        selectedIDP,
-        escalation,
-        config
-      );
+      const isValid = isIDPAllowedForEscalation(selectedIDP, escalation, config);
 
       if (!isValid) {
         // Should show error to user
@@ -508,17 +476,11 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
 
       // User selected idp1 for prod escalation
       let currentSelection = "idp1";
-      let currentEscalation: string;
-
       // User changes escalation to dev
-      currentEscalation = "dev";
+      const currentEscalation = "dev";
 
       // Check if current selection is still valid
-      const stillValid = isIDPAllowedForEscalation(
-        currentSelection,
-        currentEscalation,
-        config
-      );
+      const stillValid = isIDPAllowedForEscalation(currentSelection, currentEscalation, config);
 
       // Should be invalid - idp1 not allowed for dev
       expect(stillValid).toBe(false);
@@ -554,18 +516,12 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
       };
 
       // User selected idp1 for prod
-      let currentSelection = "idp1";
-      let currentEscalation: string;
-
+      const currentSelection = "idp1";
       // User changes to dev
-      currentEscalation = "dev";
+      const currentEscalation = "dev";
 
       // Check if selection still valid
-      const stillValid = isIDPAllowedForEscalation(
-        currentSelection,
-        currentEscalation,
-        config
-      );
+      const stillValid = isIDPAllowedForEscalation(currentSelection, currentEscalation, config);
 
       // Should be valid - idp1 allowed for both
       expect(stillValid).toBe(true);
@@ -669,10 +625,7 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
       };
 
       // Escalation not in mapping - should default to all
-      const allowed = getAllowedIDPsForEscalation(
-        "unmapped-escalation",
-        config
-      );
+      const allowed = getAllowedIDPsForEscalation("unmapped-escalation", config);
 
       expect(allowed).toHaveLength(1);
     });
@@ -718,24 +671,15 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
       const allowed = getAllowedIDPsForEscalation("cloud-admin", config);
       expect(allowed).toHaveLength(2);
 
-      const valid1 = isIDPAllowedForEscalation(
-        "azure-ad-v2.0",
-        "cloud-admin",
-        config
-      );
-      const valid2 = isIDPAllowedForEscalation(
-        "okta_prod",
-        "cloud-admin",
-        config
-      );
+      const valid1 = isIDPAllowedForEscalation("azure-ad-v2.0", "cloud-admin", config);
+      const valid2 = isIDPAllowedForEscalation("okta_prod", "cloud-admin", config);
 
       expect(valid1).toBe(true);
       expect(valid2).toBe(true);
     });
 
     it("should handle very long escalation names", () => {
-      const longEscalationName =
-        "production-kubernetes-cluster-admin-with-full-privileges-and-audit-logging";
+      const longEscalationName = "production-kubernetes-cluster-admin-with-full-privileges-and-audit-logging";
       const config: MultiIDPConfig = {
         identityProviders: [
           {
@@ -768,7 +712,7 @@ describe("Frontend Multi-IDP: IDP Selector Component Logic", () => {
           },
         ],
         escalationIDPMapping: {
-          "prod": ["IDP-1"],
+          prod: ["IDP-1"],
         },
       };
 

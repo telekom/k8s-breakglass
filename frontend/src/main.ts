@@ -16,10 +16,10 @@ import { BrandingKey } from "@/keys";
 async function initializeApp() {
   // Fetch configuration from backend, which includes runtime-configurable UI flavour
   const config = await getConfig();
-  
+
   // Determine flavour from backend config or fall back to default
   const flavour = config.uiFlavour || "oss";
-  
+
   // Configure favicon based on flavour
   try {
     const fav = document.getElementById("app-favicon") as HTMLLinkElement | null;
@@ -52,17 +52,15 @@ async function initializeApp() {
       faviconLink.href = faviconLink.href.replace(/\/$/, "");
     }
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.warn("[favicon] swap failed", e);
   }
 
   // Expose flavour for e2e/UI tests & theming hooks
   try {
     (window as any).__BREAKGLASS_UI_FLAVOUR = flavour;
-    document.documentElement.setAttribute('data-ui-flavour', flavour);
+    document.documentElement.setAttribute("data-ui-flavour", flavour);
   } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn('[ui-flavour] expose failed', e);
+    console.warn("[ui-flavour] expose failed", e);
   }
 
   // Load appropriate Scale components based on runtime flavour
@@ -117,8 +115,8 @@ async function initializeApp() {
       }
     } catch (error) {
       // Log and surface a friendly message
-      // eslint-disable-next-line no-console
-      console.error('[AuthCallback]', error);
+
+      console.error("[AuthCallback]", error);
     }
   }
 
@@ -127,11 +125,11 @@ async function initializeApp() {
 
 // Bootstrap the application
 initializeApp().catch((error) => {
-  // eslint-disable-next-line no-console
-  console.error('[AppInitialization]', error);
+  console.error("[AppInitialization]", error);
   // Show error message to user if initialization fails
   const app = document.getElementById("app");
   if (app) {
-    app.innerHTML = '<div style="padding: 20px; color: red; font-family: monospace;">Failed to initialize application. Please check the console for details.</div>';
+    app.innerHTML =
+      '<div style="padding: 20px; color: red; font-family: monospace;">Failed to initialize application. Please check the console for details.</div>';
   }
 });
