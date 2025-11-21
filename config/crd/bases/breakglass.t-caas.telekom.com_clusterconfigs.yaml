@@ -202,11 +202,11 @@ spec:
         type: object
         x-kubernetes-validations:
         - message: kubeconfigSecretRef.name must not be empty
-          rule: has(self.spec.kubeconfigSecretRef.name) && self.spec.kubeconfigSecretRef.name
-            != ”
+          rule: 'has(self.spec.kubeconfigSecretRef.name) ? self.spec.kubeconfigSecretRef.name.size()
+            > 0 : true'
         - message: kubeconfigSecretRef.namespace must not be empty
-          rule: has(self.spec.kubeconfigSecretRef.namespace) && self.spec.kubeconfigSecretRef.namespace
-            != ”
+          rule: 'has(self.spec.kubeconfigSecretRef.namespace) ? self.spec.kubeconfigSecretRef.namespace.size()
+            > 0 : true'
     served: true
     storage: true
     subresources:
