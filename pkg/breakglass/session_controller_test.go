@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2153,6 +2154,16 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "b@ex.com", GrantedGroup: "g"},
 		Status:     v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-time.Minute)), ExpiresAt: metav1.NewTime(now.Add(time.Hour))},
 	}
+	waiting := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "st-waiting"},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:            "st-cl",
+			User:               "g@ex.com",
+			GrantedGroup:       "g",
+			ScheduledStartTime: &metav1.Time{Time: now.Add(time.Hour)},
+		},
+		Status: v1alpha1.BreakglassSessionStatus{State: v1alpha1.SessionStateWaitingForScheduledTime},
+	}
 	rejected := &v1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-rejected"},
 		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "c@ex.com", GrantedGroup: "g"},
@@ -2178,7 +2189,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
 	}
-	builder.WithObjects(pending, approved, rejected, withdrawn, expired, timeout)
+	builder.WithObjects(pending, approved, waiting, rejected, withdrawn, expired, timeout)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := EscalationManager{Client: cli}
@@ -2193,6 +2204,9 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		case "approved":
 			c.Set("email", "b@ex.com")
 			c.Set("username", "b")
+		case "active":
+			c.Set("email", "b@ex.com")
+			c.Set("username", "b")
 		case "rejected":
 			c.Set("email", "c@ex.com")
 			c.Set("username", "c")
@@ -2205,6 +2219,9 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		case "timeout":
 			c.Set("email", "f@ex.com")
 			c.Set("username", "f")
+		case "waiting", "waitingforscheduledtime":
+			c.Set("email", "g@ex.com")
+			c.Set("username", "g")
 		default:
 			c.Set("email", "approver@ex.com")
 			c.Set("username", "approver")
@@ -2238,6 +2255,8 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	tests := map[string]string{
 		"pending":   "st-pending",
 		"approved":  "st-approved",
+		"active":    "st-approved",
+		"waiting":   "st-waiting",
 		"rejected":  "st-rejected",
 		"withdrawn": "st-withdrawn",
 		"expired":   "st-expired",
@@ -2247,6 +2266,153 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		got := queryByState(st)
 		if len(got) != 1 || got[0].Name != expectedName {
 			t.Fatalf("Expected one session named %s for state %s, got: %#v", expectedName, st, got)
+		}
+	}
+}
+
+func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
+	viewer := "viewer@example.com"
+	makeSession := func(name string, state v1alpha1.BreakglassSessionState) *v1alpha1.BreakglassSession {
+		return &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "multi", User: viewer, GrantedGroup: "g"},
+			Status:     v1alpha1.BreakglassSessionStatus{State: state},
+		}
+	}
+	pending := makeSession("multi-pending", v1alpha1.SessionStatePending)
+	approved := makeSession("multi-approved", v1alpha1.SessionStateApproved)
+	rejected := makeSession("multi-rejected", v1alpha1.SessionStateRejected)
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(pending, approved, rejected).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("email", viewer)
+		c.Set("username", "viewer")
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	assertStates := func(t *testing.T, query string, want []string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", query, nil)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+		res := w.Result()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+		var sessions []v1alpha1.BreakglassSession
+		if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(sessions) != len(want) {
+			t.Fatalf("expected %d sessions, got %d: %#v", len(want), len(sessions), sessions)
+		}
+		received := make([]string, len(sessions))
+		for i, s := range sessions {
+			received[i] = s.Name
+		}
+		slices.Sort(received)
+		slices.Sort(want)
+		for i := range want {
+			if received[i] != want[i] {
+				t.Fatalf("expected sessions %v, got %v", want, received)
+			}
+		}
+	}
+
+	assertStates(t, "/breakglassSessions?state=pending&state=approved&mine=true", []string{"multi-pending", "multi-approved"})
+	assertStates(t, "/breakglassSessions?state=pending,approved&mine=true", []string{"multi-pending", "multi-approved"})
+}
+
+func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
+	approver := "approver@example.com"
+	sessApproved := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-now"},
+		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner1@example.com", GrantedGroup: "g1"},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State:     v1alpha1.SessionStateApproved,
+			Approver:  approver,
+			Approvers: []string{approver},
+		},
+	}
+	sessWithdrawn := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-in-past"},
+		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner2@example.com", GrantedGroup: "g2"},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State:     v1alpha1.SessionStateWithdrawn,
+			Approvers: []string{approver},
+		},
+	}
+	sessNotMine := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "not-approved-by-me"},
+		Spec:       v1alpha1.BreakglassSessionSpec{Cluster: "c", User: "owner3@example.com", GrantedGroup: "g3"},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State:     v1alpha1.SessionStateApproved,
+			Approvers: []string{"someoneelse@example.com"},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(sessApproved, sessWithdrawn, sessNotMine).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctxSetup := func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		c.Set("email", approver)
+		c.Set("username", "approver")
+		c.Next()
+	}
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, _ := http.NewRequest("GET", "/breakglassSessions?mine=false&approver=false&approvedByMe=true", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	var sessions []v1alpha1.BreakglassSession
+	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected two sessions approved by me, got %#v", sessions)
+	}
+	returned := []string{sessions[0].Name, sessions[1].Name}
+	want := []string{"approved-now", "approved-in-past"}
+	slices.Sort(returned)
+	slices.Sort(want)
+	for i, name := range want {
+		if returned[i] != name {
+			t.Fatalf("expected %v, got %v", want, returned)
 		}
 	}
 }

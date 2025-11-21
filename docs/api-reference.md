@@ -79,7 +79,8 @@ A session is considered valid for access ONLY if:
 4. **Not expired** - `expiresAt` timestamp must be in the future
 
 **Pseudocode:**
-```
+
+```go
 isSessionValid(session) {
     // Terminal states override everything
     if (session.state in [Rejected, Withdrawn, Expired, ApprovalTimeout]) {
@@ -126,7 +127,7 @@ The API provides endpoints for managing breakglass sessions.
 Query sessions with server-side filtering.
 
 ```http
-GET /api/breakglass/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>
+GET /api/breakglass/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>
 Authorization: Bearer <token>
 ```
 
@@ -139,9 +140,10 @@ Authorization: Bearer <token>
 | `cluster` | string | Filter by cluster name |
 | `user` | string | Filter by user |
 | `group` | string | Filter by granted group |
-| `mine` | boolean | Own sessions only (default: true) |
-| `approver` | boolean | Sessions user can approve |
-| `state` | string | `pending`, `approved`, `rejected`, `expired`, `timeout`, `withdrawn` |
+| `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions) |
+| `approver` | boolean | Sessions user can approve (default: `true`) |
+| `approvedByMe` | boolean | Sessions the user has already approved |
+| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`. |
 
 **Response:** Array of `BreakglassSession` resources filtered by query parameters:
 
@@ -188,6 +190,10 @@ curl -H "Authorization: Bearer <token>" \
 # Sessions you can approve
 curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/breakglass/breakglassSessions?approver=true"
+
+# Sessions you have approved that are still active or timed out
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglass/breakglassSessions?approvedByMe=true&state=approved,timeout"
 ```
 
 ### Request Session
@@ -479,7 +485,8 @@ Authorization: Bearer <token>
 
 **Status Code:** `200 OK`
 
-**Authorization:** 
+**Authorization:**
+
 - **Requester**: Can drop pending requests
 - **Owner**: Can drop active sessions
 

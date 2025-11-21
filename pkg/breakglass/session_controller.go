@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1139,11 +1140,15 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		return
 	}
 
-	// Filtering logic
-	mine := c.Query("mine") == "true"
-	state := c.Query("state")
+	// Ownership filters
+	includeMine := parseBoolQuery(c.Query("mine"), false)
+	includeApprover := parseBoolQuery(c.Query("approver"), true)
+	includeApprovedByMe := parseBoolQuery(c.Query("approvedByMe"), false)
+	stateFilters := normalizeStateFilters(c)
+	statePredicates := buildStateFilterPredicates(stateFilters)
+
 	var userEmail string
-	if mine {
+	if includeMine || includeApprovedByMe {
 		userEmail, err = wc.identityProvider.GetEmail(c)
 		if err != nil {
 			reqLog.Error("Error getting user identity email", zap.Error(err))
@@ -1154,55 +1159,46 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 
 	filtered := make([]v1alpha1.BreakglassSession, 0, len(sessions))
 	for _, ses := range sessions {
-		// Only show sessions that belong to the user (mine) or that the user can approve
-		isMine := false
-		if userEmail != "" && ses.Spec.User == userEmail {
-			isMine = true
+		isMine := userEmail != "" && ses.Spec.User == userEmail
+		var isApprover bool
+		if includeApprover {
+			isApprover = wc.isSessionApprover(c, ses)
 		}
-		isApprover := wc.isSessionApprover(c, ses)
-		if !isMine && !isApprover {
-			continue
+		hasApproved := false
+		if includeApprovedByMe {
+			hasApproved = userHasApprovedSession(ses, userEmail)
 		}
-		if mine && !isMine {
+
+		include := false
+		if includeMine && isMine {
+			include = true
+		}
+		if includeApprover && isApprover {
+			include = true
+		}
+		if includeApprovedByMe && hasApproved {
+			include = true
+		}
+		if !(includeMine || includeApprover || includeApprovedByMe) {
+			include = isMine || isApprover || hasApproved
+		}
+		if !include {
 			continue
 		}
 
-		// STATE-FIRST FILTERING: Check state field before any timestamps
-		// Only filter by state if explicitly requested (state != "")
-		if state != "" {
-			switch state {
-			case "pending":
-				// Only include sessions in Pending state
-				if ses.Status.State != v1alpha1.SessionStatePending {
-					continue
-				}
-			case "approved":
-				// Only include sessions in Approved state
-				if ses.Status.State != v1alpha1.SessionStateApproved {
-					continue
-				}
-			case "rejected":
-				// Only include sessions in Rejected state
-				if !IsSessionRejected(ses) {
-					continue
-				}
-			case "withdrawn":
-				// Only include sessions in Withdrawn state
-				if !IsSessionWithdrawn(ses) {
-					continue
-				}
-			case "expired":
-				// Only include sessions in Expired state
-				if ses.Status.State != v1alpha1.SessionStateExpired {
-					continue
-				}
-			case "timeout", "approvaltimeout":
-				// Only include sessions in ApprovalTimeout state
-				if ses.Status.State != v1alpha1.SessionStateTimeout {
-					continue
+		if len(statePredicates) > 0 {
+			matched := false
+			for _, predicate := range statePredicates {
+				if predicate(ses) {
+					matched = true
+					break
 				}
 			}
+			if !matched {
+				continue
+			}
 		}
+
 		filtered = append(filtered, ses)
 	}
 
@@ -2488,4 +2484,109 @@ func dropK8sInternalFieldsSessionList(list []v1alpha1.BreakglassSession) []v1alp
 		dropK8sInternalFieldsSession(&list[i])
 	}
 	return list
+}
+
+type sessionStatePredicate func(v1alpha1.BreakglassSession) bool
+
+func parseBoolQuery(value string, defaultVal bool) bool {
+	if value == "" {
+		return defaultVal
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return defaultVal
+	}
+	return parsed
+}
+
+func normalizeStateFilters(c *gin.Context) []string {
+	rawValues := c.QueryArray("state")
+	if len(rawValues) == 0 {
+		if single := c.Query("state"); single != "" {
+			rawValues = append(rawValues, single)
+		}
+	}
+	normalized := make([]string, 0, len(rawValues))
+	for _, value := range rawValues {
+		parts := strings.Split(value, ",")
+		for _, part := range parts {
+			token := normalizeStateToken(part)
+			if token != "" {
+				normalized = append(normalized, token)
+			}
+		}
+	}
+	return normalized
+}
+
+func normalizeStateToken(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer("-", "", "_", "")
+	return replacer.Replace(trimmed)
+}
+
+func buildStateFilterPredicates(tokens []string) []sessionStatePredicate {
+	if len(tokens) == 0 {
+		return nil
+	}
+	predicates := make([]sessionStatePredicate, 0, len(tokens))
+	for _, token := range tokens {
+		switch token {
+		case "all":
+			return nil
+		case "pending":
+			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+				return session.Status.State == v1alpha1.SessionStatePending
+			})
+		case "approved":
+			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+				return session.Status.State == v1alpha1.SessionStateApproved
+			})
+		case "rejected":
+			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+				return IsSessionRejected(session)
+			})
+		case "withdrawn":
+			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+				return IsSessionWithdrawn(session)
+			})
+		case "expired":
+			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+				return IsSessionExpired(session)
+			})
+		case "timeout", "approvaltimeout":
+			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+				return session.Status.State == v1alpha1.SessionStateTimeout
+			})
+		case "active":
+			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+				return IsSessionActive(session)
+			})
+		case "waitingforscheduledtime", "waiting", "scheduled":
+			predicates = append(predicates, func(session v1alpha1.BreakglassSession) bool {
+				return session.Status.State == v1alpha1.SessionStateWaitingForScheduledTime
+			})
+		default:
+			continue
+		}
+	}
+	return predicates
+}
+
+func userHasApprovedSession(session v1alpha1.BreakglassSession, email string) bool {
+	if email == "" {
+		return false
+	}
+	if strings.EqualFold(session.Status.Approver, email) {
+		return true
+	}
+	for _, approver := range session.Status.Approvers {
+		if strings.EqualFold(approver, email) {
+			return true
+		}
+	}
+	return false
 }
