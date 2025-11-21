@@ -368,7 +368,7 @@ Authorization: Bearer <token>
 ### Query Sessions
 
 ```bash
-GET /api/breakglass/status?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>
+GET /api/breakglass/status?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>
 Authorization: Bearer <token>
 ```
 
@@ -377,9 +377,10 @@ Supported query parameters:
 - `cluster` - Filter by cluster name
 - `user` - Filter by user
 - `group` - Filter by granted group
-- `mine` - Show only own sessions (default: true)
-- `approver` - Show sessions user can approve
-- `state` - Filter by state: `pending`, `approved`, `rejected`, `expired`, `timeout`
+- `mine` - Show only own sessions (default: `false`; set `true` to include requester-owned sessions)
+- `approver` - Show sessions the user can approve (default: `true`)
+- `approvedByMe` - Sessions already approved by the user (works with any state)
+- `state` - Filter by state. Accepts single values, comma-separated lists, or repeated parameters. Tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`.
 
 ### Approve/Reject Sessions
 

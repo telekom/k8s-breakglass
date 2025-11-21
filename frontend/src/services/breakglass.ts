@@ -7,6 +7,7 @@ import type { ActiveBreakglass, AvailableBreakglass, Breakglass, SessionCR } fro
 export type SessionSearchParams = {
   mine?: boolean;
   approver?: boolean;
+  approvedByMe?: boolean;
   state?: string;
   cluster?: string;
   user?: string;
@@ -258,15 +259,10 @@ export default class BreakglassService {
   }
 
   public async fetchHistoricalSessions(): Promise<ActiveBreakglass[]> {
-    // Fetch both rejected and withdrawn sessions
-    const [rejectedResp, withdrawnResp] = await Promise.all([
-      // Historical lists for "My previous sessions" should be scoped to the authenticated user
-      this.client.get("/breakglassSessions", { params: { state: "rejected", mine: true, approver: false } }),
-      this.client.get("/breakglassSessions", { params: { state: "withdrawn", mine: true, approver: false } }),
-    ]);
-    const rejected = Array.isArray(rejectedResp.data) ? rejectedResp.data : [];
-    const withdrawn = Array.isArray(withdrawnResp.data) ? withdrawnResp.data : [];
-    const all = [...rejected, ...withdrawn];
+    const response = await this.client.get("/breakglassSessions", {
+      params: { state: "rejected,withdrawn", mine: true, approver: false },
+    });
+    const all = Array.isArray(response.data) ? response.data : [];
     return all.map((ses: any) => ({
       name: ses?.metadata?.name || "",
       group: ses?.spec?.grantedGroup || "",
@@ -282,12 +278,12 @@ export default class BreakglassService {
   // Fetch sessions belonging to the current user (approved + expired/timed-out + historical)
   public async fetchMySessions(): Promise<ActiveBreakglass[]> {
     try {
-      const [approvedResp, timedOutResp, historical] = await Promise.all([
+      const [activeResp, timedOutResp, historical] = await Promise.all([
         this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "approved" } }),
         this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "timeout" } }),
         this.fetchHistoricalSessions(),
       ]);
-      const approved = Array.isArray(approvedResp.data) ? approvedResp.data : [];
+      const approved = Array.isArray(activeResp.data) ? activeResp.data : [];
       const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
 
       const normalizeSession = (ses: any) => ({
@@ -322,12 +318,10 @@ export default class BreakglassService {
   // Fetch sessions that the current user approved (includes approved + timed-out sessions)
   public async fetchSessionsIApproved(): Promise<ActiveBreakglass[]> {
     try {
-      const [approvedResp, timedOutResp] = await Promise.all([
-        this.client.get("/breakglassSessions", { params: { state: "approved", mine: false, approver: false } }),
-        this.client.get("/breakglassSessions", { params: { state: "timeout", mine: false, approver: false } }),
-      ]);
-      const approved = Array.isArray(approvedResp.data) ? approvedResp.data : [];
-      const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
+      const response = await this.client.get("/breakglassSessions", {
+        params: { state: "approved,timeout", mine: false, approver: false, approvedByMe: true },
+      });
+      const data = Array.isArray(response.data) ? response.data : [];
 
       const normalizeSession = (ses: any) => ({
         name: ses?.metadata?.name || "",
@@ -340,8 +334,7 @@ export default class BreakglassService {
         status: ses?.status || {},
       });
 
-      // Combine approved and timed-out sessions, then dedupe by session name
-      const combined = [...approved.map(normalizeSession), ...timedOut.map(normalizeSession)];
+      const combined = data.map(normalizeSession);
       const seen = new Map<string, ActiveBreakglass>();
       for (const s of combined) {
         const key = s?.name || `${s.group}-${s.cluster}-${s.expiry}`;

@@ -15,8 +15,10 @@ if (!auth) {
 const breakglassService = new BreakglassService(auth);
 const user = useUser();
 const currentUserEmail = computed(() => {
-  const profile = user.value as { email?: string; preferred_username?: string } | null;
-  return profile?.email || profile?.preferred_username || "";
+  const profile = (user.value as { profile?: { email?: string; preferred_username?: string }; email?: string; preferred_username?: string } | null)?.profile;
+  const directEmail = (user.value as { email?: string; preferred_username?: string } | null)?.email;
+  const directPreferred = (user.value as { email?: string; preferred_username?: string } | null)?.preferred_username;
+  return profile?.email || profile?.preferred_username || directEmail || directPreferred || "";
 });
 
 type FilterState = {
@@ -123,6 +125,7 @@ function buildParams(state?: string): SessionSearchParams {
   const params: SessionSearchParams = {};
   if (filters.mine) params.mine = true;
   if (filters.approver) params.approver = true;
+  if (filters.onlyApprovedByMe) params.approvedByMe = true;
   if (state) params.state = state;
   if (filters.cluster.trim()) params.cluster = filters.cluster.trim();
   if (filters.group.trim()) params.group = filters.group.trim();
@@ -135,6 +138,7 @@ function describeQuery(statesQueried: (string | undefined)[]): string {
   const parts: string[] = [];
   if (filters.mine) parts.push("mine=true");
   if (filters.approver) parts.push("approver=true");
+  if (filters.onlyApprovedByMe) parts.push("approvedByMe=true");
   if (filters.cluster.trim()) parts.push(`cluster=${filters.cluster.trim()}`);
   if (filters.group.trim()) parts.push(`group=${filters.group.trim()}`);
   if (filters.user.trim()) parts.push(`user=${filters.user.trim()}`);
@@ -706,6 +710,105 @@ header p {
   font-size: 0.9rem;
 }
 
+
+@media (prefers-color-scheme: dark) {
+  .session-browser {
+    color: #f4f6fb;
+    --session-surface: #141827;
+    --session-border: rgba(255, 255, 255, 0.12);
+    --session-muted: rgba(255, 255, 255, 0.65);
+    --session-tag-bg: rgba(255, 255, 255, 0.08);
+    --session-tag-text: #fefefe;
+    --session-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+  }
+
+  .filters-card,
+  .results-card,
+  .session-card {
+    background: var(--session-surface);
+    border-color: var(--session-border);
+    box-shadow: var(--session-shadow);
+  }
+
+  .preset-btn {
+    background: #1f253a;
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #f4f6fb;
+  }
+
+  .preset-btn small {
+    color: var(--session-muted);
+  }
+
+  .preset-btn.active {
+    border-color: #ff4f9a;
+    box-shadow: 0 0 0 2px rgba(255, 79, 154, 0.35);
+  }
+
+  .filter-flag,
+  .text-filters label,
+  .session-name,
+  .actors,
+  .cluster-tag,
+  .group-tag,
+  .filters-meta,
+  .hint,
+  .error,
+  .empty {
+    color: #f4f6fb;
+  }
+
+  .text-filters input {
+    background: #0f1422;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #f4f6fb;
+  }
+
+  .state-pill {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #fefefe;
+  }
+
+  .cluster-tag,
+  .group-tag {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .group-tag {
+    background: rgba(34, 197, 94, 0.2);
+    color: #c2ffd8;
+  }
+
+  .status-badge {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+  }
+
+  .timeline {
+    border-color: var(--session-border);
+  }
+
+  .timeline .label {
+    color: var(--session-muted);
+  }
+
+  .reason-box {
+    background: rgba(255, 255, 255, 0.08);
+    border-left-color: #7db4ff;
+    color: #f4f6fb;
+  }
+
+  .end-reason {
+    background: rgba(255, 92, 139, 0.12);
+    border-left-color: #ff5c8b;
+    color: #ffe0ea;
+  }
+
+  .section-label {
+    color: var(--session-muted);
+  }
+}
 .error {
   color: #c62828;
 }
