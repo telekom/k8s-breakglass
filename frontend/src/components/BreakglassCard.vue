@@ -40,6 +40,8 @@ const showRequestModal = ref(false);
 const scheduledStartTime = ref<string | null>(null);
 const showScheduleOptions = ref(false);
 const showDurationHints = ref(false);
+const scheduleDateLocal = ref("");
+const scheduleTimeLocal = ref("");
 
 function closeRequestModal() {
   showRequestModal.value = false;
@@ -49,6 +51,8 @@ function closeRequestModal() {
   scheduledStartTime.value = null;
   showScheduleOptions.value = false;
   showDurationHints.value = false;
+  scheduleDateLocal.value = "";
+  scheduleTimeLocal.value = "";
 }
 
 // Clear reason when breakglass changes
@@ -61,6 +65,8 @@ watch(
     scheduledStartTime.value = null;
     showScheduleOptions.value = false;
     showDurationHints.value = false;
+    scheduleDateLocal.value = "";
+    scheduleTimeLocal.value = "";
   },
 );
 
@@ -125,6 +131,103 @@ const minDateTime = computed(() => {
   now.setMinutes(now.getMinutes() + 5);
   return now.toISOString().slice(0, 16);
 });
+
+const minScheduleDate = computed(() => minDateTime.value.split("T")[0] || "");
+const minScheduleTime = computed(() => minDateTime.value.split("T")[1] || "00:00");
+
+const minDateTimeAsDate = computed(() => {
+  const [datePart, timePart] = minDateTime.value.split("T");
+  if (!datePart || !timePart) return null;
+  const datePieces = datePart.split("-");
+  const timePieces = timePart.split(":");
+  if (datePieces.length !== 3 || timePieces.length < 2) return null;
+  const [yearStr, monthStr, dayStr] = datePieces;
+  const [hourStr, minuteStr] = timePieces;
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  const hours = Number(hourStr);
+  const minutes = Number(minuteStr);
+  if ([year, month, day, hours, minutes].some((n) => Number.isNaN(n))) return null;
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+});
+
+const earliestSchedulePreview = computed(() => {
+  if (!minDateTimeAsDate.value) return "";
+  return format24HourWithTZ(minDateTimeAsDate.value.toISOString());
+});
+
+const minTimeForSelectedDate = computed(() => {
+  if (!scheduleDateLocal.value || !minScheduleDate.value) return "";
+  if (scheduleDateLocal.value !== minScheduleDate.value) return "";
+  return minScheduleTime.value;
+});
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatLocalTime(date: Date): string {
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+watch(
+  () => scheduledStartTime.value,
+  (next) => {
+    if (!next) {
+      scheduleDateLocal.value = "";
+      scheduleTimeLocal.value = "";
+      return;
+    }
+    const dt = new Date(next);
+    scheduleDateLocal.value = formatLocalDate(dt);
+    scheduleTimeLocal.value = formatLocalTime(dt);
+  },
+  { immediate: true },
+);
+
+function updateScheduledFromInputs() {
+  if (!scheduleDateLocal.value && !scheduleTimeLocal.value) {
+    scheduledStartTime.value = null;
+    return;
+  }
+
+  if (!scheduleDateLocal.value || !scheduleTimeLocal.value) {
+    return;
+  }
+
+  const dateParts = scheduleDateLocal.value.split("-");
+  const timeParts = scheduleTimeLocal.value.split(":");
+  if (dateParts.length !== 3 || timeParts.length < 2) {
+    return;
+  }
+
+  const [yearStr, monthStr, dayStr] = dateParts;
+  const [hourStr, minuteStr] = timeParts;
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  const hours = Number(hourStr);
+  const minutes = Number(minuteStr);
+  if ([year, month, day, hours, minutes].some((n) => Number.isNaN(n))) {
+    return;
+  }
+
+  const dt = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  if (minDateTimeAsDate.value && dt.getTime() < minDateTimeAsDate.value.getTime()) {
+    scheduleDateLocal.value = formatLocalDate(minDateTimeAsDate.value);
+    scheduleTimeLocal.value = formatLocalTime(minDateTimeAsDate.value);
+    scheduledStartTime.value = minDateTimeAsDate.value.toISOString();
+    return;
+  }
+
+  scheduledStartTime.value = dt.toISOString();
+}
 
 // Convert between datetime-local (browser format) and ISO 8601
 // NOTE: datetime-local input returns local time in format "YYYY-MM-DDTHH:mm"
@@ -242,39 +345,6 @@ const timeoutHumanized = computed(() => {
   return "";
 });
 
-const hourCyclePreference = computed(() => {
-  try {
-    const resolved = new Intl.DateTimeFormat(browserLocale.value, {
-      hour: "numeric",
-    }).resolvedOptions() as Intl.ResolvedDateTimeFormatOptions & { hourCycle?: string };
-    return resolved.hourCycle;
-  } catch {
-    return undefined;
-  }
-});
-
-const prefers24HourFormat = computed(() => hourCyclePreference.value === "h23" || hourCyclePreference.value === "h24");
-const browserLocale = computed(() => {
-  try {
-    if (typeof navigator !== "undefined") {
-      return navigator.language || (navigator.languages && navigator.languages[0]) || "en-GB";
-    }
-  } catch {
-    /* noop */
-  }
-  return "en-GB";
-});
-
-const dateTimeInputLang = computed(() => browserLocale.value || (prefers24HourFormat.value ? "en-GB" : "en-US"));
-const scheduleLabel = computed(() =>
-  prefers24HourFormat.value ? "Scheduled Start Date/Time (24-hour)" : "Scheduled Start Date/Time (12-hour)",
-);
-const localizedFormatHint = computed(() =>
-  prefers24HourFormat.value
-    ? "Use 24-hour time, e.g., 2024-05-18 16:30"
-    : "Use 12-hour time, e.g., 05/18/2024 04:30 PM",
-);
-
 function openRequest() {
   showRequestModal.value = true;
   // Set default duration to the escalation's predefined duration
@@ -288,6 +358,8 @@ function toggleScheduleOptions() {
   showScheduleOptions.value = !showScheduleOptions.value;
   if (!showScheduleOptions.value) {
     scheduledStartTime.value = null;
+    scheduleDateLocal.value = "";
+    scheduleTimeLocal.value = "";
   }
 }
 
@@ -492,32 +564,36 @@ function drop() {
               "
             >
               <div style="margin-bottom: 0.75rem">
-                <label
-                  for="scheduled_date_escalation"
-                  style="
-                    width: auto;
-                    display: block;
-                    text-align: left;
-                    margin-bottom: 0.25rem;
-                    font-size: 14px;
-                    font-weight: 500;
-                  "
-                  >{{ scheduleLabel }}:</label
-                >
-                <input
-                  id="scheduled_date_escalation"
-                  v-model="scheduleDateTimeLocal"
-                  type="datetime-local"
-                  :min="minDateTime"
-                  :lang="dateTimeInputLang"
-                  :class="['schedule-datetime-input', { 'prefer-24h': prefers24HourFormat }]"
-                  inputmode="numeric"
-                  :aria-describedby="'schedule-time-hint-' + breakglass.to"
-                  :title="localizedFormatHint"
-                  step="60"
-                />
+                <p class="schedule-intro">
+                  Use the 24-hour date and time pickers below. Leave both fields empty to start immediately.
+                </p>
+                <div class="schedule-inputs">
+                  <label class="schedule-field" :for="'scheduled-date-' + breakglass.to">
+                    Date
+                    <input
+                      :id="'scheduled-date-' + breakglass.to"
+                      v-model="scheduleDateLocal"
+                      type="date"
+                      :min="minScheduleDate || undefined"
+                      @change="updateScheduledFromInputs"
+                      @blur="updateScheduledFromInputs"
+                    />
+                  </label>
+                  <label class="schedule-field" :for="'scheduled-time-' + breakglass.to">
+                    Time (24-hour)
+                    <input
+                      :id="'scheduled-time-' + breakglass.to"
+                      v-model="scheduleTimeLocal"
+                      type="time"
+                      step="60"
+                      :min="minTimeForSelectedDate || undefined"
+                      @change="updateScheduledFromInputs"
+                      @blur="updateScheduledFromInputs"
+                    />
+                  </label>
+                </div>
                 <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
-                  Following your locale ({{ dateTimeInputLang }}). {{ localizedFormatHint }}.
+                  Earliest allowed start: <strong>{{ earliestSchedulePreview || 'Soonest available' }}</strong>
                 </p>
               </div>
 
@@ -660,8 +736,31 @@ scale-button {
   color: #5c6b86;
 }
 
-.schedule-datetime-input {
-  width: min(100%, 320px);
+
+.schedule-intro {
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.schedule-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.schedule-field {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1e293b;
+  min-width: 140px;
+  flex: 1;
+}
+
+.schedule-field input {
+  margin-top: 0.35rem;
   padding: 0.45rem 0.6rem;
   border: 1px solid #99a1b7;
   border-radius: 6px;
@@ -675,13 +774,9 @@ scale-button {
     box-shadow 0.2s ease;
 }
 
-.schedule-datetime-input:focus {
+.schedule-field input:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
-}
-
-.schedule-datetime-input.prefer-24h {
-  letter-spacing: 0.04em;
 }
 
 .schedule-locale-hint {
