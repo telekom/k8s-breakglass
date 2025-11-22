@@ -52,6 +52,11 @@ async function refresh() {
   state.refreshing = false;
 }
 
+function updateSearch(ev: Event) {
+  const target = ev.target as HTMLInputElement | null;
+  state.search = target?.value ?? "";
+}
+
 const dedupedBreakglasses = computed(() => {
   const map = new Map<string, BreakglassWithSession>();
 
@@ -221,26 +226,49 @@ async function onDrop(bg: any) {
 </script>
 
 <template>
-  <main>
+  <main class="ui-page breakglass-page">
+    <header class="page-header">
+      <h2 class="ui-page-title">Request access</h2>
+      <p class="ui-page-subtitle">
+        Browse the escalations that match your groups. Use search to filter by cluster, requester group, or approver.
+      </p>
+    </header>
+
     <div v-if="state.loading" class="loading">
       <scale-loading-spinner size="large" />
     </div>
     <div v-else-if="state.breakglasses.length > 0">
-      <div class="search">
-        <scale-text-field
-          label="Search"
-          class="search-field"
-          :value="state.search"
-          @scaleChange="(ev: any) => (state.search = ev.target.value)"
-        ></scale-text-field>
-        <div class="refresh">
+      <div class="ui-toolbar breakglass-toolbar">
+        <div class="ui-field">
+          <label for="breakglass-search">Search escalations</label>
+          <input
+            id="breakglass-search"
+            type="search"
+            placeholder="Cluster, group or approver"
+            :value="state.search"
+            @input="updateSearch"
+          />
+        </div>
+        <div class="toolbar-refresh">
+          <span id="refresh-label" class="sr-only">Refresh list</span>
           <scale-loading-spinner v-if="state.refreshing"></scale-loading-spinner>
-          <scale-button v-else icon-only="true" icon-position="before" variant="secondary" @click="refresh()">
+          <scale-button
+            v-else
+            icon-only="true"
+            icon-position="before"
+            variant="secondary"
+            aria-describedby="refresh-label"
+            @click="refresh()"
+          >
             <scale-icon-action-refresh></scale-icon-action-refresh>
           </scale-button>
         </div>
+        <div class="ui-toolbar-info">
+          Showing {{ filteredBreakglasses.length }} of {{ dedupedBreakglasses.length }} escalations
+        </div>
       </div>
-      <div class="breakglass-list">
+
+      <div class="ui-card-grid breakglass-grid">
         <BreakglassCard
           v-for="bg in filteredBreakglasses"
           :key="
@@ -248,7 +276,6 @@ async function onDrop(bg: any) {
             (bg.sessionPending && bg.sessionPending.metadata && bg.sessionPending.metadata.name) ||
             bg.to + ':' + bg.cluster
           "
-          class="card"
           :breakglass="bg"
           :time="time"
           @request="
@@ -270,14 +297,19 @@ async function onDrop(bg: any) {
         </BreakglassCard>
       </div>
     </div>
-    <div v-else class="not-found">No requestable Breakglass groups found.</div>
+    <div v-else class="empty-state">
+      <p>No requestable breakglass groups found for your current identity provider or group membership.</p>
+    </div>
   </main>
 </template>
 
 <style scoped>
-main {
-  margin: 3rem auto;
-  max-width: 1200px;
+.breakglass-page {
+  padding-bottom: 3rem;
+}
+
+.page-header {
+  margin-bottom: 1.25rem;
 }
 
 .loading {
@@ -285,35 +317,38 @@ main {
   text-align: center;
 }
 
-.search {
-  max-width: 400px;
-  margin: 1rem auto;
+.empty-state {
+  margin: 3rem auto;
+  text-align: center;
+  color: #475569;
+  max-width: 560px;
+  line-height: 1.5;
+}
+
+.breakglass-toolbar {
+  align-items: flex-end;
+  margin-bottom: 1.5rem;
+}
+
+.breakglass-toolbar input {
+  min-width: 280px;
+}
+
+.toolbar-refresh {
   display: flex;
   align-items: center;
-}
-
-.search-field {
-  flex-grow: 1;
-  margin-right: 1rem;
-}
-
-.refresh {
-  width: 48px;
-}
-
-.breakglass-list {
-  display: flex;
-  gap: 2rem;
-  flex-wrap: wrap;
   justify-content: center;
+  min-width: 64px;
 }
 
-.not-found {
-  text-align: center;
+.toolbar-refresh scale-button {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
 }
 
-.card {
-  flex-grow: 1;
-  flex-shrink: 0;
+.breakglass-grid {
+  margin-top: 1rem;
 }
 </style>

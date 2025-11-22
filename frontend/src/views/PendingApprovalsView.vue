@@ -289,23 +289,23 @@ onMounted(fetchPendingApprovals);
 </script>
 
 <template>
-  <main class="container">
-    <h2>Pending Approvals</h2>
+  <main class="ui-page approvals-page">
+  <h2 class="ui-page-title">Pending Approvals</h2>
 
     <!-- Filter and Sort Controls -->
-    <div class="controls-section">
-      <div class="control-group">
-        <label for="sort-select">Sort by:</label>
-        <select id="sort-select" v-model="sortBy" class="sort-select">
+    <div class="ui-toolbar approvals-toolbar">
+      <div class="ui-field">
+        <label for="sort-select">Sort by</label>
+        <select id="sort-select" v-model="sortBy">
           <option value="urgent">Most Urgent (expires soonest)</option>
           <option value="recent">Most Recent</option>
           <option value="groups">By Group</option>
         </select>
       </div>
 
-      <div class="control-group">
-        <label for="urgency-filter">Urgency:</label>
-        <select id="urgency-filter" v-model="urgencyFilter" class="urgency-select">
+      <div class="ui-field">
+        <label for="urgency-filter">Urgency</label>
+        <select id="urgency-filter" v-model="urgencyFilter">
           <option value="all">All</option>
           <option value="critical">Critical (&lt; 1 hour)</option>
           <option value="high">High (&lt; 6 hours)</option>
@@ -313,7 +313,7 @@ onMounted(fetchPendingApprovals);
         </select>
       </div>
 
-      <div class="control-info">
+      <div class="ui-toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
       </div>
     </div>
@@ -327,7 +327,7 @@ onMounted(fetchPendingApprovals);
       <article
         v-for="session in sortedSessions"
         :key="session.metadata.name"
-        class="approval-card"
+        class="ui-card approval-card"
         :class="`urgency-${session.urgency}`"
       >
         <div class="card-top">
@@ -344,15 +344,15 @@ onMounted(fetchPendingApprovals);
                 </template>
               </p>
               <div class="request-meta">
-                <span class="chip primary">{{ session.spec?.cluster || "Unknown cluster" }}</span>
-                <span class="chip secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</span>
-                <span class="chip" :class="session.urgency">
+                <span class="ui-chip primary">{{ session.spec?.cluster || "Unknown cluster" }}</span>
+                <span class="ui-chip secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</span>
+                <span class="ui-chip" :class="session.urgency">
                   <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
                   <template v-else-if="session.urgency === 'high'">⏱️ High</template>
                   <template v-else>🕓 Normal</template>
                 </span>
-                <span v-if="session.spec?.scheduledStartTime" class="chip secondary">📅 Scheduled</span>
-                <span v-if="session.approvalReason?.mandatory" class="chip secondary">✍️ Note required</span>
+                <span v-if="session.spec?.scheduledStartTime" class="ui-chip secondary">📅 Scheduled</span>
+                <span v-if="session.approvalReason?.mandatory" class="ui-chip secondary">✍️ Note required</span>
               </div>
             </div>
           </div>
@@ -372,24 +372,24 @@ onMounted(fetchPendingApprovals);
           </div>
         </div>
 
-        <div class="info-grid">
-          <div class="info-item">
+        <div class="ui-info-grid info-grid">
+          <div class="ui-info-item">
             <span class="label">Requested</span>
             <span class="value">{{ format24Hour(session.metadata.creationTimestamp) }}</span>
           </div>
-          <div class="info-item">
+          <div class="ui-info-item">
             <span class="label">Duration</span>
             <span class="value">{{ session.spec?.maxValidFor ? formatDuration(session.spec.maxValidFor) : "—" }}</span>
           </div>
-          <div class="info-item">
+          <div class="ui-info-item">
             <span class="label">Identity provider</span>
             <span class="value">{{ session.spec?.identityProviderName || "—" }}</span>
           </div>
-          <div class="info-item">
+          <div class="ui-info-item">
             <span class="label">Issuer</span>
             <span class="value">{{ session.spec?.identityProviderIssuer || "—" }}</span>
           </div>
-          <div class="info-item">
+          <div class="ui-info-item">
             <span class="label">Scheduled start</span>
             <span class="value">
               <template v-if="session.spec?.scheduledStartTime">
@@ -398,7 +398,7 @@ onMounted(fetchPendingApprovals);
               <template v-else>Not scheduled</template>
             </span>
           </div>
-          <div class="info-item">
+          <div class="ui-info-item">
             <span class="label">Scheduled end</span>
             <span class="value">
               <template v-if="session.spec?.scheduledStartTime && session.spec?.maxValidFor">
@@ -418,17 +418,17 @@ onMounted(fetchPendingApprovals);
         </div>
         <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
           <span class="matching-label">Visible via</span>
-          <div class="matching-stack">
+          <div class="ui-pill-stack matching-stack">
             <span v-for="group in session.matchingApproverGroups" :key="group">{{ group }}</span>
           </div>
         </div>
 
-        <section class="reason-section">
+        <section class="ui-section reason-section">
           <h4>Request reason</h4>
           <p>{{ getSessionReason(session) }}</p>
         </section>
 
-        <section v-if="session.approvalReason?.description" class="reason-section">
+        <section v-if="session.approvalReason?.description" class="ui-section reason-section">
           <h4>Approval policy</h4>
           <p>{{ session.approvalReason.description }}</p>
         </section>
@@ -579,72 +579,13 @@ onMounted(fetchPendingApprovals);
 </template>
 
 <style scoped>
-.container {
-  max-width: 900px;
+.approvals-page {
+  max-width: 950px;
   margin: 0 auto;
-  padding: 0 1rem;
 }
 
-h2 {
-  color: #0b0b0b;
+.approvals-toolbar {
   margin-bottom: 1.5rem;
-  font-size: 1.8rem;
-}
-
-/* Controls Section */
-.controls-section {
-  background: #f8f9fa;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1.5rem;
-  display: flex;
-  gap: 1.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.control-group {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.control-group label {
-  font-weight: 600;
-  color: #333;
-  font-size: 0.9rem;
-}
-
-.sort-select,
-.urgency-select {
-  padding: 6px 10px;
-  border: 1px solid #d0d0d0;
-  border-radius: 4px;
-  background: white;
-  color: #333;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-.sort-select:hover,
-.urgency-select:hover {
-  border-color: #d9006c;
-}
-
-.sort-select:focus,
-.urgency-select:focus {
-  outline: none;
-  border-color: #d9006c;
-  box-shadow: 0 0 0 3px rgba(217, 0, 108, 0.1);
-}
-
-.control-info {
-  margin-left: auto;
-  font-size: 0.9rem;
-  color: #666;
-  font-weight: 500;
 }
 
 .loading-state,
@@ -733,41 +674,6 @@ h2 {
   margin-top: 0.65rem;
 }
 
-.chip {
-  border-radius: 999px;
-  padding: 0.35rem 0.85rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.chip.critical {
-  background: rgba(248, 113, 113, 0.15);
-  color: #b91c1c;
-}
-
-.chip.high {
-  background: rgba(249, 115, 22, 0.16);
-  color: #c2410c;
-}
-
-.chip.low {
-  background: rgba(59, 130, 246, 0.12);
-  color: #1d4ed8;
-}
-
-.chip.secondary {
-  background: #f3f4f6;
-  color: #374151;
-}
-
-.chip.primary {
-  background: rgba(217, 0, 108, 0.1);
-  color: #b10057;
-}
-
 .timer-panel {
   background: #f8fafc;
   border-radius: 12px;
@@ -807,31 +713,6 @@ h2 {
   padding: 0.35rem 0.85rem;
 }
 
-.info-grid {
-  margin-top: 1.25rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  padding: 1.25rem;
-  background: #f9fafb;
-  border-radius: 12px;
-  border: 1px solid #eef2f7;
-}
-
-.info-item .label {
-  display: block;
-  font-size: 0.85rem;
-  color: #6b7280;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.info-item .value {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: #111827;
-}
-
 .matches {
   margin-top: 1rem;
   display: inline-flex;
@@ -854,13 +735,6 @@ h2 {
   border-radius: 10px;
 }
 
-.matching-stack {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
 .matching-label {
   font-size: 0.85rem;
   letter-spacing: 0.08em;
@@ -874,29 +748,6 @@ h2 {
   background: rgba(245, 158, 11, 0.18);
   color: #92400e;
   font-weight: 600;
-}
-
-.reason-section {
-  margin-top: 1.25rem;
-  padding: 1rem 1.25rem;
-  background: #eef2ff;
-  border-radius: 12px;
-  border: 1px solid rgba(99, 102, 241, 0.25);
-}
-
-.reason-section h4 {
-  margin: 0;
-  color: #3730a3;
-  font-size: 0.9rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.reason-section p {
-  margin: 0.5rem 0 0;
-  line-height: 1.5;
-  color: #111827;
-  white-space: pre-wrap;
 }
 
 .card-bottom {
@@ -1005,11 +856,11 @@ h2 {
 }
 
 /* High contrast for form inputs */
-scale-textarea::v-deep .textarea__control {
+scale-textarea :deep(.textarea__control) {
   color: #111;
 }
 
-scale-textarea::v-deep .textarea__control::placeholder {
+scale-textarea :deep(.textarea__control::placeholder) {
   color: #999;
 }
 
