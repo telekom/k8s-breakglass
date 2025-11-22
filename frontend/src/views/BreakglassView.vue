@@ -306,18 +306,61 @@ async function onDrop(bg: any) {
 <style scoped>
 .breakglass-page {
   padding-bottom: 3rem;
+  --breakglass-bg: var(--telekom-color-background-canvas, #05060b);
+  --breakglass-card-bg: var(--telekom-color-background-surface, #111421);
+  --breakglass-card-border: rgba(255, 255, 255, 0.08);
+  --breakglass-card-shadow: 0 20px 60px rgba(5, 6, 11, 0.6);
+  --breakglass-text-strong: var(--telekom-color-text-and-icon-standard, #f8fafc);
+  --breakglass-text-muted: rgba(244, 246, 251, 0.78);
+  --breakglass-chip-bg: rgba(255, 255, 255, 0.1);
+  --breakglass-chip-text: #e2e8f0;
+  --breakglass-info-bg: rgba(15, 23, 42, 0.55);
+  --breakglass-info-border: rgba(255, 255, 255, 0.08);
+  --breakglass-section-bg: rgba(79, 70, 229, 0.25);
+  --breakglass-section-border: rgba(129, 140, 248, 0.4);
+  --breakglass-pill-bg: rgba(14, 165, 233, 0.2);
+  --breakglass-pill-text: #bae6fd;
+  background: var(--breakglass-bg);
+  color: var(--breakglass-text-strong);
 }
 
 .page-header {
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
 .page-header .ui-page-title {
   color: #f8fafc;
+  margin-bottom: 0.25rem;
 }
 
 .page-header .ui-page-subtitle {
-  color: rgba(248, 250, 252, 0.85);
+  color: var(--breakglass-text-muted);
+  max-width: 720px;
+}
+
+.breakglass-page .ui-toolbar {
+  background: var(--breakglass-card-bg);
+  border: 1px solid var(--breakglass-card-border);
+  box-shadow: none;
+}
+
+.breakglass-page .ui-toolbar label {
+  color: var(--breakglass-text-strong);
+}
+
+.breakglass-page .ui-toolbar input,
+.breakglass-page .ui-toolbar select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--breakglass-text-strong);
+}
+
+.breakglass-page .ui-toolbar input::placeholder {
+  color: rgba(244, 246, 251, 0.5);
+}
+
+.breakglass-page .ui-toolbar-info {
+  color: var(--breakglass-text-muted);
 }
 
 .loading {
