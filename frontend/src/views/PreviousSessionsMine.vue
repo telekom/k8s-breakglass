@@ -3,6 +3,7 @@ import { ref, onMounted, inject } from "vue";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -25,19 +26,26 @@ onMounted(async () => {
 
 function formatDate(ts: string | number) {
   if (!ts) return "-";
-  debugLogDateTime('formatDate', typeof ts === 'string' ? ts : new Date(ts).toISOString());
-  return format24Hour(typeof ts === 'string' ? ts : new Date(ts).toISOString());
+  debugLogDateTime("formatDate", typeof ts === "string" ? ts : new Date(ts).toISOString());
+  return format24Hour(typeof ts === "string" ? ts : new Date(ts).toISOString());
 }
 
 function startedForDisplay(s: any) {
   // prefer explicit started fields from status, then metadata creation timestamp
-  return s.started || (s.status && s.status.startedAt) || s.metadata?.creationTimestamp || s.createdAt || s.creationTimestamp || null;
+  return (
+    s.started ||
+    (s.status && s.status.startedAt) ||
+    s.metadata?.creationTimestamp ||
+    s.createdAt ||
+    s.creationTimestamp ||
+    null
+  );
 }
 
 function endedForDisplay(s: any) {
   // Only show an ended timestamp when the session is not active/approved
-  const st = (s.status && s.status.state) ? s.status.state.toString().toLowerCase() : (s.state || '').toLowerCase();
-  if (st === 'approved' || st === 'active') return null;
+  const st = s.status && s.status.state ? s.status.state.toString().toLowerCase() : (s.state || "").toLowerCase();
+  if (st === "approved" || st === "active") return null;
   return s.ended || (s.status && (s.status.endedAt || s.status.expiresAt)) || s.expiry || null;
 }
 
@@ -46,22 +54,27 @@ function reasonEndedLabel(s: any): string {
   if (s.status && s.status.reason) return s.status.reason;
   if (s.reasonEnded) return s.reasonEnded;
   if (s.terminationReason) return s.terminationReason;
-  switch ((s.state || '').toLowerCase()) {
-    case 'withdrawn':
-      return 'Withdrawn by user';
-    case 'approvaltimeout':
-      return 'Approval timed out';
-    case 'rejected':
-      return 'Rejected';
-    case 'expired':
-      return 'Session expired';
-    case 'approved':
-      return 'Active';
-    case 'pending':
-      return 'Pending';
+  switch ((s.state || "").toLowerCase()) {
+    case "withdrawn":
+      return "Withdrawn by user";
+    case "approvaltimeout":
+      return "Approval timed out";
+    case "rejected":
+      return "Rejected";
+    case "expired":
+      return "Session expired";
+    case "approved":
+      return "Active";
+    case "pending":
+      return "Pending";
     default:
-      return s.state || '-';
+      return s.state || "-";
   }
+}
+
+function statusTone(s: any): string {
+  const rawState = s.status?.state || s.state;
+  return `tone-${statusToneFor(rawState)}`;
 }
 </script>
 
@@ -85,15 +98,15 @@ function reasonEndedLabel(s: any): string {
             </div>
           </div>
           <div class="header-right">
-            <span :class="['status-badge', 'status-' + (s.state || '').toLowerCase()]">
-              {{ s.state || '-' }}
+            <span class="ui-status-badge" :class="statusTone(s)">
+              {{ s.state || "-" }}
             </span>
           </div>
         </div>
 
         <!-- User info -->
         <div class="user-info">
-          <strong>User:</strong> {{ (s.spec && (s.spec.user || s.spec.requester)) || s.user || s.requester || '-' }}
+          <strong>User:</strong> {{ (s.spec && (s.spec.user || s.spec.requester)) || s.user || s.requester || "-" }}
           <span v-if="s.spec && s.spec.identityProviderName" class="idp-info">
             | <strong>IDP:</strong> {{ s.spec.identityProviderName }}
           </span>
@@ -106,11 +119,17 @@ function reasonEndedLabel(s: any): string {
         <div class="timeline">
           <div class="timeline-item">
             <span class="timeline-label">Scheduled:</span>
-            <span class="timeline-value">{{ s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : '-' }}</span>
+            <span class="timeline-value">{{
+              s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : "-"
+            }}</span>
           </div>
           <div class="timeline-item">
             <span class="timeline-label">Started:</span>
-            <span class="timeline-value">{{ s.status && s.status.actualStartTime ? formatDate(s.status.actualStartTime) : formatDate(startedForDisplay(s)) }}</span>
+            <span class="timeline-value">{{
+              s.status && s.status.actualStartTime
+                ? formatDate(s.status.actualStartTime)
+                : formatDate(startedForDisplay(s))
+            }}</span>
           </div>
           <div class="timeline-item">
             <span class="timeline-label">Ended:</span>
@@ -131,9 +150,7 @@ function reasonEndedLabel(s: any): string {
         </div>
 
         <!-- End reason -->
-        <div v-if="reasonEndedLabel(s)" class="end-reason">
-          <strong>Ended:</strong> {{ reasonEndedLabel(s) }}
-        </div>
+        <div v-if="reasonEndedLabel(s)" class="end-reason"><strong>Ended:</strong> {{ reasonEndedLabel(s) }}</div>
       </div>
     </div>
   </main>
@@ -210,7 +227,7 @@ h2 {
   font-weight: bold;
   color: #0070b8;
   margin-bottom: 0.5rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .cluster-group {
@@ -235,55 +252,7 @@ h2 {
 }
 
 .group-tag {
-  border-left: 3px solid #4CAF50;
-}
-
-/* Status badge */
-.status-badge {
-  display: inline-block;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.status-approved,
-.status-active {
-  background-color: #c8e6c9;
-  color: #2e7d32;
-  border: 1px solid #4CAF50;
-}
-
-.status-rejected {
-  background-color: #ffcdd2;
-  color: #c62828;
-  border: 1px solid #ef5350;
-}
-
-.status-withdrawn {
-  background-color: #fff9c4;
-  color: #f57f17;
-  border: 1px solid #fbc02d;
-}
-
-.status-expired {
-  background-color: #eceff1;
-  color: #455a64;
-  border: 1px solid #90a4ae;
-}
-
-.status-pending {
-  background-color: #e3f2fd;
-  color: #1565c0;
-  border: 1px solid #2196F3;
-}
-
-.status-approvaltimeout {
-  background-color: #ffe0b2;
-  color: #e65100;
-  border: 1px solid #ff9800;
+  border-left: 3px solid #4caf50;
 }
 
 /* User info */
@@ -317,7 +286,7 @@ h2 {
   gap: 0.25rem;
   color: #666;
   font-size: 0.9rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .idp-issuer strong {
@@ -352,7 +321,7 @@ h2 {
   color: #333;
   display: block;
   font-size: 0.85rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 /* Reasons section */
@@ -365,13 +334,13 @@ h2 {
 
 .reason-box {
   background-color: #f5f5f5;
-  border-left: 3px solid #2196F3;
+  border-left: 3px solid #2196f3;
   padding: 1rem;
   border-radius: 4px;
 }
 
 .reason-title {
-  color: #1976D2;
+  color: #1976d2;
   display: block;
   margin-bottom: 0.5rem;
   font-size: 0.9rem;

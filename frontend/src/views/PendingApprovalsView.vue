@@ -1,11 +1,11 @@
 <script setup lang="ts">
-
 import { inject, ref, onMounted, reactive, computed } from "vue";
-import CountdownTimer from '@/components/CountdownTimer.vue';
+import CountdownTimer from "@/components/CountdownTimer.vue";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -13,13 +13,14 @@ const breakglassService = new BreakglassService(auth!);
 const pendingSessions = ref<any[]>([]);
 const loading = ref(true);
 const approving = ref<string | null>(null);
+const rejecting = ref<string | null>(null);
 const approverNotes = reactive<Record<string, string>>({});
 const showApproveModal = ref(false);
 const modalSession = ref<any | null>(null);
 
 // Filter and sort controls
-const sortBy = ref<'urgent' | 'recent' | 'groups'>('urgent');
-const urgencyFilter = ref<'all' | 'critical' | 'high' | 'normal'>('all');
+const sortBy = ref<"urgent" | "recent" | "groups">("urgent");
+const urgencyFilter = ref<"all" | "critical" | "high" | "normal">("all");
 
 // Helper function to get time remaining in seconds
 function getTimeRemaining(expiresAt: string | undefined): number {
@@ -30,63 +31,141 @@ function getTimeRemaining(expiresAt: string | undefined): number {
 }
 
 // Helper function to categorize urgency based on time remaining
-function getUrgency(expiresAt: string | undefined): 'critical' | 'high' | 'normal' {
+function getUrgency(expiresAt: string | undefined): "critical" | "high" | "normal" {
   const secondsRemaining = getTimeRemaining(expiresAt);
-  if (secondsRemaining < 3600) return 'critical'; // < 1 hour
-  if (secondsRemaining < 21600) return 'high';     // < 6 hours
-  return 'normal';
+  if (secondsRemaining < 3600) return "critical"; // < 1 hour
+  if (secondsRemaining < 21600) return "high"; // < 6 hours
+  return "normal";
 }
 
 // Helper function to format Go duration strings (e.g., "1h0m0s") to human-readable format
 function formatDuration(durationStr: string | undefined): string {
-  if (!durationStr) return 'Not specified';
-  
+  if (!durationStr) return "Not specified";
+
   // Parse Go duration string format: "1h0m0s"
   const match = durationStr.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
   if (!match) return durationStr;
-  
-  const hours = parseInt(match[1] || '0', 10);
-  const minutes = parseInt(match[2] || '0', 10);
-  const seconds = parseInt(match[3] || '0', 10);
-  
+
+  const hours = parseInt(match[1] || "0", 10);
+  const minutes = parseInt(match[2] || "0", 10);
+  const seconds = parseInt(match[3] || "0", 10);
+
   const parts: string[] = [];
   if (hours > 0) parts.push(`${hours}h`);
   if (minutes > 0) parts.push(`${minutes}m`);
   if (seconds > 0) parts.push(`${seconds}s`);
-  
-  return parts.length > 0 ? parts.join(' ') : '0s';
+
+  return parts.length > 0 ? parts.join(" ") : "0s";
 }
 
 // Helper function to compute end time from start time and duration
 function computeEndTime(startTimeStr: string | undefined, durationStr: string | undefined): string {
-  if (!startTimeStr || !durationStr) return 'Not available';
-  
+  if (!startTimeStr || !durationStr) return "Not available";
+
   try {
     const startTime = new Date(startTimeStr);
-    
+
     // Parse Go duration string format: "1h0m0s"
     const match = durationStr.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
-    if (!match) return 'Invalid duration format';
-    
-    const hours = parseInt(match[1] || '0', 10);
-    const minutes = parseInt(match[2] || '0', 10);
-    const seconds = parseInt(match[3] || '0', 10);
-    
+    if (!match) return "Invalid duration format";
+
+    const hours = parseInt(match[1] || "0", 10);
+    const minutes = parseInt(match[2] || "0", 10);
+    const seconds = parseInt(match[3] || "0", 10);
+
     // Calculate total milliseconds
     const totalMs = (hours * 3600 + minutes * 60 + seconds) * 1000;
-    
+
     const endTime = new Date(startTime.getTime() + totalMs);
-    debugLogDateTime('computeEndTime', endTime.toISOString());
+    debugLogDateTime("computeEndTime", endTime.toISOString());
     return format24Hour(endTime.toISOString());
   } catch (e) {
-    console.error('[DateTime] Error computing end time:', e);
-    return 'Invalid date format';
+    console.error("[DateTime] Error computing end time:", e);
+    return "Invalid date format";
   }
+}
+function collectMatchingGroups(session: any): string[] {
+  const collected = new Set<string>();
+  const tryAdd = (value?: string | string[]) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.filter(Boolean).forEach((entry) => collected.add(String(entry)));
+      return;
+    }
+    String(value)
+      .split(/[\s,]+/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .forEach((entry) => collected.add(entry));
+  };
+
+  tryAdd(session?.metadata?.annotations?.["breakglass.telekom.com/approver-groups"]);
+  tryAdd(session?.metadata?.annotations?.["breakglass.t-caas.telekom.com/approver-groups"]);
+  tryAdd(session?.metadata?.labels?.["breakglass.telekom.com/approver-groups"]);
+  tryAdd(session?.metadata?.labels?.["breakglass.t-caas.telekom.com/approver-groups"]);
+  tryAdd(session?.spec?.approverGroup);
+  tryAdd(session?.spec?.approverGroups);
+  tryAdd(session?.status?.approverGroup);
+  tryAdd(session?.status?.approverGroups);
+  return Array.from(collected);
+}
+
+function dedupePendingSessions(sessions: any[]): any[] {
+  const map = new Map<string, any>();
+  sessions.forEach((session) => {
+    const key =
+      session?.metadata?.name ||
+      `${session?.spec?.cluster || "unknown"}::${session?.spec?.grantedGroup || "unknown"}::${session?.metadata?.creationTimestamp || ""}`;
+    const existing = map.get(key);
+    if (!existing) {
+      const clone = { ...session } as any;
+      const matching = collectMatchingGroups(session);
+      if (matching.length) {
+        clone.matchingApproverGroups = matching;
+      }
+      map.set(key, clone);
+      return;
+    }
+
+    const nextGroups = collectMatchingGroups(session);
+    const combined = new Set<string>(existing.matchingApproverGroups || []);
+    nextGroups.forEach((g) => combined.add(g));
+    if (combined.size) {
+      existing.matchingApproverGroups = Array.from(combined).sort();
+    }
+  });
+  return Array.from(map.values());
+}
+
+function getSessionReason(session: any): string {
+  if (session?.spec?.requestReason) return session.spec.requestReason;
+  if (session?.status?.reason) return session.status.reason;
+  if (session?.status?.approvalReason) return session.status.approvalReason;
+  return "No request reason was supplied.";
+}
+function getUserInitials(user?: string): string {
+  if (!user) return "??";
+  const handle = user.includes("@") ? user.split("@")[0] || user : user;
+  const tokens = handle.split(/[._-]+/).filter(Boolean);
+  if (tokens.length >= 2) {
+    const first = tokens[0]?.charAt(0) ?? "";
+    const last = tokens[tokens.length - 1]?.charAt(0) ?? "";
+    return `${first}${last || first}`.toUpperCase();
+  }
+  if (tokens.length === 1 && tokens[0]) {
+    return tokens[0].slice(0, 2).toUpperCase();
+  }
+  return handle.slice(0, 2).toUpperCase();
+}
+
+function sessionStateTone(session: any) {
+  const tone = statusToneFor(session?.status?.state);
+  return `tone-${tone}`;
 }
 
 // Enhanced sessions list with urgency calculation
 const sessionsWithUrgency = computed(() => {
-  return pendingSessions.value.map(session => ({
+  return pendingSessions.value.map((session) => ({
     ...session,
     urgency: getUrgency(session.status?.expiresAt),
     timeRemaining: getTimeRemaining(session.status?.expiresAt),
@@ -95,8 +174,8 @@ const sessionsWithUrgency = computed(() => {
 
 // Filter sessions based on urgency filter
 const filteredSessions = computed(() => {
-  return sessionsWithUrgency.value.filter(session => {
-    if (urgencyFilter.value === 'all') return true;
+  return sessionsWithUrgency.value.filter((session) => {
+    if (urgencyFilter.value === "all") return true;
     return session.urgency === urgencyFilter.value;
   });
 });
@@ -104,13 +183,13 @@ const filteredSessions = computed(() => {
 // Sort sessions based on selected sort option
 const sortedSessions = computed(() => {
   const sorted = [...filteredSessions.value];
-  
+
   switch (sortBy.value) {
-    case 'urgent':
+    case "urgent":
       // Sort by time remaining (soonest first)
       sorted.sort((a, b) => a.timeRemaining - b.timeRemaining);
       break;
-    case 'recent':
+    case "recent":
       // Sort by creation date (newest first)
       sorted.sort((a, b) => {
         const timeA = new Date(a.metadata.creationTimestamp).getTime();
@@ -118,12 +197,12 @@ const sortedSessions = computed(() => {
         return timeB - timeA;
       });
       break;
-    case 'groups':
+    case "groups":
       // Sort by granted group name
-      sorted.sort((a, b) => (a.spec?.grantedGroup || '').localeCompare(b.spec?.grantedGroup || ''));
+      sorted.sort((a, b) => (a.spec?.grantedGroup || "").localeCompare(b.spec?.grantedGroup || ""));
       break;
   }
-  
+
   return sorted;
 });
 
@@ -132,8 +211,8 @@ async function fetchPendingApprovals() {
   try {
     // Fetch only sessions in pending state that the current user can approve
     const sessions = await breakglassService.fetchPendingSessionsForApproval();
-    pendingSessions.value = Array.isArray(sessions) ? sessions : [];
-  } catch (e) {
+    pendingSessions.value = Array.isArray(sessions) ? dedupePendingSessions(sessions) : [];
+  } catch {
     pushError("Failed to fetch pending approvals");
   }
   loading.value = false;
@@ -161,7 +240,7 @@ async function confirmApprove() {
     showApproveModal.value = false;
     modalSession.value = null;
     await fetchPendingApprovals();
-  } catch (e) {
+  } catch {
     pushError("Failed to approve request");
   }
   approving.value = null;
@@ -178,35 +257,61 @@ async function confirmReject() {
     showApproveModal.value = false;
     modalSession.value = null;
     await fetchPendingApprovals();
-  } catch (e) {
+  } catch {
     pushError("Failed to reject request");
   }
   approving.value = null;
 }
 
-function closeApproveModal() { showApproveModal.value = false; modalSession.value = null; }
+async function quickReject(session: any) {
+  if (!session) return;
+  const name = session.metadata?.name;
+  if (!name) {
+    pushError("Unable to reject: session metadata missing");
+    return;
+  }
+  const confirmMsg = `Reject request for ${session.spec?.user || name} (${session.spec?.grantedGroup || session.spec?.cluster || "unknown group"})?`;
+  const proceed = typeof window !== "undefined" ? window.confirm(confirmMsg) : true;
+  if (!proceed) return;
+
+  rejecting.value = name;
+  try {
+    const note = approverNotes[name] || undefined;
+    await breakglassService.rejectBreakglass(name, note);
+    pushSuccess(`Rejected request for ${session.spec?.user} (${session.spec?.grantedGroup})!`);
+    await fetchPendingApprovals();
+  } catch {
+    pushError("Failed to reject request");
+  }
+  rejecting.value = null;
+}
+
+function closeApproveModal() {
+  showApproveModal.value = false;
+  modalSession.value = null;
+}
 
 onMounted(fetchPendingApprovals);
 </script>
 
 <template>
-  <main class="container">
-    <h2>Pending Approvals</h2>
-    
+  <main class="ui-page approvals-page">
+    <h2 class="ui-page-title">Pending Approvals</h2>
+
     <!-- Filter and Sort Controls -->
-    <div class="controls-section">
-      <div class="control-group">
-        <label for="sort-select">Sort by:</label>
-        <select id="sort-select" v-model="sortBy" class="sort-select">
+    <div class="ui-toolbar approvals-toolbar">
+      <div class="ui-field">
+        <label for="sort-select">Sort by</label>
+        <select id="sort-select" v-model="sortBy">
           <option value="urgent">Most Urgent (expires soonest)</option>
           <option value="recent">Most Recent</option>
           <option value="groups">By Group</option>
         </select>
       </div>
-      
-      <div class="control-group">
-        <label for="urgency-filter">Urgency:</label>
-        <select id="urgency-filter" v-model="urgencyFilter" class="urgency-select">
+
+      <div class="ui-field">
+        <label for="urgency-filter">Urgency</label>
+        <select id="urgency-filter" v-model="urgencyFilter">
           <option value="all">All</option>
           <option value="critical">Critical (&lt; 1 hour)</option>
           <option value="high">High (&lt; 6 hours)</option>
@@ -214,7 +319,7 @@ onMounted(fetchPendingApprovals);
         </select>
       </div>
 
-      <div class="control-info">
+      <div class="ui-toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
       </div>
     </div>
@@ -225,218 +330,276 @@ onMounted(fetchPendingApprovals);
       <p v-else>No requests match the selected filters.</p>
     </div>
     <div v-else class="sessions-list">
-      <div v-for="session in sortedSessions" :key="session.metadata.name" class="approval-card" :class="`urgency-${session.urgency}`">
-        <!-- Urgency Badge -->
-        <div v-if="session.urgency === 'critical'" class="urgency-badge critical">⚠️ CRITICAL - Action Required</div>
-        <div v-else-if="session.urgency === 'high'" class="urgency-badge high">⏱️ High Priority</div>
-        
-        <!-- Scheduled Session Badge -->
-        <div v-if="session.spec && session.spec.scheduledStartTime" class="scheduled-badge">
-          📅 Scheduled Session
-        </div>
-
-        <!-- Header with basic info -->
-        <div class="card-header">
-          <div class="header-left">
-            <div class="user-badge">{{ session.spec.user }}</div>
-            <div class="cluster-group">
-              <span class="cluster-tag">{{ session.spec.cluster }}</span>
-              <span class="group-tag">{{ session.spec.grantedGroup }}</span>
+      <article
+        v-for="session in sortedSessions"
+        :key="session.metadata.name"
+        class="ui-card approval-card"
+        :class="`urgency-${session.urgency}`"
+      >
+        <div class="card-top">
+          <div class="identity-block">
+            <div class="user-avatar">{{ getUserInitials(session.spec?.user) }}</div>
+            <div class="user-info">
+              <h3>{{ session.spec?.user || "Unknown user" }}</h3>
+              <p>
+                <template v-if="session.spec?.requester && session.spec.requester !== session.spec.user">
+                  Requested by {{ session.spec.requester }}
+                </template>
+                <template v-else>
+                  Request ID: <code>{{ session.metadata?.name }}</code>
+                </template>
+              </p>
+              <div class="request-meta">
+                <span class="ui-chip primary">{{ session.spec?.cluster || "Unknown cluster" }}</span>
+                <span class="ui-chip secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</span>
+                <span class="ui-chip" :class="session.urgency">
+                  <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
+                  <template v-else-if="session.urgency === 'high'">⏱️ High</template>
+                  <template v-else>🕓 Normal</template>
+                </span>
+                <span v-if="session.spec?.scheduledStartTime" class="ui-chip secondary">📅 Scheduled</span>
+                <span v-if="session.approvalReason?.mandatory" class="ui-chip secondary">✍️ Note required</span>
+              </div>
             </div>
           </div>
-          <div class="header-right">
-            <div class="time-badge">
-              <span v-if="session.status && (session.status.expiresAt || session.status.timeoutAt)" class="timer">
-                <CountdownTimer :expiresAt="session.status.expiresAt || session.status.timeoutAt" />
-              </span>
-              <span v-else class="timer">-</span>
+          <div class="timer-panel">
+            <span class="countdown-label">Time remaining</span>
+            <div class="timer-value">
+              <CountdownTimer :expires-at="session.status?.expiresAt || session.status?.timeoutAt" />
             </div>
+            <small v-if="session.status?.expiresAt" class="timer-absolute">
+              Expires {{ format24Hour(session.status.expiresAt) }}
+            </small>
+            <small v-else-if="session.status?.timeoutAt" class="timer-absolute">
+              Timeout {{ format24Hour(session.status.timeoutAt) }}
+            </small>
+            <small v-else class="timer-absolute">No expiry set</small>
+            <span v-if="session.status?.state" class="ui-status-badge" :class="sessionStateTone(session)">
+              {{ session.status.state }}
+            </span>
           </div>
         </div>
 
-        <!-- Mandatory badge -->
-        <div v-if="session.approvalReason && session.approvalReason.mandatory" class="mandatory-badge">
-          ⚠️ Approver note required
+        <div class="ui-info-grid info-grid">
+          <div class="ui-info-item">
+            <span class="label">Requested</span>
+            <span class="value">{{ format24Hour(session.metadata.creationTimestamp) }}</span>
+          </div>
+          <div class="ui-info-item">
+            <span class="label">Duration</span>
+            <span class="value">{{ session.spec?.maxValidFor ? formatDuration(session.spec.maxValidFor) : "—" }}</span>
+          </div>
+          <div class="ui-info-item">
+            <span class="label">Identity provider</span>
+            <span class="value">{{ session.spec?.identityProviderName || "—" }}</span>
+          </div>
+          <div class="ui-info-item">
+            <span class="label">Issuer</span>
+            <span class="value">{{ session.spec?.identityProviderIssuer || "—" }}</span>
+          </div>
+          <div class="ui-info-item">
+            <span class="label">Scheduled start</span>
+            <span class="value">
+              <template v-if="session.spec?.scheduledStartTime">
+                {{ format24Hour(session.spec.scheduledStartTime) }}
+              </template>
+              <template v-else>Not scheduled</template>
+            </span>
+          </div>
+          <div class="ui-info-item">
+            <span class="label">Scheduled end</span>
+            <span class="value">
+              <template v-if="session.spec?.scheduledStartTime && session.spec?.maxValidFor">
+                {{ computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor) }}
+              </template>
+              <template v-else-if="session.status?.expiresAt">
+                {{ format24Hour(session.status.expiresAt) }}
+              </template>
+              <template v-else>—</template>
+            </span>
+          </div>
         </div>
 
-        <!-- Request reason -->
-        <div v-if="session.spec && session.spec.requestReason" class="reason-section">
-          <strong class="reason-label">Request Reason:</strong>
-          <div class="reason-text">{{ session.spec.requestReason }}</div>
+        <div v-if="session.matchingApproverGroups?.length" class="matches">
+          <span class="number">{{ session.matchingApproverGroups.length }}</span>
+          matching approver groups
+        </div>
+        <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
+          <span class="matching-label">Visible via</span>
+          <div class="ui-pill-stack matching-stack">
+            <span v-for="group in session.matchingApproverGroups" :key="group">{{ group }}</span>
+          </div>
         </div>
 
-        <!-- Approval description -->
-        <div v-if="session.approvalReason && session.approvalReason.description" class="approval-desc">
-          <strong>{{ session.approvalReason.description }}</strong>
-        </div>
+        <section class="ui-section reason-section">
+          <h4>Request reason</h4>
+          <p>{{ getSessionReason(session) }}</p>
+        </section>
 
-        <!-- Metadata row -->
-        <div class="meta-row">
-          <span class="meta-item">
-            <strong>Requested:</strong> {{ format24Hour(session.metadata.creationTimestamp) }}
-          </span>
-          <span v-if="session.spec && session.spec.maxValidFor" class="meta-item">
-            <strong>Duration:</strong> {{ formatDuration(session.spec.maxValidFor) }}
-          </span>
-        </div>
-        
-        <!-- Scheduled session end time (if applicable) -->
-        <div v-if="session.spec && session.spec.scheduledStartTime && session.spec.maxValidFor" class="meta-row">
-          <span class="meta-item">
-            <strong>Will end at:</strong> {{ computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor) }}
-          </span>
-        </div>
+        <section v-if="session.approvalReason?.description" class="ui-section reason-section">
+          <h4>Approval policy</h4>
+          <p>{{ session.approvalReason.description }}</p>
+        </section>
 
-        <!-- Action button -->
-        <div class="card-actions">
-          <scale-button 
-            :disabled="approving === session.metadata.name" 
-            @click="openApproveModal(session)"
-            class="approve-btn"
-          >
-            <span v-if="approving === session.metadata.name">Approving...</span>
-            <span v-else>Review & Approve</span>
-          </scale-button>
+        <div class="card-bottom">
+          <div class="request-footer">
+            <strong>Request ID</strong>
+            <span
+              ><code>{{ session.metadata?.name }}</code></span
+            >
+            <span v-if="session.status?.state" class="ui-status-badge" :class="sessionStateTone(session)">
+              {{ session.status.state }}
+            </span>
+          </div>
+          <div class="action-row">
+            <scale-button
+              class="pill-button"
+              :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
+              @click="openApproveModal(session)"
+            >
+              <span v-if="approving === session.metadata.name">Approving...</span>
+              <span v-else>Review & Approve</span>
+            </scale-button>
+            <scale-button
+              class="pill-button"
+              variant="danger"
+              :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
+              @click="quickReject(session)"
+            >
+              <span v-if="rejecting === session.metadata.name">Rejecting…</span>
+              <span v-else>Reject</span>
+            </scale-button>
+          </div>
         </div>
-      </div>
+      </article>
     </div>
   </main>
   <div v-if="showApproveModal" class="approve-modal-overlay">
     <div class="approve-modal">
-      <button class="modal-close" @click="closeApproveModal" aria-label="Close">×</button>
+      <button class="modal-close" aria-label="Close" @click="closeApproveModal">×</button>
       <h3>Approve request</h3>
       <p><b>User:</b> {{ modalSession.spec.user }}</p>
       <p><b>Group:</b> {{ modalSession.spec.grantedGroup }} @ {{ modalSession.spec.cluster }}</p>
-      <p v-if="modalSession.spec.identityProviderName">
-        <b>IDP:</b> {{ modalSession.spec.identityProviderName }}
-      </p>
+      <p v-if="modalSession.spec.identityProviderName"><b>IDP:</b> {{ modalSession.spec.identityProviderName }}</p>
       <p v-if="modalSession.spec.identityProviderIssuer">
         <b>Issuer:</b> {{ modalSession.spec.identityProviderIssuer }}
       </p>
-      
+
       <!-- Duration information -->
-      <div v-if="modalSession.spec && modalSession.spec.maxValidFor" style="margin-top:0.5rem; padding: 8px; background-color: #e8f4f8; border-left: 3px solid #0288d1; border-radius: 3px;">
-        <p style="margin: 4px 0; color: #01579b;">
+      <div
+        v-if="modalSession.spec && modalSession.spec.maxValidFor"
+        style="
+          margin-top: 0.5rem;
+          padding: 8px;
+          background-color: #e8f4f8;
+          border-left: 3px solid #0288d1;
+          border-radius: 3px;
+        "
+      >
+        <p style="margin: 4px 0; color: #01579b">
           <strong>Duration:</strong> {{ formatDuration(modalSession.spec.maxValidFor) }}
         </p>
       </div>
-      
+
       <!-- Scheduling information -->
-      <div v-if="modalSession.spec && modalSession.spec.scheduledStartTime" style="margin-top:1rem; padding: 10px; background-color: #fff3cd; border-left: 3px solid #ffc107; border-radius: 3px;">
-        <strong style="color: #856404;">Scheduled Session</strong>
-        <p style="margin: 4px 0; color: #856404;">
+      <div
+        v-if="modalSession.spec && modalSession.spec.scheduledStartTime"
+        style="
+          margin-top: 1rem;
+          padding: 10px;
+          background-color: #fff3cd;
+          border-left: 3px solid #ffc107;
+          border-radius: 3px;
+        "
+      >
+        <strong style="color: #856404">Scheduled Session</strong>
+        <p style="margin: 4px 0; color: #856404">
           <strong>Will start at:</strong> {{ format24Hour(modalSession.spec.scheduledStartTime) }}
         </p>
-        <p v-if="modalSession.spec.maxValidFor" style="margin: 4px 0; color: #856404;">
-          <strong>Will end at:</strong> {{ computeEndTime(modalSession.spec.scheduledStartTime, modalSession.spec.maxValidFor) }}
+        <p v-if="modalSession.spec.maxValidFor" style="margin: 4px 0; color: #856404">
+          <strong>Will end at:</strong>
+          {{ computeEndTime(modalSession.spec.scheduledStartTime, modalSession.spec.maxValidFor) }}
         </p>
-        <p v-else style="margin: 4px 0; color: #856404;">
-          <strong>Will expire at:</strong> {{ modalSession.status?.expiresAt ? format24Hour(modalSession.status.expiresAt) : 'Calculated upon activation' }}
+        <p v-else style="margin: 4px 0; color: #856404">
+          <strong>Will expire at:</strong>
+          {{
+            modalSession.status?.expiresAt ? format24Hour(modalSession.status.expiresAt) : "Calculated upon activation"
+          }}
         </p>
       </div>
 
       <!-- Activation status badge -->
-      <div v-if="modalSession.status && modalSession.status.state === 'WaitingForScheduledTime'" style="margin-top:0.5rem;">
-        <span style="display: inline-block; background-color: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 3px; font-size: 0.85em; font-weight: bold;">
+      <div
+        v-if="modalSession.status && modalSession.status.state === 'WaitingForScheduledTime'"
+        style="margin-top: 0.5rem"
+      >
+        <span
+          style="
+            display: inline-block;
+            background-color: #e3f2fd;
+            color: #1565c0;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 0.85em;
+            font-weight: bold;
+          "
+        >
           ⏳ PENDING ACTIVATION
         </span>
       </div>
 
       <!-- Immediate session timing -->
-      <div v-else-if="modalSession.status && modalSession.status.expiresAt && !modalSession.spec.scheduledStartTime" style="margin-top:0.5rem; font-size: 0.9em; color: #555;">
+      <div
+        v-else-if="modalSession.status && modalSession.status.expiresAt && !modalSession.spec.scheduledStartTime"
+        style="margin-top: 0.5rem; font-size: 0.9em; color: #555"
+      >
         <strong>Session expires at:</strong> {{ format24Hour(modalSession.status.expiresAt) }}
       </div>
 
-      <div v-if="modalSession.spec && modalSession.spec.requestReason" style="margin-top:0.5rem">
+      <div v-if="modalSession.spec && modalSession.spec.requestReason" style="margin-top: 0.5rem">
         <strong>Request reason:</strong>
         <div class="reason-text">{{ modalSession.spec.requestReason }}</div>
       </div>
-      <div v-else-if="modalSession.status && modalSession.status.reason" style="margin-top:0.5rem">
+      <div v-else-if="modalSession.status && modalSession.status.reason" style="margin-top: 0.5rem">
         <strong>Request reason:</strong>
         <div class="reason-text">{{ modalSession.status.reason }}</div>
       </div>
       <scale-textarea
         :value="approverNotes[modalSession.metadata.name]"
-        @scaleChange="(ev: any) => approverNotes[modalSession.metadata.name] = ev.target.value"
-        :placeholder="(modalSession.approvalReason && modalSession.approvalReason.description) || 'Optional approver note'"
+        :placeholder="
+          (modalSession.approvalReason && modalSession.approvalReason.description) || 'Optional approver note'
+        "
+        @scaleChange="(ev: any) => (approverNotes[modalSession.metadata.name] = ev.target.value)"
       ></scale-textarea>
-      <p v-if="modalSession.approvalReason && modalSession.approvalReason.mandatory && !(approverNotes[modalSession.metadata.name] || '').trim()" style="color:#c62828;margin-top:0.5rem">This field is required.</p>
-      <div style="margin-top:0.5rem">
-        <scale-button @click="confirmApprove" :disabled="approving !== null">Confirm Approve</scale-button>
-        <scale-button variant="danger" @click="confirmReject" :disabled="approving !== null" style="margin-left: 0.5rem;">Reject</scale-button>
-        <scale-button variant="secondary" @click="closeApproveModal" style="margin-left: 0.5rem;">Cancel</scale-button>
+      <p
+        v-if="
+          modalSession.approvalReason &&
+          modalSession.approvalReason.mandatory &&
+          !(approverNotes[modalSession.metadata.name] || '').trim()
+        "
+        style="color: #c62828; margin-top: 0.5rem"
+      >
+        This field is required.
+      </p>
+      <div style="margin-top: 0.5rem">
+        <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
+        <scale-button variant="danger" :disabled="approving !== null" style="margin-left: 0.5rem" @click="confirmReject"
+          >Reject</scale-button
+        >
+        <scale-button variant="secondary" style="margin-left: 0.5rem" @click="closeApproveModal">Cancel</scale-button>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.container {
-  max-width: 900px;
+.approvals-page {
+  max-width: 950px;
   margin: 0 auto;
-  padding: 0 1rem;
 }
 
-h2 {
-  color: #0b0b0b;
+.approvals-toolbar {
   margin-bottom: 1.5rem;
-  font-size: 1.8rem;
-}
-
-/* Controls Section */
-.controls-section {
-  background: #f8f9fa;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1.5rem;
-  display: flex;
-  gap: 1.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.control-group {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.control-group label {
-  font-weight: 600;
-  color: #333;
-  font-size: 0.9rem;
-}
-
-.sort-select,
-.urgency-select {
-  padding: 6px 10px;
-  border: 1px solid #d0d0d0;
-  border-radius: 4px;
-  background: white;
-  color: #333;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-.sort-select:hover,
-.urgency-select:hover {
-  border-color: #d9006c;
-}
-
-.sort-select:focus,
-.urgency-select:focus {
-  outline: none;
-  border-color: #d9006c;
-  box-shadow: 0 0 0 3px rgba(217, 0, 108, 0.1);
-}
-
-.control-info {
-  margin-left: auto;
-  font-size: 0.9rem;
-  color: #666;
-  font-weight: 500;
 }
 
 .loading-state,
@@ -455,361 +618,199 @@ h2 {
 
 .approval-card {
   background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
   padding: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  transition: all 0.2s ease;
-  border-left: 4px solid #d0d0d0;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+  border-left: 5px solid transparent;
+}
+
+.approval-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
 }
 
 .approval-card.urgency-critical {
-  border-left-color: #c62828;
-  background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%);
+  border-left-color: #dc2626;
+  background-image: linear-gradient(120deg, rgba(248, 113, 113, 0.12), rgba(255, 255, 255, 0));
 }
 
 .approval-card.urgency-high {
-  border-left-color: #ff9800;
+  border-left-color: #f97316;
 }
 
-.approval-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  border-color: #d9006c;
-}
-
-/* Urgency Badges */
-.urgency-badge {
-  display: inline-block;
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-weight: 600;
-  font-size: 0.85rem;
-  margin-bottom: 1rem;
-}
-
-.urgency-badge.critical {
-  background-color: #ffebee;
-  color: #c62828;
-  border-left: 3px solid #c62828;
-  padding-left: 9px;
-}
-
-.urgency-badge.high {
-  background-color: #fff3e0;
-  color: #e65100;
-  border-left: 3px solid #ff9800;
-  padding-left: 9px;
-}
-
-/* Scheduled session badge */
-.scheduled-badge {
-  display: inline-block;
-  background-color: #e8f5e9;
-  color: #2e7d32;
-  padding: 6px 12px;
-  border-radius: 4px;
-  border-left: 3px solid #4CAF50;
-  font-weight: 600;
-  font-size: 0.85rem;
-  margin-bottom: 1rem;
-  margin-left: 0.5rem;
-}
-
-/* Header section */
-.card-header {
+.card-top {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 1rem;
-  gap: 1rem;
+  gap: 1.5rem;
+  flex-wrap: wrap;
 }
 
-.header-left {
+.identity-block {
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  min-width: 320px;
   flex: 1;
 }
 
-.user-badge {
-  font-size: 1.3rem;
-  font-weight: bold;
-  color: #d9006c;
-  margin-bottom: 0.5rem;
+.user-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f472b6, #ec4899);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.2rem;
+  letter-spacing: 0.5px;
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.3);
 }
 
-.cluster-group {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+.user-info h3 {
+  margin: 0;
+  font-size: 1.35rem;
+  color: #111827;
 }
 
-.cluster-tag,
-.group-tag {
-  display: inline-block;
-  background-color: #f0f0f0;
-  color: #555;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 0.85rem;
-  font-weight: 500;
-}
-
-.cluster-tag {
-  border-left: 3px solid #0070b8;
-}
-
-.group-tag {
-  border-left: 3px solid #4CAF50;
-}
-
-.header-right {
-  text-align: right;
-}
-
-.time-badge {
-  display: inline-block;
-  background-color: #fff3cd;
-  color: #856404;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-/* Mandatory badge */
-.mandatory-badge {
-  background-color: #ffebee;
-  color: #c62828;
-  padding: 8px 12px;
-  border-radius: 4px;
-  border-left: 3px solid #c62828;
-  margin-bottom: 1rem;
-  font-weight: 600;
-}
-
-/* Reason section */
-.reason-section {
-  background-color: #e3f2fd;
-  border-left: 3px solid #2196F3;
-  padding: 1rem;
-  border-radius: 4px;
-  margin: 1rem 0;
-}
-
-.reason-label {
-  color: #1976D2;
-  font-size: 0.9rem;
-}
-
-.reason-text {
-  margin-top: 0.5rem;
-  color: #0b0b0b;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-/* Approval description */
-.approval-desc {
-  background-color: #f5f5f5;
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  border-left: 3px solid #ffc107;
-  margin: 1rem 0;
-  color: #666;
+.user-info p {
+  margin: 0.15rem 0 0;
+  color: #6b7280;
   font-size: 0.95rem;
 }
 
-/* Metadata row */
-.meta-row {
+.request-meta {
   display: flex;
+  gap: 0.6rem;
   flex-wrap: wrap;
-  gap: 1.5rem;
-  padding: 0.75rem 0;
-  border-top: 1px solid #eee;
-  border-bottom: 1px solid #eee;
-  margin: 1rem 0;
-  font-size: 0.9rem;
-  color: #666;
+  margin-top: 0.65rem;
 }
 
-.meta-item {
-  display: flex;
-  align-items: center;
+.identity-block code,
+.request-footer code {
+  display: inline-block;
+  max-width: 100%;
+  font-size: 0.92em;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
-.meta-item strong {
-  color: #333;
-  margin-right: 0.5rem;
+.request-footer code {
+  margin-top: 0.15rem;
 }
 
-/* Actions */
-.card-actions {
-  display: flex;
-  gap: 0.75rem;
-  margin-top: 1.25rem;
-}
-
-.approve-btn {
-  min-width: 150px;
-}
-
-/* Modal styling remains */
-.center {
-  text-align: center;
-}
-
-.sessions-list {
+.timer-panel {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  min-width: 220px;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-}
-
-.approval-card {
-  background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  transition: all 0.2s ease;
-}
-
-.approval-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  border-color: #d9006c;
-}
-
-/* Header section */
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 1rem;
-  gap: 1rem;
-}
-
-.header-left {
-  flex: 1;
-}
-
-.user-badge {
-  font-size: 1.3rem;
-  font-weight: bold;
-  color: #d9006c;
-  margin-bottom: 0.5rem;
-}
-
-.cluster-group {
-  display: flex;
   gap: 0.5rem;
-  flex-wrap: wrap;
 }
 
-.cluster-tag,
-.group-tag {
-  display: inline-block;
-  background-color: #f0f0f0;
-  color: #555;
-  padding: 4px 10px;
-  border-radius: 12px;
+.countdown-label {
+  color: #475569;
   font-size: 0.85rem;
   font-weight: 500;
 }
 
-.cluster-tag {
-  border-left: 3px solid #0070b8;
+.timer-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #111827;
 }
 
-.group-tag {
-  border-left: 3px solid #4CAF50;
+.timer-panel .timer-absolute {
+  color: #475569;
+  font-size: 0.8rem;
 }
 
-.header-right {
-  text-align: right;
-}
-
-.time-badge {
-  display: inline-block;
-  background-color: #fff3cd;
-  color: #856404;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-/* Mandatory badge */
-.mandatory-badge {
-  background-color: #ffebee;
-  color: #c62828;
-  padding: 8px 12px;
-  border-radius: 4px;
-  border-left: 3px solid #c62828;
-  margin-bottom: 1rem;
-  font-weight: 600;
-}
-
-/* Reason section */
-.reason-section {
-  background-color: #e3f2fd;
-  border-left: 3px solid #2196F3;
-  padding: 1rem;
-  border-radius: 4px;
-  margin: 1rem 0;
-}
-
-.reason-label {
-  color: #1976D2;
-  font-size: 0.9rem;
-}
-
-.reason-text {
-  margin-top: 0.5rem;
-  color: #0b0b0b;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-/* Approval description */
-.approval-desc {
-  background-color: #f5f5f5;
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  border-left: 3px solid #ffc107;
-  margin: 1rem 0;
-  color: #666;
+.matches {
+  margin-top: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.95rem;
 }
 
-/* Metadata row */
-.meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  padding: 0.75rem 0;
-  border-top: 1px solid #eee;
-  border-bottom: 1px solid #eee;
-  margin: 1rem 0;
-  font-size: 0.9rem;
-  color: #666;
+.matches .number {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #0d9488;
 }
 
-.meta-item {
+.matching-groups {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  border-left: 4px solid #f59e0b;
+  background: #fffbeb;
+  border-radius: 10px;
+}
+
+.matching-label {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  color: #b45309;
+  text-transform: uppercase;
+}
+
+.matching-stack span {
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #92400e;
+  font-weight: 600;
+}
+
+.info-grid .value {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.card-bottom {
+  margin-top: 1.25rem;
   display: flex;
+  justify-content: space-between;
   align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
-.meta-item strong {
-  color: #333;
-  margin-right: 0.5rem;
+.request-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+  color: #6b7280;
 }
 
-/* Actions */
-.card-actions {
+.request-footer strong {
+  color: #111827;
+}
+
+.action-row {
   display: flex;
   gap: 0.75rem;
-  margin-top: 1.25rem;
+  flex-wrap: wrap;
 }
 
-.approve-btn {
+.action-row scale-button {
   min-width: 150px;
+}
+
+.action-row scale-button.pill-button {
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.action-row scale-button.pill-button::part(base),
+.action-row scale-button.pill-button::part(button) {
+  border-radius: 999px;
 }
 
 /* Modal styling remains */
@@ -887,11 +888,11 @@ h2 {
 }
 
 /* High contrast for form inputs */
-scale-textarea::v-deep .textarea__control {
+scale-textarea :deep(.textarea__control) {
   color: #111;
 }
 
-scale-textarea::v-deep .textarea__control::placeholder {
+scale-textarea :deep(.textarea__control::placeholder) {
   color: #999;
 }
 
@@ -930,21 +931,20 @@ scale-textarea::v-deep .textarea__control::placeholder {
 }
 
 @media (max-width: 600px) {
-  .card-header {
+  .card-top {
     flex-direction: column;
   }
 
-  .header-right {
-    text-align: left;
+  .identity-block {
+    min-width: 100%;
   }
 
-  .cluster-group {
-    margin-top: 0.5rem;
+  .timer-panel {
+    width: 100%;
   }
 
-  .meta-row {
-    flex-direction: column;
-    gap: 0.5rem;
+  .info-grid {
+    grid-template-columns: 1fr;
   }
 
   .approve-modal {
@@ -968,21 +968,9 @@ scale-textarea::v-deep .textarea__control::placeholder {
     padding: 1rem;
   }
 
-  .urgency-badge {
-    font-size: 0.8rem;
-    padding: 6px 10px;
-  }
-
-  .user-badge {
-    font-size: 1.1rem;
-  }
-
-  .card-actions {
-    flex-direction: column;
-  }
-
-  .approve-btn {
+  .action-row scale-button {
     width: 100%;
+    min-width: unset;
   }
 }
 </style>

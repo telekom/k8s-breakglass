@@ -3,10 +3,33 @@ import { createPinia } from "pinia";
 
 import App from "@/App.vue";
 import router from "@/router";
-import AuthService, { AuthRedirect, type State } from "@/services/auth";
+import AuthService, { AuthRedirect, AuthSilentRedirect, type State } from "@/services/auth";
 import { AuthKey } from "@/keys";
 import getConfig from "@/services/config";
 import { BrandingKey } from "@/keys";
+import type Config from "@/model/config";
+
+const CONFIG_CACHE_KEY = "breakglass_runtime_config";
+
+function cacheRuntimeConfig(config: Config) {
+  try {
+    sessionStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));
+  } catch (error) {
+    console.warn("[ConfigCache] Failed to persist runtime config", error);
+  }
+}
+
+function readCachedRuntimeConfig(): Config | null {
+  try {
+    const cached = sessionStorage.getItem(CONFIG_CACHE_KEY);
+    if (cached) {
+      return JSON.parse(cached) as Config;
+    }
+  } catch (error) {
+    console.warn("[ConfigCache] Failed to read runtime config cache", error);
+  }
+  return null;
+}
 
 /**
  * Initialize flavour-dependent UI components and bootstrap the application.
@@ -16,10 +39,11 @@ import { BrandingKey } from "@/keys";
 async function initializeApp() {
   // Fetch configuration from backend, which includes runtime-configurable UI flavour
   const config = await getConfig();
-  
+  cacheRuntimeConfig(config);
+
   // Determine flavour from backend config or fall back to default
   const flavour = config.uiFlavour || "oss";
-  
+
   // Configure favicon based on flavour
   try {
     const fav = document.getElementById("app-favicon") as HTMLLinkElement | null;
@@ -52,17 +76,15 @@ async function initializeApp() {
       faviconLink.href = faviconLink.href.replace(/\/$/, "");
     }
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.warn("[favicon] swap failed", e);
   }
 
   // Expose flavour for e2e/UI tests & theming hooks
   try {
     (window as any).__BREAKGLASS_UI_FLAVOUR = flavour;
-    document.documentElement.setAttribute('data-ui-flavour', flavour);
+    document.documentElement.setAttribute("data-ui-flavour", flavour);
   } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn('[ui-flavour] expose failed', e);
+    console.warn("[ui-flavour] expose failed", e);
   }
 
   // Load appropriate Scale components based on runtime flavour
@@ -117,21 +139,43 @@ async function initializeApp() {
       }
     } catch (error) {
       // Log and surface a friendly message
-      // eslint-disable-next-line no-console
-      console.error('[AuthCallback]', error);
+
+      console.error("[AuthCallback]", error);
     }
   }
 
   app.mount("#app");
 }
 
-// Bootstrap the application
-initializeApp().catch((error) => {
-  // eslint-disable-next-line no-console
-  console.error('[AppInitialization]', error);
-  // Show error message to user if initialization fails
-  const app = document.getElementById("app");
-  if (app) {
-    app.innerHTML = '<div style="padding: 20px; color: red; font-family: monospace;">Failed to initialize application. Please check the console for details.</div>';
+async function initializeSilentRenew() {
+  const cachedConfig = readCachedRuntimeConfig();
+  const config = cachedConfig || (await getConfig());
+  if (!cachedConfig) {
+    cacheRuntimeConfig(config);
   }
-});
+  const auth = new AuthService(config);
+  try {
+    await auth.userManager.signinSilentCallback();
+  } catch (error) {
+    console.error("[SilentRenew]", error);
+  }
+}
+
+const isSilentRenew = window.location.pathname === AuthSilentRedirect;
+
+if (isSilentRenew) {
+  initializeSilentRenew().catch((error) => {
+    console.error("[SilentRenewInit]", error);
+  });
+} else {
+  // Bootstrap the application
+  initializeApp().catch((error) => {
+    console.error("[AppInitialization]", error);
+    // Show error message to user if initialization fails
+    const app = document.getElementById("app");
+    if (app) {
+      app.innerHTML =
+        '<div style="padding: 20px; color: red; font-family: monospace;">Failed to initialize application. Please check the console for details.</div>';
+    }
+  });
+}

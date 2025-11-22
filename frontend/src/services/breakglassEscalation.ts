@@ -1,4 +1,3 @@
-
 import axios, { AxiosHeaders } from "axios";
 import { pushError } from "@/services/errors";
 
@@ -6,7 +5,7 @@ import type AuthService from "@/services/auth";
 
 export default class BreakglassEscalationService {
   private client = axios.create({
-  baseURL: "/api/",
+    baseURL: "/api/",
   });
   private auth: AuthService;
 
@@ -33,8 +32,7 @@ export default class BreakglassEscalationService {
     );
   }
 
-
   public async getEscalations() {
-    return await this.client.get("/breakglassEscalations", {})
+    return await this.client.get("/breakglassEscalations", {});
   }
 }

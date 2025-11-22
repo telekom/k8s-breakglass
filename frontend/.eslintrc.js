@@ -10,5 +10,6 @@ module.exports = {
   rules: {
     "vue/hypenize-parameters": "off",
     "vue/v-on-event-hyphenation": "off",
+    "@typescript-eslint/no-explicit-any": "off",
   },
 };

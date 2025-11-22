@@ -2,7 +2,6 @@
 import { computed } from "vue";
 import humanizeDuration from "humanize-duration";
 
-
 const humanizeConfig: humanizeDuration.Options = {
   round: true,
   largest: 2,
@@ -10,13 +9,13 @@ const humanizeConfig: humanizeDuration.Options = {
 
 const props = defineProps<{
   review: any;
-  time: number
+  time: number;
 }>();
 
 const emit = defineEmits(["accept", "reject"]);
 
-const active = computed(() => Date.parse(props.review.until) - props.time > 0)
-const accepted = computed(() => props.review.application_status == "accepted")
+const active = computed(() => Date.parse(props.review.until) - props.time > 0);
+const accepted = computed(() => props.review.application_status == "accepted");
 
 function accept() {
   emit("accept");
@@ -30,11 +29,10 @@ const expiryHumanized = computed(() => {
   if (!active.value) {
     return "already expired";
   }
-  const until = Date.parse(props.review.until)
-  const duration = until - props.time
+  const until = Date.parse(props.review.until);
+  const duration = until - props.time;
   return humanizeDuration(duration, humanizeConfig);
 });
-
 </script>
 
 <template>
@@ -43,13 +41,20 @@ const expiryHumanized = computed(() => {
       {{ review.cluster }}
     </h2>
     <span>
-      <br> Name: '{{ review.name }}' <br />
-      <br> UID: '{{ review.uid }}' <br />
-      <br> Cluster Name: '{{ review.cluster }}' <br />
-      <br> Duration: {{ review.duration }} <br />
-      <br>Until: {{ review.until }} <br />
-      <br> Status: {{ review.application_status }} <br />
-      <br> Resource Info: <br> <br>
+      <br />
+      Name: '{{ review.name }}' <br />
+      <br />
+      UID: '{{ review.uid }}' <br />
+      <br />
+      Cluster Name: '{{ review.cluster }}' <br />
+      <br />
+      Duration: {{ review.duration }} <br />
+      <br />Until: {{ review.until }} <br />
+      <br />
+      Status: {{ review.application_status }} <br />
+      <br />
+      Resource Info: <br />
+      <br />
       User: '{{ review.subject.username }}' <br />
       Resource: '{{ review.subject.resource }}' <br />
       Method: '{{ review.subject.verb }}' <br />
