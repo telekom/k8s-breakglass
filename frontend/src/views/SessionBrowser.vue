@@ -2,10 +2,13 @@
 import { computed, inject, onMounted, reactive, ref } from "vue";
 import { AuthKey } from "@/keys";
 import BreakglassService, { type SessionSearchParams } from "@/services/breakglass";
+import BreakglassSessionService from "@/services/breakglassSession";
 import type { SessionCR } from "@/model/breakglass";
 import { format24Hour } from "@/utils/dateTime";
 import { useUser } from "@/services/auth";
 import { describeApprover, wasApprovedBy } from "@/utils/sessionFilters";
+import { pushError, pushSuccess } from "@/services/toast";
+import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -13,6 +16,7 @@ if (!auth) {
 }
 
 const breakglassService = new BreakglassService(auth);
+const breakglassSessionService = new BreakglassSessionService(auth);
 const user = useUser();
 const currentUserEmail = computed(() => {
   const profile = (
@@ -38,6 +42,8 @@ type FilterState = {
   onlyApprovedByMe: boolean;
 };
 
+type SessionActionKey = "reject" | "withdraw" | "drop" | "cancel";
+
 const defaultStates = ["approved", "timeout", "withdrawn", "rejected"];
 const filters = reactive<FilterState>({
   mine: true,
@@ -55,6 +61,7 @@ const loading = ref(false);
 const error = ref("");
 const lastQuery = ref<string | null>(null);
 const activePreset = ref<"mine" | "approved" | null>("mine");
+const actionBusy = reactive<Record<string, SessionActionKey | undefined>>({});
 
 const stateOptions = [
   { value: "approved", label: "Approved" },
@@ -123,8 +130,22 @@ function sessionState(session: SessionCR): string {
   return session.status?.state || (session as any).state || "-";
 }
 
+function normalizedState(session: SessionCR): string {
+  return sessionState(session).toLowerCase();
+}
+
 function sessionUser(session: SessionCR): string {
   return session.spec?.user || session.spec?.requester || (session as any).user || "-";
+}
+
+function sessionName(session: SessionCR): string {
+  return session.metadata?.name || session.name || "";
+}
+
+function sessionKey(session: SessionCR): string {
+  const canonical = sessionName(session);
+  if (canonical) return canonical;
+  return `${session.spec?.cluster || session.cluster || "unknown"}-${session.spec?.grantedGroup || session.group || "unknown"}`;
 }
 
 function buildParams(state?: string): SessionSearchParams {
@@ -211,18 +232,125 @@ function applyPreset(preset: "mine" | "approved") {
 function onStateToggle(state: string, event: Event) {
   const input = event.target as HTMLInputElement | null;
   const checked = !!input?.checked;
+  const next = new Set(filters.states);
   if (checked) {
-    if (state === "active") {
-      filters.states = ["active"];
-      return;
-    }
-    const next = new Set(filters.states);
-    next.delete("active");
     next.add(state);
-    filters.states = Array.from(next);
+  } else {
+    next.delete(state);
+  }
+  filters.states = Array.from(next);
+}
+
+function isSessionOwner(session: SessionCR): boolean {
+  const action = decideRejectOrWithdraw(currentUserEmail.value, session);
+  return action === "withdraw";
+}
+
+function isPending(session: SessionCR): boolean {
+  return normalizedState(session) === "pending";
+}
+
+function isActive(session: SessionCR): boolean {
+  const state = normalizedState(session);
+  return state === "approved" || state === "active";
+}
+
+function approvedByCurrentUser(session: SessionCR): boolean {
+  return wasApprovedBy(session, currentUserEmail.value);
+}
+
+function canWithdraw(session: SessionCR): boolean {
+  return isPending(session) && isSessionOwner(session);
+}
+
+function canReject(session: SessionCR): boolean {
+  if (!isPending(session)) return false;
+  if (isSessionOwner(session)) return false;
+  return filters.approver || approvedByCurrentUser(session);
+}
+
+function canDrop(session: SessionCR): boolean {
+  return isActive(session) && isSessionOwner(session);
+}
+
+function canCancel(session: SessionCR): boolean {
+  if (!isActive(session)) return false;
+  if (isSessionOwner(session)) return false;
+  return filters.approver || filters.onlyApprovedByMe || approvedByCurrentUser(session);
+}
+
+type SessionAction = {
+  key: SessionActionKey;
+  label: string;
+  variant?: string;
+};
+
+function getSessionActions(session: SessionCR): SessionAction[] {
+  const actions: SessionAction[] = [];
+  if (canWithdraw(session)) actions.push({ key: "withdraw", label: "Withdraw", variant: "secondary" });
+  if (canReject(session)) actions.push({ key: "reject", label: "Reject", variant: "danger" });
+  if (canDrop(session)) actions.push({ key: "drop", label: "Drop", variant: "secondary" });
+  if (canCancel(session)) actions.push({ key: "cancel", label: "Cancel", variant: "danger" });
+  return actions;
+}
+
+function isSessionBusy(session: SessionCR): boolean {
+  const key = sessionKey(session);
+  if (!key) return false;
+  return !!actionBusy[key];
+}
+
+function isActionRunning(session: SessionCR, action: SessionActionKey): boolean {
+  const key = sessionKey(session);
+  if (!key) return false;
+  return actionBusy[key] === action;
+}
+
+function setActionBusy(session: SessionCR, action?: SessionActionKey) {
+  const key = sessionKey(session);
+  if (!key) return;
+  if (action) {
+    actionBusy[key] = action;
     return;
   }
-  filters.states = filters.states.filter((value) => value !== state);
+  delete actionBusy[key];
+}
+
+async function runSessionAction(session: SessionCR, action: SessionActionKey) {
+  const name = sessionName(session);
+  if (!name) {
+    pushError("Unable to perform action: session name is missing.");
+    return;
+  }
+  setActionBusy(session, action);
+  try {
+    switch (action) {
+      case "reject":
+        await breakglassSessionService.rejectReview({ name });
+        pushSuccess(`Rejected session ${name}`);
+        break;
+      case "withdraw":
+        await breakglassSessionService.withdrawSession({ name });
+        pushSuccess(`Withdrew request ${name}`);
+        break;
+      case "drop":
+        await breakglassSessionService.dropSession({ name });
+        pushSuccess(`Dropped session ${name}`);
+        break;
+      case "cancel":
+        await breakglassSessionService.cancelSession({ name });
+        pushSuccess(`Cancelled session ${name}`);
+        break;
+      default:
+        break;
+    }
+    await fetchSessions();
+  } catch (err: any) {
+    const message = err?.message || `Failed to ${action} session`;
+    pushError(message);
+  } finally {
+    setActionBusy(session);
+  }
 }
 
 const visibleSessions = computed(() => {
@@ -397,6 +525,19 @@ onMounted(() => {
               <strong>Issuer:</strong> {{ session.spec.identityProviderIssuer }}
             </span>
             <span><strong>Approved by:</strong> {{ describeApprover(session) }}</span>
+          </div>
+
+          <div v-if="getSessionActions(session).length" class="session-actions">
+            <scale-button
+              v-for="action in getSessionActions(session)"
+              :key="`${sessionKey(session)}-${action.key}`"
+              :variant="action.variant || 'secondary'"
+              :disabled="isSessionBusy(session)"
+              @click="() => runSessionAction(session, action.key)"
+            >
+              <span v-if="isActionRunning(session, action.key)">Processing…</span>
+              <span v-else>{{ action.label }}</span>
+            </scale-button>
           </div>
 
           <div class="timeline">
@@ -611,6 +752,17 @@ header p {
   flex-direction: column;
   gap: 1.25rem;
   margin-top: 1rem;
+}
+
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.session-actions scale-button {
+  min-width: 120px;
 }
 
 .session-card {
