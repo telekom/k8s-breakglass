@@ -486,41 +486,23 @@ onMounted(fetchPendingApprovals);
       </p>
 
       <!-- Duration information -->
-      <div
-        v-if="modalSession.spec && modalSession.spec.maxValidFor"
-        style="
-          margin-top: 0.5rem;
-          padding: 8px;
-          background-color: #e8f4f8;
-          border-left: 3px solid #0288d1;
-          border-radius: 3px;
-        "
-      >
-        <p style="margin: 4px 0; color: #01579b">
+      <div v-if="modalSession.spec && modalSession.spec.maxValidFor" class="modal-info-block tone-info">
+        <p>
           <strong>Duration:</strong> {{ formatDuration(modalSession.spec.maxValidFor) }}
         </p>
       </div>
 
       <!-- Scheduling information -->
-      <div
-        v-if="modalSession.spec && modalSession.spec.scheduledStartTime"
-        style="
-          margin-top: 1rem;
-          padding: 10px;
-          background-color: #fff3cd;
-          border-left: 3px solid #ffc107;
-          border-radius: 3px;
-        "
-      >
-        <strong style="color: #856404">Scheduled Session</strong>
-        <p style="margin: 4px 0; color: #856404">
+      <div v-if="modalSession.spec && modalSession.spec.scheduledStartTime" class="modal-info-block tone-warn">
+        <strong>Scheduled session</strong>
+        <p>
           <strong>Will start at:</strong> {{ format24Hour(modalSession.spec.scheduledStartTime) }}
         </p>
-        <p v-if="modalSession.spec.maxValidFor" style="margin: 4px 0; color: #856404">
+        <p v-if="modalSession.spec.maxValidFor">
           <strong>Will end at:</strong>
           {{ computeEndTime(modalSession.spec.scheduledStartTime, modalSession.spec.maxValidFor) }}
         </p>
-        <p v-else style="margin: 4px 0; color: #856404">
+        <p v-else>
           <strong>Will expire at:</strong>
           {{
             modalSession.status?.expiresAt ? format24Hour(modalSession.status.expiresAt) : "Calculated upon activation"
@@ -529,38 +511,23 @@ onMounted(fetchPendingApprovals);
       </div>
 
       <!-- Activation status badge -->
-      <div
-        v-if="modalSession.status && modalSession.status.state === 'WaitingForScheduledTime'"
-        style="margin-top: 0.5rem"
-      >
-        <span
-          style="
-            display: inline-block;
-            background-color: #e3f2fd;
-            color: #1565c0;
-            padding: 4px 8px;
-            border-radius: 3px;
-            font-size: 0.85em;
-            font-weight: bold;
-          "
-        >
-          ⏳ PENDING ACTIVATION
-        </span>
+      <div v-if="modalSession.status && modalSession.status.state === 'WaitingForScheduledTime'" class="modal-pill tone-info">
+        ⏳ Pending activation
       </div>
 
       <!-- Immediate session timing -->
       <div
         v-else-if="modalSession.status && modalSession.status.expiresAt && !modalSession.spec.scheduledStartTime"
-        style="margin-top: 0.5rem; font-size: 0.9em; color: #555"
+        class="modal-info-row"
       >
         <strong>Session expires at:</strong> {{ format24Hour(modalSession.status.expiresAt) }}
       </div>
 
-      <div v-if="modalSession.spec && modalSession.spec.requestReason" style="margin-top: 0.5rem">
+      <div v-if="modalSession.spec && modalSession.spec.requestReason" class="modal-reason">
         <strong>Request reason:</strong>
         <div class="reason-text">{{ modalSession.spec.requestReason }}</div>
       </div>
-      <div v-else-if="modalSession.status && modalSession.status.reason" style="margin-top: 0.5rem">
+      <div v-else-if="modalSession.status && modalSession.status.reason" class="modal-reason">
         <strong>Request reason:</strong>
         <div class="reason-text">{{ modalSession.status.reason }}</div>
       </div>
@@ -577,16 +544,14 @@ onMounted(fetchPendingApprovals);
           modalSession.approvalReason.mandatory &&
           !(approverNotes[modalSession.metadata.name] || '').trim()
         "
-        style="color: #c62828; margin-top: 0.5rem"
+        class="approval-note-required"
       >
         This field is required.
       </p>
-      <div style="margin-top: 0.5rem">
+      <div class="modal-actions">
         <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
-        <scale-button variant="danger" :disabled="approving !== null" style="margin-left: 0.5rem" @click="confirmReject"
-          >Reject</scale-button
-        >
-        <scale-button variant="secondary" style="margin-left: 0.5rem" @click="closeApproveModal">Cancel</scale-button>
+        <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
+        <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
       </div>
     </div>
   </div>
@@ -596,17 +561,71 @@ onMounted(fetchPendingApprovals);
 .approvals-page {
   max-width: 950px;
   margin: 0 auto;
+  padding-bottom: 3rem;
+  --approvals-bg: var(--telekom-color-background-canvas);
+  --approvals-surface: var(--telekom-color-background-surface);
+  --approvals-surface-subtle: var(--telekom-color-background-surface-subtle);
+  --approvals-border: var(--telekom-color-ui-border-standard);
+  --approvals-shadow: var(--telekom-shadow-floating-standard);
+  --approvals-shadow-hover: var(--telekom-shadow-floating-hover);
+  --approvals-text-strong: var(--telekom-color-text-and-icon-standard);
+  --approvals-text-muted: var(--telekom-color-text-and-icon-additional);
+  --approvals-chip-bg: var(--telekom-color-functional-success-subtle);
+  --approvals-chip-text: var(--telekom-color-text-and-icon-on-subtle-success);
+  --approvals-chip-secondary-bg: var(--telekom-color-additional-violet-subtle);
+  --approvals-chip-secondary-text: var(--telekom-color-text-and-icon-on-subtle-violet);
+  --approvals-chip-primary-bg: var(--telekom-color-functional-informational-subtle);
+  --approvals-chip-primary-text: var(--telekom-color-text-and-icon-on-subtle-informational);
+  --approvals-panel-bg: var(--telekom-color-ui-subtle);
+  --approvals-panel-border: var(--telekom-color-ui-border-standard);
+  --approvals-pill-bg: var(--telekom-color-additional-violet-subtle);
+  --approvals-pill-text: var(--telekom-color-text-and-icon-on-subtle-violet);
+  --approvals-warn-bg: var(--telekom-color-functional-warning-subtle);
+  --approvals-warn-text: var(--telekom-color-text-and-icon-on-subtle-warning);
+  --approvals-info-bg: var(--telekom-color-functional-informational-subtle);
+  --approvals-info-text: var(--telekom-color-text-and-icon-on-subtle-informational);
+  --approvals-danger: var(--telekom-color-functional-danger-standard);
+  --approvals-warning: var(--telekom-color-functional-warning-standard);
+  --approvals-success: var(--telekom-color-functional-success-standard);
+  --approvals-focus: var(--telekom-color-functional-focus-on-dark-background);
+  background: var(--approvals-bg);
+  color: var(--approvals-text-strong);
+}
+
+.approvals-page .ui-page-title {
+  color: var(--approvals-text-strong);
 }
 
 .approvals-toolbar {
   margin-bottom: 1.5rem;
+  background: var(--approvals-surface);
+  border: 1px solid var(--approvals-border);
+  box-shadow: none;
+}
+
+.approvals-toolbar label {
+  color: var(--approvals-text-strong);
+}
+
+.approvals-toolbar select {
+  background: var(--approvals-panel-bg);
+  border: 1px solid var(--approvals-panel-border);
+  color: var(--approvals-text-strong);
+}
+
+.approvals-toolbar select option {
+  color: var(--telekom-color-text-and-icon-inverted-standard);
+}
+
+.approvals-toolbar .ui-toolbar-info {
+  color: var(--approvals-text-muted);
 }
 
 .loading-state,
 .empty-state {
   text-align: center;
   padding: 2rem;
-  color: #666;
+  color: var(--approvals-text-muted);
   font-size: 1.1rem;
 }
 
@@ -617,11 +636,11 @@ onMounted(fetchPendingApprovals);
 }
 
 .approval-card {
-  background: white;
-  border: 1px solid #e5e7eb;
+  background: var(--approvals-surface);
+  border: 1px solid var(--approvals-border);
   border-radius: 14px;
   padding: 1.5rem;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--approvals-shadow);
   transition:
     transform 0.2s ease,
     box-shadow 0.2s ease;
@@ -630,16 +649,17 @@ onMounted(fetchPendingApprovals);
 
 .approval-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--approvals-shadow-hover);
 }
 
 .approval-card.urgency-critical {
-  border-left-color: #dc2626;
-  background-image: linear-gradient(120deg, rgba(248, 113, 113, 0.12), rgba(255, 255, 255, 0));
+  border-left-color: var(--approvals-danger);
+  background-image: linear-gradient(120deg, var(--telekom-color-functional-danger-subtle), transparent);
 }
 
 .approval-card.urgency-high {
-  border-left-color: #f97316;
+  border-left-color: var(--approvals-warning);
+  background-image: linear-gradient(120deg, var(--telekom-color-functional-warning-subtle), transparent);
 }
 
 .card-top {
@@ -661,25 +681,25 @@ onMounted(fetchPendingApprovals);
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #f472b6, #ec4899);
+  background: linear-gradient(135deg, var(--telekom-color-primary-hovered), var(--telekom-color-primary-standard));
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--telekom-color-text-and-icon-inverted-standard);
   font-weight: 700;
   font-size: 1.2rem;
   letter-spacing: 0.5px;
-  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.3);
+  box-shadow: inset 0 0 0 3px var(--approvals-panel-border);
 }
 
 .user-info h3 {
   margin: 0;
   font-size: 1.35rem;
-  color: #111827;
+  color: var(--approvals-text-strong);
 }
 
 .user-info p {
   margin: 0.15rem 0 0;
-  color: #6b7280;
+  color: var(--approvals-text-muted);
   font-size: 0.95rem;
 }
 
@@ -688,6 +708,22 @@ onMounted(fetchPendingApprovals);
   gap: 0.6rem;
   flex-wrap: wrap;
   margin-top: 0.65rem;
+}
+
+.approval-card .ui-chip {
+  background: var(--approvals-chip-bg);
+  color: var(--approvals-chip-text);
+  border: 1px solid var(--approvals-panel-border);
+}
+
+.approval-card .ui-chip.secondary {
+  background: var(--approvals-chip-secondary-bg);
+  color: var(--approvals-chip-secondary-text);
+}
+
+.approval-card .ui-chip.primary {
+  background: var(--approvals-chip-primary-bg);
+  color: var(--approvals-chip-primary-text);
 }
 
 .identity-block code,
@@ -704,7 +740,8 @@ onMounted(fetchPendingApprovals);
 }
 
 .timer-panel {
-  background: #f8fafc;
+  background: var(--approvals-panel-bg);
+  border: 1px solid var(--approvals-panel-border);
   border-radius: 12px;
   padding: 1rem 1.25rem;
   min-width: 220px;
@@ -714,7 +751,7 @@ onMounted(fetchPendingApprovals);
 }
 
 .countdown-label {
-  color: #475569;
+  color: var(--approvals-text-muted);
   font-size: 0.85rem;
   font-weight: 500;
 }
@@ -722,11 +759,11 @@ onMounted(fetchPendingApprovals);
 .timer-value {
   font-size: 1.4rem;
   font-weight: 700;
-  color: #111827;
+  color: var(--approvals-text-strong);
 }
 
 .timer-panel .timer-absolute {
-  color: #475569;
+  color: var(--approvals-text-muted);
   font-size: 0.8rem;
 }
 
@@ -741,33 +778,43 @@ onMounted(fetchPendingApprovals);
 .matches .number {
   font-size: 1.4rem;
   font-weight: 700;
-  color: #0d9488;
+  color: var(--approvals-success);
 }
 
 .matching-groups {
   margin-top: 1rem;
   padding: 1rem 1.25rem;
-  border-left: 4px solid #f59e0b;
-  background: #fffbeb;
+  border-left: 4px solid var(--approvals-warning);
+  background: var(--approvals-warn-bg);
   border-radius: 10px;
 }
 
 .matching-label {
   font-size: 0.85rem;
   letter-spacing: 0.08em;
-  color: #b45309;
+  color: var(--approvals-warn-text);
   text-transform: uppercase;
 }
 
 .matching-stack span {
   padding: 0.35rem 0.75rem;
   border-radius: 999px;
-  background: rgba(245, 158, 11, 0.18);
-  color: #92400e;
+  background: var(--approvals-warn-bg);
+  color: var(--approvals-warn-text);
   font-weight: 600;
 }
 
-.info-grid .value {
+.approval-card .ui-info-item {
+  background: var(--approvals-panel-bg);
+  border: 1px solid var(--approvals-panel-border);
+}
+
+.approval-card .ui-info-item .label {
+  color: var(--approvals-text-muted);
+}
+
+.approval-card .ui-info-item .value {
+  color: var(--approvals-text-strong);
   word-break: break-word;
   overflow-wrap: anywhere;
 }
@@ -786,11 +833,11 @@ onMounted(fetchPendingApprovals);
   flex-direction: column;
   gap: 0.2rem;
   font-size: 0.9rem;
-  color: #6b7280;
+  color: var(--approvals-text-muted);
 }
 
 .request-footer strong {
-  color: #111827;
+  color: var(--approvals-text-strong);
 }
 
 .action-row {
@@ -813,7 +860,6 @@ onMounted(fetchPendingApprovals);
   border-radius: 999px;
 }
 
-/* Modal styling remains */
 .center {
   text-align: center;
 }
@@ -821,7 +867,7 @@ onMounted(fetchPendingApprovals);
 .approve-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--telekom-color-background-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -829,8 +875,8 @@ onMounted(fetchPendingApprovals);
 }
 
 .approve-modal {
-  background: white;
-  color: #0b0b0b;
+  background: var(--approvals-surface);
+  color: var(--approvals-text-strong);
   padding: 1.5rem;
   position: relative;
   border-radius: 8px;
@@ -838,76 +884,145 @@ onMounted(fetchPendingApprovals);
   width: 90%;
   max-height: 90vh;
   overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--approvals-border);
+  box-shadow: var(--telekom-shadow-overlay);
 }
 
 .approve-modal h3 {
-  color: #d9006c;
+  color: var(--telekom-color-primary-standard);
   margin-top: 0;
   margin-bottom: 1rem;
 }
 
 .approve-modal p {
   margin: 0.75rem 0;
-  color: #333;
+  color: var(--approvals-text-muted);
 }
 
 .modal-close {
   position: absolute;
   top: 0.75rem;
   right: 0.75rem;
-  background: transparent;
-  border: none;
-  font-size: 1.5rem;
+  background: var(--approvals-panel-bg);
+  border: 1px solid var(--approvals-panel-border);
+  border-radius: 999px;
+  font-size: 1.1rem;
   line-height: 1;
   cursor: pointer;
-  color: #999;
+  color: var(--approvals-text-strong);
   padding: 0.25rem;
   width: 2rem;
   height: 2rem;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: transform 0.2s ease;
 }
 
 .modal-close:hover {
-  color: #333;
-  background-color: #f0f0f0;
-  border-radius: 4px;
+  transform: scale(1.05);
 }
 
-/* Reason text in modal */
 .reason-text {
   margin-top: 0.25rem;
   padding: 0.75rem;
-  background: #f7f7f7;
+  background: var(--approvals-panel-bg);
   border-radius: 4px;
-  color: #222;
+  color: var(--approvals-text-strong);
   white-space: pre-wrap;
   font-size: 0.9rem;
 }
 
-/* High contrast for form inputs */
 scale-textarea :deep(.textarea__control) {
-  color: #111;
+  color: var(--approvals-text-strong);
+  background: var(--approvals-panel-bg);
+  border-color: var(--approvals-panel-border);
 }
 
 scale-textarea :deep(.textarea__control::placeholder) {
-  color: #999;
+  color: var(--approvals-text-muted);
 }
 
-/* Button overrides */
-.approve-modal scale-button[variant="secondary"] {
-  background: #374151 !important;
-  color: #ffffff !important;
-  border: 1px solid #374151 !important;
+.modal-info-block {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--approvals-panel-border);
+  background: var(--approvals-panel-bg);
 }
 
-.approve-modal scale-button[variant="secondary"]:hover {
-  background: #2d3748 !important;
+.modal-info-block p {
+  margin: 0.3rem 0;
+  color: var(--approvals-text-muted);
 }
 
-/* Responsive design */
+.modal-info-block strong {
+  color: var(--approvals-text-strong);
+}
+
+.modal-info-block.tone-info {
+  background: var(--approvals-info-bg);
+  border-left: 3px solid var(--telekom-color-functional-informational-standard);
+}
+
+.modal-info-block.tone-warn {
+  background: var(--approvals-warn-bg);
+  border-left: 3px solid var(--approvals-warning);
+}
+
+.modal-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  background: var(--approvals-pill-bg);
+  color: var(--approvals-pill-text);
+}
+
+.modal-pill.tone-info {
+  background: var(--approvals-info-bg);
+  color: var(--approvals-info-text);
+}
+
+.modal-info-row {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--approvals-text-muted);
+}
+
+.modal-info-row strong {
+  color: var(--approvals-text-strong);
+}
+
+.modal-reason {
+  margin-top: 0.75rem;
+}
+
+.modal-actions {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.modal-actions scale-button {
+  min-width: 140px;
+}
+
+.modal-actions scale-button + scale-button {
+  margin-left: 0;
+}
+
+.approval-note-required {
+  color: var(--approvals-danger);
+  margin-top: 0.5rem;
+}
+
 @media (max-width: 900px) {
   .controls-section {
     flex-direction: column;
@@ -971,6 +1086,10 @@ scale-textarea :deep(.textarea__control::placeholder) {
   .action-row scale-button {
     width: 100%;
     min-width: unset;
+  }
+
+  .modal-actions scale-button {
+    width: 100%;
   }
 }
 </style>

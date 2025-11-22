@@ -1,5 +1,6 @@
 <template>
-  <div class="centered">
+  <main class="ui-page outstanding-page">
+    <div class="centered">
     <div v-if="loading">Loading...</div>
     <div v-else-if="error" class="error">{{ error }}</div>
     <div v-else>
@@ -16,9 +17,14 @@
               <span v-if="req.status?.state === 'WaitingForScheduledTime'" class="status-chip schedule">
                 ⏳ Waiting for scheduled time
               </span>
-              <button class="withdraw-btn" :disabled="withdrawing === req.metadata?.name" @click="withdrawRequest(req)">
+              <scale-button
+                class="withdraw-btn"
+                variant="danger"
+                :disabled="withdrawing === req.metadata?.name"
+                @click="withdrawRequest(req)"
+              >
                 {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
-              </button>
+              </scale-button>
             </div>
           </header>
 
@@ -101,7 +107,8 @@
         </li>
       </ul>
     </div>
-  </div>
+    </div>
+  </main>
 </template>
 
 <script setup lang="ts">
@@ -187,18 +194,46 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.outstanding-page {
+  padding-bottom: 3rem;
+  --outstanding-bg: var(--telekom-color-background-canvas);
+  --outstanding-surface: var(--telekom-color-background-surface);
+  --outstanding-border: var(--telekom-color-ui-border-standard);
+  --outstanding-shadow: var(--telekom-shadow-floating-standard);
+  --outstanding-text-strong: var(--telekom-color-text-and-icon-standard);
+  --outstanding-text-muted: var(--telekom-color-text-and-icon-additional);
+  --outstanding-panel-bg: var(--telekom-color-ui-subtle);
+  --outstanding-panel-border: var(--telekom-color-ui-border-standard);
+  --outstanding-chip-bg: var(--telekom-color-functional-informational-subtle);
+  --outstanding-chip-text: var(--telekom-color-text-and-icon-on-subtle-informational);
+  --outstanding-chip-neutral-bg: var(--telekom-color-functional-success-subtle);
+  --outstanding-chip-neutral-text: var(--telekom-color-text-and-icon-on-subtle-success);
+  --outstanding-warning-bg: var(--telekom-color-functional-warning-subtle);
+  --outstanding-warning-text: var(--telekom-color-text-and-icon-on-subtle-warning);
+  --outstanding-primary: var(--telekom-color-primary-standard);
+  --outstanding-danger: var(--telekom-color-functional-danger-standard);
+  background: var(--outstanding-bg);
+  color: var(--outstanding-text-strong);
+}
+
 .requests-list {
   list-style: none;
   padding: 0;
   margin: 2rem auto;
-  max-width: 600px;
+  max-width: 680px;
 }
+
 .request-card {
   padding: 1.5rem 1.8rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  background: var(--outstanding-surface);
+  border: 1px solid var(--outstanding-border);
+  box-shadow: var(--outstanding-shadow);
+  border-radius: 16px;
 }
+
 .request-header {
   display: flex;
   justify-content: space-between;
@@ -207,68 +242,98 @@ onMounted(async () => {
   gap: 0.5rem;
   font-weight: 600;
 }
+
 .cluster {
-  color: #0070f3;
+  color: var(--telekom-color-additional-cyan-400);
   font-size: 1.1rem;
 }
+
 .group {
-  color: #d9006c;
+  color: var(--outstanding-primary);
   font-size: 1.1rem;
 }
+
 .request-target {
   display: flex;
   flex-direction: column;
 }
+
 .request-status {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 0.4rem;
 }
+
+.request-status scale-button {
+  align-self: flex-end;
+  min-width: 9rem;
+}
+
 .status-chip {
   font-size: 0.75rem;
   padding: 0.2rem 0.6rem;
   border-radius: 999px;
   font-weight: 600;
+  background: var(--outstanding-chip-bg);
+  color: var(--outstanding-chip-text);
 }
+
 .status-chip.schedule {
-  background: #e3f2fd;
-  color: #1565c0;
+  background: var(--telekom-color-functional-informational-subtle);
+  color: var(--telekom-color-text-and-icon-on-subtle-informational);
 }
+
 .request-name {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
   font-size: 0.95rem;
-  color: #666;
+  color: var(--outstanding-text-muted);
 }
+
 .request-name code {
-  background: #f6f6f8;
+  background: var(--outstanding-panel-bg);
   border-radius: 6px;
   padding: 0.2rem 0.5rem;
   font-size: 0.95rem;
-  color: #111;
+  color: var(--outstanding-text-strong);
   display: block;
   word-break: break-all;
   overflow-wrap: anywhere;
 }
+
 .request-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
 }
-.ui-chip.subtle {
-  background: #eef5ff;
-  color: #0f3b8c;
+
+.request-card .ui-chip {
+  background: var(--outstanding-chip-bg);
+  color: var(--outstanding-chip-text);
+  border: 1px solid var(--outstanding-panel-border);
 }
+
+.ui-chip.subtle {
+  background: var(--telekom-color-functional-informational-subtle);
+  color: var(--telekom-color-text-and-icon-on-subtle-informational);
+}
+
+.ui-chip.neutral {
+  background: var(--outstanding-chip-neutral-bg);
+  color: var(--outstanding-chip-neutral-text);
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1rem;
 }
+
 .info-block {
-  background: #fafbff;
-  border: 1px solid #e6e9ff;
+  background: var(--outstanding-panel-bg);
+  border: 1px solid var(--outstanding-panel-border);
   border-radius: 10px;
   padding: 0.9rem 1rem;
   display: grid;
@@ -276,28 +341,37 @@ onMounted(async () => {
   row-gap: 0.4rem;
   column-gap: 0.6rem;
 }
+
 .label {
   font-size: 0.78rem;
   font-weight: 600;
-  color: #5d5d5f;
+  color: var(--outstanding-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
 .value {
   font-size: 0.92rem;
-  color: #1e1e1e;
+  color: var(--outstanding-text-strong);
 }
+
 .muted {
-  color: #7d7d7d;
+  color: var(--outstanding-text-muted);
   font-size: 0.8rem;
 }
+
 .request-reason {
-  border-left: 4px solid rgba(217, 0, 108, 0.35);
+  border-left: 4px solid var(--outstanding-primary);
+  background: var(--outstanding-panel-bg);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
 }
+
 .request-reason .label {
   display: block;
   margin-bottom: 0.3rem;
 }
+
 .request-footer {
   display: flex;
   justify-content: space-between;
@@ -305,60 +379,39 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 0.6rem;
 }
+
 .timestamps {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
 }
+
 .muted-line {
   font-size: 0.8rem;
-  color: #6a6a6a;
-}
-.withdraw-btn {
-  appearance: none;
-  background: linear-gradient(135deg, #ff4fa3, #d9006c);
-  color: #fff;
-  border: none;
-  border-radius: 999px;
-  padding: 0.55em 1.6em;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  box-shadow: 0 10px 24px rgba(217, 0, 108, 0.35);
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    opacity 0.2s ease;
-}
-.withdraw-btn:focus-visible {
-  outline: 3px solid rgba(255, 213, 79, 0.95);
-  outline-offset: 3px;
-}
-.withdraw-btn:not(:disabled):hover {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 30px rgba(217, 0, 108, 0.45);
-}
-.withdraw-btn:not(:disabled):active {
-  transform: translateY(1px);
-  box-shadow: 0 6px 18px rgba(217, 0, 108, 0.4);
-}
-.withdraw-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-.error {
-  color: #d9006c;
-  margin: 1rem 0;
-}
-.center {
-  text-align: center;
+  color: var(--outstanding-text-muted);
 }
 
-/* Put countdown on a separate row for consistent wrapping and readability */
+.withdraw-btn {
+  margin-top: 0.25rem;
+}
+
+.error {
+  color: var(--outstanding-danger);
+  margin: 1rem 0;
+}
+
+.center {
+  text-align: center;
+  color: var(--outstanding-text-muted);
+}
+
 .reason-text {
-  color: #0b0b0b;
+  color: var(--outstanding-text-strong);
   margin-top: 0.25rem;
   white-space: pre-wrap;
+  background: var(--outstanding-panel-bg);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--outstanding-panel-border);
 }
 </style>
