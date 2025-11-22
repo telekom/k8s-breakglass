@@ -315,24 +315,37 @@ onMounted(async () => {
   color: #6a6a6a;
 }
 .withdraw-btn {
-  background: #fff;
-  color: #d9006c;
-  border: 1px solid #d9006c;
-  border-radius: 5px;
-  padding: 0.4em 1.2em;
-  font-weight: 600;
+  appearance: none;
+  background: linear-gradient(135deg, #ff4fa3, #d9006c);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 0.55em 1.6em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   cursor: pointer;
+  box-shadow: 0 10px 24px rgba(217, 0, 108, 0.35);
   transition:
-    background 0.15s,
-    color 0.15s;
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    opacity 0.2s ease;
 }
-.withdraw-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.withdraw-btn:focus-visible {
+  outline: 3px solid rgba(255, 213, 79, 0.95);
+  outline-offset: 3px;
 }
 .withdraw-btn:not(:disabled):hover {
-  background: #d9006c;
-  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(217, 0, 108, 0.45);
+}
+.withdraw-btn:not(:disabled):active {
+  transform: translateY(1px);
+  box-shadow: 0 6px 18px rgba(217, 0, 108, 0.4);
+}
+.withdraw-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 .error {
   color: #d9006c;

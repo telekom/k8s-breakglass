@@ -556,3 +556,61 @@ scale-button[variant="secondary"]:hover, .scale-button[variant="secondary"]:hove
     padding: 1.1rem;
   }
 }
+
+@media (forced-colors: active) {
+  body,
+  .app-container,
+  .ui-page,
+  .ui-toolbar,
+  .ui-toolbar input,
+  .ui-toolbar select,
+  input,
+  select,
+  textarea,
+  .ui-card,
+  .ui-card-grid,
+  .ui-info-item,
+  .ui-section,
+  .ui-chip,
+  .ui-status-badge,
+  .ui-status-badge *,
+  .ui-pill-stack span,
+  .ui-pill-stack span *,
+  .ui-link-button,
+  .ui-link-button *,
+  .request-card,
+  .request-header,
+  .request-footer,
+  .request-meta,
+  .request-card *,
+  .request-header *,
+  .request-footer *,
+  .request-meta *,
+  .withdraw-btn,
+  .withdraw-btn *,
+  scale-button,
+  .scale-button,
+  scale-button *,
+  .scale-button *,
+  button,
+  button *,
+  .main-nav a,
+  .main-nav a *,
+  .ui-info-item *,
+  .ui-section *,
+  .ui-toolbar *,
+  .ui-card *,
+  .ui-card-grid *,
+  .ui-actions-row *,
+  .ui-chip *,
+  .ui-page *,
+  .app-container * {
+    forced-color-adjust: none;
+  }
+
+  a:focus,
+  button:focus,
+  .main-nav a:focus {
+    outline-color: #ffd54f;
+  }
+}

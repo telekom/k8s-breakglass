@@ -159,7 +159,8 @@ function getUserInitials(user?: string): string {
 }
 
 function sessionStateTone(session: any) {
-  return statusToneFor(session?.status?.state);
+  const tone = statusToneFor(session?.status?.state);
+  return `tone-${tone}`;
 }
 
 // Enhanced sessions list with urgency calculation
