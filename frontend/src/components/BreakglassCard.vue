@@ -460,32 +460,32 @@ function drop() {
         </div>
       </div>
       <div class="breakglass-card__state-panel" aria-live="polite">
-        <span class="ui-status-badge" :class="`tone-${cardStateTone}`">
-          <template v-if="sessionActive">Active session</template>
-          <template v-else-if="sessionPending">Pending request</template>
-          <template v-else>Available</template>
-        </span>
-        <p v-if="sessionActive && expiryHumanized" class="state-detail">Expires in {{ expiryHumanized }}</p>
-        <p v-else-if="sessionPending && timeoutHumanized" class="state-detail">Timeout in {{ timeoutHumanized }}</p>
-        <p v-else class="state-detail">Up to {{ durationHumanized }}</p>
-        <p v-if="breakglass.approvalGroups?.length" class="state-detail">
-          Needs approval from {{ breakglass.approvalGroups.length }} group<span
-            v-if="breakglass.approvalGroups.length > 1"
-            >s</span
-          >
-        </p>
+          <span class="ui-status-badge" :class="`tone-${cardStateTone}`">
+            <template v-if="sessionActive">Active session</template>
+            <template v-else-if="sessionPending">Pending request</template>
+            <template v-else>Available</template>
+          </span>
+          <p v-if="sessionActive && expiryHumanized" class="state-detail">Expires in {{ expiryHumanized }}</p>
+          <p v-else-if="sessionPending && timeoutHumanized" class="state-detail">Timeout in {{ timeoutHumanized }}</p>
+          <p v-else class="state-detail">Up to {{ durationHumanized }}</p>
+          <p v-if="breakglass.approvalGroups?.length" class="state-detail">
+            Needs approval from {{ breakglass.approvalGroups.length }} group<span
+              v-if="breakglass.approvalGroups.length > 1"
+              >s</span
+            >
+          </p>
       </div>
     </header>
 
     <div v-if="sessionPending || sessionActive" class="ui-info-grid breakglass-card__info">
-      <div v-if="sessionPending" class="ui-info-item">
-        <span class="label">Pending request</span>
-        <span class="value">{{ timeoutHumanized || "Awaiting approver" }}</span>
-      </div>
-      <div v-if="sessionActive" class="ui-info-item">
-        <span class="label">Active session</span>
-        <span class="value">{{ expiryHumanized || "Running" }}</span>
-      </div>
+        <div v-if="sessionPending" class="ui-info-item">
+          <span class="label">Pending request</span>
+          <span class="value">{{ timeoutHumanized || "Awaiting approver" }}</span>
+        </div>
+        <div v-if="sessionActive" class="ui-info-item">
+          <span class="label">Active session</span>
+          <span class="value">{{ expiryHumanized || "Running" }}</span>
+        </div>
     </div>
 
     <div v-if="requesterGroups.length" class="breakglass-card__groups">
@@ -713,6 +713,10 @@ function drop() {
   justify-content: center;
 }
 
+.breakglass-card__state-panel .state-detail {
+  color: #1f2937;
+}
+
 .state-label {
   font-size: 0.85rem;
   letter-spacing: 0.08em;
@@ -786,7 +790,8 @@ function drop() {
 }
 
 .cta-copy {
-  flex: 1 1 300px;
+  flex: 1 1 320px;
+  color: #1f2937;
 }
 
 .breakglass-card__error {

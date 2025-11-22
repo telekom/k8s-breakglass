@@ -309,7 +309,15 @@ async function onDrop(bg: any) {
 }
 
 .page-header {
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.page-header .ui-page-title {
+  color: #f8fafc;
+}
+
+.page-header .ui-page-subtitle {
+  color: rgba(248, 250, 252, 0.85);
 }
 
 .loading {
