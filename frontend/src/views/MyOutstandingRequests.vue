@@ -31,12 +31,8 @@
             <span v-if="req.spec?.identityProviderIssuer" class="ui-chip subtle">
               Issuer: {{ req.spec.identityProviderIssuer }}
             </span>
-            <span v-if="req.spec?.user" class="ui-chip neutral">
-              User: {{ req.spec.user }}
-            </span>
-            <span v-if="req.spec?.duration" class="ui-chip neutral">
-              Duration: {{ req.spec.duration }}
-            </span>
+            <span v-if="req.spec?.user" class="ui-chip neutral"> User: {{ req.spec.user }} </span>
+            <span v-if="req.spec?.duration" class="ui-chip neutral"> Duration: {{ req.spec.duration }} </span>
           </div>
 
           <div class="info-grid">

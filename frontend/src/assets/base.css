@@ -242,6 +242,10 @@ scale-button[variant="secondary"]:hover, .scale-button[variant="secondary"]:hove
   font-weight: 600;
   background: var(--ui-chip-bg);
   color: var(--ui-chip-color);
+  flex-wrap: wrap;
+  white-space: normal;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .ui-chip.primary {

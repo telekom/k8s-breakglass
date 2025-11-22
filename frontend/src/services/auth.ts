@@ -429,7 +429,6 @@ export default class AuthService {
 
             // Try to fetch multi-IDP config and find which IDP has this directAuthority
             try {
-              const { getMultiIDPConfig } = await import("@/services/multiIDP");
               const config = await getMultiIDPConfig();
               const matchedIdp = config?.identityProviders.find(
                 (idp) => (idp as any).oidcAuthority === directAuthority,
