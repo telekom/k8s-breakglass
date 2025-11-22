@@ -27,6 +27,76 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #05060b;
+    color: #f4f6fb;
+  }
+
+  .main-nav a {
+    color: #7dd3fc;
+  }
+  .main-nav a.router-link-exact-active {
+    color: #ff4fa3;
+  }
+
+  .ui-page-title {
+    color: #f4f6fb;
+  }
+  .ui-page-subtitle,
+  .ui-muted,
+  .ui-toolbar-info {
+    color: rgba(244, 246, 251, 0.75);
+  }
+
+  .ui-card,
+  .ui-toolbar {
+    background: #111421;
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: none;
+  }
+
+  .ui-info-item {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  .ui-info-item .label {
+    color: rgba(244, 246, 251, 0.65);
+  }
+  .ui-info-item .value {
+    color: #f9fafc;
+  }
+
+  .ui-section {
+    background: rgba(67, 56, 202, 0.25);
+    border-color: rgba(99, 102, 241, 0.35);
+  }
+  .ui-section h4 {
+    color: #c7d2fe;
+  }
+  .ui-section p {
+    color: #f4f6fb;
+  }
+
+  .ui-chip {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
+  }
+
+  .ui-pill-stack span {
+    background: rgba(45, 212, 191, 0.22);
+    color: #a7f3d0;
+  }
+
+  input,
+  select,
+  textarea {
+    background: #0b0f19;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #f4f6fb;
+  }
+}
+
 /* App container used to constrain content and provide consistent padding */
 .app-container {
   max-width: var(--app-max-width);
