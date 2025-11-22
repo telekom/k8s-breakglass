@@ -41,6 +41,7 @@ const showDurationHints = ref(false);
 const scheduleDateTimeLocal = ref("");
 const showAllRequesterGroups = ref(false);
 const showAllApprovalGroups = ref(false);
+const scheduleInputRef = ref<HTMLInputElement | null>(null);
 
 function closeRequestModal() {
   showRequestModal.value = false;
@@ -53,7 +54,7 @@ function closeRequestModal() {
   scheduleDateTimeLocal.value = "";
   showAllRequesterGroups.value = false;
   showAllApprovalGroups.value = false;
-    showAllApprovalGroups.value = false;
+  showAllApprovalGroups.value = false;
 }
 
 watch(
@@ -214,6 +215,20 @@ function updateScheduledFromInput() {
   scheduledStartTime.value = dt.toISOString();
 }
 
+function triggerSchedulePicker() {
+  const input = scheduleInputRef.value;
+  if (!input) return;
+  if (typeof (input as HTMLInputElement & { showPicker?: () => void }).showPicker === "function") {
+    try {
+      (input as HTMLInputElement & { showPicker?: () => void }).showPicker?.();
+    } catch {
+      input.focus();
+    }
+    return;
+  }
+  input.focus();
+}
+
 const requiresReason = computed(() => Boolean(props.breakglass?.requestReason?.mandatory));
 
 const canRequest = computed(() => {
@@ -252,11 +267,14 @@ const hiddenRequesterGroupCount = computed(() => {
   return Math.max(requesterGroups.value.length - MAX_VISIBLE_REQUESTER_GROUPS, 0);
 });
 
-const approvalGroupsList = computed(() => {
-  if (Array.isArray(props.breakglass?.approvalGroups)) {
-    return props.breakglass.approvalGroups.filter((group: string) => typeof group === "string" && group.trim().length);
+const approvalGroupsList = computed<string[]>(() => {
+  if (!Array.isArray(props.breakglass?.approvalGroups)) {
+    return [] as string[];
   }
-  return [] as string[];
+  const filtered = props.breakglass.approvalGroups
+    .filter((group: string) => typeof group === "string" && group.trim().length)
+    .map((group: string) => group.trim());
+  return Array.from(new Set(filtered));
 });
 
 const visibleApprovalGroups = computed(() => {
@@ -326,16 +344,6 @@ const timeoutHumanized = computed(() => {
     return humanizeDuration(t > 0 ? t : 0, humanizeConfig);
   }
   return "";
-});
-
-const approvalSummary = computed(() => {
-  if (Array.isArray(props.breakglass?.approvalGroups) && props.breakglass.approvalGroups.length > 0) {
-    return props.breakglass.approvalGroups.join(", ");
-  }
-  if (props.breakglass?.selfApproval) {
-    return "Self approval possible";
-  }
-  return "No approver configured";
 });
 
 function openRequest() {
@@ -420,8 +428,10 @@ function drop() {
         <p v-else-if="sessionPending && timeoutHumanized" class="state-detail">Timeout in {{ timeoutHumanized }}</p>
         <p v-else class="state-detail">Up to {{ durationHumanized }}</p>
         <p v-if="breakglass.approvalGroups?.length" class="state-detail">
-          Needs approval from {{ breakglass.approvalGroups.length }} group
-          <span v-if="breakglass.approvalGroups.length > 1">s</span>
+          Needs approval from {{ breakglass.approvalGroups.length }} group<span
+            v-if="breakglass.approvalGroups.length > 1"
+            >s</span
+          >
         </p>
       </div>
     </header>
@@ -438,10 +448,6 @@ function drop() {
       <div class="ui-info-item">
         <span class="label">Max duration</span>
         <span class="value">{{ durationHumanized }}</span>
-      </div>
-      <div class="ui-info-item">
-        <span class="label">Approvers</span>
-        <span class="value">{{ approvalSummary }}</span>
       </div>
       <div v-if="sessionPending" class="ui-info-item">
         <span class="label">Pending request</span>
@@ -557,12 +563,19 @@ function drop() {
               Date & time (24-hour)
               <input
                 :id="'scheduled-datetime-' + breakglass.to"
+                ref="scheduleInputRef"
                 v-model="scheduleDateTimeLocal"
                 type="datetime-local"
                 step="60"
                 :min="minDateTime"
+                lang="en-GB"
+                inputmode="numeric"
+                pattern="\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}"
+                placeholder="yyyy-mm-ddThh:mm"
                 @change="updateScheduledFromInput"
                 @blur="updateScheduledFromInput"
+                @focus="triggerSchedulePicker"
+                @click="triggerSchedulePicker"
               />
             </label>
             <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
