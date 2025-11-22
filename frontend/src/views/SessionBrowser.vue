@@ -15,7 +15,13 @@ if (!auth) {
 const breakglassService = new BreakglassService(auth);
 const user = useUser();
 const currentUserEmail = computed(() => {
-  const profile = (user.value as { profile?: { email?: string; preferred_username?: string }; email?: string; preferred_username?: string } | null)?.profile;
+  const profile = (
+    user.value as {
+      profile?: { email?: string; preferred_username?: string };
+      email?: string;
+      preferred_username?: string;
+    } | null
+  )?.profile;
   const directEmail = (user.value as { email?: string; preferred_username?: string } | null)?.email;
   const directPreferred = (user.value as { email?: string; preferred_username?: string } | null)?.preferred_username;
   return profile?.email || profile?.preferred_username || directEmail || directPreferred || "";
@@ -555,7 +561,6 @@ header p {
   margin-bottom: 1rem;
 }
 
-
 .text-filters label {
   display: flex;
   flex-direction: column;
@@ -709,7 +714,6 @@ header p {
   border-radius: 6px;
   font-size: 0.9rem;
 }
-
 
 @media (prefers-color-scheme: dark) {
   .session-browser {

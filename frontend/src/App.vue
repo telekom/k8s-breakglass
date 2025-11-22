@@ -179,7 +179,11 @@ function logout() {
   <main>
     <a class="skip-link" href="#main">Skip to content</a>
     <scale-telekom-app-shell claim-lang="de">
-      <scale-telekom-header-data-back-compat :user-navigation.prop="userNav" :logo-title="brandingTitle" logo-href="/" />
+      <scale-telekom-header-data-back-compat
+        :user-navigation.prop="userNav"
+        :logo-title="brandingTitle"
+        logo-href="/"
+      />
       <div id="main" class="app-container">
         <h1 class="center">{{ brandingTitle }}</h1>
         <nav class="main-nav" aria-label="Main navigation">

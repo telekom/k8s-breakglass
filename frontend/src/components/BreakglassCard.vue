@@ -38,9 +38,9 @@ const showRequestModal = ref(false);
 const scheduledStartTime = ref<string | null>(null);
 const showScheduleOptions = ref(false);
 const showDurationHints = ref(false);
-const scheduleDateLocal = ref("");
-const scheduleTimeLocal = ref("");
+const scheduleDateTimeLocal = ref("");
 const showAllRequesterGroups = ref(false);
+const showAllApprovalGroups = ref(false);
 
 function closeRequestModal() {
   showRequestModal.value = false;
@@ -50,9 +50,10 @@ function closeRequestModal() {
   scheduledStartTime.value = null;
   showScheduleOptions.value = false;
   showDurationHints.value = false;
-  scheduleDateLocal.value = "";
-  scheduleTimeLocal.value = "";
+  scheduleDateTimeLocal.value = "";
   showAllRequesterGroups.value = false;
+  showAllApprovalGroups.value = false;
+    showAllApprovalGroups.value = false;
 }
 
 watch(
@@ -64,9 +65,9 @@ watch(
     scheduledStartTime.value = null;
     showScheduleOptions.value = false;
     showDurationHints.value = false;
-    scheduleDateLocal.value = "";
-    scheduleTimeLocal.value = "";
+    scheduleDateTimeLocal.value = "";
     showAllRequesterGroups.value = false;
+    showAllApprovalGroups.value = false;
   },
 );
 
@@ -122,9 +123,6 @@ const minDateTime = computed(() => {
   return now.toISOString().slice(0, 16);
 });
 
-const minScheduleDate = computed(() => minDateTime.value.split("T")[0] || "");
-const minScheduleTime = computed(() => minDateTime.value.split("T")[1] || "00:00");
-
 const minDateTimeAsDate = computed(() => {
   const [datePart, timePart] = minDateTime.value.split("T");
   if (!datePart || !timePart) return null;
@@ -147,71 +145,68 @@ const earliestSchedulePreview = computed(() => {
   return format24HourWithTZ(minDateTimeAsDate.value.toISOString());
 });
 
-const minTimeForSelectedDate = computed(() => {
-  if (!scheduleDateLocal.value || !minScheduleDate.value) return "";
-  if (scheduleDateLocal.value !== minScheduleDate.value) return "";
-  return minScheduleTime.value;
-});
-
-function formatLocalDate(date: Date): string {
+function formatLocalDateTime(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function formatLocalTime(date: Date): string {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
-watch(
-  () => scheduledStartTime.value,
-  (next) => {
-    if (!next) {
-      scheduleDateLocal.value = "";
-      scheduleTimeLocal.value = "";
-      return;
-    }
-    const dt = new Date(next);
-    scheduleDateLocal.value = formatLocalDate(dt);
-    scheduleTimeLocal.value = formatLocalTime(dt);
-  },
-  { immediate: true },
-);
-
-function updateScheduledFromInputs() {
-  if (!scheduleDateLocal.value && !scheduleTimeLocal.value) {
-    scheduledStartTime.value = null;
-    return;
+function parseDateTimeLocal(value: string): Date | null {
+  if (!value || !value.includes("T")) {
+    return null;
   }
 
-  if (!scheduleDateLocal.value || !scheduleTimeLocal.value) {
-    return;
-  }
+  const [datePart, timePart] = value.split("T");
+  if (!datePart || !timePart) return null;
 
-  const dateParts = scheduleDateLocal.value.split("-");
-  const timeParts = scheduleTimeLocal.value.split(":");
-  if (dateParts.length !== 3 || timeParts.length < 2) {
-    return;
-  }
+  const datePieces = datePart.split("-");
+  const timePieces = timePart.split(":");
+  if (datePieces.length !== 3 || timePieces.length < 2) return null;
 
-  const [yearStr, monthStr, dayStr] = dateParts;
-  const [hourStr, minuteStr] = timeParts;
+  const [yearStr, monthStr, dayStr] = datePieces;
+  const [hourStr, minuteStr] = timePieces;
   const year = Number(yearStr);
   const month = Number(monthStr);
   const day = Number(dayStr);
   const hours = Number(hourStr);
   const minutes = Number(minuteStr);
   if ([year, month, day, hours, minutes].some((n) => Number.isNaN(n))) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+}
+
+watch(
+  () => scheduledStartTime.value,
+  (next) => {
+    if (!next) {
+      scheduleDateTimeLocal.value = "";
+      return;
+    }
+    const dt = new Date(next);
+    scheduleDateTimeLocal.value = formatLocalDateTime(dt);
+  },
+  { immediate: true },
+);
+
+function updateScheduledFromInput() {
+  if (!scheduleDateTimeLocal.value) {
+    scheduledStartTime.value = null;
     return;
   }
 
-  const dt = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  const dt = parseDateTimeLocal(scheduleDateTimeLocal.value);
+  if (!dt) {
+    return;
+  }
+
   if (minDateTimeAsDate.value && dt.getTime() < minDateTimeAsDate.value.getTime()) {
-    scheduleDateLocal.value = formatLocalDate(minDateTimeAsDate.value);
-    scheduleTimeLocal.value = formatLocalTime(minDateTimeAsDate.value);
+    const minLocal = formatLocalDateTime(minDateTimeAsDate.value);
+    scheduleDateTimeLocal.value = minLocal;
     scheduledStartTime.value = minDateTimeAsDate.value.toISOString();
     return;
   }
@@ -241,19 +236,41 @@ const requesterGroups = computed(() => {
   return uniq;
 });
 
-const MAX_VISIBLE_GROUPS = 6;
+const MAX_VISIBLE_REQUESTER_GROUPS = 3;
+const MAX_VISIBLE_APPROVAL_GROUPS = 4;
 const visibleRequesterGroups = computed(() => {
   if (showAllRequesterGroups.value) {
     return requesterGroups.value;
   }
-  return requesterGroups.value.slice(0, MAX_VISIBLE_GROUPS);
+  return requesterGroups.value.slice(0, MAX_VISIBLE_REQUESTER_GROUPS);
 });
 
 const hiddenRequesterGroupCount = computed(() => {
   if (showAllRequesterGroups.value) {
     return 0;
   }
-  return Math.max(requesterGroups.value.length - MAX_VISIBLE_GROUPS, 0);
+  return Math.max(requesterGroups.value.length - MAX_VISIBLE_REQUESTER_GROUPS, 0);
+});
+
+const approvalGroupsList = computed(() => {
+  if (Array.isArray(props.breakglass?.approvalGroups)) {
+    return props.breakglass.approvalGroups.filter((group: string) => typeof group === "string" && group.trim().length);
+  }
+  return [] as string[];
+});
+
+const visibleApprovalGroups = computed(() => {
+  if (showAllApprovalGroups.value) {
+    return approvalGroupsList.value;
+  }
+  return approvalGroupsList.value.slice(0, MAX_VISIBLE_APPROVAL_GROUPS);
+});
+
+const hiddenApprovalGroupCount = computed(() => {
+  if (showAllApprovalGroups.value) {
+    return 0;
+  }
+  return Math.max(approvalGroupsList.value.length - MAX_VISIBLE_APPROVAL_GROUPS, 0);
 });
 
 const requesterGroupsLabel = computed(() => (requesterGroups.value.length ? requesterGroups.value.join(", ") : "—"));
@@ -333,8 +350,7 @@ function toggleScheduleOptions() {
   showScheduleOptions.value = !showScheduleOptions.value;
   if (!showScheduleOptions.value) {
     scheduledStartTime.value = null;
-    scheduleDateLocal.value = "";
-    scheduleTimeLocal.value = "";
+    scheduleDateTimeLocal.value = "";
   }
 }
 
@@ -374,227 +390,217 @@ function withdraw() {
 function drop() {
   emit("drop");
 }
-
 </script>
 
 <template>
   <article class="ui-card breakglass-card" :class="cardAccentClass">
-      <header class="breakglass-card__header">
-        <div class="breakglass-card__title">
-          <p class="eyebrow">Escalation target</p>
-          <h3 class="ui-card-title">{{ breakglass.to }}</h3>
-          <p class="breakglass-card__subtitle">
-            Available from <span class="highlight">{{ requesterGroupsLabel }}</span>
-          </p>
-          <p v-if="requesterGroups.length > 1" class="breakglass-card__hint">
-            Visible via {{ requesterGroups.length }} of your groups
-          </p>
-          <div class="ui-card-meta" aria-label="Session status and requirements">
-            <span v-for="badge in metaBadges" :key="badge.label" class="ui-chip" :class="badge.variant">
-              {{ badge.label }}
-            </span>
-          </div>
-        </div>
-        <div class="breakglass-card__state-panel" aria-live="polite">
-          <span class="state-label">
-            <template v-if="sessionActive">Active session</template>
-            <template v-else-if="sessionPending">Pending request</template>
-            <template v-else>Available</template>
+    <header class="breakglass-card__header">
+      <div class="breakglass-card__title">
+        <p class="eyebrow">Escalation target</p>
+        <h3 class="ui-card-title">{{ breakglass.to }}</h3>
+        <p class="breakglass-card__subtitle">
+          Available from <span class="highlight">{{ requesterGroupsLabel }}</span>
+        </p>
+        <p v-if="requesterGroups.length > 1" class="breakglass-card__hint">
+          Visible via {{ requesterGroups.length }} of your groups
+        </p>
+        <div class="ui-card-meta" aria-label="Session status and requirements">
+          <span v-for="badge in metaBadges" :key="badge.label" class="ui-chip" :class="badge.variant">
+            {{ badge.label }}
           </span>
-          <p class="state-detail" v-if="sessionActive && expiryHumanized">Expires in {{ expiryHumanized }}</p>
-          <p class="state-detail" v-else-if="sessionPending && timeoutHumanized">Timeout in {{ timeoutHumanized }}</p>
-          <p class="state-detail" v-else>Up to {{ durationHumanized }}</p>
-          <p v-if="breakglass.approvalGroups?.length" class="state-detail">
-            Needs approval from {{ breakglass.approvalGroups.length }} group
-            <span v-if="breakglass.approvalGroups.length > 1">s</span>
-          </p>
-        </div>
-      </header>
-
-      <div class="ui-info-grid breakglass-card__info">
-        <div class="ui-info-item">
-          <span class="label">Cluster</span>
-          <span class="value">{{ breakglass.cluster || "Global" }}</span>
-        </div>
-        <div class="ui-info-item">
-          <span class="label">Requested group</span>
-          <span class="value">{{ breakglass.to }}</span>
-        </div>
-        <div class="ui-info-item">
-          <span class="label">Max duration</span>
-          <span class="value">{{ durationHumanized }}</span>
-        </div>
-        <div class="ui-info-item">
-          <span class="label">Approvers</span>
-          <span class="value">{{ approvalSummary }}</span>
-        </div>
-        <div class="ui-info-item" v-if="sessionPending">
-          <span class="label">Pending request</span>
-          <span class="value">{{ timeoutHumanized || "Awaiting approver" }}</span>
-        </div>
-        <div class="ui-info-item" v-if="sessionActive">
-          <span class="label">Active session</span>
-          <span class="value">{{ expiryHumanized || "Running" }}</span>
         </div>
       </div>
-
-      <div v-if="requesterGroups.length" class="breakglass-card__groups">
-        <div class="groups-header">
-          <span class="label">Available via</span>
-          <span class="count-chip">{{ requesterGroups.length }} groups</span>
-        </div>
-        <div class="ui-pill-stack">
-          <span v-for="group in visibleRequesterGroups" :key="group">{{ group }}</span>
-        </div>
-        <button
-          v-if="hiddenRequesterGroupCount > 0"
-          type="button"
-          class="ui-link-button"
-          @click="showAllRequesterGroups = !showAllRequesterGroups"
-        >
-          {{ showAllRequesterGroups ? "Show fewer groups" : `Show all ${requesterGroups.length} groups` }}
-        </button>
+      <div class="breakglass-card__state-panel" aria-live="polite">
+        <span class="state-label">
+          <template v-if="sessionActive">Active session</template>
+          <template v-else-if="sessionPending">Pending request</template>
+          <template v-else>Available</template>
+        </span>
+        <p v-if="sessionActive && expiryHumanized" class="state-detail">Expires in {{ expiryHumanized }}</p>
+        <p v-else-if="sessionPending && timeoutHumanized" class="state-detail">Timeout in {{ timeoutHumanized }}</p>
+        <p v-else class="state-detail">Up to {{ durationHumanized }}</p>
+        <p v-if="breakglass.approvalGroups?.length" class="state-detail">
+          Needs approval from {{ breakglass.approvalGroups.length }} group
+          <span v-if="breakglass.approvalGroups.length > 1">s</span>
+        </p>
       </div>
+    </header>
 
-      <section v-if="reasonDescription" class="ui-section">
-        <h4>Reason policy</h4>
-        <p>{{ reasonDescription }}</p>
-      </section>
-
-      <section v-if="breakglass.approvalGroups?.length" class="ui-section breakglass-card__approvers">
-        <h4>Approval groups</h4>
-        <p>{{ breakglass.approvalGroups.join(", ") }}</p>
-      </section>
-
-      <div class="breakglass-card__cta">
-        <div class="cta-copy">
-          <p v-if="sessionPending" class="ui-muted">
-            Request pending approval. We'll notify you if anything changes.
-          </p>
-          <p v-else-if="sessionActive" class="ui-muted">
-            Session is active. Drop it once you're done.
-          </p>
-          <p v-else-if="requiresReason" class="ui-muted">✍️ Describe why you need access to request.</p>
-          <p v-else class="ui-muted">Request access instantly or schedule a window.</p>
-        </div>
-        <div class="ui-actions-row">
-          <scale-button v-if="sessionPending" variant="secondary" @click="withdraw">Withdraw</scale-button>
-          <scale-button v-else-if="sessionActive" variant="secondary" @click="drop">Drop session</scale-button>
-          <scale-button v-else @click="openRequest">Request access</scale-button>
-        </div>
+    <div class="ui-info-grid breakglass-card__info">
+      <div class="ui-info-item">
+        <span class="label">Cluster</span>
+        <span class="value">{{ breakglass.cluster || "Global" }}</span>
       </div>
+      <div class="ui-info-item">
+        <span class="label">Requested group</span>
+        <span class="value">{{ breakglass.to }}</span>
+      </div>
+      <div class="ui-info-item">
+        <span class="label">Max duration</span>
+        <span class="value">{{ durationHumanized }}</span>
+      </div>
+      <div class="ui-info-item">
+        <span class="label">Approvers</span>
+        <span class="value">{{ approvalSummary }}</span>
+      </div>
+      <div v-if="sessionPending" class="ui-info-item">
+        <span class="label">Pending request</span>
+        <span class="value">{{ timeoutHumanized || "Awaiting approver" }}</span>
+      </div>
+      <div v-if="sessionActive" class="ui-info-item">
+        <span class="label">Active session</span>
+        <span class="value">{{ expiryHumanized || "Running" }}</span>
+      </div>
+    </div>
 
-      <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__error">
-        This escalation requires a reason.
-      </p>
+    <div v-if="requesterGroups.length" class="breakglass-card__groups">
+      <div class="groups-header">
+        <span class="label">Available via</span>
+        <span class="count-chip">{{ requesterGroups.length }} groups</span>
+      </div>
+      <div class="ui-pill-stack compact-pill-stack">
+        <span v-for="group in visibleRequesterGroups" :key="group">{{ group }}</span>
+      </div>
+      <button
+        v-if="hiddenRequesterGroupCount > 0"
+        type="button"
+        class="ui-link-button"
+        @click="showAllRequesterGroups = !showAllRequesterGroups"
+      >
+        {{ showAllRequesterGroups ? "Show fewer groups" : `Show all ${requesterGroups.length} groups` }}
+      </button>
+    </div>
 
-      <div v-if="showRequestModal" class="request-modal-overlay">
-        <div class="request-modal">
-          <button class="modal-close" aria-label="Close" @click="closeRequestModal">×</button>
-          <h3>Request breakglass</h3>
+    <section v-if="reasonDescription" class="ui-section">
+      <h4>Reason policy</h4>
+      <p>{{ reasonDescription }}</p>
+    </section>
 
-          <div class="duration-selector">
-            <label for="duration-input"
-              >Duration (default: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}, min: 1m):</label
-            >
-            <input
-              id="duration-input"
-              v-model="durationInput"
-              type="text"
-              :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
-            />
-            <p class="helper">
-              Enter a shorter duration if needed. Defaults to maximum allowed ({
-                humanizeDuration(breakglass.duration * 1000, humanizeConfig)
-              })
+    <section v-if="approvalGroupsList.length" class="ui-section breakglass-card__approvers">
+      <div class="groups-header">
+        <span class="label">Approval groups</span>
+        <span class="count-chip">{{ approvalGroupsList.length }} groups</span>
+      </div>
+      <div class="ui-pill-stack compact-pill-stack">
+        <span v-for="group in visibleApprovalGroups" :key="group">{{ group }}</span>
+      </div>
+      <button
+        v-if="hiddenApprovalGroupCount > 0"
+        type="button"
+        class="ui-link-button"
+        @click="showAllApprovalGroups = !showAllApprovalGroups"
+      >
+        {{ showAllApprovalGroups ? "Show fewer groups" : `Show all ${approvalGroupsList.length} groups` }}
+      </button>
+    </section>
+
+    <div class="breakglass-card__cta">
+      <div class="cta-copy">
+        <p v-if="sessionPending" class="ui-muted">Request pending approval. We'll notify you if anything changes.</p>
+        <p v-else-if="sessionActive" class="ui-muted">Session is active. Drop it once you're done.</p>
+        <p v-else-if="requiresReason" class="ui-muted">✍️ Describe why you need access to request.</p>
+        <p v-else class="ui-muted">Request access instantly or schedule a window.</p>
+      </div>
+      <div class="ui-actions-row">
+        <scale-button v-if="sessionPending" variant="secondary" @click="withdraw">Withdraw</scale-button>
+        <scale-button v-else-if="sessionActive" variant="secondary" @click="drop">Drop session</scale-button>
+        <scale-button v-else @click="openRequest">Request access</scale-button>
+      </div>
+    </div>
+
+    <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__error">
+      This escalation requires a reason.
+    </p>
+
+    <div v-if="showRequestModal" class="request-modal-overlay">
+      <div class="request-modal">
+        <button class="modal-close" aria-label="Close" @click="closeRequestModal">×</button>
+        <h3>Request breakglass</h3>
+
+        <div class="duration-selector">
+          <label for="duration-input"
+            >Duration (default: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}, min: 1m):</label
+          >
+          <input
+            id="duration-input"
+            v-model="durationInput"
+            type="text"
+            :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
+          />
+          <p class="helper">
+            Max allowed: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}. Minimum: 1 minute. Enter a
+            shorter duration if needed.
+          </p>
+          <p v-if="durationInput" class="helper">
+            Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
+          </p>
+          <button type="button" class="ui-link-button small" @click="showDurationHints = !showDurationHints">
+            {{ showDurationHints ? "⊖ Hide" : "⊕ Show" }} common durations
+          </button>
+          <div v-if="showDurationHints" class="hint-box">
+            <p>
+              Examples: 30m, 1h, 2h, 4h (all less than max
+              {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
             </p>
-            <p v-if="durationInput" class="helper">
-              Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
+          </div>
+        </div>
+
+        <div class="schedule-section">
+          <button type="button" class="ui-link-button" @click="toggleScheduleOptions">
+            <span v-if="!showScheduleOptions">⊕ Schedule for future date (optional)</span>
+            <span v-else>⊖ Schedule for future date (optional)</span>
+          </button>
+
+          <div v-if="showScheduleOptions" class="schedule-details">
+            <p class="schedule-intro">Use the 24-hour date & time picker below. Leave it empty to start immediately.</p>
+            <label class="schedule-field" :for="'scheduled-datetime-' + breakglass.to">
+              Date & time (24-hour)
+              <input
+                :id="'scheduled-datetime-' + breakglass.to"
+                v-model="scheduleDateTimeLocal"
+                type="datetime-local"
+                step="60"
+                :min="minDateTime"
+                @change="updateScheduledFromInput"
+                @blur="updateScheduledFromInput"
+              />
+            </label>
+            <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
+              Earliest allowed start: <strong>{{ earliestSchedulePreview || "Soonest available" }}</strong>
             </p>
-            <button type="button" class="ui-link-button small" @click="showDurationHints = !showDurationHints">
-              {{ showDurationHints ? "⊖ Hide" : "⊕ Show" }} common durations
-            </button>
-            <div v-if="showDurationHints" class="hint-box">
-              <p>
-                Examples: 30m, 1h, 2h, 4h (all less than max {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig)
-                }})
-              </p>
+
+            <div v-if="scheduledStartTime" class="schedule-preview">
+              <p><strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}</p>
+              <p class="muted">Your local time: {{ format24HourWithTZ(scheduledStartTime) }}</p>
             </div>
           </div>
-
-          <div class="schedule-section">
-            <button type="button" class="ui-link-button" @click="toggleScheduleOptions">
-              <span v-if="!showScheduleOptions">⊕ Schedule for future date (optional)</span>
-              <span v-else>⊖ Schedule for future date (optional)</span>
-            </button>
-
-            <div v-if="showScheduleOptions" class="schedule-details">
-              <p class="schedule-intro">
-                Use the 24-hour date and time pickers below. Leave both fields empty to start immediately.
-              </p>
-              <div class="schedule-inputs">
-                <label class="schedule-field" :for="'scheduled-date-' + breakglass.to">
-                  Date
-                  <input
-                    :id="'scheduled-date-' + breakglass.to"
-                    v-model="scheduleDateLocal"
-                    type="date"
-                    :min="minScheduleDate || undefined"
-                    @change="updateScheduledFromInputs"
-                    @blur="updateScheduledFromInputs"
-                  />
-                </label>
-                <label class="schedule-field" :for="'scheduled-time-' + breakglass.to">
-                  Time (24-hour)
-                  <input
-                    :id="'scheduled-time-' + breakglass.to"
-                    v-model="scheduleTimeLocal"
-                    type="time"
-                    step="60"
-                    :min="minTimeForSelectedDate || undefined"
-                    @change="updateScheduledFromInputs"
-                    @blur="updateScheduledFromInputs"
-                  />
-                </label>
-              </div>
-              <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
-                Earliest allowed start: <strong>{{ earliestSchedulePreview || "Soonest available" }}</strong>
-              </p>
-
-              <div v-if="scheduledStartTime" class="schedule-preview">
-                <p><strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}</p>
-                <p class="muted">Your local time: {{ format24HourWithTZ(scheduledStartTime) }}</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="reason-field">
-            <label for="reason-field-input">Reason {{ reasonCharCount }}/{{ reasonCharLimit }}:</label>
-            <textarea
-              id="reason-field-input"
-              v-model="requestReason"
-              :maxlength="reasonCharLimit"
-              :placeholder="
-                (breakglass.requestReason && breakglass.requestReason.description) ||
-                'Optional reason (max 1024 characters)'
-              "
-              rows="4"
-            ></textarea>
-            <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning">
-              ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
-            </p>
-            <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error">
-              This field is required.
-            </p>
-          </div>
-
-          <div class="modal-actions">
-            <scale-button :disabled="requiresReason && !(requestReason || '').trim()" @click="request"
-              >Confirm Request</scale-button
-            >
-            <scale-button variant="secondary" @click="closeRequestModal">Cancel</scale-button>
-          </div>
         </div>
+
+        <div class="reason-field">
+          <label for="reason-field-input">Reason {{ reasonCharCount }}/{{ reasonCharLimit }}:</label>
+          <textarea
+            id="reason-field-input"
+            v-model="requestReason"
+            :maxlength="reasonCharLimit"
+            :placeholder="
+              (breakglass.requestReason && breakglass.requestReason.description) ||
+              'Optional reason (max 1024 characters)'
+            "
+            rows="4"
+          ></textarea>
+          <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning">
+            ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
+          </p>
+          <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error">This field is required.</p>
+        </div>
+
+        <div class="modal-actions">
+          <scale-button :disabled="requiresReason && !(requestReason || '').trim()" @click="request"
+            >Confirm Request</scale-button
+          >
+          <scale-button variant="secondary" @click="closeRequestModal">Cancel</scale-button>
+        </div>
+      </div>
     </div>
   </article>
 </template>
@@ -665,8 +671,31 @@ function drop() {
   font-size: 0.9rem;
 }
 
+.breakglass-card__info {
+  margin-top: 0.35rem;
+  gap: 0.75rem;
+}
+
+.breakglass-card__info .ui-info-item {
+  padding: 0.75rem 0.85rem;
+}
+
+.breakglass-card__info .ui-info-item .value {
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
 .breakglass-card__groups {
   padding: 0.5rem 0 0 0;
+}
+
+.breakglass-card__approvers {
+  margin-top: 0.9rem;
+  padding: 0.85rem 1rem;
+}
+
+.breakglass-card__approvers .ui-link-button {
+  margin-top: 0.35rem;
 }
 
 .groups-header {
@@ -689,6 +718,21 @@ function drop() {
   padding: 0.2rem 0.75rem;
   font-weight: 600;
   font-size: 0.8rem;
+}
+
+.breakglass-card__groups .ui-pill-stack,
+.breakglass-card__approvers .ui-pill-stack {
+  margin-top: 0.35rem;
+}
+
+.breakglass-card__groups .ui-pill-stack span,
+.compact-pill-stack span {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+.compact-pill-stack {
+  gap: 0.35rem;
 }
 
 .breakglass-card__cta {
@@ -756,7 +800,9 @@ function drop() {
   color: #0f172a;
   background: #f8fafc;
   box-sizing: border-box;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .request-modal input:focus,
@@ -822,15 +868,10 @@ function drop() {
   color: #475569;
 }
 
-.schedule-inputs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.9rem;
-}
-
 .schedule-field {
-  flex: 1;
-  min-width: 140px;
+  display: block;
+  width: 100%;
+  margin-bottom: 0.5rem;
 }
 
 .schedule-preview {
@@ -846,9 +887,15 @@ function drop() {
 
 .modal-actions {
   display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+.modal-actions scale-button {
+  width: 100%;
+  max-width: 260px;
 }
 
 .modal-close {
@@ -881,7 +928,11 @@ function drop() {
   }
 
   .modal-actions {
-    justify-content: stretch;
+    width: 100%;
+  }
+
+  .modal-actions scale-button {
+    max-width: 100%;
   }
 }
 </style>

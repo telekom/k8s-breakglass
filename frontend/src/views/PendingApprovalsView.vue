@@ -290,7 +290,7 @@ onMounted(fetchPendingApprovals);
 
 <template>
   <main class="ui-page approvals-page">
-  <h2 class="ui-page-title">Pending Approvals</h2>
+    <h2 class="ui-page-title">Pending Approvals</h2>
 
     <!-- Filter and Sort Controls -->
     <div class="ui-toolbar approvals-toolbar">
@@ -436,7 +436,9 @@ onMounted(fetchPendingApprovals);
         <div class="card-bottom">
           <div class="request-footer">
             <strong>Request ID</strong>
-            <span><code>{{ session.metadata?.name }}</code></span>
+            <span
+              ><code>{{ session.metadata?.name }}</code></span
+            >
             <span v-if="session.status?.state">State: {{ session.status.state }}</span>
           </div>
           <div class="action-row">
@@ -608,7 +610,9 @@ onMounted(fetchPendingApprovals);
   border-radius: 14px;
   padding: 1.5rem;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
   border-left: 5px solid transparent;
 }
 
