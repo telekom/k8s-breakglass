@@ -537,7 +537,7 @@ function drop() {
         <p v-else class="ui-muted">Request access instantly or schedule a window.</p>
       </div>
       <div class="ui-actions-row">
-        <scale-button v-if="sessionPending" variant="secondary" @click="withdraw">Withdraw</scale-button>
+        <scale-button v-if="sessionPending" variant="primary" @click="withdraw">Withdraw</scale-button>
         <scale-button v-else-if="sessionActive" variant="secondary" @click="drop">Drop session</scale-button>
         <scale-button v-else @click="openRequest">Request access</scale-button>
       </div>
@@ -661,6 +661,10 @@ function drop() {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  background: var(--breakglass-card-bg);
+  border: 1px solid var(--breakglass-card-border);
+  box-shadow: var(--breakglass-card-shadow);
+  color: var(--breakglass-text-strong);
 }
 
 .breakglass-card__header {
@@ -679,23 +683,23 @@ function drop() {
   text-transform: uppercase;
   font-size: 0.75rem;
   letter-spacing: 0.1em;
-  color: #94a3b8;
+  color: rgba(226, 232, 240, 0.75);
   margin: 0 0 0.25rem 0;
 }
 
 .breakglass-card__subtitle {
   margin: 0.1rem 0;
-  color: #475569;
+  color: var(--breakglass-text-muted);
 }
 
 .breakglass-card__subtitle .highlight {
-  color: #0f172a;
+  color: var(--breakglass-text-strong);
   font-weight: 600;
 }
 
 .breakglass-card__hint {
   margin: 0;
-  color: #94a3b8;
+  color: var(--breakglass-text-muted);
   font-size: 0.9rem;
 }
 
@@ -703,8 +707,8 @@ function drop() {
   min-width: 200px;
   flex: 0 0 240px;
   align-self: stretch;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   padding: 0.85rem 1rem;
   display: flex;
@@ -714,7 +718,7 @@ function drop() {
 }
 
 .breakglass-card__state-panel .state-detail {
-  color: #1f2937;
+  color: var(--breakglass-text-strong);
 }
 
 .state-label {
@@ -753,12 +757,12 @@ function drop() {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #475569;
+  color: var(--breakglass-text-muted);
 }
 
 .count-chip {
-  background: rgba(14, 165, 233, 0.16);
-  color: #0369a1;
+  background: var(--breakglass-pill-bg);
+  color: var(--breakglass-pill-text);
   border-radius: 999px;
   padding: 0.2rem 0.75rem;
   font-weight: 600;
@@ -791,7 +795,73 @@ function drop() {
 
 .cta-copy {
   flex: 1 1 320px;
-  color: #1f2937;
+  color: var(--breakglass-text-muted);
+}
+
+.breakglass-card :deep(.ui-card-title) {
+  color: var(--breakglass-text-strong);
+}
+
+.breakglass-card :deep(.ui-chip) {
+  background: var(--breakglass-chip-bg);
+  color: var(--breakglass-chip-text);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.breakglass-card :deep(.ui-chip.primary) {
+  background: rgba(217, 0, 108, 0.2);
+  color: #ffd1e5;
+}
+
+.breakglass-card :deep(.ui-chip.secondary) {
+  background: rgba(99, 102, 241, 0.2);
+  color: #c7d2fe;
+}
+
+.breakglass-card :deep(.ui-chip.info) {
+  background: rgba(14, 165, 233, 0.2);
+  color: #bae6fd;
+}
+
+.breakglass-card :deep(.ui-chip.danger) {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fecdd3;
+}
+
+.breakglass-card :deep(.ui-info-item) {
+  background: var(--breakglass-info-bg);
+  border: 1px solid var(--breakglass-info-border);
+}
+
+.breakglass-card :deep(.ui-info-item .label) {
+  color: var(--breakglass-text-muted);
+}
+
+.breakglass-card :deep(.ui-info-item .value) {
+  color: var(--breakglass-text-strong);
+}
+
+.breakglass-card :deep(.ui-section) {
+  background: var(--breakglass-section-bg);
+  border: 1px solid var(--breakglass-section-border);
+  color: var(--breakglass-text-strong);
+}
+
+.breakglass-card :deep(.ui-section h4) {
+  color: #dbeafe;
+}
+
+.breakglass-card :deep(.ui-section p) {
+  color: var(--breakglass-text-strong);
+}
+
+.breakglass-card :deep(.ui-pill-stack span) {
+  background: rgba(15, 118, 110, 0.3);
+  color: #a7f3d0;
+}
+
+.breakglass-card :deep(.ui-status-badge) {
+  border-color: transparent;
 }
 
 .breakglass-card__error {
@@ -811,15 +881,15 @@ function drop() {
 }
 
 .request-modal {
-  background: #ffffff;
-  color: #0f172a;
+  background: #0d1220;
+  color: var(--breakglass-text-strong);
   padding: 1.5rem;
   border-radius: 12px;
   max-width: 520px;
   width: 92%;
-  box-shadow: 0 30px 60px rgba(15, 23, 42, 0.35);
+  box-shadow: 0 30px 60px rgba(5, 6, 11, 0.65);
   position: relative;
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  border: 1px solid rgba(148, 163, 184, 0.3);
 }
 
 .request-modal h3 {
@@ -830,7 +900,7 @@ function drop() {
 .request-modal label {
   font-weight: 600;
   font-size: 0.9rem;
-  color: #1e293b;
+  color: var(--breakglass-text-strong);
   display: block;
   margin-bottom: 0.35rem;
 }
@@ -839,12 +909,12 @@ function drop() {
 .request-modal textarea {
   width: 100%;
   padding: 0.55rem 0.75rem;
-  border: 1px solid #cbd5f5;
+  border: 1px solid rgba(148, 163, 184, 0.4);
   border-radius: 8px;
   font-size: 0.95rem;
   font-family: inherit;
-  color: #0f172a;
-  background: #f8fafc;
+  color: var(--breakglass-text-strong);
+  background: rgba(15, 23, 42, 0.6);
   box-sizing: border-box;
   transition:
     border-color 0.2s ease,
@@ -854,9 +924,9 @@ function drop() {
 .request-modal input:focus,
 .request-modal textarea:focus {
   outline: none;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
-  background: #fff;
+  border-color: rgba(56, 189, 248, 0.85);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35);
+  background: rgba(15, 23, 42, 0.85);
 }
 
 .request-modal :deep(input::placeholder),
@@ -874,7 +944,7 @@ function drop() {
 .duration-selector .helper,
 .reason-field .helper {
   font-size: 0.85rem;
-  color: #475569;
+  color: var(--breakglass-text-muted);
   margin: 0.35rem 0;
 }
 
@@ -890,21 +960,22 @@ function drop() {
   margin-top: 0.5rem;
   padding: 0.75rem;
   border-radius: 8px;
-  background: #f1f5f9;
+  background: rgba(15, 23, 42, 0.7);
   font-size: 0.85rem;
-  color: #475569;
+  color: var(--breakglass-text-muted);
 }
 
 .breakglass-card__approvers p {
   margin: 0.5rem 0 0;
-  color: #0f172a;
+  color: var(--breakglass-text-strong);
 }
 
 .schedule-details {
   margin-top: 0.75rem;
   padding: 0.85rem 1rem;
-  border-left: 3px solid #0ea5e9;
-  background: #f0f9ff;
+  border-left: 3px solid rgba(14, 165, 233, 0.7);
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.25);
   border-radius: 10px;
 }
 
@@ -918,7 +989,7 @@ function drop() {
 .schedule-locale-hint {
   margin-top: 0.5rem;
   font-size: 0.85rem;
-  color: #475569;
+  color: var(--breakglass-text-muted);
 }
 
 .schedule-field {
@@ -926,7 +997,7 @@ function drop() {
   flex-direction: column;
   font-size: 0.85rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--breakglass-text-strong);
 }
 
 .schedule-field input,
@@ -935,16 +1006,16 @@ function drop() {
   margin-top: 0.3rem;
   padding: 0.45rem 0.65rem;
   border-radius: 8px;
-  border: 1px solid #cbd5f5;
+  border: 1px solid rgba(148, 163, 184, 0.4);
   font-size: 0.95rem;
-  color: #0f172a;
-  background: #fff;
+  color: var(--breakglass-text-strong);
+  background: rgba(15, 23, 42, 0.55);
 }
 
 .schedule-field select {
   appearance: none;
   background-image:
-    linear-gradient(45deg, transparent 50%, #0f172a 50%), linear-gradient(135deg, #0f172a 50%, transparent 50%);
+    linear-gradient(45deg, transparent 50%, #e2e8f0 50%), linear-gradient(135deg, #e2e8f0 50%, transparent 50%);
   background-position:
     calc(100% - 20px) calc(50% - 3px),
     calc(100% - 14px) calc(50% - 3px);
@@ -963,11 +1034,11 @@ function drop() {
 .schedule-preview {
   margin-top: 0.5rem;
   font-size: 0.9rem;
-  color: #0f172a;
+  color: var(--breakglass-text-strong);
 }
 
 .schedule-preview .muted {
-  color: #64748b;
+  color: var(--breakglass-text-muted);
   font-size: 0.85rem;
 }
 
@@ -988,18 +1059,19 @@ function drop() {
   position: absolute;
   top: 0.75rem;
   right: 0.75rem;
-  background: #fff;
-  border: 1px solid rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.4);
   border-radius: 999px;
   width: 32px;
   height: 32px;
   font-size: 1rem;
   cursor: pointer;
-  color: #0f172a;
+  color: var(--breakglass-text-strong);
+  transition: background 0.2s ease;
 }
 
 .modal-close:hover {
-  background: #f1f5f9;
+  background: rgba(15, 23, 42, 0.95);
 }
 
 @media (max-width: 720px) {
