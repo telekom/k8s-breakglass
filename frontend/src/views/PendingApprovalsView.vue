@@ -83,7 +83,6 @@ function computeEndTime(startTimeStr: string | undefined, durationStr: string | 
     return "Invalid date format";
   }
 }
-
 function collectMatchingGroups(session: any): string[] {
   const collected = new Set<string>();
   const tryAdd = (value?: string | string[]) => {
@@ -93,7 +92,7 @@ function collectMatchingGroups(session: any): string[] {
       return;
     }
     String(value)
-      .split(/[,\s]+/)
+      .split(/[\s,]+/)
       .map((part) => part.trim())
       .filter(Boolean)
       .forEach((entry) => collected.add(entry));
@@ -142,6 +141,20 @@ function getSessionReason(session: any): string {
   if (session?.status?.reason) return session.status.reason;
   if (session?.status?.approvalReason) return session.status.approvalReason;
   return "No request reason was supplied.";
+}
+function getUserInitials(user?: string): string {
+  if (!user) return "??";
+  const handle = user.includes("@") ? user.split("@")[0] || user : user;
+  const tokens = handle.split(/[._-]+/).filter(Boolean);
+  if (tokens.length >= 2) {
+    const first = tokens[0]?.charAt(0) ?? "";
+    const last = tokens[tokens.length - 1]?.charAt(0) ?? "";
+    return `${first}${last || first}`.toUpperCase();
+  }
+  if (tokens.length === 1 && tokens[0]) {
+    return tokens[0].slice(0, 2).toUpperCase();
+  }
+  return handle.slice(0, 2).toUpperCase();
 }
 
 // Enhanced sessions list with urgency calculation
@@ -311,102 +324,140 @@ onMounted(fetchPendingApprovals);
       <p v-else>No requests match the selected filters.</p>
     </div>
     <div v-else class="sessions-list">
-      <div
+      <article
         v-for="session in sortedSessions"
         :key="session.metadata.name"
         class="approval-card"
         :class="`urgency-${session.urgency}`"
       >
-        <!-- Urgency Badge -->
-        <div v-if="session.urgency === 'critical'" class="urgency-badge critical">⚠️ CRITICAL - Action Required</div>
-        <div v-else-if="session.urgency === 'high'" class="urgency-badge high">⏱️ High Priority</div>
-
-        <!-- Scheduled Session Badge -->
-        <div v-if="session.spec && session.spec.scheduledStartTime" class="scheduled-badge">📅 Scheduled Session</div>
-
-        <!-- Header with basic info -->
-        <div class="card-header">
-          <div class="header-left">
-            <div class="user-badge">{{ session.spec.user }}</div>
-            <div class="cluster-group">
-              <span class="cluster-tag">{{ session.spec.cluster }}</span>
-              <span class="group-tag">{{ session.spec.grantedGroup }}</span>
+        <div class="card-top">
+          <div class="identity-block">
+            <div class="user-avatar">{{ getUserInitials(session.spec?.user) }}</div>
+            <div class="user-info">
+              <h3>{{ session.spec?.user || "Unknown user" }}</h3>
+              <p>
+                <template v-if="session.spec?.requester && session.spec.requester !== session.spec.user">
+                  Requested by {{ session.spec.requester }}
+                </template>
+                <template v-else>
+                  Request ID: <code>{{ session.metadata?.name }}</code>
+                </template>
+              </p>
+              <div class="request-meta">
+                <span class="chip primary">{{ session.spec?.cluster || "Unknown cluster" }}</span>
+                <span class="chip secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</span>
+                <span class="chip" :class="session.urgency">
+                  <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
+                  <template v-else-if="session.urgency === 'high'">⏱️ High</template>
+                  <template v-else>🕓 Normal</template>
+                </span>
+                <span v-if="session.spec?.scheduledStartTime" class="chip secondary">📅 Scheduled</span>
+                <span v-if="session.approvalReason?.mandatory" class="chip secondary">✍️ Note required</span>
+              </div>
             </div>
           </div>
-          <div class="header-right">
-            <div class="time-badge">
-              <span v-if="session.status && (session.status.expiresAt || session.status.timeoutAt)" class="timer">
-                <CountdownTimer :expires-at="session.status.expiresAt || session.status.timeoutAt" />
-              </span>
-              <span v-else class="timer">-</span>
+          <div class="timer-panel">
+            <span class="countdown-label">Time remaining</span>
+            <div class="timer-value">
+              <CountdownTimer :expires-at="session.status?.expiresAt || session.status?.timeoutAt" />
             </div>
+            <small v-if="session.status?.expiresAt" class="timer-absolute">
+              Expires {{ format24Hour(session.status.expiresAt) }}
+            </small>
+            <small v-else-if="session.status?.timeoutAt" class="timer-absolute">
+              Timeout {{ format24Hour(session.status.timeoutAt) }}
+            </small>
+            <small v-else class="timer-absolute">No expiry set</small>
+            <span v-if="session.status?.state" class="action-pill">State: {{ session.status.state }}</span>
           </div>
         </div>
 
-        <!-- Mandatory badge -->
-        <div v-if="session.approvalReason && session.approvalReason.mandatory" class="mandatory-badge">
-          ⚠️ Approver note required
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="label">Requested</span>
+            <span class="value">{{ format24Hour(session.metadata.creationTimestamp) }}</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Duration</span>
+            <span class="value">{{ session.spec?.maxValidFor ? formatDuration(session.spec.maxValidFor) : "—" }}</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Identity provider</span>
+            <span class="value">{{ session.spec?.identityProviderName || "—" }}</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Issuer</span>
+            <span class="value">{{ session.spec?.identityProviderIssuer || "—" }}</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Scheduled start</span>
+            <span class="value">
+              <template v-if="session.spec?.scheduledStartTime">
+                {{ format24Hour(session.spec.scheduledStartTime) }}
+              </template>
+              <template v-else>Not scheduled</template>
+            </span>
+          </div>
+          <div class="info-item">
+            <span class="label">Scheduled end</span>
+            <span class="value">
+              <template v-if="session.spec?.scheduledStartTime && session.spec?.maxValidFor">
+                {{ computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor) }}
+              </template>
+              <template v-else-if="session.status?.expiresAt">
+                {{ format24Hour(session.status.expiresAt) }}
+              </template>
+              <template v-else>—</template>
+            </span>
+          </div>
         </div>
 
-        <!-- Matched approver groups -->
-        <div v-if="session.matchingApproverGroups && session.matchingApproverGroups.length" class="matching-groups">
-          <strong>Visible via:</strong>
-          <span class="matched-groups-list">{{ session.matchingApproverGroups.join(", ") }}</span>
+        <div v-if="session.matchingApproverGroups?.length" class="matches">
+          <span class="number">{{ session.matchingApproverGroups.length }}</span>
+          matching approver groups
+        </div>
+        <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
+          <span class="matching-label">Visible via</span>
+          <div class="matching-stack">
+            <span v-for="group in session.matchingApproverGroups" :key="group">{{ group }}</span>
+          </div>
         </div>
 
-        <!-- Request reason -->
-        <div class="reason-section">
-          <strong class="reason-label">Request Reason:</strong>
-          <div class="reason-text">{{ getSessionReason(session) }}</div>
-        </div>
+        <section class="reason-section">
+          <h4>Request reason</h4>
+          <p>{{ getSessionReason(session) }}</p>
+        </section>
 
-        <!-- Approval description -->
-        <div v-if="session.approvalReason && session.approvalReason.description" class="approval-desc">
-          <strong>{{ session.approvalReason.description }}</strong>
-        </div>
+        <section v-if="session.approvalReason?.description" class="reason-section">
+          <h4>Approval policy</h4>
+          <p>{{ session.approvalReason.description }}</p>
+        </section>
 
-        <!-- Metadata row -->
-        <div class="meta-row">
-          <span class="meta-item">
-            <strong>Requested:</strong> {{ format24Hour(session.metadata.creationTimestamp) }}
-          </span>
-          <span v-if="session.spec && session.spec.maxValidFor" class="meta-item">
-            <strong>Duration:</strong> {{ formatDuration(session.spec.maxValidFor) }}
-          </span>
-          <span v-if="session.spec && session.spec.identityProviderName" class="meta-item">
-            <strong>IDP:</strong> {{ session.spec.identityProviderName }}
-          </span>
+        <div class="card-bottom">
+          <div class="request-footer">
+            <strong>Request ID</strong>
+            <span><code>{{ session.metadata?.name }}</code></span>
+            <span v-if="session.status?.state">State: {{ session.status.state }}</span>
+          </div>
+          <div class="action-row">
+            <scale-button
+              :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
+              @click="openApproveModal(session)"
+            >
+              <span v-if="approving === session.metadata.name">Approving...</span>
+              <span v-else>Review & Approve</span>
+            </scale-button>
+            <scale-button
+              variant="danger"
+              :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
+              @click="quickReject(session)"
+            >
+              <span v-if="rejecting === session.metadata.name">Rejecting…</span>
+              <span v-else>Reject</span>
+            </scale-button>
+          </div>
         </div>
-
-        <!-- Scheduled session timing -->
-        <div v-if="session.spec && session.spec.scheduledStartTime" class="meta-row">
-          <span class="meta-item"> <strong>Starts:</strong> {{ format24Hour(session.spec.scheduledStartTime) }} </span>
-          <span v-if="session.spec.maxValidFor" class="meta-item">
-            <strong>Ends:</strong> {{ computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor) }}
-          </span>
-        </div>
-
-        <!-- Action button -->
-        <div class="card-actions">
-          <scale-button
-            :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
-            class="approve-btn"
-            @click="openApproveModal(session)"
-          >
-            <span v-if="approving === session.metadata.name">Approving...</span>
-            <span v-else>Review & Approve</span>
-          </scale-button>
-          <scale-button
-            variant="danger"
-            class="reject-btn"
-            :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
-            @click="quickReject(session)"
-          >
-            <span v-if="rejecting === session.metadata.name">Rejecting…</span>
-            <span v-else>Reject</span>
-          </scale-button>
-        </div>
-      </div>
+      </article>
     </div>
   </main>
   <div v-if="showApproveModal" class="approve-modal-overlay">
@@ -612,386 +663,270 @@ h2 {
 
 .approval-card {
   background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
   padding: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  transition: all 0.2s ease;
-  border-left: 4px solid #d0d0d0;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  border-left: 5px solid transparent;
+}
+
+.approval-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
 }
 
 .approval-card.urgency-critical {
-  border-left-color: #c62828;
-  background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%);
+  border-left-color: #dc2626;
+  background-image: linear-gradient(120deg, rgba(248, 113, 113, 0.12), rgba(255, 255, 255, 0));
 }
 
 .approval-card.urgency-high {
-  border-left-color: #ff9800;
+  border-left-color: #f97316;
 }
 
-.approval-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  border-color: #d9006c;
-}
-
-/* Urgency Badges */
-.urgency-badge {
-  display: inline-block;
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-weight: 600;
-  font-size: 0.85rem;
-  margin-bottom: 1rem;
-}
-
-.urgency-badge.critical {
-  background-color: #ffebee;
-  color: #c62828;
-  border-left: 3px solid #c62828;
-  padding-left: 9px;
-}
-
-.urgency-badge.high {
-  background-color: #fff3e0;
-  color: #e65100;
-  border-left: 3px solid #ff9800;
-  padding-left: 9px;
-}
-
-/* Scheduled session badge */
-.scheduled-badge {
-  display: inline-block;
-  background-color: #e8f5e9;
-  color: #2e7d32;
-  padding: 6px 12px;
-  border-radius: 4px;
-  border-left: 3px solid #4caf50;
-  font-weight: 600;
-  font-size: 0.85rem;
-  margin-bottom: 1rem;
-  margin-left: 0.5rem;
-}
-
-/* Header section */
-.card-header {
+.card-top {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 1rem;
-  gap: 1rem;
-}
-
-.header-left {
-  flex: 1;
-}
-
-.user-badge {
-  font-size: 1.3rem;
-  font-weight: bold;
-  color: #d9006c;
-  margin-bottom: 0.5rem;
-}
-
-.cluster-group {
-  display: flex;
-  gap: 0.5rem;
+  gap: 1.5rem;
   flex-wrap: wrap;
 }
 
-.cluster-tag,
-.group-tag {
-  display: inline-block;
-  background-color: #f0f0f0;
-  color: #555;
-  padding: 4px 10px;
+.identity-block {
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  min-width: 320px;
+  flex: 1;
+}
+
+.user-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f472b6, #ec4899);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.2rem;
+  letter-spacing: 0.5px;
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.3);
+}
+
+.user-info h3 {
+  margin: 0;
+  font-size: 1.35rem;
+  color: #111827;
+}
+
+.user-info p {
+  margin: 0.15rem 0 0;
+  color: #6b7280;
+  font-size: 0.95rem;
+}
+
+.request-meta {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.65rem;
+}
+
+.chip {
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.chip.critical {
+  background: rgba(248, 113, 113, 0.15);
+  color: #b91c1c;
+}
+
+.chip.high {
+  background: rgba(249, 115, 22, 0.16);
+  color: #c2410c;
+}
+
+.chip.low {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+.chip.secondary {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.chip.primary {
+  background: rgba(217, 0, 108, 0.1);
+  color: #b10057;
+}
+
+.timer-panel {
+  background: #f8fafc;
   border-radius: 12px;
+  padding: 1rem 1.25rem;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.countdown-label {
+  color: #475569;
   font-size: 0.85rem;
   font-weight: 500;
 }
 
-.cluster-tag {
-  border-left: 3px solid #0070b8;
+.timer-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #111827;
 }
 
-.group-tag {
-  border-left: 3px solid #4caf50;
+.timer-panel .timer-absolute {
+  color: #475569;
+  font-size: 0.8rem;
 }
 
-.header-right {
-  text-align: right;
-}
-
-.time-badge {
-  display: inline-block;
-  background-color: #fff3cd;
-  color: #856404;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-weight: 600;
+.action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.9rem;
-}
-
-/* Mandatory badge */
-.mandatory-badge {
-  background-color: #ffebee;
-  color: #c62828;
-  padding: 8px 12px;
-  border-radius: 4px;
-  border-left: 3px solid #c62828;
-  margin-bottom: 1rem;
   font-weight: 600;
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
 }
 
-/* Reason section */
-.reason-section {
-  background-color: #e3f2fd;
-  border-left: 3px solid #2196f3;
-  padding: 1rem;
-  border-radius: 4px;
-  margin: 1rem 0;
+.info-grid {
+  margin-top: 1.25rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  padding: 1.25rem;
+  background: #f9fafb;
+  border-radius: 12px;
+  border: 1px solid #eef2f7;
 }
 
-.reason-label {
-  color: #1976d2;
-  font-size: 0.9rem;
+.info-item .label {
+  display: block;
+  font-size: 0.85rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.reason-text {
-  margin-top: 0.5rem;
-  color: #0b0b0b;
-  line-height: 1.5;
-  white-space: pre-wrap;
+.info-item .value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.matches {
+  margin-top: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.95rem;
+}
+
+.matches .number {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #0d9488;
 }
 
 .matching-groups {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  border-left: 4px solid #f59e0b;
+  background: #fffbeb;
+  border-radius: 10px;
+}
+
+.matching-stack {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  align-items: baseline;
-  font-size: 0.9rem;
-  color: #374151;
-  background-color: #fdf6ec;
-  border-left: 3px solid #f59e0b;
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  margin: 0.75rem 0;
-}
-
-.matching-groups strong {
-  color: #b45309;
-}
-
-.matched-groups-list {
-  font-weight: 600;
-}
-
-/* Approval description */
-.approval-desc {
-  background-color: #f5f5f5;
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  border-left: 3px solid #ffc107;
-  margin: 1rem 0;
-  color: #666;
-  font-size: 0.95rem;
-}
-
-/* Metadata row */
-.meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  padding: 0.75rem 0;
-  border-top: 1px solid #eee;
-  border-bottom: 1px solid #eee;
-  margin: 1rem 0;
-  font-size: 0.9rem;
-  color: #666;
-}
-
-.meta-item {
-  display: flex;
-  align-items: center;
-}
-
-.meta-item strong {
-  color: #333;
-  margin-right: 0.5rem;
-}
-
-/* Actions */
-.card-actions {
-  display: flex;
-  gap: 0.75rem;
-  margin-top: 1.25rem;
-}
-
-.approve-btn {
-  min-width: 150px;
-}
-
-.reject-btn {
-  min-width: 110px;
-}
-
-/* Modal styling remains */
-.center {
-  text-align: center;
-}
-
-.sessions-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.approval-card {
-  background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  transition: all 0.2s ease;
-}
-
-.approval-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  border-color: #d9006c;
-}
-
-/* Header section */
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 1rem;
-  gap: 1rem;
-}
-
-.header-left {
-  flex: 1;
-}
-
-.user-badge {
-  font-size: 1.3rem;
-  font-weight: bold;
-  color: #d9006c;
-  margin-bottom: 0.5rem;
-}
-
-.cluster-group {
-  display: flex;
   gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.cluster-tag,
-.group-tag {
-  display: inline-block;
-  background-color: #f0f0f0;
-  color: #555;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 0.85rem;
-  font-weight: 500;
-}
-
-.cluster-tag {
-  border-left: 3px solid #0070b8;
-}
-
-.group-tag {
-  border-left: 3px solid #4caf50;
-}
-
-.header-right {
-  text-align: right;
-}
-
-.time-badge {
-  display: inline-block;
-  background-color: #fff3cd;
-  color: #856404;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-/* Mandatory badge */
-.mandatory-badge {
-  background-color: #ffebee;
-  color: #c62828;
-  padding: 8px 12px;
-  border-radius: 4px;
-  border-left: 3px solid #c62828;
-  margin-bottom: 1rem;
-  font-weight: 600;
-}
-
-/* Reason section */
-.reason-section {
-  background-color: #e3f2fd;
-  border-left: 3px solid #2196f3;
-  padding: 1rem;
-  border-radius: 4px;
-  margin: 1rem 0;
-}
-
-.reason-label {
-  color: #1976d2;
-  font-size: 0.9rem;
-}
-
-.reason-text {
   margin-top: 0.5rem;
-  color: #0b0b0b;
+}
+
+.matching-label {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  color: #b45309;
+  text-transform: uppercase;
+}
+
+.matching-stack span {
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #92400e;
+  font-weight: 600;
+}
+
+.reason-section {
+  margin-top: 1.25rem;
+  padding: 1rem 1.25rem;
+  background: #eef2ff;
+  border-radius: 12px;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+}
+
+.reason-section h4 {
+  margin: 0;
+  color: #3730a3;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.reason-section p {
+  margin: 0.5rem 0 0;
   line-height: 1.5;
+  color: #111827;
   white-space: pre-wrap;
 }
 
-/* Approval description */
-.approval-desc {
-  background-color: #f5f5f5;
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  border-left: 3px solid #ffc107;
-  margin: 1rem 0;
-  color: #666;
-  font-size: 0.95rem;
-}
-
-/* Metadata row */
-.meta-row {
+.card-bottom {
+  margin-top: 1.25rem;
   display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  padding: 0.75rem 0;
-  border-top: 1px solid #eee;
-  border-bottom: 1px solid #eee;
-  margin: 1rem 0;
-  font-size: 0.9rem;
-  color: #666;
-}
-
-.meta-item {
-  display: flex;
+  justify-content: space-between;
   align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
-.meta-item strong {
-  color: #333;
-  margin-right: 0.5rem;
+.request-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+  color: #6b7280;
 }
 
-/* Actions */
-.card-actions {
+.request-footer strong {
+  color: #111827;
+}
+
+.action-row {
   display: flex;
   gap: 0.75rem;
-  margin-top: 1.25rem;
+  flex-wrap: wrap;
 }
 
-.approve-btn {
+.action-row scale-button {
   min-width: 150px;
 }
 
@@ -1113,21 +1048,20 @@ scale-textarea::v-deep .textarea__control::placeholder {
 }
 
 @media (max-width: 600px) {
-  .card-header {
+  .card-top {
     flex-direction: column;
   }
 
-  .header-right {
-    text-align: left;
+  .identity-block {
+    min-width: 100%;
   }
 
-  .cluster-group {
-    margin-top: 0.5rem;
+  .timer-panel {
+    width: 100%;
   }
 
-  .meta-row {
-    flex-direction: column;
-    gap: 0.5rem;
+  .info-grid {
+    grid-template-columns: 1fr;
   }
 
   .approve-modal {
@@ -1151,21 +1085,9 @@ scale-textarea::v-deep .textarea__control::placeholder {
     padding: 1rem;
   }
 
-  .urgency-badge {
-    font-size: 0.8rem;
-    padding: 6px 10px;
-  }
-
-  .user-badge {
-    font-size: 1.1rem;
-  }
-
-  .card-actions {
-    flex-direction: column;
-  }
-
-  .approve-btn {
+  .action-row scale-button {
     width: 100%;
+    min-width: unset;
   }
 }
 </style>
