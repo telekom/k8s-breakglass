@@ -4,8 +4,8 @@
     <div v-else-if="error" class="error">{{ error }}</div>
     <div v-else>
       <div v-if="requests.length === 0" class="center">No outstanding requests.</div>
-      <ul v-else class="requests-list">
-        <li v-for="req in requests" :key="req.metadata?.name" class="request-card">
+      <ul v-else class="requests-list ui-card-grid">
+        <li v-for="req in requests" :key="req.metadata?.name" class="ui-card request-card">
           <header class="request-header">
             <div class="request-target">
               <span class="cluster">{{ req.spec.cluster || "-" }}</span>
@@ -25,16 +25,16 @@
           </div>
 
           <div class="request-badges">
-            <span v-if="req.spec?.identityProviderName" class="chip">
+            <span v-if="req.spec?.identityProviderName" class="ui-chip">
               IDP: {{ req.spec.identityProviderName }}
             </span>
-            <span v-if="req.spec?.identityProviderIssuer" class="chip subtle">
+            <span v-if="req.spec?.identityProviderIssuer" class="ui-chip subtle">
               Issuer: {{ req.spec.identityProviderIssuer }}
             </span>
-            <span v-if="req.spec?.user" class="chip neutral">
+            <span v-if="req.spec?.user" class="ui-chip neutral">
               User: {{ req.spec.user }}
             </span>
-            <span v-if="req.spec?.duration" class="chip neutral">
+            <span v-if="req.spec?.duration" class="ui-chip neutral">
               Duration: {{ req.spec.duration }}
             </span>
           </div>
@@ -84,7 +84,7 @@
             </div>
           </div>
 
-          <div v-if="requestReason(req)" class="request-reason">
+          <div v-if="requestReason(req)" class="ui-section request-reason">
             <span class="label">Reason</span>
             <div class="reason-text">{{ requestReason(req) }}</div>
           </div>
@@ -193,25 +193,10 @@ onMounted(async () => {
   max-width: 600px;
 }
 .request-card {
-  background: #fff;
-  border-radius: 14px;
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(0, 0, 0, 0.04);
-  margin-bottom: 1.6rem;
   padding: 1.5rem 1.8rem;
-  transition:
-    box-shadow 0.2s,
-    transform 0.2s;
   display: flex;
   flex-direction: column;
   gap: 1rem;
-}
-.request-card:hover {
-  box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.15),
-    0 6px 16px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
 }
 .request-header {
   display: flex;
@@ -276,20 +261,9 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 0.4rem;
 }
-.chip {
-  font-size: 0.8rem;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  background: #ffe6f2;
-  color: #a60b56;
-}
-.chip.subtle {
+.ui-chip.subtle {
   background: #eef5ff;
   color: #0f3b8c;
-}
-.chip.neutral {
-  background: #f1f1f1;
-  color: #333;
 }
 .info-grid {
   display: grid;
@@ -322,8 +296,7 @@ onMounted(async () => {
   font-size: 0.8rem;
 }
 .request-reason {
-  border-left: 3px solid #d9006c;
-  padding-left: 0.9rem;
+  border-left: 4px solid rgba(217, 0, 108, 0.35);
 }
 .request-reason .label {
   display: block;

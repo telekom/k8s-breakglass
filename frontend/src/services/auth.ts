@@ -1,5 +1,6 @@
 import type Config from "@/model/config";
 import type { IDPInfo } from "@/model/multiIDP";
+import { getMultiIDPConfig } from "@/services/multiIDP";
 import { UserManager, WebStorageStateStore, User, type UserManagerSettings, Log } from "oidc-client-ts";
 import { ref } from "vue";
 import { info as logInfo, error as logError } from "@/services/logger";
@@ -191,8 +192,6 @@ export default class AuthService {
       });
 
       try {
-        // Import here to avoid circular dependency
-        const { getMultiIDPConfig } = await import("@/services/multiIDP");
         const config = await getMultiIDPConfig();
 
         // Find the IDP config by name

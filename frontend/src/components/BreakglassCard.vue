@@ -8,7 +8,6 @@ const humanizeConfig = { round: true, largest: 2 };
 const props = defineProps<{ breakglass: any; time: number }>();
 const emit = defineEmits(["request", "drop", "withdraw"]);
 
-// Sanitization utility: escape HTML special characters to prevent XSS
 function sanitizeReason(text: string): string {
   if (!text) return "";
   const div = document.createElement("div");
@@ -16,7 +15,6 @@ function sanitizeReason(text: string): string {
   return div.innerHTML;
 }
 
-// Validation for duration input (in seconds)
 function validateDuration(seconds: number | null, maxAllowed: number): { valid: boolean; error?: string } {
   if (!seconds || seconds === 0) {
     return { valid: false, error: "Duration must be specified" };
@@ -42,6 +40,7 @@ const showScheduleOptions = ref(false);
 const showDurationHints = ref(false);
 const scheduleDateLocal = ref("");
 const scheduleTimeLocal = ref("");
+const showAllRequesterGroups = ref(false);
 
 function closeRequestModal() {
   showRequestModal.value = false;
@@ -53,9 +52,9 @@ function closeRequestModal() {
   showDurationHints.value = false;
   scheduleDateLocal.value = "";
   scheduleTimeLocal.value = "";
+  showAllRequesterGroups.value = false;
 }
 
-// Clear reason when breakglass changes
 watch(
   () => props.breakglass,
   () => {
@@ -67,46 +66,38 @@ watch(
     showDurationHints.value = false;
     scheduleDateLocal.value = "";
     scheduleTimeLocal.value = "";
+    showAllRequesterGroups.value = false;
   },
 );
 
-// Parse duration input string to seconds
 function parseDurationInput(input: string): number | null {
   if (!input.trim()) return null;
 
   const trimmed = input.toLowerCase().trim();
-
-  // Try parsing direct number (assume seconds if just a number)
   const directNum = parseFloat(trimmed);
   if (!isNaN(directNum) && trimmed.match(/^\d+(\.\d+)?$/)) {
     return directNum;
   }
 
-  // Try parsing "30m", "1h", "2h 30m" format
   let totalSeconds = 0;
-
-  // Match hours
   const hoursMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*h/);
-  if (hoursMatch && hoursMatch[1]) {
+  if (hoursMatch?.[1]) {
     totalSeconds += parseFloat(hoursMatch[1]) * 3600;
   }
 
-  // Match minutes
   const minutesMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*m/);
-  if (minutesMatch && minutesMatch[1]) {
+  if (minutesMatch?.[1]) {
     totalSeconds += parseFloat(minutesMatch[1]) * 60;
   }
 
-  // Match seconds
   const secondsMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*s/);
-  if (secondsMatch && secondsMatch[1]) {
+  if (secondsMatch?.[1]) {
     totalSeconds += parseFloat(secondsMatch[1]);
   }
 
   return totalSeconds > 0 ? totalSeconds : null;
 }
 
-// Format seconds to readable duration format
 function formatDurationSeconds(seconds: number): string {
   if (!seconds) return "";
 
@@ -114,7 +105,7 @@ function formatDurationSeconds(seconds: number): string {
   const minutes = Math.floor((seconds % 3600) / 60);
   const secs = Math.floor(seconds % 60);
 
-  const parts = [];
+  const parts = [] as string[];
   if (hours > 0) parts.push(`${hours}h`);
   if (minutes > 0) parts.push(`${minutes}m`);
   if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
@@ -125,7 +116,6 @@ function formatDurationSeconds(seconds: number): string {
 const reasonCharLimit = 1024;
 const reasonCharCount = computed(() => requestReason.value.length);
 
-// Compute minimum datetime (now + 5 minutes)
 const minDateTime = computed(() => {
   const now = new Date();
   now.setMinutes(now.getMinutes() + 5);
@@ -229,58 +219,10 @@ function updateScheduledFromInputs() {
   scheduledStartTime.value = dt.toISOString();
 }
 
-// Convert between datetime-local (browser format) and ISO 8601
-// NOTE: datetime-local input returns local time in format "YYYY-MM-DDTHH:mm"
-// We must treat it as local time and convert to UTC for ISO 8601 storage
-const scheduleDateTimeLocal = computed({
-  get() {
-    if (!scheduledStartTime.value) return "";
-    // scheduledStartTime is stored as ISO 8601 (UTC)
-    // Convert to local time for display in datetime-local input
-    const dt = new Date(scheduledStartTime.value);
-    // Format as YYYY-MM-DDTHH:mm for datetime-local input
-    const year = dt.getFullYear();
-    const month = String(dt.getMonth() + 1).padStart(2, "0");
-    const day = String(dt.getDate()).padStart(2, "0");
-    const hours = String(dt.getHours()).padStart(2, "0");
-    const minutes = String(dt.getMinutes()).padStart(2, "0");
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-  },
-  set(value: string) {
-    if (!value) {
-      scheduledStartTime.value = null;
-    } else {
-      // value is in format "YYYY-MM-DDTHH:mm" and represents LOCAL time
-      // Parse it as local time and convert to UTC ISO 8601
-      const parts = value.split("T");
-      if (parts.length !== 2) return;
-
-      const datePart = parts[0]!;
-      const timePart = parts[1]!;
-
-      const dateParts = datePart.split("-").map(Number);
-      const timeParts = timePart.split(":").map(Number);
-
-      if (dateParts.length !== 3 || timeParts.length !== 2) return;
-
-      const year = dateParts[0]!;
-      const month = dateParts[1]!;
-      const day = dateParts[2]!;
-      const hours = timeParts[0]!;
-      const minutes = timeParts[1]!;
-
-      // Create date in LOCAL timezone (not UTC!)
-      const dt = new Date(year, month - 1, day, hours, minutes, 0, 0);
-
-      // Convert to ISO 8601 UTC string
-      scheduledStartTime.value = dt.toISOString();
-    }
-  },
-});
+const requiresReason = computed(() => Boolean(props.breakglass?.requestReason?.mandatory));
 
 const canRequest = computed(() => {
-  const cfg = props.breakglass?.requestReason;
-  if (cfg && cfg.mandatory) {
+  if (requiresReason.value) {
     return (requestReason.value || "").toString().trim().length > 0;
   }
   return true;
@@ -299,6 +241,21 @@ const requesterGroups = computed(() => {
   return uniq;
 });
 
+const MAX_VISIBLE_GROUPS = 6;
+const visibleRequesterGroups = computed(() => {
+  if (showAllRequesterGroups.value) {
+    return requesterGroups.value;
+  }
+  return requesterGroups.value.slice(0, MAX_VISIBLE_GROUPS);
+});
+
+const hiddenRequesterGroupCount = computed(() => {
+  if (showAllRequesterGroups.value) {
+    return 0;
+  }
+  return Math.max(requesterGroups.value.length - MAX_VISIBLE_GROUPS, 0);
+});
+
 const requesterGroupsLabel = computed(() => (requesterGroups.value.length ? requesterGroups.value.join(", ") : "—"));
 
 const reasonDescription = computed(() => {
@@ -315,16 +272,25 @@ const metaBadges = computed(() => {
   } else {
     badges.push({ label: "Available", variant: "neutral" });
   }
-  if (props.breakglass?.requestReason?.mandatory) {
+  if (requiresReason.value) {
     badges.push({ label: "Reason required", variant: "danger" });
   }
   if (!props.breakglass?.selfApproval && props.breakglass?.approvalGroups?.length) {
     badges.push({ label: "Needs approval", variant: "info" });
+  } else if (props.breakglass?.selfApproval) {
+    badges.push({ label: "Self approval", variant: "secondary" });
   }
   if (requesterGroups.value.length > 1) {
     badges.push({ label: `${requesterGroups.value.length} requester groups`, variant: "neutral" });
   }
   return badges;
+});
+
+const cardAccentClass = computed(() => {
+  if (sessionActive.value) return "accent-success";
+  if (sessionPending.value) return "accent-warning";
+  if (requiresReason.value) return "accent-critical";
+  return "";
 });
 
 const expiryHumanized = computed(() => {
@@ -345,10 +311,19 @@ const timeoutHumanized = computed(() => {
   return "";
 });
 
+const approvalSummary = computed(() => {
+  if (Array.isArray(props.breakglass?.approvalGroups) && props.breakglass.approvalGroups.length > 0) {
+    return props.breakglass.approvalGroups.join(", ");
+  }
+  if (props.breakglass?.selfApproval) {
+    return "Self approval possible";
+  }
+  return "No approver configured";
+});
+
 function openRequest() {
   showRequestModal.value = true;
-  // Set default duration to the escalation's predefined duration
-  selectedDuration.value = props.breakglass.duration || 7200; // default to 2 hours
+  selectedDuration.value = props.breakglass.duration || 7200;
   if (selectedDuration.value) {
     durationInput.value = formatDurationSeconds(selectedDuration.value);
   }
@@ -364,14 +339,12 @@ function toggleScheduleOptions() {
 }
 
 function request() {
-  // Validate and parse duration from input
   const parsedDuration = parseDurationInput(durationInput.value);
   if (!parsedDuration) {
     pushError("Please enter a valid duration (e.g., '1h', '30m', '3600')");
     return;
   }
 
-  // Validate duration against maximum allowed
   const maxAllowed = props.breakglass.duration || 7200;
   const validation = validateDuration(parsedDuration, maxAllowed);
   if (!validation.valid) {
@@ -379,16 +352,11 @@ function request() {
     return;
   }
 
-  // Validate reason field is not empty if required
-  const cfg = props.breakglass?.requestReason;
-  if (cfg && cfg.mandatory) {
-    if (!requestReason.value.trim()) {
-      pushError("Reason is required for this escalation");
-      return;
-    }
+  if (requiresReason.value && !requestReason.value.trim()) {
+    pushError("Reason is required for this escalation");
+    return;
   }
 
-  // Sanitize reason before sending
   const sanitizedReason = sanitizeReason(requestReason.value);
 
   emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value);
@@ -398,74 +366,126 @@ function request() {
   scheduledStartTime.value = null;
   showRequestModal.value = false;
 }
+
 function withdraw() {
   emit("withdraw");
 }
+
 function drop() {
   emit("drop");
 }
+
 </script>
 
 <template>
-  <scale-card>
-    <h2 class="to">{{ breakglass.to }}</h2>
-    <div class="meta-tags" aria-label="Session status and requirements">
-      <span v-for="badge in metaBadges" :key="badge.label" class="badge" :class="badge.variant">
-        {{ badge.label }}
-      </span>
-    </div>
-    <p>
-      From <b>{{ requesterGroupsLabel }}</b>
-    </p>
-    <p v-if="requesterGroups.length > 1" class="meta-subtle">
-      Available through {{ requesterGroups.length }} of your groups
-    </p>
-    <p v-if="breakglass.cluster">
-      Cluster <b>{{ breakglass.cluster }}</b>
-    </p>
-    <p>
-      For <b>{{ durationHumanized }}</b>
-    </p>
-    <p v-if="breakglass.approvalGroups && breakglass.approvalGroups.length > 0">
-      Requires approval from {{ breakglass.approvalGroups.join(", ") }}
-    </p>
-    <p v-else>No approvers defined.</p>
-    <p v-if="reasonDescription" class="meta-subtle">{{ reasonDescription }}</p>
+  <article class="ui-card breakglass-card" :class="cardAccentClass">
+      <header class="breakglass-card__header">
+        <div class="breakglass-card__title">
+          <p class="eyebrow">Escalation target</p>
+          <h3 class="ui-card-title">{{ breakglass.to }}</h3>
+          <p class="breakglass-card__subtitle">
+            Available from <span class="highlight">{{ requesterGroupsLabel }}</span>
+          </p>
+          <p v-if="requesterGroups.length > 1" class="breakglass-card__hint">
+            Visible via {{ requesterGroups.length }} of your groups
+          </p>
+          <div class="ui-card-meta" aria-label="Session status and requirements">
+            <span v-for="badge in metaBadges" :key="badge.label" class="ui-chip" :class="badge.variant">
+              {{ badge.label }}
+            </span>
+          </div>
+        </div>
+        <div class="breakglass-card__state-panel" aria-live="polite">
+          <span class="state-label">
+            <template v-if="sessionActive">Active session</template>
+            <template v-else-if="sessionPending">Pending request</template>
+            <template v-else>Available</template>
+          </span>
+          <p class="state-detail" v-if="sessionActive && expiryHumanized">Expires in {{ expiryHumanized }}</p>
+          <p class="state-detail" v-else-if="sessionPending && timeoutHumanized">Timeout in {{ timeoutHumanized }}</p>
+          <p class="state-detail" v-else>Up to {{ durationHumanized }}</p>
+          <p v-if="breakglass.approvalGroups?.length" class="state-detail">
+            Needs approval from {{ breakglass.approvalGroups.length }} group
+            <span v-if="breakglass.approvalGroups.length > 1">s</span>
+          </p>
+        </div>
+      </header>
 
-    <template v-if="sessionPending">
-      <p class="pending">Request pending approval.</p>
-      <p v-if="timeoutHumanized">
-        Timeout in: <b>{{ timeoutHumanized }}</b>
-      </p>
-      <p v-if="breakglass.approvalGroups && breakglass.approvalGroups.length > 0">
-        Approvers: {{ breakglass.approvalGroups.join(", ") }}
-      </p>
-      <p class="actions">
-        <scale-button variant="secondary" @click="withdraw">Withdraw</scale-button>
-      </p>
-    </template>
-    <template v-else-if="sessionActive">
-      <p class="active">Session active.</p>
-      <p v-if="expiryHumanized">
-        Expires in: <b>{{ expiryHumanized }}</b>
-      </p>
-      <p class="actions">
-        <scale-button variant="secondary" @click="drop">Drop</scale-button>
-      </p>
-    </template>
-    <template v-else>
-      <!-- Always ask for a reason in the UI (modal) even if the escalation does not require it. -->
-      <p class="actions">
-        <!-- Always allow opening the modal so the user can fill a required reason. Only the Confirm button is disabled when the reason is missing. -->
-        <scale-button @click="openRequest">Request</scale-button>
-      </p>
-      <p
-        v-if="
-          props.breakglass && props.breakglass.requestReason && props.breakglass.requestReason.mandatory && !canRequest
-        "
-        style="color: #c62828; margin-top: 0.5rem"
-      >
-        This Escalation requires a reason.
+      <div class="ui-info-grid breakglass-card__info">
+        <div class="ui-info-item">
+          <span class="label">Cluster</span>
+          <span class="value">{{ breakglass.cluster || "Global" }}</span>
+        </div>
+        <div class="ui-info-item">
+          <span class="label">Requested group</span>
+          <span class="value">{{ breakglass.to }}</span>
+        </div>
+        <div class="ui-info-item">
+          <span class="label">Max duration</span>
+          <span class="value">{{ durationHumanized }}</span>
+        </div>
+        <div class="ui-info-item">
+          <span class="label">Approvers</span>
+          <span class="value">{{ approvalSummary }}</span>
+        </div>
+        <div class="ui-info-item" v-if="sessionPending">
+          <span class="label">Pending request</span>
+          <span class="value">{{ timeoutHumanized || "Awaiting approver" }}</span>
+        </div>
+        <div class="ui-info-item" v-if="sessionActive">
+          <span class="label">Active session</span>
+          <span class="value">{{ expiryHumanized || "Running" }}</span>
+        </div>
+      </div>
+
+      <div v-if="requesterGroups.length" class="breakglass-card__groups">
+        <div class="groups-header">
+          <span class="label">Available via</span>
+          <span class="count-chip">{{ requesterGroups.length }} groups</span>
+        </div>
+        <div class="ui-pill-stack">
+          <span v-for="group in visibleRequesterGroups" :key="group">{{ group }}</span>
+        </div>
+        <button
+          v-if="hiddenRequesterGroupCount > 0"
+          type="button"
+          class="ui-link-button"
+          @click="showAllRequesterGroups = !showAllRequesterGroups"
+        >
+          {{ showAllRequesterGroups ? "Show fewer groups" : `Show all ${requesterGroups.length} groups` }}
+        </button>
+      </div>
+
+      <section v-if="reasonDescription" class="ui-section">
+        <h4>Reason policy</h4>
+        <p>{{ reasonDescription }}</p>
+      </section>
+
+      <section v-if="breakglass.approvalGroups?.length" class="ui-section breakglass-card__approvers">
+        <h4>Approval groups</h4>
+        <p>{{ breakglass.approvalGroups.join(", ") }}</p>
+      </section>
+
+      <div class="breakglass-card__cta">
+        <div class="cta-copy">
+          <p v-if="sessionPending" class="ui-muted">
+            Request pending approval. We'll notify you if anything changes.
+          </p>
+          <p v-else-if="sessionActive" class="ui-muted">
+            Session is active. Drop it once you're done.
+          </p>
+          <p v-else-if="requiresReason" class="ui-muted">✍️ Describe why you need access to request.</p>
+          <p v-else class="ui-muted">Request access instantly or schedule a window.</p>
+        </div>
+        <div class="ui-actions-row">
+          <scale-button v-if="sessionPending" variant="secondary" @click="withdraw">Withdraw</scale-button>
+          <scale-button v-else-if="sessionActive" variant="secondary" @click="drop">Drop session</scale-button>
+          <scale-button v-else @click="openRequest">Request access</scale-button>
+        </div>
+      </div>
+
+      <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__error">
+        This escalation requires a reason.
       </p>
 
       <div v-if="showRequestModal" class="request-modal-overlay">
@@ -473,152 +493,85 @@ function drop() {
           <button class="modal-close" aria-label="Close" @click="closeRequestModal">×</button>
           <h3>Request breakglass</h3>
 
-          <!-- Duration Input (Freeform) -->
-          <div class="duration-selector" style="margin-bottom: 1rem">
-            <label for="duration-input" style="display: block; margin-bottom: 0.5rem; font-weight: 500">
-              Duration (default: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}, min: 1m):
-            </label>
+          <div class="duration-selector">
+            <label for="duration-input"
+              >Duration (default: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}, min: 1m):</label
+            >
             <input
               id="duration-input"
               v-model="durationInput"
               type="text"
               :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
-              style="
-                width: 100%;
-                padding: 0.5rem;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                font-size: 14px;
-                box-sizing: border-box;
-              "
             />
-            <p style="font-size: 0.85em; color: #666; margin-top: 0.25rem">
-              Enter a shorter duration if needed. Defaults to maximum allowed ({{
+            <p class="helper">
+              Enter a shorter duration if needed. Defaults to maximum allowed ({
                 humanizeDuration(breakglass.duration * 1000, humanizeConfig)
-              }})
+              })
             </p>
-            <p v-if="durationInput" style="font-size: 0.9em; color: #555; margin-top: 0.25rem">
+            <p v-if="durationInput" class="helper">
               Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
             </p>
-            <button
-              type="button"
-              style="
-                background: none;
-                border: none;
-                cursor: pointer;
-                color: #0066cc;
-                text-decoration: underline;
-                padding: 0;
-                font-size: 12px;
-                margin-top: 0.25rem;
-              "
-              @click="showDurationHints = !showDurationHints"
-            >
+            <button type="button" class="ui-link-button small" @click="showDurationHints = !showDurationHints">
               {{ showDurationHints ? "⊖ Hide" : "⊕ Show" }} common durations
             </button>
-            <div
-              v-if="showDurationHints"
-              style="
-                margin-top: 0.5rem;
-                padding: 0.5rem;
-                background-color: #f5f5f5;
-                border-radius: 4px;
-                font-size: 12px;
-              "
-            >
-              <p style="margin: 0.25rem 0">
-                Examples: 30m, 1h, 2h, 4h (all less than max
-                {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
+            <div v-if="showDurationHints" class="hint-box">
+              <p>
+                Examples: 30m, 1h, 2h, 4h (all less than max {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig)
+                }})
               </p>
             </div>
           </div>
-          <!-- Schedule Options Toggle -->
-          <div class="schedule-section" style="margin-bottom: 1rem; border-top: 1px solid #ddd; padding-top: 0.75rem">
-            <button
-              type="button"
-              class="toggle-schedule"
-              style="
-                background: none;
-                border: none;
-                cursor: pointer;
-                color: #0066cc;
-                text-decoration: underline;
-                padding: 0;
-                font-size: 14px;
-              "
-              @click="toggleScheduleOptions"
-            >
+
+          <div class="schedule-section">
+            <button type="button" class="ui-link-button" @click="toggleScheduleOptions">
               <span v-if="!showScheduleOptions">⊕ Schedule for future date (optional)</span>
               <span v-else>⊖ Schedule for future date (optional)</span>
             </button>
 
-            <div
-              v-if="showScheduleOptions"
-              class="schedule-details"
-              style="
-                margin-top: 0.75rem;
-                margin-left: 15px;
-                padding: 0.75rem;
-                border-left: 2px solid #0066cc;
-                background-color: #f9f9f9;
-              "
-            >
-              <div style="margin-bottom: 0.75rem">
-                <p class="schedule-intro">
-                  Use the 24-hour date and time pickers below. Leave both fields empty to start immediately.
-                </p>
-                <div class="schedule-inputs">
-                  <label class="schedule-field" :for="'scheduled-date-' + breakglass.to">
-                    Date
-                    <input
-                      :id="'scheduled-date-' + breakglass.to"
-                      v-model="scheduleDateLocal"
-                      type="date"
-                      :min="minScheduleDate || undefined"
-                      @change="updateScheduledFromInputs"
-                      @blur="updateScheduledFromInputs"
-                    />
-                  </label>
-                  <label class="schedule-field" :for="'scheduled-time-' + breakglass.to">
-                    Time (24-hour)
-                    <input
-                      :id="'scheduled-time-' + breakglass.to"
-                      v-model="scheduleTimeLocal"
-                      type="time"
-                      step="60"
-                      :min="minTimeForSelectedDate || undefined"
-                      @change="updateScheduledFromInputs"
-                      @blur="updateScheduledFromInputs"
-                    />
-                  </label>
-                </div>
-                <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
-                  Earliest allowed start: <strong>{{ earliestSchedulePreview || 'Soonest available' }}</strong>
-                </p>
+            <div v-if="showScheduleOptions" class="schedule-details">
+              <p class="schedule-intro">
+                Use the 24-hour date and time pickers below. Leave both fields empty to start immediately.
+              </p>
+              <div class="schedule-inputs">
+                <label class="schedule-field" :for="'scheduled-date-' + breakglass.to">
+                  Date
+                  <input
+                    :id="'scheduled-date-' + breakglass.to"
+                    v-model="scheduleDateLocal"
+                    type="date"
+                    :min="minScheduleDate || undefined"
+                    @change="updateScheduledFromInputs"
+                    @blur="updateScheduledFromInputs"
+                  />
+                </label>
+                <label class="schedule-field" :for="'scheduled-time-' + breakglass.to">
+                  Time (24-hour)
+                  <input
+                    :id="'scheduled-time-' + breakglass.to"
+                    v-model="scheduleTimeLocal"
+                    type="time"
+                    step="60"
+                    :min="minTimeForSelectedDate || undefined"
+                    @change="updateScheduledFromInputs"
+                    @blur="updateScheduledFromInputs"
+                  />
+                </label>
               </div>
+              <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
+                Earliest allowed start: <strong>{{ earliestSchedulePreview || "Soonest available" }}</strong>
+              </p>
 
-              <div
-                v-if="scheduledStartTime"
-                class="schedule-preview"
-                style="font-size: 0.9em; color: #555; margin-top: 0.5rem"
-              >
-                <p style="margin: 0.25rem 0">
-                  <strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}
-                </p>
-                <p style="margin: 0.25rem 0; color: #888; font-size: 0.85em">
-                  Your local time: {{ format24HourWithTZ(scheduledStartTime) }}
-                </p>
+              <div v-if="scheduledStartTime" class="schedule-preview">
+                <p><strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}</p>
+                <p class="muted">Your local time: {{ format24HourWithTZ(scheduledStartTime) }}</p>
               </div>
             </div>
           </div>
 
-          <!-- Reason Field with Character Limit -->
-          <div style="margin-bottom: 1rem">
-            <label for="reason-field" style="display: block; margin-bottom: 0.5rem; font-weight: 500">
-              Reason {{ reasonCharCount }}/{{ reasonCharLimit }}:
-            </label>
+          <div class="reason-field">
+            <label for="reason-field-input">Reason {{ reasonCharCount }}/{{ reasonCharLimit }}:</label>
             <textarea
-              id="reason-field"
+              id="reason-field-input"
               v-model="requestReason"
               :maxlength="reasonCharLimit"
               :placeholder="
@@ -626,180 +579,141 @@ function drop() {
                 'Optional reason (max 1024 characters)'
               "
               rows="4"
-              style="
-                width: 100%;
-                padding: 0.5rem;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                font-size: 14px;
-                font-family: inherit;
-                box-sizing: border-box;
-                resize: vertical;
-              "
             ></textarea>
-            <p
-              v-if="reasonCharCount >= reasonCharLimit * 0.9"
-              style="font-size: 0.85em; color: #ff6b6b; margin-top: 0.25rem"
-            >
+            <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning">
               ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
             </p>
-            <p
-              v-if="
-                props.breakglass &&
-                props.breakglass.requestReason &&
-                props.breakglass.requestReason.mandatory &&
-                !(requestReason || '').trim()
-              "
-              style="color: #c62828; margin-top: 0.5rem"
-            >
+            <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error">
               This field is required.
             </p>
           </div>
 
-          <!-- Action Buttons -->
-          <p class="actions">
-            <scale-button
-              :disabled="
-                props.breakglass &&
-                props.breakglass.requestReason &&
-                props.breakglass.requestReason.mandatory &&
-                !(requestReason || '').trim()
-              "
-              @click="request"
+          <div class="modal-actions">
+            <scale-button :disabled="requiresReason && !(requestReason || '').trim()" @click="request"
               >Confirm Request</scale-button
             >
             <scale-button variant="secondary" @click="closeRequestModal">Cancel</scale-button>
-          </p>
+          </div>
         </div>
-      </div>
-    </template>
-  </scale-card>
+    </div>
+  </article>
 </template>
 
 <style scoped>
-scale-card {
-  display: inline-block;
-  max-width: 300px;
-}
-
-scale-button {
-  margin: 0 0.4rem;
-}
-
-.meta-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin: 0.5rem 0;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.15rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.badge.success {
-  background: #e0f6ec;
-  color: #0f8a4b;
-}
-
-.badge.warning {
-  background: #fff7e6;
-  color: #c47f00;
-}
-
-.badge.neutral {
-  background: #eef2ff;
-  color: #3730a3;
-}
-
-.badge.info {
-  background: #e0f2fe;
-  color: #075985;
-}
-
-.badge.danger {
-  background: #fee2e2;
-  color: #b91c1c;
-}
-
-.meta-subtle {
-  margin-top: -0.35rem;
-  margin-bottom: 0.5rem;
-  font-size: 0.85rem;
-  color: #5c6b86;
-}
-
-
-.schedule-intro {
-  margin-bottom: 0.35rem;
-  font-size: 0.85rem;
-  color: #374151;
-}
-
-.schedule-inputs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.schedule-field {
+.breakglass-card {
   display: flex;
   flex-direction: column;
-  font-size: 0.85rem;
+  gap: 1.25rem;
+}
+
+.breakglass-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.breakglass-card__title {
+  flex: 1 1 320px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+  margin: 0 0 0.25rem 0;
+}
+
+.breakglass-card__subtitle {
+  margin: 0.1rem 0;
+  color: #475569;
+}
+
+.breakglass-card__subtitle .highlight {
+  color: #0f172a;
   font-weight: 600;
-  color: #1e293b;
-  min-width: 140px;
-  flex: 1;
 }
 
-.schedule-field input {
-  margin-top: 0.35rem;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid #99a1b7;
-  border-radius: 6px;
-  font-size: 0.95rem;
-  font-family: "JetBrains Mono", "Fira Code", monospace;
-  font-variant-numeric: tabular-nums;
-  background: #fff;
-  color: #111827;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
+.breakglass-card__hint {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.9rem;
 }
 
-.schedule-field input:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+.breakglass-card__state-panel {
+  min-width: 220px;
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
-.schedule-locale-hint {
-  margin-top: 0.3rem;
+.state-label {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.state-detail {
+  margin: 0;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.breakglass-card__groups {
+  padding: 0.5rem 0 0 0;
+}
+
+.groups-header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.groups-header .label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #475569;
+}
+
+.count-chip {
+  background: rgba(14, 165, 233, 0.16);
+  color: #0369a1;
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  font-weight: 600;
   font-size: 0.8rem;
-  color: #4b5563;
 }
 
-.actions {
-  margin-top: 1rem;
-  text-align: center;
+.breakglass-card__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
 }
 
-.to,
-.expiry {
-  text-align: center;
+.cta-copy {
+  flex: 1 1 300px;
 }
 
-/* Full-screen overlay to center the modal and provide readable backdrop */
+.breakglass-card__error {
+  color: #b91c1c;
+  font-weight: 600;
+  margin-top: -0.5rem;
+}
+
 .request-modal-overlay {
   position: fixed;
-  inset: 0; /* top:0; right:0; bottom:0; left:0 */
-  background: rgba(0, 0, 0, 0.45);
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -807,86 +721,167 @@ scale-button {
 }
 
 .request-modal {
-  background: #dbd8d8; /* light grey background for better contrast */
-  /* ensure readable text color even if global theme sets light text */
-  color: #0b0b0b;
-  padding: 1.25rem;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 1.5rem;
+  border-radius: 12px;
+  max-width: 520px;
+  width: 92%;
+  box-shadow: 0 30px 60px rgba(15, 23, 42, 0.35);
   position: relative;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.request-modal h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.request-modal label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #1e293b;
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.request-modal input,
+.request-modal textarea {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #cbd5f5;
   border-radius: 8px;
-  max-width: 420px;
-  width: 90%;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.12);
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: #0f172a;
+  background: #f8fafc;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-/* Ensure inputs and textarea inside the scale-text-field are readable */
-.request-modal ::v-deep input,
-.request-modal ::v-deep textarea,
-.request-modal select {
-  color: #111 !important;
-  border-color: #b1cbf5 !important; /* blue focus ring */
-  background: #b3b3b3 !important; /* slightly off-white to remain distinct from modal bg */
+.request-modal input:focus,
+.request-modal textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+  background: #fff;
 }
 
-/* Make inputs clearly highlighted when focused for accessibility */
-.request-modal ::v-deep input:focus,
-.request-modal ::v-deep textarea:focus,
-.request-modal select:focus {
-  outline: none !important;
-  border-color: #3b82f6 !important; /* blue focus ring */
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12) !important;
+.request-modal :deep(input::placeholder),
+.request-modal :deep(textarea::placeholder) {
+  color: #94a3b8;
+  opacity: 1;
 }
 
-/* Placeholder should be visible */
-.request-modal ::v-deep ::placeholder {
-  color: #6b7280 !important;
-  opacity: 1 !important;
+.duration-selector,
+.reason-field,
+.schedule-section {
+  margin-bottom: 1.25rem;
 }
 
-/* Duration selector specific styling */
-.duration-selector select {
-  width: 100% !important;
-  padding: 0.5rem !important;
-  border: 1px solid #ccc !important;
-  border-radius: 4px !important;
-  font-size: 14px !important;
+.duration-selector .helper,
+.reason-field .helper {
+  font-size: 0.85rem;
+  color: #475569;
+  margin: 0.35rem 0;
 }
 
-.duration-selector select option {
-  color: #111 !important;
-  background: #ffffff !important;
-  padding: 0.5rem !important;
+.reason-field .helper.warning {
+  color: #b45309;
 }
 
-/* Make the secondary/cancel button clearly visible and slightly darker */
-.request-modal scale-button[variant="secondary"] {
-  background: #374151 !important; /* dark gray */
-  color: #ffffff !important;
-  border: 1px solid #374151 !important;
-  box-shadow: none !important;
+.reason-field .helper.error {
+  color: #b91c1c;
 }
-.request-modal scale-button[variant="secondary"]:hover {
-  background: #2d3748 !important;
+
+.hint-box {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: #f1f5f9;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.breakglass-card__approvers p {
+  margin: 0.5rem 0 0;
+  color: #0f172a;
+}
+
+.schedule-details {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-left: 3px solid #0ea5e9;
+  background: #f0f9ff;
+  border-radius: 10px;
+}
+
+.schedule-locale-hint {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.schedule-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+}
+
+.schedule-field {
+  flex: 1;
+  min-width: 140px;
+}
+
+.schedule-preview {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #0f172a;
+}
+
+.schedule-preview .muted {
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .modal-close {
   position: absolute;
-  top: 0.5rem;
-  right: 0.6rem;
-  /* high-contrast visible close button */
-  background: #ffffff !important;
-  border: 1px solid rgba(2, 6, 23, 0.08) !important;
-  font-size: 1.15rem;
-  line-height: 1;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  font-size: 1rem;
   cursor: pointer;
-  color: #0b0b0b !important;
-  padding: 0.2rem 0.5rem !important;
-  border-radius: 6px !important;
-  box-shadow: 0 2px 6px rgba(2, 6, 23, 0.12) !important;
-  z-index: 2100;
+  color: #0f172a;
 }
+
 .modal-close:hover {
-  color: #111 !important;
-  background: #f3f4f6 !important;
+  background: #f1f5f9;
+}
+
+@media (max-width: 720px) {
+  .breakglass-card__state-panel {
+    width: 100%;
+    min-width: unset;
+  }
+
+  .breakglass-card__cta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .modal-actions {
+    justify-content: stretch;
+  }
 }
 </style>

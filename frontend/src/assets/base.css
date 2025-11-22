@@ -1,6 +1,15 @@
 :root{
   /* sensible defaults to make the app look clean across environments */
   --app-max-width: 1100px;
+  --ui-card-radius: 14px;
+  --ui-card-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  --ui-card-shadow-hover: 0 12px 28px rgba(15, 23, 42, 0.12);
+  --ui-border-color: #e5e7eb;
+  --ui-surface-muted: #f9fafb;
+  --ui-chip-bg: #f3f4f6;
+  --ui-chip-color: #374151;
+  --ui-chip-radius: 999px;
+  --ui-tile-radius: 12px;
 }
 
 html, body {
@@ -75,6 +84,17 @@ a:focus, button:focus, .main-nav a:focus {
 
 /* Small utility */
 .center { text-align: center; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* Ensure secondary variant buttons are high-contrast across the app */
 scale-button[variant="secondary"], .scale-button[variant="secondary"] {
@@ -85,4 +105,302 @@ scale-button[variant="secondary"], .scale-button[variant="secondary"] {
 }
 scale-button[variant="secondary"]:hover, .scale-button[variant="secondary"]:hover {
   background: #2d3748 !important;
+}
+
+/* Shared page chrome */
+.ui-page {
+  max-width: var(--app-max-width);
+  margin: 0 auto 2.5rem auto;
+  padding: 0 1rem;
+}
+
+.ui-page-title {
+  font-size: 1.9rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 0.4rem 0;
+}
+
+.ui-page-subtitle {
+  color: #475569;
+  margin: 0 0 1.5rem 0;
+  max-width: 72ch;
+}
+
+/* Toolbar (filters/search) */
+.ui-toolbar {
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ui-toolbar .ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 180px;
+  flex: 1;
+}
+
+.ui-toolbar label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #334155;
+}
+
+.ui-toolbar input,
+.ui-toolbar select {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.95rem;
+  color: #111827;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ui-toolbar input:focus,
+.ui-toolbar select:focus {
+  outline: none;
+  border-color: #d9006c;
+  box-shadow: 0 0 0 3px rgba(217, 0, 108, 0.12);
+}
+
+.ui-toolbar-info {
+  margin-left: auto;
+  font-size: 0.9rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+/* Card primitives */
+.ui-card-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.ui-card {
+  background: #fff;
+  border: 1px solid var(--ui-border-color);
+  border-radius: var(--ui-card-radius);
+  padding: 1.5rem;
+  box-shadow: var(--ui-card-shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ui-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--ui-card-shadow-hover);
+}
+
+.ui-card.accent-critical { border-left: 5px solid #dc2626; }
+.ui-card.accent-warning { border-left: 5px solid #f59e0b; }
+.ui-card.accent-success { border-left: 5px solid #16a34a; }
+
+.ui-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.ui-card-title {
+  font-size: 1.35rem;
+  color: #111827;
+  margin: 0;
+}
+
+.ui-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.ui-actions-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Chips and badges */
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: var(--ui-chip-radius);
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--ui-chip-bg);
+  color: var(--ui-chip-color);
+}
+
+.ui-chip.primary {
+  background: rgba(217, 0, 108, 0.1);
+  color: #b10057;
+}
+
+.ui-chip.secondary {
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.ui-chip.success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+}
+
+.ui-chip.warning {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.ui-chip.danger {
+  background: rgba(252, 165, 165, 0.25);
+  color: #b91c1c;
+}
+
+.ui-chip.neutral {
+  background: rgba(148, 163, 184, 0.25);
+  color: #475569;
+}
+
+.ui-chip.critical {
+  background: rgba(248, 113, 113, 0.18);
+  color: #b91c1c;
+}
+
+.ui-chip.high {
+  background: rgba(249, 115, 22, 0.18);
+  color: #c2410c;
+}
+
+.ui-chip.low,
+.ui-chip.normal {
+  background: rgba(59, 130, 246, 0.18);
+  color: #1d4ed8;
+}
+
+/* Info grid */
+.ui-info-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.ui-info-item {
+  background: var(--ui-surface-muted);
+  border: 1px solid #eef2f7;
+  border-radius: var(--ui-tile-radius);
+  padding: 1rem 1.1rem;
+}
+
+.ui-info-item .label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.ui-info-item .value {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+/* Stacked pills (e.g., groups) */
+.ui-pill-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+}
+
+.ui-pill-stack span {
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.ui-matching-summary {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  border-left: 4px solid #0ea5e9;
+  background: #ecfeff;
+  border-radius: 10px;
+}
+
+.ui-section {
+  margin-top: 1.25rem;
+  padding: 1rem 1.25rem;
+  border-radius: var(--ui-tile-radius);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: #eef2ff;
+}
+
+.ui-section h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #3730a3;
+}
+
+.ui-section p {
+  margin-top: 0.5rem;
+  color: #0f172a;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.ui-link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0ea5e9;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.ui-link-button.small {
+  font-size: 0.8rem;
+}
+
+.ui-muted {
+  color: #64748b;
+}
+
+@media (max-width: 768px) {
+  .ui-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ui-toolbar .ui-field {
+    width: 100%;
+    min-width: unset;
+  }
+
+  .ui-card {
+    padding: 1.1rem;
+  }
 }
