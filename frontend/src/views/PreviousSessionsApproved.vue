@@ -3,6 +3,7 @@ import { ref, onMounted, inject, computed } from "vue";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -68,6 +69,11 @@ function reasonEndedLabel(s: any): string {
   }
 }
 
+function statusTone(s: any): string {
+  const rawState = s.status?.state || s.state;
+  return `tone-${statusToneFor(rawState)}`;
+}
+
 // Filter out sessions where I am the requester
 const authEmail = ref("");
 onMounted(async () => {
@@ -114,7 +120,7 @@ const approverSessions = computed(() =>
             </div>
           </div>
           <div class="header-right">
-            <span :class="['status-badge', 'status-' + (s.state || '').toLowerCase()]">
+            <span class="ui-status-badge" :class="statusTone(s)">
               {{ s.state || "-" }}
             </span>
           </div>

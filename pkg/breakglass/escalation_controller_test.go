@@ -6,6 +6,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestBreakglassEscalationController_BasePath(t *testing.T) {
@@ -66,4 +70,40 @@ func TestNewBreakglassEscalationController(t *testing.T) {
 	assert.Equal(t, &manager, controller.manager)
 	assert.NotNil(t, controller.identityProvider)
 	assert.NotNil(t, controller.getUserGroupsFn)
+}
+
+func TestDropK8sInternalFieldsEscalationStripsMetadataAndStatus(t *testing.T) {
+	esc := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			UID:             types.UID("12345"),
+			ResourceVersion: "9001",
+			Generation:      42,
+			ManagedFields:   []metav1.ManagedFieldsEntry{{}},
+			Annotations: map[string]string{
+				"kubectl.kubernetes.io/last-applied-configuration": "{}",
+				"visible": "keep",
+			},
+		},
+		Status: v1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{"ops": {"alice", "bob"}},
+			IDPGroupMemberships: map[string]map[string][]string{
+				"azure": {
+					"ops": {"alice"},
+				},
+			},
+		},
+	}
+
+	dropK8sInternalFieldsEscalation(esc)
+
+	assert.Equal(t, "", string(esc.ObjectMeta.UID))
+	assert.Equal(t, "", esc.ObjectMeta.ResourceVersion)
+	assert.EqualValues(t, 0, esc.ObjectMeta.Generation)
+	assert.Nil(t, esc.ObjectMeta.ManagedFields)
+	assert.Equal(t, "keep", esc.ObjectMeta.Annotations["visible"])
+	if _, exists := esc.ObjectMeta.Annotations["kubectl.kubernetes.io/last-applied-configuration"]; exists {
+		assert.Fail(t, "kubectl last-applied annotation should be removed")
+	}
+	assert.Nil(t, esc.Status.ApproverGroupMembers)
+	assert.Nil(t, esc.Status.IDPGroupMemberships)
 }

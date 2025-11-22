@@ -26,25 +26,20 @@ describe("BreakglassService", () => {
   });
 
   it("maps withdrawn and rejected sessions using status.state", async () => {
-    mockClient.get
-      .mockResolvedValueOnce({
-        data: [
-          {
-            metadata: { name: "withdrawn1" },
-            spec: { grantedGroup: "g1", cluster: "c1" },
-            status: { state: "Withdrawn" },
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            metadata: { name: "rejected1" },
-            spec: { grantedGroup: "g2", cluster: "c2" },
-            status: { state: "Rejected" },
-          },
-        ],
-      });
+    mockClient.get.mockResolvedValueOnce({
+      data: [
+        {
+          metadata: { name: "withdrawn1" },
+          spec: { grantedGroup: "g1", cluster: "c1" },
+          status: { state: "Withdrawn" },
+        },
+        {
+          metadata: { name: "rejected1" },
+          spec: { grantedGroup: "g2", cluster: "c2" },
+          status: { state: "Rejected" },
+        },
+      ],
+    });
 
     const sessions = await service.fetchHistoricalSessions();
     expect(sessions).toEqual(

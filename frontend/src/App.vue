@@ -243,23 +243,6 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 
 <style>
 @import "@/assets/base.css";
-.main-nav {
-  display: flex;
-  justify-content: center;
-  gap: 1.5rem;
-  margin: 1.5rem 0 2.5rem 0;
-}
-.main-nav a {
-  color: #0070b8;
-  text-decoration: none;
-  font-weight: 500;
-  font-size: 1.1rem;
-  transition: color 0.2s;
-}
-.main-nav a.router-link-exact-active {
-  color: #d9006c;
-  text-decoration: underline;
-}
 </style>
 
 <style scoped>

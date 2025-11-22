@@ -17,6 +17,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -54,6 +55,42 @@ var sessionIndexFunctions = map[string]client.IndexerFunc{
 	"spec.grantedGroup": func(o client.Object) []string {
 		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
+}
+
+func TestDropK8sInternalFieldsSessionStripsMetadata(t *testing.T) {
+	s := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			UID:             types.UID("abc123"),
+			ResourceVersion: "999",
+			Generation:      7,
+			ManagedFields:   []metav1.ManagedFieldsEntry{{}},
+			Annotations: map[string]string{
+				"kubectl.kubernetes.io/last-applied-configuration": "{}",
+				"keep": "true",
+			},
+		},
+	}
+
+	dropK8sInternalFieldsSession(s)
+
+	if s.ObjectMeta.ManagedFields != nil {
+		t.Fatalf("expected managed fields to be nil, got %#v", s.ObjectMeta.ManagedFields)
+	}
+	if string(s.ObjectMeta.UID) != "" {
+		t.Fatalf("expected UID to be cleared, got %s", s.ObjectMeta.UID)
+	}
+	if s.ObjectMeta.ResourceVersion != "" {
+		t.Fatalf("expected resourceVersion to be cleared, got %s", s.ObjectMeta.ResourceVersion)
+	}
+	if s.ObjectMeta.Generation != 0 {
+		t.Fatalf("expected generation to be zero, got %d", s.ObjectMeta.Generation)
+	}
+	if _, exists := s.ObjectMeta.Annotations["kubectl.kubernetes.io/last-applied-configuration"]; exists {
+		t.Fatalf("expected kubectl annotation to be removed")
+	}
+	if s.ObjectMeta.Annotations["keep"] != "true" {
+		t.Fatalf("expected non-internal annotations to be preserved")
+	}
 }
 
 // TestRequestApproveRejectGetSession

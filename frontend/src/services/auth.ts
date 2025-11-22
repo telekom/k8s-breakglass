@@ -37,30 +37,33 @@ function getCurrentDirectAuthority(): string | undefined {
 // Wrap window.fetch to inject X-OIDC-Authority header for OIDC proxy requests.
 // This is necessary because oidc-client-ts makes internal fetch calls that we need to intercept.
 // The override is scoped to only OIDC proxy requests to minimize side effects.
-const originalFetch = window.fetch.bind(window);
-window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const url = typeof input === "string" ? input : input.toString();
-  const directAuthority = getCurrentDirectAuthority();
+const hasWindowFetch = typeof window !== "undefined" && typeof window.fetch === "function";
+const originalFetch = hasWindowFetch ? window.fetch.bind(window) : null;
+if (hasWindowFetch && originalFetch) {
+  window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const url = typeof input === "string" ? input : input.toString();
+    const directAuthority = getCurrentDirectAuthority();
 
-  // For OIDC proxy requests, inject the direct authority header
-  if (url.includes("/api/oidc/authority") && directAuthority) {
-    const headers = new Headers(init?.headers || {});
-    console.debug("[GlobalFetch] Injecting X-OIDC-Authority header for OIDC proxy request:", {
-      url,
-      directAuthority,
-    });
-    headers.set("X-OIDC-Authority", directAuthority);
+    // For OIDC proxy requests, inject the direct authority header
+    if (url.includes("/api/oidc/authority") && directAuthority) {
+      const headers = new Headers(init?.headers || {});
+      console.debug("[GlobalFetch] Injecting X-OIDC-Authority header for OIDC proxy request:", {
+        url,
+        directAuthority,
+      });
+      headers.set("X-OIDC-Authority", directAuthority);
 
-    const modifiedInit: RequestInit = {
-      ...init,
-      headers,
-    };
+      const modifiedInit: RequestInit = {
+        ...init,
+        headers,
+      };
 
-    return originalFetch(url, modifiedInit);
-  }
+      return originalFetch(url, modifiedInit);
+    }
 
-  return originalFetch(input, init);
-} as any;
+    return originalFetch(input, init);
+  } as any;
+}
 
 // Direct oidc-client logs into our logger
 Log.setLogger({
@@ -71,6 +74,7 @@ Log.setLogger({
 } as any);
 
 export const AuthRedirect = "/auth/callback";
+export const AuthSilentRedirect = "/auth/silent-renew";
 
 export interface State {
   path: string;
@@ -93,6 +97,7 @@ export default class AuthService {
       authority: config.oidcAuthority,
       client_id: config.oidcClientID,
       redirect_uri: baseURL + AuthRedirect,
+      silent_redirect_uri: baseURL + AuthSilentRedirect,
       response_type: "code",
       // 'groups' often not an allowed scope name; protocol mapper already adds groups to tokens
       scope: "openid profile email",
@@ -148,6 +153,7 @@ export default class AuthService {
       authority,
       client_id: clientID,
       redirect_uri: baseURL + AuthRedirect,
+      silent_redirect_uri: baseURL + AuthSilentRedirect,
       response_type: "code",
       scope: "openid profile email",
       post_logout_redirect_uri: baseURL,

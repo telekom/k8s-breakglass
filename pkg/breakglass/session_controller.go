@@ -2474,6 +2474,9 @@ func dropK8sInternalFieldsSession(s *v1alpha1.BreakglassSession) {
 		return
 	}
 	s.ObjectMeta.ManagedFields = nil
+	s.ObjectMeta.UID = ""
+	s.ObjectMeta.ResourceVersion = ""
+	s.ObjectMeta.Generation = 0
 	if s.ObjectMeta.Annotations != nil {
 		delete(s.ObjectMeta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
 	}

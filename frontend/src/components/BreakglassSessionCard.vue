@@ -19,6 +19,7 @@ import { computed } from "vue";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import humanizeDuration from "humanize-duration";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const humanizeConfig: humanizeDuration.Options = {
   round: true,
@@ -135,6 +136,8 @@ const ownerActionLabel = computed(() => {
   }
   return ownerAction.value === "withdraw" ? "Drop" : "Reject";
 });
+
+const statusTone = computed(() => statusToneFor(props.breakglass.status?.state));
 </script>
 
 <template>
@@ -147,9 +150,7 @@ const ownerActionLabel = computed(() => {
       <p v-if="breakglass.spec.identityProviderIssuer"><b>Issuer:</b> {{ breakglass.spec.identityProviderIssuer }}</p>
       <p>
         <b>State:</b>
-        <span :class="'state state-' + (breakglass.status.state || 'unknown').toLowerCase()">{{
-          breakglass.status.state || "Unknown"
-        }}</span>
+        <span class="ui-status-badge" :class="`tone-${statusTone}`">{{ breakglass.status.state || "Unknown" }}</span>
       </p>
       <p v-if="requestedAt"><b>Requested at:</b> {{ requestedAt }}</p>
       <p v-if="props.breakglass.spec && props.breakglass.spec.requestReason">
@@ -202,37 +203,5 @@ scale-data-grid {
   display: block;
   margin: 0 auto;
   max-width: 600px;
-}
-
-.state {
-  font-weight: bold;
-  padding: 0.1em 0.5em;
-  border-radius: 0.3em;
-  background: #eee;
-  margin-left: 0.5em;
-}
-.state-active {
-  color: #2e7d32;
-  background: #e8f5e9;
-}
-.state-approved {
-  color: #1565c0;
-  background: #e3f2fd;
-}
-.state-rejected {
-  color: #b71c1c;
-  background: #ffebee;
-}
-.state-withdrawn {
-  color: #616161;
-  background: #f5f5f5;
-}
-.state-timeout {
-  color: #f9a825;
-  background: #fffde7;
-}
-.state-unknown {
-  color: #757575;
-  background: #f5f5f5;
 }
 </style>

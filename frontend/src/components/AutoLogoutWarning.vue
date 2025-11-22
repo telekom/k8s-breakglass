@@ -1,13 +1,22 @@
 <template>
-  <div v-if="show" class="auto-logout-warning">
-    <div class="warning-content">
-      <h2>Session Expiring Soon</h2>
-      <p>
-        Your session will expire in less than a minute. Please interact with the app to stay logged in, or
-        <button @click="logout">Log out now</button>.
-      </p>
+  <transition name="fade-slide">
+    <div v-if="show" class="auto-logout-warning" role="status" aria-live="polite">
+      <div class="warning-content">
+        <p class="warning-title">Session expiring soon</p>
+        <p class="warning-copy">
+          Your session will expire shortly. Click stay logged in to silently renew, or log out if you are finished.
+        </p>
+        <div class="warning-actions">
+          <button class="stay-btn" :disabled="renewing" @click="stayLoggedIn">
+            <span v-if="renewing">Refreshing…</span>
+            <span v-else>Stay logged in</span>
+          </button>
+          <button class="dismiss-btn" @click="dismiss">Dismiss</button>
+          <button class="logout-btn" @click="logout">Log out</button>
+        </div>
+      </div>
     </div>
-  </div>
+  </transition>
 </template>
 
 <script lang="ts">
@@ -19,11 +28,33 @@ export default {
   name: "AutoLogoutWarning",
   setup() {
     const show = ref(false);
+    const renewing = ref(false);
+    const dismissed = ref(false);
     let timer: number | null = null;
     const auth = inject(AuthKey) as AuthService;
+    const WARNING_THRESHOLD_MS = 30000; // 30 seconds
 
     function logout() {
       auth?.logout();
+    }
+
+    async function stayLoggedIn() {
+      if (!auth || renewing.value) return;
+      renewing.value = true;
+      try {
+        await auth.userManager.signinSilent();
+        show.value = false;
+        dismissed.value = false;
+      } catch (err) {
+        console.warn("[AutoLogoutWarning] Silent renew failed", err);
+      } finally {
+        renewing.value = false;
+      }
+    }
+
+    function dismiss() {
+      dismissed.value = true;
+      show.value = false;
     }
 
     function checkExpiring() {
@@ -35,7 +66,14 @@ export default {
           const parsed = JSON.parse(userStr);
           if (parsed && parsed.expires_at) {
             const expiresIn = parsed.expires_at * 1000 - Date.now();
-            show.value = expiresIn < 60000 && expiresIn > 0;
+            if (expiresIn < WARNING_THRESHOLD_MS && expiresIn > 0 && !dismissed.value) {
+              show.value = true;
+            } else {
+              show.value = false;
+              if (expiresIn > WARNING_THRESHOLD_MS) {
+                dismissed.value = false;
+              }
+            }
           }
         } catch {}
       }
@@ -48,7 +86,7 @@ export default {
       if (timer) clearInterval(timer);
     });
 
-    return { show, logout };
+    return { show, logout, stayLoggedIn, dismiss, renewing };
   },
 };
 </script>
@@ -56,40 +94,83 @@ export default {
 <style scoped>
 .auto-logout-warning {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 3000;
 }
+
 .warning-content {
-  background: #fffbe6;
-  border: 2px solid #ffb300;
-  border-radius: 10px;
-  padding: 2rem 2.5rem;
-  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.12);
-  text-align: center;
-  color: #222; /* ensure readable text on all themes */
+  background: rgba(255, 251, 230, 0.95);
+  border: 1px solid #f7d07c;
+  border-radius: 14px;
+  padding: 1rem 1.25rem;
+  max-width: 360px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25);
+  color: #1f2937;
 }
-.warning-content h2 {
-  color: #d9006c;
-  margin-bottom: 1rem;
+
+.warning-title {
+  font-weight: 700;
+  margin: 0 0 0.25rem 0;
+  color: #b10057;
+  font-size: 1rem;
 }
-.warning-content button {
-  background: #d9006c;
-  color: #fff;
+
+.warning-copy {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.9rem;
+  color: #374151;
+}
+
+.warning-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.warning-actions button {
   border: none;
-  border-radius: 5px;
-  padding: 0.5em 1.2em;
   font-weight: 600;
   cursor: pointer;
-  margin-left: 0.5em;
 }
-.warning-content button:hover {
-  background: #b8005a;
+
+.stay-btn {
+  background: #d9006c;
+  color: #fff;
+  border-radius: 999px;
+  padding: 0.45rem 1.1rem;
+  min-width: 140px;
+}
+
+.stay-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.dismiss-btn {
+  background: transparent;
+  color: #475569;
+  padding: 0.35rem 0.65rem;
+}
+
+.logout-btn {
+  background: transparent;
+  color: #d9006c;
+  padding: 0.35rem 0.65rem;
+  text-decoration: underline;
+}
+
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.fade-slide-enter-from,
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
 }
 </style>
