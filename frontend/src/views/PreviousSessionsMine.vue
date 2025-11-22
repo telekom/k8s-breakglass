@@ -3,6 +3,7 @@ import { ref, onMounted, inject } from "vue";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -70,6 +71,11 @@ function reasonEndedLabel(s: any): string {
       return s.state || "-";
   }
 }
+
+function statusTone(s: any): string {
+  const rawState = s.status?.state || s.state;
+  return `tone-${statusToneFor(rawState)}`;
+}
 </script>
 
 <template>
@@ -92,7 +98,7 @@ function reasonEndedLabel(s: any): string {
             </div>
           </div>
           <div class="header-right">
-            <span :class="['status-badge', 'status-' + (s.state || '').toLowerCase()]">
+            <span class="ui-status-badge" :class="statusTone(s)">
               {{ s.state || "-" }}
             </span>
           </div>
@@ -247,54 +253,6 @@ h2 {
 
 .group-tag {
   border-left: 3px solid #4caf50;
-}
-
-/* Status badge */
-.status-badge {
-  display: inline-block;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.status-approved,
-.status-active {
-  background-color: #c8e6c9;
-  color: #2e7d32;
-  border: 1px solid #4caf50;
-}
-
-.status-rejected {
-  background-color: #ffcdd2;
-  color: #c62828;
-  border: 1px solid #ef5350;
-}
-
-.status-withdrawn {
-  background-color: #fff9c4;
-  color: #f57f17;
-  border: 1px solid #fbc02d;
-}
-
-.status-expired {
-  background-color: #eceff1;
-  color: #455a64;
-  border: 1px solid #90a4ae;
-}
-
-.status-pending {
-  background-color: #e3f2fd;
-  color: #1565c0;
-  border: 1px solid #2196f3;
-}
-
-.status-approvaltimeout {
-  background-color: #ffe0b2;
-  color: #e65100;
-  border: 1px solid #ff9800;
 }
 
 /* User info */

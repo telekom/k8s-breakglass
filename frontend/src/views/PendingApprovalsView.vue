@@ -5,6 +5,7 @@ import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -155,6 +156,10 @@ function getUserInitials(user?: string): string {
     return tokens[0].slice(0, 2).toUpperCase();
   }
   return handle.slice(0, 2).toUpperCase();
+}
+
+function sessionStateTone(session: any) {
+  return statusToneFor(session?.status?.state);
 }
 
 // Enhanced sessions list with urgency calculation
@@ -368,7 +373,9 @@ onMounted(fetchPendingApprovals);
               Timeout {{ format24Hour(session.status.timeoutAt) }}
             </small>
             <small v-else class="timer-absolute">No expiry set</small>
-            <span v-if="session.status?.state" class="action-pill">State: {{ session.status.state }}</span>
+            <span v-if="session.status?.state" class="ui-status-badge" :class="sessionStateTone(session)">
+              {{ session.status.state }}
+            </span>
           </div>
         </div>
 
@@ -439,10 +446,13 @@ onMounted(fetchPendingApprovals);
             <span
               ><code>{{ session.metadata?.name }}</code></span
             >
-            <span v-if="session.status?.state">State: {{ session.status.state }}</span>
+            <span v-if="session.status?.state" class="ui-status-badge" :class="sessionStateTone(session)">
+              {{ session.status.state }}
+            </span>
           </div>
           <div class="action-row">
             <scale-button
+              class="pill-button"
               :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
               @click="openApproveModal(session)"
             >
@@ -450,6 +460,7 @@ onMounted(fetchPendingApprovals);
               <span v-else>Review & Approve</span>
             </scale-button>
             <scale-button
+              class="pill-button"
               variant="danger"
               :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
               @click="quickReject(session)"
@@ -678,6 +689,19 @@ onMounted(fetchPendingApprovals);
   margin-top: 0.65rem;
 }
 
+.identity-block code,
+.request-footer code {
+  display: inline-block;
+  max-width: 100%;
+  font-size: 0.92em;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.request-footer code {
+  margin-top: 0.15rem;
+}
+
 .timer-panel {
   background: #f8fafc;
   border-radius: 12px;
@@ -703,18 +727,6 @@ onMounted(fetchPendingApprovals);
 .timer-panel .timer-absolute {
   color: #475569;
   font-size: 0.8rem;
-}
-
-.action-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  background: rgba(15, 118, 110, 0.12);
-  color: #0f766e;
-  border-radius: 999px;
-  padding: 0.35rem 0.85rem;
 }
 
 .matches {
@@ -754,6 +766,11 @@ onMounted(fetchPendingApprovals);
   font-weight: 600;
 }
 
+.info-grid .value {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .card-bottom {
   margin-top: 1.25rem;
   display: flex;
@@ -783,6 +800,16 @@ onMounted(fetchPendingApprovals);
 
 .action-row scale-button {
   min-width: 150px;
+}
+
+.action-row scale-button.pill-button {
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.action-row scale-button.pill-button::part(base),
+.action-row scale-button.pill-button::part(button) {
+  border-radius: 999px;
 }
 
 /* Modal styling remains */

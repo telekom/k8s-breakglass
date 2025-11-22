@@ -3,6 +3,7 @@ import humanizeDuration from "humanize-duration";
 import { computed, ref, watch } from "vue";
 import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const humanizeConfig = { round: true, largest: 2 };
 const props = defineProps<{ breakglass: any; time: number }>();
@@ -39,9 +40,15 @@ const scheduledStartTime = ref<string | null>(null);
 const showScheduleOptions = ref(false);
 const showDurationHints = ref(false);
 const scheduleDateTimeLocal = ref("");
+const scheduleDatePart = ref("");
+const scheduleHourPart = ref("00");
+const scheduleMinutePart = ref("00");
 const showAllRequesterGroups = ref(false);
 const showAllApprovalGroups = ref(false);
-const scheduleInputRef = ref<HTMLInputElement | null>(null);
+const hourOptions = Array.from({ length: 24 }, (_, idx) => String(idx).padStart(2, "0"));
+const minuteOptions = Array.from({ length: 60 }, (_, idx) => String(idx).padStart(2, "0"));
+const minScheduleDate = computed(() => (minDateTime.value.includes("T") ? minDateTime.value.split("T")[0] : ""));
+let suppressPartSync = false;
 
 function closeRequestModal() {
   showRequestModal.value = false;
@@ -194,6 +201,38 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => scheduleDateTimeLocal.value,
+  (value) => {
+    suppressPartSync = true;
+    const dt = parseDateTimeLocal(value);
+    if (!dt) {
+      scheduleDatePart.value = "";
+      scheduleHourPart.value = "00";
+      scheduleMinutePart.value = "00";
+    } else {
+      scheduleDatePart.value = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+      scheduleHourPart.value = String(dt.getHours()).padStart(2, "0");
+      scheduleMinutePart.value = String(dt.getMinutes()).padStart(2, "0");
+    }
+    suppressPartSync = false;
+  },
+  { immediate: true },
+);
+
+watch([scheduleDatePart, scheduleHourPart, scheduleMinutePart], () => {
+  if (suppressPartSync) return;
+  if (!scheduleDatePart.value) {
+    if (scheduleDateTimeLocal.value) {
+      scheduleDateTimeLocal.value = "";
+      scheduledStartTime.value = null;
+    }
+    return;
+  }
+  scheduleDateTimeLocal.value = `${scheduleDatePart.value}T${scheduleHourPart.value}:${scheduleMinutePart.value}`;
+  updateScheduledFromInput();
+});
+
 function updateScheduledFromInput() {
   if (!scheduleDateTimeLocal.value) {
     scheduledStartTime.value = null;
@@ -215,18 +254,12 @@ function updateScheduledFromInput() {
   scheduledStartTime.value = dt.toISOString();
 }
 
-function triggerSchedulePicker() {
-  const input = scheduleInputRef.value;
-  if (!input) return;
-  if (typeof (input as HTMLInputElement & { showPicker?: () => void }).showPicker === "function") {
-    try {
-      (input as HTMLInputElement & { showPicker?: () => void }).showPicker?.();
-    } catch {
-      input.focus();
-    }
-    return;
-  }
-  input.focus();
+function clearScheduledSelection() {
+  scheduleDatePart.value = "";
+  scheduleHourPart.value = "00";
+  scheduleMinutePart.value = "00";
+  scheduleDateTimeLocal.value = "";
+  scheduledStartTime.value = null;
 }
 
 const requiresReason = computed(() => Boolean(props.breakglass?.requestReason?.mandatory));
@@ -315,6 +348,8 @@ const metaBadges = computed(() => {
   } else if (props.breakglass?.selfApproval) {
     badges.push({ label: "Self approval", variant: "secondary" });
   }
+  const clusterLabel = props.breakglass?.cluster || "Global";
+  badges.push({ label: clusterLabel, variant: "info" });
   if (requesterGroups.value.length > 1) {
     badges.push({ label: `${requesterGroups.value.length} requester groups`, variant: "neutral" });
   }
@@ -326,6 +361,12 @@ const cardAccentClass = computed(() => {
   if (sessionPending.value) return "accent-warning";
   if (requiresReason.value) return "accent-critical";
   return "";
+});
+
+const cardStateTone = computed(() => {
+  if (sessionActive.value) return statusToneFor("active");
+  if (sessionPending.value) return statusToneFor("pending");
+  return statusToneFor("available");
 });
 
 const expiryHumanized = computed(() => {
@@ -419,7 +460,7 @@ function drop() {
         </div>
       </div>
       <div class="breakglass-card__state-panel" aria-live="polite">
-        <span class="state-label">
+        <span class="ui-status-badge" :class="`tone-${cardStateTone}`">
           <template v-if="sessionActive">Active session</template>
           <template v-else-if="sessionPending">Pending request</template>
           <template v-else>Available</template>
@@ -436,19 +477,7 @@ function drop() {
       </div>
     </header>
 
-    <div class="ui-info-grid breakglass-card__info">
-      <div class="ui-info-item">
-        <span class="label">Cluster</span>
-        <span class="value">{{ breakglass.cluster || "Global" }}</span>
-      </div>
-      <div class="ui-info-item">
-        <span class="label">Requested group</span>
-        <span class="value">{{ breakglass.to }}</span>
-      </div>
-      <div class="ui-info-item">
-        <span class="label">Max duration</span>
-        <span class="value">{{ durationHumanized }}</span>
-      </div>
+    <div v-if="sessionPending || sessionActive" class="ui-info-grid breakglass-card__info">
       <div v-if="sessionPending" class="ui-info-item">
         <span class="label">Pending request</span>
         <span class="value">{{ timeoutHumanized || "Awaiting approver" }}</span>
@@ -559,25 +588,34 @@ function drop() {
 
           <div v-if="showScheduleOptions" class="schedule-details">
             <p class="schedule-intro">Use the 24-hour date & time picker below. Leave it empty to start immediately.</p>
-            <label class="schedule-field" :for="'scheduled-datetime-' + breakglass.to">
-              Date & time (24-hour)
-              <input
-                :id="'scheduled-datetime-' + breakglass.to"
-                ref="scheduleInputRef"
-                v-model="scheduleDateTimeLocal"
-                type="datetime-local"
-                step="60"
-                :min="minDateTime"
-                lang="en-GB"
-                inputmode="numeric"
-                pattern="\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}"
-                placeholder="yyyy-mm-ddThh:mm"
-                @change="updateScheduledFromInput"
-                @blur="updateScheduledFromInput"
-                @focus="triggerSchedulePicker"
-                @click="triggerSchedulePicker"
-              />
-            </label>
+            <div class="schedule-picker">
+              <label class="schedule-field" :for="'scheduled-date-' + breakglass.to">
+                Date
+                <input
+                  :id="'scheduled-date-' + breakglass.to"
+                  v-model="scheduleDatePart"
+                  type="date"
+                  :min="minScheduleDate"
+                />
+              </label>
+              <label class="schedule-field" :for="'scheduled-hour-' + breakglass.to">
+                Hour (24h)
+                <select :id="'scheduled-hour-' + breakglass.to" v-model="scheduleHourPart">
+                  <option v-for="hour in hourOptions" :key="hour" :value="hour">{{ hour }}</option>
+                </select>
+              </label>
+              <label class="schedule-field" :for="'scheduled-minute-' + breakglass.to">
+                Minute
+                <select :id="'scheduled-minute-' + breakglass.to" v-model="scheduleMinutePart">
+                  <option v-for="minute in minuteOptions" :key="minute" :value="minute">{{ minute }}</option>
+                </select>
+              </label>
+            </div>
+            <div v-if="scheduleDatePart" class="schedule-picker-actions">
+              <button type="button" class="ui-link-button small" @click="clearScheduledSelection">
+                Clear selection
+              </button>
+            </div>
             <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
               Earliest allowed start: <strong>{{ earliestSchedulePreview || "Soonest available" }}</strong>
             </p>
@@ -676,21 +714,6 @@ function drop() {
   text-transform: uppercase;
   font-weight: 700;
   color: #0f172a;
-}
-
-.state-detail {
-  margin: 0;
-  color: #475569;
-  font-size: 0.9rem;
-}
-
-.breakglass-card__info {
-  margin-top: 0.35rem;
-  gap: 0.75rem;
-}
-
-.breakglass-card__info .ui-info-item {
-  padding: 0.75rem 0.85rem;
 }
 
 .breakglass-card__info .ui-info-item .value {
@@ -875,6 +898,13 @@ function drop() {
   border-radius: 10px;
 }
 
+.schedule-picker {
+  margin-top: 0.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
 .schedule-locale-hint {
   margin-top: 0.5rem;
   font-size: 0.85rem;
@@ -882,9 +912,42 @@ function drop() {
 }
 
 .schedule-field {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.schedule-field input,
+.schedule-field select {
   width: 100%;
-  margin-bottom: 0.5rem;
+  margin-top: 0.3rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+  font-size: 0.95rem;
+  color: #0f172a;
+  background: #fff;
+}
+
+.schedule-field select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #0f172a 50%), linear-gradient(135deg, #0f172a 50%, transparent 50%);
+  background-position:
+    calc(100% - 20px) calc(50% - 3px),
+    calc(100% - 14px) calc(50% - 3px);
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
+}
+
+.schedule-picker-actions {
+  margin-top: 0.25rem;
+}
+
+.schedule-picker-actions .ui-link-button.small {
+  padding-left: 0;
 }
 
 .schedule-preview {

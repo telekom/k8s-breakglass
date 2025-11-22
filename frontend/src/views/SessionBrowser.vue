@@ -9,6 +9,7 @@ import { useUser } from "@/services/auth";
 import { describeApprover, wasApprovedBy } from "@/utils/sessionFilters";
 import { pushError, pushSuccess } from "@/services/toast";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -132,6 +133,10 @@ function sessionState(session: SessionCR): string {
 
 function normalizedState(session: SessionCR): string {
   return sessionState(session).toLowerCase();
+}
+
+function sessionTone(session: SessionCR): string {
+  return `tone-${statusToneFor(sessionState(session))}`;
 }
 
 function sessionUser(session: SessionCR): string {
@@ -511,7 +516,7 @@ onMounted(() => {
                 <span class="group-tag">{{ session.spec?.grantedGroup || session.group || "-" }}</span>
               </div>
             </div>
-            <span :class="['status-badge', sessionState(session).toLowerCase()]">
+            <span class="ui-status-badge" :class="sessionTone(session)">
               {{ sessionState(session) }}
             </span>
           </div>
@@ -806,16 +811,6 @@ header p {
   color: var(--telekom-color-text-and-icon-success, #1f5c3f);
 }
 
-.status-badge {
-  border-radius: 999px;
-  padding: 0.2rem 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  font-size: 0.75rem;
-  background: var(--telekom-color-background-neutral, #eceff1);
-  color: var(--telekom-color-text-and-icon-strong, #34495e);
-}
-
 .actors {
   display: flex;
   flex-wrap: wrap;
@@ -934,11 +929,6 @@ header p {
   .group-tag {
     background: rgba(34, 197, 94, 0.2);
     color: #c2ffd8;
-  }
-
-  .status-badge {
-    background: rgba(255, 255, 255, 0.12);
-    color: #ffffff;
   }
 
   .timeline {

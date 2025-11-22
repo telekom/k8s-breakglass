@@ -10,6 +10,18 @@
   --ui-chip-color: #374151;
   --ui-chip-radius: 999px;
   --ui-tile-radius: 12px;
+  --status-success-bg: #dcfce7;
+  --status-success-fg: #166534;
+  --status-warning-bg: #fef3c7;
+  --status-warning-fg: #92400e;
+  --status-danger-bg: #fee2e2;
+  --status-danger-fg: #b91c1c;
+  --status-info-bg: #dbeafe;
+  --status-info-fg: #1d4ed8;
+  --status-neutral-bg: #e2e8f0;
+  --status-neutral-fg: #1f2937;
+  --status-muted-bg: #f4f4f5;
+  --status-muted-fg: #44403c;
 }
 
 html, body {
@@ -31,6 +43,21 @@ body {
   body {
     background-color: #05060b;
     color: #f4f6fb;
+  }
+
+  :root {
+    --status-success-bg: rgba(34, 197, 94, 0.18);
+    --status-success-fg: #bbf7d0;
+    --status-warning-bg: rgba(252, 211, 77, 0.2);
+    --status-warning-fg: #fde68a;
+    --status-danger-bg: rgba(248, 113, 113, 0.18);
+    --status-danger-fg: #fecaca;
+    --status-info-bg: rgba(59, 130, 246, 0.2);
+    --status-info-fg: #bfdbfe;
+    --status-neutral-bg: rgba(148, 163, 184, 0.25);
+    --status-neutral-fg: #e2e8f0;
+    --status-muted-bg: rgba(51, 65, 85, 0.6);
+    --status-muted-fg: #e2e8f0;
   }
 
   .main-nav a {
@@ -328,6 +355,11 @@ scale-button[variant="secondary"]:hover, .scale-button[variant="secondary"]:hove
   color: #3730a3;
 }
 
+.ui-chip.info {
+  background: rgba(59, 130, 246, 0.16);
+  color: #1d4ed8;
+}
+
 .ui-chip.success {
   background: rgba(16, 185, 129, 0.15);
   color: #047857;
@@ -362,6 +394,52 @@ scale-button[variant="secondary"]:hover, .scale-button[variant="secondary"]:hove
 .ui-chip.normal {
   background: rgba(59, 130, 246, 0.18);
   color: #1d4ed8;
+}
+
+/* Status badges (shared across all session views) */
+.ui-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: var(--ui-chip-radius);
+  padding: 0.2rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-fg);
+  border: 1px solid transparent;
+}
+
+.ui-status-badge.tone-success {
+  background: var(--status-success-bg);
+  color: var(--status-success-fg);
+}
+
+.ui-status-badge.tone-warning {
+  background: var(--status-warning-bg);
+  color: var(--status-warning-fg);
+}
+
+.ui-status-badge.tone-danger {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+}
+
+.ui-status-badge.tone-info {
+  background: var(--status-info-bg);
+  color: var(--status-info-fg);
+}
+
+.ui-status-badge.tone-muted {
+  background: var(--status-muted-bg);
+  color: var(--status-muted-fg);
+}
+
+.ui-status-badge.tone-neutral {
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-fg);
 }
 
 /* Info grid */

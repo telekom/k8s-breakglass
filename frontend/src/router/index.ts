@@ -17,6 +17,7 @@ const router = createRouter({
     },
     {
       path: "/sessions/review",
+      alias: "/review",
       name: "breakglassSessionReview",
       component: BreaglassSessionReviewView,
     },

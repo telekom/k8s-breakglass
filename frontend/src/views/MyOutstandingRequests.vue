@@ -12,10 +12,13 @@
               <span class="group">{{ req.spec.grantedGroup || "-" }}</span>
             </div>
             <div class="request-status">
-              <span class="state-label">{{ requestState(req) }}</span>
+              <span class="ui-status-badge" :class="`tone-${requestTone(req)}`">{{ requestState(req) }}</span>
               <span v-if="req.status?.state === 'WaitingForScheduledTime'" class="status-chip schedule">
                 ⏳ Waiting for scheduled time
               </span>
+              <button class="withdraw-btn" :disabled="withdrawing === req.metadata?.name" @click="withdrawRequest(req)">
+                {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
+              </button>
             </div>
           </header>
 
@@ -94,9 +97,6 @@
                 Expires hard stop: {{ formatDate(req.status.expiresAt) }}
               </span>
             </div>
-            <button class="withdraw-btn" :disabled="withdrawing === req.metadata?.name" @click="withdrawRequest(req)">
-              {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
-            </button>
           </footer>
         </li>
       </ul>
@@ -111,6 +111,7 @@ import BreakglassService from "@/services/breakglass";
 import { AuthKey } from "@/keys";
 import { format24Hour } from "@/utils/dateTime";
 import { describeApprover } from "@/utils/sessionFilters";
+import { statusToneFor } from "@/utils/statusStyles";
 
 const withdrawing = ref("");
 
@@ -144,6 +145,10 @@ function requestUser(req: any) {
 
 function requestState(req: any) {
   return req.status?.state || "Pending";
+}
+
+function requestTone(req: any) {
+  return statusToneFor(req.status?.state);
 }
 
 function requestReason(req: any) {
@@ -220,14 +225,6 @@ onMounted(async () => {
   align-items: flex-end;
   gap: 0.4rem;
 }
-.state-label {
-  background: #f4f4f6;
-  color: #242424;
-  padding: 0.2rem 0.9rem;
-  border-radius: 999px;
-  font-size: 0.9rem;
-  text-transform: capitalize;
-}
 .status-chip {
   font-size: 0.75rem;
   padding: 0.2rem 0.6rem;
@@ -251,6 +248,9 @@ onMounted(async () => {
   padding: 0.2rem 0.5rem;
   font-size: 0.95rem;
   color: #111;
+  display: block;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 .request-badges {
   display: flex;

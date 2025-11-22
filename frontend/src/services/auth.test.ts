@@ -1,4 +1,4 @@
-import AuthService, { useUser, AuthRedirect } from "./auth";
+import AuthService, { useUser, AuthRedirect, AuthSilentRedirect } from "./auth";
 import { User } from "oidc-client-ts";
 
 describe("AuthService", () => {
@@ -27,6 +27,10 @@ describe("AuthService", () => {
 
     it("should include redirect URI", () => {
       expect(authService.userManager.settings.redirect_uri).toContain(AuthRedirect);
+    });
+
+    it("should include silent redirect URI", () => {
+      expect(authService.userManager.settings.silent_redirect_uri).toContain(AuthSilentRedirect);
     });
 
     it("should use localStorage for user store", () => {
@@ -199,6 +203,12 @@ describe("AuthService", () => {
   describe("AuthRedirect constant", () => {
     it("should be defined", () => {
       expect(AuthRedirect).toBe("/auth/callback");
+    });
+  });
+
+  describe("AuthSilentRedirect constant", () => {
+    it("should be defined", () => {
+      expect(AuthSilentRedirect).toBe("/auth/silent-renew");
     });
   });
 });
