@@ -286,9 +286,14 @@ scale-button[variant="secondary"]:hover, .scale-button[variant="secondary"]:hove
   background: #fff;
   border: 1px solid var(--ui-border-color);
   border-radius: var(--ui-card-radius);
-  padding: 1.5rem;
+  padding: 1.35rem;
   box-shadow: var(--ui-card-shadow);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  color: #0f172a;
+}
+
+.ui-card .ui-muted {
+  color: #4b5563;
 }
 
 .ui-card:hover {
@@ -500,8 +505,8 @@ scale-button[variant="secondary"]:hover, .scale-button[variant="secondary"]:hove
 }
 
 .ui-section {
-  margin-top: 1.25rem;
-  padding: 1rem 1.25rem;
+  margin-top: 0.9rem;
+  padding: 0.85rem 1rem;
   border-radius: var(--ui-tile-radius);
   border: 1px solid rgba(99, 102, 241, 0.25);
   background: #eef2ff;

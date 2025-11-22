@@ -660,14 +660,15 @@ function drop() {
 .breakglass-card {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1rem;
 }
 
 .breakglass-card__header {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
+  align-items: flex-start;
 }
 
 .breakglass-card__title {
@@ -699,13 +700,17 @@ function drop() {
 }
 
 .breakglass-card__state-panel {
-  min-width: 220px;
+  min-width: 200px;
+  flex: 0 0 240px;
+  align-self: stretch;
   background: #f8fafc;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
-  padding: 1rem 1.25rem;
+  padding: 0.85rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.3rem;
+  justify-content: center;
 }
 
 .state-label {
@@ -722,12 +727,12 @@ function drop() {
 }
 
 .breakglass-card__groups {
-  padding: 0.5rem 0 0 0;
+  padding: 0.35rem 0 0 0;
 }
 
 .breakglass-card__approvers {
-  margin-top: 0.9rem;
-  padding: 0.85rem 1rem;
+  margin-top: 0.5rem;
+  padding: 0.75rem 0.9rem;
 }
 
 .breakglass-card__approvers .ui-link-button {
@@ -774,10 +779,10 @@ function drop() {
 .breakglass-card__cta {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: 0.75rem;
   justify-content: space-between;
-  align-items: center;
-  margin-top: 0.5rem;
+  align-items: flex-start;
+  margin-top: 0.35rem;
 }
 
 .cta-copy {
