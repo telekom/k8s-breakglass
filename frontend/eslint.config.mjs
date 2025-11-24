@@ -36,6 +36,7 @@ export default defineConfigWithVueTs(
     rules: {
       "vue/attribute-hyphenation": "off",
       "vue/v-on-event-hyphenation": "off",
+      "vue/no-deprecated-slot-attribute": "off",
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
