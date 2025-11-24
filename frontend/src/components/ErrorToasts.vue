@@ -1,6 +1,19 @@
 <script setup lang="ts">
+import type { AppError } from "@/services/toast";
 import { useErrors, dismissError } from "@/services/toast";
+
 const { errors } = useErrors();
+
+function headingFor(error: AppError) {
+  if (error.type === "success") {
+    return "Success";
+  }
+  return error.status ? `Error [${error.status}]` : "Error";
+}
+
+function variantFor(error: AppError) {
+  return error.type === "success" ? "success" : "danger";
+}
 </script>
 
 <template>
@@ -8,16 +21,17 @@ const { errors } = useErrors();
     <transition-group name="toast" tag="div">
       <div v-for="e in errors" :key="e.id" class="toast-wrapper">
         <scale-notification
-          variant="danger"
-          :heading="e.status ? `Error [${e.status}]` : 'Error'"
+          :variant="variantFor(e)"
+          :heading="headingFor(e)"
           class="toast-notification"
+          :data-type="variantFor(e)"
         >
           <div class="toast-content">
             <p>{{ e.message }}</p>
             <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
           </div>
           <div class="toast-actions">
-            <scale-button variant="ghost" size="small" @click="dismissError(e.id)">Dismiss</scale-button>
+            <scale-button variant="secondary" size="small" @click="dismissError(e.id)">Dismiss</scale-button>
           </div>
         </scale-notification>
       </div>
@@ -44,7 +58,17 @@ const { errors } = useErrors();
 
 .toast-notification {
   width: 100%;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--telekom-color-black) 35%, transparent);
+  border-radius: 14px;
+  border-left: 4px solid var(--accent-critical);
+}
+
+.toast-notification[data-type="success"] {
+  border-left-color: var(--accent-success);
+}
+
+.toast-notification[data-type="danger"] {
+  border-left-color: var(--accent-critical);
 }
 
 .toast-content {
@@ -58,7 +82,7 @@ const { errors } = useErrors();
 .cid {
   display: block;
   font-size: 0.75rem;
-  opacity: 0.8;
+  color: var(--text-muted);
   margin-top: 0.2rem;
 }
 

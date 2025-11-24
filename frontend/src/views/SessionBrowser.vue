@@ -134,8 +134,14 @@ function normalizedState(session: SessionCR): string {
   return sessionState(session).toLowerCase();
 }
 
-function sessionTone(session: SessionCR): string {
-  return `tone-${statusToneFor(sessionState(session))}`;
+type TagVariant = "success" | "warning" | "danger" | "info" | "neutral";
+
+function sessionStatusVariant(session: SessionCR): TagVariant {
+  const tone = statusToneFor(sessionState(session));
+  if (tone === "success" || tone === "warning" || tone === "danger" || tone === "info") {
+    return tone;
+  }
+  return "neutral";
 }
 
 function sessionUser(session: SessionCR): string {
@@ -480,33 +486,35 @@ onMounted(() => {
             <div>
               <div class="session-name">{{ session.metadata?.name || session.name }}</div>
               <div class="cluster-group">
-                <scale-chip
-                  variant="primary"
-                  class="clickable-chip"
+                <scale-tag
+                  size="small"
+                  variant="info"
+                  class="session-tag session-tag--interactive"
+                  role="button"
+                  tabindex="0"
                   @click="setFilter('cluster', session.spec?.cluster || session.cluster)"
+                  @keydown.enter.prevent="setFilter('cluster', session.spec?.cluster || session.cluster)"
+                  @keydown.space.prevent="setFilter('cluster', session.spec?.cluster || session.cluster)"
                 >
                   {{ session.spec?.cluster || session.cluster || "-" }}
-                </scale-chip>
-                <scale-chip
-                  variant="success"
-                  class="clickable-chip"
+                </scale-tag>
+                <scale-tag
+                  size="small"
+                  variant="primary"
+                  class="session-tag session-tag--interactive"
+                  role="button"
+                  tabindex="0"
                   @click="setFilter('group', session.spec?.grantedGroup || session.group)"
+                  @keydown.enter.prevent="setFilter('group', session.spec?.grantedGroup || session.group)"
+                  @keydown.space.prevent="setFilter('group', session.spec?.grantedGroup || session.group)"
                 >
                   {{ session.spec?.grantedGroup || session.group || "-" }}
-                </scale-chip>
+                </scale-tag>
               </div>
             </div>
-            <scale-chip
-              :variant="
-                sessionTone(session) === 'tone-success'
-                  ? 'success'
-                  : sessionTone(session) === 'tone-warning'
-                    ? 'warning'
-                    : 'neutral'
-              "
-            >
+            <scale-tag size="small" :variant="sessionStatusVariant(session)" class="session-tag">
               {{ sessionState(session) }}
-            </scale-chip>
+            </scale-tag>
           </div>
 
           <div class="actors">
@@ -574,13 +582,14 @@ onMounted(() => {
   grid-template-columns: minmax(320px, 380px) 1fr;
   gap: 2rem;
   align-items: flex-start;
-  color: var(--telekom-color-text-and-icon-standard, #0f172a);
-  --session-surface: var(--telekom-color-background-surface, #ffffff);
-  --session-border: var(--telekom-color-border-subtle, #e0e0e0);
-  --session-muted: var(--telekom-color-text-and-icon-weak, #4b5563);
-  --session-tag-bg: var(--telekom-color-background-interactive, #eef2ff);
-  --session-tag-text: var(--telekom-color-text-and-icon-strong, #1b3763);
-  --session-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+  color: var(--telekom-color-text-and-icon-standard);
+  --session-surface: var(--surface-card);
+  --session-border: var(--border-default);
+  --session-muted: var(--text-muted);
+  --session-tag-bg: var(--chip-bg);
+  --session-tag-text: var(--chip-text);
+  --session-shadow: var(--shadow-card);
+  --session-tag-ring-color: 0 0 0 2px color-mix(in srgb, var(--accent-telekom) 45%, transparent);
 }
 
 @media (max-width: 960px) {
@@ -616,13 +625,13 @@ header p {
 }
 
 .preset-btn {
-  border: 1px solid var(--telekom-color-border-accent, #c5d7f2);
+  border: 1px solid var(--session-border);
   border-radius: 10px;
   padding: 0.75rem 1rem;
-  background: var(--telekom-color-background-canvas-highlight, #f8fbff);
+  background: var(--surface-card-subtle);
   text-align: left;
   font-weight: 600;
-  color: var(--telekom-color-text-and-icon-strong, #0b3d60);
+  color: var(--telekom-color-text-and-icon-strong);
   transition:
     border-color 0.15s,
     box-shadow 0.15s;
@@ -635,8 +644,8 @@ header p {
 }
 
 .preset-btn.active {
-  border-color: var(--telekom-color-border-brand, #d9006c);
-  box-shadow: 0 0 0 2px rgba(217, 0, 108, 0.25);
+  border-color: var(--accent-telekom);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-telekom) 25%, transparent);
 }
 
 .filters-grid {
@@ -651,7 +660,7 @@ header p {
   align-items: center;
   gap: 0.35rem;
   font-weight: 600;
-  color: var(--telekom-color-text-and-icon-strong, #1f2937);
+  color: var(--telekom-color-text-and-icon-strong);
 }
 
 .filter-flag.disabled {
@@ -666,7 +675,7 @@ header p {
   font-size: 0.9rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #777;
+  color: var(--session-muted);
 }
 
 .state-options {
@@ -677,7 +686,7 @@ header p {
 }
 
 .state-pill {
-  border: 1px solid var(--telekom-color-border-subtle, #dfe7f5);
+  border: 1px solid var(--session-border);
   border-radius: 999px;
   padding: 0.25rem 0.75rem;
   display: inline-flex;
@@ -699,18 +708,18 @@ header p {
   display: flex;
   flex-direction: column;
   font-size: 0.85rem;
-  color: var(--telekom-color-text-and-icon-strong, #1f2937);
+  color: var(--telekom-color-text-and-icon-strong);
   font-weight: 600;
 }
 
 .text-filters input {
   margin-top: 0.35rem;
   padding: 0.45rem 0.6rem;
-  border: 1px solid var(--telekom-color-border-subtle, #ccd5e0);
+  border: 1px solid var(--session-border);
   border-radius: 6px;
   font-size: 0.95rem;
-  background: var(--telekom-color-background-canvas, #ffffff);
-  color: var(--telekom-color-text-and-icon-standard, #0f172a);
+  background: var(--surface-card);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .filters-actions {
@@ -723,7 +732,7 @@ header p {
 .link-reset {
   border: none;
   background: none;
-  color: var(--telekom-color-text-and-icon-brand, #d9006c);
+  color: var(--accent-telekom);
   font-weight: 600;
   cursor: pointer;
 }
@@ -736,7 +745,7 @@ header p {
 
 .hint {
   font-size: 0.8rem;
-  color: var(--telekom-color-text-and-icon-warning, #a94442);
+  color: var(--telekom-color-text-warning);
   margin-top: 0.25rem;
 }
 
@@ -762,7 +771,7 @@ header p {
   --scale-card-padding: 1.25rem;
   border: 1px solid var(--session-border);
   border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--session-shadow);
   background: var(--session-surface);
 }
 
@@ -776,22 +785,44 @@ header p {
 .session-name {
   font-size: 1.1rem;
   font-weight: 700;
-  color: var(--telekom-color-text-and-icon-strong, #0f3c64);
+  color: var(--telekom-color-text-and-icon-strong);
 }
 
 .cluster-group {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
   margin-top: 0.35rem;
 }
 
-.clickable-chip {
-  cursor: pointer;
-  transition: opacity 0.2s;
+scale-tag.session-tag {
+  --session-tag-ring: var(--session-tag-ring-color);
+  font-weight: 600;
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
 }
 
-.clickable-chip:hover {
-  opacity: 0.8;
+scale-tag.session-tag--interactive {
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+scale-tag.session-tag--interactive:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px color-mix(in srgb, var(--telekom-color-black) 20%, transparent);
+}
+
+scale-tag.session-tag--interactive:focus-visible {
+  outline: none;
+  box-shadow: var(--session-tag-ring);
+}
+
+scale-tag.session-tag--interactive:active {
+  transform: scale(0.97);
 }
 
 .actors {
@@ -799,7 +830,7 @@ header p {
   flex-wrap: wrap;
   gap: 1rem;
   font-size: 0.9rem;
-  color: var(--telekom-color-text-and-icon-standard, #1f2937);
+  color: var(--telekom-color-text-and-icon-standard);
   margin-bottom: 0.75rem;
 }
 
@@ -826,123 +857,33 @@ header p {
 }
 
 .reason-box {
-  background: var(--telekom-color-background-canvas-highlight, #f5f6fb);
-  border-left: 3px solid #4c8bf5;
+  background: var(--telekom-color-ui-background-info);
+  border-left: 3px solid var(--telekom-color-ui-border-info);
   padding: 0.75rem;
   border-radius: 6px;
+  color: var(--telekom-color-text-info);
 }
 
 .reason-box strong {
   display: block;
   margin-bottom: 0.35rem;
+  color: var(--telekom-color-text-and-icon-strong);
 }
 
 .end-reason {
-  background: var(--telekom-color-background-critical-subtle, #fff2f5);
-  border-left: 3px solid #d9006c;
+  background: var(--telekom-color-background-critical-subtle);
+  border-left: 3px solid var(--accent-critical);
   padding: 0.75rem;
   border-radius: 6px;
   font-size: 0.9rem;
+  color: var(--telekom-color-text-error);
 }
 
-@media (prefers-color-scheme: dark) {
-  .session-browser {
-    color: #f4f6fb;
-    --session-surface: #141827;
-    --session-border: rgba(255, 255, 255, 0.12);
-    --session-muted: rgba(255, 255, 255, 0.65);
-    --session-tag-bg: rgba(255, 255, 255, 0.08);
-    --session-tag-text: #fefefe;
-    --session-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
-  }
-
-  .filters-card,
-  .results-card,
-  .session-card {
-    background: var(--session-surface);
-    border-color: var(--session-border);
-    box-shadow: var(--session-shadow);
-  }
-
-  .preset-btn {
-    background: #1f253a;
-    border-color: rgba(255, 255, 255, 0.12);
-    color: #f4f6fb;
-  }
-
-  .preset-btn small {
-    color: var(--session-muted);
-  }
-
-  .preset-btn.active {
-    border-color: #ff4f9a;
-    box-shadow: 0 0 0 2px rgba(255, 79, 154, 0.35);
-  }
-
-  .filter-flag,
-  .text-filters label,
-  .session-name,
-  .actors,
-  .cluster-tag,
-  .group-tag,
-  .filters-meta,
-  .hint,
-  .error,
-  .empty {
-    color: #f4f6fb;
-  }
-
-  .text-filters input {
-    background: #0f1422;
-    border-color: rgba(255, 255, 255, 0.2);
-    color: #f4f6fb;
-  }
-
-  .state-pill {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.18);
-    color: #fefefe;
-  }
-
-  .cluster-tag,
-  .group-tag {
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  .group-tag {
-    background: rgba(34, 197, 94, 0.2);
-    color: #c2ffd8;
-  }
-
-  .timeline {
-    border-color: var(--session-border);
-  }
-
-  .timeline .label {
-    color: var(--session-muted);
-  }
-
-  .reason-box {
-    background: rgba(255, 255, 255, 0.08);
-    border-left-color: #7db4ff;
-    color: #f4f6fb;
-  }
-
-  .end-reason {
-    background: rgba(255, 92, 139, 0.12);
-    border-left-color: #ff5c8b;
-    color: #ffe0ea;
-  }
-
-  .section-label {
-    color: var(--session-muted);
-  }
-}
 .error {
-  color: #c62828;
+  color: var(--telekom-color-text-error);
 }
 
 .empty {
-  color: #607d8b;
+  color: var(--session-muted);
 }
 </style>

@@ -215,8 +215,8 @@ function handleIDPButtonClick(idpName: string) {
 
 .idp-single-mode {
   padding: 0.75rem 1rem;
-  background-color: var(--scale-color-blue-10, #f0f4ff);
-  border: 1px solid var(--scale-color-blue-30, #b3d9ff);
+  background-color: var(--scale-color-blue-10);
+  border: 1px solid var(--scale-color-blue-30);
   border-radius: 4px;
   margin-bottom: 1rem;
   display: flex;
@@ -227,14 +227,14 @@ function handleIDPButtonClick(idpName: string) {
 
 .idp-single-message {
   margin: 0;
-  color: var(--scale-color-blue-70, #0052cc);
+  color: var(--scale-color-blue-70);
   font-size: 0.95rem;
 }
 
 .idp-no-available {
   padding: 0.75rem 1rem;
-  background-color: var(--scale-color-yellow-10, #fff8e1);
-  border: 1px solid var(--scale-color-yellow-30, #ffe082);
+  background-color: var(--scale-color-yellow-10);
+  border: 1px solid var(--scale-color-yellow-30);
   border-radius: 4px;
 }
 
@@ -246,7 +246,7 @@ function handleIDPButtonClick(idpName: string) {
 
 .idp-label {
   font-weight: 600;
-  color: var(--scale-color-gray-80, #333);
+  color: var(--scale-color-gray-80);
   display: flex;
   gap: 0.25rem;
 }

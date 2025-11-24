@@ -519,10 +519,10 @@ function drop() {
     <div v-if="requesterGroups.length" class="breakglass-card__groups">
       <div class="groups-header">
         <span class="label">Available via</span>
-        <scale-tag size="small" variant="info">{{ requesterGroups.length }} groups</scale-tag>
+        <scale-tag size="small" variant="primary">{{ requesterGroups.length }} groups</scale-tag>
       </div>
       <div class="breakglass-card__pill-list">
-        <scale-tag v-for="group in visibleRequesterGroups" :key="group" size="small" variant="secondary">
+        <scale-tag v-for="group in visibleRequesterGroups" :key="group" size="small" variant="primary">
           {{ group }}
         </scale-tag>
       </div>
@@ -545,10 +545,10 @@ function drop() {
     <section v-if="approvalGroupsList.length" class="card-section breakglass-card__approvers">
       <div class="groups-header">
         <span class="label">Approval groups</span>
-        <scale-tag size="small" variant="info">{{ approvalGroupsList.length }} groups</scale-tag>
+        <scale-tag size="small" variant="primary">{{ approvalGroupsList.length }} groups</scale-tag>
       </div>
       <div class="breakglass-card__pill-list">
-        <scale-tag v-for="group in visibleApprovalGroups" :key="group" size="small" variant="secondary">
+        <scale-tag v-for="group in visibleApprovalGroups" :key="group" size="small" variant="primary">
           {{ group }}
         </scale-tag>
       </div>

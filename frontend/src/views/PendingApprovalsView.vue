@@ -356,8 +356,8 @@ onMounted(fetchPendingApprovals);
                 </template>
               </p>
               <div class="request-meta">
-                <scale-tag variant="primary">{{ session.spec?.cluster || "Unknown cluster" }}</scale-tag>
-                <scale-tag variant="secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-tag>
+                <scale-tag variant="info">{{ session.spec?.cluster || "Unknown cluster" }}</scale-tag>
+                <scale-tag variant="primary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-tag>
                 <scale-tag
                   :variant="
                     session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'
@@ -367,8 +367,8 @@ onMounted(fetchPendingApprovals);
                   <template v-else-if="session.urgency === 'high'">⏱️ High</template>
                   <template v-else>🕓 Normal</template>
                 </scale-tag>
-                <scale-tag v-if="session.spec?.scheduledStartTime" variant="secondary">📅 Scheduled</scale-tag>
-                <scale-tag v-if="session.approvalReason?.mandatory" variant="secondary">✍️ Note required</scale-tag>
+                <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">📅 Scheduled</scale-tag>
+                <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">✍️ Note required</scale-tag>
               </div>
             </div>
           </div>
@@ -446,7 +446,7 @@ onMounted(fetchPendingApprovals);
         <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
           <span class="matching-label">Visible via</span>
           <div class="matching-stack">
-            <scale-tag v-for="group in session.matchingApproverGroups" :key="group" variant="warning">{{
+            <scale-tag v-for="group in session.matchingApproverGroups" :key="group" variant="primary">{{
               group
             }}</scale-tag>
           </div>

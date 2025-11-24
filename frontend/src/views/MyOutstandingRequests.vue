@@ -45,10 +45,10 @@
             </div>
 
             <div class="request-badges">
-              <scale-tag v-if="req.spec?.identityProviderName" variant="secondary">
+              <scale-tag v-if="req.spec?.identityProviderName" variant="info">
                 IDP: {{ req.spec.identityProviderName }}
               </scale-tag>
-              <scale-tag v-if="req.spec?.identityProviderIssuer" variant="secondary">
+              <scale-tag v-if="req.spec?.identityProviderIssuer" variant="info">
                 Issuer: {{ req.spec.identityProviderIssuer }}
               </scale-tag>
               <scale-tag v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-tag>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, computed, ref, onMounted, watch } from "vue";
+import { inject, computed, ref, onMounted, onBeforeUnmount, watch } from "vue";
 import { decodeJwt } from "jose";
 import { useRoute, useRouter } from "vue-router";
 import type { RouteLocationRaw } from "vue-router";
@@ -41,12 +41,66 @@ const hiddenGroupCount = computed(() => {
 });
 
 // Theme handling
-const theme = ref<"light" | "dark">("dark");
+const THEME_STORAGE_KEY = "breakglass-theme";
+const userThemeOverride = ref(false);
+const theme = ref<"light" | "dark">(getInitialTheme());
+let mediaQuery: MediaQueryList | null = null;
+let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
+
+function getInitialTheme(): "light" | "dark" {
+  if (typeof window === "undefined") {
+    return "light";
+  }
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") {
+    userThemeOverride.value = true;
+    return stored;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(value: "light" | "dark") {
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("data-theme", value);
+  }
+  if (typeof window !== "undefined") {
+    if (userThemeOverride.value) {
+      window.localStorage.setItem(THEME_STORAGE_KEY, value);
+    } else {
+      window.localStorage.removeItem(THEME_STORAGE_KEY);
+    }
+  }
+}
 
 function toggleTheme() {
+  userThemeOverride.value = true;
   theme.value = theme.value === "light" ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", theme.value);
 }
+
+onMounted(() => {
+  applyTheme(theme.value);
+  if (typeof window === "undefined") return;
+  mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  mediaQueryHandler = (event: MediaQueryListEvent) => {
+    if (!userThemeOverride.value) {
+      theme.value = event.matches ? "dark" : "light";
+    }
+  };
+  mediaQuery.addEventListener("change", mediaQueryHandler);
+});
+
+onBeforeUnmount(() => {
+  if (mediaQuery && mediaQueryHandler) {
+    mediaQuery.removeEventListener("change", mediaQueryHandler);
+  }
+});
+
+watch(theme, (value) => {
+  applyTheme(value);
+});
+
+const themeIcon = computed(() => (theme.value === "light" ? "moon" : "sun"));
+const themeToggleLabel = computed(() => (theme.value === "light" ? "Switch to dark mode" : "Switch to light mode"));
 
 // Branding provided by backend; fallback to a neutral placeholder string if
 // backend unavailable or branding not configured.
@@ -255,11 +309,22 @@ function logout() {
           </div>
           <scale-button v-if="authenticated" variant="secondary" @click="logout"> Logout </scale-button>
           <scale-button v-else variant="secondary" @click="login"> Login </scale-button>
-          <scale-icon-action
-            :icon="theme === 'light' ? 'moon' : 'sun'"
-            accessibility-title="Toggle theme"
+          <button
+            type="button"
+            class="theme-toggle"
+            :aria-pressed="theme === 'dark'"
+            :aria-label="themeToggleLabel"
+            :title="themeToggleLabel"
             @click="toggleTheme"
-          ></scale-icon-action>
+          >
+            <scale-icon-action
+              class="theme-toggle__icon"
+              :icon="themeIcon"
+              aria-hidden="true"
+              tabindex="-1"
+            ></scale-icon-action>
+            <span class="theme-toggle__text">{{ theme === 'light' ? 'Dark' : 'Light' }} mode</span>
+          </button>
         </div>
       </scale-telekom-header>
 
@@ -328,6 +393,42 @@ function logout() {
 
 .header-functions scale-button::part(button) {
   min-width: 110px;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background-color: var(--surface-card-subtle);
+  color: var(--telekom-color-text-and-icon-standard);
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+  font: inherit;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent-info);
+  color: var(--accent-info);
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.theme-toggle__icon {
+  pointer-events: none;
+}
+
+.theme-toggle__text {
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .user-pill {

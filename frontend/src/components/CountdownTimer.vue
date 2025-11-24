@@ -55,10 +55,7 @@ watch(() => props.expiresAt, updateRemaining);
 <style scoped>
 .countdown {
   font-weight: bold;
-  /* color: #d9006c; */
-  /* background: #fff3f8; */
-  /* border-radius: 4px; */
-  /* padding: 0.1em 0.5em; */
+  color: var(--accent-telekom);
   margin-left: 0.5em;
   cursor: pointer;
   transition:
@@ -66,7 +63,6 @@ watch(() => props.expiresAt, updateRemaining);
     background 0.2s;
 }
 .countdown.expired {
-  color: #888;
-  /* background: #f3f3f3; */
+  color: var(--text-muted);
 }
 </style>

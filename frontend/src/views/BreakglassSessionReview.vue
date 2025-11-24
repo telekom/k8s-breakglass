@@ -220,7 +220,7 @@ async function onCancel(bg: SessionCR) {
 .not-found {
   text-align: center;
   margin: 2rem 0;
-  color: #888;
+  color: var(--text-muted);
   font-size: 1.2rem;
 }
 </style>
