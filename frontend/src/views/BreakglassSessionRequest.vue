@@ -175,15 +175,15 @@ onMounted(async () => {
             required
             @scaleChange="clusterName = $event.target.value"
           ></scale-text-field>
-          <scale-select
+          <scale-dropdown-select
             label="Group"
             :value="clusterGroup"
             @scaleChange="clusterGroup = $event.target.value; onInput()"
           >
-            <scale-select-option v-for="escalation in escalations" :key="escalation.escalatedGroup" :value="escalation.escalatedGroup">
+            <scale-dropdown-select-option v-for="escalation in escalations" :key="escalation.escalatedGroup" :value="escalation.escalatedGroup">
               {{ escalation.escalatedGroup }}
-            </scale-select-option>
-          </scale-select>
+            </scale-dropdown-select-option>
+          </scale-dropdown-select>
 
           <!-- Reason field -->
           <scale-textarea

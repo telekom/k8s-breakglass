@@ -114,7 +114,7 @@ textarea:focus,
 input:focus,
 select:focus,
 scale-field-text:focus,
-scale-select:focus,
+scale-dropdown-select:focus,
 scale-text-area:focus {
   outline: 2px solid var(--focus-outline);
   outline-offset: 3px;

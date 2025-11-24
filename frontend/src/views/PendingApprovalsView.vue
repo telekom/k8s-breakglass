@@ -300,30 +300,30 @@ onMounted(fetchPendingApprovals);
 
     <!-- Filter and Sort Controls -->
     <div class="approvals-toolbar">
-      <scale-select
+      <scale-dropdown-select
         id="sort-select"
         label="Sort by"
         :value="sortBy"
         @scaleChange="sortBy = $event.target.value"
         style="min-width: 200px;"
       >
-        <scale-select-option value="urgent">Most Urgent (expires soonest)</scale-select-option>
-        <scale-select-option value="recent">Most Recent</scale-select-option>
-        <scale-select-option value="groups">By Group</scale-select-option>
-      </scale-select>
+        <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
+        <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
+        <scale-dropdown-select-option value="groups">By Group</scale-dropdown-select-option>
+      </scale-dropdown-select>
 
-      <scale-select
+      <scale-dropdown-select
         id="urgency-filter"
         label="Urgency"
         :value="urgencyFilter"
         @scaleChange="urgencyFilter = $event.target.value"
         style="min-width: 200px;"
       >
-        <scale-select-option value="all">All</scale-select-option>
-        <scale-select-option value="critical">Critical (&lt; 1 hour)</scale-select-option>
-        <scale-select-option value="high">High (&lt; 6 hours)</scale-select-option>
-        <scale-select-option value="normal">Normal (≥ 6 hours)</scale-select-option>
-      </scale-select>
+        <scale-dropdown-select-option value="all">All</scale-dropdown-select-option>
+        <scale-dropdown-select-option value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-option>
+        <scale-dropdown-select-option value="high">High (&lt; 6 hours)</scale-dropdown-select-option>
+        <scale-dropdown-select-option value="normal">Normal (≥ 6 hours)</scale-dropdown-select-option>
+      </scale-dropdown-select>
 
       <div class="toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests

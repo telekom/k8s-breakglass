@@ -644,24 +644,24 @@ function drop() {
             @scaleChange="scheduleDatePart = $event.target.value"
             style="flex: 2;"
           ></scale-text-field>
-          <scale-select
+          <scale-dropdown-select
             :id="'scheduled-hour-' + breakglass.to"
             label="Hour (24h)"
             :value="scheduleHourPart"
             @scaleChange="scheduleHourPart = $event.target.value"
             style="flex: 1;"
           >
-            <scale-select-option v-for="hour in hourOptions" :key="hour" :value="hour">{{ hour }}</scale-select-option>
-          </scale-select>
-          <scale-select
+            <scale-dropdown-select-option v-for="hour in hourOptions" :key="hour" :value="hour">{{ hour }}</scale-dropdown-select-option>
+          </scale-dropdown-select>
+          <scale-dropdown-select
             :id="'scheduled-minute-' + breakglass.to"
             label="Minute"
             :value="scheduleMinutePart"
             @scaleChange="scheduleMinutePart = $event.target.value"
             style="flex: 1;"
           >
-            <scale-select-option v-for="minute in minuteOptions" :key="minute" :value="minute">{{ minute }}</scale-select-option>
-          </scale-select>
+            <scale-dropdown-select-option v-for="minute in minuteOptions" :key="minute" :value="minute">{{ minute }}</scale-dropdown-select-option>
+          </scale-dropdown-select>
         </div>
         <div v-if="scheduleDatePart" class="schedule-picker-actions">
           <scale-button size="small" variant="secondary" class="inline-action" @click="clearScheduledSelection">
