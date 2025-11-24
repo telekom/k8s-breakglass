@@ -697,7 +697,7 @@ function drop() {
       <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error">This field is required.</p>
     </div>
 
-    <div class="modal-actions" slot="actions">
+    <div class="modal-actions">
       <scale-button :disabled="requiresReason && !(requestReason || '').trim()" @click="request">
         Confirm Request
       </scale-button>
@@ -730,23 +730,23 @@ function drop() {
   text-transform: uppercase;
   font-size: 0.75rem;
   letter-spacing: 0.1em;
-  color: var(--telekom-color-text-placeholder);
+  color: var(--text-placeholder);
   margin: 0 0 0.25rem 0;
 }
 
 .breakglass-card__subtitle {
   margin: 0.1rem 0;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
 }
 
 .breakglass-card__subtitle .highlight {
-  color: var(--telekom-color-text-primary);
+  color: var(--telekom-text-color-inverted-primary);
   font-weight: 600;
 }
 
 .breakglass-card__hint {
   margin: 0;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
   font-size: 0.9rem;
 }
 
@@ -761,7 +761,7 @@ function drop() {
   min-width: 200px;
   flex: 0 0 240px;
   align-self: stretch;
-  background: var(--telekom-color-ui-background-subtle);
+  background: var(--surface-card-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-large);
   padding: 0.85rem 1rem;
@@ -772,7 +772,7 @@ function drop() {
 }
 
 .breakglass-card__state-panel .state-detail {
-  color: var(--telekom-color-text-primary);
+  color: var(--telekom-text-color-inverted-primary);
   font-size: 0.9rem;
   margin: 0;
 }
@@ -784,7 +784,7 @@ function drop() {
 }
 
 .info-item {
-  background: var(--telekom-color-ui-background-subtle);
+  background: var(--surface-card-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
   padding: 0.75rem;
@@ -796,14 +796,14 @@ function drop() {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
   margin-bottom: 0.25rem;
 }
 
 .info-item .value {
   font-size: 0.95rem;
   line-height: 1.35;
-  color: var(--telekom-color-text-primary);
+  color: var(--telekom-text-color-inverted-primary);
   font-weight: 600;
 }
 
@@ -814,7 +814,7 @@ function drop() {
 .card-section {
   margin-top: 0.5rem;
   padding: 0.75rem 0.9rem;
-  background: var(--telekom-color-ui-background-subtle);
+  background: var(--surface-card-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
 }
@@ -830,7 +830,7 @@ function drop() {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
 }
 
 .breakglass-card__pill-list {
@@ -856,7 +856,7 @@ function drop() {
 
 .cta-copy {
   flex: 1 1 320px;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
   font-size: 0.9rem;
 }
 
@@ -865,7 +865,7 @@ function drop() {
 }
 
 .text-muted {
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
 }
 
 .actions-row {
@@ -888,7 +888,7 @@ function drop() {
 
 .helper {
   font-size: 0.85rem;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
   margin-top: 0.25rem;
 }
 
@@ -901,7 +901,7 @@ function drop() {
 }
 
 .hint-box {
-  background: var(--telekom-color-ui-background-subtle);
+  background: var(--surface-card-subtle);
   padding: 0.5rem;
   border-radius: var(--telekom-radius-standard);
   margin-top: 0.5rem;
@@ -911,14 +911,14 @@ function drop() {
 .schedule-details {
   margin-top: 1rem;
   padding: 1rem;
-  background: var(--telekom-color-ui-background-subtle);
+  background: var(--surface-card-subtle);
   border-radius: var(--telekom-radius-standard);
 }
 
 .schedule-intro {
   margin-top: 0;
   font-size: 0.9rem;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
 }
 
 .schedule-picker {
@@ -970,7 +970,7 @@ function drop() {
 .breakglass-card__approvers {
   margin-top: 0.5rem;
   padding: 0.75rem 0.9rem;
-  background: var(--telekom-color-ui-background-subtle);
+  background: var(--surface-card-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
 }
@@ -986,7 +986,7 @@ function drop() {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
 }
 
 .breakglass-card__pill-list {
@@ -1012,7 +1012,7 @@ function drop() {
 
 .cta-copy {
   flex: 1 1 320px;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
   font-size: 0.9rem;
 }
 
@@ -1036,7 +1036,7 @@ function drop() {
 
 .helper {
   font-size: 0.85rem;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
   margin-top: 0.25rem;
 }
 
@@ -1049,7 +1049,7 @@ function drop() {
 }
 
 .hint-box {
-  background: var(--telekom-color-ui-background-subtle);
+  background: var(--surface-card-subtle);
   padding: 0.5rem;
   border-radius: var(--telekom-radius-standard);
   margin-top: 0.5rem;
@@ -1059,14 +1059,14 @@ function drop() {
 .schedule-details {
   margin-top: 1rem;
   padding: 1rem;
-  background: var(--telekom-color-ui-background-subtle);
+  background: var(--surface-card-subtle);
   border-radius: var(--telekom-radius-standard);
 }
 
 .schedule-intro {
   margin-top: 0;
   font-size: 0.9rem;
-  color: var(--telekom-color-text-secondary);
+  color: var(--text-muted);
 }
 
 .schedule-picker {
@@ -1120,7 +1120,7 @@ function drop() {
 .duration-selector .helper,
 .reason-field .helper {
   font-size: 0.85rem;
-  color: var(--breakglass-text-muted);
+  color: var(--text-muted);
   margin: 0.35rem 0;
 }
 
@@ -1139,12 +1139,12 @@ function drop() {
   background: color-mix(in srgb, var(--surface-card) 85%, transparent);
   border: 1px solid var(--border-default);
   font-size: 0.85rem;
-  color: var(--breakglass-text-muted);
+  color: var(--text-muted);
 }
 
 .breakglass-card__approvers p {
   margin: 0.5rem 0 0;
-  color: var(--breakglass-text-strong);
+  color: var(--telekom-text-color-inverted-primary);
 }
 
 .schedule-details {

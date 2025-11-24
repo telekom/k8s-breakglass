@@ -246,6 +246,12 @@ function onStateToggle(state: string, event: Event | CustomEvent) {
   filters.states = Array.from(next);
 }
 
+function setFilter(field: "cluster" | "group", value?: string) {
+  if (!value || value === "-" || value === "") return;
+  filters[field] = value;
+  fetchSessions();
+}
+
 function isSessionOwner(session: SessionCR): boolean {
   const action = decideRejectOrWithdraw(currentUserEmail.value, session);
   return action === "withdraw";
@@ -488,8 +494,20 @@ onMounted(() => {
             <div>
               <div class="session-name">{{ session.metadata?.name || session.name }}</div>
               <div class="cluster-group">
-                <scale-chip variant="primary">{{ session.spec?.cluster || session.cluster || "-" }}</scale-chip>
-                <scale-chip variant="success">{{ session.spec?.grantedGroup || session.group || "-" }}</scale-chip>
+                <scale-chip
+                  variant="primary"
+                  class="clickable-chip"
+                  @click="setFilter('cluster', session.spec?.cluster || session.cluster)"
+                >
+                  {{ session.spec?.cluster || session.cluster || "-" }}
+                </scale-chip>
+                <scale-chip
+                  variant="success"
+                  class="clickable-chip"
+                  @click="setFilter('group', session.spec?.grantedGroup || session.group)"
+                >
+                  {{ session.spec?.grantedGroup || session.group || "-" }}
+                </scale-chip>
               </div>
             </div>
             <scale-chip :variant="sessionTone(session) === 'tone-success' ? 'success' : sessionTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
@@ -771,6 +789,15 @@ header p {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.35rem;
+}
+
+.clickable-chip {
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.clickable-chip:hover {
+  opacity: 0.8;
 }
 
 .actors {
