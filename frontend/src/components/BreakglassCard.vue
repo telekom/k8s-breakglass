@@ -482,17 +482,17 @@ function drop() {
           Visible via {{ requesterGroups.length }} of your groups
         </p>
         <div class="breakglass-card__meta" aria-label="Session status and requirements">
-          <scale-chip v-for="badge in metaBadges" :key="badge.label" size="small" :variant="badge.variant">
+          <scale-tag v-for="badge in metaBadges" :key="badge.label" size="small" :variant="badge.variant">
             {{ badge.label }}
-          </scale-chip>
+          </scale-tag>
         </div>
       </div>
       <div class="breakglass-card__state-panel" aria-live="polite">
-        <scale-chip size="small" :variant="stateChipVariant">
+        <scale-tag size="small" :variant="stateChipVariant">
           <template v-if="sessionActive">Active session</template>
           <template v-else-if="sessionPending">Pending request</template>
           <template v-else>Available</template>
-        </scale-chip>
+        </scale-tag>
         <p v-if="sessionActive && expiryHumanized" class="state-detail">Expires in {{ expiryHumanized }}</p>
         <p v-else-if="sessionPending && timeoutHumanized" class="state-detail">Timeout in {{ timeoutHumanized }}</p>
         <p v-else class="state-detail">Up to {{ durationHumanized }}</p>
@@ -519,17 +519,17 @@ function drop() {
     <div v-if="requesterGroups.length" class="breakglass-card__groups">
       <div class="groups-header">
         <span class="label">Available via</span>
-        <scale-chip size="small" variant="info">{{ requesterGroups.length }} groups</scale-chip>
+        <scale-tag size="small" variant="info">{{ requesterGroups.length }} groups</scale-tag>
       </div>
       <div class="breakglass-card__pill-list">
-        <scale-chip
+        <scale-tag
           v-for="group in visibleRequesterGroups"
           :key="group"
           size="small"
           variant="secondary"
         >
           {{ group }}
-        </scale-chip>
+        </scale-tag>
       </div>
       <scale-button
         v-if="hiddenRequesterGroupCount > 0"
@@ -550,17 +550,17 @@ function drop() {
     <section v-if="approvalGroupsList.length" class="card-section breakglass-card__approvers">
       <div class="groups-header">
         <span class="label">Approval groups</span>
-        <scale-chip size="small" variant="info">{{ approvalGroupsList.length }} groups</scale-chip>
+        <scale-tag size="small" variant="info">{{ approvalGroupsList.length }} groups</scale-tag>
       </div>
       <div class="breakglass-card__pill-list">
-        <scale-chip
+        <scale-tag
           v-for="group in visibleApprovalGroups"
           :key="group"
           size="small"
           variant="secondary"
         >
           {{ group }}
-        </scale-chip>
+        </scale-tag>
       </div>
       <scale-button
         v-if="hiddenApprovalGroupCount > 0"
@@ -587,7 +587,7 @@ function drop() {
       </div>
     </div>
 
-    <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__error">
+    <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__requirement">
       This escalation requires a reason.
     </p>
   </scale-card>
@@ -873,8 +873,8 @@ function drop() {
   gap: 0.5rem;
 }
 
-.breakglass-card__error {
-  color: var(--telekom-color-functional-danger-standard);
+.breakglass-card__requirement {
+  color: var(--text-muted);
   font-weight: 600;
   margin-top: 0.5rem;
 }
@@ -955,6 +955,7 @@ function drop() {
   gap: 1rem;
   justify-content: flex-end;
   margin-top: 2rem;
+  margin-bottom: 1rem;
 }
 
 .request-modal :deep(input::placeholder),
@@ -1020,12 +1021,7 @@ function drop() {
   margin: 0;
 }
 
-/* Error state */
-.breakglass-card__error {
-  color: var(--telekom-color-functional-danger-standard);
-  font-weight: 600;
-  margin-top: 0.5rem;
-}
+
 
 /* Modal internal styles */
 .duration-selector,
@@ -1103,6 +1099,7 @@ function drop() {
   gap: 1rem;
   justify-content: flex-end;
   margin-top: 2rem;
+  margin-bottom: 1rem;
 }
 
 .request-modal :deep(input::placeholder),

@@ -356,15 +356,15 @@ onMounted(fetchPendingApprovals);
                 </template>
               </p>
               <div class="request-meta">
-                <scale-chip variant="primary">{{ session.spec?.cluster || "Unknown cluster" }}</scale-chip>
-                <scale-chip variant="secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-chip>
-                <scale-chip :variant="session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'">
+                <scale-tag variant="primary">{{ session.spec?.cluster || "Unknown cluster" }}</scale-tag>
+                <scale-tag variant="secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-tag>
+                <scale-tag :variant="session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'">
                   <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
                   <template v-else-if="session.urgency === 'high'">⏱️ High</template>
                   <template v-else>🕓 Normal</template>
-                </scale-chip>
-                <scale-chip v-if="session.spec?.scheduledStartTime" variant="secondary">📅 Scheduled</scale-chip>
-                <scale-chip v-if="session.approvalReason?.mandatory" variant="secondary">✍️ Note required</scale-chip>
+                </scale-tag>
+                <scale-tag v-if="session.spec?.scheduledStartTime" variant="secondary">📅 Scheduled</scale-tag>
+                <scale-tag v-if="session.approvalReason?.mandatory" variant="secondary">✍️ Note required</scale-tag>
               </div>
             </div>
           </div>
@@ -380,9 +380,9 @@ onMounted(fetchPendingApprovals);
               Timeout {{ format24Hour(session.status.timeoutAt) }}
             </small>
             <small v-else class="timer-absolute">No expiry set</small>
-            <scale-chip v-if="session.status?.state" :variant="sessionStateTone(session) === 'tone-success' ? 'success' : sessionStateTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
+            <scale-tag v-if="session.status?.state" :variant="sessionStateTone(session) === 'tone-success' ? 'success' : sessionStateTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
               {{ session.status.state }}
-            </scale-chip>
+            </scale-tag>
           </div>
         </div>
 
@@ -433,7 +433,7 @@ onMounted(fetchPendingApprovals);
         <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
           <span class="matching-label">Visible via</span>
           <div class="matching-stack">
-            <scale-chip v-for="group in session.matchingApproverGroups" :key="group" variant="warning">{{ group }}</scale-chip>
+            <scale-tag v-for="group in session.matchingApproverGroups" :key="group" variant="warning">{{ group }}</scale-tag>
           </div>
         </div>
 
@@ -453,9 +453,9 @@ onMounted(fetchPendingApprovals);
             <span
               ><code>{{ session.metadata?.name }}</code></span
             >
-            <scale-chip v-if="session.status?.state" :variant="sessionStateTone(session) === 'tone-success' ? 'success' : sessionStateTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
+            <scale-tag v-if="session.status?.state" :variant="sessionStateTone(session) === 'tone-success' ? 'success' : sessionStateTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
               {{ session.status.state }}
-            </scale-chip>
+            </scale-tag>
           </div>
           <div class="action-row">
             <scale-button
@@ -572,22 +572,22 @@ onMounted(fetchPendingApprovals);
   max-width: 950px;
   margin: 0 auto;
   padding-bottom: 3rem;
-  --approvals-bg: var(--telekom-color-background-canvas);
-  --approvals-surface: var(--telekom-color-background-surface);
-  --approvals-surface-subtle: var(--telekom-color-background-surface-subtle);
-  --approvals-border: var(--telekom-color-ui-border-standard);
-  --approvals-shadow: var(--telekom-shadow-floating-standard);
-  --approvals-shadow-hover: var(--telekom-shadow-floating-hover);
+  --approvals-bg: var(--surface-primary);
+  --approvals-surface: var(--surface-elevated);
+  --approvals-surface-subtle: var(--surface-card-subtle);
+  --approvals-border: var(--border-default);
+  --approvals-shadow: var(--shadow-card);
+  --approvals-shadow-hover: var(--shadow-card);
   --approvals-text-strong: var(--telekom-color-text-and-icon-standard);
-  --approvals-text-muted: var(--telekom-color-text-and-icon-additional);
+  --approvals-text-muted: var(--text-muted);
   --approvals-chip-bg: var(--telekom-color-functional-success-subtle);
   --approvals-chip-text: var(--telekom-color-text-and-icon-on-subtle-success);
   --approvals-chip-secondary-bg: var(--telekom-color-additional-violet-subtle);
   --approvals-chip-secondary-text: var(--telekom-color-text-and-icon-on-subtle-violet);
   --approvals-chip-primary-bg: var(--telekom-color-functional-informational-subtle);
   --approvals-chip-primary-text: var(--telekom-color-text-and-icon-on-subtle-informational);
-  --approvals-panel-bg: var(--telekom-color-ui-subtle);
-  --approvals-panel-border: var(--telekom-color-ui-border-standard);
+  --approvals-panel-bg: var(--surface-card);
+  --approvals-panel-border: var(--border-default);
   --approvals-pill-bg: var(--telekom-color-additional-violet-subtle);
   --approvals-pill-text: var(--telekom-color-text-and-icon-on-subtle-violet);
   --approvals-warn-bg: var(--telekom-color-functional-warning-subtle);

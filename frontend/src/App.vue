@@ -23,6 +23,14 @@ const router = useRouter();
 const groupsRef = ref<string[]>([]);
 const groupsExpanded = ref(false);
 
+// Theme handling
+const theme = ref<"light" | "dark">("dark");
+
+function toggleTheme() {
+  theme.value = theme.value === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", theme.value);
+}
+
 // Branding provided by backend; fallback to a neutral placeholder string if
 // backend unavailable or branding not configured.
 const brandingFromBackend = inject(BrandingKey) as string | undefined;
@@ -82,6 +90,10 @@ const activeNavId = computed(() => {
 
 const userDisplayName = computed(() => user.value?.profile.name || user.value?.profile.email || "");
 const userEmail = computed(() => user.value?.profile.email || "");
+
+function filterByGroup(group: string) {
+  router.push({ name: "sessionBrowser", query: { group } });
+}
 
 function navHref(item: PrimaryNavItem) {
   return router.resolve(item.to).href;
@@ -237,12 +249,17 @@ function logout() {
             </div>
             <span v-if="currentIDPName" class="user-pill__idp">{{ currentIDPName }}</span>
           </div>
-          <scale-button v-if="authenticated" variant="secondary" @click="logout">
+                    <scale-button v-if="authenticated" variant="secondary" @click="logout">
             Logout
           </scale-button>
           <scale-button v-else variant="secondary" @click="login">
             Login
           </scale-button>
+          <scale-icon-action
+            :icon="theme === 'light' ? 'moon' : 'sun'"
+            accessibility-title="Toggle theme"
+            @click="toggleTheme"
+          ></scale-icon-action>
         </div>
       </scale-telekom-header>
 
@@ -253,7 +270,13 @@ function logout() {
             <scale-accordion-item :expanded="groupsExpanded" @scale-change="groupsExpanded = $event.detail.expanded">
               <span slot="header" class="groups-header">Your Groups ({{ groupsRef.length }}) <span v-if="!groupsExpanded" class="groups-preview">- {{ groupPreview }}</span></span>
               <div class="groups-list">
-                <scale-tag v-for="group in groupsRef" :key="group" class="group-tag">
+                <scale-tag
+                  v-for="group in groupsRef"
+                  :key="group"
+                  class="group-tag"
+                  style="cursor: pointer"
+                  @click="filterByGroup(group)"
+                >
                   {{ group }}
                 </scale-tag>
               </div>
@@ -329,7 +352,7 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 
 .user-pill__name {
   font-weight: 600;
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .user-pill__email {
@@ -349,7 +372,7 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 }
 
 .groups-header {
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
   font-weight: 600;
 }
 

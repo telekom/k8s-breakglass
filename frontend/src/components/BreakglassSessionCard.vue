@@ -156,7 +156,7 @@ const chipVariant = computed(() => {
       <p v-if="breakglass.spec.identityProviderIssuer"><b>Issuer:</b> {{ breakglass.spec.identityProviderIssuer }}</p>
       <div class="state-row">
         <b>State:</b>
-        <scale-chip :variant="chipVariant">{{ breakglass.status.state || "Unknown" }}</scale-chip>
+        <scale-tag :variant="chipVariant">{{ breakglass.status.state || "Unknown" }}</scale-tag>
       </div>
       <p v-if="requestedAt"><b>Requested at:</b> {{ requestedAt }}</p>
       <p v-if="props.breakglass.spec && props.breakglass.spec.requestReason">
@@ -213,9 +213,7 @@ scale-button {
 }
 
 scale-card {
-  display: inline-block;
-  max-width: 400px;
+  max-width: 600px;
   width: 100%;
-  vertical-align: top;
 }
 </style>

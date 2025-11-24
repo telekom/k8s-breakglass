@@ -13,10 +13,10 @@
               <span class="group">{{ req.spec.grantedGroup || "-" }}</span>
             </div>
             <div class="request-status">
-              <scale-chip :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">{{ requestState(req) }}</scale-chip>
-              <scale-chip v-if="req.status?.state === 'WaitingForScheduledTime'" variant="info" class="schedule">
+              <scale-tag :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">{{ requestState(req) }}</scale-tag>
+              <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" variant="info" class="schedule">
                 ⏳ Waiting for scheduled time
-              </scale-chip>
+              </scale-tag>
               <scale-button
                 class="withdraw-btn"
                 variant="danger"
@@ -34,14 +34,14 @@
           </div>
 
           <div class="request-badges">
-            <scale-chip v-if="req.spec?.identityProviderName" variant="secondary">
+            <scale-tag v-if="req.spec?.identityProviderName" variant="secondary">
               IDP: {{ req.spec.identityProviderName }}
-            </scale-chip>
-            <scale-chip v-if="req.spec?.identityProviderIssuer" variant="secondary">
+            </scale-tag>
+            <scale-tag v-if="req.spec?.identityProviderIssuer" variant="secondary">
               Issuer: {{ req.spec.identityProviderIssuer }}
-            </scale-chip>
-            <scale-chip v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-chip>
-            <scale-chip v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-chip>
+            </scale-tag>
+            <scale-tag v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-tag>
+            <scale-tag v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-tag>
           </div>
 
           <div class="info-grid">
