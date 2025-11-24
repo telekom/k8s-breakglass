@@ -25,19 +25,19 @@ const router = useRouter();
 const groupsRef = ref<string[]>([]);
 const groupsExpanded = ref(false);
 const showAllGroups = ref(false);
-const MAX_VISIBLE_GROUPS = 10;
+const COLLAPSED_GROUP_LIMIT = 3;
 
-const hasOverflowGroups = computed(() => groupsRef.value.length > MAX_VISIBLE_GROUPS);
+const hasOverflowGroups = computed(() => groupsRef.value.length > COLLAPSED_GROUP_LIMIT);
 
 const visibleGroups = computed(() => {
   if (showAllGroups.value || !hasOverflowGroups.value) {
     return groupsRef.value;
   }
-  return groupsRef.value.slice(0, MAX_VISIBLE_GROUPS);
+  return groupsRef.value.slice(0, COLLAPSED_GROUP_LIMIT);
 });
 
 const hiddenGroupCount = computed(() => {
-  return Math.max(groupsRef.value.length - MAX_VISIBLE_GROUPS, 0);
+  return Math.max(groupsRef.value.length - COLLAPSED_GROUP_LIMIT, 0);
 });
 
 // Theme handling
@@ -52,15 +52,6 @@ function toggleTheme() {
 // backend unavailable or branding not configured.
 const brandingFromBackend = inject(BrandingKey) as string | undefined;
 const brandingTitle = computed(() => brandingFromBackend ?? "Breakglass");
-const groupPreview = computed(() => {
-  const groups = groupsRef.value || [];
-  if (groups.length <= 3) {
-    return groups.join(", ");
-  }
-  const head = groups.slice(0, 3).join(", ");
-  const remainder = groups.length - 3;
-  return `${head} +${remainder} more`;
-});
 
 type PrimaryNavItem = {
   id: string;
@@ -176,7 +167,7 @@ watch(
     if (!len) {
       groupsExpanded.value = false;
     }
-    if (len <= MAX_VISIBLE_GROUPS) {
+    if (len <= COLLAPSED_GROUP_LIMIT) {
       showAllGroups.value = false;
     }
   },
@@ -276,10 +267,7 @@ function logout() {
         <div v-if="authenticated && groupsRef.length" class="groups-panel">
           <scale-accordion>
             <scale-accordion-item :expanded="groupsExpanded" @scale-change="groupsExpanded = $event.detail.expanded">
-              <span slot="header" class="groups-header"
-                >Your Groups ({{ groupsRef.length }})
-                <span v-if="!groupsExpanded" class="groups-preview">- {{ groupPreview }}</span></span
-              >
+              <span slot="header" class="groups-header">Your Groups ({{ groupsRef.length }})</span>
               <div class="groups-list">
                 <scale-tag
                   v-for="group in visibleGroups"
@@ -352,9 +340,6 @@ function logout() {
   background-color: color-mix(in srgb, var(--surface-card) 85%, transparent);
 }
 
-.user-pill__icon {
-  color: var(--accent-info);
-}
 
 .user-pill__meta {
   display: flex;
@@ -369,7 +354,7 @@ function logout() {
 
 .user-pill__email {
   font-size: 0.82rem;
-  color: var(--telekom-color-text-and-icon-white-standard);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .user-pill__idp {

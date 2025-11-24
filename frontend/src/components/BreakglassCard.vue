@@ -728,7 +728,7 @@ function drop() {
   text-transform: uppercase;
   font-size: 0.75rem;
   letter-spacing: 0.1em;
-  color: var(--text-placeholder);
+  color: var(--telekom-color-text-and-icon-standard);
   margin: 0 0 0.25rem 0;
 }
 
@@ -738,7 +738,7 @@ function drop() {
 }
 
 .breakglass-card__subtitle .highlight {
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
   font-weight: 600;
 }
 
@@ -770,7 +770,7 @@ function drop() {
 }
 
 .breakglass-card__state-panel .state-detail {
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
   font-size: 0.9rem;
   margin: 0;
 }
@@ -801,7 +801,7 @@ function drop() {
 .info-item .value {
   font-size: 0.95rem;
   line-height: 1.35;
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
   font-weight: 600;
 }
 
@@ -822,13 +822,13 @@ function drop() {
   font-size: 0.82rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--telekom-color-text-and-icon-white-standard);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .card-section--reason p {
   margin: 0;
   line-height: 1.45;
-  color: var(--telekom-color-text-and-icon-white-standard);
+  color: var(--telekom-color-text-and-icon-standard);
   opacity: 0.9;
 }
 
@@ -1115,7 +1115,7 @@ function drop() {
 
 .request-modal :deep(input::placeholder),
 .request-modal :deep(textarea::placeholder) {
-  color: var(--text-placeholder);
+  color: var(--telekom-color-text-and-icon-standard);
   opacity: 1;
 }
 
@@ -1152,7 +1152,7 @@ function drop() {
 
 .breakglass-card__approvers p {
   margin: 0.5rem 0 0;
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .schedule-details {

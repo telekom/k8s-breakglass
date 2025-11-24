@@ -5,7 +5,7 @@
   line-height: 1.5;
   text-rendering: optimizeLegibility;
   background-color: var(--surface-primary);
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
 
   --surface-primary: var(--telekom-color-gray-950);
   --surface-elevated: var(--telekom-ui-color-surface-strong);
@@ -17,7 +17,7 @@
   --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 45%, transparent);
 
   --text-muted: var(--telekom-text-color-inverted-secondary);
-  --text-placeholder: color-mix(in srgb, var(--telekom-text-color-inverted-secondary) 60%, transparent);
+  --telekom-color-text-and-icon-standard: color-mix(in srgb, var(--telekom-text-color-inverted-secondary) 60%, transparent);
   --focus-outline: var(--telekom-color-blue-500);
 
   --accent-telekom: var(--telekom-color-magenta-500);
@@ -41,7 +41,7 @@
   --border-default: color-mix(in srgb, var(--telekom-color-gray-900) 15%, transparent);
   --border-strong: color-mix(in srgb, var(--telekom-color-gray-900) 35%, transparent);
   --text-muted: var(--telekom-text-color-primary);
-  --text-placeholder: var(--telekom-color-gray-500);
+  --telekom-color-text-and-icon-standard: var(--telekom-color-gray-500);
   --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 7%, transparent);
   --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
   --chip-text: var(--telekom-color-magenta-600);
@@ -126,7 +126,7 @@ scale-text-area:focus {
   transform: translateX(-50%);
   top: 0.75rem;
   background-color: var(--surface-card);
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
   padding: 0.5rem 1rem;
   border-radius: 999px;
   border: 1px solid var(--border-default);
@@ -161,7 +161,7 @@ scale-button[variant="secondary"]::part(button) {
   background-color: transparent;
   border: 1px solid var(--border-default);
   border-radius: 12px;
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 /* Shared page chrome */
@@ -173,7 +173,7 @@ scale-button[variant="secondary"]::part(button) {
 
 .ui-page-title {
   font-size: clamp(2rem, 4vw, 2.75rem);
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .ui-page-subtitle {
@@ -208,7 +208,7 @@ scale-button[variant="secondary"]::part(button) {
   background-color: var(--surface-card);
   border: 1px solid var(--border-default);
   border-radius: 12px;
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
   padding: 0.6rem 0.85rem;
 }
 
@@ -251,7 +251,7 @@ scale-button[variant="secondary"]::part(button) {
 }
 
 .ui-info-item span {
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
   font-weight: 500;
 }
 
@@ -263,7 +263,7 @@ scale-button[variant="secondary"]::part(button) {
 }
 
 .ui-info-item .value {
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
   font-weight: 500;
 }
 
@@ -301,7 +301,7 @@ scale-button[variant="secondary"]::part(button) {
 
 .ui-section h4 {
   font-size: 1.05rem;
-  color: var(--telekom-text-color-inverted-primary);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .ui-section p {

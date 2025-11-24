@@ -209,7 +209,7 @@ onMounted(async () => {
   --outstanding-surface: var(--surface-card);
   --outstanding-border: var(--border-default);
   --outstanding-shadow: var(--shadow-card);
-  --outstanding-text-strong: var(--telekom-text-color-inverted-primary);
+  --outstanding-text-strong: var(--telekom-color-text-and-icon-standard);
   --outstanding-text-muted: var(--text-muted);
   --outstanding-panel-bg: color-mix(in srgb, var(--surface-card) 75%, transparent);
   --outstanding-panel-border: var(--border-default);

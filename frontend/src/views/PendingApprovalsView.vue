@@ -664,7 +664,7 @@ onMounted(fetchPendingApprovals);
 }
 
 .select-wrapper select option {
-  color: var(--telekom-color-text-and-icon-inverted-standard);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .approvals-toolbar .toolbar-info {
@@ -732,7 +732,7 @@ onMounted(fetchPendingApprovals);
   background: linear-gradient(135deg, var(--telekom-color-primary-hovered), var(--telekom-color-primary-standard));
   display: grid;
   place-items: center;
-  color: var(--telekom-color-text-and-icon-inverted-standard);
+  color: var(--telekom-color-text-and-icon-standard);
   font-weight: 700;
   font-size: 1.2rem;
   letter-spacing: 0.5px;
