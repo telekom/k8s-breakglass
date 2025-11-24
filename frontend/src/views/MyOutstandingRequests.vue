@@ -15,108 +15,108 @@
         <p>No outstanding requests.</p>
       </div>
       <div v-else class="requests-list">
-          <scale-card v-for="req in requests" :key="req.metadata?.name" class="request-card">
-            <header class="request-header">
-              <div class="request-target">
-                <span class="cluster">{{ req.spec.cluster || "-" }}</span>
-                <span class="group">{{ req.spec.grantedGroup || "-" }}</span>
-              </div>
-              <div class="request-status">
-                <scale-tag :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">{{
-                  requestState(req)
-                }}</scale-tag>
-                <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" variant="info" class="schedule">
-                  ⏳ Waiting for scheduled time
-                </scale-tag>
-                <scale-button
-                  class="withdraw-btn"
-                  variant="danger"
-                  :disabled="withdrawing === req.metadata?.name"
-                  @click="withdrawRequest(req)"
-                >
-                  {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
-                </scale-button>
-              </div>
-            </header>
-
-            <div class="request-name">
-              <span>Request</span>
-              <code>{{ req.metadata?.name }}</code>
+        <scale-card v-for="req in requests" :key="req.metadata?.name" class="request-card">
+          <header class="request-header">
+            <div class="request-target">
+              <span class="cluster">{{ req.spec.cluster || "-" }}</span>
+              <span class="group">{{ req.spec.grantedGroup || "-" }}</span>
             </div>
-
-            <div class="request-badges">
-              <scale-tag v-if="req.spec?.identityProviderName" variant="info">
-                IDP: {{ req.spec.identityProviderName }}
+            <div class="request-status">
+              <scale-tag :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">{{
+                requestState(req)
+              }}</scale-tag>
+              <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" variant="info" class="schedule">
+                ⏳ Waiting for scheduled time
               </scale-tag>
-              <scale-tag v-if="req.spec?.identityProviderIssuer" variant="info">
-                Issuer: {{ req.spec.identityProviderIssuer }}
-              </scale-tag>
-              <scale-tag v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-tag>
-              <scale-tag v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-tag>
+              <scale-button
+                class="withdraw-btn"
+                variant="danger"
+                :disabled="withdrawing === req.metadata?.name"
+                @click="withdrawRequest(req)"
+              >
+                {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
+              </scale-button>
+            </div>
+          </header>
+
+          <div class="request-name">
+            <span>Request</span>
+            <code>{{ req.metadata?.name }}</code>
+          </div>
+
+          <div class="request-badges">
+            <scale-tag v-if="req.spec?.identityProviderName" variant="info">
+              IDP: {{ req.spec.identityProviderName }}
+            </scale-tag>
+            <scale-tag v-if="req.spec?.identityProviderIssuer" variant="info">
+              Issuer: {{ req.spec.identityProviderIssuer }}
+            </scale-tag>
+            <scale-tag v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-tag>
+            <scale-tag v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-tag>
+          </div>
+
+          <div class="info-grid">
+            <div class="info-block">
+              <span class="label">Requested</span>
+              <span class="value">{{ formatDate(req.status?.conditions?.[0]?.lastTransitionTime) }}</span>
+
+              <span class="label">Preferred window</span>
+              <span class="value">
+                <template v-if="req.spec?.scheduledStartTime">
+                  {{ format24Hour(req.spec.scheduledStartTime) }}
+                </template>
+                <template v-else>Not scheduled</template>
+              </span>
             </div>
 
-            <div class="info-grid">
-              <div class="info-block">
-                <span class="label">Requested</span>
-                <span class="value">{{ formatDate(req.status?.conditions?.[0]?.lastTransitionTime) }}</span>
+            <div class="info-block">
+              <span class="label">Times out</span>
+              <span class="value">
+                <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
+                  <CountdownTimer :expires-at="req.status.timeoutAt" />
+                  <small class="muted">({{ formatDate(req.status.timeoutAt) }})</small>
+                </template>
+                <template v-else>—</template>
+              </span>
 
-                <span class="label">Preferred window</span>
-                <span class="value">
-                  <template v-if="req.spec?.scheduledStartTime">
-                    {{ format24Hour(req.spec.scheduledStartTime) }}
-                  </template>
-                  <template v-else>Not scheduled</template>
-                </span>
-              </div>
-
-              <div class="info-block">
-                <span class="label">Times out</span>
-                <span class="value">
-                  <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
-                    <CountdownTimer :expires-at="req.status.timeoutAt" />
-                    <small class="muted">({{ formatDate(req.status.timeoutAt) }})</small>
-                  </template>
-                  <template v-else>—</template>
-                </span>
-
-                <span class="label">Expires</span>
-                <span class="value">
-                  <template v-if="req.status?.expiresAt && new Date(req.status.expiresAt).getTime() > Date.now()">
-                    <CountdownTimer :expires-at="req.status.expiresAt" />
-                    <small class="muted">({{ formatDate(req.status.expiresAt) }})</small>
-                  </template>
-                  <template v-else>—</template>
-                </span>
-              </div>
-
-              <div class="info-block">
-                <span class="label">Requester</span>
-                <span class="value">{{ requestUser(req) }}</span>
-
-                <span class="label">Approver status</span>
-                <span class="value">
-                  {{ approverCopy(req) }}
-                </span>
-              </div>
+              <span class="label">Expires</span>
+              <span class="value">
+                <template v-if="req.status?.expiresAt && new Date(req.status.expiresAt).getTime() > Date.now()">
+                  <CountdownTimer :expires-at="req.status.expiresAt" />
+                  <small class="muted">({{ formatDate(req.status.expiresAt) }})</small>
+                </template>
+                <template v-else>—</template>
+              </span>
             </div>
 
-            <div v-if="requestReason(req)" class="request-reason">
-              <span class="label">Reason</span>
-              <div class="reason-text">{{ requestReason(req) }}</div>
-            </div>
+            <div class="info-block">
+              <span class="label">Requester</span>
+              <span class="value">{{ requestUser(req) }}</span>
 
-            <footer class="request-footer">
-              <div class="timestamps">
-                <span v-if="req.status?.timeoutAt" class="muted-line">
-                  Timeout target: {{ formatDate(req.status.timeoutAt) }}
-                </span>
-                <span v-if="req.status?.expiresAt" class="muted-line">
-                  Expires hard stop: {{ formatDate(req.status.expiresAt) }}
-                </span>
-              </div>
-            </footer>
-          </scale-card>
-        </div>
+              <span class="label">Approver status</span>
+              <span class="value">
+                {{ approverCopy(req) }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="requestReason(req)" class="request-reason">
+            <span class="label">Reason</span>
+            <div class="reason-text">{{ requestReason(req) }}</div>
+          </div>
+
+          <footer class="request-footer">
+            <div class="timestamps">
+              <span v-if="req.status?.timeoutAt" class="muted-line">
+                Timeout target: {{ formatDate(req.status.timeoutAt) }}
+              </span>
+              <span v-if="req.status?.expiresAt" class="muted-line">
+                Expires hard stop: {{ formatDate(req.status.expiresAt) }}
+              </span>
+            </div>
+          </footer>
+        </scale-card>
+      </div>
     </section>
   </main>
 </template>

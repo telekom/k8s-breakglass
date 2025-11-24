@@ -36,9 +36,7 @@ const visibleGroups = computed(() => {
   return groupsRef.value.slice(0, COLLAPSED_GROUP_LIMIT);
 });
 
-const hiddenGroupCount = computed(() => {
-  return Math.max(groupsRef.value.length - COLLAPSED_GROUP_LIMIT, 0);
-});
+const hiddenGroupCount = computed(() => Math.max(groupsRef.value.length - COLLAPSED_GROUP_LIMIT, 0));
 
 // Theme handling
 const THEME_STORAGE_KEY = "breakglass-theme";
@@ -149,6 +147,60 @@ const activeNavId = computed(() => {
 
 const userDisplayName = computed(() => user.value?.profile.name || user.value?.profile.email || "");
 const userEmail = computed(() => user.value?.profile.email || "");
+
+const profileMenuRef = ref<HTMLElement | null>(null);
+
+const profileMenuLabel = computed(() => userDisplayName.value || userEmail.value || "Account");
+const profileMenuAriaLabel = computed(() => {
+  const tokens = [] as string[];
+  if (userDisplayName.value) tokens.push(userDisplayName.value);
+  if (userEmail.value) tokens.push(userEmail.value);
+  if (groupsRef.value.length) tokens.push(`${groupsRef.value.length} groups`);
+  return `${tokens.join(" – ")} menu`;
+});
+
+const profileMenuUserInfo = computed(() => ({
+  name: userDisplayName.value || userEmail.value || "Signed in user",
+  email: userEmail.value || "",
+}));
+
+const profileMenuServiceDescription = computed(() => {
+  if (!groupsRef.value.length) {
+    return "You are not assigned to any groups yet.";
+  }
+  return `Member of ${groupsRef.value.length} group${groupsRef.value.length === 1 ? "" : "s"}.`;
+});
+
+const profileMenuServiceLinks = computed(() => {
+  const links: Array<{ name: string; href: string; icon: string }> = [];
+  if (currentIDPName.value) {
+    links.push({
+      name: `Identity Provider: ${currentIDPName.value}`,
+      href: "javascript:void(0);",
+      icon: "service-settings",
+    });
+  }
+
+  if (!groupsRef.value.length) {
+    links.push({
+      name: "No groups assigned",
+      href: "javascript:void(0);",
+      icon: "alert-information",
+    });
+    return links;
+  }
+
+  return links.concat(
+    groupsRef.value.map((group) => ({
+      name: group,
+      href: "javascript:void(0);",
+      icon: "content-folder",
+    })),
+  );
+});
+
+const profileMenuUserInfoJson = computed(() => JSON.stringify(profileMenuUserInfo.value));
+const profileMenuServiceLinksJson = computed(() => JSON.stringify(profileMenuServiceLinks.value));
 
 function navHref(item: PrimaryNavItem) {
   return router.resolve(item.to).href;
@@ -271,74 +323,98 @@ function logout() {
   console.debug("[App] Logout initiated");
   auth?.logout();
 }
+
+watch(
+  () => profileMenuRef.value,
+  (element) => {
+    if (!element) return;
+    (element as any).logoutHandler = (event?: Event) => {
+      event?.preventDefault();
+      logout();
+    };
+    (element as any).logoutUrl = "javascript:void(0);";
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
   <main>
     <a class="skip-link" href="#main">Skip to content</a>
     <scale-telekom-app-shell>
-      <scale-telekom-header
-        slot="header"
-        type="slim"
-        :app-name="brandingTitle"
-        :logo-title="brandingTitle"
-        logo-href="/"
-        claim-lang="de"
-      >
-        <scale-telekom-nav-list slot="main-nav" variant="main-nav">
-          <scale-telekom-nav-item
-            v-for="item in primaryNavItems"
-            :key="item.id"
-            variant="main-nav"
-            :active="activeNavId === item.id"
-          >
-            <a :href="navHref(item)" @click="handlePrimaryNavClick($event, item)">
-              {{ item.label }}
-            </a>
-          </scale-telekom-nav-item>
-        </scale-telekom-nav-list>
+      <template #header>
+        <scale-telekom-header
+          type="slim"
+          :app-name="brandingTitle"
+          :logo-title="brandingTitle"
+          logo-href="/"
+          claim-lang="de"
+        >
+          <template #main-nav>
+            <scale-telekom-nav-list variant="main-nav">
+              <scale-telekom-nav-item
+                v-for="item in primaryNavItems"
+                :key="item.id"
+                variant="main-nav"
+                :active="activeNavId === item.id"
+              >
+                <a :href="navHref(item)" @click="handlePrimaryNavClick($event, item)">
+                  {{ item.label }}
+                </a>
+              </scale-telekom-nav-item>
+            </scale-telekom-nav-list>
+          </template>
 
-        <div slot="functions" class="header-functions">
-          <div v-if="authenticated" class="user-pill">
-            <scale-icon-user-file-user aria-hidden="true" class="user-pill__icon"></scale-icon-user-file-user>
-            <div class="user-pill__meta">
-              <span class="user-pill__name">{{ userDisplayName }}</span>
-              <span v-if="userEmail" class="user-pill__email">{{ userEmail }}</span>
+          <template #functions>
+            <div class="header-functions">
+              <scale-telekom-profile-menu
+                v-if="authenticated"
+                ref="profileMenuRef"
+                class="profile-menu"
+                :label="profileMenuLabel"
+                :accessibility-label="profileMenuAriaLabel"
+                :app-name="brandingTitle"
+                :service-name="brandingTitle"
+                :service-description="profileMenuServiceDescription"
+                :logged-in="true"
+                hide-login-settings
+                logout-label="Logout"
+                logout-url="javascript:void(0);"
+                :user-info="profileMenuUserInfoJson"
+                :service-links="profileMenuServiceLinksJson"
+              ></scale-telekom-profile-menu>
+              <scale-button v-if="authenticated" variant="secondary" @click="logout"> Logout </scale-button>
+              <scale-button v-else variant="secondary" @click="login"> Login </scale-button>
+              <button
+                type="button"
+                class="theme-toggle"
+                :aria-pressed="theme === 'dark'"
+                :aria-label="themeToggleLabel"
+                :title="themeToggleLabel"
+                @click="toggleTheme"
+              >
+                <scale-icon-action
+                  class="theme-toggle__icon"
+                  :icon="themeIcon"
+                  aria-hidden="true"
+                  tabindex="-1"
+                ></scale-icon-action>
+                <span class="theme-toggle__text">{{ theme === "light" ? "Dark" : "Light" }} mode</span>
+              </button>
             </div>
-            <span v-if="currentIDPName" class="user-pill__idp">{{ currentIDPName }}</span>
-          </div>
-          <scale-button v-if="authenticated" variant="secondary" @click="logout"> Logout </scale-button>
-          <scale-button v-else variant="secondary" @click="login"> Login </scale-button>
-          <button
-            type="button"
-            class="theme-toggle"
-            :aria-pressed="theme === 'dark'"
-            :aria-label="themeToggleLabel"
-            :title="themeToggleLabel"
-            @click="toggleTheme"
-          >
-            <scale-icon-action
-              class="theme-toggle__icon"
-              :icon="themeIcon"
-              aria-hidden="true"
-              tabindex="-1"
-            ></scale-icon-action>
-            <span class="theme-toggle__text">{{ theme === 'light' ? 'Dark' : 'Light' }} mode</span>
-          </button>
-        </div>
-      </scale-telekom-header>
+          </template>
+        </scale-telekom-header>
+      </template>
 
       <div id="main" class="app-container">
         <div v-if="authenticated && groupsRef.length" class="groups-panel">
           <scale-accordion>
             <scale-accordion-item :expanded="groupsExpanded" @scale-change="groupsExpanded = $event.detail.expanded">
-              <span slot="header" class="groups-header">Your Groups ({{ groupsRef.length }})</span>
+              <template #header>
+                <span class="groups-header">Your Groups ({{ groupsRef.length }})</span>
+              </template>
               <div class="groups-list">
-                <scale-tag
-                  v-for="group in visibleGroups"
-                  :key="group"
-                  class="group-tag"
-                >
+                <scale-tag v-for="group in visibleGroups" :key="group" class="group-tag">
                   {{ group }}
                 </scale-tag>
               </div>
@@ -389,6 +465,12 @@ function logout() {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.header-functions > * {
+  flex-shrink: 0;
 }
 
 .header-functions scale-button::part(button) {
@@ -431,37 +513,34 @@ function logout() {
   font-weight: 600;
 }
 
-.user-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.35rem 0.85rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-default);
-  background-color: color-mix(in srgb, var(--surface-card) 85%, transparent);
+.profile-menu {
+  flex: 1 1 220px;
+  min-width: 0;
 }
 
-
-.user-pill__meta {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.1;
+@media (max-width: 1400px) {
+  .header-functions {
+    justify-content: flex-start;
+  }
 }
 
-.user-pill__name {
-  font-weight: 600;
-  color: var(--telekom-color-primary-standard);
-}
+@media (max-width: 1100px) {
+  .header-functions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 0.5rem;
+  }
 
-.user-pill__email {
-  font-size: 0.82rem;
-  color: var(--telekom-color-text-and-icon-standard);
-}
+  .header-functions scale-button,
+  .header-functions scale-button::part(button),
+  .theme-toggle {
+    width: 100%;
+  }
 
-.user-pill__idp {
-  font-size: 0.8rem;
-  color: var(--accent-info);
-  font-weight: 500;
+  .theme-toggle {
+    justify-content: center;
+  }
 }
 
 .groups-panel {

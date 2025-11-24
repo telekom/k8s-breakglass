@@ -728,7 +728,7 @@ function drop() {
   text-transform: uppercase;
   font-size: 0.75rem;
   letter-spacing: 0.1em;
-  color: var(--telekom-color-text-and-icon-standard);
+  color: var(--telekom-color-primary-standard);
   margin: 0 0 0.25rem 0;
 }
 
@@ -887,7 +887,7 @@ function drop() {
 }
 
 .breakglass-card__requirement {
-  color: var(--text-muted);
+  color: var(--telekom-color-functional-danger-standard);
   font-weight: 600;
   margin-top: 0.5rem;
 }

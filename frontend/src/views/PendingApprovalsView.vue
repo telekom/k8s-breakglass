@@ -582,11 +582,13 @@ onMounted(fetchPendingApprovals);
         This field is required.
       </p>
     </div>
-    <div slot="actions" class="modal-actions">
-      <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
-      <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
-      <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
-    </div>
+    <template #actions>
+      <div class="modal-actions">
+        <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
+        <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
+        <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
+      </div>
+    </template>
   </scale-modal>
 </template>
 

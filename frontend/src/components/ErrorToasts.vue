@@ -4,6 +4,9 @@ import { useErrors, dismissError } from "@/services/toast";
 
 const { errors } = useErrors();
 
+const BASE_VERTICAL_OFFSET = 16;
+const STACK_SPACING = 108;
+
 function headingFor(error: AppError) {
   if (error.type === "success") {
     return "Success";
@@ -12,94 +15,82 @@ function headingFor(error: AppError) {
 }
 
 function variantFor(error: AppError) {
-  return error.type === "success" ? "success" : "danger";
+  return error.type === "success" ? "success" : "error";
+}
+
+function autoHideDurationFor(error: AppError) {
+  if (error.autoHideDuration && error.autoHideDuration > 0) {
+    return error.autoHideDuration;
+  }
+  return error.type === "success" ? 6000 : 10000;
+}
+
+function updateToastState(id: string, opened: boolean) {
+  const toast = errors.find((err) => err.id === id);
+  if (toast) {
+    toast.opened = opened;
+  }
+}
+
+function handleToastClosing(id: string) {
+  updateToastState(id, false);
+}
+
+function handleToastClosed(id: string) {
+  dismissError(id);
+}
+
+function verticalOffset(index: number) {
+  return BASE_VERTICAL_OFFSET + index * STACK_SPACING;
 }
 </script>
 
 <template>
-  <div class="toast-container" aria-live="polite" aria-atomic="true">
-    <transition-group name="toast" tag="div">
-      <div v-for="e in errors" :key="e.id" class="toast-wrapper">
-        <scale-notification
-          :variant="variantFor(e)"
-          :heading="headingFor(e)"
-          class="toast-notification"
-          :data-type="variantFor(e)"
-        >
-          <div class="toast-content">
-            <p>{{ e.message }}</p>
-            <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
-          </div>
-          <div class="toast-actions">
-            <scale-button variant="secondary" size="small" @click="dismissError(e.id)">Dismiss</scale-button>
-          </div>
-        </scale-notification>
-      </div>
-    </transition-group>
+  <div class="toast-region" aria-live="polite" aria-atomic="true">
+    <scale-notification-toast
+      v-for="(e, index) in errors"
+      :key="e.id"
+      alignment="top-right"
+      :opened="e.opened !== false"
+      :variant="variantFor(e)"
+      :position-vertical="verticalOffset(index)"
+      :auto-hide="true"
+      :auto-hide-duration="autoHideDurationFor(e)"
+      :fade-duration="280"
+      @scale-closing="handleToastClosing(e.id)"
+      @scale-close="handleToastClosed(e.id)"
+    >
+      <template #header>
+        <span>{{ headingFor(e) }}</span>
+      </template>
+      <template #body>
+        <p class="toast-body">
+          {{ e.message }}
+          <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
+        </p>
+      </template>
+    </scale-notification-toast>
   </div>
 </template>
 
 <style scoped>
-.toast-container {
-  position: fixed;
-  top: 1rem;
-  right: 1rem;
-  z-index: 10000;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  max-width: 400px;
-  width: 100%;
+.toast-region {
+  pointer-events: none;
 }
 
-.toast-wrapper {
-  width: 100%;
+.toast-region :deep(scale-notification-toast) {
+  pointer-events: all;
 }
 
-.toast-notification {
-  width: 100%;
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--telekom-color-black) 35%, transparent);
-  border-radius: 14px;
-  border-left: 4px solid var(--accent-critical);
-}
-
-.toast-notification[data-type="success"] {
-  border-left-color: var(--accent-success);
-}
-
-.toast-notification[data-type="danger"] {
-  border-left-color: var(--accent-critical);
-}
-
-.toast-content {
-  margin-bottom: 0.5rem;
-}
-
-.toast-content p {
+.toast-body {
   margin: 0;
+  font-size: 0.9rem;
 }
 
 .cid {
-  display: block;
+  display: inline-block;
   font-size: 0.75rem;
   color: var(--text-muted);
-  margin-top: 0.2rem;
-}
-
-.toast-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 0.5rem;
-}
-
-.toast-enter-active,
-.toast-leave-active {
-  transition: all 0.25s ease;
-}
-
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
+  margin-left: 0.35rem;
 }
 </style>

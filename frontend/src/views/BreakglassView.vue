@@ -365,9 +365,15 @@ async function onDrop(bg: any) {
 
 .breakglass-grid {
   margin-top: 1rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 1.5rem;
+  column-width: 360px;
+  column-gap: 1.5rem;
+}
+
+.breakglass-grid > * {
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 1.5rem;
+  break-inside: avoid;
 }
 
 .loading,
