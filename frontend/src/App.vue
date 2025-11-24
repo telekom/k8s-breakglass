@@ -342,77 +342,70 @@ watch(
   <main>
     <a class="skip-link" href="#main">Skip to content</a>
     <scale-telekom-app-shell>
-      <template #header>
-        <scale-telekom-header
-          type="slim"
-          :app-name="brandingTitle"
-          :logo-title="brandingTitle"
-          logo-href="/"
-          claim-lang="de"
-        >
-          <template #main-nav>
-            <scale-telekom-nav-list variant="main-nav">
-              <scale-telekom-nav-item
-                v-for="item in primaryNavItems"
-                :key="item.id"
-                variant="main-nav"
-                :active="activeNavId === item.id"
-              >
-                <a :href="navHref(item)" @click="handlePrimaryNavClick($event, item)">
-                  {{ item.label }}
-                </a>
-              </scale-telekom-nav-item>
-            </scale-telekom-nav-list>
-          </template>
+      <scale-telekom-header
+        slot="header"
+        type="slim"
+        :app-name="brandingTitle"
+        :logo-title="brandingTitle"
+        logo-href="/"
+        claim-lang="de"
+      >
+        <scale-telekom-nav-list slot="main-nav" variant="main-nav">
+          <scale-telekom-nav-item
+            v-for="item in primaryNavItems"
+            :key="item.id"
+            variant="main-nav"
+            :active="activeNavId === item.id"
+          >
+            <a :href="navHref(item)" @click="handlePrimaryNavClick($event, item)">
+              {{ item.label }}
+            </a>
+          </scale-telekom-nav-item>
+        </scale-telekom-nav-list>
 
-          <template #functions>
-            <div class="header-functions">
-              <scale-telekom-profile-menu
-                v-if="authenticated"
-                ref="profileMenuRef"
-                class="profile-menu"
-                :label="profileMenuLabel"
-                :accessibility-label="profileMenuAriaLabel"
-                :app-name="brandingTitle"
-                :service-name="brandingTitle"
-                :service-description="profileMenuServiceDescription"
-                :logged-in="true"
-                hide-login-settings
-                logout-label="Logout"
-                logout-url="javascript:void(0);"
-                :user-info="profileMenuUserInfoJson"
-                :service-links="profileMenuServiceLinksJson"
-              ></scale-telekom-profile-menu>
-              <scale-button v-if="authenticated" variant="secondary" @click="logout"> Logout </scale-button>
-              <scale-button v-else variant="secondary" @click="login"> Login </scale-button>
-              <button
-                type="button"
-                class="theme-toggle"
-                :aria-pressed="theme === 'dark'"
-                :aria-label="themeToggleLabel"
-                :title="themeToggleLabel"
-                @click="toggleTheme"
-              >
-                <scale-icon-action
-                  class="theme-toggle__icon"
-                  :icon="themeIcon"
-                  aria-hidden="true"
-                  tabindex="-1"
-                ></scale-icon-action>
-                <span class="theme-toggle__text">{{ theme === "light" ? "Dark" : "Light" }} mode</span>
-              </button>
-            </div>
-          </template>
-        </scale-telekom-header>
-      </template>
+        <div slot="functions" class="header-functions">
+          <scale-telekom-profile-menu
+            v-if="authenticated"
+            ref="profileMenuRef"
+            class="profile-menu"
+            :label="profileMenuLabel"
+            :accessibility-label="profileMenuAriaLabel"
+            :app-name="brandingTitle"
+            :service-name="brandingTitle"
+            :service-description="profileMenuServiceDescription"
+            :logged-in="true"
+            hide-login-settings
+            logout-label="Logout"
+            logout-url="javascript:void(0);"
+            :user-info="profileMenuUserInfoJson"
+            :service-links="profileMenuServiceLinksJson"
+          ></scale-telekom-profile-menu>
+          <scale-button v-if="authenticated" variant="secondary" @click="logout"> Logout </scale-button>
+          <scale-button v-else variant="secondary" @click="login"> Login </scale-button>
+          <button
+            type="button"
+            class="theme-toggle"
+            :aria-pressed="theme === 'dark'"
+            :aria-label="themeToggleLabel"
+            :title="themeToggleLabel"
+            @click="toggleTheme"
+          >
+            <scale-icon-action
+              class="theme-toggle__icon"
+              :icon="themeIcon"
+              aria-hidden="true"
+              tabindex="-1"
+            ></scale-icon-action>
+            <span class="theme-toggle__text">{{ theme === "light" ? "Dark" : "Light" }} mode</span>
+          </button>
+        </div>
+      </scale-telekom-header>
 
       <div id="main" class="app-container">
         <div v-if="authenticated && groupsRef.length" class="groups-panel">
           <scale-accordion>
             <scale-accordion-item :expanded="groupsExpanded" @scale-change="groupsExpanded = $event.detail.expanded">
-              <template #header>
-                <span class="groups-header">Your Groups ({{ groupsRef.length }})</span>
-              </template>
+              <span slot="header" class="groups-header">Your Groups ({{ groupsRef.length }})</span>
               <div class="groups-list">
                 <scale-tag v-for="group in visibleGroups" :key="group" class="group-tag">
                   {{ group }}

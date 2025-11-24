@@ -60,15 +60,11 @@ function verticalOffset(index: number) {
       @scale-closing="handleToastClosing(e.id)"
       @scale-close="handleToastClosed(e.id)"
     >
-      <template #header>
-        <span>{{ headingFor(e) }}</span>
-      </template>
-      <template #body>
-        <p class="toast-body">
-          {{ e.message }}
-          <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
-        </p>
-      </template>
+      <span slot="header">{{ headingFor(e) }}</span>
+      <p slot="body" class="toast-body">
+        {{ e.message }}
+        <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
+      </p>
     </scale-notification-toast>
   </div>
 </template>
