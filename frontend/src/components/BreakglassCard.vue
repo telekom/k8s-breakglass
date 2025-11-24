@@ -356,17 +356,25 @@ const metaBadges = computed(() => {
   return badges;
 });
 
-const cardAccentClass = computed(() => {
-  if (sessionActive.value) return "accent-success";
-  if (sessionPending.value) return "accent-warning";
-  if (requiresReason.value) return "accent-critical";
-  return "";
-});
-
 const cardStateTone = computed(() => {
   if (sessionActive.value) return statusToneFor("active");
   if (sessionPending.value) return statusToneFor("pending");
   return statusToneFor("available");
+});
+
+const stateChipVariant = computed(() => {
+  switch (cardStateTone.value) {
+    case "success":
+      return "success";
+    case "warning":
+      return "warning";
+    case "danger":
+      return "danger";
+    case "info":
+      return "info";
+    default:
+      return "neutral";
+  }
 });
 
 const expiryHumanized = computed(() => {
@@ -401,6 +409,26 @@ function toggleScheduleOptions() {
     scheduledStartTime.value = null;
     scheduleDateTimeLocal.value = "";
   }
+}
+
+function extractScaleValue(ev: Event): string {
+  const target = ev.target as HTMLInputElement | HTMLTextAreaElement | null;
+  if (target && typeof target.value === "string") {
+    return target.value;
+  }
+  const detail = (ev as CustomEvent<{ value?: string }>).detail;
+  if (detail && typeof detail.value === "string") {
+    return detail.value;
+  }
+  return "";
+}
+
+function handleDurationChange(ev: Event) {
+  durationInput.value = extractScaleValue(ev);
+}
+
+function handleReasonChange(ev: Event) {
+  requestReason.value = extractScaleValue(ev);
 }
 
 function request() {
@@ -442,101 +470,117 @@ function drop() {
 </script>
 
 <template>
-  <article class="ui-card breakglass-card" :class="cardAccentClass">
+  <scale-card class="breakglass-card">
     <header class="breakglass-card__header">
       <div class="breakglass-card__title">
         <p class="eyebrow">Escalation target</p>
-        <h3 class="ui-card-title">{{ breakglass.to }}</h3>
+        <h3 class="card-title">{{ breakglass.to }}</h3>
         <p class="breakglass-card__subtitle">
           Available from <span class="highlight">{{ requesterGroupsLabel }}</span>
         </p>
         <p v-if="requesterGroups.length > 1" class="breakglass-card__hint">
           Visible via {{ requesterGroups.length }} of your groups
         </p>
-        <div class="ui-card-meta" aria-label="Session status and requirements">
-          <span v-for="badge in metaBadges" :key="badge.label" class="ui-chip" :class="badge.variant">
+        <div class="breakglass-card__meta" aria-label="Session status and requirements">
+          <scale-chip v-for="badge in metaBadges" :key="badge.label" size="small" :variant="badge.variant">
             {{ badge.label }}
-          </span>
+          </scale-chip>
         </div>
       </div>
       <div class="breakglass-card__state-panel" aria-live="polite">
-          <span class="ui-status-badge" :class="`tone-${cardStateTone}`">
-            <template v-if="sessionActive">Active session</template>
-            <template v-else-if="sessionPending">Pending request</template>
-            <template v-else>Available</template>
-          </span>
-          <p v-if="sessionActive && expiryHumanized" class="state-detail">Expires in {{ expiryHumanized }}</p>
-          <p v-else-if="sessionPending && timeoutHumanized" class="state-detail">Timeout in {{ timeoutHumanized }}</p>
-          <p v-else class="state-detail">Up to {{ durationHumanized }}</p>
-          <p v-if="breakglass.approvalGroups?.length" class="state-detail">
-            Needs approval from {{ breakglass.approvalGroups.length }} group<span
-              v-if="breakglass.approvalGroups.length > 1"
-              >s</span
-            >
-          </p>
+        <scale-chip size="small" :variant="stateChipVariant">
+          <template v-if="sessionActive">Active session</template>
+          <template v-else-if="sessionPending">Pending request</template>
+          <template v-else>Available</template>
+        </scale-chip>
+        <p v-if="sessionActive && expiryHumanized" class="state-detail">Expires in {{ expiryHumanized }}</p>
+        <p v-else-if="sessionPending && timeoutHumanized" class="state-detail">Timeout in {{ timeoutHumanized }}</p>
+        <p v-else class="state-detail">Up to {{ durationHumanized }}</p>
+        <p v-if="breakglass.approvalGroups?.length" class="state-detail">
+          Needs approval from {{ breakglass.approvalGroups.length }} group<span
+            v-if="breakglass.approvalGroups.length > 1"
+            >s</span
+          >
+        </p>
       </div>
     </header>
 
-    <div v-if="sessionPending || sessionActive" class="ui-info-grid breakglass-card__info">
-        <div v-if="sessionPending" class="ui-info-item">
-          <span class="label">Pending request</span>
-          <span class="value">{{ timeoutHumanized || "Awaiting approver" }}</span>
-        </div>
-        <div v-if="sessionActive" class="ui-info-item">
-          <span class="label">Active session</span>
-          <span class="value">{{ expiryHumanized || "Running" }}</span>
-        </div>
+    <div v-if="sessionPending || sessionActive" class="info-grid breakglass-card__info">
+      <div v-if="sessionPending" class="info-item">
+        <span class="label">Pending request</span>
+        <span class="value">{{ timeoutHumanized || "Awaiting approver" }}</span>
+      </div>
+      <div v-if="sessionActive" class="info-item">
+        <span class="label">Active session</span>
+        <span class="value">{{ expiryHumanized || "Running" }}</span>
+      </div>
     </div>
 
     <div v-if="requesterGroups.length" class="breakglass-card__groups">
       <div class="groups-header">
         <span class="label">Available via</span>
-        <span class="count-chip">{{ requesterGroups.length }} groups</span>
+        <scale-chip size="small" variant="info">{{ requesterGroups.length }} groups</scale-chip>
       </div>
-      <div class="ui-pill-stack compact-pill-stack">
-        <span v-for="group in visibleRequesterGroups" :key="group">{{ group }}</span>
+      <div class="breakglass-card__pill-list">
+        <scale-chip
+          v-for="group in visibleRequesterGroups"
+          :key="group"
+          size="small"
+          variant="secondary"
+        >
+          {{ group }}
+        </scale-chip>
       </div>
-      <button
+      <scale-button
         v-if="hiddenRequesterGroupCount > 0"
-        type="button"
-        class="ui-link-button"
+        size="small"
+        variant="secondary"
+        class="inline-action"
         @click="showAllRequesterGroups = !showAllRequesterGroups"
       >
         {{ showAllRequesterGroups ? "Show fewer groups" : `Show all ${requesterGroups.length} groups` }}
-      </button>
+      </scale-button>
     </div>
 
-    <section v-if="reasonDescription" class="ui-section">
+    <section v-if="reasonDescription" class="card-section">
       <h4>Reason policy</h4>
       <p>{{ reasonDescription }}</p>
     </section>
 
-    <section v-if="approvalGroupsList.length" class="ui-section breakglass-card__approvers">
+    <section v-if="approvalGroupsList.length" class="card-section breakglass-card__approvers">
       <div class="groups-header">
         <span class="label">Approval groups</span>
-        <span class="count-chip">{{ approvalGroupsList.length }} groups</span>
+        <scale-chip size="small" variant="info">{{ approvalGroupsList.length }} groups</scale-chip>
       </div>
-      <div class="ui-pill-stack compact-pill-stack">
-        <span v-for="group in visibleApprovalGroups" :key="group">{{ group }}</span>
+      <div class="breakglass-card__pill-list">
+        <scale-chip
+          v-for="group in visibleApprovalGroups"
+          :key="group"
+          size="small"
+          variant="secondary"
+        >
+          {{ group }}
+        </scale-chip>
       </div>
-      <button
+      <scale-button
         v-if="hiddenApprovalGroupCount > 0"
-        type="button"
-        class="ui-link-button"
+        size="small"
+        variant="secondary"
+        class="inline-action"
         @click="showAllApprovalGroups = !showAllApprovalGroups"
       >
         {{ showAllApprovalGroups ? "Show fewer groups" : `Show all ${approvalGroupsList.length} groups` }}
-      </button>
+      </scale-button>
     </section>
 
     <div class="breakglass-card__cta">
       <div class="cta-copy">
-        <p v-if="sessionPending" class="ui-muted">Request pending approval. We'll notify you if anything changes.</p>
-        <p v-else-if="sessionActive" class="ui-muted">Session is active. Drop it once you're done.</p>
-        <p v-else-if="requiresReason" class="ui-muted">✍️ Describe why you need access to request.</p>
-        <p v-else class="ui-muted">Request access instantly or schedule a window.</p>
+        <p v-if="sessionPending" class="text-muted">Request pending approval. We'll notify you if anything changes.</p>
+        <p v-else-if="sessionActive" class="text-muted">Session is active. Drop it once you're done.</p>
+        <p v-else-if="requiresReason" class="text-muted">✍️ Describe why you need access to request.</p>
+        <p v-else class="text-muted">Request access instantly or schedule a window.</p>
       </div>
-      <div class="ui-actions-row">
+      <div class="actions-row">
         <scale-button v-if="sessionPending" variant="primary" @click="withdraw">Withdraw</scale-button>
         <scale-button v-else-if="sessionActive" variant="secondary" @click="drop">Drop session</scale-button>
         <scale-button v-else @click="openRequest">Request access</scale-button>
@@ -546,114 +590,120 @@ function drop() {
     <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__error">
       This escalation requires a reason.
     </p>
+  </scale-card>
 
-    <div v-if="showRequestModal" class="request-modal-overlay">
-      <div class="request-modal">
-        <button class="modal-close" aria-label="Close" @click="closeRequestModal">×</button>
-        <h3>Request breakglass</h3>
+  <scale-modal
+    v-if="showRequestModal"
+    heading="Request breakglass"
+    size="default"
+    :opened="showRequestModal"
+    @scale-close="closeRequestModal"
+  >
+    <div class="duration-selector">
+      <scale-text-field
+        id="duration-input"
+        label="Duration"
+        type="text"
+        :value="durationInput"
+        :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
+        @scaleChange="handleDurationChange"
+      ></scale-text-field>
+      <p class="helper">
+        Max allowed: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}. Minimum: 1 minute. Enter a
+        shorter duration if needed.
+      </p>
+      <p v-if="durationInput" class="helper">
+        Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
+      </p>
+      <scale-button size="small" variant="secondary" class="inline-action" @click="showDurationHints = !showDurationHints">
+        {{ showDurationHints ? "Hide common durations" : "Show common durations" }}
+      </scale-button>
+      <div v-if="showDurationHints" class="hint-box">
+        <p>
+          Examples: 30m, 1h, 2h, 4h (all less than max
+          {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
+        </p>
+      </div>
+    </div>
 
-        <div class="duration-selector">
-          <label for="duration-input"
-            >Duration (default: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}, min: 1m):</label
+    <div class="schedule-section">
+      <scale-button size="small" variant="secondary" class="inline-action" @click="toggleScheduleOptions">
+        <span v-if="!showScheduleOptions">Schedule for future date (optional)</span>
+        <span v-else>Hide schedule options</span>
+      </scale-button>
+
+      <div v-if="showScheduleOptions" class="schedule-details">
+        <p class="schedule-intro">Use the 24-hour date & time picker below. Leave it empty to start immediately.</p>
+        <div class="schedule-picker">
+          <scale-text-field
+            :id="'scheduled-date-' + breakglass.to"
+            label="Date"
+            type="date"
+            :min="minScheduleDate"
+            :value="scheduleDatePart"
+            @scaleChange="scheduleDatePart = $event.target.value"
+            style="flex: 2;"
+          ></scale-text-field>
+          <scale-select
+            :id="'scheduled-hour-' + breakglass.to"
+            label="Hour (24h)"
+            :value="scheduleHourPart"
+            @scaleChange="scheduleHourPart = $event.target.value"
+            style="flex: 1;"
           >
-          <input
-            id="duration-input"
-            v-model="durationInput"
-            type="text"
-            :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
-          />
-          <p class="helper">
-            Max allowed: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}. Minimum: 1 minute. Enter a
-            shorter duration if needed.
-          </p>
-          <p v-if="durationInput" class="helper">
-            Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
-          </p>
-          <button type="button" class="ui-link-button small" @click="showDurationHints = !showDurationHints">
-            {{ showDurationHints ? "⊖ Hide" : "⊕ Show" }} common durations
-          </button>
-          <div v-if="showDurationHints" class="hint-box">
-            <p>
-              Examples: 30m, 1h, 2h, 4h (all less than max
-              {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
-            </p>
-          </div>
-        </div>
-
-        <div class="schedule-section">
-          <button type="button" class="ui-link-button" @click="toggleScheduleOptions">
-            <span v-if="!showScheduleOptions">⊕ Schedule for future date (optional)</span>
-            <span v-else>⊖ Schedule for future date (optional)</span>
-          </button>
-
-          <div v-if="showScheduleOptions" class="schedule-details">
-            <p class="schedule-intro">Use the 24-hour date & time picker below. Leave it empty to start immediately.</p>
-            <div class="schedule-picker">
-              <label class="schedule-field" :for="'scheduled-date-' + breakglass.to">
-                Date
-                <input
-                  :id="'scheduled-date-' + breakglass.to"
-                  v-model="scheduleDatePart"
-                  type="date"
-                  :min="minScheduleDate"
-                />
-              </label>
-              <label class="schedule-field" :for="'scheduled-hour-' + breakglass.to">
-                Hour (24h)
-                <select :id="'scheduled-hour-' + breakglass.to" v-model="scheduleHourPart">
-                  <option v-for="hour in hourOptions" :key="hour" :value="hour">{{ hour }}</option>
-                </select>
-              </label>
-              <label class="schedule-field" :for="'scheduled-minute-' + breakglass.to">
-                Minute
-                <select :id="'scheduled-minute-' + breakglass.to" v-model="scheduleMinutePart">
-                  <option v-for="minute in minuteOptions" :key="minute" :value="minute">{{ minute }}</option>
-                </select>
-              </label>
-            </div>
-            <div v-if="scheduleDatePart" class="schedule-picker-actions">
-              <button type="button" class="ui-link-button small" @click="clearScheduledSelection">
-                Clear selection
-              </button>
-            </div>
-            <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
-              Earliest allowed start: <strong>{{ earliestSchedulePreview || "Soonest available" }}</strong>
-            </p>
-
-            <div v-if="scheduledStartTime" class="schedule-preview">
-              <p><strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}</p>
-              <p class="muted">Your local time: {{ format24HourWithTZ(scheduledStartTime) }}</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="reason-field">
-          <label for="reason-field-input">Reason {{ reasonCharCount }}/{{ reasonCharLimit }}:</label>
-          <textarea
-            id="reason-field-input"
-            v-model="requestReason"
-            :maxlength="reasonCharLimit"
-            :placeholder="
-              (breakglass.requestReason && breakglass.requestReason.description) ||
-              'Optional reason (max 1024 characters)'
-            "
-            rows="4"
-          ></textarea>
-          <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning">
-            ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
-          </p>
-          <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error">This field is required.</p>
-        </div>
-
-        <div class="modal-actions">
-          <scale-button :disabled="requiresReason && !(requestReason || '').trim()" @click="request"
-            >Confirm Request</scale-button
+            <scale-select-option v-for="hour in hourOptions" :key="hour" :value="hour">{{ hour }}</scale-select-option>
+          </scale-select>
+          <scale-select
+            :id="'scheduled-minute-' + breakglass.to"
+            label="Minute"
+            :value="scheduleMinutePart"
+            @scaleChange="scheduleMinutePart = $event.target.value"
+            style="flex: 1;"
           >
-          <scale-button variant="secondary" @click="closeRequestModal">Cancel</scale-button>
+            <scale-select-option v-for="minute in minuteOptions" :key="minute" :value="minute">{{ minute }}</scale-select-option>
+          </scale-select>
+        </div>
+        <div v-if="scheduleDatePart" class="schedule-picker-actions">
+          <scale-button size="small" variant="secondary" class="inline-action" @click="clearScheduledSelection">
+            Clear selection
+          </scale-button>
+        </div>
+        <p :id="'schedule-time-hint-' + breakglass.to" class="schedule-locale-hint">
+          Earliest allowed start: <strong>{{ earliestSchedulePreview || "Soonest available" }}</strong>
+        </p>
+
+        <div v-if="scheduledStartTime" class="schedule-preview">
+          <p><strong>Request will start at (UTC):</strong> {{ new Date(scheduledStartTime).toUTCString() }}</p>
+          <p class="muted">Your local time: {{ format24HourWithTZ(scheduledStartTime) }}</p>
         </div>
       </div>
     </div>
-  </article>
+
+    <div class="reason-field">
+      <scale-textarea
+        id="reason-field-input"
+        label="Reason"
+        :value="requestReason"
+        :max-length="reasonCharLimit"
+        :placeholder="
+          (breakglass.requestReason && breakglass.requestReason.description) ||
+          'Optional reason (max 1024 characters)'
+        "
+        @scaleChange="handleReasonChange"
+      ></scale-textarea>
+      <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning">
+        ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
+      </p>
+      <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error">This field is required.</p>
+    </div>
+
+    <div class="modal-actions" slot="actions">
+      <scale-button :disabled="requiresReason && !(requestReason || '').trim()" @click="request">
+        Confirm Request
+      </scale-button>
+      <scale-button variant="secondary" @click="closeRequestModal">Cancel</scale-button>
+    </div>
+  </scale-modal>
 </template>
 
 <style scoped>
@@ -661,10 +711,7 @@ function drop() {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  background: var(--breakglass-card-bg);
-  border: 1px solid var(--breakglass-card-border);
-  box-shadow: var(--breakglass-card-shadow);
-  color: var(--breakglass-text-strong);
+  /* Let scale-card handle background/border/shadow */
 }
 
 .breakglass-card__header {
@@ -683,33 +730,40 @@ function drop() {
   text-transform: uppercase;
   font-size: 0.75rem;
   letter-spacing: 0.1em;
-  color: color-mix(in srgb, var(--breakglass-text-muted) 80%, transparent);
+  color: var(--telekom-color-text-placeholder);
   margin: 0 0 0.25rem 0;
 }
 
 .breakglass-card__subtitle {
   margin: 0.1rem 0;
-  color: var(--breakglass-text-muted);
+  color: var(--telekom-color-text-secondary);
 }
 
 .breakglass-card__subtitle .highlight {
-  color: var(--breakglass-text-strong);
+  color: var(--telekom-color-text-primary);
   font-weight: 600;
 }
 
 .breakglass-card__hint {
   margin: 0;
-  color: var(--breakglass-text-muted);
+  color: var(--telekom-color-text-secondary);
   font-size: 0.9rem;
+}
+
+.breakglass-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 
 .breakglass-card__state-panel {
   min-width: 200px;
   flex: 0 0 240px;
   align-self: stretch;
-  background: color-mix(in srgb, var(--surface-card) 90%, transparent);
-  border: 1px solid var(--border-default);
-  border-radius: 16px;
+  background: var(--telekom-color-ui-background-subtle);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--telekom-radius-large);
   padding: 0.85rem 1rem;
   display: flex;
   flex-direction: column;
@@ -718,20 +772,195 @@ function drop() {
 }
 
 .breakglass-card__state-panel .state-detail {
-  color: var(--breakglass-text-strong);
+  color: var(--telekom-color-text-primary);
+  font-size: 0.9rem;
+  margin: 0;
 }
 
-.state-label {
-  font-size: 0.85rem;
-  letter-spacing: 0.08em;
+.breakglass-card__info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+}
+
+.info-item {
+  background: var(--telekom-color-ui-background-subtle);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--telekom-radius-standard);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.info-item .label {
+  font-size: 0.75rem;
   text-transform: uppercase;
-  font-weight: 700;
-  color: var(--breakglass-text-strong);
+  letter-spacing: 0.05em;
+  color: var(--telekom-color-text-secondary);
+  margin-bottom: 0.25rem;
 }
 
-.breakglass-card__info .ui-info-item .value {
+.info-item .value {
   font-size: 0.95rem;
   line-height: 1.35;
+  color: var(--telekom-color-text-primary);
+  font-weight: 600;
+}
+
+.breakglass-card__groups {
+  padding: 0.35rem 0 0 0;
+}
+
+.card-section {
+  margin-top: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--telekom-color-ui-background-subtle);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--telekom-radius-standard);
+}
+
+.groups-header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.groups-header .label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--telekom-color-text-secondary);
+}
+
+.breakglass-card__pill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.inline-action {
+  margin-top: 0.5rem;
+}
+
+.breakglass-card__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
+}
+
+.cta-copy {
+  flex: 1 1 320px;
+  color: var(--telekom-color-text-secondary);
+  font-size: 0.9rem;
+}
+
+.cta-copy p {
+  margin: 0;
+}
+
+.text-muted {
+  color: var(--telekom-color-text-secondary);
+}
+
+.actions-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.breakglass-card__error {
+  color: var(--telekom-color-functional-danger-standard);
+  font-weight: 600;
+  margin-top: 0.5rem;
+}
+
+/* Modal internal styles */
+.duration-selector,
+.schedule-section,
+.reason-field {
+  margin-bottom: 1.5rem;
+}
+
+.helper {
+  font-size: 0.85rem;
+  color: var(--telekom-color-text-secondary);
+  margin-top: 0.25rem;
+}
+
+.helper.warning {
+  color: var(--telekom-color-functional-warning-standard);
+}
+
+.helper.error {
+  color: var(--telekom-color-functional-danger-standard);
+}
+
+.hint-box {
+  background: var(--telekom-color-ui-background-subtle);
+  padding: 0.5rem;
+  border-radius: var(--telekom-radius-standard);
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.schedule-details {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--telekom-color-ui-background-subtle);
+  border-radius: var(--telekom-radius-standard);
+}
+
+.schedule-intro {
+  margin-top: 0;
+  font-size: 0.9rem;
+  color: var(--telekom-color-text-secondary);
+}
+
+.schedule-picker {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.schedule-field input,
+.schedule-field select {
+  padding: 0.4rem;
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--telekom-radius-standard);
+}
+
+.schedule-preview {
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
+  font-size: 0.9rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  margin-top: 2rem;
+}
+
+.request-modal :deep(input::placeholder),
+.request-modal :deep(textarea::placeholder) {
+  color: var(--telekom-color-text-placeholder);
+  opacity: 1;
 }
 
 .breakglass-card__groups {
@@ -741,47 +970,33 @@ function drop() {
 .breakglass-card__approvers {
   margin-top: 0.5rem;
   padding: 0.75rem 0.9rem;
-}
-
-.breakglass-card__approvers .ui-link-button {
-  margin-top: 0.35rem;
+  background: var(--telekom-color-ui-background-subtle);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--telekom-radius-standard);
 }
 
 .groups-header {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  margin-bottom: 0.5rem;
 }
 
 .groups-header .label {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--breakglass-text-muted);
+  color: var(--telekom-color-text-secondary);
 }
 
-.count-chip {
-  background: var(--breakglass-pill-bg);
-  color: var(--breakglass-pill-text);
-  border-radius: 999px;
-  padding: 0.2rem 0.75rem;
-  font-weight: 600;
-  font-size: 0.8rem;
-}
-
-.breakglass-card__groups .ui-pill-stack,
-.breakglass-card__approvers .ui-pill-stack {
-  margin-top: 0.35rem;
-}
-
-.breakglass-card__groups .ui-pill-stack span,
-.compact-pill-stack span {
-  padding: 0.3rem 0.65rem;
-  font-size: 0.8rem;
-}
-
-.compact-pill-stack {
+.breakglass-card__pill-list {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+.inline-action {
+  margin-top: 0.5rem;
 }
 
 .breakglass-card__cta {
@@ -790,168 +1005,104 @@ function drop() {
   gap: 0.75rem;
   justify-content: space-between;
   align-items: flex-start;
-  margin-top: 0.35rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
 .cta-copy {
   flex: 1 1 320px;
-  color: var(--breakglass-text-muted);
+  color: var(--telekom-color-text-secondary);
+  font-size: 0.9rem;
 }
 
-.breakglass-card :deep(.ui-card-title) {
-  color: var(--breakglass-text-strong);
+.cta-copy p {
+  margin: 0;
 }
 
-.breakglass-card :deep(.ui-chip) {
-  background: var(--breakglass-chip-bg);
-  color: var(--breakglass-chip-text);
-  border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
-}
-
-.breakglass-card :deep(.ui-chip.primary) {
-  background: color-mix(in srgb, var(--accent-telekom) 18%, transparent);
-  border-color: color-mix(in srgb, var(--accent-telekom) 35%, transparent);
-  color: var(--accent-telekom);
-}
-
-.breakglass-card :deep(.ui-chip.secondary) {
-  background: color-mix(in srgb, var(--accent-info) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-info) 35%, transparent);
-  color: var(--accent-info);
-}
-
-.breakglass-card :deep(.ui-chip.success) {
-  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-success) 35%, transparent);
-  color: var(--accent-success);
-}
-
-.breakglass-card :deep(.ui-chip.warning) {
-  background: color-mix(in srgb, var(--accent-warning) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-warning) 35%, transparent);
-  color: var(--accent-warning);
-}
-
-.breakglass-card :deep(.ui-chip.info) {
-  background: color-mix(in srgb, var(--accent-info) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-info) 35%, transparent);
-  color: var(--accent-info);
-}
-
-.breakglass-card :deep(.ui-chip.danger) {
-  background: color-mix(in srgb, var(--accent-critical) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-critical) 35%, transparent);
-  color: var(--accent-critical);
-}
-
-.breakglass-card :deep(.ui-chip.neutral) {
-  background: var(--surface-card-subtle);
-  border-color: var(--border-default);
-  color: var(--breakglass-text-muted);
-}
-
-.breakglass-card :deep(.ui-info-item) {
-  background: var(--breakglass-info-bg);
-  border: 1px solid var(--breakglass-info-border);
-}
-
-.breakglass-card :deep(.ui-info-item .label) {
-  color: var(--breakglass-text-muted);
-}
-
-.breakglass-card :deep(.ui-info-item .value) {
-  color: var(--breakglass-text-strong);
-}
-
-.breakglass-card :deep(.ui-section) {
-  background: var(--breakglass-section-bg);
-  border: 1px solid var(--breakglass-section-border);
-  color: var(--breakglass-text-strong);
-}
-
-.breakglass-card :deep(.ui-section h4) {
-  color: var(--breakglass-text-strong);
-}
-
-.breakglass-card :deep(.ui-section p) {
-  color: var(--breakglass-text-muted);
-}
-
-.breakglass-card :deep(.ui-pill-stack span) {
-  background: var(--breakglass-pill-bg);
-  color: var(--breakglass-pill-text);
-  border: 1px solid color-mix(in srgb, var(--breakglass-pill-text) 35%, transparent);
-}
-
-.breakglass-card :deep(.ui-status-badge) {
-  border-color: var(--border-default);
-  background-color: var(--surface-card-subtle);
-}
-
+/* Error state */
 .breakglass-card__error {
-  color: var(--accent-critical);
+  color: var(--telekom-color-functional-danger-standard);
   font-weight: 600;
-  margin-top: -0.5rem;
+  margin-top: 0.5rem;
 }
 
-.request-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: color-mix(in srgb, var(--surface-primary) 70%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
+/* Modal internal styles */
+.duration-selector,
+.schedule-section,
+.reason-field {
+  margin-bottom: 1.5rem;
 }
 
-.request-modal {
-  background: var(--surface-card);
-  color: var(--breakglass-text-strong);
-  padding: 1.5rem;
-  border-radius: 16px;
-  max-width: 520px;
-  width: 92%;
-  box-shadow: var(--shadow-card);
-  position: relative;
-  border: 1px solid var(--border-strong);
+.helper {
+  font-size: 0.85rem;
+  color: var(--telekom-color-text-secondary);
+  margin-top: 0.25rem;
 }
 
-.request-modal h3 {
+.helper.warning {
+  color: var(--telekom-color-functional-warning-standard);
+}
+
+.helper.error {
+  color: var(--telekom-color-functional-danger-standard);
+}
+
+.hint-box {
+  background: var(--telekom-color-ui-background-subtle);
+  padding: 0.5rem;
+  border-radius: var(--telekom-radius-standard);
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.schedule-details {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--telekom-color-ui-background-subtle);
+  border-radius: var(--telekom-radius-standard);
+}
+
+.schedule-intro {
   margin-top: 0;
+  font-size: 0.9rem;
+  color: var(--telekom-color-text-secondary);
+}
+
+.schedule-picker {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
   margin-bottom: 1rem;
 }
 
-.request-modal label {
+.schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
   font-weight: 600;
+}
+
+.schedule-field input,
+.schedule-field select {
+  padding: 0.4rem;
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--telekom-radius-standard);
+}
+
+.schedule-preview {
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
   font-size: 0.9rem;
-  color: var(--breakglass-text-strong);
-  display: block;
-  margin-bottom: 0.35rem;
 }
 
-.request-modal input,
-.request-modal textarea {
-  width: 100%;
-  padding: 0.55rem 0.75rem;
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  font-size: 0.95rem;
-  font-family: inherit;
-  color: var(--breakglass-text-strong);
-  background: var(--surface-card-subtle);
-  box-sizing: border-box;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background 0.2s ease;
-}
-
-.request-modal input:focus,
-.request-modal textarea:focus {
-  outline: none;
-  border-color: var(--accent-info);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-info) 30%, transparent);
-  background: var(--surface-card);
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  margin-top: 2rem;
 }
 
 .request-modal :deep(input::placeholder),
@@ -1004,121 +1155,6 @@ function drop() {
   border: 1px solid var(--border-default);
   border-radius: 10px;
 }
-
-.schedule-picker {
-  margin-top: 0.5rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 0.75rem;
-}
-
-.schedule-locale-hint {
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--breakglass-text-muted);
-}
-
-.schedule-field {
-  display: flex;
-  flex-direction: column;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--breakglass-text-strong);
-}
-
-.schedule-field input,
-.schedule-field select {
-  width: 100%;
-  margin-top: 0.3rem;
-  padding: 0.45rem 0.65rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-default);
-  font-size: 0.95rem;
-  color: var(--breakglass-text-strong);
-  background: var(--surface-card-subtle);
-}
-
-.schedule-field select {
-  appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--breakglass-text-strong) 50%),
-    linear-gradient(135deg, var(--breakglass-text-strong) 50%, transparent 50%);
-  background-position:
-    calc(100% - 20px) calc(50% - 3px),
-    calc(100% - 14px) calc(50% - 3px);
-  background-size: 6px 6px;
-  background-repeat: no-repeat;
-}
-
-.schedule-picker-actions {
-  margin-top: 0.25rem;
-}
-
-.schedule-picker-actions .ui-link-button.small {
-  padding-left: 0;
-}
-
-.schedule-preview {
-  margin-top: 0.5rem;
-  font-size: 0.9rem;
-  color: var(--breakglass-text-strong);
-}
-
-.schedule-preview .muted {
-  color: var(--breakglass-text-muted);
-  font-size: 0.85rem;
-}
-
-.modal-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.6rem;
-  margin-top: 1.25rem;
-}
-
-.modal-actions scale-button {
-  width: 100%;
-  max-width: 260px;
-}
-
-.modal-close {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  background: color-mix(in srgb, var(--surface-card) 92%, transparent);
-  border: 1px solid var(--border-default);
-  border-radius: 999px;
-  width: 32px;
-  height: 32px;
-  font-size: 1rem;
-  cursor: pointer;
-  color: var(--breakglass-text-strong);
-  transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-.modal-close:hover {
-  background: color-mix(in srgb, var(--surface-card) 100%, transparent);
-  border-color: color-mix(in srgb, var(--accent-info) 35%, var(--border-default));
-}
-
-@media (max-width: 720px) {
-  .breakglass-card__state-panel {
-    width: 100%;
-    min-width: unset;
-  }
-
-  .breakglass-card__cta {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .modal-actions {
-    width: 100%;
-  }
-
-  .modal-actions scale-button {
-    max-width: 100%;
-  }
-}
 </style>
+
+

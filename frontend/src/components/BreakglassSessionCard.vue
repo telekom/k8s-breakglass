@@ -138,20 +138,26 @@ const ownerActionLabel = computed(() => {
 });
 
 const statusTone = computed(() => statusToneFor(props.breakglass.status?.state));
+
+const chipVariant = computed(() => {
+  const tone = statusTone.value;
+  if (tone === "muted") return "neutral";
+  return tone;
+});
 </script>
 
 <template>
   <scale-card :aria-disabled="retained">
-    <span>
+    <div class="content">
       <p><b>Group:</b> {{ breakglass.spec.grantedGroup }}</p>
       <p><b>Username:</b> {{ breakglass.spec.user }}</p>
       <p><b>Cluster:</b> {{ breakglass.spec.cluster }}</p>
       <p v-if="breakglass.spec.identityProviderName"><b>IDP:</b> {{ breakglass.spec.identityProviderName }}</p>
       <p v-if="breakglass.spec.identityProviderIssuer"><b>Issuer:</b> {{ breakglass.spec.identityProviderIssuer }}</p>
-      <p>
+      <div class="state-row">
         <b>State:</b>
-        <span class="ui-status-badge" :class="`tone-${statusTone}`">{{ breakglass.status.state || "Unknown" }}</span>
-      </p>
+        <scale-chip :variant="chipVariant">{{ breakglass.status.state || "Unknown" }}</scale-chip>
+      </div>
       <p v-if="requestedAt"><b>Requested at:</b> {{ requestedAt }}</p>
       <p v-if="props.breakglass.spec && props.breakglass.spec.requestReason">
         <b>Request reason:</b> {{ props.breakglass.spec.requestReason }}
@@ -170,21 +176,33 @@ const statusTone = computed(() => statusToneFor(props.breakglass.status?.state))
       >
         <b>Approvers:</b> {{ props.breakglass.status.approvers.join(", ") }}
       </p>
-    </span>
+    </div>
 
     <p v-if="approved" class="expiry">
       Expires in<br />
       <b>{{ expiryHumanized }}</b>
     </p>
 
-    <p v-if="retained" class="actions">
+    <div v-if="retained" class="actions">
       <scale-button v-if="!approved" @click="accept">Accept </scale-button>
       <scale-button v-if="approved" variant="secondary" @click="reject">{{ ownerActionLabel }}</scale-button>
-    </p>
+    </div>
   </scale-card>
 </template>
 
 <style scoped>
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.state-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 scale-button {
   margin: 0 0.4rem;
 }
@@ -197,11 +215,7 @@ scale-button {
 scale-card {
   display: inline-block;
   max-width: 400px;
-}
-
-scale-data-grid {
-  display: block;
-  margin: 0 auto;
-  max-width: 600px;
+  width: 100%;
+  vertical-align: top;
 }
 </style>

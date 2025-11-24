@@ -1,22 +1,22 @@
 <template>
   <main class="ui-page outstanding-page">
     <div class="centered">
-    <div v-if="loading">Loading...</div>
-    <div v-else-if="error" class="error">{{ error }}</div>
+    <scale-loading-spinner v-if="loading" />
+    <scale-notification v-else-if="error" variant="danger" :heading="error" />
     <div v-else>
       <div v-if="requests.length === 0" class="center">No outstanding requests.</div>
-      <ul v-else class="requests-list ui-card-grid">
-        <li v-for="req in requests" :key="req.metadata?.name" class="ui-card request-card">
+      <div v-else class="requests-list">
+        <scale-card v-for="req in requests" :key="req.metadata?.name" class="request-card">
           <header class="request-header">
             <div class="request-target">
               <span class="cluster">{{ req.spec.cluster || "-" }}</span>
               <span class="group">{{ req.spec.grantedGroup || "-" }}</span>
             </div>
             <div class="request-status">
-              <span class="ui-status-badge" :class="`tone-${requestTone(req)}`">{{ requestState(req) }}</span>
-              <span v-if="req.status?.state === 'WaitingForScheduledTime'" class="status-chip schedule">
+              <scale-chip :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">{{ requestState(req) }}</scale-chip>
+              <scale-chip v-if="req.status?.state === 'WaitingForScheduledTime'" variant="info" class="schedule">
                 ⏳ Waiting for scheduled time
-              </span>
+              </scale-chip>
               <scale-button
                 class="withdraw-btn"
                 variant="danger"
@@ -34,14 +34,14 @@
           </div>
 
           <div class="request-badges">
-            <span v-if="req.spec?.identityProviderName" class="ui-chip">
+            <scale-chip v-if="req.spec?.identityProviderName" variant="secondary">
               IDP: {{ req.spec.identityProviderName }}
-            </span>
-            <span v-if="req.spec?.identityProviderIssuer" class="ui-chip subtle">
+            </scale-chip>
+            <scale-chip v-if="req.spec?.identityProviderIssuer" variant="secondary">
               Issuer: {{ req.spec.identityProviderIssuer }}
-            </span>
-            <span v-if="req.spec?.user" class="ui-chip neutral"> User: {{ req.spec.user }} </span>
-            <span v-if="req.spec?.duration" class="ui-chip neutral"> Duration: {{ req.spec.duration }} </span>
+            </scale-chip>
+            <scale-chip v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-chip>
+            <scale-chip v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-chip>
           </div>
 
           <div class="info-grid">
@@ -89,7 +89,7 @@
             </div>
           </div>
 
-          <div v-if="requestReason(req)" class="ui-section request-reason">
+          <div v-if="requestReason(req)" class="request-reason">
             <span class="label">Reason</span>
             <div class="reason-text">{{ requestReason(req) }}</div>
           </div>
@@ -104,8 +104,8 @@
               </span>
             </div>
           </footer>
-        </li>
-      </ul>
+        </scale-card>
+      </div>
     </div>
     </div>
   </main>
@@ -217,21 +217,15 @@ onMounted(async () => {
 }
 
 .requests-list {
-  list-style: none;
-  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
   margin: 2rem auto;
   max-width: 680px;
 }
 
 .request-card {
-  padding: 1.5rem 1.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  background: var(--outstanding-surface);
-  border: 1px solid var(--outstanding-border);
-  box-shadow: var(--outstanding-shadow);
-  border-radius: 16px;
+  --scale-card-padding: 1.5rem 1.8rem;
 }
 
 .request-header {
@@ -270,26 +264,13 @@ onMounted(async () => {
   min-width: 9rem;
 }
 
-.status-chip {
-  font-size: 0.75rem;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-weight: 600;
-  background: var(--outstanding-chip-bg);
-  color: var(--outstanding-chip-text);
-}
-
-.status-chip.schedule {
-  background: var(--telekom-color-functional-informational-subtle);
-  color: var(--telekom-color-text-and-icon-on-subtle-informational);
-}
-
 .request-name {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
   font-size: 0.95rem;
   color: var(--outstanding-text-muted);
+  margin-top: 1rem;
 }
 
 .request-name code {
@@ -307,28 +288,14 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-}
-
-.request-card .ui-chip {
-  background: var(--outstanding-chip-bg);
-  color: var(--outstanding-chip-text);
-  border: 1px solid var(--outstanding-panel-border);
-}
-
-.ui-chip.subtle {
-  background: var(--telekom-color-functional-informational-subtle);
-  color: var(--telekom-color-text-and-icon-on-subtle-informational);
-}
-
-.ui-chip.neutral {
-  background: var(--outstanding-chip-neutral-bg);
-  color: var(--outstanding-chip-neutral-text);
+  margin-top: 1rem;
 }
 
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1rem;
+  margin-top: 1rem;
 }
 
 .info-block {
@@ -365,6 +332,7 @@ onMounted(async () => {
   background: var(--outstanding-panel-bg);
   border-radius: 10px;
   padding: 0.75rem 1rem;
+  margin-top: 1rem;
 }
 
 .request-reason .label {
@@ -378,6 +346,7 @@ onMounted(async () => {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.6rem;
+  margin-top: 1rem;
 }
 
 .timestamps {

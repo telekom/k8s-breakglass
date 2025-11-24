@@ -53,8 +53,19 @@ async function refresh() {
 }
 
 function updateSearch(ev: Event) {
-  const target = ev.target as HTMLInputElement | null;
-  state.search = target?.value ?? "";
+  state.search = valueFromScaleEvent(ev);
+}
+
+function valueFromScaleEvent(ev: Event): string {
+  const target = ev.target as HTMLInputElement | HTMLTextAreaElement | null;
+  if (target && typeof target.value === "string") {
+    return target.value;
+  }
+  const detail = (ev as CustomEvent<{ value?: string }>).detail;
+  if (detail && typeof detail.value === "string") {
+    return detail.value;
+  }
+  return "";
 }
 
 const dedupedBreakglasses = computed(() => {
@@ -238,17 +249,15 @@ async function onDrop(bg: any) {
       <scale-loading-spinner size="large" />
     </div>
     <div v-else-if="state.breakglasses.length > 0">
-      <div class="ui-toolbar breakglass-toolbar">
-        <div class="ui-field">
-          <label for="breakglass-search">Search escalations</label>
-          <input
-            id="breakglass-search"
-            type="search"
-            placeholder="Cluster, group or approver"
-            :value="state.search"
-            @input="updateSearch"
-          />
-        </div>
+      <div class="breakglass-toolbar">
+        <scale-text-field
+          id="breakglass-search"
+          type="search"
+          label="Search escalations"
+          placeholder="Cluster, group or approver"
+          :value="state.search"
+          @scaleChange="updateSearch"
+        ></scale-text-field>
         <div class="toolbar-refresh">
           <span id="refresh-label" class="sr-only">Refresh list</span>
           <scale-loading-spinner v-if="state.refreshing"></scale-loading-spinner>
@@ -263,12 +272,12 @@ async function onDrop(bg: any) {
             <scale-icon-action-refresh></scale-icon-action-refresh>
           </scale-button>
         </div>
-        <div class="ui-toolbar-info">
+        <div class="toolbar-info">
           Showing {{ filteredBreakglasses.length }} of {{ dedupedBreakglasses.length }} escalations
         </div>
       </div>
 
-      <div class="ui-card-grid breakglass-grid">
+      <div class="breakglass-grid">
         <BreakglassCard
           v-for="bg in filteredBreakglasses"
           :key="
@@ -306,87 +315,31 @@ async function onDrop(bg: any) {
 <style scoped>
 .breakglass-page {
   padding-bottom: clamp(2.5rem, 5vw, 4.5rem);
-  --breakglass-bg: var(--surface-primary);
-  --breakglass-card-bg: var(--surface-card);
-  --breakglass-card-border: var(--border-default);
-  --breakglass-card-shadow: var(--shadow-card);
-  --breakglass-text-strong: var(--telekom-text-color-inverted-primary);
-  --breakglass-text-muted: var(--text-muted);
-  --breakglass-chip-bg: color-mix(in srgb, var(--accent-info) 16%, transparent);
-  --breakglass-chip-text: var(--accent-info);
-  --breakglass-info-bg: color-mix(in srgb, var(--surface-card) 88%, transparent);
-  --breakglass-info-border: var(--border-default);
-  --breakglass-section-bg: color-mix(in srgb, var(--surface-card) 82%, transparent);
-  --breakglass-section-border: color-mix(in srgb, var(--accent-info) 25%, var(--border-default));
-  --breakglass-pill-bg: color-mix(in srgb, var(--accent-success) 18%, transparent);
-  --breakglass-pill-text: var(--accent-success);
-  background: var(--breakglass-bg);
-  color: var(--breakglass-text-strong);
 }
 
 .page-header {
   margin-bottom: 0.5rem;
 }
 
-.page-header .ui-page-title {
-  color: var(--breakglass-text-strong);
-  margin-bottom: 0.25rem;
-}
-
 .page-header .ui-page-subtitle {
-  color: var(--breakglass-text-muted);
   max-width: 720px;
-}
-
-.breakglass-page .ui-toolbar {
-  background: var(--surface-card);
-  border: 1px solid var(--breakglass-card-border);
-  box-shadow: var(--breakglass-card-shadow);
-}
-
-.breakglass-page .ui-toolbar label {
-  color: var(--breakglass-text-strong);
-}
-
-.breakglass-page .ui-toolbar input,
-.breakglass-page .ui-toolbar select {
-  background: var(--surface-card-subtle);
-  border: 1px solid var(--border-default);
-  color: var(--breakglass-text-strong);
-}
-
-.breakglass-page .ui-toolbar input::placeholder {
-  color: var(--text-placeholder);
-}
-
-.breakglass-page .ui-toolbar-info {
-  color: var(--breakglass-text-muted);
-}
-
-.loading {
-  margin: 2rem auto;
-  text-align: center;
-}
-
-.empty-state {
-  margin: 3rem auto;
-  text-align: center;
-  color: var(--breakglass-text-muted);
-  max-width: 560px;
-  line-height: 1.5;
-  padding: 2.5rem;
-  border-radius: 18px;
-  border: 1px dashed var(--border-default);
-  background: var(--surface-card-subtle);
 }
 
 .breakglass-toolbar {
   align-items: flex-end;
   margin-bottom: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  background: var(--telekom-color-background-surface);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  padding: 1rem;
+  border-radius: 8px;
 }
 
-.breakglass-toolbar input {
+.breakglass-toolbar scale-text-field {
   min-width: 280px;
+  flex: 1 1 280px;
 }
 
 .toolbar-refresh {
@@ -403,7 +356,28 @@ async function onDrop(bg: any) {
   place-items: center;
 }
 
+.toolbar-info {
+  color: var(--telekom-color-text-and-icon-additional);
+  margin-left: auto;
+  font-size: 0.9rem;
+  align-self: center;
+}
+
 .breakglass-grid {
   margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.5rem;
+}
+
+.loading,
+.empty-state {
+  margin: 2rem auto;
+  text-align: center;
+}
+
+.empty-state {
+  max-width: 560px;
+  line-height: 1.5;
 }
 </style>

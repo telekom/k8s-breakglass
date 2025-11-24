@@ -299,27 +299,33 @@ onMounted(fetchPendingApprovals);
     <h2 class="ui-page-title">Pending Approvals</h2>
 
     <!-- Filter and Sort Controls -->
-    <div class="ui-toolbar approvals-toolbar">
-      <div class="ui-field">
-        <label for="sort-select">Sort by</label>
-        <select id="sort-select" v-model="sortBy">
-          <option value="urgent">Most Urgent (expires soonest)</option>
-          <option value="recent">Most Recent</option>
-          <option value="groups">By Group</option>
-        </select>
-      </div>
+    <div class="approvals-toolbar">
+      <scale-select
+        id="sort-select"
+        label="Sort by"
+        :value="sortBy"
+        @scaleChange="sortBy = $event.target.value"
+        style="min-width: 200px;"
+      >
+        <scale-select-option value="urgent">Most Urgent (expires soonest)</scale-select-option>
+        <scale-select-option value="recent">Most Recent</scale-select-option>
+        <scale-select-option value="groups">By Group</scale-select-option>
+      </scale-select>
 
-      <div class="ui-field">
-        <label for="urgency-filter">Urgency</label>
-        <select id="urgency-filter" v-model="urgencyFilter">
-          <option value="all">All</option>
-          <option value="critical">Critical (&lt; 1 hour)</option>
-          <option value="high">High (&lt; 6 hours)</option>
-          <option value="normal">Normal (≥ 6 hours)</option>
-        </select>
-      </div>
+      <scale-select
+        id="urgency-filter"
+        label="Urgency"
+        :value="urgencyFilter"
+        @scaleChange="urgencyFilter = $event.target.value"
+        style="min-width: 200px;"
+      >
+        <scale-select-option value="all">All</scale-select-option>
+        <scale-select-option value="critical">Critical (&lt; 1 hour)</scale-select-option>
+        <scale-select-option value="high">High (&lt; 6 hours)</scale-select-option>
+        <scale-select-option value="normal">Normal (≥ 6 hours)</scale-select-option>
+      </scale-select>
 
-      <div class="ui-toolbar-info">
+      <div class="toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
       </div>
     </div>
@@ -330,10 +336,10 @@ onMounted(fetchPendingApprovals);
       <p v-else>No requests match the selected filters.</p>
     </div>
     <div v-else class="sessions-list">
-      <article
+      <scale-card
         v-for="session in sortedSessions"
         :key="session.metadata.name"
-        class="ui-card approval-card"
+        class="approval-card"
         :class="`urgency-${session.urgency}`"
       >
         <div class="card-top">
@@ -350,15 +356,15 @@ onMounted(fetchPendingApprovals);
                 </template>
               </p>
               <div class="request-meta">
-                <span class="ui-chip primary">{{ session.spec?.cluster || "Unknown cluster" }}</span>
-                <span class="ui-chip secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</span>
-                <span class="ui-chip" :class="session.urgency">
+                <scale-chip variant="primary">{{ session.spec?.cluster || "Unknown cluster" }}</scale-chip>
+                <scale-chip variant="secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-chip>
+                <scale-chip :variant="session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'">
                   <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
                   <template v-else-if="session.urgency === 'high'">⏱️ High</template>
                   <template v-else>🕓 Normal</template>
-                </span>
-                <span v-if="session.spec?.scheduledStartTime" class="ui-chip secondary">📅 Scheduled</span>
-                <span v-if="session.approvalReason?.mandatory" class="ui-chip secondary">✍️ Note required</span>
+                </scale-chip>
+                <scale-chip v-if="session.spec?.scheduledStartTime" variant="secondary">📅 Scheduled</scale-chip>
+                <scale-chip v-if="session.approvalReason?.mandatory" variant="secondary">✍️ Note required</scale-chip>
               </div>
             </div>
           </div>
@@ -374,30 +380,30 @@ onMounted(fetchPendingApprovals);
               Timeout {{ format24Hour(session.status.timeoutAt) }}
             </small>
             <small v-else class="timer-absolute">No expiry set</small>
-            <span v-if="session.status?.state" class="ui-status-badge" :class="sessionStateTone(session)">
+            <scale-chip v-if="session.status?.state" :variant="sessionStateTone(session) === 'tone-success' ? 'success' : sessionStateTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
               {{ session.status.state }}
-            </span>
+            </scale-chip>
           </div>
         </div>
 
-        <div class="ui-info-grid info-grid">
-          <div class="ui-info-item">
+        <div class="info-grid">
+          <div class="info-item">
             <span class="label">Requested</span>
             <span class="value">{{ format24Hour(session.metadata.creationTimestamp) }}</span>
           </div>
-          <div class="ui-info-item">
+          <div class="info-item">
             <span class="label">Duration</span>
             <span class="value">{{ session.spec?.maxValidFor ? formatDuration(session.spec.maxValidFor) : "—" }}</span>
           </div>
-          <div class="ui-info-item">
+          <div class="info-item">
             <span class="label">Identity provider</span>
             <span class="value">{{ session.spec?.identityProviderName || "—" }}</span>
           </div>
-          <div class="ui-info-item">
+          <div class="info-item">
             <span class="label">Issuer</span>
             <span class="value">{{ session.spec?.identityProviderIssuer || "—" }}</span>
           </div>
-          <div class="ui-info-item">
+          <div class="info-item">
             <span class="label">Scheduled start</span>
             <span class="value">
               <template v-if="session.spec?.scheduledStartTime">
@@ -406,7 +412,7 @@ onMounted(fetchPendingApprovals);
               <template v-else>Not scheduled</template>
             </span>
           </div>
-          <div class="ui-info-item">
+          <div class="info-item">
             <span class="label">Scheduled end</span>
             <span class="value">
               <template v-if="session.spec?.scheduledStartTime && session.spec?.maxValidFor">
@@ -426,17 +432,17 @@ onMounted(fetchPendingApprovals);
         </div>
         <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
           <span class="matching-label">Visible via</span>
-          <div class="ui-pill-stack matching-stack">
-            <span v-for="group in session.matchingApproverGroups" :key="group">{{ group }}</span>
+          <div class="matching-stack">
+            <scale-chip v-for="group in session.matchingApproverGroups" :key="group" variant="warning">{{ group }}</scale-chip>
           </div>
         </div>
 
-        <section class="ui-section reason-section">
+        <section class="reason-section">
           <h4>Request reason</h4>
           <p>{{ getSessionReason(session) }}</p>
         </section>
 
-        <section v-if="session.approvalReason?.description" class="ui-section reason-section">
+        <section v-if="session.approvalReason?.description" class="reason-section">
           <h4>Approval policy</h4>
           <p>{{ session.approvalReason.description }}</p>
         </section>
@@ -447,9 +453,9 @@ onMounted(fetchPendingApprovals);
             <span
               ><code>{{ session.metadata?.name }}</code></span
             >
-            <span v-if="session.status?.state" class="ui-status-badge" :class="sessionStateTone(session)">
+            <scale-chip v-if="session.status?.state" :variant="sessionStateTone(session) === 'tone-success' ? 'success' : sessionStateTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
               {{ session.status.state }}
-            </span>
+            </scale-chip>
           </div>
           <div class="action-row">
             <scale-button
@@ -471,13 +477,16 @@ onMounted(fetchPendingApprovals);
             </scale-button>
           </div>
         </div>
-      </article>
+      </scale-card>
     </div>
   </main>
-  <div v-if="showApproveModal" class="approve-modal-overlay">
-    <div class="approve-modal">
-      <button class="modal-close" aria-label="Close" @click="closeApproveModal">×</button>
-      <h3>Approve request</h3>
+  <scale-modal
+    v-if="showApproveModal"
+    :opened="showApproveModal"
+    heading="Approve request"
+    @scale-close="closeApproveModal"
+  >
+    <div class="approve-modal-content">
       <p><b>User:</b> {{ modalSession.spec.user }}</p>
       <p><b>Group:</b> {{ modalSession.spec.grantedGroup }} @ {{ modalSession.spec.cluster }}</p>
       <p v-if="modalSession.spec.identityProviderName"><b>IDP:</b> {{ modalSession.spec.identityProviderName }}</p>
@@ -532,6 +541,7 @@ onMounted(fetchPendingApprovals);
         <div class="reason-text">{{ modalSession.status.reason }}</div>
       </div>
       <scale-textarea
+        label="Approver Note"
         :value="approverNotes[modalSession.metadata.name]"
         :placeholder="
           (modalSession.approvalReason && modalSession.approvalReason.description) || 'Optional approver note'
@@ -548,13 +558,13 @@ onMounted(fetchPendingApprovals);
       >
         This field is required.
       </p>
-      <div class="modal-actions">
-        <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
-        <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
-        <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
-      </div>
     </div>
-  </div>
+    <div slot="actions" class="modal-actions">
+      <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
+      <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
+      <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
+    </div>
+  </scale-modal>
 </template>
 
 <style scoped>
@@ -601,24 +611,43 @@ onMounted(fetchPendingApprovals);
   background: var(--approvals-surface);
   border: 1px solid var(--approvals-border);
   box-shadow: none;
+  padding: 1rem;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
 }
 
-.approvals-toolbar label {
+.toolbar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.toolbar-field label {
   color: var(--approvals-text-strong);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
-.approvals-toolbar select {
+.select-wrapper select {
   background: var(--approvals-panel-bg);
   border: 1px solid var(--approvals-panel-border);
   color: var(--approvals-text-strong);
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: 0.95rem;
 }
 
-.approvals-toolbar select option {
+.select-wrapper select option {
   color: var(--telekom-color-text-and-icon-inverted-standard);
 }
 
-.approvals-toolbar .ui-toolbar-info {
+.approvals-toolbar .toolbar-info {
   color: var(--approvals-text-muted);
+  margin-left: auto;
+  font-size: 0.9rem;
 }
 
 .loading-state,
@@ -636,11 +665,7 @@ onMounted(fetchPendingApprovals);
 }
 
 .approval-card {
-  background: var(--approvals-surface);
-  border: 1px solid var(--approvals-border);
-  border-radius: 14px;
-  padding: 1.5rem;
-  box-shadow: var(--approvals-shadow);
+  --scale-card-padding: 1.5rem;
   transition:
     transform 0.2s ease,
     box-shadow 0.2s ease;
@@ -708,22 +733,6 @@ onMounted(fetchPendingApprovals);
   gap: 0.6rem;
   flex-wrap: wrap;
   margin-top: 0.65rem;
-}
-
-.approval-card .ui-chip {
-  background: var(--approvals-chip-bg);
-  color: var(--approvals-chip-text);
-  border: 1px solid var(--approvals-panel-border);
-}
-
-.approval-card .ui-chip.secondary {
-  background: var(--approvals-chip-secondary-bg);
-  color: var(--approvals-chip-secondary-text);
-}
-
-.approval-card .ui-chip.primary {
-  background: var(--approvals-chip-primary-bg);
-  color: var(--approvals-chip-primary-text);
 }
 
 .identity-block code,
@@ -796,27 +805,62 @@ onMounted(fetchPendingApprovals);
   text-transform: uppercase;
 }
 
-.matching-stack span {
-  padding: 0.35rem 0.75rem;
-  border-radius: 999px;
-  background: var(--approvals-warn-bg);
-  color: var(--approvals-warn-text);
-  font-weight: 600;
+.matching-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 
-.approval-card .ui-info-item {
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.info-item {
   background: var(--approvals-panel-bg);
   border: 1px solid var(--approvals-panel-border);
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.approval-card .ui-info-item .label {
+.info-item .label {
   color: var(--approvals-text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
-.approval-card .ui-info-item .value {
+.info-item .value {
   color: var(--approvals-text-strong);
   word-break: break-word;
   overflow-wrap: anywhere;
+  font-size: 0.95rem;
+}
+
+.reason-section {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: var(--approvals-panel-bg);
+  border-radius: 8px;
+  border-left: 4px solid var(--telekom-color-primary-standard);
+}
+
+.reason-section h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+  color: var(--approvals-text-muted);
+  text-transform: uppercase;
+}
+
+.reason-section p {
+  margin: 0;
+  color: var(--approvals-text-strong);
 }
 
 .card-bottom {
@@ -864,63 +908,21 @@ onMounted(fetchPendingApprovals);
   text-align: center;
 }
 
-.approve-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--telekom-color-background-backdrop);
+.approve-modal-content {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-.approve-modal {
-  background: var(--approvals-surface);
-  color: var(--approvals-text-strong);
-  padding: 1.5rem;
-  position: relative;
-  border-radius: 8px;
-  max-width: 550px;
-  width: 90%;
-  max-height: 90vh;
-  overflow-y: auto;
-  border: 1px solid var(--approvals-border);
-  box-shadow: var(--telekom-shadow-overlay);
+.approve-modal-content p {
+  margin: 0.25rem 0;
 }
 
-.approve-modal h3 {
-  color: var(--telekom-color-primary-standard);
-  margin-top: 0;
-  margin-bottom: 1rem;
-}
-
-.approve-modal p {
-  margin: 0.75rem 0;
-  color: var(--approvals-text-muted);
-}
-
-.modal-close {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  background: var(--approvals-panel-bg);
-  border: 1px solid var(--approvals-panel-border);
-  border-radius: 999px;
-  font-size: 1.1rem;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--approvals-text-strong);
-  padding: 0.25rem;
-  width: 2rem;
-  height: 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.2s ease;
-}
-
-.modal-close:hover {
-  transform: scale(1.05);
+.modal-info-block {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
 }
 
 .reason-text {

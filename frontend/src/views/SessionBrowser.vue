@@ -234,9 +234,9 @@ function applyPreset(preset: "mine" | "approved") {
   fetchSessions();
 }
 
-function onStateToggle(state: string, event: Event) {
-  const input = event.target as HTMLInputElement | null;
-  const checked = !!input?.checked;
+function onStateToggle(state: string, event: Event | CustomEvent) {
+  const target = event.target as HTMLInputElement | any;
+  const checked = !!target?.checked;
   const next = new Set(filters.states);
   if (checked) {
     next.add(state);
@@ -407,82 +407,58 @@ onMounted(() => {
       </header>
 
       <div class="preset-row">
-        <button
-          class="preset-btn"
-          :class="{ active: activePreset === 'mine' }"
-          type="button"
+        <scale-button
+          :variant="activePreset === 'mine' ? 'primary' : 'secondary'"
           @click="applyPreset('mine')"
         >
-          My Sessions
-          <small>{{ presetCopy.mine }}</small>
-        </button>
-        <button
-          class="preset-btn"
-          :class="{ active: activePreset === 'approved' }"
-          type="button"
+          My Sessions ({{ presetCopy.mine }})
+        </scale-button>
+        <scale-button
+          :variant="activePreset === 'approved' ? 'primary' : 'secondary'"
           @click="applyPreset('approved')"
         >
-          Sessions I Approved
-          <small>{{ presetCopy.approved }}</small>
-        </button>
+          Sessions I Approved ({{ presetCopy.approved }})
+        </scale-button>
       </div>
 
       <div class="filters-grid">
-        <label class="filter-flag">
-          <input v-model="filters.mine" type="checkbox" />
-          <span>Mine</span>
-        </label>
-        <label class="filter-flag">
-          <input v-model="filters.approver" type="checkbox" />
-          <span>Approver</span>
-        </label>
-        <label class="filter-flag" :class="{ disabled: !currentUserEmail }" title="Requires email in profile">
-          <input v-model="filters.onlyApprovedByMe" type="checkbox" :disabled="!currentUserEmail" />
-          <span>Only sessions I approved</span>
-        </label>
+        <scale-checkbox :checked="filters.mine" @scaleChange="filters.mine = $event.target.checked">Mine</scale-checkbox>
+        <scale-checkbox :checked="filters.approver" @scaleChange="filters.approver = $event.target.checked">Approver</scale-checkbox>
+        <scale-checkbox
+          :checked="filters.onlyApprovedByMe"
+          :disabled="!currentUserEmail"
+          @scaleChange="filters.onlyApprovedByMe = $event.target.checked"
+          title="Requires email in profile"
+        >
+          Only sessions I approved
+        </scale-checkbox>
       </div>
 
       <div class="state-chooser">
         <span class="section-label">States</span>
         <div class="state-options">
-          <label
+          <scale-checkbox
             v-for="option in stateOptions"
             :key="option.value"
-            class="state-pill"
+            :checked="filters.states.includes(option.value)"
+            @scaleChange="(event: any) => onStateToggle(option.value, event)"
             :title="option.value === 'active' ? 'Shows only currently active sessions' : undefined"
           >
-            <input
-              type="checkbox"
-              :checked="filters.states.includes(option.value)"
-              @change="(event) => onStateToggle(option.value, event)"
-            />
-            <span>{{ option.label }}</span>
-          </label>
+            {{ option.label }}
+          </scale-checkbox>
         </div>
       </div>
 
       <div class="text-filters">
-        <label>
-          Cluster
-          <input v-model="filters.cluster" placeholder="cluster name" />
-        </label>
-        <label>
-          Group
-          <input v-model="filters.group" placeholder="group" />
-        </label>
-        <label>
-          User
-          <input v-model="filters.user" placeholder="user email" />
-        </label>
-        <label>
-          Session Name
-          <input v-model="filters.name" placeholder="metadata.name" />
-        </label>
+        <scale-text-field label="Cluster" :value="filters.cluster" placeholder="cluster name" @scaleChange="filters.cluster = $event.target.value"></scale-text-field>
+        <scale-text-field label="Group" :value="filters.group" placeholder="group" @scaleChange="filters.group = $event.target.value"></scale-text-field>
+        <scale-text-field label="User" :value="filters.user" placeholder="user email" @scaleChange="filters.user = $event.target.value"></scale-text-field>
+        <scale-text-field label="Session Name" :value="filters.name" placeholder="metadata.name" @scaleChange="filters.name = $event.target.value"></scale-text-field>
       </div>
 
       <div class="filters-actions">
         <scale-button :disabled="loading" variant="primary" @click="fetchSessions">Apply filters</scale-button>
-        <button class="link-reset" type="button" @click="resetFilters">Reset</button>
+        <scale-button variant="secondary" @click="resetFilters">Reset</scale-button>
       </div>
 
       <p class="filters-meta">
@@ -503,7 +479,7 @@ onMounted(() => {
       </header>
 
       <div v-if="visibleSessions.length" class="sessions-list">
-        <article
+        <scale-card
           v-for="session in visibleSessions"
           :key="session.metadata?.name || session.name || session.spec?.grantedGroup"
           class="session-card"
@@ -512,13 +488,13 @@ onMounted(() => {
             <div>
               <div class="session-name">{{ session.metadata?.name || session.name }}</div>
               <div class="cluster-group">
-                <span class="cluster-tag">{{ session.spec?.cluster || session.cluster || "-" }}</span>
-                <span class="group-tag">{{ session.spec?.grantedGroup || session.group || "-" }}</span>
+                <scale-chip variant="primary">{{ session.spec?.cluster || session.cluster || "-" }}</scale-chip>
+                <scale-chip variant="success">{{ session.spec?.grantedGroup || session.group || "-" }}</scale-chip>
               </div>
             </div>
-            <span class="ui-status-badge" :class="sessionTone(session)">
+            <scale-chip :variant="sessionTone(session) === 'tone-success' ? 'success' : sessionTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
               {{ sessionState(session) }}
-            </span>
+            </scale-chip>
           </div>
 
           <div class="actors">
@@ -574,7 +550,7 @@ onMounted(() => {
           <div v-if="reasonEndedLabel(session)" class="end-reason">
             <strong>Ended:</strong> {{ reasonEndedLabel(session) }}
           </div>
-        </article>
+        </scale-card>
       </div>
     </section>
   </main>
@@ -771,9 +747,9 @@ header p {
 }
 
 .session-card {
+  --scale-card-padding: 1.25rem;
   border: 1px solid var(--session-border);
   border-radius: 12px;
-  padding: 1.25rem;
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
   background: var(--session-surface);
 }
@@ -795,20 +771,6 @@ header p {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.35rem;
-}
-
-.cluster-tag,
-.group-tag {
-  background: var(--session-tag-bg);
-  border-radius: 999px;
-  padding: 0.2rem 0.75rem;
-  font-size: 0.85rem;
-  color: var(--session-tag-text);
-}
-
-.group-tag {
-  background: var(--telekom-color-background-success, #f5fdf7);
-  color: var(--telekom-color-text-and-icon-success, #1f5c3f);
 }
 
 .actors {

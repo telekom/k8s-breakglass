@@ -104,6 +104,10 @@ async function approve() {
         <p>No token was provided, or the provided token is invalid.</p>
       </div>
       <div v-else>
+        <div class="close-wrapper">
+          <scale-button variant="ghost" size="small" @click="$router.back()">✕</scale-button>
+        </div>
+
         <p class="center">
           <span class="requestor-name">{{ request.requestor.name }}</span
           ><br />
@@ -133,25 +137,25 @@ async function approve() {
           <scale-loading-spinner text="Validating..." />
         </div>
         <div v-else-if="approved">
-          <scale-notification-message variant="success" opened>
+          <scale-notification variant="success" opened heading="Success">
             Request approved successfully.
-          </scale-notification-message>
+          </scale-notification>
         </div>
         <div v-else-if="validation.alreadyActive">
-          <scale-notification-message variant="success" opened>
+          <scale-notification variant="success" opened heading="Already Active">
             The request was approved already.
-          </scale-notification-message>
+          </scale-notification>
         </div>
         <div v-else-if="validation.valid" class="center">
-          <button class="modal-close" aria-label="Close" @click="$router.back()">×</button>
           <scale-textarea
             :value="approverReason"
             :placeholder="(validation as any)?.approvalReason?.description || 'Optional approver note'"
             @scaleChange="(ev: any) => (approverReason = ev.target.value)"
+            class="full-width-input"
           ></scale-textarea>
           <div
             v-if="(validation as any)?.requestReason?.description || (validation as any)?.request?.reason"
-            style="margin-top: 0.5rem"
+            class="reason-block"
           >
             <strong>Request reason:</strong>
             <div class="reason-text">
@@ -160,21 +164,20 @@ async function approve() {
           </div>
           <p
             v-if="(validation as any)?.approvalReason?.mandatory && !(approverReason || '').trim()"
-            style="color: #c62828; margin-top: 0.5rem"
+            class="error-text"
           >
             This field is required.
           </p>
-          <div style="margin-top: 0.5rem">
-            <scale-button :disabled="!canApprove || approveLoading" @click="approve">
-              <scale-loading-spinner v-if="approveLoading" text="Approving..." />
-              {{ !approveLoading ? "Approve" : "" }}
+          <div class="actions">
+            <scale-button :disabled="!canApprove || approveLoading" :loading="approveLoading" @click="approve">
+              Approve
             </scale-button>
           </div>
         </div>
         <div v-else>
-          <scale-notification-message variant="error" opened>
+          <scale-notification variant="danger" opened heading="Error">
             The request is invalid or expired.
-          </scale-notification-message>
+          </scale-notification>
         </div>
       </div>
     </scale-card>
@@ -186,6 +189,7 @@ scale-card {
   display: block;
   margin: 0 auto;
   max-width: 500px;
+  --scale-card-padding: 1.5rem;
 }
 
 .center {
@@ -200,22 +204,32 @@ scale-card {
 .requested-role {
   font-size: 1.8rem;
   font-weight: bold;
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .requestor-email {
   font-size: 1.2rem;
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .horizontal {
   margin: 1.5rem 0;
   display: flex;
   align-items: stretch;
+  background: var(--telekom-color-ui-subtle);
+  border-radius: 8px;
+  padding: 1rem 0;
 }
 
 .section {
   flex: 1;
   text-align: center;
-  padding: var(--telekom-spacing-unit-x3);
+  padding: 0 1rem;
+  border-right: 1px solid var(--telekom-color-ui-border-standard);
+}
+
+.section:last-child {
+  border-right: none;
 }
 
 .approvers-section,
@@ -223,60 +237,39 @@ scale-card {
   flex: 2;
 }
 
-.horizontal > scale-divider {
-  flex-grow: 0;
-}
-
-/* Improve readability of notification popups (scale-notification-message)
-   Provide high-contrast background and foreground for success/error variants
-   and ensure the element displays as a block within the scoped card. */
-scale-notification-message[variant="success"] {
-  display: block;
-  background-color: #e8f5e9; /* light green */
-  color: #1b5e20; /* dark green */
-  padding: 0.75rem 1rem;
-  border-radius: 6px;
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-}
-scale-notification-message[variant="error"] {
-  display: block;
-  background-color: #ffebee; /* light red */
-  color: #b71c1c; /* dark red */
-  padding: 0.75rem 1rem;
-  border-radius: 6px;
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-}
-
-/* Ensure the scale-card background doesn't clash with popup content */
-scale-card.centered {
-  background: #ffffff;
-  color: #0b0b0b;
-  padding: 1rem 1.25rem;
-}
-
-.modal-close {
+.close-wrapper {
   position: absolute;
-  top: 0.6rem;
-  right: 0.8rem;
-  background: transparent;
-  border: none;
-  font-size: 1.25rem;
-  line-height: 1;
-  cursor: pointer;
-  color: #666;
+  top: 0.5rem;
+  right: 0.5rem;
 }
-.modal-close:hover {
-  color: #222;
+
+.reason-block {
+  margin-top: 1rem;
+  text-align: left;
 }
 
 .reason-text {
   margin-top: 0.25rem;
-  padding: 0.5rem;
-  background: #f7f7f7;
+  padding: 0.75rem;
+  background: var(--telekom-color-ui-subtle);
   border-radius: 4px;
-  color: #222;
+  color: var(--telekom-color-text-and-icon-standard);
   white-space: pre-wrap;
+  border-left: 3px solid var(--telekom-color-primary-standard);
+}
+
+.error-text {
+  color: var(--telekom-color-functional-danger-standard);
+  margin-top: 0.5rem;
+  text-align: left;
+}
+
+.actions {
+  margin-top: 1.5rem;
+}
+
+.full-width-input {
+  width: 100%;
+  text-align: left;
 }
 </style>

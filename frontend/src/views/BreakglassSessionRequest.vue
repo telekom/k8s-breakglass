@@ -161,77 +161,56 @@ onMounted(async () => {
     <scale-card v-else class="centered">
       <div v-if="authenticated" class="center">
         <p>Request for group assignment</p>
-        <form @submit.prevent="handleSendButtonClick">
-          <div>
-            <label for="user">User:</label>
-            <input id="user" v-model="userName" type="text" disabled="true" placeholder="Enter user" required />
-          </div>
-          <div>
-            <label for="cluster">Cluster:</label>
-            <input
-              id="cluster"
-              v-model="clusterName"
-              type="text"
-              :disabled="hasCluster"
-              placeholder="Enter cluster"
-              required
-            />
-          </div>
-          <div style="margin-bottom: 5px">
-            <label for="cluster_group">Group:</label>
-            <select id="cluster_group" v-model="clusterGroup" @input="onInput">
-              <option v-for="escalation in escalations" :key="escalation.escalatedGroup">
-                {{ escalation.escalatedGroup }}
-              </option>
-            </select>
-          </div>
+        <form @submit.prevent="handleSendButtonClick" class="request-form">
+          <scale-text-field
+            label="User"
+            :value="userName"
+            disabled
+            required
+          ></scale-text-field>
+          <scale-text-field
+            label="Cluster"
+            :value="clusterName"
+            :disabled="hasCluster"
+            required
+            @scaleChange="clusterName = $event.target.value"
+          ></scale-text-field>
+          <scale-select
+            label="Group"
+            :value="clusterGroup"
+            @scaleChange="clusterGroup = $event.target.value; onInput()"
+          >
+            <scale-select-option v-for="escalation in escalations" :key="escalation.escalatedGroup" :value="escalation.escalatedGroup">
+              {{ escalation.escalatedGroup }}
+            </scale-select-option>
+          </scale-select>
 
           <!-- Reason field -->
-          <div style="margin-bottom: 10px">
-            <label for="request_reason">Reason (optional):</label>
-            <textarea
-              id="request_reason"
-              v-model="requestReason"
-              placeholder="Describe why you need access"
-              rows="3"
-              style="width: 100%; max-width: 300px"
-            ></textarea>
-          </div>
+          <scale-textarea
+            label="Reason (optional)"
+            :value="requestReason"
+            placeholder="Describe why you need access"
+            rows="3"
+            @scaleChange="requestReason = $event.target.value"
+          ></scale-textarea>
 
           <!-- Collapsible scheduling section -->
-          <div class="schedule-section" style="margin-bottom: 15px; border-top: 1px solid #ddd; padding-top: 10px">
-            <button
-              type="button"
+          <div class="schedule-section">
+            <scale-button
+              variant="secondary"
+              size="small"
               class="toggle-schedule"
-              style="
-                background: none;
-                border: none;
-                cursor: pointer;
-                color: #0066cc;
-                text-decoration: underline;
-                padding: 0;
-              "
               @click="toggleScheduleOptions"
             >
-              <span v-if="!showScheduleOptions">⊕ Schedule for future date (optional)</span>
-              <span v-else>⊖ Schedule for future date (optional)</span>
-            </button>
+              <span v-if="!showScheduleOptions">Schedule for future date (optional)</span>
+              <span v-else>Hide schedule options</span>
+            </scale-button>
 
-            <div
-              v-if="showScheduleOptions"
-              class="schedule-details"
-              style="
-                margin-top: 10px;
-                margin-left: 15px;
-                padding: 10px;
-                border-left: 2px solid #0066cc;
-                background-color: #f9f9f9;
-              "
-            >
-              <div style="margin-bottom: 10px">
-                <label for="scheduled_date" style="width: auto; display: block; text-align: left; margin-bottom: 5px">
+            <div v-if="showScheduleOptions" class="schedule-details">
+              <div class="schedule-input-group">
+                <label for="scheduled_date" class="schedule-label">
                   <strong>Scheduled Start Date/Time (24-hour format):</strong>
-                  <span style="display: block; font-size: 0.85em; color: #666; margin-top: 2px; font-weight: normal">
+                  <span class="schedule-hint">
                     Your local time: {{ new Date().toLocaleString("en-GB", { hour12: false }).split(",")[0] }}
                   </span>
                 </label>
@@ -241,50 +220,31 @@ onMounted(async () => {
                   type="datetime-local"
                   :min="minDateTime"
                   required
-                  style="
-                    width: 100%;
-                    max-width: 300px;
-                    padding: 8px;
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                    font-size: 14px;
-                  "
+                  class="scale-input-native"
                 />
               </div>
 
-              <div
-                v-if="scheduledStartTime"
-                class="schedule-preview"
-                style="
-                  font-size: 0.9em;
-                  color: #555;
-                  margin-top: 8px;
-                  padding: 8px;
-                  background-color: #e3f2fd;
-                  border-left: 3px solid #0288d1;
-                  border-radius: 3px;
-                "
-              >
-                <p style="margin: 4px 0; color: #01579b">
+              <div v-if="scheduledStartTime" class="schedule-preview">
+                <p>
                   <strong>Your local time:</strong> {{ formatScheduledLocal(scheduledStartTime) }}
                 </p>
-                <p style="margin: 4px 0; color: #01579b">
+                <p>
                   <strong>Request will start at (UTC):</strong> {{ formatDateTime(scheduledStartTime) }}
                 </p>
-                <p style="margin: 4px 0; color: #01579b">
+                <p>
                   <strong>Request will expire at:</strong> {{ calculatedExpiryTime }}
                 </p>
               </div>
             </div>
           </div>
 
-          <div>
-            <scale-button type="submit" :disabled="alreadyRequested || escalations.length == 0" size="small"
+          <div class="form-actions">
+            <scale-button type="submit" :disabled="alreadyRequested || escalations.length == 0"
               >Send</scale-button
             >
           </div>
 
-          <p v-if="requestStatusMessage !== ''">{{ requestStatusMessage }}</p>
+          <scale-notification v-if="requestStatusMessage !== ''" :heading="requestStatusMessage" variant="info" />
         </form>
       </div>
     </scale-card>
@@ -296,20 +256,69 @@ onMounted(async () => {
   text-align: center;
 }
 
-input {
-  margin-left: 5px;
+.request-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  text-align: left;
+  padding: 1rem;
 }
 
-label {
-  display: inline-block;
-  width: 110px;
-  text-align: right;
+.schedule-section {
+  margin-top: 1rem;
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
+  padding-top: 1rem;
 }
 
-scale-data-grid {
+.schedule-details {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-left: 2px solid var(--telekom-color-primary-standard);
+  background-color: var(--telekom-color-ui-subtle);
+}
+
+.schedule-label {
   display: block;
-  margin: 0 auto;
-  max-width: 600px;
+  margin-bottom: 0.5rem;
+}
+
+.schedule-hint {
+  display: block;
+  font-size: 0.85em;
+  color: var(--telekom-color-text-and-icon-additional);
+  margin-top: 0.25rem;
+  font-weight: normal;
+}
+
+.scale-input-native {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: 4px;
+  font-size: 1rem;
+  background: var(--telekom-color-background-surface);
+  color: var(--telekom-color-text-and-icon-standard);
+}
+
+.schedule-preview {
+  font-size: 0.9em;
+  color: var(--telekom-color-text-and-icon-standard);
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background-color: var(--telekom-color-functional-informational-subtle);
+  border-left: 3px solid var(--telekom-color-functional-informational-standard);
+  border-radius: 3px;
+}
+
+.schedule-preview p {
+  margin: 0.25rem 0;
+  color: var(--telekom-color-text-and-icon-on-subtle-informational);
+}
+
+.form-actions {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
 }
 
 scale-card {

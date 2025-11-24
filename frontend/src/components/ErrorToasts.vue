@@ -6,13 +6,20 @@ const { errors } = useErrors();
 <template>
   <div class="toast-container" aria-live="polite" aria-atomic="true">
     <transition-group name="toast" tag="div">
-      <div v-for="e in errors" :key="e.id" class="toast" :class="[e.type || 'error']">
-        <div class="msg">
-          <strong v-if="e.status">[{{ e.status }}]</strong>
-          {{ e.message }}
-          <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
-        </div>
-        <button class="close" aria-label="Dismiss" @click="dismissError(e.id)">×</button>
+      <div v-for="e in errors" :key="e.id" class="toast-wrapper">
+        <scale-notification
+          variant="danger"
+          :heading="e.status ? `Error [${e.status}]` : 'Error'"
+          class="toast-notification"
+        >
+          <div class="toast-content">
+            <p>{{ e.message }}</p>
+            <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
+          </div>
+          <div class="toast-actions">
+            <scale-button variant="ghost" size="small" @click="dismissError(e.id)">Dismiss</scale-button>
+          </div>
+        </scale-notification>
       </div>
     </transition-group>
   </div>
@@ -27,56 +34,48 @@ const { errors } = useErrors();
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-width: 340px;
+  max-width: 400px;
+  width: 100%;
 }
-.toast-enter-active,
-.toast-leave-active {
-  transition: all 0.25s ease;
+
+.toast-wrapper {
+  width: 100%;
 }
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
-}
-.toast {
-  background: #fbe9e9;
-  border-left: 4px solid #d90000;
-  &.success {
-    background: #e9fbe9;
-    border-left: 4px solid #1bb700;
-    border: 1px solid #b6f5c6;
-    color: #155724;
-  }
-  padding: 0.8rem 1rem 0.8rem 1rem;
-  font-size: 0.9rem;
-  line-height: 1.4;
+
+.toast-notification {
+  width: 100%;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
-  border-radius: 6px;
-  display: flex;
-  align-items: flex-start;
-  color: #333;
-  border: 1px solid #f5c6c6;
 }
-.msg {
-  flex: 1;
-  color: #333;
-  font-weight: 500;
+
+.toast-content {
+  margin-bottom: 0.5rem;
 }
+
+.toast-content p {
+  margin: 0;
+}
+
 .cid {
   display: block;
   font-size: 0.75rem;
   opacity: 0.8;
   margin-top: 0.2rem;
 }
-.close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
-  line-height: 1;
-  padding: 0 0.25rem;
+
+.toast-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
 }
-.close:hover {
-  color: #900;
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.25s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 </style>

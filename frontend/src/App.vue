@@ -249,23 +249,16 @@ function logout() {
       <div id="main" class="app-container">
 
         <div v-if="authenticated && groupsRef.length" class="groups-panel">
-          <button
-            type="button"
-            class="groups-toggle"
-            :aria-expanded="groupsExpanded"
-            @click="groupsExpanded = !groupsExpanded"
-          >
-            <span class="toggle-label">Your Groups ({{ groupsRef.length }})</span>
-            <span class="toggle-summary">{{ groupPreview }}</span>
-            <span class="toggle-caret" aria-hidden="true">{{ groupsExpanded ? "▲" : "▼" }}</span>
-          </button>
-          <transition name="fade">
-            <ul v-if="groupsExpanded" class="groups-list">
-              <li v-for="group in groupsRef" :key="group">
-                {{ group }}
-              </li>
-            </ul>
-          </transition>
+          <scale-accordion>
+            <scale-accordion-item :expanded="groupsExpanded" @scale-change="groupsExpanded = $event.detail.expanded">
+              <span slot="header">Your Groups ({{ groupsRef.length }}) - {{ groupPreview }}</span>
+              <div class="groups-list">
+                <scale-tag v-for="group in groupsRef" :key="group" class="group-tag">
+                  {{ group }}
+                </scale-tag>
+              </div>
+            </scale-accordion-item>
+          </scale-accordion>
         </div>
 
         <div v-if="!authenticated" class="center" style="margin: 2rem 0">
@@ -355,69 +348,14 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
   margin: 0 auto 1.25rem auto;
 }
 
-.groups-toggle {
-  width: 100%;
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
-  padding: 0.85rem 1.1rem;
-  background: var(--surface-card);
-  color: var(--telekom-text-color-inverted-primary);
-  font-size: 0.95rem;
+.groups-list {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  box-shadow: var(--shadow-card);
+  padding: 1rem;
 }
 
-.groups-toggle:hover {
-  border-color: color-mix(in srgb, var(--accent-info) 35%, var(--border-default));
-}
-
-.toggle-label {
-  font-weight: 600;
-}
-
-.toggle-summary {
-  flex: 1;
-  text-align: left;
-  color: var(--text-muted);
-}
-
-.toggle-caret {
-  font-size: 0.85rem;
-}
-
-.groups-list {
-  margin: 0.5rem 0 0 0;
-  padding: 0.85rem 1.1rem;
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
-  list-style: none;
-  background: var(--surface-card);
-  max-height: 240px;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.45rem;
-}
-
-.groups-list li {
-  padding: 0.35rem 0.45rem;
-  border-radius: 8px;
-  background: var(--surface-card-subtle);
-  color: var(--telekom-text-color-inverted-primary);
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.group-tag {
+  --telekom-tag-background-color: var(--surface-card-subtle);
 }
 </style>

@@ -158,7 +158,7 @@ async function onCancel(bg: SessionCR) {
   <main>
     <div v-if="authenticated" class="center">
       <div class="controls">
-        <scale-checkbox v-model="showOnlyActive" @scaleChange="getActiveBreakglasses">Active only</scale-checkbox>
+        <scale-checkbox :checked="showOnlyActive" @scaleChange="showOnlyActive = $event.target.checked; getActiveBreakglasses()">Active only</scale-checkbox>
       </div>
       <div>
         {{ state.getBreakglassesMsg }}

@@ -124,81 +124,85 @@ const groupsDisplay = computed(() => {
 
 <template>
   <div class="debug-panel-container">
-    <button
+    <scale-button
+      variant="secondary"
       class="debug-toggle"
       title="Toggle debug panel"
-      aria-label="Toggle debug information"
       @click="showDebug = !showDebug"
     >
       🔧
-    </button>
+    </scale-button>
 
-    <div v-if="showDebug" class="debug-panel">
-      <div class="debug-header">
-        <h3>Debug Information</h3>
-        <button class="close-btn" aria-label="Close debug panel" @click="showDebug = false">✕</button>
-      </div>
+    <div v-if="showDebug" class="debug-panel-wrapper">
+      <scale-card class="debug-panel">
+        <div class="debug-header">
+          <h3>Debug Information</h3>
+          <scale-button variant="ghost" size="small" @click="showDebug = false">✕</scale-button>
+        </div>
 
-      <div class="debug-section">
-        <h4>Authentication Status</h4>
-        <div class="debug-item">
-          <span class="label">Authenticated:</span>
-          <span class="value">{{ user && !user.expired ? "✓ Yes" : "✗ No" }}</span>
-        </div>
-        <div v-if="user" class="debug-item">
-          <span class="label">Email:</span>
-          <span class="value">{{ user.profile?.email }}</span>
-        </div>
-        <div v-if="user" class="debug-item">
-          <span class="label">Name:</span>
-          <span class="value">{{ user.profile?.name }}</span>
-        </div>
-        <div v-if="debugInfo.currentIDP" class="debug-item">
-          <span class="label">Current IDP:</span>
-          <span class="value">{{ debugInfo.currentIDP }}</span>
-        </div>
-      </div>
+        <div class="debug-content">
+          <div class="debug-section">
+            <h4>Authentication Status</h4>
+            <div class="debug-item">
+              <span class="label">Authenticated:</span>
+              <span class="value">{{ user && !user.expired ? "✓ Yes" : "✗ No" }}</span>
+            </div>
+            <div v-if="user" class="debug-item">
+              <span class="label">Email:</span>
+              <span class="value">{{ user.profile?.email }}</span>
+            </div>
+            <div v-if="user" class="debug-item">
+              <span class="label">Name:</span>
+              <span class="value">{{ user.profile?.name }}</span>
+            </div>
+            <div v-if="debugInfo.currentIDP" class="debug-item">
+              <span class="label">Current IDP:</span>
+              <span class="value">{{ debugInfo.currentIDP }}</span>
+            </div>
+          </div>
 
-      <div class="debug-section">
-        <h4>Groups Information</h4>
-        <div class="debug-item">
-          <span class="label">Groups Found:</span>
-          <span class="value">{{ debugInfo.groups.length }}</span>
+          <div class="debug-section">
+            <h4>Groups Information</h4>
+            <div class="debug-item">
+              <span class="label">Groups Found:</span>
+              <span class="value">{{ debugInfo.groups.length }}</span>
+            </div>
+            <div class="debug-item">
+              <span class="label">Groups:</span>
+              <span class="value groups-list">{{ groupsDisplay }}</span>
+            </div>
+          </div>
+
+          <div class="debug-section">
+            <h4>Access Token</h4>
+            <div class="debug-item">
+              <span class="label">Summary:</span>
+              <span class="value">{{ tokenSummary }}</span>
+            </div>
+            <details class="token-details">
+              <summary>Full Claims</summary>
+              <pre>{{ JSON.stringify(debugInfo.accessTokenClaims, null, 2) }}</pre>
+            </details>
+          </div>
+
+          <div v-if="debugInfo.idTokenClaims" class="debug-section">
+            <h4>ID Token</h4>
+            <details class="token-details">
+              <summary>ID Token Claims</summary>
+              <pre>{{ JSON.stringify(debugInfo.idTokenClaims, null, 2) }}</pre>
+            </details>
+          </div>
+
+          <div v-if="debugInfo.error" class="debug-section error">
+            <h4>Errors</h4>
+            <div class="error-message">{{ debugInfo.error }}</div>
+          </div>
         </div>
-        <div class="debug-item">
-          <span class="label">Groups:</span>
-          <span class="value groups-list">{{ groupsDisplay }}</span>
+
+        <div class="debug-actions">
+          <scale-button class="btn-refresh" @click="collectDebugInfo" style="width: 100%">Refresh</scale-button>
         </div>
-      </div>
-
-      <div class="debug-section">
-        <h4>Access Token</h4>
-        <div class="debug-item">
-          <span class="label">Summary:</span>
-          <span class="value">{{ tokenSummary }}</span>
-        </div>
-        <details class="token-details">
-          <summary>Full Claims</summary>
-          <pre>{{ JSON.stringify(debugInfo.accessTokenClaims, null, 2) }}</pre>
-        </details>
-      </div>
-
-      <div v-if="debugInfo.idTokenClaims" class="debug-section">
-        <h4>ID Token</h4>
-        <details class="token-details">
-          <summary>ID Token Claims</summary>
-          <pre>{{ JSON.stringify(debugInfo.idTokenClaims, null, 2) }}</pre>
-        </details>
-      </div>
-
-      <div v-if="debugInfo.error" class="debug-section error">
-        <h4>Errors</h4>
-        <div class="error-message">{{ debugInfo.error }}</div>
-      </div>
-
-      <div class="debug-actions">
-        <button class="btn-refresh" @click="collectDebugInfo">Refresh</button>
-      </div>
+      </scale-card>
     </div>
   </div>
 </template>
@@ -213,85 +217,60 @@ const groupsDisplay = computed(() => {
 }
 
 .debug-toggle {
-  width: 40px;
-  height: 40px;
   border-radius: 50%;
-  border: 2px solid #666;
-  background-color: #f5f5f5;
-  cursor: pointer;
-  font-size: 1.2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-.debug-toggle:hover {
-  background-color: #fff;
-  border-color: #0070b8;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-}
-
-.debug-panel {
+.debug-panel-wrapper {
   position: absolute;
   bottom: 60px;
   right: 0;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-  border: 2px solid #0070b8;
-  border-radius: 8px;
-  padding: 16px;
   width: 500px;
   max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.debug-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+  overflow: hidden;
+  --telekom-card-padding: 1rem;
+}
+
+.debug-content {
   overflow-y: auto;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  flex: 1;
+  padding-right: 0.5rem;
 }
 
 .debug-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
-  border-bottom: 2px solid #0070b8;
-  padding-bottom: 8px;
+  margin-bottom: 1rem;
+  border-bottom: 2px solid var(--telekom-color-primary-standard);
+  padding-bottom: 0.5rem;
 }
 
 .debug-header h3 {
   margin: 0;
-  color: #4dbfff;
+  color: var(--telekom-color-text-and-icon-standard);
   font-size: 1.1rem;
 }
 
-.close-btn {
-  background: none;
-  border: none;
-  color: #d4d4d4;
-  cursor: pointer;
-  font-size: 1.2rem;
-  padding: 0;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.close-btn:hover {
-  color: #ff6b6b;
-}
-
 .debug-section {
-  margin-bottom: 16px;
-  padding: 12px;
-  background-color: #2d2d2d;
-  border-left: 3px solid #0070b8;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background-color: var(--telekom-color-ui-subtle);
+  border-left: 3px solid var(--telekom-color-primary-standard);
   border-radius: 4px;
 }
 
 .debug-section h4 {
-  margin: 0 0 8px 0;
-  color: #4dbfff;
+  margin: 0 0 0.5rem 0;
+  color: var(--telekom-color-text-and-icon-standard);
   font-size: 0.95rem;
 }
 
@@ -304,108 +283,89 @@ const groupsDisplay = computed(() => {
 }
 
 .debug-item .label {
-  color: #7c97c0;
+  color: var(--telekom-color-text-and-icon-additional);
   font-weight: bold;
   min-width: 120px;
 }
 
 .debug-item .value {
-  color: #ce9178;
+  color: var(--telekom-color-text-and-icon-standard);
   word-break: break-all;
   flex: 1;
 }
 
 .debug-item .value.groups-list {
-  color: #4ec9b0;
+  color: var(--telekom-color-functional-success-standard);
 }
 
 .token-details {
   margin-top: 8px;
   cursor: pointer;
-  color: #7c97c0;
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .token-details summary {
   padding: 6px 8px;
-  background-color: #1e1e1e;
+  background-color: var(--telekom-color-ui-background-surface);
   border-radius: 3px;
   user-select: none;
 }
 
 .token-details summary:hover {
-  background-color: #3d3d3d;
+  background-color: var(--telekom-color-ui-subtle);
 }
 
 .token-details pre {
   margin: 8px 0 0 0;
   padding: 8px;
-  background-color: #1e1e1e;
-  border: 1px solid #0070b8;
+  background-color: var(--telekom-color-ui-background-surface);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: 4px;
   overflow-x: auto;
   font-size: 0.85rem;
-  color: #d4d4d4;
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .debug-section.error {
-  border-left-color: #ff6b6b;
-  background-color: rgba(255, 107, 107, 0.1);
+  border-left-color: var(--telekom-color-functional-danger-standard);
+  background-color: var(--telekom-color-functional-danger-subtle);
 }
 
 .error-message {
-  color: #ff6b6b;
+  color: var(--telekom-color-functional-danger-standard);
   padding: 8px;
-  background-color: #2d2d2d;
+  background-color: var(--telekom-color-ui-background-surface);
   border-radius: 3px;
   word-break: break-all;
 }
 
 .debug-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  border-top: 1px solid #3d3d3d;
-  padding-top: 12px;
-}
-
-.btn-refresh {
-  flex: 1;
-  padding: 8px 12px;
-  background-color: #0070b8;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-family: monospace;
-  transition: background-color 0.2s;
-}
-
-.btn-refresh:hover {
-  background-color: #005a96;
+  margin-top: 1rem;
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
+  padding-top: 1rem;
 }
 
 /* Scrollbar styling for debug panel */
-.debug-panel::-webkit-scrollbar {
+.debug-content::-webkit-scrollbar {
   width: 8px;
 }
 
-.debug-panel::-webkit-scrollbar-track {
-  background: #2d2d2d;
+.debug-content::-webkit-scrollbar-track {
+  background: var(--telekom-color-ui-subtle);
   border-radius: 4px;
 }
 
-.debug-panel::-webkit-scrollbar-thumb {
-  background: #0070b8;
+.debug-content::-webkit-scrollbar-thumb {
+  background: var(--telekom-color-primary-standard);
   border-radius: 4px;
 }
 
-.debug-panel::-webkit-scrollbar-thumb:hover {
-  background: #005a96;
+.debug-content::-webkit-scrollbar-thumb:hover {
+  background: var(--telekom-color-primary-hover);
 }
 
 @media (max-width: 768px) {
-  .debug-panel {
+  .debug-panel-wrapper {
     width: calc(100vw - 40px);
     max-height: 50vh;
   }
