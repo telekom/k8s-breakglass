@@ -16,8 +16,8 @@
   --border-strong: color-mix(in srgb, var(--telekom-color-gray-100) 35%, transparent);
   --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 45%, transparent);
 
-  --text-muted: var(--telekom-text-color-inverted-secondary);
-  --telekom-color-text-and-icon-standard: color-mix(in srgb, var(--telekom-text-color-inverted-secondary) 60%, transparent);
+  --text-muted: var(--telekom-color-ui-subtle);
+  --telekom-color-text-and-icon-standard: color-mix(in srgb, var(--telekom-color-text-and-icon-standard) 60%, transparent);
   --focus-outline: var(--telekom-color-blue-500);
 
   --accent-telekom: var(--telekom-color-magenta-500);
