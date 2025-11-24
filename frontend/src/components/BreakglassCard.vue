@@ -522,12 +522,7 @@ function drop() {
         <scale-tag size="small" variant="info">{{ requesterGroups.length }} groups</scale-tag>
       </div>
       <div class="breakglass-card__pill-list">
-        <scale-tag
-          v-for="group in visibleRequesterGroups"
-          :key="group"
-          size="small"
-          variant="secondary"
-        >
+        <scale-tag v-for="group in visibleRequesterGroups" :key="group" size="small" variant="secondary">
           {{ group }}
         </scale-tag>
       </div>
@@ -542,7 +537,7 @@ function drop() {
       </scale-button>
     </div>
 
-    <section v-if="reasonDescription" class="card-section">
+    <section v-if="reasonDescription" class="card-section card-section--reason">
       <h4>Reason policy</h4>
       <p>{{ reasonDescription }}</p>
     </section>
@@ -553,12 +548,7 @@ function drop() {
         <scale-tag size="small" variant="info">{{ approvalGroupsList.length }} groups</scale-tag>
       </div>
       <div class="breakglass-card__pill-list">
-        <scale-tag
-          v-for="group in visibleApprovalGroups"
-          :key="group"
-          size="small"
-          variant="secondary"
-        >
+        <scale-tag v-for="group in visibleApprovalGroups" :key="group" size="small" variant="secondary">
           {{ group }}
         </scale-tag>
       </div>
@@ -615,7 +605,12 @@ function drop() {
       <p v-if="durationInput" class="helper">
         Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
       </p>
-      <scale-button size="small" variant="secondary" class="inline-action" @click="showDurationHints = !showDurationHints">
+      <scale-button
+        size="small"
+        variant="secondary"
+        class="inline-action"
+        @click="showDurationHints = !showDurationHints"
+      >
         {{ showDurationHints ? "Hide common durations" : "Show common durations" }}
       </scale-button>
       <div v-if="showDurationHints" class="hint-box">
@@ -641,26 +636,30 @@ function drop() {
             type="date"
             :min="minScheduleDate"
             :value="scheduleDatePart"
+            style="flex: 2"
             @scaleChange="scheduleDatePart = $event.target.value"
-            style="flex: 2;"
           ></scale-text-field>
           <scale-dropdown-select
             :id="'scheduled-hour-' + breakglass.to"
             label="Hour (24h)"
             :value="scheduleHourPart"
+            style="flex: 1"
             @scaleChange="scheduleHourPart = $event.target.value"
-            style="flex: 1;"
           >
-            <scale-dropdown-select-option v-for="hour in hourOptions" :key="hour" :value="hour">{{ hour }}</scale-dropdown-select-option>
+            <scale-dropdown-select-option v-for="hour in hourOptions" :key="hour" :value="hour">{{
+              hour
+            }}</scale-dropdown-select-option>
           </scale-dropdown-select>
           <scale-dropdown-select
             :id="'scheduled-minute-' + breakglass.to"
             label="Minute"
             :value="scheduleMinutePart"
+            style="flex: 1"
             @scaleChange="scheduleMinutePart = $event.target.value"
-            style="flex: 1;"
           >
-            <scale-dropdown-select-option v-for="minute in minuteOptions" :key="minute" :value="minute">{{ minute }}</scale-dropdown-select-option>
+            <scale-dropdown-select-option v-for="minute in minuteOptions" :key="minute" :value="minute">{{
+              minute
+            }}</scale-dropdown-select-option>
           </scale-dropdown-select>
         </div>
         <div v-if="scheduleDatePart" class="schedule-picker-actions">
@@ -686,8 +685,7 @@ function drop() {
         :value="requestReason"
         :max-length="reasonCharLimit"
         :placeholder="
-          (breakglass.requestReason && breakglass.requestReason.description) ||
-          'Optional reason (max 1024 characters)'
+          (breakglass.requestReason && breakglass.requestReason.description) || 'Optional reason (max 1024 characters)'
         "
         @scaleChange="handleReasonChange"
       ></scale-textarea>
@@ -817,6 +815,21 @@ function drop() {
   background: var(--surface-card-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
+}
+
+.card-section--reason h4 {
+  margin: 0 0 0.4rem 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--telekom-color-text-and-icon-white-standard);
+}
+
+.card-section--reason p {
+  margin: 0;
+  line-height: 1.45;
+  color: var(--telekom-color-text-and-icon-white-standard);
+  opacity: 0.9;
 }
 
 .groups-header {
@@ -1021,8 +1034,6 @@ function drop() {
   margin: 0;
 }
 
-
-
 /* Modal internal styles */
 .duration-selector,
 .schedule-section,
@@ -1153,5 +1164,3 @@ function drop() {
   border-radius: 10px;
 }
 </style>
-
-

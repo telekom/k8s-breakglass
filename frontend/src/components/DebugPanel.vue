@@ -124,12 +124,7 @@ const groupsDisplay = computed(() => {
 
 <template>
   <div class="debug-panel-container">
-    <scale-button
-      variant="secondary"
-      class="debug-toggle"
-      title="Toggle debug panel"
-      @click="showDebug = !showDebug"
-    >
+    <scale-button variant="secondary" class="debug-toggle" title="Toggle debug panel" @click="showDebug = !showDebug">
       🔧
     </scale-button>
 
@@ -200,7 +195,7 @@ const groupsDisplay = computed(() => {
         </div>
 
         <div class="debug-actions">
-          <scale-button class="btn-refresh" @click="collectDebugInfo" style="width: 100%">Refresh</scale-button>
+          <scale-button class="btn-refresh" style="width: 100%" @click="collectDebugInfo">Refresh</scale-button>
         </div>
       </scale-card>
     </div>

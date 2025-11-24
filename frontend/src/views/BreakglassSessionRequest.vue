@@ -161,13 +161,8 @@ onMounted(async () => {
     <scale-card v-else class="centered">
       <div v-if="authenticated" class="center">
         <p>Request for group assignment</p>
-        <form @submit.prevent="handleSendButtonClick" class="request-form">
-          <scale-text-field
-            label="User"
-            :value="userName"
-            disabled
-            required
-          ></scale-text-field>
+        <form class="request-form" @submit.prevent="handleSendButtonClick">
+          <scale-text-field label="User" :value="userName" disabled required></scale-text-field>
           <scale-text-field
             label="Cluster"
             :value="clusterName"
@@ -178,9 +173,16 @@ onMounted(async () => {
           <scale-dropdown-select
             label="Group"
             :value="clusterGroup"
-            @scaleChange="clusterGroup = $event.target.value; onInput()"
+            @scaleChange="
+              clusterGroup = $event.target.value;
+              onInput();
+            "
           >
-            <scale-dropdown-select-option v-for="escalation in escalations" :key="escalation.escalatedGroup" :value="escalation.escalatedGroup">
+            <scale-dropdown-select-option
+              v-for="escalation in escalations"
+              :key="escalation.escalatedGroup"
+              :value="escalation.escalatedGroup"
+            >
               {{ escalation.escalatedGroup }}
             </scale-dropdown-select-option>
           </scale-dropdown-select>
@@ -196,12 +198,7 @@ onMounted(async () => {
 
           <!-- Collapsible scheduling section -->
           <div class="schedule-section">
-            <scale-button
-              variant="secondary"
-              size="small"
-              class="toggle-schedule"
-              @click="toggleScheduleOptions"
-            >
+            <scale-button variant="secondary" size="small" class="toggle-schedule" @click="toggleScheduleOptions">
               <span v-if="!showScheduleOptions">Schedule for future date (optional)</span>
               <span v-else>Hide schedule options</span>
             </scale-button>
@@ -225,23 +222,15 @@ onMounted(async () => {
               </div>
 
               <div v-if="scheduledStartTime" class="schedule-preview">
-                <p>
-                  <strong>Your local time:</strong> {{ formatScheduledLocal(scheduledStartTime) }}
-                </p>
-                <p>
-                  <strong>Request will start at (UTC):</strong> {{ formatDateTime(scheduledStartTime) }}
-                </p>
-                <p>
-                  <strong>Request will expire at:</strong> {{ calculatedExpiryTime }}
-                </p>
+                <p><strong>Your local time:</strong> {{ formatScheduledLocal(scheduledStartTime) }}</p>
+                <p><strong>Request will start at (UTC):</strong> {{ formatDateTime(scheduledStartTime) }}</p>
+                <p><strong>Request will expire at:</strong> {{ calculatedExpiryTime }}</p>
               </div>
             </div>
           </div>
 
           <div class="form-actions">
-            <scale-button type="submit" :disabled="alreadyRequested || escalations.length == 0"
-              >Send</scale-button
-            >
+            <scale-button type="submit" :disabled="alreadyRequested || escalations.length == 0">Send</scale-button>
           </div>
 
           <scale-notification v-if="requestStatusMessage !== ''" :heading="requestStatusMessage" variant="info" />

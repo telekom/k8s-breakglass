@@ -173,7 +173,9 @@ function handleIDPButtonClick(idpName: string) {
         </label>
 
         <!-- Loading state -->
-        <div v-if="loading" class="idp-loading"><scale-loading-spinner size="small" /> Loading identity providers...</div>
+        <div v-if="loading" class="idp-loading">
+          <scale-loading-spinner size="small" /> Loading identity providers...
+        </div>
 
         <!-- Error message if config fetch failed -->
         <scale-notification v-if="error" variant="danger" :heading="error" />
@@ -185,7 +187,7 @@ function handleIDPButtonClick(idpName: string) {
             :key="idp.name"
             :variant="selectedIDPName === idp.name ? 'primary' : 'secondary'"
             :disabled="disabled || !idp.enabled"
-            style="width: 100%; margin-bottom: 0.5rem;"
+            style="width: 100%; margin-bottom: 0.5rem"
             @click="handleIDPButtonClick(idp.name)"
           >
             {{ idp.displayName }}

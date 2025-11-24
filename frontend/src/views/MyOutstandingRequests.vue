@@ -1,113 +1,123 @@
 <template>
   <main class="ui-page outstanding-page">
-    <div class="centered">
-    <scale-loading-spinner v-if="loading" />
+    <scale-loading-spinner v-if="loading" class="page-loading" />
     <scale-notification v-else-if="error" variant="danger" :heading="error" />
-    <div v-else>
-      <div v-if="requests.length === 0" class="center">No outstanding requests.</div>
-      <div v-else class="requests-list">
-        <scale-card v-for="req in requests" :key="req.metadata?.name" class="request-card">
-          <header class="request-header">
-            <div class="request-target">
-              <span class="cluster">{{ req.spec.cluster || "-" }}</span>
-              <span class="group">{{ req.spec.grantedGroup || "-" }}</span>
-            </div>
-            <div class="request-status">
-              <scale-tag :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">{{ requestState(req) }}</scale-tag>
-              <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" variant="info" class="schedule">
-                ⏳ Waiting for scheduled time
-              </scale-tag>
-              <scale-button
-                class="withdraw-btn"
-                variant="danger"
-                :disabled="withdrawing === req.metadata?.name"
-                @click="withdrawRequest(req)"
-              >
-                {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
-              </scale-button>
-            </div>
-          </header>
+    <section v-else class="outstanding-shell">
+      <header class="page-header">
+        <div>
+          <h1>My Outstanding Requests</h1>
+          <p class="page-description">Track your pending access requests and cancel anything you no longer need.</p>
+        </div>
+        <scale-tag variant="secondary" class="open-count">{{ requests.length }} open</scale-tag>
+      </header>
 
-          <div class="request-name">
-            <span>Request</span>
-            <code>{{ req.metadata?.name }}</code>
-          </div>
-
-          <div class="request-badges">
-            <scale-tag v-if="req.spec?.identityProviderName" variant="secondary">
-              IDP: {{ req.spec.identityProviderName }}
-            </scale-tag>
-            <scale-tag v-if="req.spec?.identityProviderIssuer" variant="secondary">
-              Issuer: {{ req.spec.identityProviderIssuer }}
-            </scale-tag>
-            <scale-tag v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-tag>
-            <scale-tag v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-tag>
-          </div>
-
-          <div class="info-grid">
-            <div class="info-block">
-              <span class="label">Requested</span>
-              <span class="value">{{ formatDate(req.status?.conditions?.[0]?.lastTransitionTime) }}</span>
-
-              <span class="label">Preferred window</span>
-              <span class="value">
-                <template v-if="req.spec?.scheduledStartTime">
-                  {{ format24Hour(req.spec.scheduledStartTime) }}
-                </template>
-                <template v-else>Not scheduled</template>
-              </span>
-            </div>
-
-            <div class="info-block">
-              <span class="label">Times out</span>
-              <span class="value">
-                <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
-                  <CountdownTimer :expires-at="req.status.timeoutAt" />
-                  <small class="muted">({{ formatDate(req.status.timeoutAt) }})</small>
-                </template>
-                <template v-else>—</template>
-              </span>
-
-              <span class="label">Expires</span>
-              <span class="value">
-                <template v-if="req.status?.expiresAt && new Date(req.status.expiresAt).getTime() > Date.now()">
-                  <CountdownTimer :expires-at="req.status.expiresAt" />
-                  <small class="muted">({{ formatDate(req.status.expiresAt) }})</small>
-                </template>
-                <template v-else>—</template>
-              </span>
-            </div>
-
-            <div class="info-block">
-              <span class="label">Requester</span>
-              <span class="value">{{ requestUser(req) }}</span>
-
-              <span class="label">Approver status</span>
-              <span class="value">
-                {{ approverCopy(req) }}
-              </span>
-            </div>
-          </div>
-
-          <div v-if="requestReason(req)" class="request-reason">
-            <span class="label">Reason</span>
-            <div class="reason-text">{{ requestReason(req) }}</div>
-          </div>
-
-          <footer class="request-footer">
-            <div class="timestamps">
-              <span v-if="req.status?.timeoutAt" class="muted-line">
-                Timeout target: {{ formatDate(req.status.timeoutAt) }}
-              </span>
-              <span v-if="req.status?.expiresAt" class="muted-line">
-                Expires hard stop: {{ formatDate(req.status.expiresAt) }}
-              </span>
-            </div>
-          </footer>
-        </scale-card>
+      <div v-if="requests.length === 0" class="empty-state">
+        <p>No outstanding requests.</p>
       </div>
-    </div>
-    </div>
+      <div v-else class="requests-list">
+          <scale-card v-for="req in requests" :key="req.metadata?.name" class="request-card">
+            <header class="request-header">
+              <div class="request-target">
+                <span class="cluster">{{ req.spec.cluster || "-" }}</span>
+                <span class="group">{{ req.spec.grantedGroup || "-" }}</span>
+              </div>
+              <div class="request-status">
+                <scale-tag :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">{{
+                  requestState(req)
+                }}</scale-tag>
+                <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" variant="info" class="schedule">
+                  ⏳ Waiting for scheduled time
+                </scale-tag>
+                <scale-button
+                  class="withdraw-btn"
+                  variant="danger"
+                  :disabled="withdrawing === req.metadata?.name"
+                  @click="withdrawRequest(req)"
+                >
+                  {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
+                </scale-button>
+              </div>
+            </header>
+
+            <div class="request-name">
+              <span>Request</span>
+              <code>{{ req.metadata?.name }}</code>
+            </div>
+
+            <div class="request-badges">
+              <scale-tag v-if="req.spec?.identityProviderName" variant="secondary">
+                IDP: {{ req.spec.identityProviderName }}
+              </scale-tag>
+              <scale-tag v-if="req.spec?.identityProviderIssuer" variant="secondary">
+                Issuer: {{ req.spec.identityProviderIssuer }}
+              </scale-tag>
+              <scale-tag v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-tag>
+              <scale-tag v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-tag>
+            </div>
+
+            <div class="info-grid">
+              <div class="info-block">
+                <span class="label">Requested</span>
+                <span class="value">{{ formatDate(req.status?.conditions?.[0]?.lastTransitionTime) }}</span>
+
+                <span class="label">Preferred window</span>
+                <span class="value">
+                  <template v-if="req.spec?.scheduledStartTime">
+                    {{ format24Hour(req.spec.scheduledStartTime) }}
+                  </template>
+                  <template v-else>Not scheduled</template>
+                </span>
+              </div>
+
+              <div class="info-block">
+                <span class="label">Times out</span>
+                <span class="value">
+                  <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
+                    <CountdownTimer :expires-at="req.status.timeoutAt" />
+                    <small class="muted">({{ formatDate(req.status.timeoutAt) }})</small>
+                  </template>
+                  <template v-else>—</template>
+                </span>
+
+                <span class="label">Expires</span>
+                <span class="value">
+                  <template v-if="req.status?.expiresAt && new Date(req.status.expiresAt).getTime() > Date.now()">
+                    <CountdownTimer :expires-at="req.status.expiresAt" />
+                    <small class="muted">({{ formatDate(req.status.expiresAt) }})</small>
+                  </template>
+                  <template v-else>—</template>
+                </span>
+              </div>
+
+              <div class="info-block">
+                <span class="label">Requester</span>
+                <span class="value">{{ requestUser(req) }}</span>
+
+                <span class="label">Approver status</span>
+                <span class="value">
+                  {{ approverCopy(req) }}
+                </span>
+              </div>
+            </div>
+
+            <div v-if="requestReason(req)" class="request-reason">
+              <span class="label">Reason</span>
+              <div class="reason-text">{{ requestReason(req) }}</div>
+            </div>
+
+            <footer class="request-footer">
+              <div class="timestamps">
+                <span v-if="req.status?.timeoutAt" class="muted-line">
+                  Timeout target: {{ formatDate(req.status.timeoutAt) }}
+                </span>
+                <span v-if="req.status?.expiresAt" class="muted-line">
+                  Expires hard stop: {{ formatDate(req.status.expiresAt) }}
+                </span>
+              </div>
+            </footer>
+          </scale-card>
+        </div>
+    </section>
   </main>
 </template>
 
@@ -196,36 +206,82 @@ onMounted(async () => {
 <style scoped>
 .outstanding-page {
   padding-bottom: 3rem;
-  --outstanding-bg: var(--telekom-color-background-canvas);
-  --outstanding-surface: var(--telekom-color-background-surface);
-  --outstanding-border: var(--telekom-color-ui-border-standard);
-  --outstanding-shadow: var(--telekom-shadow-floating-standard);
-  --outstanding-text-strong: var(--telekom-color-text-and-icon-standard);
-  --outstanding-text-muted: var(--telekom-color-text-and-icon-additional);
-  --outstanding-panel-bg: var(--telekom-color-ui-subtle);
-  --outstanding-panel-border: var(--telekom-color-ui-border-standard);
-  --outstanding-chip-bg: var(--telekom-color-functional-informational-subtle);
-  --outstanding-chip-text: var(--telekom-color-text-and-icon-on-subtle-informational);
-  --outstanding-chip-neutral-bg: var(--telekom-color-functional-success-subtle);
-  --outstanding-chip-neutral-text: var(--telekom-color-text-and-icon-on-subtle-success);
-  --outstanding-warning-bg: var(--telekom-color-functional-warning-subtle);
-  --outstanding-warning-text: var(--telekom-color-text-and-icon-on-subtle-warning);
-  --outstanding-primary: var(--telekom-color-primary-standard);
-  --outstanding-danger: var(--telekom-color-functional-danger-standard);
-  background: var(--outstanding-bg);
+  --outstanding-surface: var(--surface-card);
+  --outstanding-border: var(--border-default);
+  --outstanding-shadow: var(--shadow-card);
+  --outstanding-text-strong: var(--telekom-text-color-inverted-primary);
+  --outstanding-text-muted: var(--text-muted);
+  --outstanding-panel-bg: color-mix(in srgb, var(--surface-card) 75%, transparent);
+  --outstanding-panel-border: var(--border-default);
+  --outstanding-chip-bg: color-mix(in srgb, var(--accent-info) 20%, transparent);
+  --outstanding-chip-text: var(--accent-info);
+  --outstanding-chip-neutral-bg: color-mix(in srgb, var(--accent-success) 20%, transparent);
+  --outstanding-chip-neutral-text: var(--accent-success);
+  --outstanding-warning-bg: color-mix(in srgb, var(--accent-warning) 20%, transparent);
+  --outstanding-warning-text: var(--accent-warning);
+  --outstanding-primary: var(--accent-telekom);
+  --outstanding-danger: var(--accent-critical);
   color: var(--outstanding-text-strong);
+}
+
+.outstanding-shell {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  background: var(--outstanding-surface);
+  border-radius: 28px;
+  border: 1px solid var(--outstanding-border);
+  box-shadow: var(--outstanding-shadow);
+  padding: 2rem clamp(1.5rem, 4vw, 2.75rem) 2.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.page-header h1 {
+  font-size: clamp(1.8rem, 4vw, 2.4rem);
+  color: var(--outstanding-text-strong);
+  margin-bottom: 0.35rem;
+}
+
+.page-description {
+  color: var(--outstanding-text-muted);
+  margin: 0;
+}
+
+.open-count {
+  align-self: flex-start;
+  font-weight: 600;
+}
+
+.page-loading {
+  margin: 2rem auto;
+}
+
+.empty-state {
+  padding: 2.5rem 1.5rem;
+  border-radius: 20px;
+  border: 1px dashed var(--outstanding-border);
+  background: color-mix(in srgb, var(--surface-card) 60%, transparent);
+  color: var(--outstanding-text-muted);
+  text-align: center;
 }
 
 .requests-list {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  margin: 2rem auto;
-  max-width: 680px;
+  gap: 1.25rem;
 }
 
 .request-card {
-  --scale-card-padding: 1.5rem 1.8rem;
+  width: 100%;
+  --scale-card-padding: 1.5rem clamp(1rem, 4vw, 1.8rem);
 }
 
 .request-header {
@@ -233,18 +289,18 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: flex-start;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.75rem;
   font-weight: 600;
 }
 
 .cluster {
-  color: var(--telekom-color-additional-cyan-400);
-  font-size: 1.1rem;
+  color: var(--accent-info);
+  font-size: 1.05rem;
 }
 
 .group {
   color: var(--outstanding-primary);
-  font-size: 1.1rem;
+  font-size: 1.05rem;
 }
 
 .request-target {
@@ -293,7 +349,7 @@ onMounted(async () => {
 
 .info-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 1rem;
   margin-top: 1rem;
 }
@@ -301,11 +357,11 @@ onMounted(async () => {
 .info-block {
   background: var(--outstanding-panel-bg);
   border: 1px solid var(--outstanding-panel-border);
-  border-radius: 10px;
-  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  padding: 0.95rem 1.1rem;
   display: grid;
   grid-template-columns: max-content 1fr;
-  row-gap: 0.4rem;
+  row-gap: 0.45rem;
   column-gap: 0.6rem;
 }
 
@@ -330,7 +386,7 @@ onMounted(async () => {
 .request-reason {
   border-left: 4px solid var(--outstanding-primary);
   background: var(--outstanding-panel-bg);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 0.75rem 1rem;
   margin-top: 1rem;
 }
@@ -364,23 +420,34 @@ onMounted(async () => {
   margin-top: 0.25rem;
 }
 
-.error {
-  color: var(--outstanding-danger);
-  margin: 1rem 0;
-}
-
-.center {
-  text-align: center;
-  color: var(--outstanding-text-muted);
-}
-
 .reason-text {
   color: var(--outstanding-text-strong);
   margin-top: 0.25rem;
   white-space: pre-wrap;
   background: var(--outstanding-panel-bg);
-  border-radius: 6px;
+  border-radius: 10px;
   padding: 0.75rem 1rem;
   border: 1px solid var(--outstanding-panel-border);
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+  }
+
+  .open-count {
+    align-self: stretch;
+    justify-content: center;
+  }
+
+  .request-status {
+    width: 100%;
+    align-items: flex-start;
+  }
+
+  .request-status scale-button {
+    align-self: flex-start;
+    width: 100%;
+  }
 }
 </style>

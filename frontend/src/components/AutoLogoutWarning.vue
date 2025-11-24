@@ -5,8 +5,8 @@
         heading="Session expiring soon"
         variant="warning"
         opened
-        @scale-close="dismiss"
         class="logout-notification"
+        @scale-close="dismiss"
       >
         <p class="warning-copy">
           Your session will expire shortly. Click stay logged in to silently renew, or log out if you are finished.
@@ -132,5 +132,3 @@ export default {
   transform: translateY(20px);
 }
 </style>
-
-

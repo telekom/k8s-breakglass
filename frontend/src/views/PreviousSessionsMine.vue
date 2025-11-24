@@ -98,7 +98,11 @@ function statusTone(s: any): string {
             </div>
           </div>
           <div class="header-right">
-            <scale-chip :variant="statusTone(s) === 'tone-success' ? 'success' : statusTone(s) === 'tone-warning' ? 'warning' : 'neutral'">
+            <scale-chip
+              :variant="
+                statusTone(s) === 'tone-success' ? 'success' : statusTone(s) === 'tone-warning' ? 'warning' : 'neutral'
+              "
+            >
               {{ s.state || "-" }}
             </scale-chip>
           </div>

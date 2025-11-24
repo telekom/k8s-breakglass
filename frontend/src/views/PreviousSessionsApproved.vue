@@ -109,7 +109,11 @@ const approverSessions = computed(() =>
       <p>No previous sessions found.</p>
     </div>
     <div v-else class="sessions-list">
-      <scale-card v-for="s in approverSessions" :key="s.id || s.name || s.group + s.cluster + s.expiry" class="session-card">
+      <scale-card
+        v-for="s in approverSessions"
+        :key="s.id || s.name || s.group + s.cluster + s.expiry"
+        class="session-card"
+      >
         <!-- Header -->
         <div class="card-header">
           <div class="header-left">
@@ -120,7 +124,11 @@ const approverSessions = computed(() =>
             </div>
           </div>
           <div class="header-right">
-            <scale-chip :variant="statusTone(s) === 'tone-success' ? 'success' : statusTone(s) === 'tone-warning' ? 'warning' : 'neutral'">
+            <scale-chip
+              :variant="
+                statusTone(s) === 'tone-success' ? 'success' : statusTone(s) === 'tone-warning' ? 'warning' : 'neutral'
+              "
+            >
               {{ s.state || "-" }}
             </scale-chip>
           </div>

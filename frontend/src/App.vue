@@ -9,6 +9,8 @@ import { BrandingKey } from "@/keys";
 import { useUser, currentIDPName } from "@/services/auth";
 import IDPSelector from "@/components/IDPSelector.vue";
 import DebugPanel from "@/components/DebugPanel.vue";
+import ErrorToasts from "@/components/ErrorToasts.vue";
+import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 
 const auth = inject(AuthKey);
@@ -22,6 +24,21 @@ const router = useRouter();
 
 const groupsRef = ref<string[]>([]);
 const groupsExpanded = ref(false);
+const showAllGroups = ref(false);
+const MAX_VISIBLE_GROUPS = 10;
+
+const hasOverflowGroups = computed(() => groupsRef.value.length > MAX_VISIBLE_GROUPS);
+
+const visibleGroups = computed(() => {
+  if (showAllGroups.value || !hasOverflowGroups.value) {
+    return groupsRef.value;
+  }
+  return groupsRef.value.slice(0, MAX_VISIBLE_GROUPS);
+});
+
+const hiddenGroupCount = computed(() => {
+  return Math.max(groupsRef.value.length - MAX_VISIBLE_GROUPS, 0);
+});
 
 // Theme handling
 const theme = ref<"light" | "dark">("dark");
@@ -82,18 +99,11 @@ const primaryNavItems: PrimaryNavItem[] = [
 
 const activeNavId = computed(() => {
   const currentName = (route.name as string) ?? "";
-  return (
-    primaryNavItems.find((item) => item.matches.includes(currentName))?.id ??
-    "home"
-  );
+  return primaryNavItems.find((item) => item.matches.includes(currentName))?.id ?? "home";
 });
 
 const userDisplayName = computed(() => user.value?.profile.name || user.value?.profile.email || "");
 const userEmail = computed(() => user.value?.profile.email || "");
-
-function filterByGroup(group: string) {
-  router.push({ name: "sessionBrowser", query: { group } });
-}
 
 function navHref(item: PrimaryNavItem) {
   return router.resolve(item.to).href;
@@ -165,6 +175,9 @@ watch(
   (len) => {
     if (!len) {
       groupsExpanded.value = false;
+    }
+    if (len <= MAX_VISIBLE_GROUPS) {
+      showAllGroups.value = false;
     }
   },
 );
@@ -242,19 +255,15 @@ function logout() {
 
         <div slot="functions" class="header-functions">
           <div v-if="authenticated" class="user-pill">
-            <scale-icon-user-file-user aria-hidden="true" class="user-pill__icon" />
+            <scale-icon-user-file-user aria-hidden="true" class="user-pill__icon"></scale-icon-user-file-user>
             <div class="user-pill__meta">
               <span class="user-pill__name">{{ userDisplayName }}</span>
               <span v-if="userEmail" class="user-pill__email">{{ userEmail }}</span>
             </div>
             <span v-if="currentIDPName" class="user-pill__idp">{{ currentIDPName }}</span>
           </div>
-                    <scale-button v-if="authenticated" variant="secondary" @click="logout">
-            Logout
-          </scale-button>
-          <scale-button v-else variant="secondary" @click="login">
-            Login
-          </scale-button>
+          <scale-button v-if="authenticated" variant="secondary" @click="logout"> Logout </scale-button>
+          <scale-button v-else variant="secondary" @click="login"> Login </scale-button>
           <scale-icon-action
             :icon="theme === 'light' ? 'moon' : 'sun'"
             accessibility-title="Toggle theme"
@@ -264,21 +273,30 @@ function logout() {
       </scale-telekom-header>
 
       <div id="main" class="app-container">
-
         <div v-if="authenticated && groupsRef.length" class="groups-panel">
           <scale-accordion>
             <scale-accordion-item :expanded="groupsExpanded" @scale-change="groupsExpanded = $event.detail.expanded">
-              <span slot="header" class="groups-header">Your Groups ({{ groupsRef.length }}) <span v-if="!groupsExpanded" class="groups-preview">- {{ groupPreview }}</span></span>
+              <span slot="header" class="groups-header"
+                >Your Groups ({{ groupsRef.length }})
+                <span v-if="!groupsExpanded" class="groups-preview">- {{ groupPreview }}</span></span
+              >
               <div class="groups-list">
                 <scale-tag
-                  v-for="group in groupsRef"
+                  v-for="group in visibleGroups"
                   :key="group"
                   class="group-tag"
-                  style="cursor: pointer"
-                  @click="filterByGroup(group)"
                 >
                   {{ group }}
                 </scale-tag>
+              </div>
+              <div v-if="hasOverflowGroups" class="groups-toggle">
+                <span class="groups-preview">
+                  <template v-if="!showAllGroups">+{{ hiddenGroupCount }} more</template>
+                  <template v-else>Showing all groups</template>
+                </span>
+                <scale-button size="small" variant="secondary" @click="showAllGroups = !showAllGroups">
+                  {{ showAllGroups ? "Show fewer" : "Show all" }}
+                </scale-button>
               </div>
             </scale-accordion-item>
           </scale-accordion>
@@ -304,12 +322,6 @@ function logout() {
     </scale-telekom-app-shell>
   </main>
 </template>
-
-<script lang="ts">
-import ErrorToasts from "@/components/ErrorToasts.vue";
-import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
-export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
-</script>
 
 <style>
 @import "@/assets/base.css";
@@ -352,12 +364,12 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 
 .user-pill__name {
   font-weight: 600;
-  color: var(--telekom-color-text-and-icon-standard);
+  color: var(--telekom-color-primary-standard);
 }
 
 .user-pill__email {
   font-size: 0.82rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-white-standard);
 }
 
 .user-pill__idp {
@@ -391,5 +403,12 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 
 .group-tag {
   --telekom-tag-background-color: var(--surface-card-subtle);
+}
+
+.groups-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem 1rem 1rem;
 }
 </style>

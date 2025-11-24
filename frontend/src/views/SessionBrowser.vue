@@ -61,7 +61,6 @@ const sessions = ref<SessionCR[]>([]);
 const loading = ref(false);
 const error = ref("");
 const lastQuery = ref<string | null>(null);
-const activePreset = ref<"mine" | "approved" | null>("mine");
 const actionBusy = reactive<Record<string, SessionActionKey | undefined>>({});
 
 const stateOptions = [
@@ -215,23 +214,6 @@ function resetFilters() {
   filters.user = "";
   filters.name = "";
   filters.onlyApprovedByMe = false;
-  activePreset.value = "mine";
-}
-
-function applyPreset(preset: "mine" | "approved") {
-  if (preset === "mine") {
-    filters.mine = true;
-    filters.approver = false;
-    filters.states = [...defaultStates];
-    filters.onlyApprovedByMe = false;
-  } else {
-    filters.mine = false;
-    filters.approver = false;
-    filters.states = ["approved", "active", "timeout"];
-    filters.onlyApprovedByMe = true;
-  }
-  activePreset.value = preset;
-  fetchSessions();
 }
 
 function onStateToggle(state: string, event: Event | CustomEvent) {
@@ -389,11 +371,6 @@ const activeFiltersDescription = computed(() => {
   return desc.length ? desc.join(" • ") : "No client-side filters";
 });
 
-const presetCopy = {
-  mine: "Shows every session associated with your account (approved, timeouts, withdrawn, rejected).",
-  approved: "Shows sessions you have approved, including ones that are currently active or timed out.",
-};
-
 const approvedFilterDisabled = computed(() => !currentUserEmail.value && filters.onlyApprovedByMe);
 
 onMounted(() => {
@@ -412,29 +389,18 @@ onMounted(() => {
         </p>
       </header>
 
-      <div class="preset-row">
-        <scale-button
-          :variant="activePreset === 'mine' ? 'primary' : 'secondary'"
-          @click="applyPreset('mine')"
-        >
-          My Sessions ({{ presetCopy.mine }})
-        </scale-button>
-        <scale-button
-          :variant="activePreset === 'approved' ? 'primary' : 'secondary'"
-          @click="applyPreset('approved')"
-        >
-          Sessions I Approved ({{ presetCopy.approved }})
-        </scale-button>
-      </div>
-
       <div class="filters-grid">
-        <scale-checkbox :checked="filters.mine" @scaleChange="filters.mine = $event.target.checked">Mine</scale-checkbox>
-        <scale-checkbox :checked="filters.approver" @scaleChange="filters.approver = $event.target.checked">Approver</scale-checkbox>
+        <scale-checkbox :checked="filters.mine" @scaleChange="filters.mine = $event.target.checked"
+          >Mine</scale-checkbox
+        >
+        <scale-checkbox :checked="filters.approver" @scaleChange="filters.approver = $event.target.checked"
+          >Approver</scale-checkbox
+        >
         <scale-checkbox
           :checked="filters.onlyApprovedByMe"
           :disabled="!currentUserEmail"
-          @scaleChange="filters.onlyApprovedByMe = $event.target.checked"
           title="Requires email in profile"
+          @scaleChange="filters.onlyApprovedByMe = $event.target.checked"
         >
           Only sessions I approved
         </scale-checkbox>
@@ -447,8 +413,8 @@ onMounted(() => {
             v-for="option in stateOptions"
             :key="option.value"
             :checked="filters.states.includes(option.value)"
-            @scaleChange="(event: any) => onStateToggle(option.value, event)"
             :title="option.value === 'active' ? 'Shows only currently active sessions' : undefined"
+            @scaleChange="(event: any) => onStateToggle(option.value, event)"
           >
             {{ option.label }}
           </scale-checkbox>
@@ -456,10 +422,30 @@ onMounted(() => {
       </div>
 
       <div class="text-filters">
-        <scale-text-field label="Cluster" :value="filters.cluster" placeholder="cluster name" @scaleChange="filters.cluster = $event.target.value"></scale-text-field>
-        <scale-text-field label="Group" :value="filters.group" placeholder="group" @scaleChange="filters.group = $event.target.value"></scale-text-field>
-        <scale-text-field label="User" :value="filters.user" placeholder="user email" @scaleChange="filters.user = $event.target.value"></scale-text-field>
-        <scale-text-field label="Session Name" :value="filters.name" placeholder="metadata.name" @scaleChange="filters.name = $event.target.value"></scale-text-field>
+        <scale-text-field
+          label="Cluster"
+          :value="filters.cluster"
+          placeholder="cluster name"
+          @scaleChange="filters.cluster = $event.target.value"
+        ></scale-text-field>
+        <scale-text-field
+          label="Group"
+          :value="filters.group"
+          placeholder="group"
+          @scaleChange="filters.group = $event.target.value"
+        ></scale-text-field>
+        <scale-text-field
+          label="User"
+          :value="filters.user"
+          placeholder="user email"
+          @scaleChange="filters.user = $event.target.value"
+        ></scale-text-field>
+        <scale-text-field
+          label="Session Name"
+          :value="filters.name"
+          placeholder="metadata.name"
+          @scaleChange="filters.name = $event.target.value"
+        ></scale-text-field>
       </div>
 
       <div class="filters-actions">
@@ -510,7 +496,15 @@ onMounted(() => {
                 </scale-chip>
               </div>
             </div>
-            <scale-chip :variant="sessionTone(session) === 'tone-success' ? 'success' : sessionTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
+            <scale-chip
+              :variant="
+                sessionTone(session) === 'tone-success'
+                  ? 'success'
+                  : sessionTone(session) === 'tone-warning'
+                    ? 'warning'
+                    : 'neutral'
+              "
+            >
               {{ sessionState(session) }}
             </scale-chip>
           </div>

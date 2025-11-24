@@ -304,8 +304,8 @@ onMounted(fetchPendingApprovals);
         id="sort-select"
         label="Sort by"
         :value="sortBy"
+        style="min-width: 200px"
         @scaleChange="sortBy = $event.target.value"
-        style="min-width: 200px;"
       >
         <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
         <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
@@ -316,8 +316,8 @@ onMounted(fetchPendingApprovals);
         id="urgency-filter"
         label="Urgency"
         :value="urgencyFilter"
+        style="min-width: 200px"
         @scaleChange="urgencyFilter = $event.target.value"
-        style="min-width: 200px;"
       >
         <scale-dropdown-select-option value="all">All</scale-dropdown-select-option>
         <scale-dropdown-select-option value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-option>
@@ -358,7 +358,11 @@ onMounted(fetchPendingApprovals);
               <div class="request-meta">
                 <scale-tag variant="primary">{{ session.spec?.cluster || "Unknown cluster" }}</scale-tag>
                 <scale-tag variant="secondary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-tag>
-                <scale-tag :variant="session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'">
+                <scale-tag
+                  :variant="
+                    session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'
+                  "
+                >
                   <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
                   <template v-else-if="session.urgency === 'high'">⏱️ High</template>
                   <template v-else>🕓 Normal</template>
@@ -380,7 +384,16 @@ onMounted(fetchPendingApprovals);
               Timeout {{ format24Hour(session.status.timeoutAt) }}
             </small>
             <small v-else class="timer-absolute">No expiry set</small>
-            <scale-tag v-if="session.status?.state" :variant="sessionStateTone(session) === 'tone-success' ? 'success' : sessionStateTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
+            <scale-tag
+              v-if="session.status?.state"
+              :variant="
+                sessionStateTone(session) === 'tone-success'
+                  ? 'success'
+                  : sessionStateTone(session) === 'tone-warning'
+                    ? 'warning'
+                    : 'neutral'
+              "
+            >
               {{ session.status.state }}
             </scale-tag>
           </div>
@@ -433,7 +446,9 @@ onMounted(fetchPendingApprovals);
         <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
           <span class="matching-label">Visible via</span>
           <div class="matching-stack">
-            <scale-tag v-for="group in session.matchingApproverGroups" :key="group" variant="warning">{{ group }}</scale-tag>
+            <scale-tag v-for="group in session.matchingApproverGroups" :key="group" variant="warning">{{
+              group
+            }}</scale-tag>
           </div>
         </div>
 
@@ -453,7 +468,16 @@ onMounted(fetchPendingApprovals);
             <span
               ><code>{{ session.metadata?.name }}</code></span
             >
-            <scale-tag v-if="session.status?.state" :variant="sessionStateTone(session) === 'tone-success' ? 'success' : sessionStateTone(session) === 'tone-warning' ? 'warning' : 'neutral'">
+            <scale-tag
+              v-if="session.status?.state"
+              :variant="
+                sessionStateTone(session) === 'tone-success'
+                  ? 'success'
+                  : sessionStateTone(session) === 'tone-warning'
+                    ? 'warning'
+                    : 'neutral'
+              "
+            >
               {{ session.status.state }}
             </scale-tag>
           </div>
@@ -496,17 +520,13 @@ onMounted(fetchPendingApprovals);
 
       <!-- Duration information -->
       <div v-if="modalSession.spec && modalSession.spec.maxValidFor" class="modal-info-block tone-info">
-        <p>
-          <strong>Duration:</strong> {{ formatDuration(modalSession.spec.maxValidFor) }}
-        </p>
+        <p><strong>Duration:</strong> {{ formatDuration(modalSession.spec.maxValidFor) }}</p>
       </div>
 
       <!-- Scheduling information -->
       <div v-if="modalSession.spec && modalSession.spec.scheduledStartTime" class="modal-info-block tone-warn">
         <strong>Scheduled session</strong>
-        <p>
-          <strong>Will start at:</strong> {{ format24Hour(modalSession.spec.scheduledStartTime) }}
-        </p>
+        <p><strong>Will start at:</strong> {{ format24Hour(modalSession.spec.scheduledStartTime) }}</p>
         <p v-if="modalSession.spec.maxValidFor">
           <strong>Will end at:</strong>
           {{ computeEndTime(modalSession.spec.scheduledStartTime, modalSession.spec.maxValidFor) }}
@@ -520,7 +540,10 @@ onMounted(fetchPendingApprovals);
       </div>
 
       <!-- Activation status badge -->
-      <div v-if="modalSession.status && modalSession.status.state === 'WaitingForScheduledTime'" class="modal-pill tone-info">
+      <div
+        v-if="modalSession.status && modalSession.status.state === 'WaitingForScheduledTime'"
+        class="modal-pill tone-info"
+      >
         ⏳ Pending activation
       </div>
 

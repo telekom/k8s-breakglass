@@ -150,8 +150,8 @@ async function approve() {
           <scale-textarea
             :value="approverReason"
             :placeholder="(validation as any)?.approvalReason?.description || 'Optional approver note'"
-            @scaleChange="(ev: any) => (approverReason = ev.target.value)"
             class="full-width-input"
+            @scaleChange="(ev: any) => (approverReason = ev.target.value)"
           ></scale-textarea>
           <div
             v-if="(validation as any)?.requestReason?.description || (validation as any)?.request?.reason"
@@ -162,10 +162,7 @@ async function approve() {
               {{ (validation as any)?.request?.reason || (validation as any)?.requestReason?.description }}
             </div>
           </div>
-          <p
-            v-if="(validation as any)?.approvalReason?.mandatory && !(approverReason || '').trim()"
-            class="error-text"
-          >
+          <p v-if="(validation as any)?.approvalReason?.mandatory && !(approverReason || '').trim()" class="error-text">
             This field is required.
           </p>
           <div class="actions">
