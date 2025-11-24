@@ -251,7 +251,7 @@ function logout() {
         <div v-if="authenticated && groupsRef.length" class="groups-panel">
           <scale-accordion>
             <scale-accordion-item :expanded="groupsExpanded" @scale-change="groupsExpanded = $event.detail.expanded">
-              <span slot="header">Your Groups ({{ groupsRef.length }}) - {{ groupPreview }}</span>
+              <span slot="header" class="groups-header">Your Groups ({{ groupsRef.length }}) <span v-if="!groupsExpanded" class="groups-preview">- {{ groupPreview }}</span></span>
               <div class="groups-list">
                 <scale-tag v-for="group in groupsRef" :key="group" class="group-tag">
                   {{ group }}
@@ -346,6 +346,17 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 .groups-panel {
   max-width: 720px;
   margin: 0 auto 1.25rem auto;
+}
+
+.groups-header {
+  color: var(--telekom-text-color-inverted-primary);
+  font-weight: 600;
+}
+
+.groups-preview {
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 0.5rem;
 }
 
 .groups-list {

@@ -284,8 +284,8 @@ const requesterGroups = computed(() => {
   return uniq;
 });
 
-const MAX_VISIBLE_REQUESTER_GROUPS = 3;
-const MAX_VISIBLE_APPROVAL_GROUPS = 4;
+const MAX_VISIBLE_REQUESTER_GROUPS = 2;
+const MAX_VISIBLE_APPROVAL_GROUPS = 2;
 const visibleRequesterGroups = computed(() => {
   if (showAllRequesterGroups.value) {
     return requesterGroups.value;
