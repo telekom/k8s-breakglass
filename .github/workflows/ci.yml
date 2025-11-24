@@ -159,7 +159,7 @@ jobs:
           # Verify image is accessible
           docker manifest inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}" || sleep 30
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
+        uses: anchore/sbom-action@fbfd9c6c189226748411491745178e0c2017392d # v0.20.10
         id: sbom
         if: ${{ (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
         with:
