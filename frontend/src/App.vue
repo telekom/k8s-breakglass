@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { inject, computed, ref, onMounted, watch } from "vue";
 import { decodeJwt } from "jose";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
+import type { RouteLocationRaw } from "vue-router";
 
 import { AuthKey } from "@/keys";
 import { BrandingKey } from "@/keys";
@@ -17,6 +18,7 @@ const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
 
 const route = useRoute();
+const router = useRouter();
 
 const groupsRef = ref<string[]>([]);
 const groupsExpanded = ref(false);
@@ -34,6 +36,61 @@ const groupPreview = computed(() => {
   const remainder = groups.length - 3;
   return `${head} +${remainder} more`;
 });
+
+type PrimaryNavItem = {
+  id: string;
+  label: string;
+  to: RouteLocationRaw;
+  matches: string[];
+};
+
+const primaryNavItems: PrimaryNavItem[] = [
+  { id: "home", label: "Home", to: { name: "home" }, matches: ["home"] },
+  {
+    id: "pending",
+    label: "Pending Approvals",
+    to: { name: "pendingApprovals" },
+    matches: ["pendingApprovals"],
+  },
+  {
+    id: "review",
+    label: "Review Session",
+    to: { name: "breakglassSessionReview" },
+    matches: ["breakglassSessionReview"],
+  },
+  {
+    id: "requests",
+    label: "My Outstanding Requests",
+    to: { name: "myOutstandingRequests" },
+    matches: ["myOutstandingRequests"],
+  },
+  {
+    id: "sessions",
+    label: "Session Browser",
+    to: { name: "sessionBrowser" },
+    matches: ["sessionBrowser"],
+  },
+];
+
+const activeNavId = computed(() => {
+  const currentName = (route.name as string) ?? "";
+  return (
+    primaryNavItems.find((item) => item.matches.includes(currentName))?.id ??
+    "home"
+  );
+});
+
+const userDisplayName = computed(() => user.value?.profile.name || user.value?.profile.email || "");
+const userEmail = computed(() => user.value?.profile.email || "");
+
+function navHref(item: PrimaryNavItem) {
+  return router.resolve(item.to).href;
+}
+
+function handlePrimaryNavClick(event: Event, item: PrimaryNavItem) {
+  event.preventDefault();
+  router.push(item.to);
+}
 
 async function refreshGroups() {
   console.debug("[App.refreshGroups] Starting groups and IDP refresh");
@@ -119,35 +176,6 @@ async function checkMultiIDP() {
 
 onMounted(checkMultiIDP);
 
-const userNav = computed(() => {
-  if (authenticated.value) {
-    const groups = groupsRef.value;
-    const idpName = currentIDPName.value;
-    const descriptions: string[] = [];
-    if (idpName) {
-      descriptions.push(`Provider: ${idpName}`);
-    }
-    if (groups.length) {
-      descriptions.push(`Groups: ${groups.join(", ")}`);
-    }
-    return [
-      {
-        type: "userInfo",
-        shortName: user.value?.profile.email,
-        name: user.value?.profile.name || user.value?.profile.email,
-        email: user.value?.profile.email,
-        badge: true,
-        description: descriptions.length ? descriptions.join(" | ") : undefined,
-      },
-      { type: "divider" },
-      ...(idpName ? [{ type: "label", name: `Provider: ${idpName}` }] : []),
-      ...(groups.length ? [{ type: "label", name: `Groups: ${groups.join(", ")}` }] : []),
-      { type: "button", name: "Logout", id: "logout", onClick: logout, variant: "secondary" },
-    ];
-  }
-  return [{ type: "button", name: "Login", id: "login", onClick: login, variant: "secondary" }];
-});
-
 function login() {
   console.debug("[App] Login initiated", {
     selectedIDP: selectedIDPName.value,
@@ -178,21 +206,47 @@ function logout() {
 <template>
   <main>
     <a class="skip-link" href="#main">Skip to content</a>
-    <scale-telekom-app-shell claim-lang="de">
-      <scale-telekom-header-data-back-compat
-        :user-navigation.prop="userNav"
+    <scale-telekom-app-shell>
+      <scale-telekom-header
+        slot="header"
+        type="slim"
+        :app-name="brandingTitle"
         :logo-title="brandingTitle"
         logo-href="/"
-      />
+        claim-lang="de"
+      >
+        <scale-telekom-nav-list slot="main-nav" variant="main-nav">
+          <scale-telekom-nav-item
+            v-for="item in primaryNavItems"
+            :key="item.id"
+            variant="main-nav"
+            :active="activeNavId === item.id"
+          >
+            <a :href="navHref(item)" @click="handlePrimaryNavClick($event, item)">
+              {{ item.label }}
+            </a>
+          </scale-telekom-nav-item>
+        </scale-telekom-nav-list>
+
+        <div slot="functions" class="header-functions">
+          <div v-if="authenticated" class="user-pill">
+            <scale-icon-user-file-user aria-hidden="true" class="user-pill__icon" />
+            <div class="user-pill__meta">
+              <span class="user-pill__name">{{ userDisplayName }}</span>
+              <span v-if="userEmail" class="user-pill__email">{{ userEmail }}</span>
+            </div>
+            <span v-if="currentIDPName" class="user-pill__idp">{{ currentIDPName }}</span>
+          </div>
+          <scale-button v-if="authenticated" variant="secondary" @click="logout">
+            Logout
+          </scale-button>
+          <scale-button v-else variant="secondary" @click="login">
+            Login
+          </scale-button>
+        </div>
+      </scale-telekom-header>
+
       <div id="main" class="app-container">
-        <h1 class="center">{{ brandingTitle }}</h1>
-        <nav class="main-nav" aria-label="Main navigation">
-          <router-link to="/">Home</router-link>
-          <router-link to="/approvals/pending">Pending Approvals</router-link>
-          <router-link to="/sessions/review">Review Session</router-link>
-          <router-link to="/requests/mine">My Outstanding Requests</router-link>
-          <router-link to="/sessions">Session Browser</router-link>
-        </nav>
 
         <div v-if="authenticated && groupsRef.length" class="groups-panel">
           <button
@@ -250,6 +304,52 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
   text-align: center;
 }
 
+.header-functions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.header-functions scale-button::part(button) {
+  min-width: 110px;
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  background-color: color-mix(in srgb, var(--surface-card) 85%, transparent);
+}
+
+.user-pill__icon {
+  color: var(--accent-info);
+}
+
+.user-pill__meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.user-pill__name {
+  font-weight: 600;
+  color: var(--telekom-text-color-inverted-primary);
+}
+
+.user-pill__email {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.user-pill__idp {
+  font-size: 0.8rem;
+  color: var(--accent-info);
+  font-weight: 500;
+}
+
 .groups-panel {
   max-width: 720px;
   margin: 0 auto 1.25rem auto;
@@ -257,11 +357,11 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 
 .groups-toggle {
   width: 100%;
-  border: 1px solid #dcdcdc;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  background: #f8fafc;
-  color: #0f172a;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  padding: 0.85rem 1.1rem;
+  background: var(--surface-card);
+  color: var(--telekom-text-color-inverted-primary);
   font-size: 0.95rem;
   display: flex;
   flex-wrap: wrap;
@@ -269,11 +369,11 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
+  box-shadow: var(--shadow-card);
 }
 
 .groups-toggle:hover {
-  background: #eef2ff;
-  border-color: #c7d2fe;
+  border-color: color-mix(in srgb, var(--accent-info) 35%, var(--border-default));
 }
 
 .toggle-label {
@@ -283,7 +383,7 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 .toggle-summary {
   flex: 1;
   text-align: left;
-  color: #475569;
+  color: var(--text-muted);
 }
 
 .toggle-caret {
@@ -292,23 +392,23 @@ export default { components: { ErrorToasts, AutoLogoutWarning, DebugPanel } };
 
 .groups-list {
   margin: 0.5rem 0 0 0;
-  padding: 0.75rem 1rem;
-  border: 1px solid #dcdcdc;
-  border-radius: 8px;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
   list-style: none;
-  background: #ffffff;
-  max-height: 220px;
+  background: var(--surface-card);
+  max-height: 240px;
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.35rem;
+  gap: 0.45rem;
 }
 
 .groups-list li {
-  padding: 0.25rem 0.35rem;
-  border-radius: 4px;
-  background: #f1f5f9;
-  color: #0f172a;
+  padding: 0.35rem 0.45rem;
+  border-radius: 8px;
+  background: var(--surface-card-subtle);
+  color: var(--telekom-text-color-inverted-primary);
 }
 
 .fade-enter-active,

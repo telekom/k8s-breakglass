@@ -65,13 +65,13 @@ body {
     var(--surface-primary);
 }
 
-main {
+.app-container {
   width: min(1240px, 100%);
   margin: 0 auto;
   padding: 2.5rem clamp(1rem, 5vw, 3rem) 3.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1.75rem;
+  gap: 2rem;
 }
 
 a {
@@ -84,27 +84,6 @@ button:focus-visible,
 scale-button:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: 3px;
-}
-
-.main-nav {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 1rem 1.5rem;
-  margin: 1.5rem 0 2.5rem;
-}
-
-.main-nav a {
-  color: var(--accent-info);
-  text-decoration: none;
-  font-weight: 500;
-  font-size: 1.05rem;
-  transition: color 0.15s ease-in-out;
-}
-
-.main-nav a.router-link-exact-active {
-  color: var(--accent-telekom);
-  text-decoration: underline;
 }
 
 img {

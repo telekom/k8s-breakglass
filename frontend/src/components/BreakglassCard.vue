@@ -683,7 +683,7 @@ function drop() {
   text-transform: uppercase;
   font-size: 0.75rem;
   letter-spacing: 0.1em;
-  color: rgba(226, 232, 240, 0.75);
+  color: color-mix(in srgb, var(--breakglass-text-muted) 80%, transparent);
   margin: 0 0 0.25rem 0;
 }
 
@@ -707,9 +707,9 @@ function drop() {
   min-width: 200px;
   flex: 0 0 240px;
   align-self: stretch;
-  background: rgba(15, 23, 42, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-card) 90%, transparent);
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
   padding: 0.85rem 1rem;
   display: flex;
   flex-direction: column;
@@ -726,7 +726,7 @@ function drop() {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--breakglass-text-strong);
 }
 
 .breakglass-card__info .ui-info-item .value {
@@ -805,27 +805,49 @@ function drop() {
 .breakglass-card :deep(.ui-chip) {
   background: var(--breakglass-chip-bg);
   color: var(--breakglass-chip-text);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
 .breakglass-card :deep(.ui-chip.primary) {
-  background: rgba(217, 0, 108, 0.2);
-  color: #ffd1e5;
+  background: color-mix(in srgb, var(--accent-telekom) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-telekom) 35%, transparent);
+  color: var(--accent-telekom);
 }
 
 .breakglass-card :deep(.ui-chip.secondary) {
-  background: rgba(99, 102, 241, 0.2);
-  color: #c7d2fe;
+  background: color-mix(in srgb, var(--accent-info) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-info) 35%, transparent);
+  color: var(--accent-info);
+}
+
+.breakglass-card :deep(.ui-chip.success) {
+  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-success) 35%, transparent);
+  color: var(--accent-success);
+}
+
+.breakglass-card :deep(.ui-chip.warning) {
+  background: color-mix(in srgb, var(--accent-warning) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-warning) 35%, transparent);
+  color: var(--accent-warning);
 }
 
 .breakglass-card :deep(.ui-chip.info) {
-  background: rgba(14, 165, 233, 0.2);
-  color: #bae6fd;
+  background: color-mix(in srgb, var(--accent-info) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-info) 35%, transparent);
+  color: var(--accent-info);
 }
 
 .breakglass-card :deep(.ui-chip.danger) {
-  background: rgba(248, 113, 113, 0.2);
-  color: #fecdd3;
+  background: color-mix(in srgb, var(--accent-critical) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-critical) 35%, transparent);
+  color: var(--accent-critical);
+}
+
+.breakglass-card :deep(.ui-chip.neutral) {
+  background: var(--surface-card-subtle);
+  border-color: var(--border-default);
+  color: var(--breakglass-text-muted);
 }
 
 .breakglass-card :deep(.ui-info-item) {
@@ -848,24 +870,26 @@ function drop() {
 }
 
 .breakglass-card :deep(.ui-section h4) {
-  color: #dbeafe;
-}
-
-.breakglass-card :deep(.ui-section p) {
   color: var(--breakglass-text-strong);
 }
 
+.breakglass-card :deep(.ui-section p) {
+  color: var(--breakglass-text-muted);
+}
+
 .breakglass-card :deep(.ui-pill-stack span) {
-  background: rgba(15, 118, 110, 0.3);
-  color: #a7f3d0;
+  background: var(--breakglass-pill-bg);
+  color: var(--breakglass-pill-text);
+  border: 1px solid color-mix(in srgb, var(--breakglass-pill-text) 35%, transparent);
 }
 
 .breakglass-card :deep(.ui-status-badge) {
-  border-color: transparent;
+  border-color: var(--border-default);
+  background-color: var(--surface-card-subtle);
 }
 
 .breakglass-card__error {
-  color: #b91c1c;
+  color: var(--accent-critical);
   font-weight: 600;
   margin-top: -0.5rem;
 }
@@ -873,7 +897,7 @@ function drop() {
 .request-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.55);
+  background: color-mix(in srgb, var(--surface-primary) 70%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -881,15 +905,15 @@ function drop() {
 }
 
 .request-modal {
-  background: #0d1220;
+  background: var(--surface-card);
   color: var(--breakglass-text-strong);
   padding: 1.5rem;
-  border-radius: 12px;
+  border-radius: 16px;
   max-width: 520px;
   width: 92%;
-  box-shadow: 0 30px 60px rgba(5, 6, 11, 0.65);
+  box-shadow: var(--shadow-card);
   position: relative;
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  border: 1px solid var(--border-strong);
 }
 
 .request-modal h3 {
@@ -909,29 +933,30 @@ function drop() {
 .request-modal textarea {
   width: 100%;
   padding: 0.55rem 0.75rem;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
   font-size: 0.95rem;
   font-family: inherit;
   color: var(--breakglass-text-strong);
-  background: rgba(15, 23, 42, 0.6);
+  background: var(--surface-card-subtle);
   box-sizing: border-box;
   transition:
     border-color 0.2s ease,
-    box-shadow 0.2s ease;
+    box-shadow 0.2s ease,
+    background 0.2s ease;
 }
 
 .request-modal input:focus,
 .request-modal textarea:focus {
   outline: none;
-  border-color: rgba(56, 189, 248, 0.85);
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35);
-  background: rgba(15, 23, 42, 0.85);
+  border-color: var(--accent-info);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-info) 30%, transparent);
+  background: var(--surface-card);
 }
 
 .request-modal :deep(input::placeholder),
 .request-modal :deep(textarea::placeholder) {
-  color: #94a3b8;
+  color: var(--text-placeholder);
   opacity: 1;
 }
 
@@ -949,18 +974,19 @@ function drop() {
 }
 
 .reason-field .helper.warning {
-  color: #b45309;
+  color: var(--accent-warning);
 }
 
 .reason-field .helper.error {
-  color: #b91c1c;
+  color: var(--accent-critical);
 }
 
 .hint-box {
   margin-top: 0.5rem;
   padding: 0.75rem;
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.7);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-card) 85%, transparent);
+  border: 1px solid var(--border-default);
   font-size: 0.85rem;
   color: var(--breakglass-text-muted);
 }
@@ -973,9 +999,9 @@ function drop() {
 .schedule-details {
   margin-top: 0.75rem;
   padding: 0.85rem 1rem;
-  border-left: 3px solid rgba(14, 165, 233, 0.7);
-  background: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-left: 3px solid var(--accent-info);
+  background: color-mix(in srgb, var(--surface-card) 90%, transparent);
+  border: 1px solid var(--border-default);
   border-radius: 10px;
 }
 
@@ -1006,16 +1032,17 @@ function drop() {
   margin-top: 0.3rem;
   padding: 0.45rem 0.65rem;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
+  border: 1px solid var(--border-default);
   font-size: 0.95rem;
   color: var(--breakglass-text-strong);
-  background: rgba(15, 23, 42, 0.55);
+  background: var(--surface-card-subtle);
 }
 
 .schedule-field select {
   appearance: none;
   background-image:
-    linear-gradient(45deg, transparent 50%, #e2e8f0 50%), linear-gradient(135deg, #e2e8f0 50%, transparent 50%);
+    linear-gradient(45deg, transparent 50%, var(--breakglass-text-strong) 50%),
+    linear-gradient(135deg, var(--breakglass-text-strong) 50%, transparent 50%);
   background-position:
     calc(100% - 20px) calc(50% - 3px),
     calc(100% - 14px) calc(50% - 3px);
@@ -1059,19 +1086,20 @@ function drop() {
   position: absolute;
   top: 0.75rem;
   right: 0.75rem;
-  background: rgba(15, 23, 42, 0.8);
-  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: color-mix(in srgb, var(--surface-card) 92%, transparent);
+  border: 1px solid var(--border-default);
   border-radius: 999px;
   width: 32px;
   height: 32px;
   font-size: 1rem;
   cursor: pointer;
   color: var(--breakglass-text-strong);
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .modal-close:hover {
-  background: rgba(15, 23, 42, 0.95);
+  background: color-mix(in srgb, var(--surface-card) 100%, transparent);
+  border-color: color-mix(in srgb, var(--accent-info) 35%, var(--border-default));
 }
 
 @media (max-width: 720px) {
