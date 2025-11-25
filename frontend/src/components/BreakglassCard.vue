@@ -734,13 +734,14 @@ function drop() {
   min-width: 200px;
   flex: 0 0 240px;
   align-self: stretch;
-  background: var(--telekom-color-background-surface-subtle);
+  background: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--telekom-radius-large);
-  padding: 0.85rem 1rem;
+  border-radius: 18px;
+  box-shadow: 0 18px 38px color-mix(in srgb, var(--telekom-color-black) 12%, transparent);
+  padding: 1rem 1.15rem;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.35rem;
   justify-content: center;
 }
 
@@ -758,12 +759,14 @@ function drop() {
 }
 
 .info-item {
-  background: var(--telekom-color-background-surface-subtle);
+  background: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--telekom-radius-standard);
-  padding: 0.75rem;
+  border-radius: 16px;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
+  gap: 0.35rem;
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--telekom-color-black) 10%, transparent);
 }
 
 .info-item .label {
@@ -783,14 +786,15 @@ function drop() {
 
 .card-section {
   margin-top: 1rem;
-  padding: 0.9rem 1rem;
+  padding: 1rem 1.15rem;
   background: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--telekom-radius-standard);
+  border-radius: 18px;
+  box-shadow: 0 18px 38px color-mix(in srgb, var(--telekom-color-black) 12%, transparent);
 }
 
 .card-section + .card-section {
-  margin-top: 0.85rem;
+  margin-top: 1rem;
 }
 
 .card-section--reason h4 {
@@ -812,7 +816,7 @@ function drop() {
   display: flex;
   gap: 0.5rem;
   align-items: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.65rem;
 }
 
 .groups-header .label {
@@ -825,7 +829,7 @@ function drop() {
 .breakglass-card__pill-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
+  gap: 0.5rem;
 }
 
 .inline-action {
@@ -838,9 +842,12 @@ function drop() {
   gap: 0.75rem;
   justify-content: space-between;
   align-items: flex-start;
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
+  margin-top: 1.25rem;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: 18px;
+  background: var(--surface-card);
+  box-shadow: 0 18px 38px color-mix(in srgb, var(--telekom-color-black) 12%, transparent);
 }
 
 .cta-copy {
@@ -951,184 +958,5 @@ function drop() {
 .request-modal :deep(textarea::placeholder) {
   color: var(--telekom-color-text-placeholder);
   opacity: 1;
-}
-
-.breakglass-card__groups {
-  padding: 0.35rem 0 0 0;
-}
-
-.groups-header {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-
-.groups-header .label {
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.breakglass-card__pill-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.inline-action {
-  margin-top: 0.5rem;
-}
-
-.breakglass-card__cta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-}
-
-.cta-copy {
-  flex: 1 1 320px;
-  color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.9rem;
-}
-
-.cta-copy p {
-  margin: 0;
-}
-
-/* Modal internal styles */
-.duration-selector,
-.schedule-section,
-.reason-field {
-  margin-bottom: 1.5rem;
-}
-
-.helper {
-  font-size: 0.85rem;
-  color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 0.25rem;
-}
-
-.helper.warning {
-  color: var(--telekom-color-functional-warning-standard);
-}
-
-.helper.error {
-  color: var(--telekom-color-functional-danger-standard);
-}
-
-.hint-box {
-  background: var(--telekom-color-background-surface-highlight);
-  padding: 0.5rem;
-  border-radius: var(--telekom-radius-standard);
-  margin-top: 0.5rem;
-  font-size: 0.9rem;
-}
-
-.schedule-details {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: var(--telekom-color-background-surface-highlight);
-  border-radius: var(--telekom-radius-standard);
-}
-
-.schedule-intro {
-  margin-top: 0;
-  font-size: 0.9rem;
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.schedule-picker {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-
-.schedule-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.schedule-field input,
-.schedule-field select {
-  padding: 0.4rem;
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--telekom-radius-standard);
-}
-
-.schedule-preview {
-  margin-top: 1rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-  font-size: 0.9rem;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  margin-top: 2rem;
-  margin-bottom: 1rem;
-}
-
-.request-modal :deep(input::placeholder),
-.request-modal :deep(textarea::placeholder) {
-  color: var(--telekom-color-text-and-icon-standard);
-  opacity: 1;
-}
-
-.duration-selector,
-.reason-field,
-.schedule-section {
-  margin-bottom: 1.25rem;
-}
-
-.duration-selector .helper,
-.reason-field .helper {
-  font-size: 0.85rem;
-  color: var(--telekom-color-text-and-icon-additional);
-  margin: 0.35rem 0;
-}
-
-.reason-field .helper.warning {
-  color: var(--accent-warning);
-}
-
-.reason-field .helper.error {
-  color: var(--accent-critical);
-}
-
-.hint-box {
-  margin-top: 0.5rem;
-  padding: 0.85rem;
-  border-radius: var(--telekom-radius-standard);
-  background: var(--surface-card);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  font-size: 0.85rem;
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.breakglass-card__approvers p {
-  margin: 0.5rem 0 0;
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.schedule-details {
-  margin-top: 0.75rem;
-  padding: 0.85rem 1rem;
-  border-left: 3px solid var(--accent-info);
-  background: var(--surface-card);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--telekom-radius-standard);
 }
 </style>

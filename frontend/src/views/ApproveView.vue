@@ -244,13 +244,15 @@ scale-card {
   margin-top: 1rem;
   text-align: left;
   color: var(--telekom-color-background-canvas-subtle);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--telekom-radius-standard);
 }
 
 .reason-text {
   margin-top: 0.25rem;
   padding: 0.75rem;
   background: var(--telekom-color-ui-subtle);
-  border-radius: 4px;
+  border-radius: var(--telekom-radius-standard);
   color: var(--telekom-color-text-and-icon-standard);
   white-space: pre-wrap;
   border-left: 3px solid var(--telekom-color-primary-standard);
