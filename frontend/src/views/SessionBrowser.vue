@@ -611,7 +611,7 @@ onMounted(() => {
   align-items: flex-start;
   color: var(--telekom-color-text-and-icon-standard);
   --session-surface: var(--surface-card);
-  --session-border: var(--border-default);
+  --session-border: var(--telekom-color-ui-border-standard);
   --session-muted: var(--telekom-color-text-and-icon-additional);
   --session-tag-bg: var(--chip-bg);
   --session-tag-text: var(--chip-text);
@@ -884,7 +884,7 @@ scale-tag.session-tag--interactive:active {
 }
 
 .reason-box {
-  background: var(--telekom-color-ui-regular);
+  background: var(--telekom-color-background-surface-subtle);
   border-left: 3px solid color-mix(in srgb, var(--telekom-color-ui-regular) 60%, transparent);
   padding: 0.75rem;
   border-radius: 6px;

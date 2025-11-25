@@ -12,7 +12,6 @@
   --surface-card: var(--telekom-color-white);
   --surface-card-subtle: color-mix(in srgb, var(--telekom-color-gray-200) 25%, transparent);
   --surface-toolbar: var(--telekom-color-white);
-  --border-default: color-mix(in srgb, var(--telekom-color-gray-900) 15%, transparent);
   --border-strong: color-mix(in srgb, var(--telekom-color-gray-900) 35%, transparent);
   --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 15%, transparent);
 
@@ -36,7 +35,6 @@
   --surface-card: var(--telekom-ui-color-surface-stronger);
   --surface-card-subtle: color-mix(in srgb, var(--telekom-ui-color-surface-strong) 70%, transparent);
   --surface-toolbar: var(--telekom-ui-color-surface);
-  --border-default: color-mix(in srgb, var(--telekom-color-gray-100) 20%, transparent);
   --border-strong: color-mix(in srgb, var(--telekom-color-gray-100) 35%, transparent);
   --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 45%, transparent);
   --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
@@ -126,7 +124,7 @@ scale-text-area:focus {
   color: var(--telekom-color-text-and-icon-standard);
   padding: 0.5rem 1rem;
   border-radius: 999px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: var(--shadow-card);
   text-decoration: none;
   z-index: 99;
@@ -223,7 +221,7 @@ scale-tag[data-intent="status-neutral"] {
   padding: 1.25rem;
   background-color: var(--surface-toolbar);
   border-radius: 20px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: var(--shadow-card);
   align-items: center;
 }
@@ -240,7 +238,7 @@ scale-tag[data-intent="status-neutral"] {
   width: 100%;
   max-width: 280px;
   background-color: var(--surface-card);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: 12px;
   color: var(--telekom-color-text-and-icon-standard);
   padding: 0.6rem 0.85rem;
@@ -273,7 +271,7 @@ scale-tag[data-intent="status-neutral"] {
   gap: 0.15rem;
   padding: 0.75rem;
   background-color: color-mix(in srgb, var(--surface-card) 80%, transparent);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: 12px;
 }
 
@@ -310,7 +308,7 @@ scale-tag[data-intent="status-neutral"] {
 .ui-pill-stack span {
   padding: 0.2rem 0.6rem;
   border-radius: 999px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   background-color: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.8rem;
@@ -322,7 +320,7 @@ scale-tag[data-intent="status-neutral"] {
   gap: 0.35rem;
   padding: 0.85rem;
   border-radius: 14px;
-  border: 1px dashed var(--border-default);
+  border: 1px dashed var(--telekom-color-ui-border-standard);
   background-color: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-additional);
 }
@@ -372,7 +370,7 @@ scale-tag[data-intent="status-neutral"] {
 .empty-state {
   padding: 2.5rem;
   border-radius: 18px;
-  border: 1px dashed var(--border-default);
+  border: 1px dashed var(--telekom-color-ui-border-standard);
   background-color: var(--surface-elevated);
   color: var(--telekom-color-text-and-icon-additional);
   text-align: center;
@@ -400,7 +398,6 @@ scale-tag[data-intent="status-neutral"] {
     --surface-primary: Canvas;
     --surface-card: Canvas;
     --surface-card-subtle: Canvas;
-    --border-default: GrayText;
     --chip-bg: Canvas;
     --chip-border: GrayText;
     --chip-text: ButtonText;

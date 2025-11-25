@@ -230,7 +230,7 @@ onMounted(async () => {
 .empty-state {
   padding: 2rem;
   border-radius: 20px;
-  border: 1px dashed var(--border-default);
+  border: 1px dashed var(--telekom-color-ui-border-standard);
   text-align: center;
   color: var(--telekom-color-text-and-icon-additional);
   background: var(--surface-card-subtle);
@@ -310,7 +310,7 @@ onMounted(async () => {
   margin-top: 1.25rem;
   padding: 1rem;
   border-radius: 16px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   background: var(--surface-card-subtle);
 }
 

@@ -536,7 +536,7 @@ watch(
   position: relative;
   width: 100%;
   background: var(--surface-toolbar, #0f0f0f);
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
   z-index: 5;
 }
