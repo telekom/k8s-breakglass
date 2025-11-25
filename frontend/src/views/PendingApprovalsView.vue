@@ -336,12 +336,8 @@ onMounted(fetchPendingApprovals);
       <p v-else>No requests match the selected filters.</p>
     </div>
     <div v-else class="sessions-list">
-      <scale-card
-        v-for="session in sortedSessions"
-        :key="session.metadata.name"
-        class="approval-card"
-        :class="`urgency-${session.urgency}`"
-      >
+      <scale-card v-for="session in sortedSessions" :key="session.metadata.name" class="approval-card-shell">
+        <div class="approval-card" :class="`urgency-${session.urgency}`">
         <div class="card-top">
           <div class="identity-block">
             <div class="user-avatar">{{ getUserInitials(session.spec?.user) }}</div>
@@ -500,6 +496,7 @@ onMounted(fetchPendingApprovals);
               <span v-else>Reject</span>
             </scale-button>
           </div>
+        </div>
         </div>
       </scale-card>
     </div>
@@ -687,27 +684,26 @@ onMounted(fetchPendingApprovals);
   gap: 1.25rem;
 }
 
-.approval-card {
+
+.approval-card-shell {
   --scale-card-padding: 1.5rem;
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease;
+}
+
+.approval-card {
+  transition: transform 0.2s ease;
   border-left: 5px solid transparent;
 }
 
 .approval-card:hover {
   transform: translateY(-2px);
-  box-shadow: var(--approvals-shadow-hover);
 }
 
 .approval-card.urgency-critical {
   border-left-color: var(--approvals-danger);
-  background-image: linear-gradient(120deg, var(--telekom-color-functional-danger-subtle), transparent);
 }
 
 .approval-card.urgency-high {
   border-left-color: var(--approvals-warning);
-  background-image: linear-gradient(120deg, var(--telekom-color-functional-warning-subtle), transparent);
 }
 
 .card-top {

@@ -884,11 +884,11 @@ scale-tag.session-tag--interactive:active {
 }
 
 .reason-box {
-  background: var(--telekom-color-ui-background-info);
-  border-left: 3px solid var(--telekom-color-ui-border-info);
+  background: var(--telekom-color-ui-regular);
+  border-left: 3px solid color-mix(in srgb, var(--telekom-color-ui-regular) 60%, transparent);
   padding: 0.75rem;
   border-radius: 6px;
-  color: var(--telekom-color-text-info);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .reason-box strong {
