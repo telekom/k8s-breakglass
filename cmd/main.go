@@ -56,7 +56,7 @@ func createScheme(log *zap.SugaredLogger) *runtime.Scheme {
 		log.Fatalf("Failed to add v1alpha1 CRDs to scheme: %v", err)
 	}
 
-	log.Debugw("Scheme initialized with CRDs", "types", "corev1, BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider, DenyPolicy")
+	log.Debugw("Scheme initialized with CRDs", "types", "corev1, BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider, MailProvider, DenyPolicy")
 	return scheme
 }
 
@@ -274,7 +274,7 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", getEnvBool("ENABLE_HTTP2", false),
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&enableWebhooks, "enable-webhooks", getEnvBool("ENABLE_WEBHOOKS", true),
-		"Enable webhook manager for BreakglassSession, BreakglassEscalation, ClusterConfig and IdentityProvider")
+		"Enable webhook manager for BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider and MailProvider")
 	flag.StringVar(&podNamespace, "pod-namespace", getEnvString("POD_NAMESPACE", "default"),
 		"The namespace where the pod is running (used for event recording)")
 
@@ -880,7 +880,7 @@ func setupReconcilerManager(
 //
 // Component flags allow splitting the controller into multiple instances:
 //   - enableValidatingWebhooks: enables validating webhooks for breakglass CRDs (BreakglassSession,
-//     BreakglassEscalation, ClusterConfig, IdentityProvider)
+//     BreakglassEscalation, ClusterConfig, IdentityProvider, MailProvider)
 //
 // NOTE: Subject Access Review (SAR) webhooks run on the API server (Gin), not here, and cannot
 // be independently disabled. They run whenever enable-api is true.
@@ -1021,6 +1021,13 @@ func setupWebhooks(
 				return
 			}
 			log.Infow("Successfully registered IdentityProvider webhook")
+
+			log.Debugw("Starting webhook registration for MailProvider")
+			if err := (&v1alpha1.MailProvider{}).SetupWebhookWithManager(mgr); err != nil {
+				log.Warnw("Failed to setup MailProvider webhook with manager", "error", err)
+				return
+			}
+			log.Infow("Successfully registered MailProvider webhook")
 		} else {
 			log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 		}
