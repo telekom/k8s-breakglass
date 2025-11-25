@@ -31,6 +31,8 @@ type Manager struct {
 	certsReady                         chan struct{}
 	leaderElected                      <-chan struct{}
 	log                                *zap.SugaredLogger
+	managerFactory                     func(*runtime.Scheme) (ctrl.Manager, error)
+	rotatorAdder                       func(ctrl.Manager, *rotator.CertRotator) error
 }
 
 func NewManager(name, namespace, path, validatingWebhookConfigurationName string,
@@ -51,32 +53,13 @@ func NewManager(name, namespace, path, validatingWebhookConfigurationName string
 		certsReady:                         certsReady,
 		leaderElected:                      leaderElected,
 		log:                                log.With("component", "CertControllerManager"),
+		rotatorAdder:                       rotator.AddRotator,
 	}
 }
 
 func (m *Manager) setupRotator(mgr ctrl.Manager) error {
-	cr := &rotator.CertRotator{
-		SecretKey: types.NamespacedName{
-			Namespace: m.namespace,
-			Name:      m.name,
-		},
-		CertDir:               m.path,
-		CAName:                fmt.Sprintf("%s-ca", m.name),
-		CAOrganization:        "breakglass",
-		DNSName:               fmt.Sprintf("%s.%s.svc", m.name, m.namespace),
-		ExtraDNSNames:         []string{fmt.Sprintf("%s.%s.svc.cluster.local", m.name, m.namespace), m.name},
-		IsReady:               m.certsReady,
-		RequireLeaderElection: false,
-		Webhooks: []rotator.WebhookInfo{
-			{
-				Name: m.validatingWebhookConfigurationName,
-				Type: rotator.Validating,
-			},
-		},
-		RestartOnSecretRefresh: false,
-	}
-
-	if err := rotator.AddRotator(mgr, cr); err != nil {
+	cr := m.newCertRotator()
+	if err := m.getRotatorAdder()(mgr, cr); err != nil {
 		return fmt.Errorf("unable to setup cert rotation: %w", err)
 	}
 
@@ -98,14 +81,7 @@ func (m *Manager) Start(ctx context.Context, scheme *runtime.Scheme) error {
 
 	m.log.Infow("Configuring cert-controller's manager")
 	// Create a manager for cert-controller
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:           scheme,
-		LeaderElection:   false,
-		LeaderElectionID: "",
-		Metrics: metricsserver.Options{
-			BindAddress: "0", // disable metrics server
-		},
-	})
+	mgr, err := m.getManagerFactory()(scheme)
 	if err != nil {
 		return fmt.Errorf("failed to start cert-controller: %w", err)
 	}
@@ -123,4 +99,52 @@ func (m *Manager) Start(ctx context.Context, scheme *runtime.Scheme) error {
 	}
 
 	return nil
+}
+
+func (m *Manager) newCertRotator() *rotator.CertRotator {
+	return &rotator.CertRotator{
+		SecretKey: types.NamespacedName{
+			Namespace: m.namespace,
+			Name:      m.name,
+		},
+		CertDir:               m.path,
+		CAName:                fmt.Sprintf("%s-ca", m.name),
+		CAOrganization:        "breakglass",
+		DNSName:               fmt.Sprintf("%s.%s.svc", m.name, m.namespace),
+		ExtraDNSNames:         []string{fmt.Sprintf("%s.%s.svc.cluster.local", m.name, m.namespace), m.name},
+		IsReady:               m.certsReady,
+		RequireLeaderElection: false,
+		Webhooks: []rotator.WebhookInfo{
+			{
+				Name: m.validatingWebhookConfigurationName,
+				Type: rotator.Validating,
+			},
+		},
+		RestartOnSecretRefresh: false,
+	}
+}
+
+func (m *Manager) getManagerFactory() func(*runtime.Scheme) (ctrl.Manager, error) {
+	if m.managerFactory != nil {
+		return m.managerFactory
+	}
+
+	return func(scheme *runtime.Scheme) (ctrl.Manager, error) {
+		return ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+			Scheme:           scheme,
+			LeaderElection:   false,
+			LeaderElectionID: "",
+			Metrics: metricsserver.Options{
+				BindAddress: "0", // disable metrics server
+			},
+		})
+	}
+}
+
+func (m *Manager) getRotatorAdder() func(ctrl.Manager, *rotator.CertRotator) error {
+	if m.rotatorAdder != nil {
+		return m.rotatorAdder
+	}
+
+	return rotator.AddRotator
 }
