@@ -1,20 +1,20 @@
 :root {
-  color-scheme: dark;
   font-family: "TeleNeo Web", "TeleNeo", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-weight: 400;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
-  background-color: var(--surface-primary);
   color: var(--telekom-color-text-and-icon-standard);
+  background-color: var(--surface-primary);
+  color-scheme: light;
 
-  --surface-primary: var(--telekom-color-gray-950);
-  --surface-elevated: var(--telekom-ui-color-surface-strong);
-  --surface-card: var(--telekom-ui-color-surface-stronger);
-  --surface-card-subtle: color-mix(in srgb, var(--telekom-ui-color-surface-strong) 70%, transparent);
-  --surface-toolbar: var(--telekom-ui-color-surface);
-  --border-default: color-mix(in srgb, var(--telekom-color-gray-100) 20%, transparent);
-  --border-strong: color-mix(in srgb, var(--telekom-color-gray-100) 35%, transparent);
-  --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 45%, transparent);
+  --surface-primary: var(--telekom-color-white);
+  --surface-elevated: var(--telekom-ui-color-surface-subtle);
+  --surface-card: var(--telekom-color-white);
+  --surface-card-subtle: color-mix(in srgb, var(--telekom-color-gray-200) 25%, transparent);
+  --surface-toolbar: var(--telekom-color-white);
+  --border-default: color-mix(in srgb, var(--telekom-color-gray-900) 15%, transparent);
+  --border-strong: color-mix(in srgb, var(--telekom-color-gray-900) 35%, transparent);
+  --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 15%, transparent);
 
   --focus-outline: var(--telekom-color-blue-500);
 
@@ -24,23 +24,24 @@
   --accent-info: var(--telekom-color-blue-400);
   --accent-critical: var(--telekom-color-red-400);
 
-  --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
-  --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 35%, transparent);
-  --chip-text: var(--telekom-color-magenta-200);
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-  --surface-primary: var(--telekom-color-white);
-  --surface-elevated: var(--telekom-ui-color-surface-subtle);
-  --surface-card: var(--telekom-color-white);
-  --surface-card-subtle: color-mix(in srgb, var(--telekom-color-gray-200) 25%, transparent);
-  --surface-toolbar: var(--telekom-color-white);
-  --border-default: color-mix(in srgb, var(--telekom-color-gray-900) 15%, transparent);
-  --border-strong: color-mix(in srgb, var(--telekom-color-gray-900) 35%, transparent);
   --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 7%, transparent);
   --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
   --chip-text: var(--telekom-color-magenta-600);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-primary: var(--telekom-color-gray-950);
+  --surface-elevated: var(--telekom-ui-color-surface-strong);
+  --surface-card: var(--telekom-ui-color-surface-stronger);
+  --surface-card-subtle: color-mix(in srgb, var(--telekom-ui-color-surface-strong) 70%, transparent);
+  --surface-toolbar: var(--telekom-ui-color-surface);
+  --border-default: color-mix(in srgb, var(--telekom-color-gray-100) 20%, transparent);
+  --border-strong: color-mix(in srgb, var(--telekom-color-gray-100) 35%, transparent);
+  --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 45%, transparent);
+  --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
+  --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 35%, transparent);
+  --chip-text: var(--telekom-color-magenta-200);
 }
 
 * {
@@ -153,16 +154,6 @@ a.scale-button-link::part(button) {
   padding: 0;
 }
 
-scale-card {
-  --background: var(--telekom-color-background-canvas);
-}
-
-scale-button[variant="secondary"]::part(button) {
-  background-color: transparent;
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
-  color: var(--telekom-color-text-and-icon-standard);
-}
 
 scale-tag[data-intent] {
   --icon-color: var(--color);
@@ -177,10 +168,14 @@ scale-tag[data-intent="self-approval"] {
 }
 
 scale-tag[data-intent="status-pending"],
-scale-tag[data-intent="needs-approval"],
-scale-tag[data-intent="tip"] {
+scale-tag[data-intent="needs-approval"] {
   --background: var(--telekom-color-functional-warning-subtle);
   --color: var(--telekom-color-text-and-icon-on-subtle-warning);
+}
+
+scale-tag[data-intent="tip"] {
+  --background: var(--telekom-color-ui-regular);
+  --color: var(--telekom-color-text-and-icon-on-ui-regular, var(--telekom-color-text-and-icon-standard));
 }
 
 scale-tag[data-intent="status-available"],
@@ -409,9 +404,5 @@ scale-tag[data-intent="status-neutral"] {
     --chip-bg: Canvas;
     --chip-border: GrayText;
     --chip-text: ButtonText;
-  }
-
-  scale-button[variant="secondary"]::part(button) {
-    border-color: GrayText;
   }
 }

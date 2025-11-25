@@ -31,6 +31,10 @@ const theme = ref<"light" | "dark">(getInitialTheme());
 let mediaQuery: MediaQueryList | null = null;
 let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
 
+if (typeof document !== "undefined") {
+  applyTheme(theme.value);
+}
+
 function getInitialTheme(): "light" | "dark" {
   if (typeof window === "undefined") {
     return "light";
@@ -402,10 +406,6 @@ watch(
 </style>
 
 <style scoped>
-:deep(scale-telekom-header) {
-  --background: var(--telekom-color-background-surface);
-}
-
 .center {
   text-align: center;
 }
