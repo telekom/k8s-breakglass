@@ -16,8 +16,6 @@
   --border-strong: color-mix(in srgb, var(--telekom-color-gray-100) 35%, transparent);
   --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 45%, transparent);
 
-  --text-muted: var(--telekom-color-ui-subtle);
-  --telekom-color-text-and-icon-standard: color-mix(in srgb, var(--telekom-color-text-and-icon-standard) 60%, transparent);
   --focus-outline: var(--telekom-color-blue-500);
 
   --accent-telekom: var(--telekom-color-magenta-500);
@@ -40,8 +38,6 @@
   --surface-toolbar: var(--telekom-color-white);
   --border-default: color-mix(in srgb, var(--telekom-color-gray-900) 15%, transparent);
   --border-strong: color-mix(in srgb, var(--telekom-color-gray-900) 35%, transparent);
-  --text-muted: var(--telekom-text-color-primary);
-  --telekom-color-text-and-icon-standard: var(--telekom-color-gray-500);
   --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 7%, transparent);
   --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
   --chip-text: var(--telekom-color-magenta-600);
@@ -157,11 +153,54 @@ a.scale-button-link::part(button) {
   padding: 0;
 }
 
+scale-card {
+  --background: var(--telekom-color-background-canvas);
+}
+
 scale-button[variant="secondary"]::part(button) {
   background-color: transparent;
   border: 1px solid var(--border-default);
   border-radius: 12px;
   color: var(--telekom-color-text-and-icon-standard);
+}
+
+scale-tag[data-intent] {
+  --icon-color: var(--color);
+  --icon-color-hover: var(--color);
+}
+
+scale-tag[data-intent="status-active"],
+scale-tag[data-intent="group"],
+scale-tag[data-intent="self-approval"] {
+  --background: var(--telekom-color-functional-success-subtle);
+  --color: var(--telekom-color-text-and-icon-on-subtle-success);
+}
+
+scale-tag[data-intent="status-pending"],
+scale-tag[data-intent="needs-approval"],
+scale-tag[data-intent="tip"] {
+  --background: var(--telekom-color-functional-warning-subtle);
+  --color: var(--telekom-color-text-and-icon-on-subtle-warning);
+}
+
+scale-tag[data-intent="status-available"],
+scale-tag[data-intent="cluster"],
+scale-tag[data-intent="group-count"],
+scale-tag[data-intent="info"] {
+  --background: var(--telekom-color-functional-informational-subtle);
+  --color: var(--telekom-color-text-and-icon-on-subtle-informational);
+}
+
+scale-tag[data-intent="status-critical"],
+scale-tag[data-intent="approval-timeout"],
+scale-tag[data-intent="reason-required"] {
+  --background: var(--telekom-color-functional-danger-subtle);
+  --color: var(--telekom-color-text-and-icon-on-subtle-danger);
+}
+
+scale-tag[data-intent="status-neutral"] {
+  --background: var(--telekom-color-background-surface-subtle);
+  --color: var(--telekom-color-text-and-icon-standard);
 }
 
 /* Shared page chrome */
@@ -177,7 +216,7 @@ scale-button[variant="secondary"]::part(button) {
 }
 
 .ui-page-subtitle {
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   font-size: 1rem;
 }
 
@@ -220,7 +259,7 @@ scale-button[variant="secondary"]::part(button) {
   display: flex;
   gap: 0.5rem;
   font-size: 0.95rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 /* Card primitives */
@@ -247,7 +286,7 @@ scale-button[variant="secondary"]::part(button) {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .ui-info-item span {
@@ -259,7 +298,7 @@ scale-button[variant="secondary"]::part(button) {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .ui-info-item .value {
@@ -278,7 +317,7 @@ scale-button[variant="secondary"]::part(button) {
   border-radius: 999px;
   border: 1px solid var(--border-default);
   background-color: var(--surface-card-subtle);
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.8rem;
 }
 
@@ -290,7 +329,7 @@ scale-button[variant="secondary"]::part(button) {
   border-radius: 14px;
   border: 1px dashed var(--border-default);
   background-color: var(--surface-card-subtle);
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .ui-section {
@@ -305,7 +344,7 @@ scale-button[variant="secondary"]::part(button) {
 }
 
 .ui-section p {
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .ui-link-button {
@@ -326,7 +365,7 @@ scale-button[variant="secondary"]::part(button) {
 }
 
 .ui-muted {
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .center {
@@ -340,7 +379,7 @@ scale-button[variant="secondary"]::part(button) {
   border-radius: 18px;
   border: 1px dashed var(--border-default);
   background-color: var(--surface-elevated);
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   text-align: center;
 }
 
@@ -367,7 +406,6 @@ scale-button[variant="secondary"]::part(button) {
     --surface-card: Canvas;
     --surface-card-subtle: Canvas;
     --border-default: GrayText;
-    --text-muted: GrayText;
     --chip-bg: Canvas;
     --chip-border: GrayText;
     --chip-text: ButtonText;

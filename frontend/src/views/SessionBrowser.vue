@@ -144,6 +144,26 @@ function sessionStatusVariant(session: SessionCR): TagVariant {
   return "neutral";
 }
 
+function sessionStatusIntent(session: SessionCR): string {
+  const normalized = normalizedState(session);
+  if (normalized === "approvaltimeout" || normalized === "timeout") {
+    return "approval-timeout";
+  }
+  const tone = statusToneFor(sessionState(session));
+  switch (tone) {
+    case "success":
+      return "status-active";
+    case "warning":
+      return "status-pending";
+    case "danger":
+      return "status-critical";
+    case "info":
+      return "status-available";
+    default:
+      return "status-neutral";
+  }
+}
+
 function sessionUser(session: SessionCR): string {
   return session.spec?.user || session.spec?.requester || (session as any).user || "-";
 }
@@ -489,6 +509,7 @@ onMounted(() => {
                 <scale-tag
                   size="small"
                   variant="info"
+                  data-intent="cluster"
                   class="session-tag session-tag--interactive"
                   role="button"
                   tabindex="0"
@@ -501,6 +522,7 @@ onMounted(() => {
                 <scale-tag
                   size="small"
                   variant="primary"
+                  data-intent="group"
                   class="session-tag session-tag--interactive"
                   role="button"
                   tabindex="0"
@@ -512,7 +534,12 @@ onMounted(() => {
                 </scale-tag>
               </div>
             </div>
-            <scale-tag size="small" :variant="sessionStatusVariant(session)" class="session-tag">
+            <scale-tag
+              size="small"
+              :variant="sessionStatusVariant(session)"
+              :data-intent="sessionStatusIntent(session)"
+              class="session-tag"
+            >
               {{ sessionState(session) }}
             </scale-tag>
           </div>
@@ -585,7 +612,7 @@ onMounted(() => {
   color: var(--telekom-color-text-and-icon-standard);
   --session-surface: var(--surface-card);
   --session-border: var(--border-default);
-  --session-muted: var(--text-muted);
+  --session-muted: var(--telekom-color-text-and-icon-additional);
   --session-tag-bg: var(--chip-bg);
   --session-tag-text: var(--chip-text);
   --session-shadow: var(--shadow-card);

@@ -285,7 +285,7 @@ onMounted(async () => {
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: 4px;
   font-size: 1rem;
-  background: var(--telekom-color-background-surface);
+  background: var(--telekom-color-background-canvas);
   color: var(--telekom-color-text-and-icon-standard);
 }
 

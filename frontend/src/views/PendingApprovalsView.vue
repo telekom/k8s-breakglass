@@ -602,7 +602,7 @@ onMounted(fetchPendingApprovals);
   --approvals-shadow: var(--shadow-card);
   --approvals-shadow-hover: var(--shadow-card);
   --approvals-text-strong: var(--telekom-color-text-and-icon-standard);
-  --approvals-text-muted: var(--text-muted);
+  --approvals-text-muted: var(--telekom-color-text-and-icon-additional);
   --approvals-chip-bg: var(--telekom-color-functional-success-subtle);
   --approvals-chip-text: var(--telekom-color-text-and-icon-on-subtle-success);
   --approvals-chip-secondary-bg: var(--telekom-color-additional-violet-subtle);

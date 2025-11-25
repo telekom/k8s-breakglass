@@ -331,7 +331,7 @@ async function onDrop(bg: any) {
   display: flex;
   flex-wrap: wrap;
   gap: 1rem;
-  background: var(--telekom-color-background-surface);
+  background: var(--telekom-color-background-canvas);
   border: 1px solid var(--telekom-color-ui-border-standard);
   padding: 1rem;
   border-radius: 8px;

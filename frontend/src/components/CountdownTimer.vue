@@ -63,6 +63,6 @@ watch(() => props.expiresAt, updateRemaining);
     background 0.2s;
 }
 .countdown.expired {
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 </style>

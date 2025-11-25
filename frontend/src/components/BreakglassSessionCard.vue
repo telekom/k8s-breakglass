@@ -144,6 +144,25 @@ const chipVariant = computed(() => {
   if (tone === "muted") return "neutral";
   return tone;
 });
+
+const statusTagIntent = computed(() => {
+  const normalized = props.breakglass.status?.state?.toString().toLowerCase() || "";
+  if (normalized === "approvaltimeout" || normalized === "timeout") {
+    return "approval-timeout";
+  }
+  switch (statusTone.value) {
+    case "success":
+      return "status-active";
+    case "warning":
+      return "status-pending";
+    case "danger":
+      return "status-critical";
+    case "info":
+      return "status-available";
+    default:
+      return "status-neutral";
+  }
+});
 </script>
 
 <template>
@@ -156,7 +175,9 @@ const chipVariant = computed(() => {
       <p v-if="breakglass.spec.identityProviderIssuer"><b>Issuer:</b> {{ breakglass.spec.identityProviderIssuer }}</p>
       <div class="state-row">
         <b>State:</b>
-        <scale-tag :variant="chipVariant">{{ breakglass.status.state || "Unknown" }}</scale-tag>
+        <scale-tag :variant="chipVariant" :data-intent="statusTagIntent">{{
+          breakglass.status.state || "Unknown"
+        }}</scale-tag>
       </div>
       <p v-if="requestedAt"><b>Requested at:</b> {{ requestedAt }}</p>
       <p v-if="props.breakglass.spec && props.breakglass.spec.requestReason">

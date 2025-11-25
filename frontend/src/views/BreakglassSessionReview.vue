@@ -220,7 +220,7 @@ async function onCancel(bg: SessionCR) {
 .not-found {
   text-align: center;
   margin: 2rem 0;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   font-size: 1.2rem;
 }
 </style>

@@ -3,7 +3,19 @@ import humanizeDuration from "humanize-duration";
 import { computed, ref, watch } from "vue";
 import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
-import { statusToneFor } from "@/utils/statusStyles";
+
+type TagIntent =
+  | "status-active"
+  | "status-pending"
+  | "status-available"
+  | "status-critical"
+  | "approval-timeout"
+  | "cluster"
+  | "group"
+  | "group-count"
+  | "needs-approval"
+  | "reason-required"
+  | "self-approval";
 
 const humanizeConfig = { round: true, largest: 2 };
 const props = defineProps<{ breakglass: any; time: number }>();
@@ -331,50 +343,37 @@ const reasonDescription = computed(() => {
   return typeof desc === "string" ? desc.trim() : "";
 });
 
-const metaBadges = computed(() => {
-  const badges: { label: string; variant: string }[] = [];
+type MetaBadge = { label: string; intent: TagIntent };
+
+const metaBadges = computed<MetaBadge[]>(() => {
+  const badges: MetaBadge[] = [];
   if (sessionActive.value) {
-    badges.push({ label: "Active", variant: "success" });
+    badges.push({ label: "Active", intent: "status-active" });
   } else if (sessionPending.value) {
-    badges.push({ label: "Pending", variant: "warning" });
+    badges.push({ label: "Pending", intent: "status-pending" });
   } else {
-    badges.push({ label: "Available", variant: "neutral" });
+    badges.push({ label: "Available", intent: "status-available" });
   }
   if (requiresReason.value) {
-    badges.push({ label: "Reason required", variant: "danger" });
+    badges.push({ label: "Reason required", intent: "reason-required" });
   }
   if (!props.breakglass?.selfApproval && props.breakglass?.approvalGroups?.length) {
-    badges.push({ label: "Needs approval", variant: "info" });
+    badges.push({ label: "Needs approval", intent: "needs-approval" });
   } else if (props.breakglass?.selfApproval) {
-    badges.push({ label: "Self approval", variant: "secondary" });
+    badges.push({ label: "Self approval", intent: "self-approval" });
   }
   const clusterLabel = props.breakglass?.cluster || "Global";
-  badges.push({ label: clusterLabel, variant: "info" });
+  badges.push({ label: clusterLabel, intent: "cluster" });
   if (requesterGroups.value.length > 1) {
-    badges.push({ label: `${requesterGroups.value.length} requester groups`, variant: "neutral" });
+    badges.push({ label: `${requesterGroups.value.length} requester groups`, intent: "group-count" });
   }
   return badges;
 });
 
-const cardStateTone = computed(() => {
-  if (sessionActive.value) return statusToneFor("active");
-  if (sessionPending.value) return statusToneFor("pending");
-  return statusToneFor("available");
-});
-
-const stateChipVariant = computed(() => {
-  switch (cardStateTone.value) {
-    case "success":
-      return "success";
-    case "warning":
-      return "warning";
-    case "danger":
-      return "danger";
-    case "info":
-      return "info";
-    default:
-      return "neutral";
-  }
+const stateChipIntent = computed<TagIntent>(() => {
+  if (sessionActive.value) return "status-active";
+  if (sessionPending.value) return "status-pending";
+  return "status-available";
 });
 
 const expiryHumanized = computed(() => {
@@ -482,13 +481,13 @@ function drop() {
           Visible via {{ requesterGroups.length }} of your groups
         </p>
         <div class="breakglass-card__meta" aria-label="Session status and requirements">
-          <scale-tag v-for="badge in metaBadges" :key="badge.label" size="small" :variant="badge.variant">
+          <scale-tag v-for="badge in metaBadges" :key="badge.label" size="small" :data-intent="badge.intent">
             {{ badge.label }}
           </scale-tag>
         </div>
       </div>
       <div class="breakglass-card__state-panel" aria-live="polite">
-        <scale-tag size="small" :variant="stateChipVariant">
+        <scale-tag size="small" :data-intent="stateChipIntent">
           <template v-if="sessionActive">Active session</template>
           <template v-else-if="sessionPending">Pending request</template>
           <template v-else>Available</template>
@@ -519,10 +518,10 @@ function drop() {
     <div v-if="requesterGroups.length" class="breakglass-card__groups">
       <div class="groups-header">
         <span class="label">Available via</span>
-        <scale-tag size="small" variant="primary">{{ requesterGroups.length }} groups</scale-tag>
+        <scale-tag size="small" data-intent="group-count">{{ requesterGroups.length }} groups</scale-tag>
       </div>
       <div class="breakglass-card__pill-list">
-        <scale-tag v-for="group in visibleRequesterGroups" :key="group" size="small" variant="primary">
+        <scale-tag v-for="group in visibleRequesterGroups" :key="group" size="small" data-intent="group">
           {{ group }}
         </scale-tag>
       </div>
@@ -545,10 +544,10 @@ function drop() {
     <section v-if="approvalGroupsList.length" class="card-section breakglass-card__approvers">
       <div class="groups-header">
         <span class="label">Approval groups</span>
-        <scale-tag size="small" variant="primary">{{ approvalGroupsList.length }} groups</scale-tag>
+        <scale-tag size="small" data-intent="group-count">{{ approvalGroupsList.length }} groups</scale-tag>
       </div>
       <div class="breakglass-card__pill-list">
-        <scale-tag v-for="group in visibleApprovalGroups" :key="group" size="small" variant="primary">
+        <scale-tag v-for="group in visibleApprovalGroups" :key="group" size="small" data-intent="group">
           {{ group }}
         </scale-tag>
       </div>
@@ -744,7 +743,7 @@ function drop() {
 
 .breakglass-card__hint {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.9rem;
 }
 
@@ -794,7 +793,7 @@ function drop() {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   margin-bottom: 0.25rem;
 }
 
@@ -843,7 +842,7 @@ function drop() {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .breakglass-card__pill-list {
@@ -869,7 +868,7 @@ function drop() {
 
 .cta-copy {
   flex: 1 1 320px;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.9rem;
 }
 
@@ -878,7 +877,7 @@ function drop() {
 }
 
 .text-muted {
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .actions-row {
@@ -901,7 +900,7 @@ function drop() {
 
 .helper {
   font-size: 0.85rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   margin-top: 0.25rem;
 }
 
@@ -931,7 +930,7 @@ function drop() {
 .schedule-intro {
   margin-top: 0;
   font-size: 0.9rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .schedule-picker {
@@ -1000,7 +999,7 @@ function drop() {
   font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .breakglass-card__pill-list {
@@ -1026,7 +1025,7 @@ function drop() {
 
 .cta-copy {
   flex: 1 1 320px;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.9rem;
 }
 
@@ -1043,7 +1042,7 @@ function drop() {
 
 .helper {
   font-size: 0.85rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   margin-top: 0.25rem;
 }
 
@@ -1073,7 +1072,7 @@ function drop() {
 .schedule-intro {
   margin-top: 0;
   font-size: 0.9rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .schedule-picker {
@@ -1128,7 +1127,7 @@ function drop() {
 .duration-selector .helper,
 .reason-field .helper {
   font-size: 0.85rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   margin: 0.35rem 0;
 }
 

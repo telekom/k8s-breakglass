@@ -86,7 +86,7 @@ function verticalOffset(index: number) {
 .cid {
   display: inline-block;
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-additional);
   margin-left: 0.35rem;
 }
 </style>

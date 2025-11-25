@@ -402,6 +402,10 @@ watch(
 </style>
 
 <style scoped>
+:deep(scale-telekom-header) {
+  --background: var(--telekom-color-background-surface);
+}
+
 .center {
   text-align: center;
 }
