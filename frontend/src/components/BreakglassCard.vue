@@ -336,8 +336,6 @@ const hiddenApprovalGroupCount = computed(() => {
   return Math.max(approvalGroupsList.value.length - MAX_VISIBLE_APPROVAL_GROUPS, 0);
 });
 
-const requesterGroupsLabel = computed(() => (requesterGroups.value.length ? requesterGroups.value.join(", ") : "—"));
-
 const reasonDescription = computed(() => {
   const desc = props.breakglass?.requestReason?.description;
   return typeof desc === "string" ? desc.trim() : "";
@@ -474,12 +472,6 @@ function drop() {
       <div class="breakglass-card__title">
         <p class="eyebrow">Escalation target</p>
         <h3 class="card-title">{{ breakglass.to }}</h3>
-        <p class="breakglass-card__subtitle">
-          Available from <span class="highlight">{{ requesterGroupsLabel }}</span>
-        </p>
-        <p v-if="requesterGroups.length > 1" class="breakglass-card__hint">
-          Visible via {{ requesterGroups.length }} of your groups
-        </p>
         <div class="breakglass-card__meta" aria-label="Session status and requirements">
           <scale-tag v-for="badge in metaBadges" :key="badge.label" size="small" :data-intent="badge.intent">
             {{ badge.label }}
@@ -515,7 +507,7 @@ function drop() {
       </div>
     </div>
 
-    <div v-if="requesterGroups.length" class="breakglass-card__groups">
+    <section v-if="requesterGroups.length" class="card-section breakglass-card__groups">
       <div class="groups-header">
         <span class="label">Available via</span>
         <scale-tag size="small" data-intent="group-count">{{ requesterGroups.length }} groups</scale-tag>
@@ -534,7 +526,7 @@ function drop() {
       >
         {{ showAllRequesterGroups ? "Show fewer groups" : `Show all ${requesterGroups.length} groups` }}
       </scale-button>
-    </div>
+    </section>
 
     <section v-if="reasonDescription" class="card-section card-section--reason">
       <h4>Reason policy</h4>
@@ -731,22 +723,6 @@ function drop() {
   margin: 0 0 0.25rem 0;
 }
 
-.breakglass-card__subtitle {
-  margin: 0.1rem 0;
-  color: var(--telekom-color-text-and-icon-functional-informational);
-}
-
-.breakglass-card__subtitle .highlight {
-  color: var(--telekom-color-text-and-icon-functional-informational);
-  font-weight: 600;
-}
-
-.breakglass-card__hint {
-  margin: 0;
-  color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.9rem;
-}
-
 .breakglass-card__meta {
   display: flex;
   flex-wrap: wrap;
@@ -778,6 +754,7 @@ function drop() {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 1rem;
+  margin-top: 0.75rem;
 }
 
 .info-item {
@@ -804,16 +781,16 @@ function drop() {
   font-weight: 600;
 }
 
-.breakglass-card__groups {
-  padding: 0.35rem 0 0 0;
-}
-
 .card-section {
-  margin-top: 0.5rem;
-  padding: 0.75rem 0.9rem;
-  background: var(--telekom-color-background-surface-subtle);
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  background: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
+}
+
+.card-section + .card-section {
+  margin-top: 0.85rem;
 }
 
 .card-section--reason h4 {
@@ -980,14 +957,6 @@ function drop() {
   padding: 0.35rem 0 0 0;
 }
 
-.breakglass-card__approvers {
-  margin-top: 0.5rem;
-  padding: 0.75rem 0.9rem;
-  background: var(--telekom-color-background-surface-subtle);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--telekom-radius-standard);
-}
-
 .groups-header {
   display: flex;
   gap: 0.5rem;
@@ -1141,9 +1110,9 @@ function drop() {
 
 .hint-box {
   margin-top: 0.5rem;
-  padding: 0.75rem;
+  padding: 0.85rem;
   border-radius: var(--telekom-radius-standard);
-  background: var(--telekom-color-background-surface-highlight);
+  background: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
   font-size: 0.85rem;
   color: var(--telekom-color-text-and-icon-standard);
@@ -1158,7 +1127,7 @@ function drop() {
   margin-top: 0.75rem;
   padding: 0.85rem 1rem;
   border-left: 3px solid var(--accent-info);
-  background: var(--telekom-color-background-surface-highlight);
+  background: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
 }

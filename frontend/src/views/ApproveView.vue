@@ -243,6 +243,7 @@ scale-card {
 .reason-block {
   margin-top: 1rem;
   text-align: left;
+  color: var(--telekom-color-background-canvas-subtle);
 }
 
 .reason-text {

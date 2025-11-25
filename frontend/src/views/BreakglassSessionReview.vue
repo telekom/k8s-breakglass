@@ -72,6 +72,27 @@ onMounted(async () => {
   await getActiveBreakglasses();
 });
 
+function matchesSearch(bg: SessionCR, term: string) {
+  if (!term) return true;
+  const values = [
+    bg.metadata?.name,
+    bg.spec?.grantedGroup,
+    bg.spec?.cluster,
+    bg.spec?.user,
+    bg.spec?.identityProviderName,
+    bg.spec?.identityProviderIssuer,
+    bg.status?.state,
+    bg.status?.approvalReason,
+    bg.status?.approver,
+    Array.isArray(bg.status?.approvers) ? bg.status?.approvers.join(",") : "",
+    bg.spec?.requestReason,
+  ].filter((value) => typeof value === "string" && value.length > 0);
+  const haystack = values.join(" ").toLowerCase();
+  return haystack.includes(term);
+}
+
+const normalizedSearch = computed(() => state.search.trim().toLowerCase());
+
 const filteredBreakglasses = computed(() => {
   let sessions = state.breakglasses;
   if (showOnlyActive.value) {
@@ -81,9 +102,8 @@ const filteredBreakglasses = computed(() => {
       return st === "active" || st === "approved";
     });
   }
-  if (state.search !== "") {
-    // Optionally add search filtering here
-    // sessions = sessions.filter(...)
+  if (normalizedSearch.value) {
+    sessions = sessions.filter((bg) => matchesSearch(bg, normalizedSearch.value));
   }
   return sessions;
 });
@@ -155,72 +175,132 @@ async function onCancel(bg: SessionCR) {
 </script>
 
 <template>
-  <main>
-    <div v-if="authenticated" class="center">
-      <div class="controls">
-        <scale-checkbox
-          :checked="showOnlyActive"
-          @scaleChange="
-            showOnlyActive = $event.target.checked;
-            getActiveBreakglasses();
-          "
-          >Active only</scale-checkbox
-        >
-      </div>
-      <div>
-        {{ state.getBreakglassesMsg }}
-      </div>
-      <div v-if="filteredBreakglasses.length === 0 && !state.loading" class="not-found">No sessions were found.</div>
-      <div v-else class="breakglass-list">
-        <BreakglassSessionCard
-          v-for="(bg, index) in filteredBreakglasses"
-          :key="bg.metadata?.name || bg.name || index"
-          class="card"
-          :breakglass="bg"
-          :time="time"
-          :current-user-email="currentUserEmail"
-          @accept="
-            () => {
-              onAccept(bg);
-            }
-          "
-          @reject="
-            () => {
-              onReject(bg);
-            }
-          "
-          @drop="
-            () => {
-              onDrop(bg);
-            }
-          "
-          @cancel="
-            () => {
-              onCancel(bg);
-            }
-          "
-        >
-        </BreakglassSessionCard>
-      </div>
+  <main class="ui-page review-session-page" v-if="authenticated">
+    <div class="page-heading">
+      <h2 class="ui-page-title">Review Session</h2>
+      <p class="ui-page-subtitle">Inspect outstanding sessions and take action when needed.</p>
+    </div>
+
+    <section class="review-toolbar ui-toolbar" aria-label="Session filters">
+      <scale-text-field
+        label="Search"
+        name="session-search"
+        placeholder="Search by user, group, cluster, or IDP"
+        type="text"
+        :value="state.search"
+        @scaleChange="state.search = $event.target.value"
+      ></scale-text-field>
+
+      <scale-checkbox
+        :checked="showOnlyActive"
+        @scaleChange="
+          showOnlyActive = $event.target.checked;
+          getActiveBreakglasses();
+        "
+        >Active only</scale-checkbox
+      >
+
+      <scale-button variant="secondary" @click="getActiveBreakglasses">Refresh</scale-button>
+
+      <div class="toolbar-info">Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} sessions</div>
+    </section>
+
+    <div v-if="state.getBreakglassesMsg" class="review-session-message">
+      {{ state.getBreakglassesMsg }}
+    </div>
+
+    <div v-if="state.loading" class="loading-state">Loading sessions…</div>
+    <div v-else-if="filteredBreakglasses.length === 0" class="empty-state">
+      <p>No sessions match the current filters.</p>
+      <p class="ui-muted">Try clearing the search or turning off “Active only”.</p>
+    </div>
+    <div v-else class="breakglass-list">
+      <BreakglassSessionCard
+        v-for="(bg, index) in filteredBreakglasses"
+        :key="bg.metadata?.name || bg.name || index"
+        class="card"
+        :breakglass="bg"
+        :time="time"
+        :current-user-email="currentUserEmail"
+        @accept="
+          () => {
+            onAccept(bg);
+          }
+        "
+        @reject="
+          () => {
+            onReject(bg);
+          }
+        "
+        @drop="
+          () => {
+            onDrop(bg);
+          }
+        "
+        @cancel="
+          () => {
+            onCancel(bg);
+          }
+        "
+      />
     </div>
   </main>
 </template>
 
 <style scoped>
-.center {
-  text-align: center;
+.review-session-page {
+  gap: 1.5rem;
+}
+
+.page-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.review-toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  align-items: center;
+}
+
+.review-toolbar scale-text-field {
+  grid-column: span 2;
+  min-width: 240px;
+}
+
+.review-toolbar scale-checkbox {
+  white-space: nowrap;
+}
+
+.toolbar-info {
+  font-size: 0.9rem;
+  color: var(--telekom-color-text-and-icon-additional);
+}
+
+.review-session-message {
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  background-color: var(--surface-card-subtle);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .breakglass-list {
-  display: flex;
-  gap: 2rem;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
 }
-.not-found {
-  text-align: center;
-  margin: 2rem 0;
-  color: var(--telekom-color-text-and-icon-additional);
-  font-size: 1.2rem;
+
+@media (max-width: 768px) {
+  .review-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .review-toolbar scale-text-field {
+    grid-column: 1;
+    width: 100%;
+  }
 }
 </style>
