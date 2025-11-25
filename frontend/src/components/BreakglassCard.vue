@@ -567,7 +567,7 @@ function drop() {
       <div class="cta-copy">
         <p v-if="sessionPending" class="text-muted">Request pending approval. We'll notify you if anything changes.</p>
         <p v-else-if="sessionActive" class="text-muted">Session is active. Drop it once you're done.</p>
-        <p v-else-if="requiresReason" class="text-muted">✍️ Describe why you need access to request.</p>
+        <p v-else-if="requiresReason" class="text-muted">✍️ Describe why you need access before requesting.</p>
         <p v-else class="text-muted">Request access instantly or schedule a window.</p>
       </div>
       <div class="actions-row">
@@ -734,11 +734,11 @@ function drop() {
 
 .breakglass-card__subtitle {
   margin: 0.1rem 0;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-functional-informational);
 }
 
 .breakglass-card__subtitle .highlight {
-  color: var(--telekom-color-text-and-icon-standard);
+  color: var(--telekom-color-text-and-icon-functional-informational);
   font-weight: 600;
 }
 
@@ -759,7 +759,7 @@ function drop() {
   min-width: 200px;
   flex: 0 0 240px;
   align-self: stretch;
-  background: var(--surface-card-subtle);
+  background: var(--telekom-color-background-surface-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-large);
   padding: 0.85rem 1rem;
@@ -782,7 +782,7 @@ function drop() {
 }
 
 .info-item {
-  background: var(--surface-card-subtle);
+  background: var(--telekom-color-background-surface-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
   padding: 0.75rem;
@@ -812,7 +812,7 @@ function drop() {
 .card-section {
   margin-top: 0.5rem;
   padding: 0.75rem 0.9rem;
-  background: var(--surface-card-subtle);
+  background: var(--telekom-color-background-surface-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
 }
@@ -914,7 +914,7 @@ function drop() {
 }
 
 .hint-box {
-  background: var(--surface-card-subtle);
+  background: var(--telekom-color-background-surface-highlight);
   padding: 0.5rem;
   border-radius: var(--telekom-radius-standard);
   margin-top: 0.5rem;
@@ -924,7 +924,7 @@ function drop() {
 .schedule-details {
   margin-top: 1rem;
   padding: 1rem;
-  background: var(--surface-card-subtle);
+  background: var(--telekom-color-background-surface-highlight);
   border-radius: var(--telekom-radius-standard);
 }
 
@@ -984,7 +984,7 @@ function drop() {
 .breakglass-card__approvers {
   margin-top: 0.5rem;
   padding: 0.75rem 0.9rem;
-  background: var(--surface-card-subtle);
+  background: var(--telekom-color-background-surface-subtle);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--telekom-radius-standard);
 }
@@ -1056,7 +1056,7 @@ function drop() {
 }
 
 .hint-box {
-  background: var(--surface-card-subtle);
+  background: var(--telekom-color-background-surface-highlight);
   padding: 0.5rem;
   border-radius: var(--telekom-radius-standard);
   margin-top: 0.5rem;
@@ -1066,7 +1066,7 @@ function drop() {
 .schedule-details {
   margin-top: 1rem;
   padding: 1rem;
-  background: var(--surface-card-subtle);
+  background: var(--telekom-color-background-surface-highlight);
   border-radius: var(--telekom-radius-standard);
 }
 
@@ -1143,11 +1143,11 @@ function drop() {
 .hint-box {
   margin-top: 0.5rem;
   padding: 0.75rem;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--surface-card) 85%, transparent);
-  border: 1px solid var(--border-default);
+  border-radius: var(--telekom-radius-standard);
+  background: var(--telekom-color-background-surface-highlight);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   font-size: 0.85rem;
-  color: var(--text-muted);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .breakglass-card__approvers p {
@@ -1159,8 +1159,8 @@ function drop() {
   margin-top: 0.75rem;
   padding: 0.85rem 1rem;
   border-left: 3px solid var(--accent-info);
-  background: color-mix(in srgb, var(--surface-card) 90%, transparent);
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
+  background: var(--telekom-color-background-surface-highlight);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--telekom-radius-standard);
 }
 </style>

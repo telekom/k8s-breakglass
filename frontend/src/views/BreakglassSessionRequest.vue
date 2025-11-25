@@ -191,7 +191,7 @@ onMounted(async () => {
           <scale-textarea
             label="Reason (optional)"
             :value="requestReason"
-            placeholder="Describe why you need access"
+            placeholder="Describe why you need access before requesting"
             rows="3"
             @scaleChange="requestReason = $event.target.value"
           ></scale-textarea>

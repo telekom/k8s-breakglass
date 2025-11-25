@@ -23,20 +23,6 @@ const route = useRoute();
 const router = useRouter();
 
 const groupsRef = ref<string[]>([]);
-const groupsExpanded = ref(false);
-const showAllGroups = ref(false);
-const COLLAPSED_GROUP_LIMIT = 3;
-
-const hasOverflowGroups = computed(() => groupsRef.value.length > COLLAPSED_GROUP_LIMIT);
-
-const visibleGroups = computed(() => {
-  if (showAllGroups.value || !hasOverflowGroups.value) {
-    return groupsRef.value;
-  }
-  return groupsRef.value.slice(0, COLLAPSED_GROUP_LIMIT);
-});
-
-const hiddenGroupCount = computed(() => Math.max(groupsRef.value.length - COLLAPSED_GROUP_LIMIT, 0));
 
 // Theme handling
 const THEME_STORAGE_KEY = "breakglass-theme";
@@ -267,18 +253,6 @@ watch(
   { deep: true },
 );
 
-watch(
-  () => groupsRef.value.length,
-  (len) => {
-    if (!len) {
-      groupsExpanded.value = false;
-    }
-    if (len <= COLLAPSED_GROUP_LIMIT) {
-      showAllGroups.value = false;
-    }
-  },
-);
-
 // Check if multi-IDP is available
 async function checkMultiIDP() {
   try {
@@ -402,28 +376,6 @@ watch(
       </scale-telekom-header>
 
       <div id="main" class="app-container">
-        <div v-if="authenticated && groupsRef.length" class="groups-panel">
-          <scale-accordion>
-            <scale-accordion-item :expanded="groupsExpanded" @scale-change="groupsExpanded = $event.detail.expanded">
-              <span slot="header" class="groups-header">Your Groups ({{ groupsRef.length }})</span>
-              <div class="groups-list">
-                <scale-tag v-for="group in visibleGroups" :key="group" class="group-tag">
-                  {{ group }}
-                </scale-tag>
-              </div>
-              <div v-if="hasOverflowGroups" class="groups-toggle">
-                <span class="groups-preview">
-                  <template v-if="!showAllGroups">+{{ hiddenGroupCount }} more</template>
-                  <template v-else>Showing all groups</template>
-                </span>
-                <scale-button size="small" variant="secondary" @click="showAllGroups = !showAllGroups">
-                  {{ showAllGroups ? "Show fewer" : "Show all" }}
-                </scale-button>
-              </div>
-            </scale-accordion-item>
-          </scale-accordion>
-        </div>
-
         <div v-if="!authenticated" class="center" style="margin: 2rem 0">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
@@ -534,39 +486,5 @@ watch(
   .theme-toggle {
     justify-content: center;
   }
-}
-
-.groups-panel {
-  max-width: 720px;
-  margin: 0 auto 1.25rem auto;
-}
-
-.groups-header {
-  color: var(--telekom-color-text-and-icon-standard);
-  font-weight: 600;
-}
-
-.groups-preview {
-  font-weight: 400;
-  color: var(--text-muted);
-  margin-left: 0.5rem;
-}
-
-.groups-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 1rem;
-}
-
-.group-tag {
-  --telekom-tag-background-color: var(--surface-card-subtle);
-}
-
-.groups-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0 1rem 1rem 1rem;
 }
 </style>
