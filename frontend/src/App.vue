@@ -410,7 +410,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
 }
 
@@ -459,13 +459,14 @@ watch(
 }
 
 .profile-menu {
-  flex: 1 1 220px;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: 220px;
 }
 
 @media (max-width: 1400px) {
   .header-functions {
     justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 
@@ -479,7 +480,8 @@ watch(
 
   .header-functions scale-button,
   .header-functions scale-button::part(button),
-  .theme-toggle {
+  .theme-toggle,
+  .profile-menu {
     width: 100%;
   }
 
