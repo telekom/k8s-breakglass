@@ -4,8 +4,12 @@ kind: Kustomization
 # Include webhook manifests, certificate resources, and service
 resources:
   - manifests.yaml
-  - certificate.yaml
+  # [CERT-CONTROLLER] certificate.yaml should be commented if automated webhook certificate generation is enabled
+  # [CERT-MANAGER] certificate.yaml should be uncommented if cert-manager is being used
+  # - certificate.yaml
   - service.yaml
+  # [CERT-CONTROLLER] secret.yaml should be uncommented if automated webhook certificate generation is enabled
+  # - secret.yaml
 
 # Add breakglass- prefix to webhook resources (except Service which has explicit namespace)
 namePrefix: breakglass-

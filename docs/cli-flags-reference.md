@@ -130,6 +130,39 @@ Name of the webhook key file in the cert directory
 | **Environment** | `WEBHOOK_CERT_KEY` |
 | **Example** | `--webhook-cert-key=key.pem` |
 
+#### `--webhook-service-name`
+
+Name of the deployed breakglass service
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` |
+| **Default** | `breakglass-webhook-service` |
+| **Environment** | `WEBHOOK_SERVICE_NAME` |
+| **Example** | `--webhook-service-name=breakglass-system-webhook-service` |
+
+#### `--webhook-validating-config-name`
+
+Name of the ValidatingWebhookConfiguration object for the webhook
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` |
+| **Default** | `` (empty) |
+| **Environment** | `WEBHOOK_VALIDATING_CONFIG_NAME` |
+| **Example** | `--webhook-validating-config-name=breakglass-validating-webhook-configuration` |
+
+#### `--webhook-cert-generation`
+
+Enable certificate generation for the webhook
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `WEBHOOK_CERT_GENERATION` |
+| **Example** | `--webhook-cert-generation=true` |
+
 ---
 
 ### Metrics Server Configuration

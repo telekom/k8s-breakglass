@@ -1,0 +1,10 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: production-idp
+  namespace: breakglass-dev-system
+spec:
+  primary: true
+  oidc:
+    authority: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e"
+    clientID: "breakglass-ui"

@@ -22,7 +22,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # Scripts
 [[annotations]]
-path = ["*.sh", "Makefile", "Dockerfile", "hack/**", "tools/**", "e2e/**.sh", "e2e/**.yaml", "e2e/**.md"]
+path = ["*.sh", "Makefile", "Dockerfile", "hack/**", "tools/**", "e2e/**.sh", "e2e/**.yaml", "e2e/**.md", "config/dev/**.sh"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 

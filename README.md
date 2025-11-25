@@ -107,7 +107,11 @@ Get breakglass running in 5 minutes with the dev deployment:
 
 ```bash
 # Deploy to local kind cluster with Keycloak and MailHog
-make deploy_dev
+make docker-build-dev                   # build dev image
+kind create cluster                     # create local kind cluster
+kind load docker-image breakglass:dev   # load dev image into kind cluster
+make install                            # install CRDs
+make deploy_dev                         # deploy breakglass and dependencies
 
 # Access the application
 # Breakglass UI:  https://breakglass-dev:30081
