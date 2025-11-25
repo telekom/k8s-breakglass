@@ -22,10 +22,17 @@
               <span class="group">{{ req.spec.grantedGroup || "-" }}</span>
             </div>
             <div class="request-status">
-              <scale-tag :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">{{
+              <scale-tag
+                class="status-chip"
+                :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)"
+              >
                 requestState(req)
               }}</scale-tag>
-              <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" variant="info" class="schedule">
+              <scale-tag
+                v-if="req.status?.state === 'WaitingForScheduledTime'"
+                class="status-chip schedule-chip"
+                variant="info"
+              >
                 ⏳ Waiting for scheduled time
               </scale-tag>
               <scale-button
@@ -45,14 +52,18 @@
           </div>
 
           <div class="request-badges">
-            <scale-tag v-if="req.spec?.identityProviderName" variant="info">
+            <scale-tag v-if="req.spec?.identityProviderName" class="meta-chip" variant="info">
               IDP: {{ req.spec.identityProviderName }}
             </scale-tag>
-            <scale-tag v-if="req.spec?.identityProviderIssuer" variant="info">
+            <scale-tag v-if="req.spec?.identityProviderIssuer" class="meta-chip" variant="info">
               Issuer: {{ req.spec.identityProviderIssuer }}
             </scale-tag>
-            <scale-tag v-if="req.spec?.user" variant="neutral"> User: {{ req.spec.user }} </scale-tag>
-            <scale-tag v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-tag>
+            <scale-tag v-if="req.spec?.user" class="meta-chip muted-chip" variant="neutral">
+              User: {{ req.spec.user }}
+            </scale-tag>
+            <scale-tag v-if="req.spec?.duration" class="meta-chip muted-chip" variant="neutral">
+              Duration: {{ req.spec.duration }}
+            </scale-tag>
           </div>
 
           <div class="info-grid">
@@ -71,7 +82,7 @@
 
             <div class="info-block">
               <span class="label">Times out</span>
-              <span class="value">
+              <span class="value value-stack">
                 <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
                   <CountdownTimer :expires-at="req.status.timeoutAt" />
                   <small class="muted">({{ formatDate(req.status.timeoutAt) }})</small>
@@ -80,7 +91,7 @@
               </span>
 
               <span class="label">Expires</span>
-              <span class="value">
+              <span class="value value-stack">
                 <template v-if="req.status?.expiresAt && new Date(req.status.expiresAt).getTime() > Date.now()">
                   <CountdownTimer :expires-at="req.status.expiresAt" />
                   <small class="muted">({{ formatDate(req.status.expiresAt) }})</small>
@@ -206,22 +217,25 @@ onMounted(async () => {
 <style scoped>
 .outstanding-page {
   padding-bottom: 3rem;
-  --outstanding-surface: var(--surface-card);
-  --outstanding-border: var(--border-default);
-  --outstanding-shadow: var(--shadow-card);
-  --outstanding-text-strong: var(--telekom-color-text-and-icon-standard);
-  --outstanding-text-muted: var(--telekom-color-text-and-icon-additional);
-  --outstanding-panel-bg: color-mix(in srgb, var(--surface-card) 75%, transparent);
-  --outstanding-panel-border: var(--border-default);
-  --outstanding-chip-bg: color-mix(in srgb, var(--accent-info) 20%, transparent);
-  --outstanding-chip-text: var(--accent-info);
-  --outstanding-chip-neutral-bg: color-mix(in srgb, var(--accent-success) 20%, transparent);
-  --outstanding-chip-neutral-text: var(--accent-success);
-  --outstanding-warning-bg: color-mix(in srgb, var(--accent-warning) 20%, transparent);
+  --outstanding-surface: color-mix(in srgb, var(--surface-card) 15%, var(--telekom-color-black) 85%);
+  --outstanding-border: color-mix(in srgb, var(--telekom-color-white) 12%, transparent);
+  --outstanding-shadow: 0 32px 60px color-mix(in srgb, var(--telekom-color-black) 70%, transparent);
+  --outstanding-text-strong: var(--telekom-color-white, var(--telekom-color-text-and-icon-standard));
+  --outstanding-text-muted: color-mix(in srgb, var(--telekom-color-white) 60%, transparent);
+  --outstanding-panel-bg: color-mix(in srgb, var(--outstanding-surface) 75%, transparent);
+  --outstanding-panel-border: color-mix(in srgb, var(--outstanding-border) 75%, transparent);
+  --outstanding-chip-bg: color-mix(in srgb, var(--telekom-color-gray-500) 35%, transparent);
+  --outstanding-chip-text: var(--telekom-color-white);
+  --outstanding-chip-neutral-bg: color-mix(in srgb, var(--telekom-color-gray-400) 20%, transparent);
+  --outstanding-chip-neutral-text: color-mix(in srgb, var(--telekom-color-white) 75%, transparent);
+  --outstanding-warning-bg: color-mix(in srgb, var(--accent-warning) 18%, transparent);
   --outstanding-warning-text: var(--accent-warning);
   --outstanding-primary: var(--accent-telekom);
   --outstanding-danger: var(--accent-critical);
   color: var(--outstanding-text-strong);
+  background: radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--accent-info) 35%, transparent) 0%, transparent 45%),
+    radial-gradient(circle at 85% 5%, color-mix(in srgb, var(--accent-telekom) 20%, transparent) 0%, transparent 55%),
+    var(--surface-primary);
 }
 
 .outstanding-shell {
@@ -235,6 +249,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  backdrop-filter: blur(18px);
 }
 
 .page-header {
@@ -296,11 +311,15 @@ onMounted(async () => {
 .cluster {
   color: var(--accent-info);
   font-size: 1.05rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .group {
   color: var(--outstanding-primary);
   font-size: 1.05rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .request-target {
@@ -318,6 +337,21 @@ onMounted(async () => {
 .request-status scale-button {
   align-self: flex-end;
   min-width: 9rem;
+}
+
+:deep(scale-tag.status-chip) {
+  --background: color-mix(in srgb, var(--outstanding-chip-bg) 70%, transparent);
+  --color: var(--outstanding-text-strong);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding-inline: 0.15rem;
+}
+
+:deep(scale-tag.schedule-chip) {
+  --background: var(--outstanding-warning-bg);
+  --color: var(--outstanding-warning-text);
 }
 
 .request-name {
@@ -345,6 +379,18 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 0.4rem;
   margin-top: 1rem;
+}
+
+.request-badges :deep(scale-tag.meta-chip) {
+  --background: var(--outstanding-chip-bg);
+  --color: var(--outstanding-chip-text);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.request-badges :deep(scale-tag.meta-chip.muted-chip) {
+  --background: var(--outstanding-chip-neutral-bg);
+  --color: var(--outstanding-chip-neutral-text);
 }
 
 .info-grid {
@@ -376,6 +422,14 @@ onMounted(async () => {
 .value {
   font-size: 0.92rem;
   color: var(--outstanding-text-strong);
+  word-break: break-word;
+}
+
+.value-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: flex-start;
 }
 
 .muted {
@@ -398,10 +452,9 @@ onMounted(async () => {
 
 .request-footer {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.6rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
   margin-top: 1rem;
 }
 
@@ -414,6 +467,7 @@ onMounted(async () => {
 .muted-line {
   font-size: 0.8rem;
   color: var(--outstanding-text-muted);
+  line-height: 1.4;
 }
 
 .withdraw-btn {
@@ -423,7 +477,8 @@ onMounted(async () => {
 .reason-text {
   color: var(--outstanding-text-strong);
   margin-top: 0.25rem;
-  white-space: pre-wrap;
+  white-space: pre-line;
+  line-height: 1.4;
   background: var(--outstanding-panel-bg);
   border-radius: 10px;
   padding: 0.75rem 1rem;
