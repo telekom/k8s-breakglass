@@ -22,6 +22,10 @@ const hasMultipleIDPs = ref(false);
 const route = useRoute();
 const router = useRouter();
 
+const isCompactHeader = ref(false);
+const mobileNavOpen = ref(false);
+const COMPACT_BREAKPOINT = 1040;
+
 const groupsRef = ref<string[]>([]);
 
 // Theme handling respects the user's system preference without offering a manual toggle
@@ -46,6 +50,25 @@ function applyTheme(value: "light" | "dark") {
   }
 }
 
+function updateHeaderLayout() {
+  if (typeof window === "undefined") return;
+  const shouldBeCompact = window.innerWidth <= COMPACT_BREAKPOINT;
+  if (shouldBeCompact !== isCompactHeader.value) {
+    isCompactHeader.value = shouldBeCompact;
+  }
+  if (!shouldBeCompact) {
+    mobileNavOpen.value = false;
+  }
+}
+
+function closeMobileNav() {
+  mobileNavOpen.value = false;
+}
+
+function toggleMobileNav() {
+  mobileNavOpen.value = !mobileNavOpen.value;
+}
+
 onMounted(() => {
   applyTheme(theme.value);
   if (typeof window === "undefined") return;
@@ -54,11 +77,16 @@ onMounted(() => {
     theme.value = event.matches ? "dark" : "light";
   };
   mediaQuery.addEventListener("change", mediaQueryHandler);
+  updateHeaderLayout();
+  window.addEventListener("resize", updateHeaderLayout);
 });
 
 onBeforeUnmount(() => {
   if (mediaQuery && mediaQueryHandler) {
     mediaQuery.removeEventListener("change", mediaQueryHandler);
+  }
+  if (typeof window !== "undefined") {
+    window.removeEventListener("resize", updateHeaderLayout);
   }
 });
 
@@ -175,6 +203,9 @@ function navHref(item: PrimaryNavItem) {
 function handlePrimaryNavClick(event: Event, item: PrimaryNavItem) {
   event.preventDefault();
   router.push(item.to);
+  if (isCompactHeader.value) {
+    closeMobileNav();
+  }
 }
 
 async function refreshGroups() {
@@ -252,6 +283,15 @@ async function checkMultiIDP() {
 
 onMounted(checkMultiIDP);
 
+watch(
+  () => route.fullPath,
+  () => {
+    if (isCompactHeader.value) {
+      closeMobileNav();
+    }
+  },
+);
+
 function login() {
   console.debug("[App] Login initiated", {
     selectedIDP: selectedIDPName.value,
@@ -304,7 +344,25 @@ watch(
         logo-href="/"
         claim-lang="de"
       >
-        <scale-telekom-nav-list slot="main-nav" variant="main-nav">
+        <button
+          v-if="isCompactHeader"
+          slot="logo"
+          type="button"
+          class="mobile-logo-toggle"
+          :aria-expanded="mobileNavOpen"
+          :aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
+          @click="toggleMobileNav"
+        >
+          <scale-logo class="compact-logo" aria-hidden="true"></scale-logo>
+          <span class="hamburger" :class="{ 'hamburger--open': mobileNavOpen }" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </span>
+          <span class="sr-only">Toggle navigation</span>
+        </button>
+
+        <scale-telekom-nav-list v-if="!isCompactHeader" slot="main-nav" variant="main-nav">
           <scale-telekom-nav-item
             v-for="item in primaryNavItems"
             :key="item.id"
@@ -337,6 +395,24 @@ watch(
           <scale-button v-if="!authenticated" variant="secondary" @click="login"> Login </scale-button>
         </div>
       </scale-telekom-header>
+
+      <transition name="mobile-nav">
+        <div v-if="isCompactHeader && mobileNavOpen" class="mobile-nav-overlay" @click.self="closeMobileNav">
+          <nav class="mobile-nav-panel" aria-label="Primary navigation">
+            <ul>
+              <li v-for="item in primaryNavItems" :key="`mobile-${item.id}`">
+                <a
+                  :href="navHref(item)"
+                  :class="{ active: activeNavId === item.id }"
+                  @click="handlePrimaryNavClick($event, item)"
+                >
+                  {{ item.label }}
+                </a>
+              </li>
+            </ul>
+          </nav>
+        </div>
+      </transition>
 
       <div id="main" class="app-container">
         <div v-if="!authenticated" class="center" style="margin: 2rem 0">
@@ -390,6 +466,127 @@ watch(
   min-width: 220px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.mobile-logo-toggle {
+  background: var(--surface-toolbar, #101010);
+  border: none;
+  border-radius: 0 0.5rem 0.5rem 0;
+  min-width: 84px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0 1.25rem;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+  position: relative;
+  isolation: isolate;
+}
+
+.mobile-logo-toggle:focus-visible {
+  outline: 2px solid var(--telekom-color-focus-outline, #00a0e1);
+  outline-offset: 2px;
+}
+
+.mobile-logo-toggle .compact-logo {
+  width: 30px;
+  height: 30px;
+}
+
+.hamburger {
+  width: 24px;
+  height: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.hamburger span {
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: #fff;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.hamburger--open span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+
+.hamburger--open span:nth-child(2) {
+  opacity: 0;
+}
+
+.hamburger--open span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
+.mobile-nav-overlay {
+  position: relative;
+  width: 100%;
+  background: var(--surface-toolbar, #0f0f0f);
+  border-bottom: 1px solid var(--border-default);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  z-index: 5;
+}
+
+.mobile-nav-panel {
+  padding: 1rem clamp(1rem, 4vw, 2.5rem);
+}
+
+.mobile-nav-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.mobile-nav-panel a {
+  display: block;
+  padding: 0.75rem 0.5rem;
+  font: var(--telekom-text-style-heading-5);
+  color: var(--telekom-color-text-and-icon-standard);
+  text-decoration: none;
+  border-radius: 0.4rem;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mobile-nav-panel a:hover,
+.mobile-nav-panel a:focus-visible {
+  background: color-mix(in srgb, var(--accent-info) 10%, transparent);
+  color: var(--telekom-color-text-and-icon-standard);
+  outline: none;
+}
+
+.mobile-nav-panel a.active {
+  background: color-mix(in srgb, var(--accent-telekom) 12%, transparent);
+  color: var(--accent-telekom);
+}
+
+.mobile-nav-enter-active,
+.mobile-nav-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.mobile-nav-enter-from,
+.mobile-nav-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
 @media (max-width: 1400px) {
   .header-functions {
     justify-content: flex-start;
@@ -409,6 +606,12 @@ watch(
   .header-functions scale-button::part(button),
   .profile-menu {
     width: 100%;
+  }
+}
+
+@media (max-width: 1040px) {
+  .profile-menu {
+    min-width: unset;
   }
 }
 </style>
