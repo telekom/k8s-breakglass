@@ -233,6 +233,28 @@ func TestDenyPolicyStatus(t *testing.T) {
 
 }
 
+func TestDenyPolicySetConditionAddsAndUpdates(t *testing.T) {
+	policy := &DenyPolicy{}
+	policy.SetCondition(metav1.Condition{Type: string(DenyPolicyConditionReady), Status: metav1.ConditionTrue})
+	ready := policy.GetCondition(string(DenyPolicyConditionReady))
+	if ready == nil || ready.Status != metav1.ConditionTrue {
+		t.Fatalf("expected Ready condition to be stored, got %#v", ready)
+	}
+
+	policy.SetCondition(metav1.Condition{Type: string(DenyPolicyConditionReady), Status: metav1.ConditionFalse, Reason: "SyncFailed"})
+	updated := policy.GetCondition(string(DenyPolicyConditionReady))
+	if updated == nil || updated.Status != metav1.ConditionFalse || updated.Reason != "SyncFailed" {
+		t.Fatalf("expected condition to update, got %#v", updated)
+	}
+}
+
+func TestDenyPolicyGetConditionMissing(t *testing.T) {
+	policy := &DenyPolicy{}
+	if policy.GetCondition("does-not-exist") != nil {
+		t.Fatal("expected missing condition to return nil")
+	}
+}
+
 // TestDenyPolicyList verifies DenyPolicyList structure
 func TestDenyPolicyList(t *testing.T) {
 	policyList := &DenyPolicyList{

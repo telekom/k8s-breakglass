@@ -144,3 +144,31 @@ func TestClusterConfig_ValidateUpdate_Immutable(t *testing.T) {
 		t.Fatalf("expected ValidateUpdate to succeed when spec unchanged, got %v", err)
 	}
 }
+
+func TestClusterConfigSetAndGetCondition(t *testing.T) {
+	cc := &ClusterConfig{}
+	cond := metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue}
+	cc.SetCondition(cond)
+	if got := cc.GetCondition("Ready"); got == nil || got.Status != metav1.ConditionTrue {
+		t.Fatalf("expected Ready condition to be stored, got %#v", got)
+	}
+	cc.SetCondition(metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse})
+	if got := cc.GetCondition("Ready"); got == nil || got.Status != metav1.ConditionFalse {
+		t.Fatalf("expected Ready condition to be updated, got %#v", got)
+	}
+}
+
+func TestClusterConfigGetConditionMissing(t *testing.T) {
+	cc := &ClusterConfig{}
+	if cc.GetCondition("does-not-exist") != nil {
+		t.Fatal("expected missing condition to return nil")
+	}
+}
+
+func TestClusterConfigValidateDelete(t *testing.T) {
+	cc := &ClusterConfig{}
+	warnings, err := cc.ValidateDelete(context.Background(), cc)
+	if err != nil || warnings != nil {
+		t.Fatalf("expected ValidateDelete to allow deletes, warnings=%v err=%v", warnings, err)
+	}
+}

@@ -76,3 +76,32 @@ func TestValidateUpdate_ImmutableSpec(t *testing.T) {
 		t.Fatalf("sanity: deep copy produced different spec")
 	}
 }
+
+func TestBreakglassSessionSetCondition(t *testing.T) {
+	bs := &BreakglassSession{}
+	cond := metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue}
+	bs.SetCondition(cond)
+	if len(bs.Status.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(bs.Status.Conditions))
+	}
+	bs.SetCondition(metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse})
+	got := bs.GetCondition("Ready")
+	if got == nil || got.Status != metav1.ConditionFalse {
+		t.Fatalf("expected Ready condition to be updated, got %#v", got)
+	}
+}
+
+func TestBreakglassSessionGetConditionMissing(t *testing.T) {
+	bs := &BreakglassSession{}
+	if bs.GetCondition("does-not-exist") != nil {
+		t.Fatal("expected missing condition to return nil")
+	}
+}
+
+func TestBreakglassSessionValidateDelete(t *testing.T) {
+	bs := &BreakglassSession{}
+	warnings, err := bs.ValidateDelete(context.Background(), bs)
+	if err != nil || warnings != nil {
+		t.Fatalf("expected ValidateDelete to allow delete, warnings=%v err=%v", warnings, err)
+	}
+}

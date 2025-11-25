@@ -51,3 +51,35 @@ func TestBreakglassEscalation_ValidateUpdate_Immutable(t *testing.T) {
 		t.Fatalf("expected ValidateUpdate to succeed when spec unchanged, got %v", err)
 	}
 }
+
+func TestBreakglassEscalationSetAndGetCondition(t *testing.T) {
+	be := &BreakglassEscalation{}
+	cond := metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Init"}
+
+	be.SetCondition(cond)
+	if got := be.GetCondition("Ready"); got == nil || got.Status != metav1.ConditionTrue {
+		t.Fatalf("expected Ready condition to be stored, got %#v", got)
+	}
+
+	updated := metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "NotReady"}
+	be.SetCondition(updated)
+	got := be.GetCondition("Ready")
+	if got == nil || got.Status != metav1.ConditionFalse || got.Reason != "NotReady" {
+		t.Fatalf("expected updated Ready condition, got %#v", got)
+	}
+}
+
+func TestBreakglassEscalationGetConditionMissing(t *testing.T) {
+	be := &BreakglassEscalation{}
+	if be.GetCondition("Unknown") != nil {
+		t.Fatal("expected missing condition to return nil")
+	}
+}
+
+func TestBreakglassEscalationValidateDelete(t *testing.T) {
+	esc := &BreakglassEscalation{}
+	warnings, err := esc.ValidateDelete(context.Background(), esc)
+	if err != nil || warnings != nil {
+		t.Fatalf("expected ValidateDelete to allow deletes, warnings=%v err=%v", warnings, err)
+	}
+}
