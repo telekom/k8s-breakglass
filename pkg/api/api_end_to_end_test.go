@@ -1,4 +1,4 @@
-package webhook
+package api
 
 import (
 	"bytes"
@@ -24,11 +24,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/api"
+
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
+	"github.com/telekom/k8s-breakglass/pkg/webhook"
 )
 
 var sessionIndexFnsEndToEnd = map[string]client.IndexerFunc{
@@ -63,7 +64,7 @@ const (
 
 type apiEndToEndEnv struct {
 	t               *testing.T
-	server          *api.Server
+	server          *Server
 	handler         http.Handler
 	sarServer       *httptest.Server
 	sarRequests     int
@@ -172,18 +173,18 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 	provider := cluster.NewClientProvider(cli, logger.Sugar())
 
 	cfg := config.Config{Frontend: config.Frontend{BaseURL: "https://breakglass.example"}}
-	auth := api.NewAuth(logger.Sugar(), cfg)
+	auth := NewAuth(logger.Sugar(), cfg)
 
 	middleware := testIdentityMiddleware()
 	sessionController := breakglass.NewBreakglassSessionController(logger.Sugar(), cfg, sessionManager, escalationManager, middleware, "", provider, cli, true)
 	escalationController := breakglass.NewBreakglassEscalationController(logger.Sugar(), escalationManager, middleware, "")
-	webhookController := NewWebhookController(logger.Sugar(), cfg, sessionManager, escalationManager, provider, policy.NewEvaluator(cli, logger.Sugar()))
-	webhookController.canDoFn = func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clusterName string) (bool, error) {
+	webhookController := webhook.NewWebhookController(logger.Sugar(), cfg, sessionManager, escalationManager, provider, policy.NewEvaluator(cli, logger.Sugar()))
+	webhookController.SetCanDoFn(func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clusterName string) (bool, error) {
 		return false, nil
-	}
+	})
 
-	server := api.NewServer(logger, cfg, true, auth)
-	require.NoError(t, server.RegisterAll([]api.APIController{sessionController, escalationController, webhookController}))
+	server := NewServer(logger, cfg, true, auth)
+	require.NoError(t, server.RegisterAll([]APIController{sessionController, escalationController, webhookController}))
 
 	env.server = server
 	env.handler = server.Handler()
@@ -249,15 +250,15 @@ func (env *apiEndToEndEnv) approveSession(t *testing.T, name string) {
 	require.Equal(t, http.StatusOK, rr.Code)
 }
 
-func (env *apiEndToEndEnv) invokeSAR(t *testing.T) SubjectAccessReviewResponse {
+func (env *apiEndToEndEnv) invokeSAR(t *testing.T) webhook.SubjectAccessReviewResponse {
 	return env.invokeSARForClusterWithModifier(t, env.clusterName, nil)
 }
 
-func (env *apiEndToEndEnv) invokeSARForCluster(t *testing.T, clusterName string) SubjectAccessReviewResponse {
+func (env *apiEndToEndEnv) invokeSARForCluster(t *testing.T, clusterName string) webhook.SubjectAccessReviewResponse {
 	return env.invokeSARForClusterWithModifier(t, clusterName, nil)
 }
 
-func (env *apiEndToEndEnv) invokeSARForClusterWithModifier(t *testing.T, clusterName string, modify func(*authorizationv1.SubjectAccessReview)) SubjectAccessReviewResponse {
+func (env *apiEndToEndEnv) invokeSARForClusterWithModifier(t *testing.T, clusterName string, modify func(*authorizationv1.SubjectAccessReview)) webhook.SubjectAccessReviewResponse {
 	t.Helper()
 	sar := authorizationv1.SubjectAccessReview{
 		TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
@@ -279,7 +280,7 @@ func (env *apiEndToEndEnv) invokeSARForClusterWithModifier(t *testing.T, cluster
 	path := fmt.Sprintf(sarPathTemplate, clusterName)
 	rr := env.doRequest(t, http.MethodPost, path, body)
 	require.Equal(t, http.StatusOK, rr.Code)
-	var resp SubjectAccessReviewResponse
+	var resp webhook.SubjectAccessReviewResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 	return resp
 }

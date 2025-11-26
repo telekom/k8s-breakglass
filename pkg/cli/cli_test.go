@@ -1,28 +1,9 @@
-package main
+package cli
 
 import (
 	"crypto/tls"
 	"testing"
 )
-
-func TestSetupLogger_DebugMode(t *testing.T) {
-	// debug true should return a non-nil logger
-	logger := setupLogger(true)
-	if logger == nil {
-		t.Fatalf("expected non-nil logger for debug mode")
-	}
-	// best-effort flush
-	_ = logger.Sync()
-}
-
-func TestSetupLogger_ProductionMode(t *testing.T) {
-	// debug false should return a non-nil logger
-	logger := setupLogger(false)
-	if logger == nil {
-		t.Fatalf("expected non-nil logger for production mode")
-	}
-	_ = logger.Sync()
-}
 
 func TestGetEnvString(t *testing.T) {
 	t.Setenv("BREAKGLASS_TEST_ENV", "custom-value")
@@ -64,7 +45,7 @@ func TestGetEnvBool(t *testing.T) {
 
 func TestDisableHTTP2(t *testing.T) {
 	cfg := &tls.Config{NextProtos: []string{"h2", "http/1.1"}}
-	disableHTTP2(cfg)
+	DisableHTTP2(cfg)
 
 	if len(cfg.NextProtos) != 1 || cfg.NextProtos[0] != "http/1.1" {
 		t.Fatalf("expected HTTP/1.1 only, got %v", cfg.NextProtos)

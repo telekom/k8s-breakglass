@@ -2,7 +2,11 @@ package cert
 
 import (
 	"context"
+	"encoding/pem"
 	"fmt"
+	"os"
+	"path"
+	"time"
 
 	"github.com/open-policy-agent/cert-controller/pkg/rotator"
 	"go.uber.org/zap"
@@ -147,4 +151,44 @@ func (m *Manager) getRotatorAdder() func(ctrl.Manager, *rotator.CertRotator) err
 	}
 
 	return rotator.AddRotator
+}
+
+func Ensure(path string, name string, certsReady chan struct{}, certMgrErr chan error, log *zap.SugaredLogger) error {
+	log.Debugw("waiting for certs generation")
+	select {
+	case <-certsReady:
+		log.Debugw("certs ready")
+		if err := wait(path, name, 30*time.Second, 100*time.Millisecond); err != nil {
+			return fmt.Errorf("certificates are not present: %w", err)
+		} else {
+			log.Debugw("certificates loaded")
+			return nil
+		}
+	case err := <-certMgrErr:
+		close(certsReady)
+		return fmt.Errorf("certificates not ready due to cert-controller error: %w", err)
+	}
+}
+
+func wait(webhookCertPath, webhookCertName string, timeout, tick time.Duration) error {
+	to := time.After(timeout)
+	t := time.Tick(tick)
+	p := path.Join(webhookCertPath, webhookCertName)
+
+	for {
+		select {
+		case <-to:
+			// stop waiting for the file and log error
+			return fmt.Errorf("waiting for certificates timed out after %s", timeout.String())
+		case <-t:
+			// check if file contains proper PEM data
+			data, err := os.ReadFile(p)
+			if err == nil {
+				b, _ := pem.Decode([]byte(data))
+				if b != nil {
+					return nil
+				}
+			}
+		}
+	}
 }

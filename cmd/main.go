@@ -2,15 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/pem"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
-	"path"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -19,98 +13,28 @@ import (
 	"go.uber.org/zap"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
 
-	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
+	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
-	"github.com/telekom/k8s-breakglass/pkg/indexer"
+	"github.com/telekom/k8s-breakglass/pkg/leaderelection"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
+	"github.com/telekom/k8s-breakglass/pkg/reconciler"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 )
-
-// createScheme creates and returns a runtime scheme with all necessary types registered.
-// This includes standard Kubernetes types and all custom breakglass CRDs.
-// The same scheme instance should be reused for all Kubernetes clients to ensure consistency.
-func createScheme(log *zap.SugaredLogger) *runtime.Scheme {
-	scheme := runtime.NewScheme()
-
-	// Add standard Kubernetes types (core API)
-	if err := corev1.AddToScheme(scheme); err != nil {
-		log.Fatalf("Failed to add corev1 to scheme: %v", err)
-	}
-
-	// Add custom breakglass CRD types (v1alpha1)
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		log.Fatalf("Failed to add v1alpha1 CRDs to scheme: %v", err)
-	}
-
-	log.Debugw("Scheme initialized with CRDs", "types", "corev1, BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider, MailProvider, DenyPolicy")
-	return scheme
-}
-
-// getEnvString returns the value of an environment variable, or the provided default if not set.
-func getEnvString(key, defaultVal string) string {
-	if val, ok := os.LookupEnv(key); ok {
-		return val
-	}
-	return defaultVal
-}
-
-// getEnvBool returns the value of an environment variable as a bool, or the provided default if not set.
-// Valid true values are "true", "1", "yes" (case-insensitive).
-func getEnvBool(key string, defaultVal bool) bool {
-	if val, ok := os.LookupEnv(key); ok {
-		switch val {
-		case "true", "1", "yes":
-			return true
-		case "false", "0", "no":
-			return false
-		}
-	}
-	return defaultVal
-}
-
-// disableHTTP2 is used to configure TLS options to disable HTTP/2.
-// This is important because HTTP/2 has known vulnerabilities (CVE-2023-44487, CVE-2024-3156).
-func disableHTTP2(c *tls.Config) {
-	c.NextProtos = []string{"http/1.1"}
-}
-
-// setupLogger creates and configures a zap logger for the application.
-// If debug is true, it uses development mode; otherwise production mode.
-func setupLogger(debug bool) *zap.Logger {
-	if debug {
-		logger, err := zap.NewDevelopment()
-		if err != nil {
-			panic(err)
-		}
-		return logger
-	}
-
-	logger, err := zap.NewProduction()
-	if err != nil {
-		panic(err)
-	}
-	return logger
-}
 
 func main() {
 	// DEPLOYMENT PATTERNS
@@ -174,163 +98,17 @@ func main() {
 	//   ENABLE_VALIDATING_WEBHOOKS=true  # Which validating webhooks to register
 	//   WEBHOOKS_METRICS_BIND_ADDRESS=0.0.0.0:8083  # Separate metrics for webhooks
 	//
-	var (
-		// Application flags
-		debug bool
 
-		// Webhook server flags
-		webhookBindAddr             string
-		webhookCertPath             string
-		webhookCertName             string
-		webhookCertKey              string
-		webhookCertGeneration       bool
-		webhookSvcName              string
-		webhookValidatingConfigName string
-
-		// Metrics server flags
-		metricsAddr     string
-		metricsSecure   bool
-		metricsCertPath string
-		metricsCertName string
-		metricsCertKey  string
-
-		// Webhook metrics server flags
-		webhooksMetricsAddr     string
-		webhooksMetricsSecure   bool
-		webhooksMetricsCertPath string
-		webhooksMetricsCertName string
-		webhooksMetricsCertKey  string
-
-		// Health probe flags
-		probeAddr string
-
-		// Leader election flags
-		enableLeaderElection bool
-		leaderElectNamespace string
-		leaderElectID        string
-		enableHTTP2          bool
-		enableWebhooks       bool
-		podNamespace         string
-
-		// Component enable flags (for splitting controller into multiple instances)
-		enableFrontend           bool
-		enableAPI                bool
-		enableCleanup            bool
-		enableValidatingWebhooks bool
-
-		// Configuration flags
-		configPath          string
-		breakglassNamespace string
-		disableEmail        bool
-
-		// Interval flags
-		clusterConfigCheckInterval string
-		escalationStatusUpdateInt  string
-	)
-
-	// Define command-line flags with environment variable fallbacks.
-	// The pattern: flag.XxxVar(&variable, "flag-name", defaultValueOrEnvValue, "help text")
-	flag.BoolVar(&debug, "debug", false, "Enable debug level logging")
-
-	// Webhook server configuration
-	flag.StringVar(&webhookBindAddr, "webhook-bind-address", getEnvString("WEBHOOK_BIND_ADDRESS", "0.0.0.0:9443"),
-		"The address the webhook server binds to (host:port)")
-	flag.StringVar(&webhookCertPath, "webhook-cert-path", getEnvString("WEBHOOK_CERT_PATH", cert.DefaultWebhookPath),
-		"The directory that contains the webhook certificate")
-	flag.StringVar(&webhookCertName, "webhook-cert-name", getEnvString("WEBHOOK_CERT_NAME", cert.DefaultTLSCertFile),
-		"The name of the webhook certificate file")
-	flag.StringVar(&webhookCertKey, "webhook-cert-key", getEnvString("WEBHOOK_CERT_KEY", cert.DefaultTLSKeyFile),
-		"The name of the webhook key file")
-
-	// Metrics server configuration
-	flag.StringVar(&metricsAddr, "metrics-bind-address", getEnvString("METRICS_BIND_ADDRESS", "0.0.0.0:8081"),
-		"The address the metrics endpoint binds to. "+
-			"Use :8443 for HTTPS or :8081 for HTTP, or leave as 0 to disable the metrics service")
-	flag.BoolVar(&metricsSecure, "metrics-secure", getEnvBool("METRICS_SECURE", false),
-		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead")
-	flag.StringVar(&metricsCertPath, "metrics-cert-path", getEnvString("METRICS_CERT_PATH", ""),
-		"The directory that contains the metrics server certificate")
-	flag.StringVar(&metricsCertName, "metrics-cert-name", getEnvString("METRICS_CERT_NAME", "tls.crt"),
-		"The name of the metrics server certificate file")
-	flag.StringVar(&metricsCertKey, "metrics-cert-key", getEnvString("METRICS_CERT_KEY", cert.DefaultTLSKeyFile),
-		"The name of the metrics server key file")
-
-	// Webhook metrics server configuration (separate from reconciler metrics)
-	flag.StringVar(&webhooksMetricsAddr, "webhooks-metrics-bind-address", getEnvString("WEBHOOKS_METRICS_BIND_ADDRESS", ""),
-		"The address the webhook metrics endpoint binds to (separate from reconciler metrics). "+
-			"If empty, webhook metrics will use the reconciler metrics address. "+
-			"Use :8443 for HTTPS or :8083 for HTTP")
-	flag.BoolVar(&webhooksMetricsSecure, "webhooks-metrics-secure", getEnvBool("WEBHOOKS_METRICS_SECURE", false),
-		"If set, the webhook metrics endpoint is served securely via HTTPS")
-	flag.StringVar(&webhooksMetricsCertPath, "webhooks-metrics-cert-path", getEnvString("WEBHOOKS_METRICS_CERT_PATH", ""),
-		"The directory that contains the webhook metrics server certificate")
-	flag.StringVar(&webhooksMetricsCertName, "webhooks-metrics-cert-name", getEnvString("WEBHOOKS_METRICS_CERT_NAME", cert.DefaultTLSCertFile),
-		"The name of the webhook metrics server certificate file")
-	flag.StringVar(&webhooksMetricsCertKey, "webhooks-metrics-cert-key", getEnvString("WEBHOOKS_METRICS_CERT_KEY", cert.DefaultTLSKeyFile),
-		"The name of the webhook metrics server key file")
-	flag.StringVar(&webhookSvcName, "webhook-service-name", getEnvString("WEBHOOK_SERVICE_NAME", "breakglass-webhook-service"), "Name of the deployed breakglass service")
-	flag.StringVar(&webhookValidatingConfigName, "webhook-validating-config-name", getEnvString("WEBHOOK_VALIDATING_CONFIG_NAME", ""),
-		"Name of the ValidatingWebhookConfiguration object for the webhook")
-	flag.BoolVar(&webhookCertGeneration, "webhook-cert-generation", getEnvBool("WEBHOOK_CERT_GENERATION", false), "Enable certificate generation for the webhook")
-
-	// Health probe configuration
-	flag.StringVar(&probeAddr, "health-probe-bind-address", getEnvString("PROBE_BIND_ADDRESS", ":8082"),
-		"The address the probe endpoint binds to")
-
-	// Leader election configuration
-	flag.BoolVar(&enableLeaderElection, "enable-leader-election", getEnvBool("ENABLE_LEADER_ELECTION", true),
-		"Enable leader election for running multiple instances. Set to false when running a single instance")
-	flag.StringVar(&leaderElectNamespace, "leader-elect-namespace", getEnvString("LEADER_ELECT_NAMESPACE", ""),
-		"The namespace where the leader election lease will be created. If empty, will default to the pod's namespace")
-	flag.StringVar(&leaderElectID, "leader-elect-id", getEnvString("LEADER_ELECT_ID", "breakglass.telekom.io"),
-		"The ID used for leader election; ensures multiple instances coordinate properly")
-	flag.BoolVar(&enableHTTP2, "enable-http2", getEnvBool("ENABLE_HTTP2", false),
-		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	flag.BoolVar(&enableWebhooks, "enable-webhooks", getEnvBool("ENABLE_WEBHOOKS", true),
-		"Enable webhook manager for BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider and MailProvider")
-	flag.StringVar(&podNamespace, "pod-namespace", getEnvString("POD_NAMESPACE", "default"),
-		"The namespace where the pod is running (used for event recording)")
-
-	// Component enable flags for multi-instance deployments
-	// By default, all components are enabled for backwards compatibility
-	flag.BoolVar(&enableFrontend, "enable-frontend", getEnvBool("ENABLE_FRONTEND", true),
-		"Enable the frontend API endpoints. Use false when deploying a webhook-only instance")
-	flag.BoolVar(&enableAPI, "enable-api", getEnvBool("ENABLE_API", true),
-		"Enable the API controller for BreakglassSession and BreakglassEscalation endpoints. Use false when deploying a webhook-only instance")
-	flag.BoolVar(&enableCleanup, "enable-cleanup", getEnvBool("ENABLE_CLEANUP", true),
-		"Enable the background cleanup routine for expired sessions. Use false when deploying a webhook-only instance")
-	flag.BoolVar(&enableValidatingWebhooks, "enable-validating-webhooks", getEnvBool("ENABLE_VALIDATING_WEBHOOKS", true),
-		"Enable validating webhooks for breakglass CRDs. Disable when running a frontend/API-only instance")
-
-	// Interval configuration flags
-	flag.StringVar(&clusterConfigCheckInterval, "cluster-config-check-interval", getEnvString("CLUSTER_CONFIG_CHECK_INTERVAL", "10m"),
-		"Interval for checking cluster configuration validity (e.g., '10m', '5m')")
-	flag.StringVar(&escalationStatusUpdateInt, "escalation-status-update-interval", getEnvString("ESCALATION_STATUS_UPDATE_INTERVAL", "10m"),
-		"Interval for updating escalation status from identity provider (e.g., '10m', '5m')")
-
-	// Configuration flags
-	flag.StringVar(&configPath, "config-path", getEnvString("BREAKGLASS_CONFIG_PATH", "./config.yaml"),
-		"Path to the breakglass configuration file")
-	flag.StringVar(&breakglassNamespace, "breakglass-namespace", getEnvString("BREAKGLASS_NAMESPACE", ""),
-		"The Kubernetes namespace containing breakglass resources (e.g., IdentityProvider secrets)")
-	flag.BoolVar(&disableEmail, "disable-email", getEnvBool("BREAKGLASS_DISABLE_EMAIL", false),
-		"Disable email notifications for breakglass session requests")
-
-	// Parse command-line flags and enable logging flag options
-	flag.Parse()
+	cliConfig := cli.Parse()
 
 	// Setup logging with zap
 	var zapLogger *zap.Logger
 	var err error
 
-	if debug {
-		zapLogger, err = zap.NewDevelopment()
-	} else {
-		zapLogger, err = zap.NewProduction()
-	}
-	if err != nil {
+	if zapLogger, err = utils.SetupLogger(cliConfig.Debug); err != nil {
 		panic(fmt.Errorf("failed to setup logger: %w", err))
 	}
+
 	defer func() {
 		_ = zapLogger.Sync()
 	}()
@@ -340,67 +118,34 @@ func main() {
 	log := zapLogger.Sugar()
 	log.Infof("Starting breakglass controller (version: %s)", system.Version)
 
-	if debug {
+	if cliConfig.Debug {
 		log.Debug("Debug logging enabled")
 	}
 
 	// Log all startup configuration flags for debuggability
-	log.Infow("Startup Configuration",
-		// Debug and logging
-		"debug", debug,
-		// Webhook server configuration
-		"webhook_bind_address", webhookBindAddr,
-		"webhook_cert_path", webhookCertPath,
-		"webhook_cert_name", webhookCertName,
-		"webhook_cert_key", webhookCertKey,
-		// Metrics server configuration
-		"metrics_bind_address", metricsAddr,
-		"metrics_secure", metricsSecure,
-		"metrics_cert_path", metricsCertPath,
-		// Webhook metrics server configuration
-		"webhooks_metrics_bind_address", webhooksMetricsAddr,
-		"webhooks_metrics_secure", webhooksMetricsSecure,
-		// Health probe
-		"health_probe_bind_address", probeAddr,
-		// Leader election configuration
-		"enable_leader_election", enableLeaderElection,
-		"leader_elect_namespace", leaderElectNamespace,
-		"leader_elect_id", leaderElectID,
-		"enable_http2", enableHTTP2,
-		"pod_namespace", podNamespace,
-		// Component enable flags
-		"enable_frontend", enableFrontend,
-		"enable_api", enableAPI,
-		"enable_cleanup", enableCleanup,
-		"enable_webhooks", enableWebhooks,
-		"enable_validating_webhooks", enableValidatingWebhooks,
-		// Intervals
-		"cluster_config_check_interval", clusterConfigCheckInterval,
-		"escalation_status_update_interval", escalationStatusUpdateInt,
-		// Configuration paths
-		"config_path", configPath,
-		"breakglass_namespace", breakglassNamespace,
-		"disable_email", disableEmail,
-	)
+	cliConfig.Print(log)
 
 	// Load configuration from config.yaml
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(cliConfig.ConfigPath)
 	if err != nil {
 		log.Fatalf("Error loading config for breakglass controller: %v", err)
 	}
 
-	if debug {
+	if cliConfig.Debug {
 		log.Infof("Configuration: %#v", cfg)
 	}
 
 	// Setup authentication
 	auth := api.NewAuth(log, cfg)
-	server := api.NewServer(zapLogger, cfg, debug, auth)
+	server := api.NewServer(zapLogger, cfg, cliConfig.Debug, auth)
 
 	// Create a unified scheme with all CRDs registered
-	scheme := createScheme(log)
+	scheme, err := utils.CreateScheme()
+	if err != nil {
+		log.Fatalf("failed to create scheme: %v", err)
+	}
+	log.Debugw("Scheme initialized with CRDs", "types", "corev1, BreakglassSession, BreakglassEscalation, ClusterConfig, IdentityProvider, MailProvider, DenyPolicy")
 
-	// Create a Kubernetes client for loading IdentityProvider (with custom scheme)
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
 		log.Fatalf("Error getting Kubernetes config: %v", err)
@@ -411,31 +156,16 @@ func main() {
 		log.Fatalf("Failed to create uncached Kubernetes client: %v", err)
 	}
 
-	reconcilerMgr, err := createReconcilerManager(restConfig, scheme, log,
-		metricsAddr, metricsSecure, metricsCertPath, metricsCertName, metricsCertKey,
-		probeAddr, enableHTTP2)
+	reconcilerMgr, err := reconciler.NewManager(restConfig, scheme, cliConfig.MetricsAddr, cliConfig.MetricsSecure,
+		cliConfig.MetricsCertPath, cliConfig.MetricsCertName, cliConfig.MetricsCertKey, cliConfig.ProbeAddr, cliConfig.EnableHTTP2, log)
 	if err != nil {
 		log.Fatalf("Failed to create controller-runtime manager: %v", err)
 	}
-	indexer.RegisterCommonFieldIndexes(context.Background(), reconcilerMgr.GetFieldIndexer(), log)
 
-	kubeClient := reconcilerMgr.GetClient()
-	sessionManager := breakglass.NewSessionManagerWithClient(kubeClient)
-
-	// Load IdentityProvider configuration for group sync
-	idpLoader := config.NewIdentityProviderLoader(uncachedClient)
-	idpLoader.WithLogger(log)
-
-	// Set up metrics recorder for conversion failures
-	idpLoader.WithMetricsRecorder(func(idpName, failureReason string) {
-		metrics.IdentityProviderConversionErrors.WithLabelValues(idpName, failureReason).Inc()
-	})
-
-	// Validate IdentityProvider exists (mandatory)
 	ctx := context.Background()
-	if err := idpLoader.ValidateIdentityProviderExists(ctx); err != nil {
-		metrics.IdentityProviderValidationFailed.WithLabelValues("not_found").Inc()
-		log.Fatalf("IdentityProvider validation failed: %v", err)
+	idpLoader, err := config.DefaultIdentityProviderLoader(ctx, uncachedClient, scheme, log)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// Load primary IdentityProvider to check for Keycloak group sync
@@ -446,77 +176,41 @@ func main() {
 		idpConfig = nil
 	}
 
-	// Make IdentityProvider available to API server for frontend configuration
-	if idpConfig != nil {
-		server.SetIdentityProvider(idpConfig)
-		log.Infow("identity_provider_set_on_api_server", "type", idpConfig.Type)
+	resolver := breakglass.SetupResolver(idpConfig, log)
+
+	escalationManager := breakglass.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver)
+
+	// Build shared cluster config provider & deny policy evaluator reusing kubernetes client
+	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
+	denyEval := policy.NewEvaluator(escalationManager.Client, log)
+
+	mailQueue, err := mail.Setup(ctx, uncachedClient, cfg.Frontend.BrandingName, log)
+	if err != nil {
+		log.Warn(err)
 	}
 
 	// Enable multi-IDP support in auth handler for token verification
 	// This allows the backend to verify tokens from any configured IDP, not just the default one
 	auth.WithIdentityProviderLoader(idpLoader)
 
-	// Setup GroupMemberResolver for escalation approver expansion
-	var resolver breakglass.GroupMemberResolver
-	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" {
-		resolver = breakglass.NewKeycloakGroupMemberResolver(log, *idpConfig.Keycloak)
-		log.Infow("Keycloak group sync enabled", "baseURL", idpConfig.Keycloak.BaseURL, "realm", idpConfig.Keycloak.Realm)
-	} else {
-		resolver = &breakglass.KeycloakGroupMemberResolver{} // no-op
-		log.Infow("Keycloak group sync disabled or not fully configured; using no-op resolver")
-	}
-
-	escalationManager := breakglass.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver)
-
-	// Build shared cluster config provider & deny policy evaluator reusing escalation manager client
-	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
-	denyEval := policy.NewEvaluator(escalationManager.Client, log)
-
-	// Initialize MailProviderLoader and load default provider from cluster
-	mailProviderLoader := config.NewMailProviderLoader(uncachedClient).WithLogger(log)
-	var mailQueue *mail.Queue
-
-	defaultProvider, err := mailProviderLoader.GetDefaultMailProvider(ctx)
-	if err != nil {
-		log.Warnw("No default mail provider found in cluster - mail notifications will be disabled", "error", err)
-		mailQueue = nil
-		disableEmail = true
-	} else {
-		log.Infow("Using default mail provider from cluster",
-			"provider", defaultProvider.Name,
-			"host", defaultProvider.Host,
-			"port", defaultProvider.Port)
-		mailSender := mail.NewSenderFromMailProvider(defaultProvider, cfg.Frontend.BrandingName)
-		mailQueue = mail.NewQueue(mailSender, log, defaultProvider.RetryCount, defaultProvider.RetryBackoffMs, defaultProvider.QueueSize)
-		mailQueue.Start()
-		log.Infow("Mail queue initialized and started",
-			"provider", defaultProvider.Name,
-			"retryCount", defaultProvider.RetryCount,
-			"retryBackoffMs", defaultProvider.RetryBackoffMs,
-			"queueSize", defaultProvider.QueueSize)
-	}
+	sessionManager := breakglass.NewSessionManagerWithClient(reconcilerMgr.GetClient())
 
 	// Setup session controller with all dependencies
-	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager, auth.Middleware(), configPath, ccProvider, escalationManager.Client, disableEmail).WithQueue(mailQueue)
+	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager,
+		auth.Middleware(), cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).WithQueue(mailQueue)
 
 	// Register API controllers based on component flags
+	apiControllers := api.Setup(sessionController, &escalationManager, &sessionManager, cliConfig.EnableFrontend,
+		cliConfig.EnableAPI, cliConfig.ConfigPath, auth, ccProvider, denyEval, &cfg, log)
+
+	// Make IdentityProvider available to API server for frontend configuration
+	if idpConfig != nil {
+		server.SetIdentityProvider(idpConfig)
+		log.Infow("identity_provider_set_on_api_server", "type", idpConfig.Type)
+	}
+
 	// Both frontend and API share the same HTTP server, so we check both flags
-	shouldEnableHTTPServer := enableFrontend || enableAPI
-	apiControllers := []api.APIController{}
-
-	if enableFrontend {
-		log.Infow("Frontend UI enabled via --enable-frontend=true")
-	}
-
-	if enableAPI {
-		apiControllers = append(apiControllers, sessionController)
-		apiControllers = append(apiControllers, breakglass.NewBreakglassEscalationController(log, &escalationManager, auth.Middleware(), configPath))
-		log.Infow("API controllers enabled", "components", "BreakglassSession, BreakglassEscalation")
-	}
-
-	// Webhook controller is always registered but may not be exposed via webhooks
-	webhookCtrl := webhook.NewWebhookController(log, cfg, &sessionManager, &escalationManager, ccProvider, denyEval)
-	apiControllers = append(apiControllers, webhookCtrl)
+	shouldEnableHTTPServer := cliConfig.EnableFrontend || cliConfig.EnableAPI
 
 	if shouldEnableHTTPServer {
 		err = server.RegisterAll(apiControllers)
@@ -531,9 +225,6 @@ func main() {
 	// This enables safe horizontal scaling: only the leader runs cleanup loops
 	leaderElectedCh := make(chan struct{})
 
-	// Placeholder for resourcelock - will be created after kubeClientset is initialized
-	var resourceLock resourcelock.Interface
-
 	var wg sync.WaitGroup
 
 	// Escalation approver group expansion updater (Keycloak read-only sync)
@@ -541,7 +232,7 @@ func main() {
 	defer cancel()
 
 	// Background routines (cleanup routine is optional)
-	if enableCleanup {
+	if cliConfig.EnableCleanup {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -557,8 +248,7 @@ func main() {
 	}
 
 	// Event recorder for emitting Kubernetes events (persisted to API server)
-	restCfg := ctrl.GetConfigOrDie()
-	kubeClientset, err := kubernetes.NewForConfig(restCfg)
+	kubeClientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		log.Fatalf("failed to create kubernetes clientset for event recorder: %v", err)
 	}
@@ -566,16 +256,6 @@ func main() {
 	// Now create the leader election resourcelock using the kubeClientset
 	eventBroadcaster := record.NewBroadcaster()
 	eventRecorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-controller"})
-
-	// Determine escalation status update interval from CLI flag (fallback to 10m)
-	escalationInterval := 10 * time.Minute
-	if escalationStatusUpdateInt != "" {
-		if d, err := time.ParseDuration(escalationStatusUpdateInt); err == nil {
-			escalationInterval = d
-		} else {
-			log.Warnw("Invalid escalation-status-update-interval; using default 10m", "value", escalationStatusUpdateInt, "error", err)
-		}
-	}
 
 	// Start the escalation status updater with EventRecorder and IDPLoader so it can:
 	// - Emit events when IDP group sync fails (surfaced via kubectl describe identityprovider)
@@ -589,17 +269,17 @@ func main() {
 			Resolver:      escalationManager.Resolver,
 			EventRecorder: eventRecorder,
 			IDPLoader:     idpLoader,
-			Interval:      escalationInterval,
+			Interval:      cli.ParseEscalationStatusUpdateInterval(cliConfig.EscalationStatusUpdateInt, log),
 			LeaderElected: leaderElectedCh,
 		}.Start(managerCtx)
 	}()
 
 	// Determine the namespace for the lease
 	// If not specified via flag, use the pod's namespace from the environment
-	leaseName := leaderElectID
-	leaseNamespace := leaderElectNamespace
+	leaseName := cliConfig.LeaderElectID
+	leaseNamespace := cliConfig.LeaderElectNamespace
 	if leaseNamespace == "" {
-		leaseNamespace = podNamespace
+		leaseNamespace = cliConfig.PodNamespace
 	}
 	if leaseNamespace == "" {
 		leaseNamespace = "default"
@@ -615,7 +295,7 @@ func main() {
 
 	// Create the resourcelock directly using resourcelock.New
 	// This will automatically create the lease if it doesn't exist
-	resourceLock, err = resourcelock.New(
+	resourceLock, err := resourcelock.New(
 		"leases",
 		leaseNamespace,
 		leaseName,
@@ -631,21 +311,14 @@ func main() {
 	}
 	log.Infow("Leader election resource lock created", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
 
-	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: podNamespace, Logger: log}
+	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: cliConfig.PodNamespace, Logger: log}
 
 	// Determine interval from CLI flag first, then config (fallback to 10m)
-	interval := 10 * time.Minute
-	intervalStr := clusterConfigCheckInterval
+	intervalStr := cliConfig.ClusterConfigCheckInterval
 	if intervalStr == "" && cfg.Kubernetes.ClusterConfigCheckInterval != "" {
 		intervalStr = cfg.Kubernetes.ClusterConfigCheckInterval
 	}
-	if intervalStr != "" {
-		if d, err := time.ParseDuration(intervalStr); err == nil {
-			interval = d
-		} else {
-			log.Warnw("Invalid cluster-config-check-interval; using default 10m", "value", intervalStr, "error", err)
-		}
-	}
+	interval := cli.ParseClusterConfigCheckInterval(intervalStr, log)
 
 	// ClusterConfig checker: validates that referenced kubeconfig secrets contain the expected key
 	wg.Add(1)
@@ -658,9 +331,10 @@ func main() {
 	certMgrErr := make(chan error)
 	defer close(certMgrErr)
 
-	if enableWebhooks && webhookCertGeneration {
+	if cliConfig.EnableWebhooks && cliConfig.Webhook.CertGeneration {
 		certsReady = make(chan struct{})
-		certMgr := cert.NewManager(webhookSvcName, breakglassNamespace, webhookCertPath, webhookValidatingConfigName, certsReady, leaderElectedCh, log)
+		certMgr := cert.NewManager(cliConfig.Webhook.SvcName, cliConfig.BreakglassNamespace, cliConfig.Webhook.CertPath,
+			cliConfig.Webhook.ValidatingConfigName, certsReady, leaderElectedCh, log)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -674,59 +348,10 @@ func main() {
 	// Start leader election if enabled
 	// This coordinates background loops (cleanup, escalation updater, cluster config checker)
 	// to run only on the leader replica using the resourcelock
-	if enableLeaderElection {
+	if cliConfig.EnableLeaderElection {
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
-			// Create callbacks for leader election
-			leaderCallbacks := leaderelection.LeaderCallbacks{
-				OnStartedLeading: func(ctx context.Context) {
-					log.Infow("This replica acquired leadership, signaling background loops")
-					// Signal background loops that we're the leader
-					select {
-					case <-leaderElectedCh:
-						// Already closed, we've signaled leadership
-					default:
-						close(leaderElectedCh)
-					}
-				},
-				OnStoppedLeading: func() {
-					log.Infow("Lost leadership")
-					// Recreate the channel for the next leader to use
-					leaderElectedCh = make(chan struct{})
-				},
-				OnNewLeader: func(identity string) {
-					if identity == hostname {
-						log.Infow("I became the leader", "identity", identity)
-					} else {
-						log.Infow("New leader elected", "identity", identity)
-					}
-				},
-			}
-
-			// Create the LeaderElector which handles the full lifecycle of leader election:
-			// - Acquires the lock when becoming leader (creates/updates the lease)
-			// - Renews the lock at the specified interval to maintain leadership
-			// - Releases the lock when context is cancelled
-			// - Detects when leadership is lost and calls OnStoppedLeading
-			elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
-				Lock:          resourceLock,
-				LeaseDuration: 15 * time.Second, // Time the lease is held by leader
-				RenewDeadline: 10 * time.Second, // Deadline for renewing the lease before losing it
-				RetryPeriod:   2 * time.Second,  // Duration to wait between leader election tries
-				Callbacks:     leaderCallbacks,
-				WatchDog:      nil,
-				Name:          "breakglass-controller",
-			})
-			if err != nil {
-				log.Fatalf("Failed to create LeaderElector: %v", err)
-			}
-
-			log.Infow("Starting leader election", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
-
-			// Run the leader election - this will block until context is cancelled
-			// It continuously tries to acquire the lease and renews it if successful
-			elector.Run(managerCtx)
+			leaderelection.Start(managerCtx, &wg, &leaderElectedCh, resourceLock, hostname, leaseName, leaseNamespace, log)
 		}()
 	} else {
 		// If leader election is disabled, immediately signal that we're the leader
@@ -741,7 +366,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := setupReconcilerManager(managerCtx, log, reconcilerMgr, idpLoader, server); err != nil {
+		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, log); err != nil {
 			recMgrErr <- err
 		}
 	}()
@@ -750,30 +375,18 @@ func main() {
 	webhookErr := make(chan error)
 	defer close(webhookErr)
 
-	if enableWebhooks {
+	if cliConfig.EnableWebhooks {
 		log.Infow("Webhooks enabled via --enable-webhooks flag")
-		if webhookCertGeneration {
-			log.Debugw("waiting for certs generation")
-			select {
-			case <-certsReady:
-				log.Debugw("certs ready")
-				if err := waitForCerts(webhookCertPath, webhookCertName, 30*time.Second, 100*time.Millisecond); err != nil {
-					log.Fatalf("certificates are not present: %w", err)
-				} else {
-					log.Debugw("certifcates loaded")
-				}
-			case err := <-certMgrErr:
-				close(certsReady)
-				log.Fatalf("certificates not ready due to cert-controller error: %w", err)
+		if cliConfig.Webhook.CertGeneration {
+			if err := cert.Ensure(cliConfig.Webhook.CertPath, cliConfig.Webhook.CertName, certsReady, certMgrErr, log); err != nil {
+				log.Fatal(err)
 			}
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := setupWebhooks(managerCtx, log, scheme,
-				webhookBindAddr, webhookCertPath, webhookCertName, webhookCertKey,
-				webhooksMetricsAddr, webhooksMetricsSecure, webhooksMetricsCertPath, webhooksMetricsCertName, webhooksMetricsCertKey,
-				enableValidatingWebhooks, enableHTTP2, webhookCertGeneration); err != nil {
+			if err := webhook.Setup(managerCtx, log, scheme, &cliConfig.Webhook, cliConfig.EnableValidatingWebhooks,
+				cliConfig.EnableHTTP2, cliConfig.Webhook.CertGeneration); err != nil {
 				webhookErr <- err
 			}
 		}()
@@ -817,343 +430,4 @@ func main() {
 	log.Info("Waiting for all goroutines to finish")
 	wg.Wait()
 	log.Info("Breakglass controller shutdown complete")
-}
-
-func waitForCerts(webhookCertPath, webhookCertName string, timeout, tick time.Duration) error {
-	to := time.After(timeout)
-	t := time.Tick(tick)
-	p := path.Join(webhookCertPath, webhookCertName)
-
-	for {
-		select {
-		case <-to:
-			// stop waiting for the file and log error
-			return fmt.Errorf("waiting for certificates timed out after %s", timeout.String())
-		case <-t:
-			// check if file contains proper PEM data
-			data, err := os.ReadFile(p)
-			if err == nil {
-				b, _ := pem.Decode([]byte(data))
-				if b != nil {
-					return nil
-				}
-			}
-		}
-	}
-}
-
-// setupReconcilerManager starts the controller-runtime manager with field indices and IdentityProvider reconciler.
-// This function handles:
-// - Metrics server configuration with secure serving
-// - Field index setup for efficient queries
-// - IdentityProvider reconciler setup
-// - Manager startup and leader election
-// - Broadcasting leadership signal to background loops when acquired
-
-func setupReconcilerManager(
-	ctx context.Context,
-	log *zap.SugaredLogger,
-	mgr ctrl.Manager,
-	idpLoader *config.IdentityProviderLoader,
-	server *api.Server,
-) error {
-	log.Debugw("Starting reconciler manager with unified scheme")
-
-	if mgr == nil {
-		return fmt.Errorf("controller-runtime manager is nil; reconcilers will not run")
-	}
-
-	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
-		return fmt.Errorf("failed to add healthz check to reconciler manager: %w", err)
-	}
-	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
-		return fmt.Errorf("failed to add readyz check to reconciler manager: %w", err)
-	}
-	log.Infow("Health check handlers registered")
-
-	// Register IdentityProvider Reconciler with controller-runtime manager
-	log.Debugw("Setting up IdentityProvider reconciler")
-	idpReconciler := config.NewIdentityProviderReconciler(
-		mgr.GetClient(),
-		log,
-		func(reloadCtx context.Context) error {
-			return server.ReloadIdentityProvider(idpLoader)
-		},
-	)
-	idpReconciler.WithErrorHandler(func(ctx context.Context, err error) {
-		log.Errorw("IdentityProvider reconciliation error", "error", err)
-		metrics.IdentityProviderLoadFailed.WithLabelValues("reconciler_error").Inc()
-	})
-	idpReconciler.WithEventRecorder(mgr.GetEventRecorderFor("breakglass-controller"))
-	idpReconciler.WithResyncPeriod(10 * time.Minute)
-
-	// Set reconciler in API server so it can use the cached IDPs
-	// This prevents the API from querying the Kubernetes APIServer on every /api/config/idps request
-	server.SetIdentityProviderReconciler(idpReconciler)
-
-	if err := idpReconciler.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("failed to setup IdentityProvider reconciler with manager: %w", err)
-	}
-	log.Infow("Successfully registered IdentityProvider reconciler", "resyncPeriod", "10m")
-
-	// Register BreakglassEscalation Reconciler with controller-runtime manager
-	log.Debugw("Setting up BreakglassEscalation reconciler")
-	escalationReconciler := config.NewEscalationReconciler(
-		mgr.GetClient(),
-		log,
-		mgr.GetEventRecorderFor("breakglass-escalation-controller"),
-		nil, // no onReload callback needed for escalations
-		func(ctx context.Context, err error) {
-			log.Errorw("BreakglassEscalation reconciliation error", "error", err)
-			metrics.IdentityProviderLoadFailed.WithLabelValues("escalation_reconciler_error").Inc()
-		},
-		10*time.Minute,
-	)
-
-	// Set reconciler in API server so it can use the cached escalation→IDP mapping
-	// This prevents the API from querying the Kubernetes APIServer on every /api/config/idps request
-	server.SetEscalationReconciler(escalationReconciler)
-
-	if err := escalationReconciler.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("failed to setup BreakglassEscalation reconciler with manager: %w", err)
-	}
-	log.Infow("Successfully registered BreakglassEscalation reconciler", "resyncPeriod", "10m")
-
-	// Note: Leadership election is NOT handled by the manager at this level.
-	// Background loops (cleanup, escalation updater, cluster config checker) use the resourcelock
-	// to coordinate and run only on the leader. The signal propagation to those loops happens
-	// outside this manager in the main() function after the manager and loops are set up.
-
-	// Start manager (blocks) but we run it in a goroutine so it doesn't prevent the API server
-	// The manager runs reconcilers on all replicas (no leader election)
-	log.Infow("Starting controller-runtime reconciler manager (no leader election at manager level)")
-	if err := mgr.Start(ctx); err != nil {
-		return fmt.Errorf("controller-runtime reconciler manager exited: %w", err)
-	}
-
-	return nil
-}
-
-// setupWebhooks starts the webhook server with TLS configuration and optional separate metrics server.
-// This function is only called if webhooks are enabled via --enable-webhooks flag.
-// Webhooks are optional; they can be disabled for deployments that don't use CRD validation.
-//
-// Component flags allow splitting the controller into multiple instances:
-//   - enableValidatingWebhooks: enables validating webhooks for breakglass CRDs (BreakglassSession,
-//     BreakglassEscalation, ClusterConfig, IdentityProvider, MailProvider)
-//
-// NOTE: Subject Access Review (SAR) webhooks run on the API server (Gin), not here, and cannot
-// be independently disabled. They run whenever enable-api is true.
-func setupWebhooks(
-	ctx context.Context,
-	log *zap.SugaredLogger,
-	scheme *runtime.Scheme,
-	webhookBindAddr string,
-	webhookCertPath string,
-	webhookCertName string,
-	webhookCertKey string,
-	webhooksMetricsAddr string,
-	webhooksMetricsSecure bool,
-	webhooksMetricsCertPath string,
-	webhooksMetricsCertName string,
-	webhooksMetricsCertKey string,
-	enableValidatingWebhooks bool,
-	enableHTTP2 bool,
-	enableCertGeneration bool,
-) error {
-	log.Debugw("Starting webhook server setup")
-
-	// Parse webhook bind address to extract host and port
-	// webhookBindAddr should be in format "host:port" (e.g., "0.0.0.0:9443")
-	webhookHost := "0.0.0.0"
-	webhookPort := 9443
-	if parts := strings.Split(webhookBindAddr, ":"); len(parts) == 2 {
-		webhookHost = parts[0]
-		if port, err := strconv.Atoi(parts[1]); err == nil {
-			webhookPort = port
-			log.Debugw("Parsed webhook bind address", "bindAddress", webhookBindAddr, "host", webhookHost, "port", webhookPort)
-		} else {
-			log.Warnw("Failed to parse webhook port from bind address; using default", "bindAddress", webhookBindAddr, "defaultPort", 9443, "error", err)
-		}
-	}
-
-	// Webhook server configuration
-	webhookServerOptions := webhookserver.Options{
-		Host: webhookHost,
-		Port: webhookPort,
-	}
-	if !enableCertGeneration && webhookCertPath != "" {
-		webhookServerOptions.CertDir = webhookCertPath
-		webhookServerOptions.CertName = webhookCertName
-		webhookServerOptions.KeyName = webhookCertKey
-		log.Infow("Initializing webhook certificate watcher using provided certificates",
-			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName,
-			"webhook-cert-key", webhookCertKey)
-	} else if !enableCertGeneration {
-		return fmt.Errorf("No webhook certificate path provided and cert generation is disabled; no webhooks will be configured")
-	} else if webhookCertPath != "" {
-		webhookServerOptions.CertDir = webhookCertPath
-		log.Infof("Cert-controller will generate certs in %q", webhookServerOptions.CertDir)
-	} else {
-		webhookServerOptions.CertDir = cert.DefaultWebhookPath
-		log.Infof("No webhook certificate path provided - cert-controller will generate certs in default directory %q", webhookServerOptions.CertDir)
-	}
-	webhookServer := webhookserver.NewServer(webhookServerOptions)
-
-	// Configure separate metrics server for webhooks (if specified)
-	// This allows running webhook-only instances with their own metrics endpoint
-	var metricsServerOptions metricsserver.Options
-	if webhooksMetricsAddr != "" {
-		log.Infow("Configuring separate metrics server for webhooks",
-			"address", webhooksMetricsAddr, "secure", webhooksMetricsSecure)
-
-		tlsOpts := []func(*tls.Config){}
-		if !enableHTTP2 {
-			tlsOpts = append(tlsOpts, disableHTTP2)
-		}
-
-		metricsServerOptions = metricsserver.Options{
-			BindAddress:   webhooksMetricsAddr,
-			SecureServing: webhooksMetricsSecure,
-			TLSOpts:       tlsOpts,
-		}
-
-		if webhooksMetricsSecure {
-			if webhooksMetricsCertPath != "" {
-				log.Infow("Initializing webhook metrics certificate watcher using provided certificates",
-					"webhooks-metrics-cert-path", webhooksMetricsCertPath, "webhooks-metrics-cert-name", webhooksMetricsCertName,
-					"webhooks-metrics-cert-key", webhooksMetricsCertKey)
-				metricsServerOptions.CertDir = webhooksMetricsCertPath
-				metricsServerOptions.CertName = webhooksMetricsCertName
-				metricsServerOptions.KeyName = webhooksMetricsCertKey
-			} else {
-				if enableCertGeneration {
-					log.Infow("Initializing webhook metrics certificate watcher using generated certificates",
-						"path", webhookServerOptions.CertDir, "webhooks-metrics-cert-name", webhooksMetricsCertName,
-						"webhooks-metrics-cert-key", webhooksMetricsCertKey)
-					metricsServerOptions.CertDir = webhookServerOptions.CertDir
-					metricsServerOptions.CertName = webhooksMetricsCertName
-					metricsServerOptions.KeyName = webhooksMetricsCertKey
-				} else if webhooksMetricsSecure {
-					return fmt.Errorf("unable to configure webhook metrics server - webhooks-metrics-cert-path: %s, secure: %t, cert-generation: %t",
-						webhooksMetricsCertPath, webhooksMetricsSecure, enableCertGeneration)
-				}
-			}
-		}
-	} else {
-		log.Infow("Webhook metrics will use default metrics endpoint; to use separate metrics, set --webhooks-metrics-bind-address")
-		metricsServerOptions = metricsserver.Options{
-			BindAddress: "0",
-		}
-	}
-
-	// Create a manager for webhooks (separate from reconciler manager)
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:           scheme,
-		WebhookServer:    webhookServer,
-		Metrics:          metricsServerOptions,
-		LeaderElection:   false,
-		LeaderElectionID: "",
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start webhook server; webhooks will not be registered: %w", err)
-	}
-	log.Infow("Webhook server created successfully")
-
-	indexer.RegisterCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log)
-
-	// Register health check handlers for the webhook manager
-	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
-		return fmt.Errorf("failed to add webhook healthz check: %w", err)
-	}
-	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
-		return fmt.Errorf("failed to add webhook readyz check: %w", err)
-	}
-	log.Infow("Webhook health check handlers registered")
-
-	type webhookRegistrar interface {
-		SetupWebhookWithManager(ctrl.Manager) error
-	}
-
-	registerWebhook := func(r webhookRegistrar, name string, mgr ctrl.Manager, log *zap.SugaredLogger) error {
-		log.Debugf("Starting webhook registration for %s", name)
-		if err := r.SetupWebhookWithManager(mgr); err != nil {
-			return fmt.Errorf("failed to setup %s webhook with manager: %w", name, err)
-		}
-		log.Infof("Successfully registered %s webhook", name)
-		return nil
-	}
-
-	// Register validating webhooks (conditionally based on enableValidatingWebhooks)
-	if enableValidatingWebhooks {
-		if err := registerWebhook(&v1alpha1.BreakglassSession{}, "BreakglassSession", mgr, log); err != nil {
-			return err
-		}
-		if err := registerWebhook(&v1alpha1.BreakglassEscalation{}, "BreakglassEscalation", mgr, log); err != nil {
-			return err
-		}
-		if err := registerWebhook(&v1alpha1.ClusterConfig{}, "ClusterConfig", mgr, log); err != nil {
-			return err
-		}
-		if err := registerWebhook(&v1alpha1.IdentityProvider{}, "IdentityProvider", mgr, log); err != nil {
-			return err
-		}
-		if err := registerWebhook(&v1alpha1.MailProvider{}, "MailProvider", mgr, log); err != nil {
-			return err
-		}
-	} else {
-		log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
-	}
-
-	// Start webhook server (blocks) but we run it in a goroutine so it doesn't prevent the API server
-	log.Infow("Starting webhook manager", "bindAddress", webhookBindAddr)
-
-	// Start the manager in a blocking call that will also handle cache synchronization
-	if err := mgr.Start(ctx); err != nil {
-		return fmt.Errorf("webhook server failed to start or exited with error (type: %s): %w", fmt.Sprintf("%T", err), err)
-	} else {
-		log.Infow("webhook server exited normally (this should not happen during normal operation)")
-	}
-	return nil
-}
-
-func createReconcilerManager(
-	restCfg *rest.Config,
-	scheme *runtime.Scheme,
-	log *zap.SugaredLogger,
-	metricsAddr string,
-	metricsSecure bool,
-	metricsCertPath string,
-	metricsCertName string,
-	metricsCertKey string,
-	probeAddr string,
-	enableHTTP2 bool,
-) (ctrl.Manager, error) {
-	tlsOpts := []func(*tls.Config){}
-	if !enableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
-	}
-
-	metricsServerOptions := metricsserver.Options{
-		BindAddress:   metricsAddr,
-		SecureServing: metricsSecure,
-		TLSOpts:       tlsOpts,
-	}
-
-	if len(metricsCertPath) > 0 {
-		log.Infow("Initializing metrics certificate watcher using provided certificates",
-			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName,
-			"metrics-cert-key", metricsCertKey)
-		metricsServerOptions.CertDir = metricsCertPath
-		metricsServerOptions.CertName = metricsCertName
-		metricsServerOptions.KeyName = metricsCertKey
-	}
-
-	return ctrl.NewManager(restCfg, ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		HealthProbeBindAddress: probeAddr,
-		WebhookServer:          nil,
-		LeaderElection:         false,
-	})
 }

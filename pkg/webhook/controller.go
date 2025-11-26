@@ -1004,3 +1004,7 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 	}
 	return false, "", "", ""
 }
+
+func (wc *WebhookController) SetCanDoFn(f func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clustername string) (bool, error)) {
+	wc.canDoFn = f
+}

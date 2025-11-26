@@ -41,7 +41,7 @@ patches:
     kind: Deployment
     name: manager
   path: ./resources/keycloak_wait_initcontainer.yaml
-# [CERT_CONTROLLER] this target should be commented if automated webhook certificate generation is to be used
+# [CERT-CONTROLLER] this target should be commented if automated webhook certificate generation is to be used
 - target:
     group: apps
     version: v1

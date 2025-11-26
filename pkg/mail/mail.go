@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"go.uber.org/zap"
 	"gopkg.in/gomail.v2"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type Sender interface {
@@ -119,4 +122,30 @@ func (s *sender) GetHost() string {
 
 func (s *sender) GetPort() int {
 	return s.dialer.Port
+}
+
+func Setup(ctx context.Context, kubeClient client.Client, brandingName string, log *zap.SugaredLogger) (*Queue, error) {
+	// Initialize MailProviderLoader and load default provider from cluster
+	mailProviderLoader := config.NewMailProviderLoader(kubeClient).WithLogger(log)
+	var mailQueue *Queue
+
+	defaultProvider, err := mailProviderLoader.GetDefaultMailProvider(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("No default mail provider found in cluster - mail notifications will be disabled: %w", err)
+	} else {
+		log.Infow("Using default mail provider from cluster",
+			"provider", defaultProvider.Name,
+			"host", defaultProvider.Host,
+			"port", defaultProvider.Port)
+		mailSender := NewSenderFromMailProvider(defaultProvider, brandingName)
+		mailQueue = NewQueue(mailSender, log, defaultProvider.RetryCount, defaultProvider.RetryBackoffMs, defaultProvider.QueueSize)
+		mailQueue.Start()
+		log.Infow("Mail queue initialized and started",
+			"provider", defaultProvider.Name,
+			"retryCount", defaultProvider.RetryCount,
+			"retryBackoffMs", defaultProvider.RetryBackoffMs,
+			"queueSize", defaultProvider.QueueSize)
+	}
+
+	return mailQueue, nil
 }

@@ -977,18 +977,12 @@ func TestRegressionFix_WithdrawnSessionsShouldNotHaveRejectedAtSet(t *testing.T)
 			var session v1alpha1.BreakglassSession
 			session.Status.State = tt.state
 
-			// Simulate what the controller does based on state
-			if tt.state == v1alpha1.SessionStateRejected {
+			switch tt.state {
+			case v1alpha1.SessionStateRejected:
 				// When rejected by approver, set RejectedAt
 				session.Status.RejectedAt = metav1.Now()
-			} else if tt.state == v1alpha1.SessionStateWithdrawn {
-				// When withdrawn by user, RejectedAt should be empty
-				session.Status.RejectedAt = metav1.Time{}
-			} else if tt.state == v1alpha1.SessionStateApproved {
-				// When approved, RejectedAt should be empty
-				session.Status.RejectedAt = metav1.Time{}
-			} else if tt.state == v1alpha1.SessionStatePending {
-				// When pending, RejectedAt should be empty
+			case v1alpha1.SessionStateWithdrawn, v1alpha1.SessionStateApproved, v1alpha1.SessionStatePending:
+				// When withdrawn, approved or pending by user, RejectedAt should be empty
 				session.Status.RejectedAt = metav1.Time{}
 			}
 
@@ -1054,16 +1048,11 @@ func TestRetainedUntilSetForAllTerminalStates(t *testing.T) {
 			}
 
 			// Simulate what the controller should do for each state
-			if tt.state == v1alpha1.SessionStateRejected {
+			switch tt.state {
+			case v1alpha1.SessionStateRejected:
 				session.Status.RejectedAt = metav1.Now()
 				session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
-			} else if tt.state == v1alpha1.SessionStateWithdrawn {
-				session.Status.RejectedAt = metav1.Time{}
-				session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
-			} else if tt.state == v1alpha1.SessionStateExpired {
-				session.Status.RejectedAt = metav1.Time{}
-				session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
-			} else if tt.state == v1alpha1.SessionStateTimeout {
+			case v1alpha1.SessionStateWithdrawn, v1alpha1.SessionStateExpired, v1alpha1.SessionStateTimeout:
 				session.Status.RejectedAt = metav1.Time{}
 				session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 			}

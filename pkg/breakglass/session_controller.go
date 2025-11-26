@@ -670,14 +670,12 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	// Get approval timeout from escalation spec, or use cluster default
 	approvalTimeout := time.Hour // Default: 1 hour
-	if matchedEsc != nil {
-		if matchedEsc.Spec.ApprovalTimeout != "" {
-			if d, err := time.ParseDuration(matchedEsc.Spec.ApprovalTimeout); err == nil && d > 0 {
-				approvalTimeout = d
-				reqLog.Debugw("Using approval timeout from escalation spec", "approvalTimeout", approvalTimeout)
-			} else {
-				reqLog.Warnw("Invalid ApprovalTimeout in escalation spec; falling back to default", "value", matchedEsc.Spec.ApprovalTimeout, "error", err)
-			}
+	if matchedEsc != nil && matchedEsc.Spec.ApprovalTimeout != "" {
+		if d, err := time.ParseDuration(matchedEsc.Spec.ApprovalTimeout); err == nil && d > 0 {
+			approvalTimeout = d
+			reqLog.Debugw("Using approval timeout from escalation spec", "approvalTimeout", approvalTimeout)
+		} else {
+			reqLog.Warnw("Invalid ApprovalTimeout in escalation spec; falling back to default", "value", matchedEsc.Spec.ApprovalTimeout, "error", err)
 		}
 	}
 
@@ -717,7 +715,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			"escalationName", matchedEsc.Name,
 			"cluster", bs.Spec.Cluster,
 			"grantedGroup", bs.Spec.GrantedGroup)
-	} else {
+	} else if matchedEsc != nil {
 		reqLog.Infow("Resolved approvers from escalation (explicit users + group members)",
 			"approverCount", len(allApprovers),
 			"approvers", allApprovers,
