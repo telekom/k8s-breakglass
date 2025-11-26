@@ -338,165 +338,167 @@ onMounted(fetchPendingApprovals);
     <div v-else class="sessions-list">
       <scale-card v-for="session in sortedSessions" :key="session.metadata.name" class="approval-card-shell">
         <div class="approval-card" :class="`urgency-${session.urgency}`">
-        <div class="card-top">
-          <div class="identity-block">
-            <div class="user-avatar">{{ getUserInitials(session.spec?.user) }}</div>
-            <div class="user-info">
-              <h3>{{ session.spec?.user || "Unknown user" }}</h3>
-              <p>
-                <template v-if="session.spec?.requester && session.spec.requester !== session.spec.user">
-                  Requested by {{ session.spec.requester }}
-                </template>
-                <template v-else>
-                  Request ID: <code>{{ session.metadata?.name }}</code>
-                </template>
-              </p>
-              <div class="request-meta">
-                <scale-tag variant="info">{{ session.spec?.cluster || "Unknown cluster" }}</scale-tag>
-                <scale-tag variant="primary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-tag>
-                <scale-tag
-                  :variant="
-                    session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'
-                  "
-                >
-                  <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
-                  <template v-else-if="session.urgency === 'high'">⏱️ High</template>
-                  <template v-else>🕓 Normal</template>
-                </scale-tag>
-                <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">📅 Scheduled</scale-tag>
-                <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">✍️ Note required</scale-tag>
+          <div class="card-top">
+            <div class="identity-block">
+              <div class="user-avatar">{{ getUserInitials(session.spec?.user) }}</div>
+              <div class="user-info">
+                <h3>{{ session.spec?.user || "Unknown user" }}</h3>
+                <p>
+                  <template v-if="session.spec?.requester && session.spec.requester !== session.spec.user">
+                    Requested by {{ session.spec.requester }}
+                  </template>
+                  <template v-else>
+                    Request ID: <code>{{ session.metadata?.name }}</code>
+                  </template>
+                </p>
+                <div class="request-meta">
+                  <scale-tag variant="info">{{ session.spec?.cluster || "Unknown cluster" }}</scale-tag>
+                  <scale-tag variant="primary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-tag>
+                  <scale-tag
+                    :variant="
+                      session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'
+                    "
+                  >
+                    <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
+                    <template v-else-if="session.urgency === 'high'">⏱️ High</template>
+                    <template v-else>🕓 Normal</template>
+                  </scale-tag>
+                  <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">📅 Scheduled</scale-tag>
+                  <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">✍️ Note required</scale-tag>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="timer-panel">
-            <span class="countdown-label">Time remaining</span>
-            <div class="timer-value">
-              <CountdownTimer :expires-at="session.status?.expiresAt || session.status?.timeoutAt" />
+            <div class="timer-panel">
+              <span class="countdown-label">Time remaining</span>
+              <div class="timer-value">
+                <CountdownTimer :expires-at="session.status?.expiresAt || session.status?.timeoutAt" />
+              </div>
+              <small v-if="session.status?.expiresAt" class="timer-absolute">
+                Expires {{ format24Hour(session.status.expiresAt) }}
+              </small>
+              <small v-else-if="session.status?.timeoutAt" class="timer-absolute">
+                Timeout {{ format24Hour(session.status.timeoutAt) }}
+              </small>
+              <small v-else class="timer-absolute">No expiry set</small>
+              <scale-tag
+                v-if="session.status?.state"
+                :variant="
+                  sessionStateTone(session) === 'tone-success'
+                    ? 'success'
+                    : sessionStateTone(session) === 'tone-warning'
+                      ? 'warning'
+                      : 'neutral'
+                "
+              >
+                {{ session.status.state }}
+              </scale-tag>
             </div>
-            <small v-if="session.status?.expiresAt" class="timer-absolute">
-              Expires {{ format24Hour(session.status.expiresAt) }}
-            </small>
-            <small v-else-if="session.status?.timeoutAt" class="timer-absolute">
-              Timeout {{ format24Hour(session.status.timeoutAt) }}
-            </small>
-            <small v-else class="timer-absolute">No expiry set</small>
-            <scale-tag
-              v-if="session.status?.state"
-              :variant="
-                sessionStateTone(session) === 'tone-success'
-                  ? 'success'
-                  : sessionStateTone(session) === 'tone-warning'
-                    ? 'warning'
-                    : 'neutral'
-              "
-            >
-              {{ session.status.state }}
-            </scale-tag>
           </div>
-        </div>
 
-        <div class="info-grid">
-          <div class="info-item">
-            <span class="label">Requested</span>
-            <span class="value">{{ format24Hour(session.metadata.creationTimestamp) }}</span>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">Requested</span>
+              <span class="value">{{ format24Hour(session.metadata.creationTimestamp) }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">Duration</span>
+              <span class="value">{{
+                session.spec?.maxValidFor ? formatDuration(session.spec.maxValidFor) : "—"
+              }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">Identity provider</span>
+              <span class="value">{{ session.spec?.identityProviderName || "—" }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">Issuer</span>
+              <span class="value">{{ session.spec?.identityProviderIssuer || "—" }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">Scheduled start</span>
+              <span class="value">
+                <template v-if="session.spec?.scheduledStartTime">
+                  {{ format24Hour(session.spec.scheduledStartTime) }}
+                </template>
+                <template v-else>Not scheduled</template>
+              </span>
+            </div>
+            <div class="info-item">
+              <span class="label">Scheduled end</span>
+              <span class="value">
+                <template v-if="session.spec?.scheduledStartTime && session.spec?.maxValidFor">
+                  {{ computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor) }}
+                </template>
+                <template v-else-if="session.status?.expiresAt">
+                  {{ format24Hour(session.status.expiresAt) }}
+                </template>
+                <template v-else>—</template>
+              </span>
+            </div>
           </div>
-          <div class="info-item">
-            <span class="label">Duration</span>
-            <span class="value">{{ session.spec?.maxValidFor ? formatDuration(session.spec.maxValidFor) : "—" }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">Identity provider</span>
-            <span class="value">{{ session.spec?.identityProviderName || "—" }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">Issuer</span>
-            <span class="value">{{ session.spec?.identityProviderIssuer || "—" }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">Scheduled start</span>
-            <span class="value">
-              <template v-if="session.spec?.scheduledStartTime">
-                {{ format24Hour(session.spec.scheduledStartTime) }}
-              </template>
-              <template v-else>Not scheduled</template>
-            </span>
-          </div>
-          <div class="info-item">
-            <span class="label">Scheduled end</span>
-            <span class="value">
-              <template v-if="session.spec?.scheduledStartTime && session.spec?.maxValidFor">
-                {{ computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor) }}
-              </template>
-              <template v-else-if="session.status?.expiresAt">
-                {{ format24Hour(session.status.expiresAt) }}
-              </template>
-              <template v-else>—</template>
-            </span>
-          </div>
-        </div>
 
-        <div v-if="session.matchingApproverGroups?.length" class="matches">
-          <span class="number">{{ session.matchingApproverGroups.length }}</span>
-          matching approver groups
-        </div>
-        <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
-          <span class="matching-label">Visible via</span>
-          <div class="matching-stack">
-            <scale-tag v-for="group in session.matchingApproverGroups" :key="group" variant="primary">{{
-              group
-            }}</scale-tag>
+          <div v-if="session.matchingApproverGroups?.length" class="matches">
+            <span class="number">{{ session.matchingApproverGroups.length }}</span>
+            matching approver groups
           </div>
-        </div>
-
-        <section class="reason-section">
-          <h4>Request reason</h4>
-          <p>{{ getSessionReason(session) }}</p>
-        </section>
-
-        <section v-if="session.approvalReason?.description" class="reason-section">
-          <h4>Approval policy</h4>
-          <p>{{ session.approvalReason.description }}</p>
-        </section>
-
-        <div class="card-bottom">
-          <div class="request-footer">
-            <strong>Request ID</strong>
-            <span
-              ><code>{{ session.metadata?.name }}</code></span
-            >
-            <scale-tag
-              v-if="session.status?.state"
-              :variant="
-                sessionStateTone(session) === 'tone-success'
-                  ? 'success'
-                  : sessionStateTone(session) === 'tone-warning'
-                    ? 'warning'
-                    : 'neutral'
-              "
-            >
-              {{ session.status.state }}
-            </scale-tag>
+          <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
+            <span class="matching-label">Visible via</span>
+            <div class="matching-stack">
+              <scale-tag v-for="group in session.matchingApproverGroups" :key="group" variant="primary">{{
+                group
+              }}</scale-tag>
+            </div>
           </div>
-          <div class="action-row">
-            <scale-button
-              class="pill-button"
-              :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
-              @click="openApproveModal(session)"
-            >
-              <span v-if="approving === session.metadata.name">Approving...</span>
-              <span v-else>Review & Approve</span>
-            </scale-button>
-            <scale-button
-              class="pill-button"
-              variant="danger"
-              :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
-              @click="quickReject(session)"
-            >
-              <span v-if="rejecting === session.metadata.name">Rejecting…</span>
-              <span v-else>Reject</span>
-            </scale-button>
+
+          <section class="reason-section">
+            <h4>Request reason</h4>
+            <p>{{ getSessionReason(session) }}</p>
+          </section>
+
+          <section v-if="session.approvalReason?.description" class="reason-section">
+            <h4>Approval policy</h4>
+            <p>{{ session.approvalReason.description }}</p>
+          </section>
+
+          <div class="card-bottom">
+            <div class="request-footer">
+              <strong>Request ID</strong>
+              <span
+                ><code>{{ session.metadata?.name }}</code></span
+              >
+              <scale-tag
+                v-if="session.status?.state"
+                :variant="
+                  sessionStateTone(session) === 'tone-success'
+                    ? 'success'
+                    : sessionStateTone(session) === 'tone-warning'
+                      ? 'warning'
+                      : 'neutral'
+                "
+              >
+                {{ session.status.state }}
+              </scale-tag>
+            </div>
+            <div class="action-row">
+              <scale-button
+                class="pill-button"
+                :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
+                @click="openApproveModal(session)"
+              >
+                <span v-if="approving === session.metadata.name">Approving...</span>
+                <span v-else>Review & Approve</span>
+              </scale-button>
+              <scale-button
+                class="pill-button"
+                variant="danger"
+                :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
+                @click="quickReject(session)"
+              >
+                <span v-if="rejecting === session.metadata.name">Rejecting…</span>
+                <span v-else>Reject</span>
+              </scale-button>
+            </div>
           </div>
-        </div>
         </div>
       </scale-card>
     </div>
@@ -578,11 +580,11 @@ onMounted(fetchPendingApprovals);
       >
         This field is required.
       </p>
-    </div>
-    <div slot="actions" class="modal-actions">
-      <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
-      <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
-      <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
+      <div class="modal-actions">
+        <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
+        <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
+        <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
+      </div>
     </div>
   </scale-modal>
 </template>
@@ -683,7 +685,6 @@ onMounted(fetchPendingApprovals);
   flex-direction: column;
   gap: 1.25rem;
 }
-
 
 .approval-card-shell {
   --scale-card-padding: 1.5rem;

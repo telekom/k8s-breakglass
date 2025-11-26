@@ -175,7 +175,7 @@ async function onCancel(bg: SessionCR) {
 </script>
 
 <template>
-  <main class="ui-page review-session-page" v-if="authenticated">
+  <main v-if="authenticated" class="ui-page review-session-page">
     <div class="page-heading">
       <h2 class="ui-page-title">Review Session</h2>
       <p class="ui-page-subtitle">Inspect outstanding sessions and take action when needed.</p>
@@ -202,7 +202,9 @@ async function onCancel(bg: SessionCR) {
 
       <scale-button variant="secondary" @click="getActiveBreakglasses">Refresh</scale-button>
 
-      <div class="toolbar-info">Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} sessions</div>
+      <div class="toolbar-info">
+        Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} sessions
+      </div>
     </section>
 
     <div v-if="state.getBreakglassesMsg" class="review-session-message">

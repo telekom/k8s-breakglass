@@ -489,7 +489,9 @@ watch(
   gap: 0.75rem;
   padding: 0 1.25rem;
   cursor: pointer;
-  transition: background 0.2s ease, transform 0.2s ease;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
   position: relative;
   isolation: isolate;
 }
@@ -517,7 +519,9 @@ watch(
   height: 3px;
   border-radius: 999px;
   background: #fff;
-  transition: transform 0.2s ease, opacity 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
 }
 
 .hamburger--open span:nth-child(1) {
@@ -561,7 +565,9 @@ watch(
   color: var(--telekom-color-text-and-icon-standard);
   text-decoration: none;
   border-radius: 0.4rem;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .mobile-nav-panel a:hover,
@@ -578,7 +584,9 @@ watch(
 
 .mobile-nav-enter-active,
 .mobile-nav-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 .mobile-nav-enter-from,

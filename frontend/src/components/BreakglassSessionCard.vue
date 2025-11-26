@@ -168,7 +168,9 @@ const groupName = computed(() => props.breakglass?.spec?.grantedGroup || "Unknow
 const clusterLabel = computed(() => props.breakglass?.spec?.cluster || "Unknown cluster");
 const requestReasonText = computed(() => {
   const reason =
-    props.breakglass?.spec?.requestReason || props.breakglass?.status?.reason || props.breakglass?.status?.approvalReason;
+    props.breakglass?.spec?.requestReason ||
+    props.breakglass?.status?.reason ||
+    props.breakglass?.status?.approvalReason;
   return typeof reason === "string" ? reason.trim() : "";
 });
 const statusDetail = computed(() => {
@@ -253,20 +255,20 @@ const statusDetail = computed(() => {
       </section>
 
       <div class="session-card__actions">
-        <div class="session-card__expiry" v-if="approved && retained">
+        <div v-if="approved && retained" class="session-card__expiry">
           <span class="label">Expires in</span>
           <span class="value">{{ expiryHumanized }}</span>
         </div>
-        <div class="session-card__expiry" v-else-if="retained">
+        <div v-else-if="retained" class="session-card__expiry">
           <span class="label">Retention window</span>
           <span class="value">{{ expiryHumanized }}</span>
         </div>
-        <div class="session-card__expiry session-card__expiry--inactive" v-else>
+        <div v-else class="session-card__expiry session-card__expiry--inactive">
           <span class="label">Status</span>
           <span class="value">No longer actionable</span>
         </div>
 
-        <div class="session-card__buttons" v-if="retained">
+        <div v-if="retained" class="session-card__buttons">
           <scale-button v-if="!approved" @click="accept">Accept</scale-button>
           <scale-button v-else variant="secondary" @click="reject">{{ ownerActionLabel }}</scale-button>
         </div>
