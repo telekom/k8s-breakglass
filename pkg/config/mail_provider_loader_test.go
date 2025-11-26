@@ -383,3 +383,57 @@ func TestInvalidateCache(t *testing.T) {
 	// Verify cache is empty
 	t.Log("Cache invalidated successfully")
 }
+
+func TestMailProviderConfig_GetTLSConfig(t *testing.T) {
+	const testCACert = `-----BEGIN CERTIFICATE-----
+MIIDBTCCAe2gAwIBAgIUPFFNzK5sok9Bl0JUlPYl6QXnJLcwDQYJKoZIhvcNAQEL
+BQAwEjEQMA4GA1UEAwwHVGVzdCBDQTAeFw0yNTExMjUxNTI5NDhaFw0yNTExMjYx
+NTI5NDhaMBIxEDAOBgNVBAMMB1Rlc3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IB
+DwAwggEKAoIBAQD5W/I7H+29ceIlnWo8Rw6qJum4kj2fK8rwPJNVmhV5QvRte2wx
+ybdVdZLDkbgEGSEkU6z2kCzqgvGGOh3O+oBOpC2z9ryt1glj8ykkEw4o9jaLZ0zO
+hqmoAEBP3mZdQhi2SrUAeDDun/iq8dTADda2mHVNATBob7l2Y0kk+nxsyTFIAcTu
+BxE7Gb/RcSGM/7MGePMXFvmS73sdqBj6zOArCeJUR/RBliic0oWrsbQjbfH1cXGm
+OkFcAgR90ARikKjd+G1OA3e9FF/pjdkg8t1ntzP1/+oNAUA1NRVyl6axUWSRq2Xz
+g7MDlL0xoUpRpN2J/1ZNG2yywdQ7XwwnQhLRAgMBAAGjUzBRMB0GA1UdDgQWBBT1
+G2uJpNQYpxsmo+DaFrQYKdv2MDAfBgNVHSMEGDAWgBT1G2uJpNQYpxsmo+DaFrQY
+Kdv2MDAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQDENpgNFOCi
+N8Igw4yrQU9Re4BZzsbagFPbOWcXjsTw/CUGi5xdobF2nRrXHc54jr9Es5oRlG2e
+0c9xuQ37Nwb8/7jrIcbHFb03FSz4VXDXhAvXCqn08Y0ZRhU79n7x/sLh9mBefCIn
+Z4d+QFNm3N1Y/tpRbJavvD/asuCzYcxttTzj9X9bQrvOaOBwH2reaoHZvOgYc75u
+dQBsMeAlg7H7UgxSRm2NFxYIxxQ1JEhh+eOrA0vU+ZSp9Ule7OLkP/jodCQAs7dZ
+o4H3FDVtDbGTiWZiFeVo1TmugM60/gtTZuBFHC7Cmmuhl3BA/y/l72UXzzfsfTYM
+IZ+J72v8cfAb
+-----END CERTIFICATE-----`
+
+	config := &MailProviderConfig{
+		Host:                 "smtp.secure.example",
+		InsecureSkipVerify:   true,
+		CertificateAuthority: testCACert,
+	}
+
+	tlsConfig := config.GetTLSConfig()
+	if tlsConfig.ServerName != config.Host {
+		t.Fatalf("expected ServerName %s, got %s", config.Host, tlsConfig.ServerName)
+	}
+	if !tlsConfig.InsecureSkipVerify {
+		t.Fatal("expected InsecureSkipVerify to be true")
+	}
+	if tlsConfig.RootCAs == nil {
+		t.Fatal("expected custom CA to be added to RootCAs")
+	}
+}
+
+func TestMailProviderConfig_GetTLSConfig_InvalidPEM(t *testing.T) {
+	config := &MailProviderConfig{
+		Host:                 "smtp.example.com",
+		CertificateAuthority: "not a valid cert",
+	}
+
+	tlsConfig := config.GetTLSConfig()
+	if tlsConfig.ServerName != config.Host {
+		t.Fatalf("expected ServerName %s, got %s", config.Host, tlsConfig.ServerName)
+	}
+	if tlsConfig.RootCAs != nil {
+		t.Fatal("expected RootCAs to be nil when certificate parsing fails")
+	}
+}

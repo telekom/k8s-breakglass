@@ -26,8 +26,6 @@ import (
 )
 
 func TestNewManagerAppliesDefaults(t *testing.T) {
-	t.Parallel()
-
 	mgr := NewManager("svc", "ns", "", "", make(chan struct{}), nil, zap.NewNop().Sugar())
 
 	require.Equal(t, DefaultWebhookPath, mgr.path)
@@ -35,8 +33,6 @@ func TestNewManagerAppliesDefaults(t *testing.T) {
 }
 
 func TestNewCertRotatorConfiguration(t *testing.T) {
-	t.Parallel()
-
 	certsReady := make(chan struct{})
 	mgr := NewManager("svc", "ns", "/tmp/certs", "custom-config", certsReady, nil, zap.NewNop().Sugar())
 
@@ -54,8 +50,6 @@ func TestNewCertRotatorConfiguration(t *testing.T) {
 }
 
 func TestSetupRotatorPassesConfiguration(t *testing.T) {
-	t.Parallel()
-
 	mgr := NewManager("svc", "ns", "/tmp/certs", "cfg", make(chan struct{}), nil, zap.NewNop().Sugar())
 	fakeMgr := newFakeCtrlManager(t)
 
@@ -71,8 +65,6 @@ func TestSetupRotatorPassesConfiguration(t *testing.T) {
 }
 
 func TestSetupRotatorPropagatesError(t *testing.T) {
-	t.Parallel()
-
 	mgr := NewManager("svc", "ns", "/tmp/certs", "cfg", make(chan struct{}), nil, zap.NewNop().Sugar())
 	fakeMgr := newFakeCtrlManager(t)
 
@@ -85,8 +77,6 @@ func TestSetupRotatorPropagatesError(t *testing.T) {
 }
 
 func TestManagerStartHappyPath(t *testing.T) {
-	t.Parallel()
-
 	mgr, fakeMgr := newTestCertManager(t)
 	captured := make(chan *rotator.CertRotator, 1)
 	mgr.rotatorAdder = func(_ ctrl.Manager, cr *rotator.CertRotator) error {

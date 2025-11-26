@@ -2,9 +2,14 @@ package config
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 
+	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -505,6 +510,149 @@ func TestIdentityProviderLoader_CrossNamespaceSecrets(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMarshalIdentityProviderToJSON(t *testing.T) {
+	original := &IdentityProviderConfig{
+		Name:      "test-idp",
+		Authority: "https://issuer.example.com",
+		Issuer:    "https://issuer.example.com",
+		ClientID:  "client-123",
+	}
+
+	jsonStr, err := MarshalIdentityProviderToJSON(original)
+	if err != nil {
+		t.Fatalf("MarshalIdentityProviderToJSON() error = %v", err)
+	}
+
+	var decoded IdentityProviderConfig
+	if err := json.Unmarshal([]byte(jsonStr), &decoded); err != nil {
+		t.Fatalf("failed to unmarshal json output: %v", err)
+	}
+
+	if decoded.Name != original.Name || decoded.ClientID != original.ClientID || decoded.Authority != original.Authority {
+		t.Fatalf("decoded config mismatch: %+v", decoded)
+	}
+}
+
+func TestCategorizeConversionError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "missing field", err: fmt.Errorf("required attribute missing"), want: "missing_field"},
+		{name: "invalid config", err: fmt.Errorf("invalid format"), want: "invalid_config"},
+		{name: "parse error", err: fmt.Errorf("unable to parse response"), want: "parse_error"},
+		{name: "secret error", err: fmt.Errorf("secret not found"), want: "secret_error"},
+		{name: "connection error", err: fmt.Errorf("connection refused"), want: "connection_error"},
+		{name: "timeout error", err: fmt.Errorf("timeout reached"), want: "timeout_error"},
+		{name: "auth error", err: fmt.Errorf("unauthorized access"), want: "auth_error"},
+		{name: "nil error", err: nil, want: "unknown"},
+		{name: "other error", err: errors.New("boom"), want: "other_error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := categorizeConversionError(tt.err); got != tt.want {
+				t.Fatalf("categorizeConversionError() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIdentityProviderLoader_recordConversionFailureMetric(t *testing.T) {
+	loader := NewIdentityProviderLoader(nil)
+	var recorded []struct {
+		name   string
+		reason string
+	}
+
+	loader.WithMetricsRecorder(func(idpName, failureReason string) {
+		recorded = append(recorded, struct {
+			name   string
+			reason string
+		}{name: idpName, reason: failureReason})
+	})
+
+	loader.recordConversionFailureMetric("primary", "invalid_config")
+	loader.recordConversionFailureMetric("secondary", "missing_field")
+
+	if len(recorded) != 2 {
+		t.Fatalf("expected 2 recorded metrics, got %d", len(recorded))
+	}
+	if recorded[0].name != "primary" || recorded[0].reason != "invalid_config" {
+		t.Fatalf("first metric mismatch: %+v", recorded[0])
+	}
+	if recorded[1].name != "secondary" || recorded[1].reason != "missing_field" {
+		t.Fatalf("second metric mismatch: %+v", recorded[1])
+	}
+}
+
+func TestIdentityProviderLoader_updateConversionFailureStatus(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := breakglassv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add scheme: %v", err)
+	}
+
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "conversion-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Primary: true,
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://authority",
+				ClientID:  "client",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&breakglassv1alpha1.IdentityProvider{}).
+		WithObjects(idp).
+		Build()
+
+	loader := NewIdentityProviderLoader(fakeClient).
+		WithLogger(zap.NewNop().Sugar())
+
+	var recordedName, recordedReason string
+	loader.WithMetricsRecorder(func(name, reason string) {
+		recordedName = name
+		recordedReason = reason
+	})
+
+	ctx := context.Background()
+	conversionErr := fmt.Errorf("invalid configuration provided")
+	loader.updateConversionFailureStatus(ctx, idp, conversionErr)
+
+	if len(idp.Status.Conditions) == 0 {
+		t.Fatal("expected conversion failure condition to be set")
+	}
+
+	var condition *metav1.Condition
+	for i := range idp.Status.Conditions {
+		if idp.Status.Conditions[i].Type == string(breakglassv1alpha1.IdentityProviderConditionConversionFailed) {
+			condition = &idp.Status.Conditions[i]
+			break
+		}
+	}
+
+	if condition == nil {
+		t.Fatal("conversion failure condition not found")
+	}
+	if condition.Status != metav1.ConditionTrue {
+		t.Fatalf("expected condition status true, got %s", condition.Status)
+	}
+	if recordedName != idp.Name {
+		t.Fatalf("expected metric name %s, got %s", idp.Name, recordedName)
+	}
+	if recordedReason != "invalid_config" {
+		t.Fatalf("expected metric reason invalid_config, got %s", recordedReason)
+	}
+
+	// Ensure no panic when idp or error is nil
+	loader.updateConversionFailureStatus(ctx, nil, conversionErr)
+	loader.updateConversionFailureStatus(ctx, idp, nil)
 }
 
 // Helper function to check if a string contains a substring
