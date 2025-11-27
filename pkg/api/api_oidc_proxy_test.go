@@ -137,7 +137,7 @@ func TestValidateOIDCProxyPath(t *testing.T) {
 		{"allows well-known endpoint", "/.well-known/openid-configuration", true},
 		{"rejects disallowed prefix", "/not-allowed", false},
 		{"rejects suspicious absolute", "http://evil", false},
-		{"rejects encoded traversal", "/.well%32known", false},
+		{"rejects encoded traversal", "/protocol/openid-connect/%2e%2e/%2e%2e/admin", false},
 	}
 
 	for _, tt := range tests {
@@ -156,7 +156,12 @@ func TestValidateOIDCProxyPath(t *testing.T) {
 func TestSelectOIDCProxyAuthority(t *testing.T) {
 	defaultURL, err := url.Parse("https://default.example.com")
 	require.NoError(t, err)
-	server := &Server{oidcAuthority: defaultURL}
+	server := &Server{
+		oidcAuthority: defaultURL,
+		idpConfig: &config.IdentityProviderConfig{
+			Authority: defaultURL.String(),
+		},
+	}
 
 	t.Run("returns clone for default", func(t *testing.T) {
 		selected, err := server.selectOIDCProxyAuthority("")
@@ -267,6 +272,39 @@ func TestOIDCProxyMultiIDPValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOIDCProxyResponseHeaderAllowlist(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+	mockAuthority := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Upstream-Secret", "should-not-leak")
+		_, _ = w.Write([]byte(`{"issuer":"https://example.com"}`))
+	}))
+	defer mockAuthority.Close()
+
+	parsed, err := url.Parse(mockAuthority.URL)
+	require.NoError(t, err)
+	server := &Server{
+		log:           logger,
+		auth:          &AuthHandler{},
+		config:        config.Config{},
+		idpConfig:     &config.IdentityProviderConfig{Authority: mockAuthority.URL, InsecureSkipVerify: true},
+		oidcAuthority: parsed,
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/oidc/authority/.well-known/openid-configuration", nil)
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+	c.Params = gin.Params{{Key: "proxyPath", Value: "/.well-known/openid-configuration"}}
+
+	server.handleOIDCProxy(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "application/json", w.Header().Get("Content-Type"))
+	require.Equal(t, "", w.Header().Get("X-Upstream-Secret"))
 }
 
 // TestOIDCProxyPathTrustedIDPs tests that known IDP authorities are properly recognized and untrusted ones are rejected
@@ -770,7 +808,8 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 		server := &Server{
 			log: logger,
 			idpConfig: &config.IdentityProviderConfig{
-				Name: "test",
+				Name:      "test",
+				Authority: "https://keycloak.example.com",
 			},
 		}
 		client, err := server.newOIDCProxyHTTPClient(true)
@@ -784,6 +823,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 			log: logger,
 			idpConfig: &config.IdentityProviderConfig{
 				Name:               "test",
+				Authority:          "https://keycloak.example.com",
 				InsecureSkipVerify: true,
 			},
 		}
@@ -799,6 +839,7 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 			log: logger,
 			idpConfig: &config.IdentityProviderConfig{
 				Name:                 "test",
+				Authority:            "https://keycloak.example.com",
 				CertificateAuthority: testCertificatePEM(t),
 			},
 		}
@@ -810,7 +851,13 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 	})
 
 	t.Run("http targets skip tls setup", func(t *testing.T) {
-		server := &Server{log: logger}
+		server := &Server{
+			log: logger,
+			idpConfig: &config.IdentityProviderConfig{
+				Name:      "test",
+				Authority: "https://keycloak.example.com",
+			},
+		}
 		client, err := server.newOIDCProxyHTTPClient(false)
 		require.NoError(t, err)
 		transport := client.Transport.(*http.Transport)

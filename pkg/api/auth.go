@@ -107,16 +107,16 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 
 	// Configure TLS if needed (from IDP config)
 	if idpCfg.CertificateAuthority != "" {
-		pool := x509.NewCertPool()
-		if ok := pool.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority)); !ok {
-			return nil, fmt.Errorf("could not parse CA certificate for IDP %s", idpCfg.Name)
+		pool, err := buildCertPoolFromPEM(idpCfg.CertificateAuthority)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
 		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
 		options.Client = &http.Client{Transport: transport}
 	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
-		pool := x509.NewCertPool()
-		if ok := pool.AppendCertsFromPEM([]byte(idpCfg.Keycloak.CertificateAuthority)); !ok {
-			return nil, fmt.Errorf("could not parse CA certificate for IDP %s", idpCfg.Name)
+		pool, err := buildCertPoolFromPEM(idpCfg.Keycloak.CertificateAuthority)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
 		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
 		options.Client = &http.Client{Transport: transport}
@@ -384,4 +384,12 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func buildCertPoolFromPEM(pemData string) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	if ok := pool.AppendCertsFromPEM([]byte(pemData)); !ok {
+		return nil, fmt.Errorf("failed to append certificates from PEM data")
+	}
+	return pool, nil
 }

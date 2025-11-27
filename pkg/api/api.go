@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -62,6 +63,26 @@ var defaultAllowedOrigins = []string{
 	"http://localhost:28081",
 	"http://localhost:28080",
 	"http://localhost:5173",
+}
+
+var allowedOIDCProxyResponseHeaders = map[string]struct{}{
+	"Cache-Control":          {},
+	"Content-Encoding":       {},
+	"Content-Language":       {},
+	"Content-Length":         {},
+	"Content-Type":           {},
+	"Date":                   {},
+	"ETag":                   {},
+	"Expires":                {},
+	"Last-Modified":          {},
+	"Pragma":                 {},
+	"WWW-Authenticate":       {},
+	"X-Content-Type-Options": {},
+}
+
+var oidcProxyTLSModeState struct {
+	sync.Mutex
+	current string
 }
 
 func NewServer(log *zap.Logger, cfg config.Config,
@@ -145,28 +166,31 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		allowedOriginSet[origin] = struct{}{}
 	}
 
-	if len(allowedOriginSet) > 0 {
-		engine.Use(func(c *gin.Context) {
-			originHeader := c.Request.Header.Get("Origin")
-			if originHeader == "" {
-				c.Next()
-				return
-			}
+	engine.Use(func(c *gin.Context) {
+		if len(allowedOriginSet) == 0 {
+			c.Next()
+			return
+		}
 
-			normalized := normalizeOrigin(originHeader)
-			if _, ok := allowedOriginSet[normalized]; ok {
-				c.Next()
-				return
-			}
+		originHeader := c.Request.Header.Get("Origin")
+		if originHeader == "" {
+			c.Next()
+			return
+		}
 
-			cid, _ := c.Get("cid")
-			log.Warn("blocked_request_origin", zap.String("origin", originHeader), zap.String("normalized_origin", normalized), zap.String("cid", fmt.Sprintf("%v", cid)))
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "origin not allowed",
-				"cid":   cid,
-			})
+		normalized := normalizeOrigin(originHeader)
+		if _, ok := allowedOriginSet[normalized]; ok {
+			c.Next()
+			return
+		}
+
+		cid, _ := c.Get("cid")
+		log.Warn("blocked_request_origin", zap.String("origin", originHeader), zap.String("normalized_origin", normalized), zap.String("cid", fmt.Sprintf("%v", cid)))
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error": "origin not allowed",
+			"cid":   cid,
 		})
-	}
+	})
 
 	// Always expose CORS for browser-based OIDC flows (token exchange happens against keycloak but frontend hits API)
 	engine.Use(
@@ -301,6 +325,7 @@ func (s *Server) ReloadIdentityProvider(loader *config.IdentityProviderLoader) e
 func buildAllowedOrigins(cfg config.Config) []string {
 	seen := make(map[string]struct{})
 	var origins []string
+	usedDefaultOrigins := false
 
 	add := func(candidate string) {
 		normalized := normalizeOrigin(candidate)
@@ -322,9 +347,10 @@ func buildAllowedOrigins(cfg config.Config) []string {
 		for _, raw := range defaultAllowedOrigins {
 			add(raw)
 		}
+		usedDefaultOrigins = true
 	}
 
-	if cfg.Frontend.BaseURL != "" {
+	if usedDefaultOrigins && cfg.Frontend.BaseURL != "" {
 		add(cfg.Frontend.BaseURL)
 	}
 
@@ -346,7 +372,22 @@ func normalizeOrigin(raw string) string {
 		return trimmed
 	}
 
-	return fmt.Sprintf("%s://%s", strings.ToLower(parsed.Scheme), parsed.Host)
+	scheme := strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+	port := parsed.Port()
+	defaultPort := (scheme == "http" && port == "80") || (scheme == "https" && port == "443")
+	switch {
+	case port != "" && !defaultPort:
+		host = net.JoinHostPort(host, port)
+	case port != "" && defaultPort:
+		if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+			host = fmt.Sprintf("[%s]", host)
+		}
+	case port == "" && strings.Contains(host, ":") && !strings.HasPrefix(host, "["):
+		host = fmt.Sprintf("[%s]", host)
+	}
+
+	return fmt.Sprintf("%s://%s", scheme, host)
 }
 
 // SetIdentityProviderReconciler sets the reconciler for accessing cached IDPs
@@ -695,8 +736,12 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	s.log.Sugar().Debugw("oidc_proxy_upstream_response", "status", resp.StatusCode, "target", target, "elapsed", time.Since(start))
 
 	for k, vs := range resp.Header {
+		if !isAllowedOIDCProxyResponseHeader(k) {
+			continue
+		}
+		canonical := http.CanonicalHeaderKey(k)
 		for _, v := range vs {
-			c.Writer.Header().Add(k, v)
+			c.Writer.Header().Add(canonical, v)
 		}
 	}
 	c.Status(resp.StatusCode)
@@ -804,6 +849,14 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 }
 
 func recordOIDCProxyTLSMode(mode string) {
+	oidcProxyTLSModeState.Lock()
+	if oidcProxyTLSModeState.current == mode {
+		oidcProxyTLSModeState.Unlock()
+		return
+	}
+	oidcProxyTLSModeState.current = mode
+	oidcProxyTLSModeState.Unlock()
+
 	modes := []string{tlsModeHTTP, tlsModeSystemCA, tlsModeCustomCA, tlsModeInsecure}
 	for _, candidate := range modes {
 		value := 0.0
@@ -851,4 +904,12 @@ func recordOIDCProxyFailure(metric string, start time.Time) {
 func recordOIDCProxySuccess(start time.Time) {
 	metrics.OIDCProxySuccess.WithLabelValues("authority").Inc()
 	metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
+}
+
+func isAllowedOIDCProxyResponseHeader(name string) bool {
+	if name == "" {
+		return false
+	}
+	_, ok := allowedOIDCProxyResponseHeaders[http.CanonicalHeaderKey(name)]
+	return ok
 }

@@ -54,7 +54,7 @@ func validateOIDCProxyPath(proxyPath string) (string, error) {
 		return "", errProxyPathSuspicious
 	}
 	if decoded, err := url.PathUnescape(normalizedPath); err == nil {
-		if hasSuspiciousOIDCProxyPattern(decoded) || hasEncodedTraversal(decoded) {
+		if hasSuspiciousOIDCProxyPattern(decoded) {
 			return "", errProxyPathSuspicious
 		}
 	}
