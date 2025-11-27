@@ -580,7 +580,7 @@ onMounted(fetchPendingApprovals);
       >
         This field is required.
       </p>
-      <div class="modal-actions" slot="footer">
+      <div slot="footer" class="modal-actions">
         <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
         <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
         <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>
@@ -1030,6 +1030,8 @@ scale-textarea :deep(.textarea__control::placeholder) {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  justify-content: flex-end;
+  padding: 0.75rem 1rem 0.5rem;
 }
 
 .modal-actions scale-button {
@@ -1112,6 +1114,11 @@ scale-textarea :deep(.textarea__control::placeholder) {
 
   .modal-actions scale-button {
     width: 100%;
+  }
+
+  .modal-actions {
+    justify-content: stretch;
+    padding: 0.5rem 0;
   }
 }
 </style>

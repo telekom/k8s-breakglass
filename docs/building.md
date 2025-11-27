@@ -58,6 +58,32 @@ npm run build
 
 Output: `./frontend/dist/`
 
+### Rapid local UI preview (mock backend)
+
+Use the bundled mock API to edit the UI with hot module reloading—no controller container or cluster
+is required. A single command spins up both the mock backend (port 8080) and the Vite dev server:
+
+```bash
+cd frontend
+npm run dev:mock
+```
+
+What you get:
+
+- Express-based mock API with sample breakglass sessions, escalations, and multi-IDP data
+- Requests to `/api/*` are automatically proxied to the mock server via Vite
+- Instant WYSIWYG feedback when editing Vue components or CSS
+- Ability to approve/reject mock requests without configuring Keycloak/OIDC
+- Seeded permutations covering every session state (pending, approved, rejected, withdrawn, expired,
+  timeout, approval-timeout, dropped, waiting-for-schedule) plus single/multi-group escalations,
+  Azure/Keycloak/no-IDP combinations, and huge approver stacks for chip stress tests
+
+Override the mock API port by setting `MOCK_API_PORT` before running the script if 8080 is busy.
+
+Need an even bigger dataset for scroll performance measurements? Call the REST endpoint with
+`mockScale`, `scaleCount`, or `total`, e.g. `/api/breakglassSessions?mockScale=300`. The mock server
+will append enough synthetic entries to reach that total without touching the seed file.
+
 ## Building for Production
 
 1. Use OSS flavour (unless you are Deutsche Telekom)

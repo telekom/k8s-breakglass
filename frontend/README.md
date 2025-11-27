@@ -33,6 +33,62 @@ npm install
 npm run dev
 ```
 
+Mock authentication is enabled automatically for all Vite dev builds so the UI can log in instantly
+without contacting a real identity provider. To exercise the full OIDC flow against a real backend run:
+
+```sh
+npm run dev:real
+```
+
+or prefix the dev command with `VITE_USE_MOCK_AUTH=false`.
+
+### Run the mock UI workspace (no backend required)
+
+```sh
+npm run dev:mock
+```
+
+This command starts the lightweight mock API server (`mock-api/server.mjs`) together with Vite. Mock
+authentication is already on by default in dev mode, so when you click **Log in** the UI skips real
+OIDC redirects and immediately issues a synthetic token/profile so that delegated approval
+flows, request creation, and multi-IDP selection all behave as if a real user signed in.
+
+The frontend proxies `http://localhost:5173/api/*` traffic to `http://localhost:8080`, so any
+changes you make to Vue components or the mock data refresh instantly without rebuilding a
+container. The mock backend preloads sample breakglass escalations, sessions, and multi-IDP data
+so you can tweak UI layouts WYSIWYG-style.
+
+### Switching UI flavours locally
+
+Need to preview the Telekom theme versus the OSS/neutral look without touching the mock data? Use
+one of the following quick overrides while running any dev server (`npm run dev`, `dev:mock`, or
+`dev:real`):
+
+- **Query parameter** – Append `?flavour=telekom` or `?flavour=oss` to the dev URL
+  (`http://localhost:5173/?flavour=telekom`). The chosen value is persisted to
+  `localStorage` (`k8sBreakglassUiFlavourOverride`) so you can refresh without retyping it.
+- **Reset override** – Append `?flavour=reset` (or `clear`, `default`, `auto`) to remove the stored
+  value and fall back to whatever the backend delivers.
+
+These overrides are resolved entirely in the browser; no backend changes are required and you can
+flip the theme in seconds when demoing or iterating on styles.
+
+#### Mock API coverage
+
+The dataset includes:
+
+- All session states: `Pending`, `Approved`, `Rejected`, `Withdrawn`, `Dropped`, `Expired`, `Timeout`,
+  `ApprovalTimeout`, and `WaitingForScheduledTime`
+- Variations for scheduled sessions (future/past start), mandatory/optional request & approval reasons,
+  Keycloak/Azure/no-IDP flows, and owner/approver combinations
+- Escalations with single and multi-cluster targeting, single- and multi-group requesters, and dozens of
+  approver group chips for stress testing UI layouts
+- Scale-testing hook: append `?mockScale=250` (or `scaleCount` / `total`) to `/api/breakglassSessions` to
+  generate synthetic records without editing the seed data
+
+Edit `frontend/mock-api/data.mjs` if you want to pin additional permutations. The Node `--watch` flag reloads the
+Express server automatically after each save.
+
 ### Type-Check, Compile and Minify for Production
 
 ```sh
@@ -137,4 +193,3 @@ The frontend should **never** implement its own session validity logic. Instead:
 3. Let the backend (via `isSessionValid()`) determine if a session is valid
 4. Render UI based on state + backend response codes (e.g., 403 for invalid access)
 
-````
