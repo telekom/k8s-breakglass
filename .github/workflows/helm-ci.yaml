@@ -29,9 +29,16 @@ jobs:
           version: v3.16.0
 
       - name: Install kustomize
+        env:
+          KUSTOMIZE_VERSION: v5.6.0
         run: |
-          curl -sSL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/311dbbf975369a5e871d6a1a2e3d6ce4b83d5972/hack/install_kustomize.sh | bash
+          set -euo pipefail
+          echo "Installing kustomize ${KUSTOMIZE_VERSION}"
+          ARCHIVE="kustomize_${KUSTOMIZE_VERSION#v}_linux_amd64.tar.gz"
+          curl -L "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/${ARCHIVE}" -o "${ARCHIVE}"
+          tar -xzf "${ARCHIVE}"
           sudo mv kustomize /usr/local/bin/kustomize
+          kustomize version
 
       - name: Determine chart VERSION for this run
         id: version
