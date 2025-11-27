@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,6 +55,13 @@ type ServerConfig struct {
 	Log   *zap.Logger
 	Cfg   config.Config
 	Debug bool
+}
+
+var defaultAllowedOrigins = []string{
+	"https://localhost:8443",
+	"http://localhost:28081",
+	"http://localhost:28080",
+	"http://localhost:5173",
 }
 
 func NewServer(log *zap.Logger, cfg config.Config,
@@ -131,11 +139,39 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		},
 	)
 
+	allowedOrigins := buildAllowedOrigins(cfg)
+	allowedOriginSet := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		allowedOriginSet[origin] = struct{}{}
+	}
+
+	if len(allowedOriginSet) > 0 {
+		engine.Use(func(c *gin.Context) {
+			originHeader := c.Request.Header.Get("Origin")
+			if originHeader == "" {
+				c.Next()
+				return
+			}
+
+			normalized := normalizeOrigin(originHeader)
+			if _, ok := allowedOriginSet[normalized]; ok {
+				c.Next()
+				return
+			}
+
+			cid, _ := c.Get("cid")
+			log.Warn("blocked_request_origin", zap.String("origin", originHeader), zap.String("normalized_origin", normalized), zap.String("cid", fmt.Sprintf("%v", cid)))
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "origin not allowed",
+				"cid":   cid,
+			})
+		})
+	}
+
 	// Always expose CORS for browser-based OIDC flows (token exchange happens against keycloak but frontend hits API)
 	engine.Use(
 		cors.New(cors.Config{
-			// Allow HTTPS origin for Keycloak local forward and controller UI
-			AllowOrigins:     []string{"https://localhost:8443", "http://localhost:28081", "http://localhost:28080", "*"},
+			AllowOrigins:     allowedOrigins,
 			AllowMethods:     []string{"GET", "PUT", "PATCH", "POST", "OPTIONS"},
 			AllowHeaders:     []string{"Origin", "Authorization", "Content-Type"},
 			ExposeHeaders:    []string{"Authorization"},
@@ -260,6 +296,57 @@ func (s *Server) ReloadIdentityProvider(loader *config.IdentityProviderLoader) e
 	s.SetIdentityProvider(newConfig)
 	s.log.Sugar().Infow("identity provider reloaded successfully", "type", newConfig.Type, "name", newConfig.Name)
 	return nil
+}
+
+func buildAllowedOrigins(cfg config.Config) []string {
+	seen := make(map[string]struct{})
+	var origins []string
+
+	add := func(candidate string) {
+		normalized := normalizeOrigin(candidate)
+		if normalized == "" {
+			return
+		}
+		if _, ok := seen[normalized]; ok {
+			return
+		}
+		seen[normalized] = struct{}{}
+		origins = append(origins, normalized)
+	}
+
+	for _, raw := range cfg.Server.AllowedOrigins {
+		add(raw)
+	}
+
+	if len(origins) == 0 {
+		for _, raw := range defaultAllowedOrigins {
+			add(raw)
+		}
+	}
+
+	if cfg.Frontend.BaseURL != "" {
+		add(cfg.Frontend.BaseURL)
+	}
+
+	return origins
+}
+
+func normalizeOrigin(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return trimmed
+	}
+
+	return fmt.Sprintf("%s://%s", strings.ToLower(parsed.Scheme), parsed.Host)
 }
 
 // SetIdentityProviderReconciler sets the reconciler for accessing cached IDPs
@@ -539,264 +626,74 @@ func (s *Server) isKnownIDPAuthority(authority string) bool {
 	return false
 }
 
-// handleOIDCProxy proxies OIDC discovery and JWKS endpoints from the configured
-// authorization server authority. The route is mounted at /api/oidc/authority/*proxyPath
-// and performs a backend GET to the configured authority, returning the body and
-// status to the browser. This avoids requiring the browser to trust the Keycloak
-// certificate for e2e local runs. Only simple GET proxying is implemented here.
-//
-// In multi-IDP setups, the frontend can send X-OIDC-Authority header to specify
-// which Keycloak instance to proxy to. This header is validated against known IDPs
-// to prevent SSRF attacks.
-//
-// Security: This function uses strict whitelist validation on both the path parameter
-// and the authority header to prevent SSRF attacks. Only known OIDC endpoints are allowed.
+// handleOIDCProxy proxies OIDC discovery and JWKS endpoints from the configured authority.
+// It validates the requested path and optional X-OIDC-Authority header rigorously to prevent SSRF.
 func (s *Server) handleOIDCProxy(c *gin.Context) {
+	start := time.Now()
+	metrics.OIDCProxyRequests.WithLabelValues("authority").Inc()
 	if s.oidcAuthority == nil {
 		s.log.Sugar().Warnw("oidc_proxy_missing_authority")
-		metrics.OIDCProxyRequests.WithLabelValues("authority").Inc()
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "missing_authority").Inc()
+		recordOIDCProxyFailure("missing_authority", start)
 		c.JSON(http.StatusNotFound, gin.H{"error": "OIDC authority not configured"})
 		return
 	}
-	start := time.Now()
-	metrics.OIDCProxyRequests.WithLabelValues("authority").Inc()
+
 	proxyPath := c.Param("proxyPath")
-
-	// Whitelist of allowed OIDC endpoints - only these paths can be proxied
-	// This prevents SSRF by ensuring only known OIDC discovery and authorization endpoints are accessible
-	allowedPathPrefixes := []string{
-		"/.well-known/openid-configuration",
-		"/.well-known/oauth-authorization-server",
-		"/.well-known/jwks.json",
-		"/auth/realms/", // Keycloak specific
-		"/protocol/openid-connect/auth",
-		"/protocol/openid-connect/token",
-		"/protocol/openid-connect/certs",
-		"/protocol/openid-connect/userinfo",
-		"/protocol/openid-connect/logout",
-		"/certs", // Some OIDC providers use this
-		"/token",
-		"/authorize",
-		"/userinfo",
-		"/revocation",
-		"/introspection",
-	}
-
-	// Normalize the path - remove query string and fragment
-	normalizedPath := proxyPath
-	if idx := strings.Index(normalizedPath, "?"); idx != -1 {
-		normalizedPath = normalizedPath[:idx]
-	}
-	if idx := strings.Index(normalizedPath, "#"); idx != -1 {
-		normalizedPath = normalizedPath[:idx]
-	}
-
-	// Check if path matches any allowed prefix
-	pathAllowed := false
-	for _, prefix := range allowedPathPrefixes {
-		if strings.HasPrefix(normalizedPath, prefix) {
-			pathAllowed = true
-			break
-		}
-	}
-
-	if !pathAllowed {
-		s.log.Sugar().Warnw("oidc_proxy_path_not_whitelisted", "path", proxyPath, "normalized", normalizedPath)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "path_not_allowed").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "path_not_allowed").Inc()
-		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusForbidden, gin.H{"error": "requested path is not an allowed OIDC endpoint"})
+	normalizedPath, err := validateOIDCProxyPath(proxyPath)
+	if err != nil {
+		s.handleOIDCProxyPathError(c, proxyPath, normalizedPath, err, start)
 		return
 	}
 
-	// Additional validation: reject suspicious patterns even if they pass the prefix check
-	// This catches encoded attacks and other bypasses
-	if strings.Contains(proxyPath, "://") || strings.HasPrefix(proxyPath, "//") || strings.Contains(proxyPath, "..") {
-		s.log.Sugar().Warnw("oidc_proxy_suspicious_pattern", "path", proxyPath)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "suspicious_pattern").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "suspicious_pattern").Inc()
-		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusForbidden, gin.H{"error": "invalid proxy path: absolute URLs and path traversal not allowed"})
+	customAuthority := strings.TrimSpace(c.Request.Header.Get("X-OIDC-Authority"))
+	targetAuthority, err := s.selectOIDCProxyAuthority(customAuthority)
+	if err != nil {
+		s.handleOIDCProxyAuthorityError(c, customAuthority, err, start)
 		return
 	}
-
-	// Validate that the path is still URL-safe after normalization
-	parsedPath, parseErr := url.Parse(normalizedPath)
-	if parseErr != nil {
-		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "normalized", normalizedPath, "error", parseErr)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "malformed_path").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "malformed_path").Inc()
-		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path: malformed"})
-		return
+	if customAuthority != "" {
+		s.log.Sugar().Debugw("oidc_proxy_using_custom_authority", "authority", targetAuthority.Scheme+"://"+targetAuthority.Host, "path", targetAuthority.Path)
 	}
 
-	// Ensure the parsed path doesn't contain URL scheme or host (which would indicate an absolute URL)
-	if parsedPath.Scheme != "" || parsedPath.Host != "" {
-		s.log.Sugar().Warnw("oidc_proxy_absolute_url_detected", "path", proxyPath, "scheme", parsedPath.Scheme, "host", parsedPath.Host)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "absolute_url_detected").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "absolute_url_detected").Inc()
-		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusForbidden, gin.H{"error": "invalid proxy path: must be relative"})
-		return
-	}
-
-	// Check for X-OIDC-Authority header to support multi-IDP routing
-	// The frontend sends this header when using a specific IDP to tell backend which Keycloak to proxy to
-	targetAuthority := s.oidcAuthority
-	if customAuthority := c.Request.Header.Get("X-OIDC-Authority"); customAuthority != "" {
-		s.log.Sugar().Debugw("oidc_proxy_custom_authority_header", "header", customAuthority)
-		// Validate that the custom authority is a valid URL with allowed scheme
-		if parsed, err := url.Parse(customAuthority); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
-			// Verify this is from a known IDP configuration to prevent SSRF attacks
-			if s.isKnownIDPAuthority(customAuthority) {
-				targetAuthority = parsed
-				s.log.Sugar().Debugw("oidc_proxy_using_custom_authority", "authority", parsed.Scheme+"://"+parsed.Host, "path", parsed.Path)
-			} else {
-				s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", customAuthority)
-				metrics.OIDCProxyFailure.WithLabelValues("authority", "unknown_authority").Inc()
-				metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "unknown_authority").Inc()
-				metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-				c.JSON(http.StatusForbidden, gin.H{"error": "unknown OIDC authority"})
-				return
-			}
-		} else {
-			s.log.Sugar().Warnw("oidc_proxy_invalid_authority_header", "customAuthority", customAuthority)
-			metrics.OIDCProxyFailure.WithLabelValues("authority", "invalid_authority_header").Inc()
-			metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "invalid_authority_header").Inc()
-			metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid X-OIDC-Authority header"})
-			return
-		}
-	}
-
-	// Construct target URL safely using URL.ResolveReference
-	// This ensures we're building a proper URL with the authority as base
-	base := targetAuthority
-	if base.Path != "" {
-		base.Path = strings.TrimRight(base.Path, "/")
-	}
-
-	// Create a URL from the normalized path with the base authority
-	// Important: if normalizedPath is absolute (starts with /), we need to append it to the base path
-	// not use ResolveReference which would replace the base path entirely (per RFC 3986)
-	targetPath := normalizedPath
-	if base.Path != "" && strings.HasPrefix(normalizedPath, "/") {
-		// Append the relative proxy path to the base authority path
-		targetPath = base.Path + normalizedPath
-	}
-
-	relativeURL := &url.URL{Path: targetPath}
-	if idx := strings.Index(proxyPath, "?"); idx != -1 {
-		relativeURL.RawQuery = proxyPath[idx+1:]
-	}
-
-	targetURL := base.ResolveReference(relativeURL)
-
-	// Final validation: ensure the resolved URL has the same scheme and host as our target authority
-	if targetURL.Scheme != base.Scheme || targetURL.Host != base.Host {
-		s.log.Sugar().Warnw("oidc_proxy_url_resolution_attack", "originalPath", proxyPath, "resultScheme", targetURL.Scheme, "resultHost", targetURL.Host, "expectedScheme", base.Scheme, "expectedHost", base.Host)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "url_resolution_attack").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "url_resolution_attack").Inc()
-		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusForbidden, gin.H{"error": "invalid proxy path: resolved to different host"})
+	targetURL, err := buildOIDCProxyTargetURL(targetAuthority, normalizedPath, proxyPath)
+	if err != nil {
+		s.handleOIDCProxyPathError(c, proxyPath, normalizedPath, err, start)
 		return
 	}
 
 	target := targetURL.String()
 	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target_scheme", targetURL.Scheme, "target_host", targetURL.Host, "target_path", targetURL.Path)
 
-	// Create HTTP client; get TLS config from IdentityProvider if available
-	transport := &http.Transport{}
-
-	// Thread-safe read of idpConfig for TLS settings
-	s.idpMutex.RLock()
-	// If an IdentityProvider CA is configured, use it; otherwise skip verify for e2e
-	if s.idpConfig != nil && s.idpConfig.CertificateAuthority != "" {
-		roots := x509.NewCertPool()
-		ok := roots.AppendCertsFromPEM([]byte(s.idpConfig.CertificateAuthority))
-		s.idpMutex.RUnlock()
-		if ok {
-			transport.TLSClientConfig = &tls.Config{RootCAs: roots}
-		}
-	} else {
-		s.idpMutex.RUnlock()
-		// For convenience in e2e local setups, allow insecure TLS to the authority
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-
-	// Support both GET and POST methods
-	var req *http.Request
-	var err error
-
-	if c.Request.Method == http.MethodPost {
-		// For POST requests (e.g., token endpoint), buffer the body to allow re-reading.
-		// c.Request.Body can only be read once, so we must buffer it first.
-		bodyBytes, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			s.log.Sugar().Errorw("oidc_proxy_read_body_error", "error", err, "target", target)
-			metrics.OIDCProxyFailure.WithLabelValues("authority", "read_body_error").Inc()
-			metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "read_body_error").Inc()
-			metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read request body", "detail": err.Error()})
-			return
-		}
-		// Create a new request with a buffered body
-		req, err = http.NewRequestWithContext(c.Request.Context(), c.Request.Method, target, io.NopCloser(bytes.NewReader(bodyBytes)))
-		if err != nil {
-			s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
-			metrics.OIDCProxyFailure.WithLabelValues("authority", "request_build_error").Inc()
-			metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "request_build_error").Inc()
-			metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
-			return
-		}
-		// Forward Content-Type header for POST
-		if contentType := c.Request.Header.Get("Content-Type"); contentType != "" {
-			req.Header.Set("Content-Type", contentType)
-		}
-	} else {
-		// For GET requests (default)
-		req, err = http.NewRequestWithContext(c.Request.Context(), http.MethodGet, target, nil)
-		if err != nil {
-			s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
-			metrics.OIDCProxyFailure.WithLabelValues("authority", "request_build_error").Inc()
-			metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "request_build_error").Inc()
-			metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
-			return
-		}
-	}
-
+	client, err := s.newOIDCProxyHTTPClient(targetURL.Scheme == "https")
 	if err != nil {
-		s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "request_build_error").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "request_build_error").Inc()
-		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
+		s.log.Sugar().Errorw("oidc_proxy_client_error", "error", err)
+		recordOIDCProxyFailure("tls_configuration_error", start)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "oidc proxy TLS configuration error", "detail": err.Error()})
 		return
 	}
-
-	// Forward Accept header if present
-	if accept := c.Request.Header.Get("Accept"); accept != "" {
-		req.Header.Set("Accept", accept)
+	req, err := buildOIDCProxyHTTPRequest(c, target)
+	if err != nil {
+		s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
+		if errors.Is(err, errOIDCProxyReadBody) {
+			recordOIDCProxyFailure("read_body_error", start)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read request body", "detail": err.Error()})
+		} else {
+			recordOIDCProxyFailure("request_build_error", start)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
+		}
+		return
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_upstream_error", "error", err, "target", target, "elapsed", time.Since(start))
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "upstream_error").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "upstream_error").Inc()
-		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
+		recordOIDCProxyFailure("upstream_error", start)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch from authority", "detail": err.Error(), "target": target})
 		return
 	}
 	defer resp.Body.Close()
 	s.log.Sugar().Debugw("oidc_proxy_upstream_response", "status", resp.StatusCode, "target", target, "elapsed", time.Since(start))
 
-	// Copy status, headers (selectively) and body
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			c.Writer.Header().Add(k, v)
@@ -805,14 +702,153 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	c.Status(resp.StatusCode)
 	if _, err := io.Copy(c.Writer, resp.Body); err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_copy_error", "error", err, "target", target)
-		metrics.OIDCProxyFailure.WithLabelValues("authority", "response_copy_error").Inc()
-		metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", "response_copy_error").Inc()
-		metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
+		recordOIDCProxyFailure("response_copy_error", start)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to stream response from authority", "detail": err.Error(), "target": target})
 		return
 	}
 
-	// Record successful proxy completion
+	recordOIDCProxySuccess(start)
+}
+
+func (s *Server) handleOIDCProxyPathError(c *gin.Context, proxyPath, normalizedPath string, err error, start time.Time) {
+	switch {
+	case errors.Is(err, errProxyPathNotAllowed):
+		s.log.Sugar().Warnw("oidc_proxy_path_not_whitelisted", "path", proxyPath, "normalized", normalizedPath)
+		recordOIDCProxyFailure("path_not_allowed", start)
+		c.JSON(http.StatusForbidden, gin.H{"error": errProxyPathNotAllowed.Error()})
+	case errors.Is(err, errProxyPathSuspicious):
+		s.log.Sugar().Warnw("oidc_proxy_suspicious_pattern", "path", proxyPath)
+		recordOIDCProxyFailure("suspicious_pattern", start)
+		c.JSON(http.StatusForbidden, gin.H{"error": errProxyPathSuspicious.Error()})
+	case errors.Is(err, errProxyPathMalformed):
+		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "normalized", normalizedPath, "error", err)
+		recordOIDCProxyFailure("malformed_path", start)
+		c.JSON(http.StatusBadRequest, gin.H{"error": errProxyPathMalformed.Error()})
+	case errors.Is(err, errProxyPathAbsolute):
+		s.log.Sugar().Warnw("oidc_proxy_absolute_url_detected", "path", proxyPath)
+		recordOIDCProxyFailure("absolute_url_detected", start)
+		c.JSON(http.StatusForbidden, gin.H{"error": errProxyPathAbsolute.Error()})
+	case errors.Is(err, errURLResolutionAttack):
+		s.log.Sugar().Warnw("oidc_proxy_url_resolution_attack", "originalPath", proxyPath)
+		recordOIDCProxyFailure("url_resolution_attack", start)
+		c.JSON(http.StatusForbidden, gin.H{"error": errURLResolutionAttack.Error()})
+	default:
+		s.log.Sugar().Errorw("oidc_proxy_unknown_path_error", "path", proxyPath, "error", err)
+		recordOIDCProxyFailure("path_error", start)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path"})
+	}
+}
+
+func (s *Server) handleOIDCProxyAuthorityError(c *gin.Context, headerValue string, err error, start time.Time) {
+	switch {
+	case errors.Is(err, errInvalidAuthorityHeader):
+		s.log.Sugar().Warnw("oidc_proxy_invalid_authority_header", "customAuthority", headerValue, "error", err)
+		recordOIDCProxyFailure("invalid_authority_header", start)
+		c.JSON(http.StatusBadRequest, gin.H{"error": errInvalidAuthorityHeader.Error()})
+	case errors.Is(err, errUnknownOIDCAuthority):
+		s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", headerValue)
+		recordOIDCProxyFailure("unknown_authority", start)
+		c.JSON(http.StatusForbidden, gin.H{"error": errUnknownOIDCAuthority.Error()})
+	default:
+		s.log.Sugar().Errorw("oidc_proxy_authority_error", "customAuthority", headerValue, "error", err)
+		recordOIDCProxyFailure("authority_error", start)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid authority header"})
+	}
+}
+
+const (
+	tlsModeHTTP     = "http"
+	tlsModeSystemCA = "system_ca"
+	tlsModeCustomCA = "custom_ca"
+	tlsModeInsecure = "insecure_skip_verify"
+)
+
+func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) {
+	transport := &http.Transport{}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+
+	if !requiresTLS {
+		recordOIDCProxyTLSMode(tlsModeHTTP)
+		return client, nil
+	}
+
+	s.idpMutex.RLock()
+	idpCfg := s.idpConfig
+	s.idpMutex.RUnlock()
+	if idpCfg == nil {
+		return nil, fmt.Errorf("identity provider not loaded")
+	}
+
+	mode := tlsModeSystemCA
+	var tlsConfig *tls.Config
+
+	switch {
+	case idpCfg.CertificateAuthority != "":
+		roots := x509.NewCertPool()
+		if ok := roots.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority)); !ok {
+			return nil, fmt.Errorf("failed to parse certificateAuthority for IDP %s", idpCfg.Name)
+		}
+		tlsConfig = &tls.Config{RootCAs: roots}
+		mode = tlsModeCustomCA
+	case idpCfg.InsecureSkipVerify, idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify:
+		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+		mode = tlsModeInsecure
+	}
+
+	if tlsConfig != nil {
+		transport.TLSClientConfig = tlsConfig
+	}
+
+	recordOIDCProxyTLSMode(mode)
+	return client, nil
+}
+
+func recordOIDCProxyTLSMode(mode string) {
+	modes := []string{tlsModeHTTP, tlsModeSystemCA, tlsModeCustomCA, tlsModeInsecure}
+	for _, candidate := range modes {
+		value := 0.0
+		if candidate == mode {
+			value = 1
+		}
+		metrics.OIDCProxyTLSMode.WithLabelValues(candidate).Set(value)
+	}
+}
+
+var errOIDCProxyReadBody = errors.New("oidc_proxy_read_body_error")
+
+func buildOIDCProxyHTTPRequest(c *gin.Context, target string) (*http.Request, error) {
+	method := http.MethodGet
+	var body io.Reader
+	if c.Request.Method == http.MethodPost {
+		method = http.MethodPost
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", errOIDCProxyReadBody, err)
+		}
+		body = bytes.NewReader(bodyBytes)
+	}
+	req, err := http.NewRequestWithContext(c.Request.Context(), method, target, body)
+	if err != nil {
+		return nil, err
+	}
+	if method == http.MethodPost {
+		if contentType := c.Request.Header.Get("Content-Type"); contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+	}
+	if accept := c.Request.Header.Get("Accept"); accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	return req, nil
+}
+
+func recordOIDCProxyFailure(metric string, start time.Time) {
+	metrics.OIDCProxyFailure.WithLabelValues("authority", metric).Inc()
+	metrics.APIEndpointErrors.WithLabelValues("handleOIDCProxy", metric).Inc()
+	metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
+}
+
+func recordOIDCProxySuccess(start time.Time) {
 	metrics.OIDCProxySuccess.WithLabelValues("authority").Inc()
 	metrics.APIEndpointDuration.WithLabelValues("handleOIDCProxy").Observe(time.Since(start).Seconds())
 }

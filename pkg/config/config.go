@@ -34,6 +34,9 @@ type IdentityProviderConfig struct {
 	// Loaded from spec.oidc.certificateAuthority
 	CertificateAuthority string
 
+	// InsecureSkipVerify allows skipping TLS verification for OIDC authority (testing only)
+	InsecureSkipVerify bool
+
 	// Other provider-specific fields (BaseURL for Keycloak, etc.)
 	Keycloak *KeycloakRuntimeConfig
 
@@ -71,6 +74,7 @@ type Server struct {
 	TLSCertFile    string   `yaml:"tlsCertFile"`
 	TLSKeyFile     string   `yaml:"tlsKeyFile"`
 	TrustedProxies []string `yaml:"trustedProxies"` // IPs/CIDRS to trust for X-Forwarded-For headers (e.g., ["10.0.0.0/8", "127.0.0.1"])
+	AllowedOrigins []string `yaml:"allowedOrigins"` // Explicit list of origins permitted for credentialed browser calls
 }
 
 type Kubernetes struct {

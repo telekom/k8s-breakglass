@@ -1,24 +1,16 @@
-import axios, { AxiosHeaders } from "axios";
+import type { AxiosInstance } from "axios";
 import { pushError } from "@/services/errors";
 
 import type AuthService from "@/services/auth";
+import { createAuthenticatedApiClient } from "@/services/httpClient";
 
 export default class BreakglassEscalationService {
-  private client = axios.create({
-    baseURL: "/api/",
-  });
+  private client: AxiosInstance;
   private auth: AuthService;
 
   constructor(auth: AuthService) {
     this.auth = auth;
-
-    this.client.interceptors.request.use(async (req) => {
-      if (!req.headers) {
-        req.headers = {} as AxiosHeaders;
-      }
-      req.headers["Authorization"] = `Bearer ${await this.auth.getAccessToken()}`;
-      return req;
-    });
+    this.client = createAuthenticatedApiClient(this.auth);
 
     this.client.interceptors.response.use(
       (resp) => resp,

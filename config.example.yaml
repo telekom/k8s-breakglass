@@ -2,6 +2,9 @@ server:
   listenAddress: :8080
   tlsCertFile: /some/file.crt # optional
   tlsKeyFile: /some/file.key # optional for https
+  allowedOrigins:
+    - https://breakglass.example.com
+    - https://admin.example.net
 frontend:
   baseURL: http://localhost:5173
   # Optional: brandingName controls the product name shown in the UI header and

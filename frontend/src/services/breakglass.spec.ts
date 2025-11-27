@@ -1,8 +1,8 @@
 import BreakglassService from "./breakglass";
-import axios from "axios";
+import { createAuthenticatedApiClient } from "@/services/httpClient";
 
-jest.mock("axios");
-const mockedAxios = axios as jest.Mocked<typeof axios>;
+jest.mock("@/services/httpClient");
+const mockedCreateClient = createAuthenticatedApiClient as jest.MockedFunction<typeof createAuthenticatedApiClient>;
 
 describe("BreakglassService", () => {
   const fakeAuth = { getAccessToken: async () => "fake-token" } as any;
@@ -17,7 +17,7 @@ describe("BreakglassService", () => {
         response: { use: jest.fn() },
       },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValue(mockClient);
+    mockedCreateClient.mockReturnValue(mockClient as any);
     service = new BreakglassService(fakeAuth);
   });
 
@@ -90,7 +90,7 @@ describe("BreakglassService", () => {
       get: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth2);
     mockClient2.post.mockResolvedValueOnce({ status: 201 });
 
@@ -109,7 +109,7 @@ describe("BreakglassService", () => {
       get: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient);
+    mockedCreateClient.mockReturnValueOnce(mockClient);
     const svc = new BreakglassService(fakeAuth);
     mockClient.post.mockResolvedValueOnce({ status: 201 });
 
@@ -129,7 +129,7 @@ describe("BreakglassService", () => {
       get: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient);
+    mockedCreateClient.mockReturnValueOnce(mockClient);
     const svc = new BreakglassService(fakeAuth);
     mockClient.post.mockResolvedValueOnce({ status: 201 });
 
@@ -153,7 +153,7 @@ describe("BreakglassService", () => {
       get: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient);
+    mockedCreateClient.mockReturnValueOnce(mockClient);
     const svc = new BreakglassService(fakeAuth);
     mockClient.post.mockResolvedValueOnce({ status: 201 });
 
@@ -171,7 +171,7 @@ describe("BreakglassService", () => {
       post: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -185,7 +185,7 @@ describe("BreakglassService", () => {
       post: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -199,7 +199,7 @@ describe("BreakglassService", () => {
       post: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -213,7 +213,7 @@ describe("BreakglassService", () => {
       post: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 
@@ -227,7 +227,7 @@ describe("BreakglassService", () => {
       post: jest.fn(),
       interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
-    (mockedAxios.create as jest.Mock).mockReturnValueOnce(mockClient2);
+    mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
     mockClient2.post.mockResolvedValueOnce({ status: 200 });
 

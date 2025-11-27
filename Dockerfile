@@ -39,6 +39,7 @@ WORKDIR /
 
 COPY --from=builder /workspace/breakglass .
 COPY --from=npm_builder /workspace/frontend/dist /frontend/dist
+COPY --from=builder /etc/ssl/certs/ /etc/ssl/certs/
 
 # Copy license files for compliance
 COPY LICENSES /licenses/

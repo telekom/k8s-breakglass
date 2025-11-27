@@ -106,14 +106,21 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 	}
 
 	// Configure TLS if needed (from IDP config)
-	if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
+	if idpCfg.CertificateAuthority != "" {
+		pool := x509.NewCertPool()
+		if ok := pool.AppendCertsFromPEM([]byte(idpCfg.CertificateAuthority)); !ok {
+			return nil, fmt.Errorf("could not parse CA certificate for IDP %s", idpCfg.Name)
+		}
+		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
+		options.Client = &http.Client{Transport: transport}
+	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
 		pool := x509.NewCertPool()
 		if ok := pool.AppendCertsFromPEM([]byte(idpCfg.Keycloak.CertificateAuthority)); !ok {
 			return nil, fmt.Errorf("could not parse CA certificate for IDP %s", idpCfg.Name)
 		}
 		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
 		options.Client = &http.Client{Transport: transport}
-	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify {
+	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
 		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 		options.Client = &http.Client{Transport: transport}
 		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)

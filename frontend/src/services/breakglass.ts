@@ -1,5 +1,6 @@
-import axios, { type AxiosRequestHeaders, type AxiosResponse } from "axios";
+import type { AxiosInstance, AxiosResponse } from "axios";
 import { handleAxiosError } from "@/services/logger";
+import { createAuthenticatedApiClient } from "@/services/httpClient";
 
 import type AuthService from "@/services/auth";
 import type { ActiveBreakglass, AvailableBreakglass, Breakglass, SessionCR } from "@/model/breakglass";
@@ -28,21 +29,12 @@ export default class BreakglassService {
       return [];
     }
   }
-  private client = axios.create({
-    baseURL: "/api",
-  });
+  private client: AxiosInstance;
   private auth: AuthService;
 
   constructor(auth: AuthService) {
     this.auth = auth;
-
-    this.client.interceptors.request.use(async (req) => {
-      if (!req.headers) {
-        req.headers = {} as AxiosRequestHeaders;
-      }
-      req.headers["Authorization"] = `Bearer ${await this.auth.getAccessToken()}`;
-      return req;
-    });
+    this.client = createAuthenticatedApiClient(this.auth);
 
     this.client.interceptors.response.use(
       (resp) => resp,
