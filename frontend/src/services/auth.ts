@@ -26,7 +26,7 @@ const DEFAULT_MOCK_PROFILE: MockProfile = {
 
 const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   "production-keycloak": {
-    email: "maximilian.rink@telekom.de",
+    email: "mock.keycloak.user@breakglass.dev",
     displayName: "Production Keycloak (Mock)",
     groups: ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"],
   },
@@ -36,12 +36,12 @@ const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
     groups: ["partner-devops", "external-approvers"],
   },
   "sandbox-keycloak": {
-    email: "sandbox.engineer@telekom.de",
+    email: "sandbox.engineer@breakglass.dev",
     displayName: "Sandbox Keycloak (Mock)",
     groups: ["sandbox-admin", "sandbox-approvers"],
   },
   "legacy-ldap": {
-    email: "legacy.user@telekom.de",
+    email: "legacy.user@breakglass.dev",
     displayName: "Legacy LDAP (Mock)",
     groups: ["legacy-ops"],
   },
@@ -211,7 +211,9 @@ function safeBtoa(value: string): string {
       return globalAny.Buffer.from(value, "binary").toString("base64");
     }
   }
-  throw new Error("Base64 encoding not supported in this environment");
+  throw new Error(
+    "Base64 encoding not supported in this environment. Provide a browser with 'btoa' or Node.js with 'Buffer' support.",
+  );
 }
 
 function base64UrlEncodeString(value: string): string {

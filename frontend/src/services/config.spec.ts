@@ -91,4 +91,25 @@ describe("Config service", () => {
 
     expect(config.uiFlavour).toBe("oss");
   });
+
+  it("clears stored override when reset tokens are provided", async () => {
+    mockedGetIdentityProvider.mockResolvedValue({
+      type: "Keycloak",
+      clientID: "ui",
+      keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
+    } as any);
+    mockedExtractOIDC.mockReturnValue({
+      oidcAuthority: "https://keycloak.example.com/realms/schiff",
+      oidcClientID: "ui",
+    });
+    mockedAxios.get.mockResolvedValue({ data: { frontend: { uiFlavour: "telekom" } } });
+
+    window.localStorage.setItem("k8sBreakglassUiFlavourOverride", "oss");
+    window.history.replaceState({}, "", "http://localhost/?flavour=reset");
+
+    const config = await getConfig();
+
+    expect(config.uiFlavour).toBe("telekom");
+    expect(window.localStorage.getItem("k8sBreakglassUiFlavourOverride")).toBeNull();
+  });
 });

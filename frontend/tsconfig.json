@@ -5,9 +5,6 @@
     "src/**/*",
     "src/**/*.vue",
     "src/**/*.test.ts",
-    "src/components/AutoLogoutWarning.vue",
-    "src/services/auth.ts",
-    "src/keys.ts",
     "tests/unit/**/*.spec.ts"
   ],
   "compilerOptions": {

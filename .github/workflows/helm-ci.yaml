@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Installing kustomize ${KUSTOMIZE_VERSION}"
-          ARCHIVE="kustomize_${KUSTOMIZE_VERSION#v}_linux_amd64.tar.gz"
+          ARCHIVE="kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
           curl -L "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/${ARCHIVE}" -o "${ARCHIVE}"
           tar -xzf "${ARCHIVE}"
           sudo mv kustomize /usr/local/bin/kustomize

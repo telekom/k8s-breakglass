@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 
-export const CURRENT_USER_EMAIL = "maximilian.rink@telekom.de";
-export const PARTNER_USER_EMAIL = "contractor@partner.example.com";
+export const CURRENT_USER_EMAIL = "mock.user@breakglass.dev";
+export const PARTNER_USER_EMAIL = "partner.user@breakglass.dev";
 export const MOCK_APPROVER_GROUPS = ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"];
 
 const buildGroupRange = (prefix, count) =>
@@ -135,7 +135,7 @@ export const breakglassEscalations = [
       },
       approvers: {
         groups: ["security-leads"],
-        users: ["lead.oncall@telekom.de"],
+        users: ["lead.oncall@breakglass.dev"],
       },
       escalatedGroup: "platform-superuser",
       maxValidFor: "1h30m0s",
@@ -211,7 +211,7 @@ function baseSession({
   expiresInMinutes = 120,
   requestReason = "Hotfix rollout",
   approverGroups = MOCK_APPROVER_GROUPS,
-  approvers = [CURRENT_USER_EMAIL, "backup.approver@telekom.de"],
+  approvers = [CURRENT_USER_EMAIL, "backup.approver@breakglass.dev"],
   approvedBy = [],
   approvalReason,
   scheduledStartTime,
@@ -457,7 +457,7 @@ const permutationSessions = [
     group: "edge-breakglass",
     state: "Pending",
     user: PARTNER_USER_EMAIL,
-    approvers: ["approver.partner@telekom.de"],
+    approvers: ["approver.partner@breakglass.dev"],
     approvedBy: [],
     metadataLabels: {
       "breakglass.telekom.com/approver-groups": "partner-ops,partner-oncall",
@@ -515,7 +515,9 @@ const stressSessions = LARGE_REQUESTER_STACK.map((group, index) => {
     requestReason: index % 2 === 0 ? `Stress reason ${index + 1}` : undefined,
     approverGroups: buildGroupRange(`stress-approver-${index + 1}`, (index % 12) + 1),
     approvers:
-      index % 2 === 0 ? [CURRENT_USER_EMAIL, "approver.secondary@telekom.de"] : ["approver.secondary@telekom.de"],
+      index % 2 === 0
+        ? [CURRENT_USER_EMAIL, "approver.secondary@breakglass.dev"]
+        : ["approver.secondary@breakglass.dev"],
     approvedBy: state === "Approved" ? [CURRENT_USER_EMAIL] : [],
     approvalReason,
     identityProviderName,
@@ -563,7 +565,11 @@ function parseStates(raw) {
 function parseScaleHint(value) {
   if (value === undefined) return 0;
   const parsed = parseInt(String(value), 10);
-  return Number.isNaN(parsed) ? 0 : Math.max(parsed, 0);
+  if (Number.isNaN(parsed)) {
+    console.warn("[mock-api] Invalid scale hint value:", value);
+    return 0;
+  }
+  return Math.max(parsed, 0);
 }
 
 function generateScaleDataset(count) {
@@ -582,7 +588,7 @@ function generateScaleDataset(count) {
       metadataLabels: {
         "breakglass.telekom.com/approver-groups": buildGroupRange("scale-label", (idx % 3) + 1).join(","),
       },
-      approvers: idx % 2 === 0 ? [CURRENT_USER_EMAIL, "scale.oncall@telekom.de"] : ["scale.oncall@telekom.de"],
+      approvers: idx % 2 === 0 ? [CURRENT_USER_EMAIL, "scale.oncall@breakglass.dev"] : ["scale.oncall@breakglass.dev"],
       approvedBy: state === "Approved" ? [CURRENT_USER_EMAIL] : [],
     });
   });

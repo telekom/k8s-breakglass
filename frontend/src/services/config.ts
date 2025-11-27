@@ -115,8 +115,6 @@ function readBrowserFlavourOverride(): string | undefined {
   }
 }
 
-const resolveFlavourOverride = readBrowserFlavourOverride;
-
 // Supports both legacy flat shape { oidcAuthority, oidcClientID }
 // and new nested shape { frontend: { oidcAuthority, oidcClientID, uiFlavour }, authorizationServer: {...} }
 export default async function getConfig(): Promise<Config> {
@@ -186,7 +184,7 @@ export default async function getConfig(): Promise<Config> {
     uiFlavour: resolved.uiFlavour,
   };
 
-  const flavourOverride = resolveFlavourOverride();
+  const flavourOverride = readBrowserFlavourOverride();
   if (flavourOverride) {
     finalConfig.uiFlavour = flavourOverride;
   }

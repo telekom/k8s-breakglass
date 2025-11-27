@@ -1,5 +1,18 @@
+jest.mock("@/services/multiIDP", () => ({
+  getMultiIDPConfig: jest.fn(),
+}));
+
+jest.mock("@/services/logger", () => ({
+  info: jest.fn(),
+  error: jest.fn(),
+}));
+
 import AuthService, { useUser, AuthRedirect, AuthSilentRedirect } from "./auth";
 import { User } from "oidc-client-ts";
+import { getMultiIDPConfig } from "@/services/multiIDP";
+
+const mockedGetMultiIDPConfig = getMultiIDPConfig as jest.MockedFunction<typeof getMultiIDPConfig>;
+const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
 
 describe("AuthService", () => {
   let authService: AuthService;
@@ -10,6 +23,9 @@ describe("AuthService", () => {
       oidcClientID: "test-client",
     };
     authService = new AuthService(mockConfig);
+    mockedGetMultiIDPConfig.mockReset();
+    sessionStorage.clear();
+    localStorage.clear();
   });
 
   describe("Constructor", () => {
@@ -180,6 +196,129 @@ describe("AuthService", () => {
       await authService.login(state);
       expect(signinSpy).toHaveBeenCalledWith({ state });
     });
+
+    it("initiates IDP-specific login when config contains OIDC credentials", async () => {
+      const idpName = "corp";
+      mockedGetMultiIDPConfig.mockResolvedValue({
+        identityProviders: [
+          {
+            name: idpName,
+            displayName: "Corporate",
+            issuer: "https://corp",
+            enabled: true,
+            oidcAuthority: "https://direct.corp",
+            oidcClientID: "corp-ui",
+          },
+        ],
+        escalationIDPMapping: {},
+      } as any);
+
+      const fakeManager = { signinRedirect: jest.fn().mockResolvedValue(undefined), settings: {} } as any;
+      const managerSpy = jest.spyOn(authService as any, "getOrCreateUserManagerForIDP").mockReturnValue(fakeManager);
+
+      await authService.login({ path: "/secure", idpName });
+
+      expect(fakeManager.signinRedirect).toHaveBeenCalledWith({ state: { path: "/secure", idpName } });
+      expect(sessionStorage.getItem("oidc_idp_name")).toBe(idpName);
+      expect(sessionStorage.getItem("oidc_direct_authority")).toBe("https://direct.corp");
+      expect(authService.getIdentityProviderName()).toBe(idpName);
+
+      managerSpy.mockRestore();
+    });
+
+    it("falls back to default manager when IDP is unknown or misconfigured", async () => {
+      mockedGetMultiIDPConfig.mockResolvedValue({ identityProviders: [], escalationIDPMapping: {} });
+      const defaultSignin = jest.spyOn(authService.userManager, "signinRedirect").mockResolvedValue(undefined);
+
+      await authService.login({ path: "/secure", idpName: "missing" });
+      expect(defaultSignin).toHaveBeenCalledWith({ state: { path: "/secure", idpName: "missing" } });
+
+      mockedGetMultiIDPConfig.mockResolvedValue({
+        identityProviders: [{ name: "corp", displayName: "corp", issuer: "https://corp", enabled: true }],
+        escalationIDPMapping: {},
+      } as any);
+      await authService.login({ path: "/secure", idpName: "corp" });
+      expect(defaultSignin).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("persistent session preference", () => {
+    it("enables persistent mode and reinitializes the manager", () => {
+      const reinitSpy = jest.spyOn(authService as any, "reinitializeDefaultManager").mockImplementation(() => {});
+
+      authService.setPersistentSessionEnabled(true);
+
+      expect(localStorage.getItem(TOKEN_PERSISTENCE_KEY)).toBe("persistent");
+      expect(reinitSpy).toHaveBeenCalledTimes(1);
+      reinitSpy.mockRestore();
+    });
+
+    it("toggles back to session mode only when preference changes", () => {
+      localStorage.setItem(TOKEN_PERSISTENCE_KEY, "persistent");
+      const reinitSpy = jest.spyOn(authService as any, "reinitializeDefaultManager").mockImplementation(() => {});
+
+      authService.setPersistentSessionEnabled(false);
+
+      expect(localStorage.getItem(TOKEN_PERSISTENCE_KEY)).toBe("session");
+      expect(reinitSpy).toHaveBeenCalledTimes(1);
+
+      authService.setPersistentSessionEnabled(false);
+      expect(reinitSpy).toHaveBeenCalledTimes(1);
+      reinitSpy.mockRestore();
+    });
+
+    it("reports whether persistent mode is enabled", () => {
+      expect(authService.isPersistentSessionEnabled()).toBe(false);
+      localStorage.setItem(TOKEN_PERSISTENCE_KEY, "persistent");
+      expect(authService.isPersistentSessionEnabled()).toBe(true);
+    });
+  });
+
+  describe("handleSigninCallback()", () => {
+    it("skips managers with authority mismatches and restores IDP context", async () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      const paramsSpy = jest.spyOn(globalThis, "URLSearchParams").mockImplementation(
+        () =>
+          ({
+            get: (key: string) => {
+              if (key === "iss") return "https://direct-other";
+              if (key === "state") return "STATE";
+              return null;
+            },
+          }) as any,
+      );
+
+      const mismatchError = new Error("authority mismatch: direct-other");
+      const failingManager = {
+        settings: { authority: "https://other", client_id: "other" },
+        signinCallback: jest.fn().mockRejectedValue(mismatchError),
+      };
+      const successManager = {
+        settings: { authority: "https://corp", client_id: "corp" },
+        signinCallback: jest.fn().mockResolvedValue({ state: { idpName: "corp" } }),
+      };
+
+      (authService as any).idpManagers = new Map([
+        ["other", { manager: failingManager as any, directAuthority: "https://direct-other" }],
+        ["corp", { manager: successManager as any, directAuthority: "https://direct-corp" }],
+      ]);
+      (authService as any).userManager = {
+        settings: { authority: "https://default", client_id: "default" },
+        signinCallback: jest.fn().mockResolvedValue(null),
+        events: { addUserLoaded: jest.fn() },
+      } as any;
+
+      const result = await authService.handleSigninCallback();
+
+      expect(failingManager.signinCallback).toHaveBeenCalled();
+      expect(successManager.signinCallback).toHaveBeenCalled();
+      expect(result).toEqual({ state: { idpName: "corp" } });
+      expect(authService.getIdentityProviderName()).toBe("corp");
+      expect(sessionStorage.getItem("oidc_idp_name")).toBeNull();
+      expect(sessionStorage.getItem("oidc_direct_authority")).toBe("https://direct-corp");
+
+      paramsSpy.mockRestore();
+    });
   });
 
   describe("logout()", () => {
@@ -209,6 +348,46 @@ describe("AuthService", () => {
   describe("AuthSilentRedirect constant", () => {
     it("should be defined", () => {
       expect(AuthSilentRedirect).toBe("/auth/silent-renew");
+    });
+  });
+
+  describe("mock authentication mode", () => {
+    let mockAuthService: AuthService;
+    const baseConfig = {
+      oidcAuthority: "https://example.com/auth",
+      oidcClientID: "mock-client",
+    };
+
+    beforeEach(() => {
+      sessionStorage.clear();
+      localStorage.clear();
+      mockAuthService = new AuthService(baseConfig as any, { mock: true });
+    });
+
+    it("performs mock login and exposes synthetic token/email", async () => {
+      await mockAuthService.login({ path: "/pending", idpName: "production-keycloak" });
+
+      const user = await mockAuthService.getUser();
+      expect(user?.profile?.email).toBe("mock.keycloak.user@breakglass.dev");
+      const token = await mockAuthService.getAccessToken();
+      expect(token?.split(".")[2]).toBe("bW9jay1zaWduYXR1cmU");
+      expect(await mockAuthService.getUserEmail()).toBe("mock.keycloak.user@breakglass.dev");
+      expect(mockAuthService.getIdentityProviderName()).toBe("production-keycloak");
+    });
+
+    it("clears mock session on logout", async () => {
+      await mockAuthService.login();
+      await mockAuthService.logout();
+
+      expect(await mockAuthService.getUser()).toBeNull();
+      expect(await mockAuthService.getAccessToken()).toBe("");
+      expect(await mockAuthService.getUserEmail()).toBe("");
+    });
+
+    it("returns the mock user when handling callbacks", async () => {
+      await mockAuthService.login({ path: "/pending", idpName: "production-keycloak" });
+      const result = await mockAuthService.handleSigninCallback();
+      expect(result?.profile?.email).toBe("mock.keycloak.user@breakglass.dev");
     });
   });
 });
