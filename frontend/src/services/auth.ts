@@ -17,6 +17,13 @@ type IDPManagerContext = {
   directAuthority?: string;
 };
 
+type UserManagerSettingsWithFetch = UserManagerSettings & {
+  fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+};
+
+// MemoryStorage implements the Storage interface for SSR/tests when browser storage is unavailable.
+// Note: key iteration preserves insertion order (Map semantics), which differs from the browser's
+// implementation where ordering is user agent defined.
 class MemoryStorage implements Storage {
   private store = new Map<string, string>();
 
@@ -76,19 +83,23 @@ function getOIDCStorage(): Storage {
 
 /**
  * Set the current direct authority for the active OIDC session.
- * The value is read by oidc-client-ts via the extraHeaders hook so we can scope
- * X-OIDC-Authority injection to the proxy requests without touching window.fetch.
+ * The value is read by the custom fetch hook so we can scope
+ * X-OIDC-Authority injection to the proxy requests without touching window.fetch globally.
  * Stored in sessionStorage to survive page reloads during OAuth redirects.
  */
 function setCurrentDirectAuthority(authority: string | undefined) {
+  if (!isBrowser || typeof window.sessionStorage === "undefined") {
+    return;
+  }
   console.debug("[AuthService] Setting current direct authority for header injection:", {
     newAuthority: authority,
     previousAuthority: getCurrentDirectAuthority(),
   });
+  const storage = window.sessionStorage;
   if (authority) {
-    sessionStorage.setItem(DIRECT_AUTHORITY_STORAGE_KEY, authority);
+    storage.setItem(DIRECT_AUTHORITY_STORAGE_KEY, authority);
   } else {
-    sessionStorage.removeItem(DIRECT_AUTHORITY_STORAGE_KEY);
+    storage.removeItem(DIRECT_AUTHORITY_STORAGE_KEY);
   }
 }
 
@@ -97,7 +108,10 @@ function setCurrentDirectAuthority(authority: string | undefined) {
  * This survives page reloads during OAuth redirect flow
  */
 function getCurrentDirectAuthority(): string | undefined {
-  return sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
+  if (!isBrowser || typeof window.sessionStorage === "undefined") {
+    return undefined;
+  }
+  return window.sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
 }
 
 // Direct oidc-client logs into our logger
@@ -114,6 +128,15 @@ export const AuthSilentRedirect = "/auth/silent-renew";
 export interface State {
   path: string;
   idpName?: string;
+}
+
+function resolveState(state?: State): State {
+  const fallbackPath = isBrowser ? window.location.pathname || "/" : "/";
+  if (!state) {
+    return { path: fallbackPath };
+  }
+  const path = state.path && state.path.trim().length > 0 ? state.path : fallbackPath;
+  return { ...state, path };
 }
 
 const user = ref<User>();
@@ -187,7 +210,7 @@ export default class AuthService {
           console.error("[AuthService] IDP not found in config:", state.idpName);
           logError("AuthService", "IDP not found", state.idpName);
           // Fall back to default UserManager
-          return this.userManager.signinRedirect({ state });
+          return this.userManager.signinRedirect({ state: resolveState(state) });
         }
 
         console.debug("[AuthService] Found IDP config:", {
@@ -206,7 +229,7 @@ export default class AuthService {
           console.error("[AuthService] IDP missing OIDC configuration", idpConfig);
           logError("AuthService", "IDP missing OIDC config", idpConfig);
           // Fall back to default UserManager
-          return this.userManager.signinRedirect({ state });
+          return this.userManager.signinRedirect({ state: resolveState(state) });
         }
 
         // IMPORTANT: Use the proxy authority path for browser requests, not the direct Keycloak URL
@@ -244,9 +267,9 @@ export default class AuthService {
           directAuthority,
         });
 
-        const defaultState: State = { path: isBrowser ? window.location.pathname || "/" : "/" };
+        const baseState = resolveState(state);
         const redirectedState: State = {
-          ...(state || defaultState),
+          ...baseState,
           idpName: state.idpName,
         };
 
@@ -255,7 +278,7 @@ export default class AuthService {
         console.error("[AuthService] Error getting IDP config:", err);
         logError("AuthService", "Error getting IDP config", err);
         // Fall back to default UserManager
-        return this.userManager.signinRedirect({ state });
+        return this.userManager.signinRedirect({ state: resolveState(state) });
       }
     }
 
@@ -265,7 +288,7 @@ export default class AuthService {
     }
     // Clear any previously set direct authority for default login
     setCurrentDirectAuthority(undefined);
-    return this.userManager.signinRedirect({ state });
+    return this.userManager.signinRedirect({ state: resolveState(state) });
   }
 
   public getIdentityProviderName(): string | undefined {
@@ -456,7 +479,7 @@ export default class AuthService {
   }
 
   private buildUserManager(authority: string, clientID: string): UserManager {
-    const settings: UserManagerSettings = {
+    const settings: UserManagerSettingsWithFetch = {
       userStore: new WebStorageStateStore({ store: getOIDCStorage() }),
       authority,
       client_id: clientID,
@@ -468,9 +491,18 @@ export default class AuthService {
       filterProtocolClaims: true,
       automaticSilentRenew: true,
       accessTokenExpiringNotificationTimeInSeconds: 60,
-      extraHeaders: {
-        "X-OIDC-Authority": () => getCurrentDirectAuthority() || "",
-      },
+    };
+
+    settings.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? undefined);
+      const directAuthority = getCurrentDirectAuthority();
+      if (directAuthority) {
+        headers.set("X-OIDC-Authority", directAuthority);
+      } else {
+        headers.delete("X-OIDC-Authority");
+      }
+      const nextInit: RequestInit = { ...init, headers };
+      return fetch(input, nextInit);
     };
 
     return new UserManager(settings);

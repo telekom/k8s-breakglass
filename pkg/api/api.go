@@ -66,18 +66,21 @@ var defaultAllowedOrigins = []string{
 }
 
 var allowedOIDCProxyResponseHeaders = map[string]struct{}{
-	"Cache-Control":          {},
-	"Content-Encoding":       {},
-	"Content-Language":       {},
-	"Content-Length":         {},
-	"Content-Type":           {},
-	"Date":                   {},
-	"ETag":                   {},
-	"Expires":                {},
-	"Last-Modified":          {},
-	"Pragma":                 {},
-	"WWW-Authenticate":       {},
-	"X-Content-Type-Options": {},
+	"Cache-Control":               {},
+	"Content-Encoding":            {},
+	"Content-Language":            {},
+	"Content-Length":              {},
+	"Content-Type":                {},
+	"Date":                        {},
+	"ETag":                        {},
+	"Expires":                     {},
+	"Last-Modified":               {},
+	"Pragma":                      {},
+	"WWW-Authenticate":            {},
+	"X-Content-Type-Options":      {},
+	"Vary":                        {},
+	"Access-Control-Allow-Origin": {},
+	"Strict-Transport-Security":   {},
 }
 
 var oidcProxyTLSModeState struct {
@@ -168,6 +171,11 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	engine.Use(func(c *gin.Context) {
 		if len(allowedOriginSet) == 0 {
+			c.Next()
+			return
+		}
+
+		if c.Request.Method == http.MethodOptions {
 			c.Next()
 			return
 		}
@@ -769,6 +777,10 @@ func (s *Server) handleOIDCProxyPathError(c *gin.Context, proxyPath, normalizedP
 		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "normalized", normalizedPath, "error", err)
 		recordOIDCProxyFailure("malformed_path", start)
 		c.JSON(http.StatusBadRequest, gin.H{"error": errProxyPathMalformed.Error()})
+	case errors.Is(err, errProxyAuthorityMissing):
+		s.log.Sugar().Errorw("oidc_proxy_missing_authority_base", "path", proxyPath)
+		recordOIDCProxyFailure("missing_authority", start)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errProxyAuthorityMissing.Error()})
 	case errors.Is(err, errProxyPathAbsolute):
 		s.log.Sugar().Warnw("oidc_proxy_absolute_url_detected", "path", proxyPath)
 		recordOIDCProxyFailure("absolute_url_detected", start)
@@ -838,6 +850,15 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 	case idpCfg.InsecureSkipVerify, idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify:
 		tlsConfig = &tls.Config{InsecureSkipVerify: true}
 		mode = tlsModeInsecure
+	default:
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load system CA pool: %w", err)
+		}
+		if roots == nil {
+			roots = x509.NewCertPool()
+		}
+		tlsConfig = &tls.Config{RootCAs: roots}
 	}
 
 	if tlsConfig != nil {
@@ -850,21 +871,18 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 
 func recordOIDCProxyTLSMode(mode string) {
 	oidcProxyTLSModeState.Lock()
-	if oidcProxyTLSModeState.current == mode {
+	prev := oidcProxyTLSModeState.current
+	if prev == mode {
 		oidcProxyTLSModeState.Unlock()
 		return
 	}
 	oidcProxyTLSModeState.current = mode
 	oidcProxyTLSModeState.Unlock()
 
-	modes := []string{tlsModeHTTP, tlsModeSystemCA, tlsModeCustomCA, tlsModeInsecure}
-	for _, candidate := range modes {
-		value := 0.0
-		if candidate == mode {
-			value = 1
-		}
-		metrics.OIDCProxyTLSMode.WithLabelValues(candidate).Set(value)
+	if prev != "" {
+		metrics.OIDCProxyTLSMode.WithLabelValues(prev).Set(0)
 	}
+	metrics.OIDCProxyTLSMode.WithLabelValues(mode).Set(1)
 }
 
 var errOIDCProxyReadBody = errors.New("oidc_proxy_read_body_error")

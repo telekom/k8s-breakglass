@@ -29,12 +29,18 @@ var (
 	errProxyPathSuspicious    = errors.New("invalid proxy path: absolute URLs and path traversal not allowed")
 	errProxyPathMalformed     = errors.New("invalid proxy path: malformed")
 	errProxyPathAbsolute      = errors.New("invalid proxy path: must be relative")
+	errProxyAuthorityMissing  = errors.New("invalid proxy path: OIDC authority not configured")
 	errInvalidAuthorityHeader = errors.New("invalid X-OIDC-Authority header")
 	errUnknownOIDCAuthority   = errors.New("unknown OIDC authority")
 	errURLResolutionAttack    = errors.New("invalid proxy path: resolved to different host")
 )
 
 func normalizeProxyPath(raw string) string {
+	if parsed, err := url.Parse(raw); err == nil {
+		if path := parsed.EscapedPath(); path != "" {
+			return path
+		}
+	}
 	normalized := raw
 	if idx := strings.Index(normalized, "?"); idx != -1 {
 		normalized = normalized[:idx]
@@ -83,8 +89,19 @@ func hasSuspiciousOIDCProxyPattern(path string) bool {
 }
 
 func hasEncodedTraversal(path string) bool {
-	lower := strings.ToLower(path)
-	return strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c") || strings.Contains(lower, "%2e")
+	candidate := path
+	for i := 0; i < 3; i++ {
+		lower := strings.ToLower(candidate)
+		if strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c") || strings.Contains(lower, "%2e") || strings.Contains(lower, "../") || strings.Contains(lower, "..\\") {
+			return true
+		}
+		decoded, err := url.QueryUnescape(candidate)
+		if err != nil || decoded == candidate {
+			break
+		}
+		candidate = decoded
+	}
+	return false
 }
 
 func cloneURL(u *url.URL) *url.URL {
@@ -97,7 +114,7 @@ func cloneURL(u *url.URL) *url.URL {
 
 func buildOIDCProxyTargetURL(base *url.URL, normalizedPath, proxyPath string) (*url.URL, error) {
 	if base == nil {
-		return nil, errProxyPathMalformed
+		return nil, errProxyAuthorityMissing
 	}
 	baseCopy := cloneURL(base)
 	if baseCopy.Path != "" {

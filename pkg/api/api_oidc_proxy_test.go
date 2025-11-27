@@ -138,6 +138,7 @@ func TestValidateOIDCProxyPath(t *testing.T) {
 		{"rejects disallowed prefix", "/not-allowed", false},
 		{"rejects suspicious absolute", "http://evil", false},
 		{"rejects encoded traversal", "/protocol/openid-connect/%2e%2e/%2e%2e/admin", false},
+		{"rejects double encoded traversal", "/protocol/openid-connect/%252e%252e/%252e%252e/admin", false},
 	}
 
 	for _, tt := range tests {
@@ -815,7 +816,8 @@ func TestNewOIDCProxyHTTPClientTLSModes(t *testing.T) {
 		client, err := server.newOIDCProxyHTTPClient(true)
 		require.NoError(t, err)
 		transport := client.Transport.(*http.Transport)
-		assert.Nil(t, transport.TLSClientConfig)
+		require.NotNil(t, transport.TLSClientConfig)
+		require.NotNil(t, transport.TLSClientConfig.RootCAs)
 	})
 
 	t.Run("allows insecure flag explicitly", func(t *testing.T) {

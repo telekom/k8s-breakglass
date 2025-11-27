@@ -384,6 +384,9 @@ func init() {
 	prometheus.MustRegister(OIDCProxyDuration)
 	prometheus.MustRegister(OIDCProxyPathValidationFailure)
 	prometheus.MustRegister(OIDCProxyTLSMode)
+	for _, mode := range []string{"http", "system_ca", "custom_ca", "insecure_skip_verify"} {
+		OIDCProxyTLSMode.WithLabelValues(mode).Set(0)
+	}
 
 	// Register session-IDP association metrics
 	prometheus.MustRegister(SessionCreatedWithIDP)

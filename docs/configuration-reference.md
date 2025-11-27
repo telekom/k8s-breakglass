@@ -113,6 +113,7 @@ server:
 - These origins must include scheme + host (and optional port); paths are ignored.
 - Requests whose `Origin` header is not on this list are rejected before hitting any handler—even if the CORS middleware is bypassed.
 - When left empty, the server falls back to a safe set of localhost origins plus the configured `frontend.baseURL` for developer convenience.
+- **Important:** If you specify custom `allowedOrigins`, the frontend base URL is *not* auto-included. Add the UI origin explicitly whenever you override this list.
 
 ---
 

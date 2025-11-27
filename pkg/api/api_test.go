@@ -326,6 +326,55 @@ func TestServer_getIdentityProvider_AllProviderTypes(t *testing.T) {
 	}
 }
 
+func TestOriginValidationMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+	cfg := config.Config{
+		Server: config.Server{
+			AllowedOrigins: []string{"https://allowed.example.com"},
+		},
+	}
+	server := NewServer(logger, cfg, true, &AuthHandler{})
+	server.gin.GET("/api/probe", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	server.gin.OPTIONS("/api/probe", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	makeRequest := func(method, origin string) *httptest.ResponseRecorder {
+		req, err := http.NewRequest(method, "/api/probe", nil)
+		require.NoError(t, err)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		server.gin.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("allows configured origin", func(t *testing.T) {
+		resp := makeRequest(http.MethodGet, "https://allowed.example.com")
+		require.Equal(t, http.StatusOK, resp.Code)
+	})
+
+	t.Run("blocks disallowed origin", func(t *testing.T) {
+		resp := makeRequest(http.MethodGet, "https://evil.example.com")
+		require.Equal(t, http.StatusForbidden, resp.Code)
+	})
+
+	t.Run("skips when origin header missing", func(t *testing.T) {
+		resp := makeRequest(http.MethodGet, "")
+		require.Equal(t, http.StatusOK, resp.Code)
+	})
+
+	t.Run("skips validation for OPTIONS preflight", func(t *testing.T) {
+		resp := makeRequest(http.MethodOptions, "https://evil.example.com")
+		require.Equal(t, http.StatusForbidden, resp.Code)
+		require.Empty(t, resp.Body.String(), "response should come from CORS middleware, not origin validator")
+	})
+}
+
 func TestServer_RegisterAll(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	logger := zaptest.NewLogger(t)
