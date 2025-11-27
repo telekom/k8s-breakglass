@@ -1,38 +1,18 @@
-import axios, { AxiosHeaders } from "axios";
+import type { AxiosInstance } from "axios";
 import { handleAxiosError } from "@/services/logger";
+import { createAuthenticatedApiClient } from "@/services/httpClient";
 
 import type AuthService from "@/services/auth";
 import type { ClusterAccessReview } from "@/model/cluster_access";
 import type { BreakglassSessionRequest } from "@/model/breakglassSession";
 
 export default class BreakglassSessionService {
-  private client = axios.create({
-    baseURL: "/api",
-  });
+  private client: AxiosInstance;
   private auth: AuthService;
 
   constructor(auth: AuthService) {
     this.auth = auth;
-
-    this.client.interceptors.request.use(async (req) => {
-      if (!req.headers) {
-        req.headers = {} as AxiosHeaders;
-      }
-      const token = await this.auth.getAccessToken();
-      req.headers["Authorization"] = `Bearer ${token}`;
-      // Dev-only: surface Authorization header in console for debugging when VUE_APP_DEV_TOKEN_LOG is set
-      try {
-        // Use a window-scoped flag for dev logging to avoid bundler/node type issues
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        if (typeof window !== "undefined" && (window.__DEV_TOKEN_LOG === true || window.__DEV_TOKEN_LOG === "true")) {
-          console.debug("[BreakglassSessionService] Authorization header:", req.headers["Authorization"]);
-        }
-      } catch {
-        // ignore in non-browser or hardened environments
-      }
-      return req;
-    });
+    this.client = createAuthenticatedApiClient(this.auth, { enableDevTokenLogging: true });
 
     this.client.interceptors.response.use(
       (resp) => resp,

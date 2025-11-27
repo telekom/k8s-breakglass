@@ -277,6 +277,10 @@ var (
 		Name: "breakglass_oidc_proxy_path_validation_failure_total",
 		Help: "Total OIDC proxy path validation failures",
 	}, []string{"reason"})
+	OIDCProxyTLSMode = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_oidc_proxy_tls_mode",
+		Help: "Current TLS mode for the OIDC proxy",
+	}, []string{"mode"})
 
 	// Session-IDP Association metrics
 	SessionCreatedWithIDP = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -379,6 +383,10 @@ func init() {
 	prometheus.MustRegister(OIDCProxyFailure)
 	prometheus.MustRegister(OIDCProxyDuration)
 	prometheus.MustRegister(OIDCProxyPathValidationFailure)
+	prometheus.MustRegister(OIDCProxyTLSMode)
+	for _, mode := range []string{"http", "system_ca", "custom_ca", "insecure_skip_verify"} {
+		OIDCProxyTLSMode.WithLabelValues(mode).Set(0)
+	}
 
 	// Register session-IDP association metrics
 	prometheus.MustRegister(SessionCreatedWithIDP)

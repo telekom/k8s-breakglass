@@ -91,6 +91,32 @@ Path to TLS private key file for HTTPS.
 
 ---
 
+#### `allowedOrigins`
+
+Explicit list of browser origins allowed to make credentialed API requests (CORS).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `[]string` |
+| **Default** | Local development origins (e.g. `https://localhost:8443`) |
+| **Example** | `https://breakglass.example.com`, `https://admin.example.net` |
+
+```yaml
+server:
+  allowedOrigins:
+    - https://breakglass.example.com
+    - https://admin.example.net
+```
+
+**Notes:**
+
+- These origins must include scheme + host (and optional port); paths are ignored.
+- Requests whose `Origin` header is not on this list are rejected before hitting any handler—even if the CORS middleware is bypassed.
+- When left empty, the server falls back to a safe set of localhost origins plus the configured `frontend.baseURL` for developer convenience.
+- **Important:** If you specify custom `allowedOrigins`, the frontend base URL is *not* auto-included. Add the UI origin explicitly whenever you override this list.
+
+---
+
 ### `frontend`
 
 Frontend UI configuration.
@@ -111,6 +137,7 @@ frontend:
 ```
 
 Used for:
+
 - OIDC redirect URIs
 - Links in email notifications
 - Frontend JavaScript API calls
@@ -133,6 +160,7 @@ frontend:
 ```
 
 When set, displayed in:
+
 - Page title (`<title>`)
 - Header/navbar
 - Email subjects
@@ -249,6 +277,7 @@ kubernetes:
 **Purpose**: Normalizes group names across different OIDC providers.
 
 **Example**:
+
 - OIDC provider returns: `oidc:site-reliability-engineers`
 - After prefix stripping: `site-reliability-engineers`
 - Matched against: BreakglassEscalation `allowed.groups: ["site-reliability-engineers"]`
@@ -332,6 +361,7 @@ Breakglass loads configuration in this order:
 4. **Use defaults** for unset values
 
 **Priority** (highest to lowest):
+
 1. CLI flags
 2. Environment variables
 3. Config file
@@ -347,7 +377,7 @@ Breakglass validates configuration on startup:
 
 **If validation fails**: Controller exits with error message.
 
-```
+```text
 Fatal error: IdentityProvider validation failed: no IdentityProvider resources found
 ```
 
@@ -397,44 +427,48 @@ spec:
 
 ### "Configuration file not found"
 
-```
+```text
 Error loading config: open config.yaml: no such file or directory
 ```
 
 **Solutions**:
+
 1. Check file exists: `ls -la config.yaml`
 2. Use absolute path: `--config-path=/etc/breakglass/config.yaml`
 3. Set environment variable: `export BREAKGLASS_CONFIG_PATH=/etc/breakglass/config.yaml`
 
 ### "Required field missing"
 
-```
+```text
 Fatal error: missing required configuration field 'frontend.identityProviderName'
 ```
 
 **Solutions**:
+
 1. Add missing field to config.yaml
 2. Verify IdentityProvider Kubernetes resource exists
 3. Check field name spelling (case-sensitive)
 
 ### "OIDC provider unreachable"
 
-```
+```text
 Error validating OIDC configuration: context deadline exceeded
 ```
 
 **Solutions**:
+
 1. Verify `authorizationserver.url` is correct and reachable
 2. Check network connectivity to OIDC provider
 3. Verify TLS certificates if using HTTPS
 
 ### "Email sending fails"
 
-```
+```text
 Error sending email: connection refused
 ```
 
 **Solutions**:
+
 1. Verify SMTP server `host` and `port` are correct
 2. Check firewall allows outbound SMTP
 3. Test with `telnet host port`

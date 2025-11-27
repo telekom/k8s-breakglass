@@ -580,7 +580,7 @@ onMounted(fetchPendingApprovals);
       >
         This field is required.
       </p>
-      <div class="modal-actions">
+      <div class="modal-actions" slot="footer">
         <scale-button :disabled="approving !== null" @click="confirmApprove">Confirm Approve</scale-button>
         <scale-button variant="danger" :disabled="approving !== null" @click="confirmReject">Reject</scale-button>
         <scale-button variant="secondary" @click="closeApproveModal">Cancel</scale-button>

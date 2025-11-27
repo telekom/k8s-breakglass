@@ -1,5 +1,6 @@
-import axios, { type AxiosRequestHeaders, type AxiosResponse } from "axios";
+import type { AxiosInstance, AxiosResponse } from "axios";
 import { handleAxiosError } from "@/services/logger";
+import { createAuthenticatedApiClient } from "@/services/httpClient";
 
 import type AuthService from "@/services/auth";
 import type { ActiveBreakglass, AvailableBreakglass, Breakglass, SessionCR } from "@/model/breakglass";
@@ -28,21 +29,12 @@ export default class BreakglassService {
       return [];
     }
   }
-  private client = axios.create({
-    baseURL: "/api",
-  });
+  private client: AxiosInstance;
   private auth: AuthService;
 
   constructor(auth: AuthService) {
     this.auth = auth;
-
-    this.client.interceptors.request.use(async (req) => {
-      if (!req.headers) {
-        req.headers = {} as AxiosRequestHeaders;
-      }
-      req.headers["Authorization"] = `Bearer ${await this.auth.getAccessToken()}`;
-      return req;
-    });
+    this.client = createAuthenticatedApiClient(this.auth);
 
     this.client.interceptors.response.use(
       (resp) => resp,
@@ -259,20 +251,29 @@ export default class BreakglassService {
   }
 
   public async fetchHistoricalSessions(): Promise<ActiveBreakglass[]> {
-    const response = await this.client.get("/breakglassSessions", {
-      params: { state: "rejected,withdrawn", mine: true, approver: false },
-    });
-    const all = Array.isArray(response.data) ? response.data : [];
-    return all.map((ses: any) => ({
-      name: ses?.metadata?.name || "",
-      group: ses?.spec?.grantedGroup || "",
-      expiry: ses?.status?.expiresAt ? new Date(ses.status.expiresAt).getTime() / 1000 : 0,
-      cluster: ses?.spec?.cluster || "",
-      state: ses?.status?.state || "Unknown", // Use canonical state from backend
-      started: ses?.status?.startedAt || ses?.metadata?.creationTimestamp || "",
-      ended: ses?.status?.endedAt || ses?.status?.expiresAt || "",
-      reasonEnded: ses?.status?.reasonEnded || "",
-    }));
+    try {
+      const response = await this.client.get("/breakglassSessions", {
+        params: { state: "rejected,withdrawn", mine: true, approver: false },
+      });
+      const all = Array.isArray(response.data) ? response.data : [];
+      return all.map((ses: any) => ({
+        name: ses?.metadata?.name || "",
+        group: ses?.spec?.grantedGroup || "",
+        expiry: ses?.status?.expiresAt ? new Date(ses.status.expiresAt).getTime() / 1000 : 0,
+        cluster: ses?.spec?.cluster || "",
+        state: ses?.status?.state || "Unknown", // Use canonical state from backend
+        started: ses?.status?.startedAt || ses?.metadata?.creationTimestamp || "",
+        ended: ses?.status?.endedAt || ses?.status?.expiresAt || "",
+        reasonEnded: ses?.status?.reasonEnded || "",
+      }));
+    } catch (e) {
+      handleAxiosError(
+        "BreakglassService.fetchHistoricalSessions",
+        e,
+        "Unable to load historical sessions. Showing recent activity only.",
+      );
+      return [];
+    }
   }
 
   // Fetch sessions belonging to the current user (approved + expired/timed-out + historical)

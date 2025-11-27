@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
 )
@@ -323,6 +324,55 @@ func TestServer_getIdentityProvider_AllProviderTypes(t *testing.T) {
 			assert.Equal(t, "test-client", response.ClientID)
 		})
 	}
+}
+
+func TestOriginValidationMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+	cfg := config.Config{
+		Server: config.Server{
+			AllowedOrigins: []string{"https://allowed.example.com"},
+		},
+	}
+	server := NewServer(logger, cfg, true, &AuthHandler{})
+	server.gin.GET("/api/probe", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	server.gin.OPTIONS("/api/probe", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	makeRequest := func(method, origin string) *httptest.ResponseRecorder {
+		req, err := http.NewRequest(method, "/api/probe", nil)
+		require.NoError(t, err)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		server.gin.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("allows configured origin", func(t *testing.T) {
+		resp := makeRequest(http.MethodGet, "https://allowed.example.com")
+		require.Equal(t, http.StatusOK, resp.Code)
+	})
+
+	t.Run("blocks disallowed origin", func(t *testing.T) {
+		resp := makeRequest(http.MethodGet, "https://evil.example.com")
+		require.Equal(t, http.StatusForbidden, resp.Code)
+	})
+
+	t.Run("skips when origin header missing", func(t *testing.T) {
+		resp := makeRequest(http.MethodGet, "")
+		require.Equal(t, http.StatusOK, resp.Code)
+	})
+
+	t.Run("skips validation for OPTIONS preflight", func(t *testing.T) {
+		resp := makeRequest(http.MethodOptions, "https://evil.example.com")
+		require.Equal(t, http.StatusForbidden, resp.Code)
+		require.Empty(t, resp.Body.String(), "response should come from CORS middleware, not origin validator")
+	})
 }
 
 func TestServer_RegisterAll(t *testing.T) {
@@ -668,4 +718,68 @@ func TestSetIdentityProvider_NilKeycloak(t *testing.T) {
 	assert.NotNil(t, server.idpConfig)
 	assert.NotNil(t, server.oidcAuthority)
 	assert.Equal(t, "https://auth.example.com", server.oidcAuthority.String())
+}
+
+func TestNormalizeOrigin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"strips_default_https_port", "HTTPS://Example.com:443/", "https://example.com"},
+		{"strips_default_http_port", "http://Example.com:80", "http://example.com"},
+		{"preserves_non_default_port", "http://example.com:8080", "http://example.com:8080"},
+		{"handles_ipv6_default_port", "https://[2001:db8::1]:443", "https://[2001:db8::1]"},
+		{"returns_trimmed_when_invalid", "example.com", "example.com"},
+		{"empty_string", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, normalizeOrigin(tt.input))
+		})
+	}
+}
+
+func TestBuildAllowedOrigins(t *testing.T) {
+	t.Run("custom server origins do not auto-include frontend", func(t *testing.T) {
+		cfg := config.Config{
+			Server: config.Server{
+				AllowedOrigins: []string{
+					"https://Example.com",
+					"https://example.com:443/",
+					"https://example.com:4443",
+					"http://localhost:5173",
+				},
+			},
+			Frontend: config.Frontend{BaseURL: "https://ui.example.com/"},
+		}
+
+		origins := buildAllowedOrigins(cfg)
+		require.NotEmpty(t, origins)
+		seen := make(map[string]struct{}, len(origins))
+		for _, origin := range origins {
+			seen[origin] = struct{}{}
+		}
+		require.Len(t, seen, len(origins), "expected unique origins")
+		require.Contains(t, origins, "https://example.com")
+		require.Contains(t, origins, "https://example.com:4443")
+		require.NotContains(t, origins, "https://ui.example.com")
+	})
+
+	t.Run("defaults include frontend base URL when provided", func(t *testing.T) {
+		cfg := config.Config{
+			Frontend: config.Frontend{BaseURL: "https://ui.example.com"},
+		}
+		origins := buildAllowedOrigins(cfg)
+		expected := append([]string{}, defaultAllowedOrigins...)
+		expected = append(expected, "https://ui.example.com")
+		require.ElementsMatch(t, expected, origins)
+	})
+
+	t.Run("empty config uses localhost defaults", func(t *testing.T) {
+		defaults := buildAllowedOrigins(config.Config{})
+		require.ElementsMatch(t, defaultAllowedOrigins, defaults)
+	})
 }

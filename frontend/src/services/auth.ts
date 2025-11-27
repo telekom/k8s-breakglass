@@ -8,21 +8,98 @@ import { info as logInfo, error as logError } from "@/services/logger";
 // Store the current direct authority for header injection during OIDC requests
 // We use sessionStorage so it persists across page reloads during OAuth redirect flow
 const DIRECT_AUTHORITY_STORAGE_KEY = "oidc_direct_authority";
+const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
+export type TokenPersistenceMode = "session" | "persistent";
+const isBrowser = typeof window !== "undefined";
+
+type IDPManagerContext = {
+  manager: UserManager;
+  directAuthority?: string;
+};
+
+type UserManagerSettingsWithFetch = UserManagerSettings & {
+  fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+};
+
+// MemoryStorage implements the Storage interface for SSR/tests when browser storage is unavailable.
+// Note: key iteration preserves insertion order (Map semantics), which differs from the browser's
+// implementation where ordering is user agent defined.
+class MemoryStorage implements Storage {
+  private store = new Map<string, string>();
+
+  get length(): number {
+    return this.store.size;
+  }
+
+  clear(): void {
+    this.store.clear();
+  }
+
+  getItem(key: string): string | null {
+    return this.store.has(key) ? this.store.get(key)! : null;
+  }
+
+  key(index: number): string | null {
+    const keys = Array.from(this.store.keys());
+    return keys[index] ?? null;
+  }
+
+  removeItem(key: string): void {
+    this.store.delete(key);
+  }
+
+  setItem(key: string, value: string): void {
+    this.store.set(key, value);
+  }
+}
+
+const fallbackStorage: Storage = new MemoryStorage();
+
+function getTokenPersistenceMode(): TokenPersistenceMode {
+  if (!isBrowser || typeof window.localStorage === "undefined") {
+    return "session";
+  }
+  const stored = window.localStorage.getItem(TOKEN_PERSISTENCE_KEY);
+  return stored === "persistent" ? "persistent" : "session";
+}
+
+function setTokenPersistencePreference(mode: TokenPersistenceMode) {
+  if (!isBrowser || typeof window.localStorage === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(TOKEN_PERSISTENCE_KEY, mode);
+}
+
+function getOIDCStorage(): Storage {
+  if (!isBrowser) {
+    return fallbackStorage;
+  }
+  const prefersPersistent = getTokenPersistenceMode() === "persistent";
+  if (prefersPersistent && typeof window.localStorage !== "undefined") {
+    return window.localStorage;
+  }
+  return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
+}
 
 /**
- * Set the current direct authority for the active OIDC session
- * This is used to inject the X-OIDC-Authority header in fetch requests
- * Stored in sessionStorage to survive page reloads during OAuth redirects
+ * Set the current direct authority for the active OIDC session.
+ * The value is read by the custom fetch hook so we can scope
+ * X-OIDC-Authority injection to the proxy requests without touching window.fetch globally.
+ * Stored in sessionStorage to survive page reloads during OAuth redirects.
  */
 function setCurrentDirectAuthority(authority: string | undefined) {
+  if (!isBrowser || typeof window.sessionStorage === "undefined") {
+    return;
+  }
   console.debug("[AuthService] Setting current direct authority for header injection:", {
     newAuthority: authority,
     previousAuthority: getCurrentDirectAuthority(),
   });
+  const storage = window.sessionStorage;
   if (authority) {
-    sessionStorage.setItem(DIRECT_AUTHORITY_STORAGE_KEY, authority);
+    storage.setItem(DIRECT_AUTHORITY_STORAGE_KEY, authority);
   } else {
-    sessionStorage.removeItem(DIRECT_AUTHORITY_STORAGE_KEY);
+    storage.removeItem(DIRECT_AUTHORITY_STORAGE_KEY);
   }
 }
 
@@ -31,38 +108,10 @@ function setCurrentDirectAuthority(authority: string | undefined) {
  * This survives page reloads during OAuth redirect flow
  */
 function getCurrentDirectAuthority(): string | undefined {
-  return sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
-}
-
-// Wrap window.fetch to inject X-OIDC-Authority header for OIDC proxy requests.
-// This is necessary because oidc-client-ts makes internal fetch calls that we need to intercept.
-// The override is scoped to only OIDC proxy requests to minimize side effects.
-const hasWindowFetch = typeof window !== "undefined" && typeof window.fetch === "function";
-const originalFetch = hasWindowFetch ? window.fetch.bind(window) : null;
-if (hasWindowFetch && originalFetch) {
-  window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    const url = typeof input === "string" ? input : input.toString();
-    const directAuthority = getCurrentDirectAuthority();
-
-    // For OIDC proxy requests, inject the direct authority header
-    if (url.includes("/api/oidc/authority") && directAuthority) {
-      const headers = new Headers(init?.headers || {});
-      console.debug("[GlobalFetch] Injecting X-OIDC-Authority header for OIDC proxy request:", {
-        url,
-        directAuthority,
-      });
-      headers.set("X-OIDC-Authority", directAuthority);
-
-      const modifiedInit: RequestInit = {
-        ...init,
-        headers,
-      };
-
-      return originalFetch(url, modifiedInit);
-    }
-
-    return originalFetch(input, init);
-  } as any;
+  if (!isBrowser || typeof window.sessionStorage === "undefined") {
+    return undefined;
+  }
+  return window.sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
 }
 
 // Direct oidc-client logs into our logger
@@ -81,37 +130,32 @@ export interface State {
   idpName?: string;
 }
 
+function resolveState(state?: State): State {
+  const fallbackPath = isBrowser ? window.location.pathname || "/" : "/";
+  if (!state) {
+    return { path: fallbackPath };
+  }
+  const path = state.path && state.path.trim().length > 0 ? state.path : fallbackPath;
+  return { ...state, path };
+}
+
 const user = ref<User>();
 export const currentIDPName = ref<string | undefined>();
 
 export default class AuthService {
   public userManager: UserManager;
-  private userManagers: Map<string, UserManager> = new Map();
+  private idpManagers: Map<string, IDPManagerContext> = new Map();
   private currentIDPName: string | undefined;
+  private readonly baseURL: string;
+  private readonly baseConfig: Config;
 
   constructor(config: Config) {
-    const baseURL = `${window.location.protocol}//${window.location.host}`;
-    logInfo("AuthService", "baseURL", baseURL);
-    const settings: UserManagerSettings = {
-      userStore: new WebStorageStateStore({ store: window.localStorage }),
-      authority: config.oidcAuthority,
-      client_id: config.oidcClientID,
-      redirect_uri: baseURL + AuthRedirect,
-      silent_redirect_uri: baseURL + AuthSilentRedirect,
-      response_type: "code",
-      // 'groups' often not an allowed scope name; protocol mapper already adds groups to tokens
-      scope: "openid profile email",
-      post_logout_redirect_uri: baseURL,
-      filterProtocolClaims: true,
-      automaticSilentRenew: true,
-      accessTokenExpiringNotificationTimeInSeconds: 60,
-    };
+    this.baseConfig = config;
+    this.baseURL = isBrowser ? `${window.location.protocol}//${window.location.host}` : "";
+    logInfo("AuthService", "baseURL", this.baseURL);
 
-    this.userManager = new UserManager(settings);
-
-    this.userManager.events.addUserLoaded((loadedUser) => {
-      user.value = loadedUser;
-    });
+    this.userManager = this.buildUserManager(config.oidcAuthority, config.oidcClientID);
+    this.registerUserManagerEvents(this.userManager);
     this.userManager.getUser().then((u) => {
       if (u) {
         user.value = u;
@@ -119,69 +163,27 @@ export default class AuthService {
     });
   }
 
-  /**
-   * Create or get a UserManager for a specific IDP
-   * Used in multi-IDP mode to authenticate with the selected IDP
-   * @param authority The authority URL (proxy or direct) to use in OIDC settings
-   * @param clientID The OIDC client ID
-   * @param directAuthority Optional direct IDP authority URL for backend communication
-   */
-  private getOrCreateUserManager(authority: string, clientID: string, directAuthority?: string): UserManager {
-    // Include directAuthority in the cache key so different IDPs get different managers
-    // This is critical for multi-IDP: both may use proxy authority but route to different Keycloaks
-    const key = `${authority}:${clientID}:${directAuthority || "default"}`;
-    if (this.userManagers.has(key)) {
-      const existingManager = this.userManagers.get(key)!;
-      console.debug("[AuthService] Retrieved cached UserManager:", {
-        key,
-        authority,
-        directAuthority,
-      });
-      return existingManager;
+  private getOrCreateUserManagerForIDP(
+    idpName: string,
+    authority: string,
+    clientID: string,
+    directAuthority: string,
+  ): UserManager {
+    const existing = this.idpManagers.get(idpName);
+    if (existing) {
+      console.debug("[AuthService] Reusing cached UserManager for IDP:", { idpName, authority, directAuthority });
+      return existing.manager;
     }
 
-    const baseURL = `${window.location.protocol}//${window.location.host}`;
-    console.debug("[AuthService] Creating new UserManager:", {
-      key,
+    console.debug("[AuthService] Creating UserManager for IDP:", {
+      idpName,
       authority,
       clientID,
       directAuthority,
     });
-
-    const settings: UserManagerSettings = {
-      userStore: new WebStorageStateStore({ store: window.localStorage }),
-      authority,
-      client_id: clientID,
-      redirect_uri: baseURL + AuthRedirect,
-      silent_redirect_uri: baseURL + AuthSilentRedirect,
-      response_type: "code",
-      scope: "openid profile email",
-      post_logout_redirect_uri: baseURL,
-      filterProtocolClaims: true,
-      automaticSilentRenew: true,
-      accessTokenExpiringNotificationTimeInSeconds: 60,
-    };
-
-    const manager = new UserManager(settings);
-
-    // Store the direct authority as metadata for callback processing
-    if (directAuthority) {
-      (manager as any).directAuthority = directAuthority;
-      console.debug("[AuthService] Stored directAuthority in UserManager:", {
-        key,
-        directAuthority,
-      });
-    }
-
-    manager.events.addUserLoaded((loadedUser) => {
-      user.value = loadedUser;
-    });
-
-    this.userManagers.set(key, manager);
-    console.debug("[AuthService] Cached UserManager:", {
-      key,
-      totalManagers: this.userManagers.size,
-    });
+    const manager = this.buildUserManager(authority, clientID);
+    this.registerUserManagerEvents(manager);
+    this.idpManagers.set(idpName, { manager, directAuthority });
     return manager;
   }
 
@@ -208,7 +210,7 @@ export default class AuthService {
           console.error("[AuthService] IDP not found in config:", state.idpName);
           logError("AuthService", "IDP not found", state.idpName);
           // Fall back to default UserManager
-          return this.userManager.signinRedirect({ state });
+          return this.userManager.signinRedirect({ state: resolveState(state) });
         }
 
         console.debug("[AuthService] Found IDP config:", {
@@ -227,7 +229,7 @@ export default class AuthService {
           console.error("[AuthService] IDP missing OIDC configuration", idpConfig);
           logError("AuthService", "IDP missing OIDC config", idpConfig);
           // Fall back to default UserManager
-          return this.userManager.signinRedirect({ state });
+          return this.userManager.signinRedirect({ state: resolveState(state) });
         }
 
         // IMPORTANT: Use the proxy authority path for browser requests, not the direct Keycloak URL
@@ -249,7 +251,7 @@ export default class AuthService {
 
         // Get or create UserManager for this IDP with the proxy authority
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
-        const manager = this.getOrCreateUserManager(proxyAuthority, oidcClientID, directAuthority);
+  const manager = this.getOrCreateUserManagerForIDP(state.idpName, proxyAuthority, oidcClientID, directAuthority);
 
         console.debug("[AuthService] About to initiate signin redirect for IDP:", {
           idpName: state.idpName,
@@ -265,19 +267,28 @@ export default class AuthService {
           directAuthority,
         });
 
-        return manager.signinRedirect({ state });
+        const baseState = resolveState(state);
+        const redirectedState: State = {
+          ...baseState,
+          idpName: state.idpName,
+        };
+
+        return manager.signinRedirect({ state: redirectedState });
       } catch (err) {
         console.error("[AuthService] Error getting IDP config:", err);
         logError("AuthService", "Error getting IDP config", err);
         // Fall back to default UserManager
-        return this.userManager.signinRedirect({ state });
+        return this.userManager.signinRedirect({ state: resolveState(state) });
       }
     }
 
     console.debug("[AuthService] Logging in with default IDP (no specific IDP selected)");
+    if (isBrowser) {
+      sessionStorage.removeItem("oidc_idp_name");
+    }
     // Clear any previously set direct authority for default login
     setCurrentDirectAuthority(undefined);
-    return this.userManager.signinRedirect({ state });
+    return this.userManager.signinRedirect({ state: resolveState(state) });
   }
 
   public getIdentityProviderName(): string | undefined {
@@ -309,6 +320,19 @@ export default class AuthService {
     return email;
   }
 
+  public isPersistentSessionEnabled(): boolean {
+    return getTokenPersistenceMode() === "persistent";
+  }
+
+  public setPersistentSessionEnabled(enabled: boolean) {
+    const targetMode: TokenPersistenceMode = enabled ? "persistent" : "session";
+    if (targetMode === getTokenPersistenceMode()) {
+      return;
+    }
+    setTokenPersistencePreference(targetMode);
+    this.reinitializeDefaultManager();
+  }
+
   /**
    * Handle OIDC signin callback after redirect from authorization server
    * In multi-IDP scenarios, we use the 'iss' (issuer) parameter from the callback URL to identify
@@ -327,71 +351,63 @@ export default class AuthService {
       hasIssuer: !!issuerParam,
     });
 
-    // Build the list of managers to try, prioritizing by issuer match
-    let managers: UserManager[] = [];
+    const preferredIdpName = isBrowser ? sessionStorage.getItem("oidc_idp_name") || undefined : undefined;
+    const candidateManagers: Array<{ manager: UserManager; idpName?: string; directAuthority?: string }> = [];
+    const seenManagers = new Set<UserManager>();
 
-    // If we have an issuer in the callback, try to find a matching manager first
+    const pushCandidate = (idpName?: string, prioritize = false) => {
+      if (!idpName) {
+        return;
+      }
+      const ctx = this.idpManagers.get(idpName);
+      if (!ctx || seenManagers.has(ctx.manager)) {
+        return;
+      }
+      seenManagers.add(ctx.manager);
+      const entry = { manager: ctx.manager, idpName, directAuthority: ctx.directAuthority };
+      if (prioritize) {
+        candidateManagers.unshift(entry);
+      } else {
+        candidateManagers.push(entry);
+      }
+    };
+
     if (issuerParam) {
-      console.debug("[AuthService] Looking for manager matching issuer:", { issuerParam });
-
-      // Check all IDP-specific managers to find one with matching issuer/directAuthority
-      // Also look through the cache keys to find the IDP name
-      for (const [cacheKey, manager] of this.userManagers.entries()) {
-        const directAuthority = (manager as any).directAuthority;
-        if (directAuthority && directAuthority.startsWith(issuerParam)) {
-          console.debug("[AuthService] Found matching manager for issuer:", {
-            issuerParam,
-            directAuthority,
-            cacheKey,
-          });
-          managers.push(manager);
-
-          // Extract IDP name from cache key: format is "/api/oidc/authority:clientID:directAuthority"
-          // We can infer which IDP this is from the directAuthority
-          // Try to match it with known IDPs by checking our cache
-          for (const [, otherManager] of this.userManagers.entries()) {
-            const otherAuth = (otherManager as any).directAuthority;
-            if (otherAuth === directAuthority) {
-              // Found matching manager, now get its IDP name
-              // Unfortunately the cache key doesn't store the IDP name, but we can try to deduce it
-              // from the fact that this manager has this specific directAuthority
-              console.debug("[AuthService] Cache key for matched manager:", { cacheKey, directAuthority });
-            }
-          }
-          break; // Found the right one, use it first
+      for (const [idpName, ctx] of this.idpManagers.entries()) {
+        if (ctx.directAuthority && ctx.directAuthority.startsWith(issuerParam)) {
+          pushCandidate(idpName, true);
         }
       }
     }
 
-    // If we didn't find a specific match (or no issuer), try all managers
-    // Specific IDP managers first (with directAuthority), then default
-    if (managers.length === 0) {
-      const specificIDPManagers = Array.from(this.userManagers.values());
-      managers = [...specificIDPManagers, this.userManager];
-      console.debug("[AuthService] No issuer match found, trying all managers in order:", {
-        totalManagers: managers.length,
-        specificIDPCount: specificIDPManagers.length,
-        hasIssuer: !!issuerParam,
-      });
-    } else {
-      // Add fallback managers in case the issuer match fails
-      const specificIDPManagers = Array.from(this.userManagers.values()).filter((m) => managers.indexOf(m) === -1);
-      managers = [...managers, ...specificIDPManagers, this.userManager];
-      console.debug("[AuthService] Using issuer-matched manager with fallbacks:", {
-        totalManagers: managers.length,
-        issuerMatched: true,
-      });
+    pushCandidate(preferredIdpName);
+    pushCandidate(this.currentIDPName);
+
+    for (const idpName of this.idpManagers.keys()) {
+      pushCandidate(idpName);
     }
 
-    for (const manager of managers) {
+    if (!seenManagers.has(this.userManager)) {
+      candidateManagers.push({ manager: this.userManager });
+      seenManagers.add(this.userManager);
+    }
+
+    console.debug("[AuthService] Candidate managers for callback:", {
+      candidateCount: candidateManagers.length,
+      preferredIdpName,
+      issuerParam,
+    });
+
+    for (const candidate of candidateManagers) {
       try {
-        const directAuthority = (manager as any).directAuthority;
+        const directAuthority = candidate.directAuthority;
         console.debug("[AuthService] Attempting signin callback with manager", {
-          authority: manager.settings.authority,
-          client_id: manager.settings.client_id,
+          authority: candidate.manager.settings.authority,
+          client_id: candidate.manager.settings.client_id,
           hasDirectAuthority: !!directAuthority,
           directAuthority,
           issuerParam,
+          idpName: candidate.idpName,
         });
 
         // Set the direct authority for this manager so header injection works during callback
@@ -402,55 +418,37 @@ export default class AuthService {
           });
         }
 
-        const result = await manager.signinCallback();
+        const result = await candidate.manager.signinCallback();
         console.debug("[AuthService] Successfully processed signin callback with manager", {
-          authority: manager.settings.authority,
+          authority: candidate.manager.settings.authority,
           directAuthority,
         });
 
-        // Restore IDP name from the state if available
+        let restoredIdpName: string | undefined;
         if (result && result.state && typeof result.state === "object" && "idpName" in result.state) {
-          this.currentIDPName = (result.state as any).idpName;
-          currentIDPName.value = (result.state as any).idpName;
-          console.debug("[AuthService] Restored IDP name from state:", {
-            idpName: this.currentIDPName,
+          restoredIdpName = (result.state as any).idpName as string | undefined;
+          console.debug("[AuthService] Restored IDP name from state payload:", {
+            idpName: restoredIdpName,
             directAuthority,
           });
-        } else {
-          // Try to restore IDP name from sessionStorage (set before OAuth redirect)
-          const storedIdpName = sessionStorage.getItem("oidc_idp_name");
-          if (storedIdpName) {
-            this.currentIDPName = storedIdpName;
-            currentIDPName.value = storedIdpName;
-            console.debug("[AuthService] Restored IDP name from sessionStorage:", {
-              idpName: this.currentIDPName,
-              directAuthority,
-            });
-            sessionStorage.removeItem("oidc_idp_name");
-          } else if (directAuthority) {
-            // If IDP name not in state or storage, try to deduce from directAuthority
-            console.debug("[AuthService] No IDP name in state or storage, attempting to deduce from directAuthority:", {
-              directAuthority,
-            });
+        } else if (preferredIdpName) {
+          restoredIdpName = preferredIdpName;
+          console.debug("[AuthService] Restored IDP name from sessionStorage hint:", {
+            idpName: restoredIdpName,
+            directAuthority,
+          });
+        } else if (candidate.idpName) {
+          restoredIdpName = candidate.idpName;
+          console.debug("[AuthService] Using candidate IDP context for name:", {
+            idpName: restoredIdpName,
+            directAuthority,
+          });
+        }
 
-            // Try to fetch multi-IDP config and find which IDP has this directAuthority
-            try {
-              const config = await getMultiIDPConfig();
-              const matchedIdp = config?.identityProviders.find(
-                (idp) => (idp as any).oidcAuthority === directAuthority,
-              );
-              if (matchedIdp) {
-                this.currentIDPName = matchedIdp.name;
-                currentIDPName.value = matchedIdp.name;
-                console.debug("[AuthService] Deduced IDP name from directAuthority:", {
-                  idpName: this.currentIDPName,
-                  directAuthority,
-                });
-              }
-            } catch (err) {
-              console.debug("[AuthService] Could not deduce IDP name from directAuthority:", { err });
-            }
-          }
+        this.currentIDPName = restoredIdpName;
+        currentIDPName.value = restoredIdpName;
+        if (preferredIdpName && isBrowser) {
+          sessionStorage.removeItem("oidc_idp_name");
         }
 
         return result;
@@ -459,7 +457,7 @@ export default class AuthService {
         const errorMsg = String(error);
         if (errorMsg.includes("authority mismatch")) {
           console.debug("[AuthService] Authority mismatch with this manager, trying next", {
-            authority: manager.settings.authority,
+            authority: candidate.manager.settings.authority,
             error: errorMsg,
           });
           // Continue to next manager
@@ -467,7 +465,7 @@ export default class AuthService {
         } else {
           // This is a different error, re-throw it
           console.error("[AuthService] Non-authority-mismatch error during callback", {
-            authority: manager.settings.authority,
+            authority: candidate.manager.settings.authority,
             error,
           });
           throw error;
@@ -478,6 +476,55 @@ export default class AuthService {
     // If we get here, no manager worked
     console.error("[AuthService] No UserManager could process the signin callback");
     throw new Error("Failed to process signin callback: no matching UserManager found");
+  }
+
+  private buildUserManager(authority: string, clientID: string): UserManager {
+    const settings: UserManagerSettingsWithFetch = {
+      userStore: new WebStorageStateStore({ store: getOIDCStorage() }),
+      authority,
+      client_id: clientID,
+      redirect_uri: this.baseURL + AuthRedirect,
+      silent_redirect_uri: this.baseURL + AuthSilentRedirect,
+      response_type: "code",
+      scope: "openid profile email",
+      post_logout_redirect_uri: this.baseURL,
+      filterProtocolClaims: true,
+      automaticSilentRenew: true,
+      accessTokenExpiringNotificationTimeInSeconds: 60,
+    };
+
+    settings.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? undefined);
+      const directAuthority = getCurrentDirectAuthority();
+      if (directAuthority) {
+        headers.set("X-OIDC-Authority", directAuthority);
+      } else {
+        headers.delete("X-OIDC-Authority");
+      }
+      const nextInit: RequestInit = { ...init, headers };
+      return fetch(input, nextInit);
+    };
+
+    return new UserManager(settings);
+  }
+
+  private registerUserManagerEvents(manager: UserManager) {
+    manager.events.addUserLoaded((loadedUser) => {
+      user.value = loadedUser;
+    });
+  }
+
+  private reinitializeDefaultManager() {
+    this.idpManagers.clear();
+    this.userManager = this.buildUserManager(this.baseConfig.oidcAuthority, this.baseConfig.oidcClientID);
+    this.registerUserManagerEvents(this.userManager);
+    this.userManager.getUser().then((u) => {
+      if (u) {
+        user.value = u;
+      } else {
+        user.value = undefined;
+      }
+    });
   }
 }
 

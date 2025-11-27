@@ -192,7 +192,7 @@ function handleIDPButtonClick(idpName: string) {
           >
             {{ idp.displayName }}
             <span v-if="!idp.enabled"> (disabled)</span>
-            <span v-if="selectedIDPName === idp.name"> ✓</span>
+            <span v-if="selectedIDPName === idp.name" class="idp-button-check">✓</span>
           </scale-button>
         </div>
 
@@ -275,6 +275,12 @@ function handleIDPButtonClick(idpName: string) {
   margin: 0;
   font-size: 0.9rem;
   color: var(--telekom-color-text-info);
+}
+
+.idp-button-check {
+  margin-left: 0.5rem;
+  font-weight: 600;
+  display: inline-flex;
 }
 
 .warning {

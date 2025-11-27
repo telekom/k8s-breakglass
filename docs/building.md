@@ -117,6 +117,10 @@ The Dockerfile:
 3. Packages into final image
 4. Sets up health checks
 
+### TLS certificates inside the container
+
+The final stage uses `gcr.io/distroless/static:nonroot`, which expects trusted certificates in `/etc/ssl/certs/`. We explicitly copy `/etc/ssl/certs` from the builder stage into the distroless image to ensure the runtime trust store matches the Go toolchain that compiled the binary. This avoids TLS failures when the OIDC proxy dials external authorities. If you change base images, confirm that CA bundles remain at `/etc/ssl/certs/ca-certificates.crt` or update the copy instructions accordingly.
+
 ## Cross-Platform Builds
 
 Build for multiple architectures:
