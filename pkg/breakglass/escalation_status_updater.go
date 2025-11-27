@@ -437,7 +437,7 @@ func (u EscalationStatusUpdater) Start(ctx context.Context) {
 		log.Info("Escalation status updater waiting for leadership signal before starting...")
 		select {
 		case <-ctx.Done():
-			log.Infow("Escalation status updater stopping before acquiring leadership (context cancelled)")
+			log.Infow("Escalation status updater stopping before acquiring leadership (context canceled)")
 			return
 		case <-u.LeaderElected:
 			log.Info("Leadership acquired - starting escalation status updater")

@@ -18,30 +18,48 @@ type CleanupRoutine struct {
 
 const CleanupInterval = 5 * time.Minute
 
-func (cr CleanupRoutine) CleanupRoutine() {
+func (cr CleanupRoutine) CleanupRoutine(ctx context.Context) {
 	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
 	if cr.LeaderElected != nil {
 		cr.Log.Info("Cleanup routine waiting for leadership signal before starting...")
-		<-cr.LeaderElected
-		cr.Log.Info("Leadership acquired - starting cleanup routine")
-	}
-
-	for {
-		cr.Log.Info("Running breakglass session cleanup task")
-		// Activate scheduled sessions first (before expiry checks)
-		if cr.Manager != nil {
-			activator := NewScheduledSessionActivator(cr.Log, cr.Manager)
-			activator.ActivateScheduledSessions()
-
-			ctrl := &BreakglassSessionController{log: cr.Log, sessionManager: cr.Manager}
-			ctrl.ExpirePendingSessions()
-			// Expire approved sessions whose ExpiresAt has passed
-			ctrl.ExpireApprovedSessions()
+		select {
+		case <-ctx.Done():
+			cr.Log.Infow("Cert-controller's manager stopping before acquiring leadership (context cancelled)")
+			return
+		case <-cr.LeaderElected:
+			cr.Log.Info("Leadership acquired - starting cleanup routine")
 		}
-		cr.markCleanupExpiredSession(context.Background())
-		cr.Log.Info("Finished breakglass session cleanup task")
-		time.Sleep(CleanupInterval)
 	}
+
+	// run initial cleanup
+	cr.clean()
+
+	tick := time.Tick(CleanupInterval)
+	for {
+		select {
+		case <-ctx.Done():
+			cr.Log.Warnw("cleanup routine stopped (context cancelled)")
+			return
+		case <-tick:
+			cr.clean()
+		}
+	}
+}
+
+func (cr CleanupRoutine) clean() {
+	cr.Log.Info("Running breakglass session cleanup task")
+	// Activate scheduled sessions first (before expiry checks)
+	if cr.Manager != nil {
+		activator := NewScheduledSessionActivator(cr.Log, cr.Manager)
+		activator.ActivateScheduledSessions()
+
+		ctrl := &BreakglassSessionController{log: cr.Log, sessionManager: cr.Manager}
+		ctrl.ExpirePendingSessions()
+		// Expire approved sessions whose ExpiresAt has passed
+		ctrl.ExpireApprovedSessions()
+	}
+	cr.markCleanupExpiredSession(context.Background())
+	cr.Log.Info("Finished breakglass session cleanup task")
 }
 
 // Marks sessions that are expired and removes those that should no longer be stored.
