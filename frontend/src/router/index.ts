@@ -4,6 +4,7 @@ import BreakglassView from "@/views/BreakglassView.vue";
 import BreaglassSessionReviewView from "@/views/BreakglassSessionReview.vue";
 import PendingApprovalsView from "@/views/PendingApprovalsView.vue";
 import SessionBrowser from "@/views/SessionBrowser.vue";
+import NotFoundView from "@/views/NotFoundView.vue";
 
 import { createRouter, createWebHistory } from "vue-router";
 
@@ -35,6 +36,11 @@ const router = createRouter({
       path: "/sessions",
       name: "sessionBrowser",
       component: SessionBrowser,
+    },
+    {
+      path: "/:pathMatch(.*)*",
+      name: "notFound",
+      component: NotFoundView,
     },
   ],
 });

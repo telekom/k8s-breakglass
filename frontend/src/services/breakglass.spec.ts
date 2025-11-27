@@ -50,6 +50,14 @@ describe("BreakglassService", () => {
     );
   });
 
+  it("returns an empty list when historical sessions call fails", async () => {
+    mockClient.get.mockRejectedValueOnce(new Error("network issue"));
+
+    const sessions = await service.fetchHistoricalSessions();
+    expect(sessions).toEqual([]);
+    expect(mockClient.get).toHaveBeenCalledTimes(1);
+  });
+
   it("normalizes active sessions so getBreakglasses() can match them", async () => {
     // fetchAvailableEscalations -> returns one available escalation
     mockClient.get

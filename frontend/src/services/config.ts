@@ -2,6 +2,43 @@ import type Config from "@/model/config";
 import axios from "axios";
 import { error as logError } from "@/services/logger";
 import { getIdentityProvider, extractOIDCConfig } from "@/services/identityProvider";
+import { pushError } from "@/services/errors";
+
+const CONFIG_RETRY_ATTEMPTS = 3;
+const CONFIG_RETRY_BASE_DELAY_MS = 500;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchConfigWithRetry(): Promise<any> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= CONFIG_RETRY_ATTEMPTS; attempt++) {
+    try {
+      console.debug("[ConfigService] Fetching /api/config", { attempt, maxAttempts: CONFIG_RETRY_ATTEMPTS });
+      const res = await axios.get<any>("/api/config");
+      return res.data || {};
+    } catch (err) {
+      lastError = err;
+      const delay = CONFIG_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+      logError(
+        "ConfigService",
+        `Failed to fetch /api/config (attempt ${attempt}/${CONFIG_RETRY_ATTEMPTS})`,
+        err,
+      );
+      console.warn(
+        "[ConfigService] /api/config attempt failed, will retry if attempts remain",
+        attempt,
+        CONFIG_RETRY_ATTEMPTS,
+        err,
+      );
+      if (attempt < CONFIG_RETRY_ATTEMPTS) {
+        await sleep(delay);
+      }
+    }
+  }
+  throw lastError;
+}
 
 // Supports both legacy flat shape { oidcAuthority, oidcClientID }
 // and new nested shape { frontend: { oidcAuthority, oidcClientID, uiFlavour }, authorizationServer: {...} }
@@ -32,8 +69,15 @@ export default async function getConfig(): Promise<Config> {
 
   // Fall back to /api/config if IdentityProvider endpoint fails or returns invalid data
   console.debug("[ConfigService] Falling back to /api/config endpoint");
-  const res = await axios.get<any>("/api/config");
-  const data = res.data || {};
+  let data: any = {};
+  try {
+    data = await fetchConfigWithRetry();
+  } catch (err) {
+    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+    pushError("Failed to load controller configuration. Please refresh or contact an administrator.", status);
+    logError("ConfigService", "Exhausted retries for /api/config", err);
+    throw err;
+  }
   console.debug("[ConfigService] Received config from /api/config:", {
     hasFlatConfig: !!(data.oidcAuthority && data.oidcClientID),
     hasNestedConfig: !!(data.frontend?.oidcAuthority && data.frontend?.oidcClientID),
