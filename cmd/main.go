@@ -28,6 +28,7 @@ import (
 
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -405,6 +406,11 @@ func main() {
 		log.Fatalf("Error getting Kubernetes config: %v", err)
 	}
 
+	uncachedClient, err := client.New(restConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		log.Fatalf("Failed to create uncached Kubernetes client: %v", err)
+	}
+
 	reconcilerMgr, err := createReconcilerManager(restConfig, scheme, log,
 		metricsAddr, metricsSecure, metricsCertPath, metricsCertName, metricsCertKey,
 		probeAddr, enableHTTP2)
@@ -414,10 +420,10 @@ func main() {
 	indexer.RegisterCommonFieldIndexes(context.Background(), reconcilerMgr.GetFieldIndexer(), log)
 
 	kubeClient := reconcilerMgr.GetClient()
-	sessionManager := breakglass.NewSessionManagerWithClient(reconcilerMgr.GetClient())
+	sessionManager := breakglass.NewSessionManagerWithClient(kubeClient)
 
 	// Load IdentityProvider configuration for group sync
-	idpLoader := config.NewIdentityProviderLoader(kubeClient)
+	idpLoader := config.NewIdentityProviderLoader(uncachedClient)
 	idpLoader.WithLogger(log)
 
 	// Set up metrics recorder for conversion failures
@@ -467,7 +473,7 @@ func main() {
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
 	// Initialize MailProviderLoader and load default provider from cluster
-	mailProviderLoader := config.NewMailProviderLoader(escalationManager.Client).WithLogger(log)
+	mailProviderLoader := config.NewMailProviderLoader(uncachedClient).WithLogger(log)
 	var mailQueue *mail.Queue
 
 	defaultProvider, err := mailProviderLoader.GetDefaultMailProvider(ctx)

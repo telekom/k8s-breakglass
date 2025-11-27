@@ -861,9 +861,7 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		tlsConfig = &tls.Config{RootCAs: roots}
 	}
 
-	if tlsConfig != nil {
-		transport.TLSClientConfig = tlsConfig
-	}
+	transport.TLSClientConfig = tlsConfig
 
 	recordOIDCProxyTLSMode(mode)
 	return client, nil

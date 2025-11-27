@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
 )
 
 func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
@@ -399,6 +400,69 @@ func TestIdentityProviderLoader_ValidateIdentityProviderExists(t *testing.T) {
 	}
 }
 
+func TestIdentityProviderLoader_ValidateIdentityProviderExists_ManagerCacheNotStarted(t *testing.T) {
+	ctx := context.Background()
+	idp := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "primary"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Primary: true,
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "demo",
+			},
+		},
+	}
+	baseClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&idp).Build()
+	cacheClient := &cacheBlockingClient{Client: baseClient}
+	loader := NewIdentityProviderLoader(cacheClient)
+
+	err := loader.ValidateIdentityProviderExists(ctx)
+	if err == nil || !contains(err.Error(), "cache is not started") {
+		t.Fatalf("expected cache-not-started error, got %v", err)
+	}
+}
+
+func TestIdentityProviderLoader_ValidateIdentityProviderExists_ManagerCacheStarted(t *testing.T) {
+	ctx := context.Background()
+	idp := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "primary"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Primary: true,
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "demo",
+			},
+		},
+	}
+	baseClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&idp).Build()
+	cacheClient := &cacheBlockingClient{Client: baseClient}
+	cacheClient.StartCache()
+	loader := NewIdentityProviderLoader(cacheClient)
+
+	if err := loader.ValidateIdentityProviderExists(ctx); err != nil {
+		t.Fatalf("expected validation to succeed once cache started, got %v", err)
+	}
+}
+
+func TestIdentityProviderLoader_ValidateIdentityProviderExists_ListFailure(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	wrappedClient := &listErrorClient{
+		Client:  fakeClient,
+		listErr: fmt.Errorf("cache is not started"),
+	}
+
+	loader := NewIdentityProviderLoader(wrappedClient)
+	err := loader.ValidateIdentityProviderExists(context.Background())
+
+	if err == nil {
+		t.Fatal("expected error when list operation fails, got nil")
+	}
+
+	if !contains(err.Error(), "cache is not started") {
+		t.Fatalf("expected cache-not-started error, got %v", err)
+	}
+}
+
 // TestIdentityProviderLoader_CrossNamespaceSecrets tests loading secrets from different namespaces
 func TestIdentityProviderLoader_CrossNamespaceSecrets(t *testing.T) {
 	tests := []struct {
@@ -653,6 +717,48 @@ func TestIdentityProviderLoader_updateConversionFailureStatus(t *testing.T) {
 	// Ensure no panic when idp or error is nil
 	loader.updateConversionFailureStatus(ctx, nil, conversionErr)
 	loader.updateConversionFailureStatus(ctx, idp, nil)
+}
+
+type cacheBlockingClient struct {
+	client.Client
+	cacheStarted bool
+}
+
+func (c *cacheBlockingClient) StartCache() {
+	c.cacheStarted = true
+}
+
+func (c *cacheBlockingClient) ensureCacheStarted() error {
+	if !c.cacheStarted {
+		return fmt.Errorf("cache is not started")
+	}
+	return nil
+}
+
+func (c *cacheBlockingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if err := c.ensureCacheStarted(); err != nil {
+		return err
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func (c *cacheBlockingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if err := c.ensureCacheStarted(); err != nil {
+		return err
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+type listErrorClient struct {
+	client.Client
+	listErr error
+}
+
+func (c *listErrorClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if c.listErr != nil {
+		return c.listErr
+	}
+	return c.Client.List(ctx, list, opts...)
 }
 
 // Helper function to check if a string contains a substring
