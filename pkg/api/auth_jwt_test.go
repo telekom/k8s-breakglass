@@ -62,7 +62,7 @@ func TestAuthMiddleware_ExposesTokenAndRawClaims(t *testing.T) {
 	tokStr, err := tok.SignedString(priv)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("GET", "/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+tokStr)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -116,7 +116,6 @@ func TestAuthMiddleware_GroupNormalizationCases(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			router := gin.New()
 			router.Use(auth.Middleware())
@@ -136,7 +135,7 @@ func TestAuthMiddleware_GroupNormalizationCases(t *testing.T) {
 			tokStr, err := tok.SignedString(priv)
 			require.NoError(t, err)
 
-			req := httptest.NewRequest("GET", "/test", nil)
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
 			req.Header.Set("Authorization", "Bearer "+tokStr)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
@@ -215,7 +214,7 @@ func TestAuthMiddleware_JWKSUnreachable(t *testing.T) {
 	tokStr, err := tok.SignedString(privNew)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("GET", "/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+tokStr)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -263,14 +262,14 @@ func TestAuthMiddleware_NegativeTokenCases(t *testing.T) {
 	tokExp.Header["kid"] = kid
 	tokExpStr, err := tokExp.SignedString(priv)
 	require.NoError(t, err)
-	reqExp := httptest.NewRequest("GET", "/test", nil)
+	reqExp := httptest.NewRequest(http.MethodGet, "/test", nil)
 	reqExp.Header.Set("Authorization", "Bearer "+tokExpStr)
 	wExp := httptest.NewRecorder()
 	router.ServeHTTP(wExp, reqExp)
 	require.Equal(t, http.StatusUnauthorized, wExp.Code)
 
 	// 2) Malformed token (random string)
-	reqBad := httptest.NewRequest("GET", "/test", nil)
+	reqBad := httptest.NewRequest(http.MethodGet, "/test", nil)
 	reqBad.Header.Set("Authorization", "Bearer this-is-not-a-jwt")
 	wBad := httptest.NewRecorder()
 	router.ServeHTTP(wBad, reqBad)
@@ -282,7 +281,7 @@ func TestAuthMiddleware_NegativeTokenCases(t *testing.T) {
 	tokNoSub.Header["kid"] = kid
 	tokNoSubStr, err := tokNoSub.SignedString(priv)
 	require.NoError(t, err)
-	reqNoSub := httptest.NewRequest("GET", "/test", nil)
+	reqNoSub := httptest.NewRequest(http.MethodGet, "/test", nil)
 	reqNoSub.Header.Set("Authorization", "Bearer "+tokNoSubStr)
 	wNoSub := httptest.NewRecorder()
 	router.ServeHTTP(wNoSub, reqNoSub)
@@ -384,7 +383,7 @@ func TestAuthMiddleware_ValidAndInvalidJWT(t *testing.T) {
 	}
 
 	// Valid token request
-	req := httptest.NewRequest("GET", "/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+tokStr)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -423,7 +422,7 @@ func TestAuthMiddleware_ValidAndInvalidJWT(t *testing.T) {
 	badStr, err := badTok.SignedString(badPriv)
 	require.NoError(t, err)
 
-	req2 := httptest.NewRequest("GET", "/test", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req2.Header.Set("Authorization", "Bearer "+badStr)
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
@@ -466,13 +465,13 @@ func TestAuthMiddleware_MissingOrWrongHeader(t *testing.T) {
 	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	// Missing header
-	req := httptest.NewRequest("GET", "/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 
 	// Wrong header (not Bearer)
-	req2 := httptest.NewRequest("GET", "/test", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req2.Header.Set("Authorization", "Basic abcdef")
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
@@ -546,7 +545,7 @@ func TestAuthMiddleware_RefreshOnMissingKid(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start the request in a goroutine so we can coordinate the refresh
-	req := httptest.NewRequest("GET", "/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+tokStr)
 	w := httptest.NewRecorder()
 

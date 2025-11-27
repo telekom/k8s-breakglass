@@ -22,6 +22,8 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestValidateCreate_MissingFields(t *testing.T) {
@@ -103,5 +105,111 @@ func TestBreakglassSessionValidateDelete(t *testing.T) {
 	warnings, err := bs.ValidateDelete(context.Background(), bs)
 	if err != nil || warnings != nil {
 		t.Fatalf("expected ValidateDelete to allow delete, warnings=%v err=%v", warnings, err)
+	}
+}
+
+func TestBreakglassSessionClusterConfigRefMissingIsAccepted(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	origClient := webhookClient
+	defer func() { webhookClient = origClient }()
+	webhookClient = client
+
+	session := &BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess", Namespace: "team-a"},
+		Spec: BreakglassSessionSpec{
+			Cluster:          "cluster1",
+			User:             "user@example.com",
+			GrantedGroup:     "team",
+			ClusterConfigRef: "cluster-a",
+		},
+	}
+
+	if _, err := session.ValidateCreate(context.Background(), session); err != nil {
+		t.Fatalf("expected webhook to accept missing clusterConfigRef, got %v", err)
+	}
+}
+
+func TestBreakglassSessionClusterConfigRefCrossNamespaceAccepted(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+	clusterConfig := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "team-b"},
+		Spec:       ClusterConfigSpec{KubeconfigSecretRef: SecretKeyReference{Name: "kc", Namespace: "system"}},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig).Build()
+	origClient := webhookClient
+	defer func() { webhookClient = origClient }()
+	webhookClient = client
+
+	session := &BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess", Namespace: "team-a"},
+		Spec: BreakglassSessionSpec{
+			Cluster:          "cluster1",
+			User:             "user@example.com",
+			GrantedGroup:     "team",
+			ClusterConfigRef: "cluster-a",
+		},
+	}
+
+	if _, err := session.ValidateCreate(context.Background(), session); err != nil {
+		t.Fatalf("expected webhook to accept cross-namespace clusterConfigRef, got %v", err)
+	}
+}
+
+func TestBreakglassSessionClusterConfigRefHappyPath(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+	clusterConfig := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "team-a"},
+		Spec:       ClusterConfigSpec{KubeconfigSecretRef: SecretKeyReference{Name: "kc", Namespace: "system"}},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig).Build()
+	origClient := webhookClient
+	defer func() { webhookClient = origClient }()
+	webhookClient = client
+
+	session := &BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess", Namespace: "team-a"},
+		Spec: BreakglassSessionSpec{
+			Cluster:          "cluster1",
+			User:             "user@example.com",
+			GrantedGroup:     "team",
+			ClusterConfigRef: "cluster-a",
+		},
+	}
+
+	if _, err := session.ValidateCreate(context.Background(), session); err != nil {
+		t.Fatalf("expected success when clusterConfigRef exists in namespace, got %v", err)
+	}
+}
+
+func TestBreakglassSessionDenyPolicyRefsValidationDeferred(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+	policy := &DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "policy-a"}}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	origClient := webhookClient
+	defer func() { webhookClient = origClient }()
+	webhookClient = client
+
+	session := &BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess", Namespace: "team-a"},
+		Spec: BreakglassSessionSpec{
+			Cluster:        "cluster1",
+			User:           "user@example.com",
+			GrantedGroup:   "team",
+			DenyPolicyRefs: []string{"policy-a"},
+		},
+	}
+
+	if _, err := session.ValidateCreate(context.Background(), session); err != nil {
+		t.Fatalf("expected success when denyPolicyRefs exist, got %v", err)
+	}
+
+	session.Spec.DenyPolicyRefs = []string{"missing"}
+	if _, err := session.ValidateCreate(context.Background(), session); err != nil {
+		t.Fatalf("expected webhook to accept missing denyPolicyRefs, got %v", err)
 	}
 }

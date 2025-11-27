@@ -41,6 +41,13 @@ func NewSessionManager(contextName string) (SessionManager, error) {
 	return SessionManager{c}, nil
 }
 
+// NewSessionManagerWithClient allows embedding an existing controller-runtime client (e.g., from a shared manager)
+// to avoid creating redundant rest.Config instances or duplicate caches. The provided client must already be
+// configured with the Breakglass scheme.
+func NewSessionManagerWithClient(c client.Client) SessionManager {
+	return SessionManager{Client: c}
+}
+
 func SessionSelector(name, username, cluster, group string) string {
 	selectors := []string{}
 
@@ -87,6 +94,29 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 		return bs, nil
 	} else {
 		zap.S().Debugw("Direct GET failed; falling back to list across namespaces", "name", name, "error", err.Error())
+	}
+
+	// Try cache-backed field index before falling back to selector-based listing
+	indexed := v1alpha1.BreakglassSessionList{}
+	if err := c.List(ctx, &indexed, client.MatchingFields{"metadata.name": name}); err == nil {
+		switch len(indexed.Items) {
+		case 0:
+			zap.S().Debugw("Field index lookup returned no sessions; falling back to selector", "name", name)
+		case 1:
+			found := indexed.Items[0]
+			zap.S().Infow("Fetched BreakglassSession by name (field index)", system.NamespacedFields(found.Name, found.Namespace)...)
+			return found, nil
+		default:
+			namespaces := make([]string, 0, len(indexed.Items))
+			for _, it := range indexed.Items {
+				namespaces = append(namespaces, it.Namespace)
+			}
+			msg := fmt.Sprintf("multiple BreakglassSessions with name %q found in namespaces: %s", name, strings.Join(namespaces, ","))
+			zap.S().Errorw("Ambiguous BreakglassSession name across namespaces (field index)", "name", name, "namespaces", namespaces)
+			return bs, errors.Errorf("%s", msg)
+		}
+	} else {
+		zap.S().Debugw("Field index lookup failed; falling back to selector", "name", name, "error", err.Error())
 	}
 
 	// Fallback: list across namespaces using a metadata.name field selector

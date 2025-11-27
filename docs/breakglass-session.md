@@ -179,6 +179,8 @@ Reference to a specific `ClusterConfig` if different from parsing `spec.cluster`
 clusterConfigRef: "my-cluster-config"  # Name of ClusterConfig resource
 ```
 
+> The validating webhook requires the referenced `ClusterConfig` to exist in the **same namespace** as the session. Create the `ClusterConfig` first and keep both objects co-located or admission will fail.
+
 #### denyPolicyRefs
 
 Names of `DenyPolicy` objects to associate with this session:
@@ -186,6 +188,8 @@ Names of `DenyPolicy` objects to associate with this session:
 ```yaml
 denyPolicyRefs: ["deny-policy-1", "deny-policy-2"]
 ```
+
+> Each `DenyPolicy` listed here must already exist (cluster-scoped). Missing references are rejected during admission to avoid dangling policy bindings.
 
 ## Status Fields
 

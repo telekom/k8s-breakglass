@@ -74,7 +74,7 @@ func TestServeSPA(t *testing.T) {
 			router := gin.New()
 			router.NoRoute(ServeSPA(tt.urlPrefix, tempDir))
 
-			req, err := http.NewRequest("GET", tt.requestPath, nil)
+			req, err := http.NewRequest(http.MethodGet, tt.requestPath, nil)
 			assert.NoError(t, err)
 
 			w := httptest.NewRecorder()
@@ -101,7 +101,7 @@ func TestServeSPA_EmptyPrefix(t *testing.T) {
 	router := gin.New()
 	router.NoRoute(ServeSPA("", tempDir))
 
-	req, err := http.NewRequest("GET", "/", nil)
+	req, err := http.NewRequest(http.MethodGet, "/", nil)
 	assert.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -118,7 +118,7 @@ func TestServeSPA_NonExistentDirectory(t *testing.T) {
 	router := gin.New()
 	router.NoRoute(ServeSPA("/", "/non/existent/directory"))
 
-	req, err := http.NewRequest("GET", "/", nil)
+	req, err := http.NewRequest(http.MethodGet, "/", nil)
 	assert.NoError(t, err)
 
 	w := httptest.NewRecorder()

@@ -76,7 +76,7 @@ func TestServer_getConfig(t *testing.T) {
 	router := gin.New()
 	router.GET("/config", server.getConfig)
 
-	req, err := http.NewRequest("GET", "/config", nil)
+	req, err := http.NewRequest(http.MethodGet, "/config", nil)
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -111,7 +111,7 @@ func TestServer_getIdentityProvider(t *testing.T) {
 	router := gin.New()
 	router.GET("/identity-provider", server.getIdentityProvider)
 
-	req, err := http.NewRequest("GET", "/identity-provider", nil)
+	req, err := http.NewRequest(http.MethodGet, "/identity-provider", nil)
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -151,7 +151,7 @@ func TestServer_getIdentityProvider_WithKeycloak(t *testing.T) {
 	router := gin.New()
 	router.GET("/identity-provider", server.getIdentityProvider)
 
-	req, err := http.NewRequest("GET", "/identity-provider", nil)
+	req, err := http.NewRequest(http.MethodGet, "/identity-provider", nil)
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -185,7 +185,7 @@ func TestServer_getIdentityProvider_NotConfigured(t *testing.T) {
 	router := gin.New()
 	router.GET("/identity-provider", server.getIdentityProvider)
 
-	req, err := http.NewRequest("GET", "/identity-provider", nil)
+	req, err := http.NewRequest(http.MethodGet, "/identity-provider", nil)
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -239,7 +239,7 @@ func TestServer_getConfig_WithoutIdentityProvider(t *testing.T) {
 	router := gin.New()
 	router.GET("/config", server.getConfig)
 
-	req, err := http.NewRequest("GET", "/config", nil)
+	req, err := http.NewRequest(http.MethodGet, "/config", nil)
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -274,7 +274,7 @@ func TestServer_getIdentityProvider_EmptyKeycloakConfig(t *testing.T) {
 	router := gin.New()
 	router.GET("/identity-provider", server.getIdentityProvider)
 
-	req, err := http.NewRequest("GET", "/identity-provider", nil)
+	req, err := http.NewRequest(http.MethodGet, "/identity-provider", nil)
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -308,7 +308,7 @@ func TestServer_getIdentityProvider_AllProviderTypes(t *testing.T) {
 			router := gin.New()
 			router.GET("/identity-provider", server.getIdentityProvider)
 
-			req, err := http.NewRequest("GET", "/identity-provider", nil)
+			req, err := http.NewRequest(http.MethodGet, "/identity-provider", nil)
 			assert.NoError(t, err)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
@@ -424,7 +424,7 @@ func TestServer_NoRoute_API_Json404(t *testing.T) {
 	server := NewServer(logger, cfg, true, &AuthHandler{})
 
 	// Use the engine directly and perform a request to an unknown /api/ path
-	req, err := http.NewRequest("GET", "/api/unknown/thing", nil)
+	req, err := http.NewRequest(http.MethodGet, "/api/unknown/thing", nil)
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	server.gin.ServeHTTP(w, req)
@@ -453,7 +453,7 @@ func TestServer_NoRoute_SPA_Fallback(t *testing.T) {
 	engine := gin.New()
 	engine.NoRoute(ServeSPA("/", tmpDir))
 
-	req, err := http.NewRequest("GET", "/some/page", nil)
+	req, err := http.NewRequest(http.MethodGet, "/some/page", nil)
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)

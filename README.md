@@ -16,6 +16,8 @@
 - **Multi-Cluster Support** - Centralized hub manages access across multiple spoke clusters
 - **OIDC/JWT Authentication** - Integrates with identity providers like Keycloak and Azure AD
 - **Web UI & REST API** - User-friendly interface with programmatic access
+- **Automatic Cluster Cache Invalidation** - Watches ClusterConfig and kubeconfig Secret changes to refresh connectivity instantly
+- **Rich Prometheus Signals** - API endpoints expose dedicated request/error/duration metrics for fine-grained SLOs
 
 ## Architecture
 
@@ -36,11 +38,13 @@
 Complete documentation is available in the [docs/](./docs/) directory:
 
 **Getting Started:**
+
 - **[Quick Start](./docs/quickstart.md)** - Get running in 5 minutes
 - **[Installation](./docs/installation.md)** - Complete step-by-step installation guide
 - **[Building](./docs/building.md)** - Build from source
 
 **Resources & Configuration:**
+
 - **[IdentityProvider](./docs/identity-provider.md)** - **MANDATORY** - Configure OIDC authentication for users
 - **[BreakglassEscalation](./docs/breakglass-escalation.md)** - Define available privilege escalations
 - **[BreakglassSession](./docs/breakglass-session.md)** - Session lifecycle and state management
@@ -48,11 +52,16 @@ Complete documentation is available in the [docs/](./docs/) directory:
 - **[DenyPolicy](./docs/deny-policy.md)** - Create access restrictions and policies
 
 **Integration & Advanced Topics:**
+
 - **[Webhook Setup](./docs/webhook-setup.md)** - Integrate with Kubernetes authorization
 - **[API Reference](./docs/api-reference.md)** - REST API endpoints and examples
 - **[Metrics](./docs/metrics.md)** - Prometheus metrics, alerting, and dashboards
 - **[Advanced Features](./docs/advanced-features.md)** - Request reasons, approval reasons, self-approval prevention, domain restrictions
 - **[Troubleshooting](./docs/troubleshooting.md)** - Common issues and solutions
+
+## 📦 Example Assets
+
+- **[DenyPolicy examples](./config/deny-policy-examples.yaml)** - Ready-to-use templates covering exfiltration, operational safety, and compliance controls
 
 ## ⚙️ Configuration
 
@@ -233,13 +242,13 @@ Restrict access across clusters and namespaces based on resource attributes.
 
 See [DenyPolicy Documentation](./docs/deny-policy.md) for details.
 
-# Code of Conduct
+## Code of Conduct
 
 This project has adopted the [Contributor Covenant](https://www.contributor-covenant.org/) in version 2.1 as our code of conduct. Please see the details in our [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). All contributors must abide by the code of conduct.
 
 By participating in this project, you agree to abide by its [Code of Conduct](./CODE_OF_CONDUCT.md) at all times.
 
-# License
+## License
 
 Copyright (c) Deutsche Telekom AG
 

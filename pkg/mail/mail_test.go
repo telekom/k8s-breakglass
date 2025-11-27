@@ -258,7 +258,7 @@ func TestSender_Send_Edge_Cases(t *testing.T) {
 
 	t.Run("Very long body", func(t *testing.T) {
 		longBody := "<html><body>"
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			longBody += "<p>This is paragraph " + string(rune(i)) + " in a very long email body that tests the mail sender's ability to handle large content sizes.</p>"
 		}
 		longBody += "</body></html>"
@@ -269,7 +269,7 @@ func TestSender_Send_Edge_Cases(t *testing.T) {
 
 	t.Run("Many receivers", func(t *testing.T) {
 		manyReceivers := make([]string, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			manyReceivers[i] = "user" + string(rune(i)) + "@example.com"
 		}
 

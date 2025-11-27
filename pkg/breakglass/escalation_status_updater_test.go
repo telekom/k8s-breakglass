@@ -428,7 +428,7 @@ func BenchmarkDeduplicateMembersFromHierarchy(b *testing.B) {
 	}
 
 	// Populate with test data
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		hierarchy["idp-1"]["group-1"][i] = fmt.Sprintf("user%d@example.com", i)
 		hierarchy["idp-1"]["group-2"][i] = fmt.Sprintf("user%d@example.com", i+50)
 		hierarchy["idp-2"]["group-1"][i] = fmt.Sprintf("user%d@example.com", i+25)
@@ -437,7 +437,7 @@ func BenchmarkDeduplicateMembersFromHierarchy(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = deduplicateMembersFromHierarchy(hierarchy, "group-1")
 	}
 }
@@ -445,12 +445,12 @@ func BenchmarkDeduplicateMembersFromHierarchy(b *testing.B) {
 // BenchmarkNormalizeMembers benchmarks the normalize function
 func BenchmarkNormalizeMembers(b *testing.B) {
 	members := make([]string, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		members[i] = fmt.Sprintf("user%d@example.com", i)
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = normalizeMembers(members)
 	}
 }

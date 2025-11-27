@@ -155,7 +155,7 @@ func TestAuthHandler_MiddlewareErrorResponses(t *testing.T) {
 				c.JSON(http.StatusOK, gin.H{"status": "ok"})
 			})
 
-			req, err := http.NewRequest("GET", "/test", nil)
+			req, err := http.NewRequest(http.MethodGet, "/test", nil)
 			assert.NoError(t, err)
 
 			if tt.authHeader != "" {
@@ -183,7 +183,7 @@ func TestAuthHandler_MiddlewareHeaderRemoval(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"auth_header": authHeader})
 	})
 
-	req, err := http.NewRequest("GET", "/test", nil)
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
 	assert.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer test-token")
 

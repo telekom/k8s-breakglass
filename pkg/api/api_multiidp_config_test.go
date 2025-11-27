@@ -32,7 +32,7 @@ func TestMultiIDPConfigEndpointReturnsIDPList(t *testing.T) {
 	router := gin.New()
 	router.GET("/api/config/idps", server.getMultiIDPConfig)
 
-	req, err := http.NewRequest("GET", "/api/config/idps", nil)
+	req, err := http.NewRequest(http.MethodGet, "/api/config/idps", nil)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -234,7 +234,7 @@ func TestConfigEndpointResponseHeaders(t *testing.T) {
 	router := gin.New()
 	router.GET("/api/config/idps", server.getMultiIDPConfig)
 
-	req, err := http.NewRequest("GET", "/api/config/idps", nil)
+	req, err := http.NewRequest(http.MethodGet, "/api/config/idps", nil)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -263,7 +263,7 @@ func TestEmptyIDPConfigHandling(t *testing.T) {
 	server.SetIdentityProviderReconciler(mockReconciler)
 
 	t.Run("ValidResponseStructure_MinimalConfig", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "/api/config/idps", nil)
+		req, err := http.NewRequest(http.MethodGet, "/api/config/idps", nil)
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
@@ -418,7 +418,7 @@ func TestSpecialCharactersInIDPNames(t *testing.T) {
 func TestLargeConfigScaling(t *testing.T) {
 	// Create a large config with many IDPs and escalation mappings
 	idps := make([]IDPInfo, 50)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		idps[i] = IDPInfo{
 			Name:        "idp-" + string(rune(48+i%10)), // 0-9 cycle
 			DisplayName: "IDP Instance " + string(rune(48+i%10)),
@@ -428,12 +428,12 @@ func TestLargeConfigScaling(t *testing.T) {
 	}
 
 	mappings := make(map[string][]string)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		escalationName := "escalation-" + string(rune(48+i%10))
 		// Randomly assign 0-3 IDPs to each escalation
 		numIDPs := i % 4
 		var assignedIDPs []string
-		for j := 0; j < numIDPs; j++ {
+		for j := range numIDPs {
 			assignedIDPs = append(assignedIDPs, "idp-"+string(rune(48+j)))
 		}
 		mappings[escalationName] = assignedIDPs
@@ -473,7 +473,7 @@ func TestBackwardCompatibilitySingleIDP(t *testing.T) {
 	router := gin.New()
 	router.GET("/api/config/idps", server.getMultiIDPConfig)
 
-	req, err := http.NewRequest("GET", "/api/config/idps", nil)
+	req, err := http.NewRequest(http.MethodGet, "/api/config/idps", nil)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -518,7 +518,7 @@ func TestMultiIDPConfigWithCachedIDPs(t *testing.T) {
 
 	// Since we can't easily test GetCachedIdentityProviders directly,
 	// we verify that the endpoint returns valid JSON structure
-	req, err := http.NewRequest("GET", "/api/config/idps", nil)
+	req, err := http.NewRequest(http.MethodGet, "/api/config/idps", nil)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()

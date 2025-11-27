@@ -88,14 +88,14 @@ func (BreakglassSessionController) BasePath() string {
 
 func (wc *BreakglassSessionController) Register(rg *gin.RouterGroup) error {
 	// RESTful endpoints for breakglass sessions (no leading slash)
-	rg.GET("", wc.handleGetBreakglassSessionStatus)             // List/filter sessions
-	rg.GET(":name", wc.handleGetBreakglassSessionByName)        // Get single session by name
-	rg.POST("", wc.handleRequestBreakglassSession)              // Create session
-	rg.POST(":name/approve", wc.handleApproveBreakglassSession) // Approve session
-	rg.POST(":name/reject", wc.handleRejectBreakglassSession)   // Reject session
-	rg.POST(":name/withdraw", wc.handleWithdrawMyRequest)       // Withdraw session (by requester)
-	rg.POST(":name/drop", wc.handleDropMySession)               // Drop session (owner can drop active or pending)
-	rg.POST(":name/cancel", wc.handleApproverCancel)            // Approver cancels a running/approved session
+	rg.GET("", instrumentedHandler("handleGetBreakglassSessionStatus", wc.handleGetBreakglassSessionStatus))           // List/filter sessions
+	rg.GET(":name", instrumentedHandler("handleGetBreakglassSessionByName", wc.handleGetBreakglassSessionByName))      // Get single session by name
+	rg.POST("", instrumentedHandler("handleRequestBreakglassSession", wc.handleRequestBreakglassSession))              // Create session
+	rg.POST(":name/approve", instrumentedHandler("handleApproveBreakglassSession", wc.handleApproveBreakglassSession)) // Approve session
+	rg.POST(":name/reject", instrumentedHandler("handleRejectBreakglassSession", wc.handleRejectBreakglassSession))    // Reject session
+	rg.POST(":name/withdraw", instrumentedHandler("handleWithdrawMyRequest", wc.handleWithdrawMyRequest))              // Withdraw session (by requester)
+	rg.POST(":name/drop", instrumentedHandler("handleDropMySession", wc.handleDropMySession))                          // Drop session (owner can drop active or pending)
+	rg.POST(":name/cancel", instrumentedHandler("handleApproverCancel", wc.handleApproverCancel))                      // Approver cancels a running/approved session
 	return nil
 }
 
@@ -2037,7 +2037,7 @@ func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
 	return filtered
 }
 
-// nolint:unused // might use later
+//nolint:unused // might use later
 func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
@@ -2314,7 +2314,6 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	clusterConfigClient client.Client,
 	disableEmail ...bool,
 ) *BreakglassSessionController {
-
 	ip := KeycloakIdentityProvider{}
 
 	// Check if disableEmail flag is provided

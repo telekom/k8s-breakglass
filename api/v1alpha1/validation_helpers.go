@@ -203,7 +203,23 @@ func validateIdentityProviderRefs(
 	return errs
 }
 
-// validateMailProviderReference ensures that referenced MailProviders exist and are enabled
+func validateIdentityProviderRefsFormat(refs []string, path *field.Path) field.ErrorList {
+	if len(refs) == 0 || path == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+	errs = append(errs, validateStringListNoDuplicates(refs, path)...)
+	for i, ref := range refs {
+		if strings.TrimSpace(ref) == "" {
+			errs = append(errs, field.Required(path.Index(i), "identity provider reference cannot be empty"))
+		}
+	}
+	return errs
+}
+
+// validateMailProviderReference currently no-ops during admission. Runtime reconcilers surface
+// missing/disabled MailProviders via conditions and events to avoid blocking CR creation.
 func validateMailProviderReference(ctx context.Context, mailProvider string, path *field.Path) field.ErrorList {
 	if mailProvider == "" || path == nil {
 		return nil

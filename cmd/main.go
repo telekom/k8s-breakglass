@@ -21,13 +21,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
 
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -37,6 +37,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
@@ -395,12 +396,6 @@ func main() {
 	auth := api.NewAuth(log, cfg)
 	server := api.NewServer(zapLogger, cfg, debug, auth)
 
-	kubeContext := cfg.Kubernetes.Context
-	sessionManager, err := breakglass.NewSessionManager(kubeContext)
-	if err != nil {
-		log.Fatalf("Error creating breakglass session manager: %v", err)
-	}
-
 	// Create a unified scheme with all CRDs registered
 	scheme := createScheme(log)
 
@@ -410,10 +405,16 @@ func main() {
 		log.Fatalf("Error getting Kubernetes config: %v", err)
 	}
 
-	kubeClient, err := client.New(restConfig, client.Options{Scheme: scheme})
+	reconcilerMgr, err := createReconcilerManager(restConfig, scheme, log,
+		metricsAddr, metricsSecure, metricsCertPath, metricsCertName, metricsCertKey,
+		probeAddr, enableHTTP2)
 	if err != nil {
-		log.Fatalf("Error creating Kubernetes client: %v", err)
+		log.Fatalf("Failed to create controller-runtime manager: %v", err)
 	}
+	indexer.RegisterCommonFieldIndexes(context.Background(), reconcilerMgr.GetFieldIndexer(), log)
+
+	kubeClient := reconcilerMgr.GetClient()
+	sessionManager := breakglass.NewSessionManagerWithClient(reconcilerMgr.GetClient())
 
 	// Load IdentityProvider configuration for group sync
 	idpLoader := config.NewIdentityProviderLoader(kubeClient)
@@ -459,10 +460,7 @@ func main() {
 		log.Infow("Keycloak group sync disabled or not fully configured; using no-op resolver")
 	}
 
-	escalationManager, err := breakglass.NewEscalationManager(kubeContext, resolver)
-	if err != nil {
-		log.Fatalf("Error creating breakglass escalation manager: %v", err)
-	}
+	escalationManager := breakglass.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver)
 
 	// Build shared cluster config provider & deny policy evaluator reusing escalation manager client
 	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
@@ -546,6 +544,10 @@ func main() {
 		log.Infow("Cleanup routine enabled")
 	} else {
 		log.Infow("Cleanup routine disabled via --enable-cleanup=false")
+	}
+
+	if err := cluster.RegisterInvalidationHandlers(managerCtx, reconcilerMgr, ccProvider, log); err != nil {
+		log.Warnw("Failed to register cluster cache invalidation handlers", "error", err)
 	}
 
 	// Event recorder for emitting Kubernetes events (persisted to API server)
@@ -733,8 +735,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := setupReconcilerManager(managerCtx, log, scheme, idpLoader, server, metricsAddr,
-			metricsSecure, metricsCertPath, metricsCertName, metricsCertKey, probeAddr, enableHTTP2); err != nil {
+		if err := setupReconcilerManager(managerCtx, log, reconcilerMgr, idpLoader, server); err != nil {
 			recMgrErr <- err
 		}
 	}()
@@ -842,76 +843,27 @@ func waitForCerts(webhookCertPath, webhookCertName string, timeout, tick time.Du
 // - IdentityProvider reconciler setup
 // - Manager startup and leader election
 // - Broadcasting leadership signal to background loops when acquired
+
 func setupReconcilerManager(
 	ctx context.Context,
 	log *zap.SugaredLogger,
-	scheme *runtime.Scheme,
+	mgr ctrl.Manager,
 	idpLoader *config.IdentityProviderLoader,
 	server *api.Server,
-	metricsAddr string,
-	metricsSecure bool,
-	metricsCertPath string,
-	metricsCertName string,
-	metricsCertKey string,
-	probeAddr string,
-	enableHTTP2 bool,
 ) error {
-
 	log.Debugw("Starting reconciler manager with unified scheme")
 
-	// Configure TLS for metrics server
-	// Disable HTTP/2 by default due to security vulnerabilities
-	tlsOpts := []func(*tls.Config){}
-	if !enableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
+	if mgr == nil {
+		return fmt.Errorf("controller-runtime manager is nil; reconcilers will not run")
 	}
 
-	// Metrics server configuration
-	metricsServerOptions := metricsserver.Options{
-		BindAddress:   metricsAddr,
-		SecureServing: metricsSecure,
-		TLSOpts:       tlsOpts,
-	}
-
-	// If explicit certificate paths are provided, use them; otherwise controller-runtime
-	// will auto-generate self-signed certificates (suitable for development/testing).
-	if len(metricsCertPath) > 0 {
-		log.Infow("Initializing metrics certificate watcher using provided certificates",
-			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName,
-			"metrics-cert-key", metricsCertKey)
-		metricsServerOptions.CertDir = metricsCertPath
-		metricsServerOptions.CertName = metricsCertName
-		metricsServerOptions.KeyName = metricsCertKey
-	}
-
-	// Create manager without webhook server (webhooks are optional)
-	// NOTE: Manager does NOT use leader election; that's handled separately by background loops
-	// The resourcelock is passed to background loops for their own coordination
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		HealthProbeBindAddress: probeAddr,
-		WebhookServer:          nil,   // Webhooks are handled separately if enabled
-		LeaderElection:         false, // Reconcilers run on all replicas
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start controller-runtime manager: %w", err)
-	}
-	log.Infow("Controller-runtime manager created successfully (no leader election at manager level)")
-
-	// Register health check handlers for liveness and readiness probes
-	// These endpoints are exposed at the health probe bind address (default :8082)
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
 		return fmt.Errorf("failed to add healthz check to reconciler manager: %w", err)
 	}
 	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
 		return fmt.Errorf("failed to add readyz check to reconciler manager: %w", err)
 	}
-	log.Infow("Health check handlers registered", "endpoint", probeAddr)
-
-	if err := registerCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log); err != nil {
-		return fmt.Errorf("failed to register common field indexes: %w", err)
-	}
+	log.Infow("Health check handlers registered")
 
 	// Register IdentityProvider Reconciler with controller-runtime manager
 	log.Debugw("Setting up IdentityProvider reconciler")
@@ -1102,9 +1054,7 @@ func setupWebhooks(
 	}
 	log.Infow("Webhook server created successfully")
 
-	if err := registerCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log); err != nil {
-		return fmt.Errorf("failed to register common field indexes: %w", err)
-	}
+	indexer.RegisterCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log)
 
 	// Register health check handlers for the webhook manager
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
@@ -1161,140 +1111,43 @@ func setupWebhooks(
 	return nil
 }
 
-// registerCommonFieldIndexes configures the field indices required by both the
-// reconcilers and validating webhooks. These indices allow cache-backed
-// lookups for frequently queried fields (e.g., spec.cluster) and enable
-// metadata.name selectors for cluster-wide uniqueness checks.
-func registerCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, log *zap.SugaredLogger) error {
-	if idx == nil {
-		log.Warnw("Field indexer not available from manager")
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	register := func(field string, fn func() error) error {
-		if err := fn(); err != nil {
-			return fmt.Errorf("failed to register field index - field: %s, errorType: %s, error: %w", field, fmt.Sprintf("%T", err), err)
-		}
-		log.Debugw("Registered field index", "field", field)
-		return nil
+func createReconcilerManager(
+	restCfg *rest.Config,
+	scheme *runtime.Scheme,
+	log *zap.SugaredLogger,
+	metricsAddr string,
+	metricsSecure bool,
+	metricsCertPath string,
+	metricsCertName string,
+	metricsCertKey string,
+	probeAddr string,
+	enableHTTP2 bool,
+) (ctrl.Manager, error) {
+	tlsOpts := []func(*tls.Config){}
+	if !enableHTTP2 {
+		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	if err := register("BreakglassSession.spec.cluster", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.cluster", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.Cluster != "" {
-				return []string{bs.Spec.Cluster}
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
+	metricsServerOptions := metricsserver.Options{
+		BindAddress:   metricsAddr,
+		SecureServing: metricsSecure,
+		TLSOpts:       tlsOpts,
 	}
 
-	if err := register("BreakglassSession.spec.user", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.user", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.User != "" {
-				return []string{bs.Spec.User}
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
+	if len(metricsCertPath) > 0 {
+		log.Infow("Initializing metrics certificate watcher using provided certificates",
+			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName,
+			"metrics-cert-key", metricsCertKey)
+		metricsServerOptions.CertDir = metricsCertPath
+		metricsServerOptions.CertName = metricsCertName
+		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	if err := register("BreakglassSession.spec.grantedGroup", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "spec.grantedGroup", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Spec.GrantedGroup != "" {
-				return []string{bs.Spec.GrantedGroup}
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := register("BreakglassSession.metadata.name", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "metadata.name", func(rawObj client.Object) []string {
-			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Name != "" {
-				return []string{bs.Name}
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := register("BreakglassEscalation.spec.allowed.cluster", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.cluster", func(rawObj client.Object) []string {
-			be, ok := rawObj.(*v1alpha1.BreakglassEscalation)
-			if !ok || be == nil {
-				return nil
-			}
-			out := make([]string, 0, len(be.Spec.Allowed.Clusters)+len(be.Spec.ClusterConfigRefs))
-			out = append(out, be.Spec.Allowed.Clusters...)
-			out = append(out, be.Spec.ClusterConfigRefs...)
-			return out
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := register("BreakglassEscalation.spec.allowed.group", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.allowed.group", func(rawObj client.Object) []string {
-			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil {
-				return be.Spec.Allowed.Groups
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := register("BreakglassEscalation.spec.escalatedGroup", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "spec.escalatedGroup", func(rawObj client.Object) []string {
-			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil && be.Spec.EscalatedGroup != "" {
-				return []string{be.Spec.EscalatedGroup}
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := register("BreakglassEscalation.metadata.name", func() error {
-		return idx.IndexField(ctx, &v1alpha1.BreakglassEscalation{}, "metadata.name", func(rawObj client.Object) []string {
-			if be, ok := rawObj.(*v1alpha1.BreakglassEscalation); ok && be != nil && be.Name != "" {
-				return []string{be.Name}
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := register("ClusterConfig.metadata.name", func() error {
-		return idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "metadata.name", func(rawObj client.Object) []string {
-			if cc, ok := rawObj.(*v1alpha1.ClusterConfig); ok && cc != nil && cc.Name != "" {
-				return []string{cc.Name}
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := register("ClusterConfig.spec.clusterID", func() error {
-		return idx.IndexField(ctx, &v1alpha1.ClusterConfig{}, "spec.clusterID", func(rawObj client.Object) []string {
-			if cc, ok := rawObj.(*v1alpha1.ClusterConfig); ok && cc != nil && cc.Spec.ClusterID != "" {
-				return []string{cc.Spec.ClusterID}
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	return ctrl.NewManager(restCfg, ctrl.Options{
+		Scheme:                 scheme,
+		Metrics:                metricsServerOptions,
+		HealthProbeBindAddress: probeAddr,
+		WebhookServer:          nil,
+		LeaderElection:         false,
+	})
 }

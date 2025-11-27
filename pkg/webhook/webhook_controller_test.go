@@ -120,8 +120,11 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 		RetainedUntil: metav1.NewTime(time.Now().Add(breakglass.MonthDuration)),
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).
-		WithObjects(&ses, &ses2, &ses3, &v1alpha1.BreakglassEscalation{
+	objects := []client.Object{
+		&ses,
+		&ses2,
+		&ses3,
+		&v1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "tester-allow-create-all",
 			},
@@ -135,23 +138,9 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 					Users: []string{"approver@telekom.de"},
 				},
 			},
-		})
-	if interceptFuncs != nil {
-		builder.WithInterceptorFuncs(*interceptFuncs)
+		},
 	}
 
-	for index, fn := range sessionIndexFunctions {
-		builder.WithIndex(&ses, index, fn)
-	}
-
-	cli := builder.Build()
-
-	// Provide a minimal ClusterConfig + Secret for testGroupData.Clustername so controller can fetch rest.Config
-	// The kubeconfig data itself isn't used by canDoFn (stubbed), but presence prevents warning path.
-	_ = cli.Create(context.Background(), &v1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: testGroupData.Clustername, Namespace: "default"},
-		Spec:       v1alpha1.ClusterConfigSpec{KubeconfigSecretRef: v1alpha1.SecretKeyReference{Name: "ccfg-secret", Namespace: "default"}},
-	})
 	// Kubeconfig secret placeholder built via typed clientcmd API
 	kc := clientcmdapi.Config{
 		APIVersion:     "v1",
@@ -165,7 +154,35 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 	if err != nil {
 		panic(err)
 	}
-	_ = cli.Create(context.Background(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ccfg-secret", Namespace: "default"}, Data: map[string][]byte{"value": kcBytes}})
+	for _, clusterName := range []string{
+		testGroupData.Clustername,
+		clusterNameWithEscalation,
+		"testError",
+	} {
+		secretName := fmt.Sprintf("ccfg-secret-%s", clusterName)
+		objects = append(objects,
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"}, Data: map[string][]byte{"value": kcBytes}},
+			&v1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "default"},
+				Spec: v1alpha1.ClusterConfigSpec{
+					Tenant:              fmt.Sprintf("tenant-%s", clusterName),
+					KubeconfigSecretRef: v1alpha1.SecretKeyReference{Name: secretName, Namespace: "default"},
+				},
+			},
+		)
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).
+		WithObjects(objects...)
+	if interceptFuncs != nil {
+		builder.WithInterceptorFuncs(*interceptFuncs)
+	}
+
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&ses, index, fn)
+	}
+
+	cli := builder.Build()
 	sesmanager := breakglass.SessionManager{
 		Client: cli,
 	}
@@ -254,7 +271,7 @@ func TestHandleAuthorize(t *testing.T) {
 				inBytes, _ = json.Marshal(*testCase.InReview)
 			}
 
-			req, _ := http.NewRequest("POST", "/authorize/"+testCase.Clustername, bytes.NewReader(inBytes))
+			req, _ := http.NewRequest(http.MethodPost, "/authorize/"+testCase.Clustername, bytes.NewReader(inBytes))
 			w := httptest.NewRecorder()
 			engine.ServeHTTP(w, req)
 			response := w.Result()
@@ -294,7 +311,7 @@ func TestHandleAuthorize_LogsActionStructured(t *testing.T) {
 
 	// Prepare SAR payload
 	inBytes, _ := json.Marshal(sar)
-	req, _ := http.NewRequest("POST", "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
@@ -332,7 +349,7 @@ func TestStatusReasons(t *testing.T) {
 	var inBytes []byte
 	inBytes, _ = json.Marshal(sar)
 
-	req, _ := http.NewRequest("POST", "/authorize/"+clusterNameWithEscalation, bytes.NewReader(inBytes))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+clusterNameWithEscalation, bytes.NewReader(inBytes))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -358,17 +375,23 @@ func TestStatusReasons(t *testing.T) {
 func TestManagerError(t *testing.T) {
 	errorClusterName := "testError"
 	listIntercept := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-		if len(opts) == 0 {
-			return nil
+		var intercept bool
+		switch list.(type) {
+		case *v1alpha1.BreakglassSessionList, *v1alpha1.BreakglassEscalationList:
+			intercept = true
 		}
-
-		fs := opts[0].(*client.ListOptions).FieldSelector
-		for _, req := range fs.Requirements() {
-			if req.Value == errorClusterName {
-				return errors.New("IGNORE manager unit test error")
+		if intercept {
+			if len(opts) > 0 {
+				if lo, ok := opts[0].(*client.ListOptions); ok && lo.FieldSelector != nil {
+					for _, req := range lo.FieldSelector.Requirements() {
+						if req.Value == errorClusterName {
+							return errors.New("IGNORE manager unit test error")
+						}
+					}
+				}
 			}
 		}
-		return nil
+		return c.List(ctx, list, opts...)
 	}}
 	controller := SetupController(&listIntercept)
 	controller.canDoFn = alwaysCanDo
@@ -377,7 +400,7 @@ func TestManagerError(t *testing.T) {
 	var inBytes []byte
 	inBytes, _ = json.Marshal(sar)
 
-	req, _ := http.NewRequest("POST", "/authorize/"+errorClusterName, bytes.NewReader(inBytes))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+errorClusterName, bytes.NewReader(inBytes))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -417,7 +440,7 @@ func TestDenyPolicyGlobal(t *testing.T) {
 	engine := gin.New()
 	_ = controller.Register(engine.Group(""))
 	inBytes, _ := json.Marshal(sar)
-	req, _ := http.NewRequest("POST", "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	resp := w.Result()
@@ -477,7 +500,7 @@ func TestDenyPolicySessionScope(t *testing.T) {
 	engine := gin.New()
 	_ = controller.Register(engine.Group(""))
 	inBytes, _ := json.Marshal(sar)
-	req, _ := http.NewRequest("POST", "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	resp := w.Result()
@@ -510,7 +533,7 @@ func TestMissingRestConfigFallback(t *testing.T) {
 	engine := gin.New()
 	_ = controller.Register(engine.Group(""))
 	inBytes, _ := json.Marshal(sar)
-	req, _ := http.NewRequest("POST", "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	resp := w.Result()
@@ -542,7 +565,7 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 
 	// Start HTTP test server that simulates kube-apiserver SubjectAccessReview endpoint
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" && (r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews" || r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
+		if r.Method == http.MethodPost && (r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews" || r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
 			w.Header().Set("Content-Type", "application/json")
 			// respond with allowed true
 			_, _ = io.WriteString(w, `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":true}}`)
@@ -587,7 +610,7 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 	// Start HTTP test server that simulates kube-apiserver SubjectAccessReview endpoint
 	// but responds allowed=true only for the prefixed group
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" && (r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews" || r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
+		if r.Method == http.MethodPost && (r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews" || r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
 			// inspect raw body and allow if it contains the prefixed group string
 			bodyBytes, _ := io.ReadAll(r.Body)
 			bodyStr := string(bodyBytes)

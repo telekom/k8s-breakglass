@@ -2,7 +2,10 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -16,20 +19,37 @@ import (
 )
 
 // ClientProvider resolves ClusterConfig objects and caches lightweight metadata.
+var ErrClusterConfigNotFound = errors.New("clusterconfig not found")
+
 type ClientProvider struct {
 	k8s  ctrlclient.Client
 	log  *zap.SugaredLogger
 	mu   sync.RWMutex
 	data map[string]*telekomv1alpha1.ClusterConfig
 	rest map[string]*rest.Config
+	// clusterToSecret tracks which kubeconfig secret each ClusterConfig uses (keyed by cluster name)
+	clusterToSecret map[string]string
+	// secretToClusters tracks all clusters backed by a given secret (keyed by namespace/name)
+	secretToClusters map[string]map[string]struct{}
 }
 
 func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvider {
-	return &ClientProvider{k8s: c, log: log, data: map[string]*telekomv1alpha1.ClusterConfig{}, rest: map[string]*rest.Config{}}
+	return &ClientProvider{
+		k8s:              c,
+		log:              log,
+		data:             map[string]*telekomv1alpha1.ClusterConfig{},
+		rest:             map[string]*rest.Config{},
+		clusterToSecret:  map[string]string{},
+		secretToClusters: map[string]map[string]struct{}{},
+	}
 }
 
 // Get returns cached ClusterConfig or fetches it (metadata only usage for now).
 func cacheKey(namespace, name string) string {
+	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+func secretCacheKey(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
 }
 
@@ -61,7 +81,7 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 			return &cp, nil
 		}
 	}
-	return nil, fmt.Errorf("clusterconfig %s not found", name)
+	return nil, fmt.Errorf("%w: %s", ErrClusterConfigNotFound, name)
 }
 
 // GetInNamespace fetches a ClusterConfig by metadata.name within the provided namespace.
@@ -100,18 +120,18 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	if err != nil {
 		return nil, err
 	}
-	secretKey := cc.Spec.KubeconfigSecretRef.Key
-	if secretKey == "" {
+	secretDataKey := cc.Spec.KubeconfigSecretRef.Key
+	if secretDataKey == "" {
 		// default to 'value' for Cluster API compatibility
-		secretKey = "value"
+		secretDataKey = "value"
 	}
 	secret := corev1.Secret{}
 	if err := p.k8s.Get(ctx, types.NamespacedName{Name: cc.Spec.KubeconfigSecretRef.Name, Namespace: cc.Spec.KubeconfigSecretRef.Namespace}, &secret); err != nil {
 		return nil, fmt.Errorf("fetch kubeconfig secret: %w", err)
 	}
-	raw, ok := secret.Data[secretKey]
+	raw, ok := secret.Data[secretDataKey]
 	if !ok {
-		return nil, fmt.Errorf("secret %s/%s missing key %s", cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name, secretKey)
+		return nil, fmt.Errorf("secret %s/%s missing key %s", cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name, secretDataKey)
 	}
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(raw)
 	if err != nil {
@@ -119,8 +139,12 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 	// If the kubeconfig references a loopback endpoint (kind default), rewrite to in-cluster service DNS
 	if strings.Contains(cfg.Host, "127.0.0.1") || strings.Contains(cfg.Host, "localhost") {
-		p.log.Infow("Rewriting loopback kubeconfig host to in-cluster DNS", "original", cfg.Host, "replacement", "https://kubernetes.default.svc")
-		cfg.Host = "https://kubernetes.default.svc"
+		if disableRewrite, _ := strconv.ParseBool(os.Getenv("BREAKGLASS_DISABLE_LOOPBACK_REWRITE")); disableRewrite {
+			p.log.Debugw("Skipping loopback kubeconfig host rewrite due to BREAKGLASS_DISABLE_LOOPBACK_REWRITE", "host", cfg.Host)
+		} else {
+			p.log.Infow("Rewriting loopback kubeconfig host to in-cluster DNS", "original", cfg.Host, "replacement", "https://kubernetes.default.svc")
+			cfg.Host = "https://kubernetes.default.svc"
+		}
 	}
 	if cc.Spec.QPS != nil {
 		cfg.QPS = float32(*cc.Spec.QPS)
@@ -130,6 +154,12 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 	p.mu.Lock()
 	p.rest[name] = cfg
+	secretRefKey := secretCacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
+	p.clusterToSecret[name] = secretRefKey
+	if _, ok := p.secretToClusters[secretRefKey]; !ok {
+		p.secretToClusters[secretRefKey] = map[string]struct{}{}
+	}
+	p.secretToClusters[secretRefKey][name] = struct{}{}
 	p.mu.Unlock()
 	return cfg, nil
 }
@@ -137,13 +167,48 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 // Invalidate removes an entry (called by informer/controller update hooks later).
 func (p *ClientProvider) Invalidate(name string) {
 	p.mu.Lock()
-	// Remove any cached clusterconfig entries matching the logical name across namespaces
+	p.evictClusterLocked(name)
+	p.mu.Unlock()
+}
+
+// InvalidateSecret removes all cached entries (ClusterConfig + rest.Config) that rely on a specific secret.
+func (p *ClientProvider) InvalidateSecret(namespace, name string) {
+	key := secretCacheKey(namespace, name)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	clusters, ok := p.secretToClusters[key]
+	if !ok {
+		return
+	}
+	for cluster := range clusters {
+		p.evictClusterLocked(cluster)
+	}
+	delete(p.secretToClusters, key)
+}
+
+// IsSecretTracked reports whether the provider currently caches any cluster configs referencing the secret.
+func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
+	key := secretCacheKey(namespace, name)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	_, ok := p.secretToClusters[key]
+	return ok
+}
+
+func (p *ClientProvider) evictClusterLocked(name string) {
 	for k := range p.data {
 		if strings.HasSuffix(k, "/"+name) || k == name {
 			delete(p.data, k)
 		}
 	}
-	// Rest configs are still keyed by logical name
 	delete(p.rest, name)
-	p.mu.Unlock()
+	if secretKey, ok := p.clusterToSecret[name]; ok {
+		if clusters, found := p.secretToClusters[secretKey]; found {
+			delete(clusters, name)
+			if len(clusters) == 0 {
+				delete(p.secretToClusters, secretKey)
+			}
+		}
+		delete(p.clusterToSecret, name)
+	}
 }

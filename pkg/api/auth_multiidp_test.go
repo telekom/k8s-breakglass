@@ -249,7 +249,7 @@ func TestEmptyIDPHandling(t *testing.T) {
 	tokStr, err := tok.SignedString(priv)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("GET", "/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+tokStr)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -438,7 +438,7 @@ func TestMissingBearerToken(t *testing.T) {
 	})
 
 	t.Run("NoAuthorizationHeader", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/protected", nil)
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
 		// No Authorization header
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -447,7 +447,7 @@ func TestMissingBearerToken(t *testing.T) {
 	})
 
 	t.Run("InvalidBearerFormat", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/protected", nil)
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
 		req.Header.Set("Authorization", "InvalidToken")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -456,7 +456,7 @@ func TestMissingBearerToken(t *testing.T) {
 	})
 
 	t.Run("EmptyBearerToken", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/protected", nil)
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
 		req.Header.Set("Authorization", "Bearer ")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)

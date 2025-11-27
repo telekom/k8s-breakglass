@@ -3,6 +3,7 @@ package breakglass
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
@@ -24,10 +25,23 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 	list := telekomv1alpha1.ClusterConfigList{}
 	// Try to use a field index (metadata.name) via MatchingFields if available.
 	if err := ccm.client.List(ctx, &list, client.MatchingFields{"metadata.name": name}); err == nil {
+		matching := make([]*telekomv1alpha1.ClusterConfig, 0, len(list.Items))
 		for i := range list.Items {
 			if list.Items[i].Name == name {
-				return &list.Items[i], nil
+				matching = append(matching, &list.Items[i])
 			}
+		}
+		switch len(matching) {
+		case 0:
+			// continue to fallback for legacy behavior
+		case 1:
+			return matching[0], nil
+		default:
+			namespaces := make([]string, 0, len(matching))
+			for _, cfg := range matching {
+				namespaces = append(namespaces, cfg.Namespace)
+			}
+			return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
 		}
 	}
 
@@ -37,12 +51,24 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 		zap.S().Errorw("Failed to list ClusterConfig resources", "error", err.Error())
 		return nil, fmt.Errorf("failed to list ClusterConfig resources: %w", err)
 	}
+	matching := make([]*telekomv1alpha1.ClusterConfig, 0, len(list2.Items))
 	for i := range list2.Items {
 		if list2.Items[i].Name == name {
-			return &list2.Items[i], nil
+			matching = append(matching, &list2.Items[i])
 		}
 	}
-	return nil, fmt.Errorf("failed to get ClusterConfig by name %q: not found", name)
+	switch len(matching) {
+	case 0:
+		return nil, fmt.Errorf("failed to get ClusterConfig by name %q: not found", name)
+	case 1:
+		return matching[0], nil
+	default:
+		namespaces := make([]string, 0, len(matching))
+		for _, cfg := range matching {
+			namespaces = append(namespaces, cfg.Namespace)
+		}
+		return nil, fmt.Errorf("clusterconfig name %q is not unique; found in namespaces: %s", name, strings.Join(namespaces, ","))
+	}
 }
 
 // GetClusterConfigInNamespace fetches the ClusterConfig resource by name within the provided namespace.

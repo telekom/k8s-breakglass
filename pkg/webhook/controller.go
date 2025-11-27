@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,6 +69,31 @@ func (wc *WebhookController) finalizeReason(reason string, allowed bool, cluster
 	}
 	// If reason already contains something, append a short pointer to the link
 	return fmt.Sprintf("%s; see %s", reason, link)
+}
+
+func summarizeAction(sar *authorizationv1.SubjectAccessReview) string {
+	if sar == nil {
+		return "the requested action"
+	}
+	if ra := sar.Spec.ResourceAttributes; ra != nil {
+		resource := ra.Resource
+		if ra.Subresource != "" {
+			resource = fmt.Sprintf("%s/%s", resource, ra.Subresource)
+		}
+		target := resource
+		if ra.Name != "" {
+			target = fmt.Sprintf("%s %s", resource, ra.Name)
+		}
+		ns := ra.Namespace
+		if ns == "" {
+			ns = "(cluster-wide)"
+		}
+		return fmt.Sprintf("%s %s in namespace %s", ra.Verb, target, ns)
+	}
+	if nra := sar.Spec.NonResourceAttributes; nra != nil {
+		return fmt.Sprintf("%s %s", nra.Verb, nra.Path)
+	}
+	return "the requested action"
 }
 
 // getIDPHintFromIssuer retrieves issuer information from the SAR and returns a helpful
@@ -281,9 +307,40 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	}
 
 	reqLog.Debug("Received SubjectAccessReview")
+	actionSummary := summarizeAction(&sar)
 
 	username := sar.Spec.User
 	reqLog.Infow("Processing authorization", "username", username, "groupsRequested", sar.Spec.Groups)
+
+	var clusterCfg *v1alpha1.ClusterConfig
+	if wc.ccProvider != nil {
+		cfg, cfgErr := wc.getClusterConfigAcrossNamespaces(ctx, clusterName)
+		if cfgErr != nil {
+			if errors.Is(cfgErr, cluster.ErrClusterConfigNotFound) {
+				reason := fmt.Sprintf("Cluster %q is not registered with Breakglass, so %s cannot be authorized yet. Ask your platform administrators to onboard the cluster or choose one of the onboarded clusters.", clusterName, actionSummary)
+				reason = wc.finalizeReason(reason, false, clusterName)
+				metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
+				if sar.Spec.ResourceAttributes != nil {
+					ra := sar.Spec.ResourceAttributes
+					metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "denied", "cluster-missing").Inc()
+				}
+				reqLog.Warnw("Cluster not registered for Breakglass", "cluster", clusterName)
+				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
+					ApiVersion: sar.APIVersion,
+					Kind:       sar.Kind,
+					Status: SubjectAccessReviewResponseStatus{
+						Allowed: false,
+						Reason:  reason,
+					},
+				})
+				return
+			}
+			reqLog.With("error", cfgErr.Error()).Error("Failed to load ClusterConfig for SAR validation")
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		clusterCfg = cfg
+	}
 
 	// Emit the actual requested API action (from SAR) at Info level for observability.
 	// This includes resource attributes (verb, group, resource, namespace, name, subresource)
@@ -337,7 +394,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 	}
 
-	groups, sessions, idpMismatches, tenant, err := wc.getUserGroupsAndSessionsWithIDPInfo(ctx, username, clusterName, issuer)
+	groups, sessions, idpMismatches, tenant, err := wc.getUserGroupsAndSessionsWithIDPInfo(ctx, username, clusterName, issuer, clusterCfg)
 	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
 		c.Status(http.StatusInternalServerError)
@@ -503,7 +560,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 		// Get user groups from active sessions
 		// Pass empty issuer string since we're just counting available escalations, not filtering by IDP
-		activeUserGroups, _, _, err := wc.getUserGroupsAndSessions(ctx, username, clusterName, "")
+		activeUserGroups, _, _, err := wc.getUserGroupsAndSessions(ctx, username, clusterName, "", clusterCfg)
 		if err != nil {
 			reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
 			c.Status(http.StatusInternalServerError)
@@ -713,7 +770,6 @@ func NewWebhookController(log *zap.SugaredLogger,
 	ccProvider *cluster.ClientProvider,
 	denyEval *policy.Evaluator,
 ) *WebhookController {
-
 	return &WebhookController{
 		log:          log,
 		config:       cfg,
@@ -727,15 +783,15 @@ func NewWebhookController(log *zap.SugaredLogger,
 
 // getUserGroupsAndSessions returns groups from active sessions, list of sessions, and a tenant (best-effort from cluster config).
 // It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
-func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string) ([]string, []v1alpha1.BreakglassSession, string, error) {
-	groups, sessions, _, tenant, err := wc.getUserGroupsAndSessionsWithIDPInfo(ctx, username, clustername, issuer)
+func (wc *WebhookController) getUserGroupsAndSessions(ctx context.Context, username, clustername, issuer string, clusterCfg *v1alpha1.ClusterConfig) ([]string, []v1alpha1.BreakglassSession, string, error) {
+	groups, sessions, _, tenant, err := wc.getUserGroupsAndSessionsWithIDPInfo(ctx, username, clustername, issuer, clusterCfg)
 	return groups, sessions, tenant, err
 }
 
 // getUserGroupsAndSessionsWithIDPInfo returns groups from active sessions, list of sessions, IDP mismatch info, and a tenant.
 // It filters sessions by IDP issuer if present, ensuring multi-IDP scenarios only use sessions created with matching identity providers.
 // Returns: (groups, sessions, idpMismatchedSessions, tenant, error)
-func (wc *WebhookController) getUserGroupsAndSessionsWithIDPInfo(ctx context.Context, username, clustername, issuer string) ([]string, []v1alpha1.BreakglassSession, []v1alpha1.BreakglassSession, string, error) {
+func (wc *WebhookController) getUserGroupsAndSessionsWithIDPInfo(ctx context.Context, username, clustername, issuer string, clusterCfg *v1alpha1.ClusterConfig) ([]string, []v1alpha1.BreakglassSession, []v1alpha1.BreakglassSession, string, error) {
 	sessions, idpMismatches, err := wc.getSessionsWithIDPMismatchInfo(ctx, username, clustername, issuer)
 	if err != nil {
 		return nil, nil, nil, "", err
@@ -746,7 +802,9 @@ func (wc *WebhookController) getUserGroupsAndSessionsWithIDPInfo(ctx context.Con
 	}
 	// best-effort tenant lookup
 	tenant := ""
-	if wc.ccProvider != nil {
+	if clusterCfg != nil {
+		tenant = clusterCfg.Spec.Tenant
+	} else if wc.ccProvider != nil {
 		if cfg, err := wc.getClusterConfigAcrossNamespaces(ctx, clustername); err == nil && cfg != nil {
 			tenant = cfg.Spec.Tenant
 		}
@@ -822,21 +880,17 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 		// Resolve escalation via OwnerReferences first
 		if len(s.OwnerReferences) > 0 && wc.escalManager != nil {
 			for _, or := range s.OwnerReferences {
-				escs, eerr := wc.escalManager.GetBreakglassEscalationsWithFilter(ctx, func(be v1alpha1.BreakglassEscalation) bool {
-					return be.Name == or.Name
-				})
+				esc, eerr := wc.escalManager.GetBreakglassEscalation(ctx, s.Namespace, or.Name)
 				if eerr != nil {
 					if logger != nil {
-						logger.With("error", eerr, "ownerRef", or).Debug("failed to lookup escalation for session ownerRef")
+						logger.With("error", eerr, "ownerRef", or, "session", s.Name).Debug("failed to lookup escalation for session ownerRef")
 					} else if wc.log != nil {
-						wc.log.With("error", eerr, "ownerRef", or).Debug("failed to lookup escalation for session ownerRef")
+						wc.log.With("error", eerr, "ownerRef", or, "session", s.Name).Debug("failed to lookup escalation for session ownerRef")
 					}
 					continue
 				}
-				if len(escs) > 0 {
-					allowedGroupsToCheck = escs[0].Spec.Allowed.Groups
-					break
-				}
+				allowedGroupsToCheck = esc.Spec.Allowed.Groups
+				break
 			}
 		}
 

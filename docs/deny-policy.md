@@ -205,3 +205,13 @@ The breakglass controller logs all policy violations for compliance purposes.
 - [BreakglassEscalation](./breakglass-escalation.md) - Escalation policies
 - [BreakglassSession](./breakglass-session.md) - Session management
 - [Webhook Authorization](./webhook-setup.md) - Authorization webhook setup
+
+## Policy Template Library
+
+Need inspiration for real-world controls? The repository ships with [config/deny-policy-examples.yaml](../config/deny-policy-examples.yaml), a curated collection that maps common security scenarios to concrete policies:
+
+- **Data exfiltration prevention:** block privileged users from reading production secrets or exporting audit logs
+- **Operational safety:** stop accidental deletion of namespaces, PVs, or critical workloads
+- **Security hardening:** restrict kube-system/kube-node-lease access, disallow exec/attach, or forbid risky network policies
+
+Apply the file as-is to bootstrap a baseline posture, or copy individual policies and adjust `appliesTo`, `namespaces`, or `verb` settings to fit your organization.

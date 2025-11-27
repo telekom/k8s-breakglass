@@ -138,6 +138,45 @@ sum(rate(breakglass_mail_send_success_total[5m]))
 breakglass_mail_send_failure_total
 ```
 
+## API Endpoint Metrics
+
+Track frontend and REST API usage with dedicated counters and histograms. All Breakglass session and escalation REST endpoints now emit these metrics automatically through a shared instrumentation wrapper, so create/read/update paths show up in dashboards without manual bookkeeping.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_api_endpoint_requests_total` | Counter | `endpoint` | Total requests routed through a given API handler (e.g., `handleGetEscalations`, `handleRequestBreakglassSession`, `getIdentityProvider`) |
+| `breakglass_api_endpoint_errors_total` | Counter | `endpoint`, `status_code` | Error responses grouped by handler and HTTP status |
+| `breakglass_api_endpoint_duration_seconds` | Histogram | `endpoint` | Request latency buckets (10ms to 1s) per handler |
+
+**Example Queries:**
+
+```promql
+# Error rate per endpoint
+sum(rate(breakglass_api_endpoint_errors_total[5m])) by (endpoint)
+/
+sum(rate(breakglass_api_endpoint_requests_total[5m])) by (endpoint)
+
+# 95th percentile latency for the escalations API
+histogram_quantile(
+  0.95,
+  sum by (le) (rate(breakglass_api_endpoint_duration_seconds_bucket{endpoint="handleGetEscalations"}[5m]))
+)
+
+**Session Endpoint Labels:**
+
+| Endpoint Label | Description |
+|----------------|-------------|
+| `handleGetBreakglassSessionStatus` | GET `/api/breakglassSessions` list endpoint |
+| `handleGetBreakglassSessionByName` | GET `/api/breakglassSessions/:name` detail endpoint |
+| `handleRequestBreakglassSession` | POST create session |
+| `handleApproveBreakglassSession` | POST `:name/approve` |
+| `handleRejectBreakglassSession` | POST `:name/reject` |
+| `handleWithdrawMyRequest` | POST `:name/withdraw` |
+| `handleDropMySession` | POST `:name/drop` |
+| `handleApproverCancel` | POST `:name/cancel` |
+| `handleGetEscalations` | GET breakglassEscalations list |
+```
+
 ## ClusterConfig Validation Metrics
 
 Monitor the health of cluster configurations.
@@ -216,18 +255,21 @@ groups:
 Consider creating Grafana dashboards with these panels:
 
 **Overview Dashboard:**
+
 - Webhook requests per cluster (rate)
 - Allow/deny decision pie chart
 - Session lifecycle (created, expired, approved per day)
 - Mail delivery success rate
 
 **Operations Dashboard:**
+
 - Denial rate trends (alert on spikes)
 - Session approval time distribution
 - Webhook latency percentiles (p50, p95, p99)
 - ClusterConfig health per cluster
 
 **Audit Dashboard:**
+
 - Sessions created per cluster (daily)
 - Sessions by approver
 - High-frequency denials (potential issues)
@@ -379,6 +421,7 @@ scrape_configs:
 ## Troubleshooting with Metrics
 
 **No metrics appearing:**
+
 - Check bearer token/authentication credentials
 - Verify `/api/metrics` endpoint is accessible
 - Check firewall rules between Prometheus and breakglass service

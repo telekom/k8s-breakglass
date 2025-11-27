@@ -64,11 +64,11 @@ func TestServer_ConcurrentReloadsAndReads(t *testing.T) {
 	var updateCount int32
 
 	// Spawn multiple readers
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				server.idpMutex.RLock()
 				_ = server.idpConfig
 				server.idpMutex.RUnlock()
@@ -78,11 +78,11 @@ func TestServer_ConcurrentReloadsAndReads(t *testing.T) {
 	}
 
 	// Spawn multiple updaters (SetIdentityProvider)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 10; j++ {
+			for range 10 {
 				server.SetIdentityProvider(config1)
 				atomic.AddInt32(&updateCount, 1)
 			}

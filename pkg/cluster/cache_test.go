@@ -172,3 +172,41 @@ func TestInvalidate_ClearsCache(t *testing.T) {
 		t.Fatalf("expected different pointer after Invalidate, got same")
 	}
 }
+
+func TestInvalidateSecret_EvictsTrackedEntries(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	kubeYAML := mustBuildKubeconfigYAML("https://kind-control-plane:6443")
+	cc := telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "kind", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "kind-kube", Namespace: "default"},
+		},
+	}
+	secret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kind-kube", Namespace: "default"},
+		Data:       map[string][]byte{"value": kubeYAML},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	ctx := context.Background()
+	firstCfg, err := provider.GetRESTConfig(ctx, "kind")
+	assert.NoError(t, err)
+	assert.True(t, provider.IsSecretTracked("default", "kind-kube"))
+
+	provider.InvalidateSecret("default", "kind-kube")
+	assert.False(t, provider.IsSecretTracked("default", "kind-kube"))
+
+	secondCfg, err := provider.GetRESTConfig(ctx, "kind")
+	assert.NoError(t, err)
+	assert.NotSame(t, firstCfg, secondCfg, "expected rest config to be rebuilt after secret invalidation")
+}
+
+func TestIsSecretTracked_FalseForUnknownSecret(t *testing.T) {
+	provider := NewClientProvider(fake.NewClientBuilder().Build(), zaptest.NewLogger(t).Sugar())
+	assert.False(t, provider.IsSecretTracked("default", "missing"))
+}

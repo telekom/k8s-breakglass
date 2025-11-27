@@ -9,11 +9,13 @@ import (
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 type EscalationManager struct {
@@ -24,6 +26,7 @@ type EscalationManager struct {
 // Get all stored BreakglassEscalations
 func (em EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debug("Fetching all BreakglassEscalations")
+	metrics.APIEndpointRequests.WithLabelValues("GetAllBreakglassEscalations").Inc()
 	escal := telekomv1alpha1.BreakglassEscalationList{}
 	if err := em.List(ctx, &escal); err != nil {
 		zap.S().Errorw("Failed to get BreakglassEscalationList", "error", err)
@@ -37,6 +40,7 @@ func (em EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Conte
 	filter func(telekomv1alpha1.BreakglassEscalation) bool,
 ) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debug("Fetching BreakglassEscalations with filter")
+	metrics.APIEndpointRequests.WithLabelValues("GetBreakglassEscalationsWithFilter").Inc()
 	ess := telekomv1alpha1.BreakglassEscalationList{}
 
 	if err := em.List(ctx, &ess); err != nil {
@@ -64,6 +68,7 @@ func (em EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Con
 	fs fields.Selector,
 ) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching BreakglassEscalations with selector", "selector", fs.String())
+	metrics.APIEndpointRequests.WithLabelValues("GetBreakglassEscalationsWithSelector").Inc()
 	ess := telekomv1alpha1.BreakglassEscalationList{}
 
 	if err := em.List(ctx, &ess, &client.ListOptions{FieldSelector: fs}); err != nil {
@@ -75,11 +80,29 @@ func (em EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Con
 	return ess.Items, nil
 }
 
+// GetBreakglassEscalation retrieves a single BreakglassEscalation by namespace/name using the cached controller-runtime client.
+// Prefer this over filter-based scans when the owner reference is known to minimize cache iterations.
+func (em EscalationManager) GetBreakglassEscalation(ctx context.Context, namespace, name string) (*telekomv1alpha1.BreakglassEscalation, error) {
+	zap.S().Debugw("Fetching BreakglassEscalation by name", "namespace", namespace, "name", name)
+	metrics.APIEndpointRequests.WithLabelValues("GetBreakglassEscalation").Inc()
+	got := &telekomv1alpha1.BreakglassEscalation{}
+	if err := em.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, got); err != nil {
+		status := "500"
+		if apierrors.IsNotFound(err) {
+			status = "404"
+		}
+		metrics.APIEndpointErrors.WithLabelValues("GetBreakglassEscalation", status).Inc()
+		return nil, errors.Wrapf(err, "failed to get BreakglassEscalation %s/%s", namespace, name)
+	}
+	return got, nil
+}
+
 // GetGroupBreakglassEscalations returns escalations available to users in the specified groups
 func (em EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	groups []string,
 ) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching group BreakglassEscalations", "groups", groups)
+	metrics.APIEndpointRequests.WithLabelValues("GetGroupBreakglassEscalations").Inc()
 	// First try index-based lookup for each group and collect results (deduped)
 	collectedMap := map[string]telekomv1alpha1.BreakglassEscalation{}
 	for _, g := range groups {
@@ -132,6 +155,7 @@ func (em EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 
 func (em EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching cluster BreakglassEscalations", "cluster", cluster)
+	metrics.APIEndpointRequests.WithLabelValues("GetClusterBreakglassEscalations").Inc()
 	list := telekomv1alpha1.BreakglassEscalationList{}
 	if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.cluster": cluster}); err == nil && len(list.Items) > 0 {
 		// filter results to ensure cluster actually matches (fake client may ignore MatchingFields)
@@ -170,6 +194,7 @@ func (em EscalationManager) GetClusterBreakglassEscalations(ctx context.Context,
 // GetClusterGroupBreakglassEscalations returns escalations for specific cluster and user groups
 func (em EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groups", groups)
+	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupBreakglassEscalations").Inc()
 	// Try to perform index-based lookups. We will collect matches from cluster index and then filter by group.
 	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
 	list := telekomv1alpha1.BreakglassEscalationList{}
@@ -226,6 +251,7 @@ func (em EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Con
 // GetClusterGroupTargetBreakglassEscalation returns escalations for specific cluster, user groups, and target group
 func (em EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	zap.S().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroups", userGroups, "targetGroup", targetGroup)
+	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupTargetBreakglassEscalation").Inc()
 	// Try index-based lookup by escalatedGroup first
 	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
 	list := telekomv1alpha1.BreakglassEscalationList{}
@@ -295,6 +321,12 @@ func NewEscalationManager(contextName string, resolver GroupMemberResolver) (Esc
 
 	zap.S().Info("EscalationManager initialized successfully")
 	return EscalationManager{Client: c, Resolver: resolver}, nil
+}
+
+// NewEscalationManagerWithClient constructs an EscalationManager backed by the provided controller-runtime client.
+// Use this when a shared manager client (with cache/indexes) should be reused instead of creating a new rest.Config.
+func NewEscalationManagerWithClient(c client.Client, resolver GroupMemberResolver) EscalationManager {
+	return EscalationManager{Client: c, Resolver: resolver}
 }
 
 // UpdateBreakglassEscalationStatus updates the given escalation resource status

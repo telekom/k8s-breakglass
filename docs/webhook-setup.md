@@ -175,7 +175,7 @@ Notes on matching behavior
 
 - Make sure the value you expose in the webhook URL is identical (including case) to the `ClusterConfig` name or the cluster identifier used in session/escalation objects. URL-encode any characters that are not valid in a URL path.
 
-- If a ClusterConfig is not present for the provided `{cluster-name}`, the webhook will still attempt to match active sessions and escalations by the raw cluster identifier present in the resources; however, some hub-specific checks may rely on a ClusterConfig being present.
+- If a ClusterConfig is not present for the provided `{cluster-name}`, the webhook immediately denies the request with a human-friendly message (`Cluster "foo" is not registered with Breakglass`) and emits a `cluster-missing` reason in metrics. This reduces confusion for platform users and surfaces onboarding gaps early. Create the missing ClusterConfig or update the webhook URL path to match an existing name.
 
 ### Authentication Methods
 

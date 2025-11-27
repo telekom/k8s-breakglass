@@ -186,7 +186,9 @@ func TestClusterConfigEmptyIdentityProviderRefsAllowed(t *testing.T) {
 	assert.Empty(t, err)
 }
 
-// TestBreakglassEscalationAllowedIdentityProvidersValidation tests escalation IDP validation
+// TestBreakglassEscalationAllowedIdentityProvidersValidation verifies that IDP lookups are deferred to runtime.
+// The webhook should accept references to IdentityProviders that do not exist yet so reconcilers can surface
+// the missing objects via conditions and events instead of blocking the CR creation.
 func TestBreakglassEscalationAllowedIdentityProvidersValidation(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)
@@ -216,13 +218,27 @@ func TestBreakglassEscalationAllowedIdentityProvidersValidation(t *testing.T) {
 			Allowed: BreakglassEscalationAllowed{
 				Clusters: []string{"cluster-1"},
 			},
+			Approvers:                BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
 			AllowedIdentityProviders: []string{"non-existent-idp"},
 		},
 	}
 
 	_, err := escalation.ValidateCreate(context.Background(), escalation)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Not found")
+	assert.NoError(t, err)
+}
+
+// TestBreakglassEscalationAllowedIdentityProvidersFormatting ensures duplicates/empty entries are still rejected.
+func TestBreakglassEscalationAllowedIdentityProvidersFormatting(t *testing.T) {
+	path := field.NewPath("spec").Child("allowedIdentityProviders")
+
+	err := validateIdentityProviderRefsFormat([]string{"", "idp-a"}, path)
+	assert.Len(t, err, 1)
+
+	err = validateIdentityProviderRefsFormat([]string{"idp-a", "idp-a"}, path)
+	assert.Len(t, err, 1)
+
+	err = validateIdentityProviderRefsFormat([]string{"idp-a", "idp-b"}, path)
+	assert.Empty(t, err)
 }
 
 // TestBreakglassEscalationEmptyAllowedIdentityProvidersAllowed tests backward compatibility
@@ -247,7 +263,7 @@ func TestBreakglassEscalationEmptyAllowedIdentityProvidersAllowed(t *testing.T) 
 		},
 	}
 
-	err := validateIdentityProviderRefs(context.Background(), escalation.Spec.AllowedIdentityProviders, field.NewPath("spec").Child("allowedIdentityProviders"))
+	err := validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProviders, field.NewPath("spec").Child("allowedIdentityProviders"))
 	// May error due to unique name check, but not due to empty IDP list
 	assert.Empty(t, err)
 }

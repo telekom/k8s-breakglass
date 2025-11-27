@@ -3,10 +3,12 @@ package config
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -158,6 +160,21 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		})
 	}
 
+	// Validate mail provider references
+	if mailProviderErr := r.validateMailProviderRef(ctx, escalation); mailProviderErr != nil {
+		validationErrors = append(validationErrors, struct {
+			conditionType string
+			reason        string
+			message       string
+			error         error
+		}{
+			conditionType: string(breakglassv1alpha1.BreakglassEscalationConditionMailProviderValid),
+			reason:        "MailProviderValidationFailed",
+			message:       mailProviderErr.Error(),
+			error:         mailProviderErr,
+		})
+	}
+
 	// Update conditions based on validation results
 	if len(validationErrors) > 0 {
 		// Set failed conditions
@@ -195,6 +212,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid,
 		breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid,
 		breakglassv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionMailProviderValid,
 	} {
 		condition := metav1.Condition{
 			Type:               string(condType),
@@ -338,53 +356,128 @@ func (r *EscalationReconciler) validateEscalationConfig(esc *breakglassv1alpha1.
 
 // validateClusterRef validates that the referenced clusters exist and are accessible
 func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) error {
-	// Validate ClusterConfigRefs if specified
+	if len(esc.Spec.ClusterConfigRefs) == 0 {
+		return nil
+	}
+
+	var missing []string
 	for _, clusterName := range esc.Spec.ClusterConfigRefs {
-		clusterKey := client.ObjectKey{Name: clusterName}
+		name := strings.TrimSpace(clusterName)
+		if name == "" {
+			continue
+		}
+
+		clusterKey := client.ObjectKey{Namespace: esc.Namespace, Name: name}
 		cluster := &breakglassv1alpha1.ClusterConfig{}
 		if err := r.client.Get(ctx, clusterKey, cluster); err != nil {
-			return fmt.Errorf("referenced ClusterConfig '%s' not found: %w", clusterName, err)
+			if apierrors.IsNotFound(err) {
+				missing = append(missing, fmt.Sprintf("%s/%s", esc.Namespace, name))
+				continue
+			}
+			return fmt.Errorf("failed to fetch ClusterConfig %s/%s: %w", esc.Namespace, name, err)
 		}
 	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("ClusterConfigRefs not found: %s", strings.Join(missing, ", "))
+	}
+
 	return nil
 }
 
 // validateIDPRefs validates that all referenced IDPs exist
 func (r *EscalationReconciler) validateIDPRefs(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) error {
-	// Helper to validate a list of IDP names
-	validateIDPList := func(idpNames []string) error {
-		for _, idpName := range idpNames {
-			idpKey := client.ObjectKey{Name: idpName}
-			idp := &breakglassv1alpha1.IdentityProvider{}
-			if err := r.client.Get(ctx, idpKey, idp); err != nil {
-				return fmt.Errorf("referenced IdentityProvider '%s' not found: %w", idpName, err)
-			}
-		}
-		return nil
+	checkLists := [][]string{
+		esc.Spec.AllowedIdentityProviders,
+		esc.Spec.AllowedIdentityProvidersForRequests,
+		esc.Spec.AllowedIdentityProvidersForApprovers,
 	}
 
-	// Validate all IDP references
-	if err := validateIDPList(esc.Spec.AllowedIdentityProviders); err != nil {
-		return err
+	var missing []string
+	var disabled []string
+	for _, refs := range checkLists {
+		for _, idpName := range refs {
+			name := strings.TrimSpace(idpName)
+			if name == "" {
+				continue
+			}
+
+			idpKey := client.ObjectKey{Name: name}
+			idp := &breakglassv1alpha1.IdentityProvider{}
+			if err := r.client.Get(ctx, idpKey, idp); err != nil {
+				if apierrors.IsNotFound(err) {
+					missing = append(missing, name)
+					continue
+				}
+				return fmt.Errorf("failed to fetch IdentityProvider %q: %w", name, err)
+			}
+			if idp.Spec.Disabled {
+				disabled = append(disabled, name)
+			}
+		}
 	}
-	if err := validateIDPList(esc.Spec.AllowedIdentityProvidersForRequests); err != nil {
-		return err
+
+	switch {
+	case len(missing) > 0 && len(disabled) > 0:
+		return fmt.Errorf("IdentityProvider refs invalid: missing [%s]; disabled [%s]", strings.Join(missing, ", "), strings.Join(disabled, ", "))
+	case len(missing) > 0:
+		return fmt.Errorf("IdentityProvider refs not found: %s", strings.Join(missing, ", "))
+	case len(disabled) > 0:
+		return fmt.Errorf("IdentityProvider refs disabled: %s", strings.Join(disabled, ", "))
+	default:
+		return nil
 	}
-	if err := validateIDPList(esc.Spec.AllowedIdentityProvidersForApprovers); err != nil {
-		return err
-	}
-	return nil
 }
 
 // validateDenyPolicyRefs validates deny policy references if they exist
 func (r *EscalationReconciler) validateDenyPolicyRefs(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) error {
-	// Only validate if deny policies are configured
+	if len(esc.Spec.DenyPolicyRefs) == 0 {
+		return nil
+	}
+
+	var missing []string
 	for _, policyName := range esc.Spec.DenyPolicyRefs {
-		policyKey := client.ObjectKey{Name: policyName}
+		name := strings.TrimSpace(policyName)
+		if name == "" {
+			continue
+		}
+
+		policyKey := client.ObjectKey{Name: name}
 		policy := &breakglassv1alpha1.DenyPolicy{}
 		if err := r.client.Get(ctx, policyKey, policy); err != nil {
-			return fmt.Errorf("referenced DenyPolicy '%s' not found: %w", policyName, err)
+			if apierrors.IsNotFound(err) {
+				missing = append(missing, name)
+				continue
+			}
+			return fmt.Errorf("failed to fetch DenyPolicy %q: %w", name, err)
 		}
 	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("DenyPolicy refs not found: %s", strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+// validateMailProviderRef validates that the referenced MailProvider exists and is enabled (if one is specified)
+func (r *EscalationReconciler) validateMailProviderRef(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) error {
+	name := strings.TrimSpace(esc.Spec.MailProvider)
+	if name == "" {
+		return nil
+	}
+
+	provider := &breakglassv1alpha1.MailProvider{}
+	if err := r.client.Get(ctx, client.ObjectKey{Name: name}, provider); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("MailProvider %q not found", name)
+		}
+		return fmt.Errorf("failed to fetch MailProvider %q: %w", name, err)
+	}
+
+	if provider.Spec.Disabled {
+		return fmt.Errorf("MailProvider %q is disabled", name)
+	}
+
 	return nil
 }

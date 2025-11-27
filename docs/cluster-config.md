@@ -56,6 +56,7 @@ kubeconfigSecretRef:
 - The referenced Secret MUST exist in the specified namespace
 - The kubeconfig MUST provide admin-level access to the target cluster
 - The kubeconfig should be valid and accessible from the hub cluster
+- `metadata.name` MUST be unique across **all namespaces**. The controller now enforces globally-unique names and will raise an error if two namespaces contain the same ClusterConfig name. Pick descriptive names that remain unique even when teams manage their own namespaces.
 
 ## Optional Fields
 
@@ -75,6 +76,16 @@ location: "eu-west-1"               # Region/location
 qps: 100    # Maximum queries per second to target cluster
 burst: 200  # Maximum burst capacity for API calls
 ```
+
+### Loopback kubeconfig rewrite
+
+Some bootstrap kubeconfigs (especially from kind) still point to `https://127.0.0.1` or `https://localhost`. Breakglass automatically rewrites those hosts to the in-cluster DNS name `https://kubernetes.default.svc` so SubjectAccessReview calls succeed from the hub cluster. If you need to keep the original host—for example, when running through a proxy—set the environment variable:
+
+```bash
+export BREAKGLASS_DISABLE_LOOPBACK_REWRITE=true
+```
+
+The flag can be toggled per controller instance and takes effect immediately without a restart.
 
 ## Status and Conditions
 
@@ -279,6 +290,12 @@ current-context: webhook
 - Use descriptive names reflecting purpose and environment
 - Include metadata (`tenant`, `environment`, `location`)
 - Monitor `ClusterConfig` status regularly
+
+### Cache invalidation and secret tracking
+
+- Breakglass registers controller-runtime informers for `ClusterConfig` objects and referenced kubeconfig Secrets. Any update/delete automatically invalidates cached metadata and REST configs, so you no longer need to restart the controller after editing kubeconfigs.
+- Secrets referenced by one or more ClusterConfigs are tracked. When a Secret changes, all dependent clusters are refreshed immediately.
+- REST config secrets default to the `value` key; customize with `spec.kubeconfigSecretRef.key` when you store multiple kubeconfigs in one Secret.
 
 ## Troubleshooting
 

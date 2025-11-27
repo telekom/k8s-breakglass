@@ -103,7 +103,7 @@ func TestQueue_EnqueueMultiple(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		err := queue.Enqueue("test-"+string(rune(i)), []string{"user@example.com"}, "Subject", "Body")
 		assert.NoError(t, err)
 	}
@@ -256,7 +256,7 @@ func TestQueue_ShutdownTimeout(t *testing.T) {
 	queue.Start()
 
 	// Enqueue 5 items (will take ~500ms to process all)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		err := queue.Enqueue("test-"+string(rune(i)), []string{"user@example.com"}, "Subject", "Body")
 		if err != nil {
 			t.Logf("failed to enqueue item %d: %v", i, err)
@@ -427,7 +427,7 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 
 	// Enqueue from multiple goroutines
 	done := make(chan error, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(id int) {
 			err := queue.Enqueue("test-"+string(rune(48+id)), []string{"user@example.com"}, "Subject", "Body")
 			done <- err
@@ -435,7 +435,7 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 	}
 
 	// Collect results
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		err := <-done
 		assert.NoError(t, err)
 	}

@@ -230,7 +230,6 @@ func TestDenyPolicyStatus(t *testing.T) {
 	readyCondition := policy.GetCondition(string(DenyPolicyConditionReady))
 	assert.NotNil(t, readyCondition)
 	assert.Equal(t, metav1.ConditionTrue, readyCondition.Status)
-
 }
 
 func TestDenyPolicySetConditionAddsAndUpdates(t *testing.T) {

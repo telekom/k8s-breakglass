@@ -72,7 +72,7 @@ func TestHandleGetEscalations_ReturnsEscalationsForTokenGroups(t *testing.T) {
 	// Register controller with its middleware so the test middleware runs for the route
 	_ = controller.Register(engine.Group("/"+controller.BasePath(), controller.Handlers()...))
 
-	req := httptest.NewRequest("GET", "/breakglassEscalations", nil)
+	req := httptest.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
 	w := httptest.NewRecorder()
 
 	engine.ServeHTTP(w, req)

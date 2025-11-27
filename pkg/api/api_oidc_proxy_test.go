@@ -109,7 +109,7 @@ func TestOIDCProxyPathValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a mock Gin context with the test proxyPath
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("GET", fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
 			c, _ := gin.CreateTestContext(w)
 			c.Request = req
 			c.Params = gin.Params{{Key: "proxyPath", Value: tt.proxyPath}}
@@ -191,7 +191,7 @@ func TestOIDCProxyMultiIDPValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("GET", fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
 			if tt.customAuthority != "" {
 				req.Header.Set("X-OIDC-Authority", tt.customAuthority)
 			}
@@ -275,7 +275,7 @@ func TestOIDCProxyPathTrustedIDPs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("GET", fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
 			c, _ := gin.CreateTestContext(w)
 			c.Request = req
 			c.Params = gin.Params{{Key: "proxyPath", Value: tt.proxyPath}}
@@ -347,7 +347,7 @@ func TestOIDCProxyPathEncoding(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("GET", fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
 			c, _ := gin.CreateTestContext(w)
 			c.Request = req
 			c.Params = gin.Params{{Key: "proxyPath", Value: tt.proxyPath}}
@@ -417,7 +417,7 @@ func TestOIDCProxyPortBinding(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("GET", fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
 			c, _ := gin.CreateTestContext(w)
 			c.Request = req
 			c.Params = gin.Params{{Key: "proxyPath", Value: tt.proxyPath}}
@@ -470,7 +470,7 @@ func TestOIDCProxyLocalhostBinding(t *testing.T) {
 
 	// Test that localhost authority is configured and won't be overridden
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/oidc/authority/.well-known/openid-configuration", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/oidc/authority/.well-known/openid-configuration", nil)
 	// Try to inject a different authority - should be rejected
 	req.Header.Set("X-OIDC-Authority", fmt.Sprintf("http://%s", addr))
 
@@ -559,7 +559,7 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("GET", fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/oidc/authority%s", tt.proxyPath), nil)
 
 			c, _ := gin.CreateTestContext(w)
 			c.Request = req
@@ -648,7 +648,7 @@ func TestOIDCProxyRealmPathIntegration(t *testing.T) {
 
 	t.Run("Full OIDC discovery flow with realm path preservation", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/api/oidc/authority/.well-known/openid-configuration", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/oidc/authority/.well-known/openid-configuration", nil)
 
 		c, _ := gin.CreateTestContext(w)
 		c.Request = req
@@ -685,7 +685,7 @@ func TestOIDCProxyRealmPathIntegration(t *testing.T) {
 
 	t.Run("Query parameters are preserved in realm path scenario", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/api/oidc/authority/.well-known/openid-configuration?foo=bar", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/oidc/authority/.well-known/openid-configuration?foo=bar", nil)
 
 		c, _ := gin.CreateTestContext(w)
 		c.Request = req

@@ -45,6 +45,8 @@ const (
 	BreakglassEscalationConditionIDPRefsValid BreakglassEscalationConditionType = "IDPRefsValid"
 	// BreakglassEscalationConditionDenyPolicyRefsValid indicates deny policy references are valid
 	BreakglassEscalationConditionDenyPolicyRefsValid BreakglassEscalationConditionType = "DenyPolicyRefsValid"
+	// BreakglassEscalationConditionMailProviderValid indicates mail provider references are valid
+	BreakglassEscalationConditionMailProviderValid BreakglassEscalationConditionType = "MailProviderValid"
 )
 
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
@@ -331,9 +333,10 @@ func validateBreakglassEscalationSpec(ctx context.Context, escalation *Breakglas
 	allowedGroupsPath := specPath.Child("allowed").Child("groups")
 	allowedClustersPath := specPath.Child("allowed").Child("clusters")
 
-	// Validate allowed groups and clusters are not both empty
-	if len(escalation.Spec.Allowed.Groups) == 0 && len(escalation.Spec.Allowed.Clusters) == 0 {
-		allErrs = append(allErrs, field.Required(specPath.Child("allowed"), "either groups or clusters must be specified"))
+	clustersProvided := len(escalation.Spec.Allowed.Clusters) > 0 || len(escalation.Spec.ClusterConfigRefs) > 0
+	// Validate allowed groups and cluster targets are not both empty (cluster targets include allowed.clusters + clusterConfigRefs)
+	if len(escalation.Spec.Allowed.Groups) == 0 && !clustersProvided {
+		allErrs = append(allErrs, field.Required(specPath.Child("allowed"), "either groups or cluster targets (allowed.clusters or clusterConfigRefs) must be specified"))
 	}
 
 	// Validate allowed groups
@@ -378,14 +381,17 @@ func validateBreakglassEscalationSpec(ctx context.Context, escalation *Breakglas
 		allErrs = append(allErrs, validateEmailDomainList(escalation.Spec.AllowedApproverDomains, specPath.Child("allowedApproverDomains"))...)
 	}
 
+	// Validate optional mail provider reference
+	allErrs = append(allErrs, validateIdentifierFormat(escalation.Spec.MailProvider, specPath.Child("mailProvider"))...)
+
 	// Validate timeout relationships
 	allErrs = append(allErrs, validateTimeoutRelationships(&escalation.Spec, specPath)...)
 
 	// Multi-IDP validations
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProviders, specPath.Child("allowedIdentityProviders"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProviders, specPath.Child("allowedIdentityProviders"))...)
 	allErrs = append(allErrs, validateIDPFieldCombinations(&escalation.Spec, specPath)...)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForRequests, specPath.Child("allowedIdentityProvidersForRequests"))...)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, escalation.Spec.AllowedIdentityProvidersForApprovers, specPath.Child("allowedIdentityProvidersForApprovers"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProvidersForRequests, specPath.Child("allowedIdentityProvidersForRequests"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProvidersForApprovers, specPath.Child("allowedIdentityProvidersForApprovers"))...)
 
 	return allErrs
 }

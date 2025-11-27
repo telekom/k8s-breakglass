@@ -110,5 +110,4 @@ func getCondition(cc *telekomv1alpha1.ClusterConfig, condType string) *metav1.Co
 		}
 	}
 	return nil
-
 }

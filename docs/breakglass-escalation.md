@@ -138,6 +138,18 @@ spec:
   disableNotifications: true    # No emails for automated monitoring access
 ```
 
+### mailProvider
+
+Force this escalation to send notifications through a specific [`MailProvider`](./mail-provider.md):
+
+```yaml
+mailProvider: "prod-mail-provider"
+```
+
+If omitted, Breakglass uses the cluster-level mail provider, and if that is unset, the default MailProvider. This allows sensitive escalations to route via hardened SMTP relays while everything else uses the default.
+
+> **Runtime validation:** The webhook no longer blocks missing MailProviders. The Escalation controller re-checks the reference after admission and flips the `MailProviderValid` condition (and emits a warning event) if the provider is missing or disabled. Create/enable the provider to restore the condition to `True` and re-enable notifications.
+
 ### notificationExclusions
 
 Exclude specific users or groups from receiving email notifications for this escalation. Useful for excluding automated services, bots, or specific approvers from notification spam.
@@ -153,18 +165,20 @@ notificationExclusions:
 ```
 
 **Behavior:**
+
 - Excluded users will NOT receive emails when sessions are requested/approved/rejected
 - Excluded groups' members will NOT receive emails
 - All other approvers will receive emails as normal
 - Takes precedence over individual approver lists
 
 **Use Cases:**
+
 - Exclude automated CI/CD systems from notifications
 - Exclude specific approver groups that don't need notifications
 - Exclude service accounts that shouldn't receive emails
 - Mix with `disableNotifications: true` for fully silent escalations
 
-**Example:** Exclude automated services:
+#### Example: Exclude automated services
 
 ```yaml
 spec:
@@ -193,6 +207,7 @@ approvers:
 ```
 
 **Behavior:**
+
 - Hidden users/groups are NOT shown in the UI's approver list
 - Hidden users/groups do NOT receive email notifications
 - Hidden users/groups CAN still approve sessions if they know about them
@@ -200,18 +215,20 @@ approvers:
 - Useful for "on-call" or "last resort" approver groups
 
 **Important Distinction:**
+
 - `hiddenFromUI`: Group exists as a fallback approver but is hidden from UI/emails
 - `notificationExclusions`: Group receives no emails but is still shown in UI
 - `disableNotifications: true`: All approvers receive no emails and group is still shown in UI
 
 **Use Cases:**
+
 - Hide FLM group (only contact in emergencies)
 - Hide on-call escalation groups from routine notifications
 - Hide duty manager group from daily UI displays
 - Keep emergency approvers as fallback without notifying them
 - Hide automated approvers that still function as backup
 
-**Example:** FLM as hidden fallback:
+#### Example: FLM as hidden fallback
 
 ```yaml
 spec:
@@ -228,12 +245,13 @@ spec:
 ```
 
 In this example:
+
 - Users see "security-team" as approvers in the UI
 - Security team members receive approval emails
 - If security-team is unavailable, FLM-on-duty can still approve
 - FLM doesn't receive emails and doesn't see this in the UI until activated
 
-**Example:** Hide both direct user and group:
+#### Example: Hide both direct user and group
 
 ```yaml
 approvers:
@@ -276,17 +294,19 @@ allowedIdentityProvidersForApprovers:
 ```
 
 **Requirements:**
+
 - Both fields must be set together (mutual requirement)
 - Cannot be mixed with legacy `allowedIdentityProviders` field
 - All referenced IdentityProviders must exist
 
 **Behavior:**
+
 - If `allowedIdentityProvidersForRequests` is empty, all IDPs can request (default)
 - If `allowedIdentityProvidersForApprovers` is empty, all IDPs can approve (default)
 - Users can only request via their authenticated IDP
 - Approvers can only approve if their IDP is in the allowed list
 
-**Example: Restrict to Corporate OIDC only**
+#### Example: Restrict to Corporate OIDC only
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -307,7 +327,7 @@ spec:
   - "corp-oidc"
 ```
 
-**Example: Multiple IDPs**
+#### Example: Multiple IDPs
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -390,6 +410,7 @@ conditions:
 ```
 
 When `False`:
+
 ```yaml
 - type: Ready
   status: "False"
@@ -405,6 +426,7 @@ When `False`:
 | `ClusterReferenceInvalid` | False | Referenced cluster doesn't exist |
 | `IdentityProviderReferenceInvalid` | False | Referenced IDP doesn't exist or is disabled |
 | `DenyPolicyReferenceInvalid` | False | Referenced deny policy doesn't exist |
+| `MailProviderValidationFailed` | False | Referenced MailProvider is missing or disabled |
 | `GroupSyncFailed` | False | Failed to sync approver groups from IDP |
 | `ValidationInProgress` | Unknown | Configuration being validated |
 
@@ -435,6 +457,8 @@ Alternative to `allowed.clusters` - list specific `ClusterConfig` resource names
 clusterConfigRefs: ["prod-cluster-config", "staging-cluster-config"]
 ```
 
+> **Runtime validation:** The admission webhook intentionally accepts escalations even if the referenced `ClusterConfig` objects are missing. The Escalation controller re-validates these references and updates the `ClusterRefsValid` condition (and emits warning events) whenever a reference cannot be resolved.
+
 ### denyPolicyRefs
 
 Default deny policies attached to any session created via this escalation:
@@ -442,6 +466,8 @@ Default deny policies attached to any session created via this escalation:
 ```yaml
 denyPolicyRefs: ["deny-production-secrets", "deny-destructive-actions"]
 ```
+
+> **Runtime validation:** Missing or misconfigured `DenyPolicy` references do not block creation. Instead, the Escalation controller surfaces problems through the `DenyPolicyRefsValid` condition and warning events so operators can react without being prevented from applying manifests.
 
 ## Complete Examples
 
@@ -578,6 +604,7 @@ kubectl get breakglassescalation <name> -o yaml | grep -A 20 status:
 **Cause:** Referenced cluster in `allowed.clusters` or `clusterConfigRefs` doesn't exist.
 
 **Diagnosis:**
+
 ```bash
 # List available clusters
 kubectl get clusterconfig
@@ -587,6 +614,7 @@ kubectl get breakglassescalation <name> -o jsonpath='{.spec.allowed.clusters}'
 ```
 
 **Solution:**
+
 - Verify cluster names in `allowed.clusters` match existing `ClusterConfig` names
 - Use exact names as shown in `kubectl get clusterconfig`
 - If using `clusterConfigRefs`, ensure those `ClusterConfig` resources exist
@@ -596,6 +624,7 @@ kubectl get breakglassescalation <name> -o jsonpath='{.spec.allowed.clusters}'
 **Cause:** Referenced identity provider doesn't exist or is disabled.
 
 **Diagnosis:**
+
 ```bash
 # List available IDPs
 kubectl get identityprovider
@@ -605,6 +634,7 @@ kubectl get identityprovider <name> -o yaml | grep -E '(name:|disabled:)'
 ```
 
 **Solution:**
+
 - Verify IDP names in `allowedIdentityProvidersForRequests/Approvers` exist
 - Check if referenced IDP is disabled (`spec.disabled: true`)
 - Enable the IDP or update the escalation references
@@ -614,6 +644,7 @@ kubectl get identityprovider <name> -o yaml | grep -E '(name:|disabled:)'
 **Cause:** Failed to synchronize approver groups from identity provider.
 
 **Diagnosis:**
+
 ```bash
 # Check sync error details
 kubectl describe breakglassescalation <name> | grep -A 3 "GroupSyncFailed"
@@ -623,6 +654,7 @@ kubectl describe identityprovider <idp-name>
 ```
 
 **Solution:**
+
 - Verify identity provider is healthy (check `Ready` condition)
 - Ensure approver groups exist in configured IDP
 - Check IDP connectivity and credentials
@@ -633,6 +665,7 @@ kubectl describe identityprovider <idp-name>
 **Cause:** Referenced deny policy doesn't exist.
 
 **Diagnosis:**
+
 ```bash
 # List available deny policies
 kubectl get denypolicy
@@ -642,6 +675,7 @@ kubectl get breakglassescalation <name> -o jsonpath='{.spec.denyPolicyRefs}'
 ```
 
 **Solution:**
+
 - Verify all deny policy names in `denyPolicyRefs` exist
 - Create missing deny policies or remove invalid references
 
@@ -650,6 +684,7 @@ kubectl get breakglassescalation <name> -o jsonpath='{.spec.denyPolicyRefs}'
 #### Users can't see escalation as an option
 
 **Check user group membership:**
+
 ```bash
 # User must belong to one of the groups in allowed.groups or users list
 # Verify in your identity provider that user belongs to:
@@ -658,6 +693,7 @@ kubectl get breakglassescalation <name> -o jsonpath='{.spec.denyPolicyRefs}'
 ```
 
 **Check cluster configuration:**
+
 ```bash
 # Verify the cluster they're requesting is in allowed.clusters
 kubectl get breakglassescalation <name> -o jsonpath='{.spec.allowed.clusters}'
@@ -666,12 +702,14 @@ kubectl get breakglassescalation <name> -o jsonpath='{.spec.allowed.clusters}'
 #### Approvals not working
 
 **Check approver configuration:**
+
 ```bash
 # Verify approvers exist
 kubectl get breakglassescalation <name> -o yaml | grep -A 10 'approvers:'
 ```
 
 **Verify approver group membership:**
+
 ```bash
 # If using group-based approvals, ensure approvers belong to those groups
 # in the configured identity provider
@@ -682,12 +720,14 @@ kubectl get breakglassescalation <name> -o yaml | grep -A 10 'approvers:'
 #### Sessions not created from escalations
 
 **Check if escalation is Ready:**
+
 ```bash
 kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="Ready")]}'
 # Should show status: True
 ```
 
 **Check webhook authorization:**
+
 ```bash
 # Ensure webhook is properly configured and accessible
 # Review breakglass controller logs for details
@@ -698,12 +738,14 @@ kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.typ
 #### Approver groups not resolved
 
 **Check sync status in status section:**
+
 ```bash
 kubectl get breakglassescalation <name> -o jsonpath='{.status.approverGroupMembers}'
 # Should show resolved email addresses
 ```
 
 **If empty or missing:**
+
 - Verify identity provider is healthy
 - Check IDP group names exist
 - Review IDP reconciler logs for sync errors

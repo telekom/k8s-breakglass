@@ -275,7 +275,7 @@ func TestLeadershipSignal_MultipleListeners(t *testing.T) {
 
 	// Both should eventually exit due to context timeout
 	completed := 0
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-done1:
 			completed++

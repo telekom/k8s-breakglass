@@ -185,7 +185,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 		GroupName:   "breakglass-create-all",
 	}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -195,7 +195,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 
 	// get created request and check if proper fields are set
 	getSession := func() v1alpha1.BreakglassSession {
-		req, _ := http.NewRequest("GET", "/breakglassSessions", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		response := w.Result()
@@ -219,7 +219,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	}
 
 	// approve session
-	req, _ = http.NewRequest("POST",
+	req, _ = http.NewRequest(http.MethodPost,
 		fmt.Sprintf("/breakglassSessions/%s/approve", ses.Name),
 		nil)
 	w = httptest.NewRecorder()
@@ -236,7 +236,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	}
 
 	// reject session -> should be invalid because session is already approved (terminal)
-	req, _ = http.NewRequest("POST",
+	req, _ = http.NewRequest(http.MethodPost,
 		fmt.Sprintf("/breakglassSessions/%s/reject", ses.Name),
 		nil)
 	w = httptest.NewRecorder()
@@ -348,7 +348,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 		GroupName:   "breakglass-create-all",
 	}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -357,7 +357,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	}
 
 	// fetch created session
-	req, _ = http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response = w.Result()
@@ -374,7 +374,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	ses := respSessions[0]
 
 	// approve session (approver@telekom.de)
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", ses.Name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", ses.Name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response = w.Result()
@@ -383,7 +383,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	}
 
 	// fetch session and assert approver fields
-	req, _ = http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response = w.Result()
@@ -413,7 +413,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	}
 
 	// reject session as a different user (rejector@telekom.de) -> should be invalid because session is terminal (approved)
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/reject", ses.Name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/reject", ses.Name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response = w.Result()
@@ -422,7 +422,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	}
 
 	// fetch session and assert approver metadata remains unchanged (reject did not overwrite)
-	req, _ = http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response = w.Result()
@@ -493,7 +493,7 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 		GroupName:   "esc-group",
 	}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	resp := w.Result()
@@ -556,7 +556,7 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 		GroupName:   "nonexistent-group",
 	}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	resp := w.Result()
@@ -565,7 +565,7 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	}
 
 	// Verify no sessions exist
-	req, _ = http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	resp = w.Result()
@@ -629,7 +629,7 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 
 	reqData := BreakglassSessionRequest{Clustername: "c", Username: "self@example.com", GroupName: "g-block"}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusCreated {
@@ -643,7 +643,7 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 	name := created.Name
 
 	// Approve request
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode == http.StatusOK {
@@ -704,7 +704,7 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 	// create a session
 	reqData := BreakglassSessionRequest{Clustername: "c2", Username: "requester@ex.com", GroupName: "g-domain"}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusCreated {
@@ -717,7 +717,7 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 	name := created.Name
 
 	// Attempt approval by approver@example.com (example.com) -> escalation restricts to example.org and should deny
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode == http.StatusOK {
@@ -778,7 +778,7 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 		GroupName:   "g1",
 	}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusCreated {
@@ -872,7 +872,7 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
 	// Filter by mine=true (user1@example.com)
-	req, _ := http.NewRequest("GET", "/breakglassSessions?mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -953,7 +953,7 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("POST", "/breakglassSessions/pending-1/approve", nil)
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/pending-1/approve", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -1027,7 +1027,7 @@ func TestTerminalStateImmutability(t *testing.T) {
 	// create session
 	reqData := BreakglassSessionRequest{Clustername: "c", Username: "user@e.com", GroupName: "g"}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusCreated {
@@ -1042,7 +1042,7 @@ func TestTerminalStateImmutability(t *testing.T) {
 	name := created.Name
 
 	// approve once -> OK
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -1050,7 +1050,7 @@ func TestTerminalStateImmutability(t *testing.T) {
 	}
 
 	// approve second time -> conflict (409)
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusConflict {
@@ -1058,7 +1058,7 @@ func TestTerminalStateImmutability(t *testing.T) {
 	}
 
 	// attempt to reject after approval -> should be BadRequest (terminal)
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/reject", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/reject", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusBadRequest {
@@ -1132,7 +1132,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	// create session as requester user@e.com
 	reqData := BreakglassSessionRequest{Clustername: "c", Username: "user@e.com", GroupName: "g"}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusCreated {
@@ -1147,7 +1147,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	name := created.Name
 
 	// approve as approver -> session becomes Approved
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -1155,7 +1155,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	}
 
 	// verify approved state
-	req, _ = http.NewRequest("GET", fmt.Sprintf("/breakglassSessions/%s", name), nil)
+	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("/breakglassSessions/%s", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	gotList := []v1alpha1.BreakglassSession{}
@@ -1171,7 +1171,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	}
 
 	// drop as owner -> should transition to Expired
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/drop", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/drop", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -1179,7 +1179,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	}
 
 	// verify expired state
-	req, _ = http.NewRequest("GET", fmt.Sprintf("/breakglassSessions/%s", name), nil)
+	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("/breakglassSessions/%s", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	gotList = []v1alpha1.BreakglassSession{}
@@ -1198,7 +1198,7 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	}
 
 	// ensure expired is terminal: further approve attempts must fail
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode == http.StatusOK {
@@ -1272,7 +1272,7 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	// create session as requester user@e.com
 	reqData := BreakglassSessionRequest{Clustername: "c", Username: "user@e.com", GroupName: "g"}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusCreated {
@@ -1287,7 +1287,7 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	name := created.Name
 
 	// approve as approver -> session becomes Approved
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -1295,7 +1295,7 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	}
 
 	// cancel as approver -> should transition to Expired
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/cancel", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/cancel", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -1326,7 +1326,7 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	}
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/cancel", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/cancel", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusUnauthorized {
@@ -1378,7 +1378,7 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?cluster=clusterA&mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?cluster=clusterA&mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -1439,7 +1439,7 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?user=alice@example.com&mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?user=alice@example.com&mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -1500,7 +1500,7 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?group=admins&mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?group=admins&mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -1575,7 +1575,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 
 	// 1) Successful withdraw by owner on pending session
 	{
-		req, _ := http.NewRequest("POST", "/breakglassSessions/w-pending/withdraw", nil)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/w-pending/withdraw", nil)
 		req.Header.Set("X-Test-Email", "owner@example.com")
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
@@ -1595,7 +1595,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 
 	// 2) Unauthorized withdraw attempt by non-owner
 	{
-		req, _ := http.NewRequest("POST", "/breakglassSessions/w-approved/withdraw", nil)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/w-approved/withdraw", nil)
 		req.Header.Set("X-Test-Email", "other@example.com")
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
@@ -1607,7 +1607,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 
 	// 3) Owner attempts to withdraw a non-pending (approved) session -> BadRequest
 	{
-		req, _ := http.NewRequest("POST", "/breakglassSessions/w-approved/withdraw", nil)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/w-approved/withdraw", nil)
 		req.Header.Set("X-Test-Email", "owner@example.com")
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
@@ -1662,7 +1662,7 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?cluster=c1&user=u1@example.com&mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?cluster=c1&user=u1@example.com&mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -1736,7 +1736,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	// 1) attempt request without reason -> 422
 	reqBody := BreakglassSessionRequest{Clustername: "c1", Username: "requester@example.com", GroupName: "g-with-reason"}
 	b, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -1747,7 +1747,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	// 2) request with reason -> 201
 	reqBody.Reason = "CASM-12345"
 	b, _ = json.Marshal(reqBody)
-	req, _ = http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ = http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res = w.Result()
@@ -1756,7 +1756,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	}
 
 	// fetch session and verify stored request reason
-	req, _ = http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res = w.Result()
@@ -1778,7 +1778,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	// 3) approve with approver reason
 	approveBody := map[string]string{"reason": "Approved for emergency"}
 	bb, _ := json.Marshal(approveBody)
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/approve", ses.Name), bytes.NewReader(bb))
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", ses.Name), bytes.NewReader(bb))
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res = w.Result()
@@ -1787,7 +1787,7 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 	}
 
 	// fetch session and assert approvalReason stored
-	req, _ = http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res = w.Result()
@@ -1850,7 +1850,7 @@ func TestLongReasonStored(t *testing.T) {
 	long := strings.Repeat("A", 3000)
 	reqBody := BreakglassSessionRequest{Clustername: "lc1", Username: "longreq@example.com", GroupName: "g-long", Reason: long}
 	b, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -1859,7 +1859,7 @@ func TestLongReasonStored(t *testing.T) {
 	}
 
 	// fetch and assert stored
-	req, _ = http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res = w.Result()
@@ -1912,7 +1912,7 @@ func TestWhitespaceReasonRejectedWhenMandatory(t *testing.T) {
 
 	reqBody := BreakglassSessionRequest{Clustername: "wc1", Username: "ws@example.com", GroupName: "g-ws", Reason: "   "}
 	b, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -1961,7 +1961,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	// create request
 	reqBody := BreakglassSessionRequest{Clustername: "oc1", Username: "owner@example.com", GroupName: "g-owner"}
 	b, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusCreated {
@@ -1969,7 +1969,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	}
 
 	// get session name
-	req, _ = http.NewRequest("GET", "/breakglassSessions?mine=true", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	var sessions []v1alpha1.BreakglassSession
@@ -1980,7 +1980,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	name := sessions[0].Name
 
 	// owner rejects own pending session
-	req, _ = http.NewRequest("POST", fmt.Sprintf("/breakglassSessions/%s/reject", name), nil)
+	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/reject", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -1988,7 +1988,7 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 	}
 
 	// verify rejected
-	req, _ = http.NewRequest("GET", "/breakglassSessions?mine=true", nil)
+	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	sessions = []v1alpha1.BreakglassSession{}
@@ -2041,7 +2041,7 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?cluster=cluster1&group=ops&mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?cluster=cluster1&group=ops&mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -2101,7 +2101,7 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?user=sam@example.com&group=ops&mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?user=sam@example.com&group=ops&mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -2161,7 +2161,7 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?cluster=z1&user=p@example.com&group=wheel&mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?cluster=z1&user=p@example.com&group=wheel&mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	response := w.Result()
@@ -2274,7 +2274,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 
 	// helper to query by state
 	queryByState := func(state string) []v1alpha1.BreakglassSession {
-		req, _ := http.NewRequest("GET", "/breakglassSessions?state="+state+"&mine=true", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?state="+state+"&mine=true", nil)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		response := w.Result()
@@ -2346,7 +2346,7 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 
 	assertStates := func(t *testing.T, query string, want []string) {
 		t.Helper()
-		req, _ := http.NewRequest("GET", query, nil)
+		req, _ := http.NewRequest(http.MethodGet, query, nil)
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		res := w.Result()
@@ -2429,7 +2429,7 @@ func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?mine=false&approver=false&approvedByMe=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?mine=false&approver=false&approvedByMe=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -2508,7 +2508,7 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
 	// bob should see the pending session without specifying mine=true
-	req, _ := http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -2559,7 +2559,7 @@ func TestGetSessions_IdentityProviderErrorReturns500(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions?mine=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?mine=true", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -2627,7 +2627,7 @@ func TestClusterConfig_BlockSelfApproval_PreventsSelfApproval(t *testing.T) {
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
 	// Since self-approval is blocked, the owner acting as approver should NOT see the pending session
-	req, _ := http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -2698,7 +2698,7 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	req, _ := http.NewRequest("GET", "/breakglassSessions", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
@@ -2797,7 +2797,7 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		req, _ := http.NewRequest("GET", "/breakglassSessions?"+tc.query, nil)
+		req, _ := http.NewRequest(http.MethodGet, "/breakglassSessions?"+tc.query, nil)
 		if tc.header != "" {
 			req.Header.Set("X-Test-Email", tc.header)
 		}
@@ -3134,7 +3134,7 @@ func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
 		GroupName:   "admin",
 	}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
@@ -3213,7 +3213,7 @@ func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
 	rg := engine.Group("/breakglassEscalations", ctrl.middleware)
 	_ = ctrl.Register(rg)
 
-	req, _ := http.NewRequest("GET", "/breakglassEscalations", nil)
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
@@ -3313,7 +3313,7 @@ func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 		GroupName:   "admin",
 	}
 	b, _ := json.Marshal(reqData)
-	req, _ := http.NewRequest("POST", "/breakglassSessions", bytes.NewReader(b))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 

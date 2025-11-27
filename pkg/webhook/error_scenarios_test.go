@@ -57,7 +57,7 @@ func TestHandleAuthorize_MalformedJSON(t *testing.T) {
 	_ = wc.Register(engine.Group("/" + wc.BasePath()))
 
 	malformedJSON := `{"spec": invalid json`
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader([]byte(malformedJSON)))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader([]byte(malformedJSON)))
 	w := httptest.NewRecorder()
 
 	engine.ServeHTTP(w, req)
@@ -98,7 +98,7 @@ func TestHandleAuthorize_NilResourceAttributes(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(sar)
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
 	engine.ServeHTTP(w, req)
@@ -142,7 +142,7 @@ func TestHandleAuthorize_SpecialCharactersInReason(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(sar)
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
 	engine.ServeHTTP(w, req)
@@ -186,7 +186,7 @@ func TestHandleAuthorize_EmptyUserField(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(sar)
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
 	engine.ServeHTTP(w, req)
@@ -218,7 +218,7 @@ func TestHandleAuthorize_ConcurrentRequests(t *testing.T) {
 	_ = wc.Register(engine.Group("/" + wc.BasePath()))
 
 	resultChan := make(chan int, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		go func(userID int) {
 			sar := authorizationv1.SubjectAccessReview{
 				TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
@@ -233,7 +233,7 @@ func TestHandleAuthorize_ConcurrentRequests(t *testing.T) {
 			}
 
 			body, _ := json.Marshal(sar)
-			req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+			req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 			w := httptest.NewRecorder()
 
 			engine.ServeHTTP(w, req)
@@ -241,7 +241,7 @@ func TestHandleAuthorize_ConcurrentRequests(t *testing.T) {
 		}(i)
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		status := <-resultChan
 		if status == http.StatusInternalServerError {
 			t.Errorf("Concurrent request %d returned 500", i)
@@ -281,7 +281,7 @@ func TestHandleAuthorize_InvalidResourceName(t *testing.T) {
 
 	body, _ := json.Marshal(sar)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/test-cluster", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
@@ -320,7 +320,7 @@ func TestHandleAuthorize_InvalidGroupFormat(t *testing.T) {
 
 	body, _ := json.Marshal(sar)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/test-cluster", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
@@ -369,7 +369,7 @@ func TestHandleAuthorize_BothAttributeTypesPresent(t *testing.T) {
 
 	body, _ := json.Marshal(sar)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/test-cluster", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
@@ -413,7 +413,7 @@ func TestHandleAuthorize_UnicodeCharactersInUser(t *testing.T) {
 
 	body, _ := json.Marshal(sar)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/test-cluster", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
@@ -456,7 +456,7 @@ func TestHandleAuthorize_MissingContentType(t *testing.T) {
 
 	body, _ := json.Marshal(sar)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/test-cluster", bytes.NewReader(body))
 	// Don't set Content-Type header
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req

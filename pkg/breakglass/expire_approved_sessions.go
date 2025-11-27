@@ -48,7 +48,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 
 			// Persist the status change using Status().Update and retry on conflict with a few attempts.
 			var lastErr error
-			for attempt := 0; attempt < 3; attempt++ {
+			for attempt := range 3 {
 				if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
 					lastErr = nil
 					// count as expired when status update succeeds

@@ -1,0 +1,89 @@
+# Granular DenyPolicy Examples for Operational, Security, and Data Exfiltration Protection
+
+---
+# 1. Block all access to production secrets (data exfiltration)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: block-prod-secrets-exfiltration
+spec:
+  appliesTo:
+    clusters: ["prod-cluster"]
+  rules:
+    - verbs: ["get", "list", "create", "update", "delete"]
+      apiGroups: [""]
+      resources: ["secrets"]
+      namespaces: ["prod", "system"]
+      resourceNames:
+        - "database-credentials"
+        - "api-keys"
+  precedence: 10
+---
+# 2. Prevent deletion of critical infrastructure (operational safety)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: prevent-critical-infra-deletion
+spec:
+  rules:
+    - verbs: ["delete"]
+      apiGroups: [""]
+      resources: ["namespaces", "persistentvolumes"]
+    - verbs: ["delete"]
+      apiGroups: ["apps"]
+      resources: ["deployments"]
+  precedence: 20
+---
+# 3. Restrict access to kube-system and node-lease namespaces (security hardening)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: restrict-kube-system-access
+spec:
+  rules:
+    - verbs: ["*"]
+      apiGroups: ["*"]
+      resources: ["*"]
+      namespaces: ["kube-system", "kube-node-lease"]
+  precedence: 5
+---
+# 4. Block creation of external network policies (data exfiltration risk)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: block-external-network-policies
+spec:
+  rules:
+    - verbs: ["create", "update"]
+      apiGroups: ["networking.k8s.io"]
+      resources: ["networkpolicies"]
+      resourceNames: ["allow-external"]
+  precedence: 15
+---
+# 5. Deny access to audit logs for non-admins (compliance)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: deny-audit-log-access
+spec:
+  appliesTo:
+    tenants: ["tenant-a", "tenant-b"]
+  rules:
+    - verbs: ["get", "list"]
+      apiGroups: [""]
+      resources: ["configmaps"]
+      resourceNames: ["audit-logs"]
+  precedence: 30
+---
+# 6. Block exec/attach to running pods (security, exfiltration)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: block-pod-exec-attach
+spec:
+  rules:
+    - verbs: ["create"]
+      apiGroups: [""]
+      resources: ["pods"]
+      subresources: ["exec", "attach"]
+  precedence: 25

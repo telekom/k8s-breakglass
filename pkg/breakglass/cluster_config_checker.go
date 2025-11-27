@@ -72,7 +72,6 @@ func (ccc ClusterConfigChecker) Start(ctx context.Context) {
 }
 
 func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogger) {
-
 	lg.Debug("Running ClusterConfig validation check")
 	list := telekomv1alpha1.ClusterConfigList{}
 	if err := ccc.Client.List(ctx, &list); err != nil {
@@ -167,7 +166,6 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 }
 
 func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
-
 	// update status with conditions
 	now := metav1.Now()
 

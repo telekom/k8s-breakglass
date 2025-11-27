@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 )
@@ -45,7 +46,7 @@ func dropK8sInternalFieldsEscalationList(list []v1alpha1.BreakglassEscalation) [
 func (ec *BreakglassEscalationController) Register(rg *gin.RouterGroup) error {
 	basePath := ec.BasePath()
 	ec.log.With("basePath", basePath).Info("Registering escalation controller endpoints (RESTful)")
-	rg.GET("", ec.handleGetEscalations)
+	rg.GET("", instrumentedHandler("handleGetEscalations", ec.handleGetEscalations))
 	ec.log.With("endpoint", basePath).Debug("Escalation endpoint registered successfully (RESTful)")
 	return nil
 }
@@ -55,10 +56,12 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, ec.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 	reqLog.Info("Processing escalations request")
+	metrics.APIEndpointRequests.WithLabelValues("handleGetEscalations").Inc()
 
 	email, err := ec.identityProvider.GetEmail(c)
 	if err != nil {
 		reqLog.With("error", err).Error("Failed to extract user email from authentication token")
+		metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
 		c.JSON(http.StatusInternalServerError, "failed to extract user identity")
 		return
 	}
@@ -83,6 +86,7 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		userGroups, gerr = ec.getUserGroupsFn(c.Request.Context(), userContext)
 		if gerr != nil {
 			reqLog.With("error", gerr.Error(), "user", email).Error("Failed to retrieve user groups for escalation determination")
+			metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
 			c.JSON(http.StatusInternalServerError, "failed to extract user groups")
 			return
 		}
@@ -100,6 +104,7 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	escalations, err := ec.manager.GetGroupBreakglassEscalations(c.Request.Context(), userGroups)
 	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to retrieve escalations from manager")
+		metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
 		c.JSON(http.StatusInternalServerError, "failed to extract user escalations")
 		return
 	}
@@ -167,7 +172,6 @@ func NewBreakglassEscalationController(log *zap.SugaredLogger,
 	middleware gin.HandlerFunc,
 	configPath string,
 ) *BreakglassEscalationController {
-
 	log.Debug("Initializing BreakglassEscalationController with Keycloak identity provider")
 
 	identityProvider := KeycloakIdentityProvider{}

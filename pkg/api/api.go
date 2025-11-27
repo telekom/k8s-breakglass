@@ -307,6 +307,12 @@ func (s *Server) Listen() {
 	}
 }
 
+// Handler exposes the underlying HTTP handler (Gin engine). This is primarily intended
+// for tests that need to exercise the full API stack without starting a real TCP server.
+func (s *Server) Handler() http.Handler {
+	return s.gin
+}
+
 type FrontendConfig struct {
 	OIDCAuthority string `json:"oidcAuthority"`
 	OIDCClientID  string `json:"oidcClientID"`
@@ -725,7 +731,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	var req *http.Request
 	var err error
 
-	if c.Request.Method == "POST" {
+	if c.Request.Method == http.MethodPost {
 		// For POST requests (e.g., token endpoint), buffer the body to allow re-reading.
 		// c.Request.Body can only be read once, so we must buffer it first.
 		bodyBytes, err := io.ReadAll(c.Request.Body)
@@ -753,7 +759,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		}
 	} else {
 		// For GET requests (default)
-		req, err = http.NewRequestWithContext(c.Request.Context(), "GET", target, nil)
+		req, err = http.NewRequestWithContext(c.Request.Context(), http.MethodGet, target, nil)
 		if err != nil {
 			s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
 			metrics.OIDCProxyFailure.WithLabelValues("authority", "request_build_error").Inc()

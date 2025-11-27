@@ -62,7 +62,7 @@ func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 	engine := gin.New()
 	_ = wc.Register(engine.Group("/" + wc.BasePath()))
 
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
@@ -121,7 +121,7 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 	engine := gin.New()
 	_ = wc.Register(engine.Group("/" + wc.BasePath()))
 
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
@@ -206,7 +206,7 @@ func TestHandleAuthorize_MultiIDP_AllowedIDP(t *testing.T) {
 	engine := gin.New()
 	_ = wc.Register(engine.Group("/" + wc.BasePath()))
 
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
@@ -273,7 +273,7 @@ func TestHandleAuthorize_MultiIDP_BlockedIDP(t *testing.T) {
 	engine := gin.New()
 	_ = wc.Register(engine.Group("/" + wc.BasePath()))
 
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
@@ -353,7 +353,7 @@ func TestHandleAuthorize_NoIDPRestriction_HappyPath(t *testing.T) {
 	engine := gin.New()
 	_ = wc.Register(engine.Group("/" + wc.BasePath()))
 
-	req, _ := http.NewRequest("POST", "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 
