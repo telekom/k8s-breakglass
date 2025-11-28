@@ -9,10 +9,16 @@ import (
 
 	"github.com/Nerzal/gocloak/v13"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+const (
+	DefaultEscalationStatusUpdateInterval = 10 * time.Minute
+	DefaultClusterConfigCheckInterval     = 10 * time.Minute
 )
 
 // GroupMemberResolver abstracts IdP (Keycloak) group membership queries.
@@ -852,3 +858,16 @@ func deduplicateMembersFromHierarchy(hierarchy map[string]map[string][]string, g
 }
 
 // End of EscalationStatusUpdater methods
+
+func SetupResolver(idpConfig *config.IdentityProviderConfig, log *zap.SugaredLogger) GroupMemberResolver {
+	// Setup GroupMemberResolver for escalation approver expansion
+	var resolver GroupMemberResolver
+	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" {
+		resolver = NewKeycloakGroupMemberResolver(log, *idpConfig.Keycloak)
+		log.Infow("Keycloak group sync enabled", "baseURL", idpConfig.Keycloak.BaseURL, "realm", idpConfig.Keycloak.Realm)
+	} else {
+		resolver = &KeycloakGroupMemberResolver{} // no-op
+		log.Infow("Keycloak group sync disabled or not fully configured; using no-op resolver")
+	}
+	return resolver
+}
