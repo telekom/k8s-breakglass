@@ -31,3 +31,19 @@ func TestSessionMetricsExistAndIncrement(t *testing.T) {
 		t.Fatalf("expected SessionExpired >= 1, got %v", v)
 	}
 }
+
+func TestEscalationIDPAuthorizationChecksLabelCardinality(t *testing.T) {
+	EscalationIDPAuthorizationChecks.Reset()
+	defer EscalationIDPAuthorizationChecks.Reset()
+	labels := []string{"admin-group", "production-keycloak", "allowed"}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("EscalationIDPAuthorizationChecks panicked with labels %v: %v", labels, r)
+		}
+	}()
+
+	EscalationIDPAuthorizationChecks.WithLabelValues(labels...).Inc()
+	if v := testutil.ToFloat64(EscalationIDPAuthorizationChecks.WithLabelValues(labels...)); v != 1 {
+		t.Fatalf("expected metric value 1 after increment, got %v", v)
+	}
+}
