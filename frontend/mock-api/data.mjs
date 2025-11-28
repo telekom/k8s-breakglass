@@ -631,7 +631,7 @@ function secondsToDuration(seconds = 3600) {
   const hrs = Math.floor(seconds / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
   const secs = seconds % 60;
-  return `${hrs}h${mins}m${secs}s`;
+  return `${hrs}h${String(mins).padStart(2, "0")}m${String(secs).padStart(2, "0")}s`;
 }
 
 export function createSessionFromRequest(body = {}) {

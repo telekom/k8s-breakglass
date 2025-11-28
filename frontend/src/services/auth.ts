@@ -208,7 +208,7 @@ function safeBtoa(value: string): string {
       return globalAny.btoa(value);
     }
     if (globalAny.Buffer) {
-      return globalAny.Buffer.from(value, "binary").toString("base64");
+      return globalAny.Buffer.from(value, "utf8").toString("base64");
     }
   }
   throw new Error(
@@ -224,6 +224,10 @@ function base64UrlEncodeObject(obj: Record<string, any>): string {
   return base64UrlEncodeString(JSON.stringify(obj));
 }
 
+/**
+ * Builds an unsigned JWT purely for mock environments.
+ * Consumers must NEVER rely on the signature because the header uses alg "none".
+ */
 function createMockJWT(payload: Record<string, any>): string {
   const header = { alg: "none", typ: "JWT" };
   const signature = base64UrlEncodeString("mock-signature");
