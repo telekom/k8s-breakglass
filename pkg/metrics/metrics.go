@@ -294,7 +294,7 @@ var (
 	EscalationIDPAuthorizationChecks = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_escalation_idp_authorization_checks_total",
 		Help: "Total escalation-IDP authorization checks",
-	}, []string{"escalation", "result"})
+	}, []string{"escalation", "identity_provider", "result"})
 	EscalationAllowedIDPsCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "breakglass_escalation_allowed_idps_count",
 		Help: "Number of IDPs allowed for an escalation",
