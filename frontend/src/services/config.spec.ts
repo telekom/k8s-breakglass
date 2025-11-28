@@ -92,7 +92,7 @@ describe("Config service", () => {
     expect(config.uiFlavour).toBe("oss");
   });
 
-  it("clears stored override when reset tokens are provided", async () => {
+  it.each(["reset", "clear", "default", "auto"])("clears stored override when %s token is provided", async (token) => {
     mockedGetIdentityProvider.mockResolvedValue({
       type: "Keycloak",
       clientID: "ui",
@@ -105,7 +105,7 @@ describe("Config service", () => {
     mockedAxios.get.mockResolvedValue({ data: { frontend: { uiFlavour: "telekom" } } });
 
     window.localStorage.setItem("k8sBreakglassUiFlavourOverride", "oss");
-    window.history.replaceState({}, "", "http://localhost/?flavour=reset");
+    window.history.replaceState({}, "", `http://localhost/?flavour=${token}`);
 
     const config = await getConfig();
 

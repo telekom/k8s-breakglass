@@ -91,7 +91,7 @@ function readBrowserFlavourOverride(): string | undefined {
   }
 
   try {
-    const params = new URLSearchParams(window.location?.search ?? "");
+    const params = new URLSearchParams(window.location.search ?? "");
     const rawQueryValue = params.get("flavour") ?? params.get("uiFlavour");
 
     if (rawQueryValue && CLEAR_OVERRIDE_TOKENS.has(rawQueryValue.toLowerCase())) {

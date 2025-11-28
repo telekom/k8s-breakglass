@@ -47,6 +47,10 @@ const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   },
 };
 
+const resolvedNodeEnv = (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env
+  ?.NODE_ENV;
+const isProdBuild = resolvedNodeEnv === "production";
+
 type UserLoadedHandler = (loadedUser: User) => void;
 
 class MockUserManager {
@@ -290,6 +294,10 @@ export default class AuthService {
     logInfo("AuthService", "baseURL", this.baseURL);
 
     this.mockMode = options?.mock ?? false;
+
+    if (this.mockMode && isProdBuild) {
+      throw new Error("Mock authentication cannot be enabled in production builds.");
+    }
 
     if (this.mockMode) {
       this.mockManager = new MockUserManager();

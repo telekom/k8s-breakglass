@@ -101,20 +101,20 @@ app.get("/api/breakglassSessions/:name", (req, res) => {
   res.json(session);
 });
 
-app.use((err, _req, res, _next) => {
-  console.error("[mock-api] Unhandled error:", err);
-  if (res.headersSent && typeof _next === "function") {
-    return _next(err);
-  }
-  return res.status(err?.status || 500).json({ message: "Internal server error", error: err?.message || String(err) });
-});
-
 app.use((req, res, next) => {
   if (req.path.startsWith("/api")) {
     console.warn("[mock-api] Unhandled API route", req.method, req.path);
     return res.status(404).json({ message: "mock route not implemented" });
   }
   return next();
+});
+
+app.use((err, _req, res, _next) => {
+  console.error("[mock-api] Unhandled error:", err);
+  if (res.headersSent && typeof _next === "function") {
+    return _next(err);
+  }
+  return res.status(err?.status || 500).json({ message: "Internal server error", error: err?.message || String(err) });
 });
 
 app.listen(port, () => {

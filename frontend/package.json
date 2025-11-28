@@ -1,6 +1,9 @@
 {
   "name": "breakglass",
   "version": "0.0.0",
+  "engines": {
+    "node": ">=18.11.0"
+  },
   "scripts": {
     "dev": "vite",
     "dev:mock": "cross-env VITE_USE_MOCK_AUTH=true concurrently -k -n api,ui -c magenta,cyan \"npm:mock-api\" \"npm:dev\"",

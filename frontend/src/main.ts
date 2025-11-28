@@ -11,7 +11,8 @@ import type Config from "@/model/config";
 
 const CONFIG_CACHE_KEY = "breakglass_runtime_config";
 const explicitMockFlag = import.meta.env.VITE_USE_MOCK_AUTH;
-const USE_MOCK_AUTH = typeof explicitMockFlag === "string" ? explicitMockFlag === "true" : import.meta.env.DEV === true;
+const USE_MOCK_AUTH =
+  explicitMockFlag === "false" ? false : explicitMockFlag === "true" ? true : import.meta.env.DEV === true;
 
 function cacheRuntimeConfig(config: Config) {
   try {

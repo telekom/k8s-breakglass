@@ -89,6 +89,9 @@ The dataset includes:
 Edit `frontend/mock-api/data.mjs` if you want to pin additional permutations. The Node `--watch` flag reloads the
 Express server automatically after each save.
 
+> **Node version**: The built-in `node --watch` flag requires Node.js **18.11.0 or newer**. Make sure your local runtime
+> meets that requirement to avoid crashes when running `npm run mock-api` or `npm run dev:mock`.
+
 ### Type-Check, Compile and Minify for Production
 
 ```sh
