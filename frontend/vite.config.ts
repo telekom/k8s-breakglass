@@ -6,6 +6,8 @@ import legacy from "@vitejs/plugin-legacy";
 import dynamicImportVars from "@rollup/plugin-dynamic-import-vars";
 
 // https://vitejs.dev/config/
+const apiPort = Number(process.env.MOCK_API_PORT || 8080);
+
 export default defineConfig({
   base: "/",
   build: {
@@ -13,9 +15,15 @@ export default defineConfig({
       plugins: [dynamicImportVars()],
     },
   },
+  optimizeDeps: {
+    exclude: ["@telekom/scale-components", "@telekom/scale-components-neutral", "@duetds/date-picker"],
+  },
+  ssr: {
+    noExternal: ["@telekom/scale-components", "@telekom/scale-components-neutral", "@duetds/date-picker"],
+  },
   server: {
     proxy: {
-      "/api": "http://localhost:8080",
+      "/api": `http://localhost:${apiPort}`,
     },
   },
   plugins: [

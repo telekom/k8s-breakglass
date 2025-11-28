@@ -10,6 +10,9 @@ import { BrandingKey } from "@/keys";
 import type Config from "@/model/config";
 
 const CONFIG_CACHE_KEY = "breakglass_runtime_config";
+const explicitMockFlag = import.meta.env.VITE_USE_MOCK_AUTH;
+const USE_MOCK_AUTH =
+  explicitMockFlag === "false" ? false : explicitMockFlag === "true" ? true : import.meta.env.DEV === true;
 
 function cacheRuntimeConfig(config: Config) {
   try {
@@ -90,7 +93,6 @@ async function initializeApp() {
   // Load appropriate Scale components based on runtime flavour
   if (flavour === "oss" || flavour === "neutral" || flavour === "default") {
     // Use neutral variant. Stylesheet imports are side-effect only; types not provided.
-    // @ts-expect-error stylesheet side-effect import
     await import("@telekom/scale-components-neutral/dist/scale-components/scale-components.css");
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore loader lacks types in neutral package version
@@ -99,7 +101,6 @@ async function initializeApp() {
     await defineCustomElements(window);
   } else {
     // Default Telekom-branded components
-    // @ts-expect-error stylesheet side-effect import
     await import("@telekom/scale-components/dist/scale-components/scale-components.css");
     const { applyPolyfills, defineCustomElements } = await import("@telekom/scale-components/loader");
     await applyPolyfills();
@@ -112,7 +113,10 @@ async function initializeApp() {
   app.use(createPinia());
   app.use(router);
 
-  const auth = new AuthService(config);
+  const auth = new AuthService(config, { mock: USE_MOCK_AUTH });
+  if (USE_MOCK_AUTH) {
+    console.info("[AuthService] Mock authentication enabled (dev default)");
+  }
   app.provide(AuthKey, auth);
   // Provide optional branding name for the UI. Fallbacks will be used by components
   // if branding is not provided by the backend.
@@ -148,6 +152,10 @@ async function initializeApp() {
 }
 
 async function initializeSilentRenew() {
+  if (USE_MOCK_AUTH) {
+    console.info("[SilentRenew] Mock auth enabled, skipping silent renew callback");
+    return;
+  }
   const cachedConfig = readCachedRuntimeConfig();
   const config = cachedConfig || (await getConfig());
   if (!cachedConfig) {

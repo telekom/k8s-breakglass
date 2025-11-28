@@ -11,6 +11,97 @@ const DIRECT_AUTHORITY_STORAGE_KEY = "oidc_direct_authority";
 const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
 export type TokenPersistenceMode = "session" | "persistent";
 const isBrowser = typeof window !== "undefined";
+const MOCK_AUTH_EXPIRY_SECONDS = 60 * 60; // 1 hour sessions for mock mode
+type MockProfile = {
+  email: string;
+  displayName: string;
+  groups: string[];
+};
+
+const DEFAULT_MOCK_PROFILE: MockProfile = {
+  email: "mock.ops@breakglass.dev",
+  displayName: "Mock Platform Engineer",
+  groups: ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"],
+};
+
+const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
+  "production-keycloak": {
+    email: "mock.keycloak.user@breakglass.dev",
+    displayName: "Production Keycloak (Mock)",
+    groups: ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"],
+  },
+  "partners-azuread": {
+    email: "contractor@partner.example.com",
+    displayName: "Partner Azure AD (Mock)",
+    groups: ["partner-devops", "external-approvers"],
+  },
+  "sandbox-keycloak": {
+    email: "sandbox.engineer@breakglass.dev",
+    displayName: "Sandbox Keycloak (Mock)",
+    groups: ["sandbox-admin", "sandbox-approvers"],
+  },
+  "legacy-ldap": {
+    email: "legacy.user@breakglass.dev",
+    displayName: "Legacy LDAP (Mock)",
+    groups: ["legacy-ops"],
+  },
+};
+
+const resolvedNodeEnv = (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env
+  ?.NODE_ENV;
+const isProdBuild = resolvedNodeEnv === "production";
+
+type UserLoadedHandler = (loadedUser: User) => void;
+
+class MockUserManager {
+  public settings = {
+    authority: "mock://authority",
+    client_id: "mock-breakglass-ui",
+  };
+
+  private listeners = new Set<UserLoadedHandler>();
+  private currentUser: User | null = null;
+
+  public events = {
+    addUserLoaded: (handler: UserLoadedHandler) => {
+      this.listeners.add(handler);
+    },
+    removeUserLoaded: (handler: UserLoadedHandler) => {
+      this.listeners.delete(handler);
+    },
+  };
+
+  public async getUser(): Promise<User | null> {
+    return this.currentUser;
+  }
+
+  public async signinRedirect(): Promise<void> {
+    return;
+  }
+
+  public async signinCallback(): Promise<User | null> {
+    return this.currentUser;
+  }
+
+  public async signinSilent(): Promise<User | null> {
+    return this.currentUser;
+  }
+
+  public async signinSilentCallback(): Promise<User | null> {
+    return this.currentUser;
+  }
+
+  public async signoutRedirect(): Promise<void> {
+    this.setUser(null);
+  }
+
+  public setUser(newUser: User | null) {
+    this.currentUser = newUser;
+    if (newUser) {
+      this.listeners.forEach((listener) => listener(newUser));
+    }
+  }
+}
 
 type IDPManagerContext = {
   manager: UserManager;
@@ -114,6 +205,46 @@ function getCurrentDirectAuthority(): string | undefined {
   return window.sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
 }
 
+function safeBtoa(value: string): string {
+  if (typeof globalThis !== "undefined") {
+    const globalAny = globalThis as { btoa?: (data: string) => string; Buffer?: any };
+    if (typeof globalAny.btoa === "function") {
+      return globalAny.btoa(value);
+    }
+    if (globalAny.Buffer) {
+      return globalAny.Buffer.from(value, "utf8").toString("base64");
+    }
+  }
+  throw new Error(
+    "Base64 encoding not supported in this environment. Provide a browser with 'btoa' or Node.js with 'Buffer' support.",
+  );
+}
+
+function base64UrlEncodeString(value: string): string {
+  return safeBtoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlEncodeObject(obj: Record<string, any>): string {
+  return base64UrlEncodeString(JSON.stringify(obj));
+}
+
+/**
+ * Builds an unsigned JWT purely for mock environments.
+ * Consumers must NEVER rely on the signature because the header uses alg "none".
+ */
+function createMockJWT(payload: Record<string, any>): string {
+  const header = { alg: "none", typ: "JWT" };
+  const signature = base64UrlEncodeString("mock-signature");
+  return `${base64UrlEncodeObject(header)}.${base64UrlEncodeObject(payload)}.${signature}`;
+}
+
+function resolveMockProfile(idpName?: string): MockProfile {
+  if (!idpName) {
+    return DEFAULT_MOCK_PROFILE;
+  }
+  return MOCK_IDP_PROFILES[idpName] || DEFAULT_MOCK_PROFILE;
+}
+
 // Direct oidc-client logs into our logger
 Log.setLogger({
   debug: (...args: any[]) => logInfo("oidc-client", ...args),
@@ -142,6 +273,10 @@ function resolveState(state?: State): State {
 const user = ref<User>();
 export const currentIDPName = ref<string | undefined>();
 
+export interface AuthServiceOptions {
+  mock?: boolean;
+}
+
 export default class AuthService {
   public userManager: UserManager;
   private idpManagers: Map<string, IDPManagerContext> = new Map();
@@ -149,10 +284,27 @@ export default class AuthService {
   private readonly baseURL: string;
   private readonly baseConfig: Config;
 
-  constructor(config: Config) {
+  private readonly mockMode: boolean;
+  private mockManager?: MockUserManager;
+  private mockUser: User | null = null;
+
+  constructor(config: Config, options?: AuthServiceOptions) {
     this.baseConfig = config;
     this.baseURL = isBrowser ? `${window.location.protocol}//${window.location.host}` : "";
     logInfo("AuthService", "baseURL", this.baseURL);
+
+    this.mockMode = options?.mock ?? false;
+
+    if (this.mockMode && isProdBuild) {
+      throw new Error("Mock authentication cannot be enabled in production builds.");
+    }
+
+    if (this.mockMode) {
+      this.mockManager = new MockUserManager();
+      this.userManager = this.mockManager as unknown as UserManager;
+      this.registerUserManagerEvents(this.userManager);
+      return;
+    }
 
     this.userManager = this.buildUserManager(config.oidcAuthority, config.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
@@ -187,11 +339,82 @@ export default class AuthService {
     return manager;
   }
 
+  private buildMockUser(state?: State): User {
+    const idpName = state?.idpName;
+    const profile = resolveMockProfile(idpName);
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      sub: `mock-${idpName || "default"}`,
+      email: profile.email,
+      name: profile.displayName,
+      preferred_username: profile.email,
+      groups: profile.groups,
+      iss: `https://mock-idp.breakglass.dev/${idpName || "default"}`,
+      aud: this.baseConfig.oidcClientID || "breakglass-ui",
+      iat: now,
+      nbf: now,
+      exp: now + MOCK_AUTH_EXPIRY_SECONDS,
+      idp: idpName || "default",
+    };
+
+    const accessToken = createMockJWT(payload);
+
+    const mockUser = new User({
+      access_token: accessToken,
+      token_type: "Bearer",
+      profile: {
+        sub: payload.sub,
+        aud: payload.aud,
+        exp: payload.exp,
+        iat: payload.iat,
+        email: profile.email,
+        name: profile.displayName,
+        preferred_username: profile.email,
+        groups: profile.groups,
+        iss: payload.iss,
+      } as any,
+      expires_at: payload.exp,
+      scope: "openid profile email",
+    });
+
+    (mockUser as any).state = resolveState(state);
+    return mockUser;
+  }
+
+  private performMockLogin(state?: State) {
+    const mockUser = this.buildMockUser(state);
+    this.mockUser = mockUser;
+    user.value = mockUser;
+    if (this.mockManager) {
+      this.mockManager.setUser(mockUser);
+    }
+    this.currentIDPName = state?.idpName;
+    currentIDPName.value = state?.idpName;
+  }
+
+  private clearMockSession() {
+    this.mockUser = null;
+    user.value = undefined;
+    if (this.mockManager) {
+      this.mockManager.setUser(null);
+    }
+    this.currentIDPName = undefined;
+    currentIDPName.value = undefined;
+  }
+
   public async getUser(): Promise<User | null> {
+    if (this.mockMode) {
+      return this.mockUser;
+    }
     return this.userManager.getUser();
   }
 
   public async login(state?: State): Promise<void> {
+    if (this.mockMode) {
+      console.debug("[AuthService] Mock login activated", { idpName: state?.idpName });
+      this.performMockLogin(state);
+      return;
+    }
     // If specific IDP requested, need to get its config and use its UserManager
     if (state?.idpName) {
       console.debug("[AuthService] Logging in with specific IDP:", {
@@ -251,7 +474,7 @@ export default class AuthService {
 
         // Get or create UserManager for this IDP with the proxy authority
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
-  const manager = this.getOrCreateUserManagerForIDP(state.idpName, proxyAuthority, oidcClientID, directAuthority);
+        const manager = this.getOrCreateUserManagerForIDP(state.idpName, proxyAuthority, oidcClientID, directAuthority);
 
         console.debug("[AuthService] About to initiate signin redirect for IDP:", {
           idpName: state.idpName,
@@ -296,6 +519,10 @@ export default class AuthService {
   }
 
   public logout(): Promise<void> {
+    if (this.mockMode) {
+      this.clearMockSession();
+      return Promise.resolve();
+    }
     console.debug("[AuthService] Logging out");
     // Clear the current IDP name on logout
     this.currentIDPName = undefined;
@@ -304,6 +531,9 @@ export default class AuthService {
   }
 
   public async getAccessToken(): Promise<string> {
+    if (this.mockMode) {
+      return this.mockUser?.access_token || "";
+    }
     const data = await this.userManager.getUser();
     const token = data?.access_token || "";
     console.debug("[AuthService] Retrieved access token", {
@@ -314,6 +544,9 @@ export default class AuthService {
   }
 
   public async getUserEmail(): Promise<string> {
+    if (this.mockMode) {
+      return this.mockUser?.profile?.email || "";
+    }
     const data = await this.userManager.getUser();
     const email = data?.profile?.email || ""; // Extract email from user profile
     console.debug("[AuthService] Retrieved user email:", { email });
@@ -330,7 +563,9 @@ export default class AuthService {
       return;
     }
     setTokenPersistencePreference(targetMode);
-    this.reinitializeDefaultManager();
+    if (!this.mockMode) {
+      this.reinitializeDefaultManager();
+    }
   }
 
   /**
@@ -340,6 +575,9 @@ export default class AuthService {
    * to process the callback. This is much more reliable than trying managers sequentially.
    */
   public async handleSigninCallback() {
+    if (this.mockMode) {
+      return this.mockUser;
+    }
     // Get parameters from URL
     const urlParams = new URLSearchParams(window.location.search);
     const stateParam = urlParams.get("state");
@@ -515,6 +753,9 @@ export default class AuthService {
   }
 
   private reinitializeDefaultManager() {
+    if (this.mockMode) {
+      return;
+    }
     this.idpManagers.clear();
     this.userManager = this.buildUserManager(this.baseConfig.oidcAuthority, this.baseConfig.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
