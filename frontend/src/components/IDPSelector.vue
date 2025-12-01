@@ -167,10 +167,10 @@ function handleIDPButtonClick(idpName: string) {
     <!-- Show individual buttons if multiple IDPs available -->
     <template v-if="hasMultipleIDPs">
       <div class="idp-selector-group">
-        <label class="idp-label">
+        <h2 class="idp-heading">
           Select Identity Provider
-          <span v-if="required" class="required">*</span>
-        </label>
+          <span v-if="required" class="required" aria-hidden="true">*</span>
+        </h2>
 
         <!-- Loading state -->
         <div v-if="loading" class="idp-loading">
@@ -182,18 +182,22 @@ function handleIDPButtonClick(idpName: string) {
 
         <!-- Individual login buttons for each IDP -->
         <div v-if="!loading && !error" class="idp-buttons-container">
-          <scale-button
-            v-for="idp in allowedIDPs"
-            :key="idp.name"
-            :variant="selectedIDPName === idp.name ? 'primary' : 'secondary'"
-            :disabled="disabled || !idp.enabled"
-            style="width: 100%; margin-bottom: 0.5rem"
-            @click="handleIDPButtonClick(idp.name)"
-          >
-            {{ idp.displayName }}
-            <span v-if="!idp.enabled"> (disabled)</span>
-            <span v-if="selectedIDPName === idp.name" class="idp-button-check">✓</span>
-          </scale-button>
+          <div v-for="idp in allowedIDPs" :key="idp.name" class="idp-button-row">
+            <scale-button
+              class="idp-button"
+              :variant="selectedIDPName === idp.name ? 'primary' : 'secondary'"
+              :disabled="disabled || !idp.enabled"
+              @click="handleIDPButtonClick(idp.name)"
+            >
+              <span class="idp-button-content">
+                <span class="idp-button-text">
+                  <span class="idp-button-label">{{ idp.displayName }}</span>
+                  <span v-if="!idp.enabled" class="idp-button-status">(disabled)</span>
+                </span>
+                <span v-if="selectedIDPName === idp.name" class="idp-button-check" aria-hidden="true"> ✓ </span>
+              </span>
+            </scale-button>
+          </div>
         </div>
 
         <!-- Info about selected IDP -->
@@ -244,10 +248,15 @@ function handleIDPButtonClick(idpName: string) {
   gap: 0.75rem;
 }
 
-.idp-label {
+.idp-heading {
+  margin: 0 auto;
+  font-size: 1.25rem;
   font-weight: 600;
-  color: var(--scale-color-gray-80);
+  color: var(--telekom-color-text-and-icon-standard);
   display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   gap: 0.25rem;
 }
 
@@ -261,6 +270,39 @@ function handleIDPButtonClick(idpName: string) {
   flex-direction: column;
   gap: 0.75rem;
   width: 100%;
+}
+
+.idp-button-row {
+  width: 100%;
+}
+
+.idp-button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.idp-button-content {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.idp-button-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.idp-button-label {
+  font-weight: 600;
+}
+
+.idp-button-status {
+  font-size: 0.85rem;
+  color: var(--telekom-color-text-disabled);
+  line-height: 1.1;
 }
 
 /* Info box */
@@ -278,9 +320,9 @@ function handleIDPButtonClick(idpName: string) {
 }
 
 .idp-button-check {
-  margin-left: 0.5rem;
   font-weight: 600;
   display: inline-flex;
+  font-size: 1.25rem;
 }
 
 .warning {

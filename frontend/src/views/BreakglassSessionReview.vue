@@ -182,25 +182,31 @@ async function onCancel(bg: SessionCR) {
     </div>
 
     <section class="review-toolbar ui-toolbar" aria-label="Session filters">
-      <scale-text-field
-        label="Search"
-        name="session-search"
-        placeholder="Search by user, group, cluster, or IDP"
-        type="text"
-        :value="state.search"
-        @scaleChange="state.search = $event.target.value"
-      ></scale-text-field>
+      <div class="review-toolbar__field ui-toolbar-field">
+        <scale-text-field
+          label="Search"
+          name="session-search"
+          placeholder="Search by user, group, cluster, or IDP"
+          type="text"
+          :value="state.search"
+          @scaleChange="state.search = $event.target.value"
+        ></scale-text-field>
+      </div>
 
-      <scale-checkbox
-        :checked="showOnlyActive"
-        @scaleChange="
-          showOnlyActive = $event.target.checked;
-          getActiveBreakglasses();
-        "
-        >Active only</scale-checkbox
-      >
+      <div class="review-toolbar__toggle">
+        <scale-checkbox
+          :checked="showOnlyActive"
+          @scaleChange="
+            showOnlyActive = $event.target.checked;
+            getActiveBreakglasses();
+          "
+          >Active only</scale-checkbox
+        >
+      </div>
 
-      <scale-button variant="secondary" @click="getActiveBreakglasses">Refresh</scale-button>
+      <div class="ui-toolbar-actions review-toolbar__actions">
+        <scale-button variant="secondary" @click="getActiveBreakglasses">Refresh</scale-button>
+      </div>
 
       <div class="toolbar-info">
         Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} sessions
@@ -267,13 +273,21 @@ async function onCancel(bg: SessionCR) {
   align-items: center;
 }
 
-.review-toolbar scale-text-field {
+.review-toolbar__field {
   grid-column: span 2;
   min-width: 240px;
 }
 
-.review-toolbar scale-checkbox {
+.review-toolbar__field > * {
+  width: 100%;
+}
+
+.review-toolbar__toggle {
   white-space: nowrap;
+}
+
+.review-toolbar__actions {
+  justify-self: start;
 }
 
 .toolbar-info {
@@ -300,7 +314,7 @@ async function onCancel(bg: SessionCR) {
     grid-template-columns: 1fr;
   }
 
-  .review-toolbar scale-text-field {
+  .review-toolbar__field {
     grid-column: 1;
     width: 100%;
   }

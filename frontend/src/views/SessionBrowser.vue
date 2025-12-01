@@ -144,26 +144,6 @@ function sessionStatusVariant(session: SessionCR): TagVariant {
   return "neutral";
 }
 
-function sessionStatusIntent(session: SessionCR): string {
-  const normalized = normalizedState(session);
-  if (normalized === "approvaltimeout" || normalized === "timeout") {
-    return "approval-timeout";
-  }
-  const tone = statusToneFor(sessionState(session));
-  switch (tone) {
-    case "success":
-      return "status-active";
-    case "warning":
-      return "status-pending";
-    case "danger":
-      return "status-critical";
-    case "info":
-      return "status-available";
-    default:
-      return "status-neutral";
-  }
-}
-
 function sessionUser(session: SessionCR): string {
   return session.spec?.user || session.spec?.requester || (session as any).user || "-";
 }
@@ -506,42 +486,29 @@ onMounted(() => {
             <div>
               <div class="session-name">{{ session.metadata?.name || session.name }}</div>
               <div class="cluster-group">
-                <scale-tag
+                <scale-button
                   size="small"
-                  variant="info"
-                  data-intent="cluster"
-                  class="session-tag session-tag--interactive"
-                  role="button"
-                  tabindex="0"
+                  variant="ghost"
+                  :disabled="!(session.spec?.cluster || session.cluster)"
+                  aria-label="Filter by cluster"
                   @click="setFilter('cluster', session.spec?.cluster || session.cluster)"
-                  @keydown.enter.prevent="setFilter('cluster', session.spec?.cluster || session.cluster)"
-                  @keydown.space.prevent="setFilter('cluster', session.spec?.cluster || session.cluster)"
                 >
                   {{ session.spec?.cluster || session.cluster || "-" }}
-                </scale-tag>
-                <scale-tag
+                </scale-button>
+                <scale-button
                   size="small"
-                  variant="primary"
-                  data-intent="group"
-                  class="session-tag session-tag--interactive"
-                  role="button"
-                  tabindex="0"
+                  variant="ghost"
+                  :disabled="!(session.spec?.grantedGroup || session.group)"
+                  aria-label="Filter by group"
                   @click="setFilter('group', session.spec?.grantedGroup || session.group)"
-                  @keydown.enter.prevent="setFilter('group', session.spec?.grantedGroup || session.group)"
-                  @keydown.space.prevent="setFilter('group', session.spec?.grantedGroup || session.group)"
                 >
                   {{ session.spec?.grantedGroup || session.group || "-" }}
-                </scale-tag>
+                </scale-button>
               </div>
             </div>
-            <scale-tag
-              size="small"
-              :variant="sessionStatusVariant(session)"
-              :data-intent="sessionStatusIntent(session)"
-              class="session-tag"
-            >
+            <scale-chip size="small" :variant="sessionStatusVariant(session)">
               {{ sessionState(session) }}
-            </scale-tag>
+            </scale-chip>
           </div>
 
           <div class="actors">
@@ -616,7 +583,6 @@ onMounted(() => {
   --session-tag-bg: var(--chip-bg);
   --session-tag-text: var(--chip-text);
   --session-shadow: var(--shadow-card);
-  --session-tag-ring-color: 0 0 0 2px color-mix(in srgb, var(--accent-telekom) 45%, transparent);
 }
 
 @media (max-width: 960px) {
@@ -790,12 +756,11 @@ header p {
   margin: 0.5rem 0 0.25rem;
 }
 
-.session-actions scale-button {
+.session-actions > * {
   min-width: 120px;
 }
 
 .session-card {
-  --scale-card-padding: 1.25rem;
   border: 1px solid var(--session-border);
   border-radius: 12px;
   box-shadow: var(--session-shadow);
@@ -820,36 +785,6 @@ header p {
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.35rem;
-}
-
-scale-tag.session-tag {
-  --session-tag-ring: var(--session-tag-ring-color);
-  font-weight: 600;
-  letter-spacing: 0;
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-}
-
-scale-tag.session-tag--interactive {
-  cursor: pointer;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-scale-tag.session-tag--interactive:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 20px color-mix(in srgb, var(--telekom-color-black) 20%, transparent);
-}
-
-scale-tag.session-tag--interactive:focus-visible {
-  outline: none;
-  box-shadow: var(--session-tag-ring);
-}
-
-scale-tag.session-tag--interactive:active {
-  transform: scale(0.97);
 }
 
 .actors {

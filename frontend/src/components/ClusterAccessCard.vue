@@ -72,15 +72,6 @@ const expiryHumanized = computed(() => {
 </template>
 
 <style scoped>
-scale-card {
-  display: inline-block;
-  max-width: 300px;
-}
-
-scale-button {
-  margin: 0 0.4rem;
-}
-
 .actions {
   margin-top: 1rem;
   text-align: center;

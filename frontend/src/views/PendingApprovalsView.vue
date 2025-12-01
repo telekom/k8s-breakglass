@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { inject, ref, onMounted, reactive, computed } from "vue";
 import CountdownTimer from "@/components/CountdownTimer.vue";
+import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
+import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
@@ -143,24 +145,60 @@ function getSessionReason(session: any): string {
   if (session?.status?.approvalReason) return session.status.approvalReason;
   return "No request reason was supplied.";
 }
-function getUserInitials(user?: string): string {
-  if (!user) return "??";
-  const handle = user.includes("@") ? user.split("@")[0] || user : user;
-  const tokens = handle.split(/[._-]+/).filter(Boolean);
-  if (tokens.length >= 2) {
-    const first = tokens[0]?.charAt(0) ?? "";
-    const last = tokens[tokens.length - 1]?.charAt(0) ?? "";
-    return `${first}${last || first}`.toUpperCase();
-  }
-  if (tokens.length === 1 && tokens[0]) {
-    return tokens[0].slice(0, 2).toUpperCase();
-  }
-  return handle.slice(0, 2).toUpperCase();
-}
-
 function sessionStateTone(session: any) {
   const tone = statusToneFor(session?.status?.state);
-  return `tone-${tone}`;
+  return tone === "muted" ? "neutral" : tone;
+}
+
+function sessionSubtitle(session: any) {
+  if (session.spec?.requester && session.spec.requester !== session.spec.user) {
+    return `Requested by ${session.spec.requester}`;
+  }
+  if (session.metadata?.name) {
+    return `Request ID: ${session.metadata.name}`;
+  }
+  return session.spec?.user || "Pending session";
+}
+
+function urgencyLabel(level: "critical" | "high" | "normal") {
+  switch (level) {
+    case "critical":
+      return "⚠️ Critical";
+    case "high":
+      return "⏱️ High";
+    default:
+      return "🕓 Normal";
+  }
+}
+
+function approvalMetaItems(session: any) {
+  return [
+    { id: "requested", label: "Requested", value: format24Hour(session.metadata.creationTimestamp) },
+    {
+      id: "duration",
+      label: "Duration",
+      value: session.spec?.maxValidFor ? formatDuration(session.spec.maxValidFor) : "Not specified",
+      hint: "Maximum requested runtime",
+    },
+    {
+      id: "identityProvider",
+      label: "Identity provider",
+      value: session.spec?.identityProviderName || "—",
+    },
+    {
+      id: "issuer",
+      label: "Issuer",
+      value: session.spec?.identityProviderIssuer || "—",
+      mono: true,
+    },
+    {
+      id: "scheduledStart",
+      label: "Scheduled start",
+      value: session.spec?.scheduledStartTime ? format24Hour(session.spec.scheduledStartTime) : "Not scheduled",
+    },
+    { id: "scheduledEnd", label: "Scheduled end" },
+    { id: "timeout", label: "Timeout", hint: "Approver must act before this" },
+  ];
 }
 
 // Enhanced sessions list with urgency calculation
@@ -300,30 +338,32 @@ onMounted(fetchPendingApprovals);
 
     <!-- Filter and Sort Controls -->
     <div class="approvals-toolbar">
-      <scale-dropdown-select
-        id="sort-select"
-        label="Sort by"
-        :value="sortBy"
-        style="min-width: 200px"
-        @scaleChange="sortBy = $event.target.value"
-      >
-        <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
-        <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
-        <scale-dropdown-select-option value="groups">By Group</scale-dropdown-select-option>
-      </scale-dropdown-select>
+      <div class="approvals-toolbar__control">
+        <scale-dropdown-select
+          id="sort-select"
+          label="Sort by"
+          :value="sortBy"
+          @scaleChange="sortBy = $event.target.value"
+        >
+          <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
+          <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
+          <scale-dropdown-select-option value="groups">By Group</scale-dropdown-select-option>
+        </scale-dropdown-select>
+      </div>
 
-      <scale-dropdown-select
-        id="urgency-filter"
-        label="Urgency"
-        :value="urgencyFilter"
-        style="min-width: 200px"
-        @scaleChange="urgencyFilter = $event.target.value"
-      >
-        <scale-dropdown-select-option value="all">All</scale-dropdown-select-option>
-        <scale-dropdown-select-option value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-option>
-        <scale-dropdown-select-option value="high">High (&lt; 6 hours)</scale-dropdown-select-option>
-        <scale-dropdown-select-option value="normal">Normal (≥ 6 hours)</scale-dropdown-select-option>
-      </scale-dropdown-select>
+      <div class="approvals-toolbar__control">
+        <scale-dropdown-select
+          id="urgency-filter"
+          label="Urgency"
+          :value="urgencyFilter"
+          @scaleChange="urgencyFilter = $event.target.value"
+        >
+          <scale-dropdown-select-option value="all">All</scale-dropdown-select-option>
+          <scale-dropdown-select-option value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-option>
+          <scale-dropdown-select-option value="high">High (&lt; 6 hours)</scale-dropdown-select-option>
+          <scale-dropdown-select-option value="normal">Normal (≥ 6 hours)</scale-dropdown-select-option>
+        </scale-dropdown-select>
+      </div>
 
       <div class="toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
@@ -336,152 +376,108 @@ onMounted(fetchPendingApprovals);
       <p v-else>No requests match the selected filters.</p>
     </div>
     <div v-else class="sessions-list">
-      <scale-card v-for="session in sortedSessions" :key="session.metadata.name" class="approval-card-shell">
-        <div class="approval-card" :class="`urgency-${session.urgency}`">
-          <div class="card-top">
-            <div class="identity-block">
-              <div class="user-avatar">{{ getUserInitials(session.spec?.user) }}</div>
-              <div class="user-info">
-                <h3>{{ session.spec?.user || "Unknown user" }}</h3>
-                <p>
-                  <template v-if="session.spec?.requester && session.spec.requester !== session.spec.user">
-                    Requested by {{ session.spec.requester }}
-                  </template>
-                  <template v-else>
-                    Request ID: <code>{{ session.metadata?.name }}</code>
-                  </template>
-                </p>
-                <div class="request-meta">
-                  <scale-tag variant="info">{{ session.spec?.cluster || "Unknown cluster" }}</scale-tag>
-                  <scale-tag variant="primary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-tag>
-                  <scale-tag
-                    :variant="
-                      session.urgency === 'critical' ? 'danger' : session.urgency === 'high' ? 'warning' : 'neutral'
-                    "
-                  >
-                    <template v-if="session.urgency === 'critical'">⚠️ Critical</template>
-                    <template v-else-if="session.urgency === 'high'">⏱️ High</template>
-                    <template v-else>🕓 Normal</template>
-                  </scale-tag>
-                  <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">📅 Scheduled</scale-tag>
-                  <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">✍️ Note required</scale-tag>
-                </div>
-              </div>
+      <SessionSummaryCard
+        v-for="session in sortedSessions"
+        :key="session.metadata.name"
+        :class="['approval-card-shell', `approval-card-shell--${session.urgency}`]"
+        :eyebrow="session.spec?.cluster || 'Unknown cluster'"
+        :title="session.spec?.grantedGroup || 'Unknown group'"
+        :subtitle="sessionSubtitle(session)"
+        :status-tone="sessionStateTone(session)"
+      >
+        <template #status>
+          <div class="timer-panel">
+            <span class="countdown-label">Time remaining</span>
+            <div class="timer-value">
+              <CountdownTimer :expires-at="session.status?.expiresAt || session.status?.timeoutAt" />
             </div>
-            <div class="timer-panel">
-              <span class="countdown-label">Time remaining</span>
-              <div class="timer-value">
-                <CountdownTimer :expires-at="session.status?.expiresAt || session.status?.timeoutAt" />
-              </div>
-              <small v-if="session.status?.expiresAt" class="timer-absolute">
-                Expires {{ format24Hour(session.status.expiresAt) }}
-              </small>
-              <small v-else-if="session.status?.timeoutAt" class="timer-absolute">
-                Timeout {{ format24Hour(session.status.timeoutAt) }}
-              </small>
-              <small v-else class="timer-absolute">No expiry set</small>
-              <scale-tag
-                v-if="session.status?.state"
-                :variant="
-                  sessionStateTone(session) === 'tone-success'
-                    ? 'success'
-                    : sessionStateTone(session) === 'tone-warning'
-                      ? 'warning'
-                      : 'neutral'
-                "
-              >
-                {{ session.status.state }}
-              </scale-tag>
-            </div>
+            <small v-if="session.status?.expiresAt" class="timer-absolute">
+              Expires {{ format24Hour(session.status.expiresAt) }}
+            </small>
+            <small v-else-if="session.status?.timeoutAt" class="timer-absolute">
+              Timeout {{ format24Hour(session.status.timeoutAt) }}
+            </small>
+            <small v-else class="timer-absolute">No expiry set</small>
+            <span class="tone-chip" :class="`tone-chip--${session.urgency}`">
+              {{ urgencyLabel(session.urgency) }}
+            </span>
+            <scale-tag v-if="session.status?.state" :variant="sessionStateTone(session)">
+              {{ session.status.state }}
+            </scale-tag>
           </div>
+        </template>
 
-          <div class="info-grid">
-            <div class="info-item">
-              <span class="label">Requested</span>
-              <span class="value">{{ format24Hour(session.metadata.creationTimestamp) }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">Duration</span>
-              <span class="value">{{
-                session.spec?.maxValidFor ? formatDuration(session.spec.maxValidFor) : "—"
-              }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">Identity provider</span>
-              <span class="value">{{ session.spec?.identityProviderName || "—" }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">Issuer</span>
-              <span class="value">{{ session.spec?.identityProviderIssuer || "—" }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">Scheduled start</span>
-              <span class="value">
-                <template v-if="session.spec?.scheduledStartTime">
-                  {{ format24Hour(session.spec.scheduledStartTime) }}
-                </template>
-                <template v-else>Not scheduled</template>
-              </span>
-            </div>
-            <div class="info-item">
-              <span class="label">Scheduled end</span>
-              <span class="value">
-                <template v-if="session.spec?.scheduledStartTime && session.spec?.maxValidFor">
-                  {{ computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor) }}
-                </template>
-                <template v-else-if="session.status?.expiresAt">
-                  {{ format24Hour(session.status.expiresAt) }}
+        <template #chips>
+          <scale-tag variant="info">{{ session.spec?.cluster || "Unknown cluster" }}</scale-tag>
+          <scale-tag variant="primary">{{ session.spec?.grantedGroup || "Unknown group" }}</scale-tag>
+          <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">📅 Scheduled</scale-tag>
+          <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">✍️ Note required</scale-tag>
+          <scale-tag v-if="session.spec?.identityProviderName" variant="neutral">
+            IDP: {{ session.spec.identityProviderName }}
+          </scale-tag>
+        </template>
+
+        <template #meta>
+          <SessionMetaGrid :items="approvalMetaItems(session)">
+            <template #item="{ item }">
+              <div v-if="item.id === 'timeout'" class="countdown-value">
+                <template v-if="session.status?.timeoutAt && new Date(session.status.timeoutAt).getTime() > Date.now()">
+                  <CountdownTimer :expires-at="session.status.timeoutAt" />
+                  <small>({{ format24Hour(session.status.timeoutAt) }})</small>
                 </template>
                 <template v-else>—</template>
-              </span>
-            </div>
+              </div>
+              <div v-else-if="item.id === 'scheduledEnd'">
+                {{
+                  session.spec?.scheduledStartTime && session.spec?.maxValidFor
+                    ? computeEndTime(session.spec.scheduledStartTime, session.spec.maxValidFor)
+                    : session.status?.expiresAt
+                      ? format24Hour(session.status.expiresAt)
+                      : "—"
+                }}
+              </div>
+              <div v-else>{{ item.value ?? "—" }}</div>
+            </template>
+          </SessionMetaGrid>
+        </template>
+
+        <template #body>
+          <div class="approval-body">
+            <scale-table v-if="session.matchingApproverGroups?.length" density="compact" class="matching-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Matching approver groups ({{ session.matchingApproverGroups.length }})</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="group in session.matchingApproverGroups" :key="group">
+                    <td>{{ group }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </scale-table>
+
+            <section class="reason-section">
+              <h4>Request reason</h4>
+              <p>{{ getSessionReason(session) }}</p>
+            </section>
+
+            <section v-if="session.approvalReason?.description" class="reason-section">
+              <h4>Approval policy</h4>
+              <p>{{ session.approvalReason.description }}</p>
+            </section>
           </div>
+        </template>
 
-          <div v-if="session.matchingApproverGroups?.length" class="matches">
-            <span class="number">{{ session.matchingApproverGroups.length }}</span>
-            matching approver groups
-          </div>
-          <div v-if="session.matchingApproverGroups?.length" class="matching-groups">
-            <span class="matching-label">Visible via</span>
-            <div class="matching-stack">
-              <scale-tag v-for="group in session.matchingApproverGroups" :key="group" variant="primary">{{
-                group
-              }}</scale-tag>
-            </div>
-          </div>
-
-          <section class="reason-section">
-            <h4>Request reason</h4>
-            <p>{{ getSessionReason(session) }}</p>
-          </section>
-
-          <section v-if="session.approvalReason?.description" class="reason-section">
-            <h4>Approval policy</h4>
-            <p>{{ session.approvalReason.description }}</p>
-          </section>
-
-          <div class="card-bottom">
+        <template #footer>
+          <div class="approval-footer">
             <div class="request-footer">
               <strong>Request ID</strong>
-              <span
-                ><code>{{ session.metadata?.name }}</code></span
-              >
-              <scale-tag
-                v-if="session.status?.state"
-                :variant="
-                  sessionStateTone(session) === 'tone-success'
-                    ? 'success'
-                    : sessionStateTone(session) === 'tone-warning'
-                      ? 'warning'
-                      : 'neutral'
-                "
-              >
-                {{ session.status.state }}
-              </scale-tag>
+              <code>{{ session.metadata?.name }}</code>
             </div>
             <div class="action-row">
               <scale-button
-                class="pill-button"
                 :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
                 @click="openApproveModal(session)"
               >
@@ -489,7 +485,6 @@ onMounted(fetchPendingApprovals);
                 <span v-else>Review & Approve</span>
               </scale-button>
               <scale-button
-                class="pill-button"
                 variant="danger"
                 :disabled="approving === session.metadata.name || rejecting === session.metadata.name"
                 @click="quickReject(session)"
@@ -499,8 +494,8 @@ onMounted(fetchPendingApprovals);
               </scale-button>
             </div>
           </div>
-        </div>
-      </scale-card>
+        </template>
+      </SessionSummaryCard>
     </div>
   </main>
   <scale-modal
@@ -641,6 +636,15 @@ onMounted(fetchPendingApprovals);
   align-items: center;
 }
 
+.approvals-toolbar__control {
+  flex: 1 1 200px;
+  min-width: 200px;
+}
+
+.approvals-toolbar__control > * {
+  width: 100%;
+}
+
 .toolbar-field {
   display: flex;
   flex-direction: column;
@@ -687,84 +691,58 @@ onMounted(fetchPendingApprovals);
 }
 
 .approval-card-shell {
-  --scale-card-padding: 1.5rem;
-}
-
-.approval-card {
-  transition: transform 0.2s ease;
   border-left: 5px solid transparent;
+  padding-left: 0.25rem;
+  transition: border-color 0.2s ease;
 }
 
-.approval-card:hover {
-  transform: translateY(-2px);
-}
-
-.approval-card.urgency-critical {
+.approval-card-shell--critical {
   border-left-color: var(--approvals-danger);
 }
 
-.approval-card.urgency-high {
+.approval-card-shell--high {
   border-left-color: var(--approvals-warning);
 }
 
-.card-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 1.5rem;
-  flex-wrap: wrap;
+.approval-card-shell--normal {
+  border-left-color: var(--approvals-border);
 }
 
-.identity-block {
+.approval-body {
   display: flex;
+  flex-direction: column;
   gap: 1.25rem;
-  align-items: center;
-  min-width: 320px;
-  flex: 1;
 }
 
-.user-avatar {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--telekom-color-primary-hovered), var(--telekom-color-primary-standard));
-  display: grid;
-  place-items: center;
-  color: var(--telekom-color-text-and-icon-standard);
-  font-weight: 700;
-  font-size: 1.2rem;
-  letter-spacing: 0.5px;
-  box-shadow: inset 0 0 0 3px var(--approvals-panel-border);
+.matching-table table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
-.user-info h3 {
-  margin: 0;
-  font-size: 1.35rem;
-  color: var(--approvals-text-strong);
+.matching-table th,
+.matching-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--approvals-panel-border);
+  text-align: left;
 }
 
-.user-info p {
-  margin: 0.15rem 0 0;
+.matching-table th {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--approvals-text-muted);
-  font-size: 0.95rem;
 }
 
-.request-meta {
-  display: flex;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  margin-top: 0.65rem;
+.matching-table tr:last-child td {
+  border-bottom: none;
 }
 
-.identity-block code,
 .request-footer code {
   display: inline-block;
   max-width: 100%;
   font-size: 0.92em;
   word-break: break-all;
   overflow-wrap: anywhere;
-}
-
-.request-footer code {
   margin-top: 0.15rem;
 }
 
@@ -796,73 +774,6 @@ onMounted(fetchPendingApprovals);
   font-size: 0.8rem;
 }
 
-.matches {
-  margin-top: 1rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.95rem;
-}
-
-.matches .number {
-  font-size: 1.4rem;
-  font-weight: 700;
-  color: var(--approvals-success);
-}
-
-.matching-groups {
-  margin-top: 1rem;
-  padding: 1rem 1.25rem;
-  border-left: 4px solid var(--approvals-warning);
-  background: var(--approvals-warn-bg);
-  border-radius: 10px;
-}
-
-.matching-label {
-  font-size: 0.85rem;
-  letter-spacing: 0.08em;
-  color: var(--approvals-warn-text);
-  text-transform: uppercase;
-}
-
-.matching-stack {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  margin-top: 1.5rem;
-}
-
-.info-item {
-  background: var(--approvals-panel-bg);
-  border: 1px solid var(--approvals-panel-border);
-  padding: 0.75rem 1rem;
-  border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.info-item .label {
-  color: var(--approvals-text-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.info-item .value {
-  color: var(--approvals-text-strong);
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  font-size: 0.95rem;
-}
-
 .reason-section {
   margin-top: 1.5rem;
   padding: 1rem;
@@ -883,15 +794,6 @@ onMounted(fetchPendingApprovals);
   color: var(--approvals-text-strong);
 }
 
-.card-bottom {
-  margin-top: 1.25rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
 .request-footer {
   display: flex;
   flex-direction: column;
@@ -904,24 +806,23 @@ onMounted(fetchPendingApprovals);
   color: var(--approvals-text-strong);
 }
 
+.approval-footer {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .action-row {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
 }
 
-.action-row scale-button {
+.action-row > * {
   min-width: 150px;
-}
-
-.action-row scale-button.pill-button {
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.action-row scale-button.pill-button::part(base),
-.action-row scale-button.pill-button::part(button) {
-  border-radius: 999px;
 }
 
 .center {
@@ -953,16 +854,6 @@ onMounted(fetchPendingApprovals);
   color: var(--approvals-text-strong);
   white-space: pre-wrap;
   font-size: 0.9rem;
-}
-
-scale-textarea :deep(.textarea__control) {
-  color: var(--approvals-text-strong);
-  background: var(--approvals-panel-bg);
-  border-color: var(--approvals-panel-border);
-}
-
-scale-textarea :deep(.textarea__control::placeholder) {
-  color: var(--approvals-text-muted);
 }
 
 .modal-info-block {
@@ -1034,12 +925,8 @@ scale-textarea :deep(.textarea__control::placeholder) {
   padding: 0.75rem 1rem 0.5rem;
 }
 
-.modal-actions scale-button {
+.modal-actions > * {
   min-width: 140px;
-}
-
-.modal-actions scale-button + scale-button {
-  margin-left: 0;
 }
 
 .approval-note-required {
@@ -1070,55 +957,28 @@ scale-textarea :deep(.textarea__control::placeholder) {
 }
 
 @media (max-width: 600px) {
-  .card-top {
+  .timer-panel,
+  .approval-footer,
+  .action-row {
+    width: 100%;
+  }
+
+  .action-row {
     flex-direction: column;
   }
 
-  .identity-block {
-    min-width: 100%;
-  }
-
-  .timer-panel {
-    width: 100%;
-  }
-
-  .info-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .approve-modal {
-    padding: 1rem;
-  }
-
-  .controls-section {
-    padding: 0.75rem;
-  }
-
-  .control-group label {
-    font-size: 0.85rem;
-  }
-
-  .sort-select,
-  .urgency-select {
-    font-size: 0.85rem;
-  }
-
-  .approval-card {
-    padding: 1rem;
-  }
-
-  .action-row scale-button {
+  .action-row > * {
     width: 100%;
     min-width: unset;
-  }
-
-  .modal-actions scale-button {
-    width: 100%;
   }
 
   .modal-actions {
     justify-content: stretch;
     padding: 0.5rem 0;
+  }
+
+  .modal-actions > * {
+    width: 100%;
   }
 }
 </style>

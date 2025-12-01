@@ -47,25 +47,25 @@ function verticalOffset(index: number) {
 
 <template>
   <div class="toast-region" aria-live="polite" aria-atomic="true">
-    <scale-notification-toast
-      v-for="(e, index) in errors"
-      :key="e.id"
-      alignment="top-right"
-      :opened="e.opened !== false"
-      :variant="variantFor(e)"
-      :position-vertical="verticalOffset(index)"
-      :auto-hide="true"
-      :auto-hide-duration="autoHideDurationFor(e)"
-      :fade-duration="280"
-      @scale-closing="handleToastClosing(e.id)"
-      @scale-close="handleToastClosed(e.id)"
-    >
-      <span slot="header">{{ headingFor(e) }}</span>
-      <p slot="body" class="toast-body">
-        {{ e.message }}
-        <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
-      </p>
-    </scale-notification-toast>
+    <div v-for="(e, index) in errors" :key="e.id" class="toast-wrapper">
+      <scale-notification-toast
+        alignment="top-right"
+        :opened="e.opened !== false"
+        :variant="variantFor(e)"
+        :position-vertical="verticalOffset(index)"
+        :auto-hide="true"
+        :auto-hide-duration="autoHideDurationFor(e)"
+        :fade-duration="280"
+        @scale-closing="handleToastClosing(e.id)"
+        @scale-close="handleToastClosed(e.id)"
+      >
+        <span slot="header">{{ headingFor(e) }}</span>
+        <p slot="body" class="toast-body">
+          {{ e.message }}
+          <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
+        </p>
+      </scale-notification-toast>
+    </div>
   </div>
 </template>
 
@@ -73,8 +73,7 @@ function verticalOffset(index: number) {
 .toast-region {
   pointer-events: none;
 }
-
-.toast-region :deep(scale-notification-toast) {
+.toast-wrapper {
   pointer-events: all;
 }
 

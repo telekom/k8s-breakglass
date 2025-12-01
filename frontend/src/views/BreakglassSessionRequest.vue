@@ -158,85 +158,87 @@ onMounted(async () => {
     <div v-if="loading" class="loading">
       <scale-loading-spinner size="large" />
     </div>
-    <scale-card v-else class="centered">
-      <div v-if="authenticated" class="center">
-        <p>Request for group assignment</p>
-        <form class="request-form" @submit.prevent="handleSendButtonClick">
-          <scale-text-field label="User" :value="userName" disabled required></scale-text-field>
-          <scale-text-field
-            label="Cluster"
-            :value="clusterName"
-            :disabled="hasCluster"
-            required
-            @scaleChange="clusterName = $event.target.value"
-          ></scale-text-field>
-          <scale-dropdown-select
-            label="Group"
-            :value="clusterGroup"
-            @scaleChange="
-              clusterGroup = $event.target.value;
-              onInput();
-            "
-          >
-            <scale-dropdown-select-option
-              v-for="escalation in escalations"
-              :key="escalation.escalatedGroup"
-              :value="escalation.escalatedGroup"
+    <div v-else class="request-card-shell">
+      <scale-card>
+        <div v-if="authenticated" class="center">
+          <p>Request for group assignment</p>
+          <form class="request-form" @submit.prevent="handleSendButtonClick">
+            <scale-text-field label="User" :value="userName" disabled required></scale-text-field>
+            <scale-text-field
+              label="Cluster"
+              :value="clusterName"
+              :disabled="hasCluster"
+              required
+              @scaleChange="clusterName = $event.target.value"
+            ></scale-text-field>
+            <scale-dropdown-select
+              label="Group"
+              :value="clusterGroup"
+              @scaleChange="
+                clusterGroup = $event.target.value;
+                onInput();
+              "
             >
-              {{ escalation.escalatedGroup }}
-            </scale-dropdown-select-option>
-          </scale-dropdown-select>
+              <scale-dropdown-select-option
+                v-for="escalation in escalations"
+                :key="escalation.escalatedGroup"
+                :value="escalation.escalatedGroup"
+              >
+                {{ escalation.escalatedGroup }}
+              </scale-dropdown-select-option>
+            </scale-dropdown-select>
 
-          <!-- Reason field -->
-          <scale-textarea
-            label="Reason (optional)"
-            :value="requestReason"
-            placeholder="Describe why you need access before requesting"
-            rows="3"
-            @scaleChange="requestReason = $event.target.value"
-          ></scale-textarea>
+            <!-- Reason field -->
+            <scale-textarea
+              label="Reason (optional)"
+              :value="requestReason"
+              placeholder="Describe why you need access before requesting"
+              rows="3"
+              @scaleChange="requestReason = $event.target.value"
+            ></scale-textarea>
 
-          <!-- Collapsible scheduling section -->
-          <div class="schedule-section">
-            <scale-button variant="secondary" size="small" class="toggle-schedule" @click="toggleScheduleOptions">
-              <span v-if="!showScheduleOptions">Schedule for future date (optional)</span>
-              <span v-else>Hide schedule options</span>
-            </scale-button>
+            <!-- Collapsible scheduling section -->
+            <div class="schedule-section">
+              <scale-button variant="secondary" size="small" class="toggle-schedule" @click="toggleScheduleOptions">
+                <span v-if="!showScheduleOptions">Schedule for future date (optional)</span>
+                <span v-else>Hide schedule options</span>
+              </scale-button>
 
-            <div v-if="showScheduleOptions" class="schedule-details">
-              <div class="schedule-input-group">
-                <label for="scheduled_date" class="schedule-label">
-                  <strong>Scheduled Start Date/Time (24-hour format):</strong>
-                  <span class="schedule-hint">
-                    Your local time: {{ new Date().toLocaleString("en-GB", { hour12: false }).split(",")[0] }}
-                  </span>
-                </label>
-                <input
-                  id="scheduled_date"
-                  v-model="scheduleDateTimeLocal"
-                  type="datetime-local"
-                  :min="minDateTime"
-                  required
-                  class="scale-input-native"
-                />
-              </div>
+              <div v-if="showScheduleOptions" class="schedule-details">
+                <div class="schedule-input-group">
+                  <label for="scheduled_date" class="schedule-label">
+                    <strong>Scheduled Start Date/Time (24-hour format):</strong>
+                    <span class="schedule-hint">
+                      Your local time: {{ new Date().toLocaleString("en-GB", { hour12: false }).split(",")[0] }}
+                    </span>
+                  </label>
+                  <input
+                    id="scheduled_date"
+                    v-model="scheduleDateTimeLocal"
+                    type="datetime-local"
+                    :min="minDateTime"
+                    required
+                    class="scale-input-native"
+                  />
+                </div>
 
-              <div v-if="scheduledStartTime" class="schedule-preview">
-                <p><strong>Your local time:</strong> {{ formatScheduledLocal(scheduledStartTime) }}</p>
-                <p><strong>Request will start at (UTC):</strong> {{ formatDateTime(scheduledStartTime) }}</p>
-                <p><strong>Request will expire at:</strong> {{ calculatedExpiryTime }}</p>
+                <div v-if="scheduledStartTime" class="schedule-preview">
+                  <p><strong>Your local time:</strong> {{ formatScheduledLocal(scheduledStartTime) }}</p>
+                  <p><strong>Request will start at (UTC):</strong> {{ formatDateTime(scheduledStartTime) }}</p>
+                  <p><strong>Request will expire at:</strong> {{ calculatedExpiryTime }}</p>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="form-actions">
-            <scale-button type="submit" :disabled="alreadyRequested || escalations.length == 0">Send</scale-button>
-          </div>
+            <div class="form-actions">
+              <scale-button type="submit" :disabled="alreadyRequested || escalations.length == 0">Send</scale-button>
+            </div>
 
-          <scale-notification v-if="requestStatusMessage !== ''" :heading="requestStatusMessage" variant="info" />
-        </form>
-      </div>
-    </scale-card>
+            <scale-notification v-if="requestStatusMessage !== ''" :heading="requestStatusMessage" variant="info" />
+          </form>
+        </div>
+      </scale-card>
+    </div>
   </main>
 </template>
 
@@ -310,10 +312,9 @@ onMounted(async () => {
   justify-content: flex-end;
 }
 
-scale-card {
-  display: block;
-  margin: 0 auto;
+.request-card-shell {
   max-width: 500px;
+  margin: 0 auto;
 }
 
 .loading {

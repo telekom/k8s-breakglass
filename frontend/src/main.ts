@@ -8,11 +8,14 @@ import { AuthKey } from "@/keys";
 import getConfig from "@/services/config";
 import { BrandingKey } from "@/keys";
 import type Config from "@/model/config";
+import { exposeDebugControls, debug } from "@/services/logger";
 
 const CONFIG_CACHE_KEY = "breakglass_runtime_config";
 const explicitMockFlag = import.meta.env.VITE_USE_MOCK_AUTH;
 const USE_MOCK_AUTH =
   explicitMockFlag === "false" ? false : explicitMockFlag === "true" ? true : import.meta.env.DEV === true;
+
+exposeDebugControls();
 
 function cacheRuntimeConfig(config: Config) {
   try {
@@ -41,6 +44,7 @@ function readCachedRuntimeConfig(): Config | null {
  */
 async function initializeApp() {
   // Fetch configuration from backend, which includes runtime-configurable UI flavour
+  debug("App.init", "Fetching runtime config");
   const config = await getConfig();
   cacheRuntimeConfig(config);
 
@@ -91,6 +95,7 @@ async function initializeApp() {
   }
 
   // Load appropriate Scale components based on runtime flavour
+  debug("App.init", "Applying Scale components for flavour", { flavour });
   if (flavour === "oss" || flavour === "neutral" || flavour === "default") {
     // Use neutral variant. Stylesheet imports are side-effect only; types not provided.
     await import("@telekom/scale-components-neutral/dist/scale-components/scale-components.css");
@@ -130,6 +135,7 @@ async function initializeApp() {
   await router.isReady();
   if (router.currentRoute.value.path === AuthRedirect) {
     try {
+      debug("Auth.callback", "Processing signin callback");
       const user = await auth.handleSigninCallback();
       if (user && user.state) {
         const state = user.state as State;

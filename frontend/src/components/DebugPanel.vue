@@ -16,6 +16,13 @@ import { useUser, currentIDPName } from "@/services/auth";
 const auth = inject(AuthKey);
 const user = useUser();
 const showDebug = ref(false);
+const usedMockAccessToken = ref(false);
+
+const MOCK_ACCESS_TOKEN =
+  "eyJhbGciOiJub25lIn0." +
+  "eyJzdWIiOiJkZWJ1Zy11c2VyIiwicHJlZmVycmVkX3VzZXJuYW1lIjoiZGVidWcub3BlcmF0b3IiLCJlbWFpbCI6ImRlYnVnQHVpLmV4YW1wbGUiLCJuYW1lIjoiRGVidWcgVXNlciIsImdyb3VwcyI6WyJicmVha2dsYXNzLXZpZXdlciIsImFwcHJvdmVyIl0sInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJicmVhazEiLCJicmVhazIiXX0sImV4dHJhQ2xhaW1zIjp7ImN1c3RvbSI6InZhbHVlIn0sImlhdCI6MTczMjY5MzYwMCwiZXhwIjoxOTAwMDAwMDAwfQ.";
+
+const MOCK_ACCESS_TOKEN_CLAIMS = decodeJwt(MOCK_ACCESS_TOKEN);
 
 interface DebugInfo {
   user: any;
@@ -35,9 +42,34 @@ const debugInfo = ref<DebugInfo>({
   error: null,
 });
 
+function extractGroups(claims: any | null): string[] {
+  if (!claims) return [];
+  const groups: Set<string> = new Set();
+  if (Array.isArray(claims.groups)) {
+    claims.groups.forEach((g: string) => groups.add(g));
+  }
+  if (claims.group) {
+    if (typeof claims.group === "string") groups.add(claims.group);
+    if (Array.isArray(claims.group)) claims.group.forEach((g: string) => groups.add(g));
+  }
+  if (claims.realm_access?.roles && Array.isArray(claims.realm_access.roles)) {
+    claims.realm_access.roles.forEach((r: string) => groups.add(r));
+  }
+  return Array.from(groups);
+}
+
+function applyMockAccessToken() {
+  usedMockAccessToken.value = true;
+  debugInfo.value.accessTokenClaims = MOCK_ACCESS_TOKEN_CLAIMS;
+  debugInfo.value.groups = extractGroups(MOCK_ACCESS_TOKEN_CLAIMS);
+  debugInfo.value.error = null;
+  console.debug("[DebugPanel] Using mock access token claims", MOCK_ACCESS_TOKEN_CLAIMS);
+}
+
 async function collectDebugInfo() {
   try {
     console.debug("[DebugPanel] Collecting debug information...");
+    usedMockAccessToken.value = false;
 
     // Get user info
     debugInfo.value.user = user.value
@@ -54,11 +86,15 @@ async function collectDebugInfo() {
       const at = await auth?.getAccessToken();
       if (at) {
         debugInfo.value.accessTokenClaims = decodeJwt(at);
+        debugInfo.value.groups = extractGroups(debugInfo.value.accessTokenClaims);
         console.debug("[DebugPanel] Access token claims:", debugInfo.value.accessTokenClaims);
+      } else {
+        applyMockAccessToken();
       }
     } catch (err) {
       console.warn("[DebugPanel] Error decoding access token:", err);
       debugInfo.value.error = `Failed to decode access token: ${String(err)}`;
+      applyMockAccessToken();
     }
 
     // Get ID token claims
@@ -75,25 +111,8 @@ async function collectDebugInfo() {
     debugInfo.value.currentIDP = currentIDPName.value;
 
     // Extract groups from access token
-    const atClaims = debugInfo.value.accessTokenClaims;
-    if (atClaims) {
-      const groups: Set<string> = new Set();
-
-      if (atClaims.groups && Array.isArray(atClaims.groups)) {
-        atClaims.groups.forEach((g: string) => groups.add(g));
-      }
-      if (atClaims.group && (typeof atClaims.group === "string" || Array.isArray(atClaims.group))) {
-        if (typeof atClaims.group === "string") {
-          groups.add(atClaims.group);
-        } else {
-          atClaims.group.forEach((g: string) => groups.add(g));
-        }
-      }
-      if (atClaims.realm_access?.roles && Array.isArray(atClaims.realm_access.roles)) {
-        atClaims.realm_access.roles.forEach((r: string) => groups.add(r));
-      }
-
-      debugInfo.value.groups = Array.from(groups);
+    if (!usedMockAccessToken.value) {
+      debugInfo.value.groups = extractGroups(debugInfo.value.accessTokenClaims);
     }
 
     console.debug("[DebugPanel] Debug info collected:", debugInfo.value);
@@ -174,6 +193,10 @@ const groupsDisplay = computed(() => {
               <span class="label">Summary:</span>
               <span class="value">{{ tokenSummary }}</span>
             </div>
+            <div v-if="usedMockAccessToken" class="debug-item">
+              <span class="label">Source:</span>
+              <span class="value mock-indicator">Mock token (no authenticated user)</span>
+            </div>
             <details class="token-details">
               <summary>Full Claims</summary>
               <pre>{{ JSON.stringify(debugInfo.accessTokenClaims, null, 2) }}</pre>
@@ -195,7 +218,7 @@ const groupsDisplay = computed(() => {
         </div>
 
         <div class="debug-actions">
-          <scale-button class="btn-refresh" style="width: 100%" @click="collectDebugInfo">Refresh</scale-button>
+          <scale-button @click="collectDebugInfo">Refresh</scale-button>
         </div>
       </scale-card>
     </div>
@@ -293,6 +316,11 @@ const groupsDisplay = computed(() => {
   color: var(--telekom-color-functional-success-standard);
 }
 
+.debug-item .value.mock-indicator {
+  color: var(--telekom-color-functional-warning-standard);
+  font-style: italic;
+}
+
 .token-details {
   margin-top: 8px;
   cursor: pointer;
@@ -338,6 +366,10 @@ const groupsDisplay = computed(() => {
   margin-top: 1rem;
   border-top: 1px solid var(--telekom-color-ui-border-standard);
   padding-top: 1rem;
+}
+
+.debug-actions > * {
+  width: 100%;
 }
 
 /* Scrollbar styling for debug panel */

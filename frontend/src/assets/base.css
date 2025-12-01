@@ -26,6 +26,26 @@
   --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 7%, transparent);
   --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
   --chip-text: var(--telekom-color-magenta-600);
+
+  --tone-chip-info-bg: color-mix(in srgb, var(--telekom-color-blue-400) 15%, transparent);
+  --tone-chip-info-border: color-mix(in srgb, var(--telekom-color-blue-500) 35%, transparent);
+  --tone-chip-info-text: var(--telekom-color-blue-800);
+
+  --tone-chip-success-bg: color-mix(in srgb, var(--telekom-color-seafoam-400) 20%, transparent);
+  --tone-chip-success-border: color-mix(in srgb, var(--telekom-color-seafoam-500) 40%, transparent);
+  --tone-chip-success-text: var(--telekom-color-seafoam-900);
+
+  --tone-chip-warning-bg: color-mix(in srgb, var(--telekom-color-amber-300) 25%, transparent);
+  --tone-chip-warning-border: color-mix(in srgb, var(--telekom-color-amber-400) 50%, transparent);
+  --tone-chip-warning-text: var(--telekom-color-amber-900);
+
+  --tone-chip-danger-bg: color-mix(in srgb, var(--telekom-color-red-200) 30%, transparent);
+  --tone-chip-danger-border: color-mix(in srgb, var(--telekom-color-red-400) 55%, transparent);
+  --tone-chip-danger-text: var(--telekom-color-red-900);
+
+  --tone-chip-neutral-bg: color-mix(in srgb, var(--telekom-color-gray-200) 30%, transparent);
+  --tone-chip-neutral-border: color-mix(in srgb, var(--telekom-color-gray-400) 45%, transparent);
+  --tone-chip-neutral-text: var(--telekom-color-gray-900);
 }
 
 :root[data-theme="dark"] {
@@ -40,6 +60,26 @@
   --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
   --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 35%, transparent);
   --chip-text: var(--telekom-color-magenta-200);
+
+  --tone-chip-info-bg: color-mix(in srgb, var(--telekom-color-blue-700) 25%, transparent);
+  --tone-chip-info-border: color-mix(in srgb, var(--telekom-color-blue-400) 55%, transparent);
+  --tone-chip-info-text: var(--telekom-color-blue-050);
+
+  --tone-chip-success-bg: color-mix(in srgb, var(--telekom-color-seafoam-500) 30%, transparent);
+  --tone-chip-success-border: color-mix(in srgb, var(--telekom-color-seafoam-300) 60%, transparent);
+  --tone-chip-success-text: var(--telekom-color-seafoam-050);
+
+  --tone-chip-warning-bg: color-mix(in srgb, var(--telekom-color-amber-400) 35%, transparent);
+  --tone-chip-warning-border: color-mix(in srgb, var(--telekom-color-amber-200) 65%, transparent);
+  --tone-chip-warning-text: var(--telekom-color-amber-050);
+
+  --tone-chip-danger-bg: color-mix(in srgb, var(--telekom-color-red-500) 35%, transparent);
+  --tone-chip-danger-border: color-mix(in srgb, var(--telekom-color-red-200) 65%, transparent);
+  --tone-chip-danger-text: var(--telekom-color-red-050);
+
+  --tone-chip-neutral-bg: color-mix(in srgb, var(--telekom-ui-color-surface-strong) 60%, transparent);
+  --tone-chip-neutral-border: color-mix(in srgb, var(--telekom-color-gray-200) 45%, transparent);
+  --tone-chip-neutral-text: var(--telekom-color-gray-050);
 }
 
 * {
@@ -75,8 +115,7 @@ a {
 
 a:focus-visible,
 button:focus-visible,
-[tabindex]:focus-visible,
-scale-button:focus-visible {
+[tabindex]:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: 3px;
 }
@@ -107,10 +146,7 @@ button {
 
 textarea:focus,
 input:focus,
-select:focus,
-scale-field-text:focus,
-scale-dropdown-select:focus,
-scale-text-area:focus {
+select:focus {
   outline: 2px solid var(--focus-outline);
   outline-offset: 3px;
 }
@@ -148,54 +184,6 @@ scale-text-area:focus {
   border: 0;
 }
 
-a.scale-button-link::part(button) {
-  padding: 0;
-}
-
-
-scale-tag[data-intent] {
-  --icon-color: var(--color);
-  --icon-color-hover: var(--color);
-}
-
-scale-tag[data-intent="status-active"],
-scale-tag[data-intent="group"],
-scale-tag[data-intent="self-approval"] {
-  --background: var(--telekom-color-functional-success-subtle);
-  --color: var(--telekom-color-text-and-icon-on-subtle-success);
-}
-
-scale-tag[data-intent="status-pending"],
-scale-tag[data-intent="needs-approval"] {
-  --background: var(--telekom-color-functional-warning-subtle);
-  --color: var(--telekom-color-text-and-icon-on-subtle-warning);
-}
-
-scale-tag[data-intent="tip"] {
-  --background: var(--telekom-color-ui-regular);
-  --color: var(--telekom-color-text-and-icon-on-ui-regular, var(--telekom-color-text-and-icon-standard));
-}
-
-scale-tag[data-intent="status-available"],
-scale-tag[data-intent="cluster"],
-scale-tag[data-intent="group-count"],
-scale-tag[data-intent="info"] {
-  --background: var(--telekom-color-functional-informational-subtle);
-  --color: var(--telekom-color-text-and-icon-on-subtle-informational);
-}
-
-scale-tag[data-intent="status-critical"],
-scale-tag[data-intent="approval-timeout"],
-scale-tag[data-intent="reason-required"] {
-  --background: var(--telekom-color-functional-danger-subtle);
-  --color: var(--telekom-color-text-and-icon-on-subtle-danger);
-}
-
-scale-tag[data-intent="status-neutral"] {
-  --background: var(--telekom-color-background-surface-subtle);
-  --color: var(--telekom-color-text-and-icon-standard);
-}
-
 /* Shared page chrome */
 .ui-page {
   display: flex;
@@ -226,13 +214,6 @@ scale-tag[data-intent="status-neutral"] {
   align-items: center;
 }
 
-.ui-toolbar scale-text-field,
-.ui-toolbar scale-select,
-.ui-toolbar scale-text-area {
-  width: 100%;
-  max-width: 280px;
-}
-
 .ui-toolbar input,
 .ui-toolbar select {
   width: 100%;
@@ -244,7 +225,22 @@ scale-tag[data-intent="status-neutral"] {
   padding: 0.6rem 0.85rem;
 }
 
-.ui-toolbar scale-button::part(button) {
+.ui-toolbar-field {
+  flex: 1 1 220px;
+  min-width: 220px;
+}
+
+.ui-toolbar-field > * {
+  width: 100%;
+}
+
+.ui-toolbar-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.ui-toolbar-actions > * {
   min-width: 140px;
 }
 
@@ -312,6 +308,58 @@ scale-tag[data-intent="status-neutral"] {
   background-color: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.8rem;
+}
+
+.tone-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--tone-chip-border, var(--telekom-color-ui-border-standard));
+  background-color: var(--tone-chip-bg, var(--surface-card-subtle));
+  color: var(--tone-chip-text, var(--telekom-color-text-and-icon-standard));
+}
+
+.tone-chip--info {
+  --tone-chip-bg: var(--tone-chip-info-bg);
+  --tone-chip-border: var(--tone-chip-info-border);
+  --tone-chip-text: var(--tone-chip-info-text);
+}
+
+.tone-chip--success {
+  --tone-chip-bg: var(--tone-chip-success-bg);
+  --tone-chip-border: var(--tone-chip-success-border);
+  --tone-chip-text: var(--tone-chip-success-text);
+}
+
+.tone-chip--warning {
+  --tone-chip-bg: var(--tone-chip-warning-bg);
+  --tone-chip-border: var(--tone-chip-warning-border);
+  --tone-chip-text: var(--tone-chip-warning-text);
+}
+
+.tone-chip--danger,
+.tone-chip--critical {
+  --tone-chip-bg: var(--tone-chip-danger-bg);
+  --tone-chip-border: var(--tone-chip-danger-border);
+  --tone-chip-text: var(--tone-chip-danger-text);
+}
+
+.tone-chip--neutral,
+.tone-chip--normal {
+  --tone-chip-bg: var(--tone-chip-neutral-bg);
+  --tone-chip-border: var(--tone-chip-neutral-border);
+  --tone-chip-text: var(--tone-chip-neutral-text);
+}
+
+.tone-chip--high {
+  --tone-chip-bg: var(--tone-chip-warning-bg);
+  --tone-chip-border: var(--tone-chip-warning-border);
+  --tone-chip-text: var(--tone-chip-warning-text);
 }
 
 .ui-matching-summary {
@@ -386,9 +434,8 @@ scale-tag[data-intent="status-neutral"] {
     align-items: stretch;
   }
 
-  .ui-toolbar scale-text-field,
-  .ui-toolbar scale-select,
-  .ui-toolbar scale-button::part(button) {
+  .ui-toolbar-field,
+  .ui-toolbar-actions > * {
     width: 100%;
   }
 }

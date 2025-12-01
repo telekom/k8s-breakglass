@@ -98,8 +98,8 @@ async function approve() {
 </script>
 
 <template>
-  <div>
-    <scale-card class="centered">
+  <div class="approve-card-shell">
+    <scale-card>
       <div v-if="!request">
         <p>No token was provided, or the provided token is invalid.</p>
       </div>
@@ -182,11 +182,9 @@ async function approve() {
 </template>
 
 <style scoped>
-scale-card {
-  display: block;
-  margin: 0 auto;
+.approve-card-shell {
   max-width: 500px;
-  --scale-card-padding: 1.5rem;
+  margin: 0 auto;
 }
 
 .center {

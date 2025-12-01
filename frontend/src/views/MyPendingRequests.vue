@@ -16,98 +16,84 @@
         <p>No pending requests.</p>
       </div>
       <div v-else class="requests-list">
-        <scale-card v-for="req in requests" :key="req.metadata?.name">
-          <div class="request-card">
-            <div class="card-header">
-              <div>
-                <p class="eyebrow">{{ req.spec.cluster || "-" }}</p>
-                <h3>{{ req.spec.grantedGroup || "-" }}</h3>
-              </div>
-              <div class="status-stack">
-                <scale-tag class="status-chip" :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">
-                  {{ requestState(req) }}
-                </scale-tag>
-                <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" class="status-chip" variant="warning">
-                  Scheduled
-                </scale-tag>
-                <scale-button
-                  class="withdraw-btn"
-                  variant="secondary"
-                  :disabled="withdrawing === req.metadata?.name"
-                  @click="withdrawRequest(req)"
-                >
-                  {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
-                </scale-button>
-              </div>
-            </div>
+        <SessionSummaryCard
+          v-for="req in requests"
+          :key="req.metadata?.name"
+          :eyebrow="req.spec.cluster || '-'"
+          :title="req.spec.grantedGroup || '-'"
+          :subtitle="requestUser(req)"
+          :status-tone="requestTone(req)"
+        >
+          <template #status>
+            <scale-tag class="status-chip" :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">
+              {{ requestState(req) }}
+            </scale-tag>
+            <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" class="status-chip" variant="warning">
+              Scheduled
+            </scale-tag>
+          </template>
 
-            <div class="pill-row">
-              <scale-tag v-if="req.metadata?.name" variant="info">Request ID: {{ req.metadata.name }}</scale-tag>
-              <scale-tag v-if="req.spec?.identityProviderName" variant="info">
-                IDP: {{ req.spec.identityProviderName }}
-              </scale-tag>
-              <scale-tag v-if="req.spec?.identityProviderIssuer" variant="info">
-                Issuer: {{ req.spec.identityProviderIssuer }}
-              </scale-tag>
-              <scale-tag v-if="req.spec?.user" variant="neutral">User: {{ req.spec.user }}</scale-tag>
-              <scale-tag v-if="req.spec?.duration" variant="neutral">Duration: {{ req.spec.duration }}</scale-tag>
-            </div>
+          <template #chips>
+            <scale-tag v-if="req.metadata?.name" variant="info">Request ID: {{ req.metadata.name }}</scale-tag>
+            <scale-tag v-if="req.spec?.identityProviderName" variant="info">
+              IDP: {{ req.spec.identityProviderName }}
+            </scale-tag>
+            <scale-tag v-if="req.spec?.identityProviderIssuer" variant="info">
+              Issuer: {{ req.spec.identityProviderIssuer }}
+            </scale-tag>
+            <scale-tag v-if="req.spec?.duration" variant="neutral">Duration: {{ req.spec.duration }}</scale-tag>
+          </template>
 
-            <div class="ui-info-grid">
-              <div class="ui-info-item">
-                <span class="label">Requested</span>
-                <span class="value">{{ formatDate(req.status?.conditions?.[0]?.lastTransitionTime) }}</span>
-              </div>
-              <div class="ui-info-item">
-                <span class="label">Preferred window</span>
-                <span class="value">
-                  <template v-if="req.spec?.scheduledStartTime">
-                    {{ format24Hour(req.spec.scheduledStartTime) }}
-                  </template>
-                  <template v-else>Not scheduled</template>
-                </span>
-              </div>
-              <div class="ui-info-item">
-                <span class="label">Times out</span>
-                <span class="value countdown-value">
+          <template #meta>
+            <SessionMetaGrid :items="requestMetaItems(req)">
+              <template #item="{ item }">
+                <div v-if="item.id === 'timeout'" class="countdown-value">
                   <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
                     <CountdownTimer :expires-at="req.status.timeoutAt" />
                     <small>({{ formatDate(req.status.timeoutAt) }})</small>
                   </template>
                   <template v-else>—</template>
-                </span>
-              </div>
-              <div class="ui-info-item">
-                <span class="label">Expires</span>
-                <span class="value countdown-value">
+                </div>
+                <div v-else-if="item.id === 'expires'" class="countdown-value">
                   <template v-if="req.status?.expiresAt && new Date(req.status.expiresAt).getTime() > Date.now()">
                     <CountdownTimer :expires-at="req.status.expiresAt" />
                     <small>({{ formatDate(req.status.expiresAt) }})</small>
                   </template>
                   <template v-else>—</template>
-                </span>
-              </div>
-              <div class="ui-info-item">
-                <span class="label">Requester</span>
-                <span class="value">{{ requestUser(req) }}</span>
-              </div>
-              <div class="ui-info-item">
-                <span class="label">Approver status</span>
-                <span class="value">{{ approverCopy(req) }}</span>
-              </div>
-            </div>
+                </div>
+                <span v-else :class="{ mono: item.mono }">{{ item.value ?? "—" }}</span>
+              </template>
+            </SessionMetaGrid>
+          </template>
 
-            <div v-if="requestReason(req)" class="reason-panel">
+          <template v-if="requestReason(req)" #body>
+            <div class="reason-panel">
               <span class="label">Reason</span>
               <p>{{ requestReason(req) }}</p>
             </div>
+          </template>
 
-            <footer class="meta-footer">
-              <span v-if="req.status?.timeoutAt">Timeout target: {{ formatDate(req.status.timeoutAt) }}</span>
-              <span v-if="req.status?.expiresAt">Hard stop: {{ formatDate(req.status.expiresAt) }}</span>
-            </footer>
-          </div>
-        </scale-card>
+          <template #footer>
+            <div class="request-card__footer">
+              <div class="request-card__deadlines">
+                <span v-if="req.status?.timeoutAt" class="tone-chip tone-chip--warning">
+                  Timeout target: {{ formatDate(req.status.timeoutAt) }}
+                </span>
+                <span v-if="req.status?.expiresAt" class="tone-chip tone-chip--info">
+                  Hard stop: {{ formatDate(req.status.expiresAt) }}
+                </span>
+              </div>
+              <scale-button
+                class="withdraw-btn"
+                variant="secondary"
+                :disabled="withdrawing === req.metadata?.name"
+                @click="withdrawRequest(req)"
+              >
+                {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
+              </scale-button>
+            </div>
+          </template>
+        </SessionSummaryCard>
       </div>
     </section>
   </main>
@@ -116,6 +102,8 @@
 <script setup lang="ts">
 import { ref, onMounted, inject } from "vue";
 import CountdownTimer from "@/components/CountdownTimer.vue";
+import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
+import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
 import BreakglassService from "@/services/breakglass";
 import { AuthKey } from "@/keys";
 import { format24Hour } from "@/utils/dateTime";
@@ -177,6 +165,39 @@ function approverCopy(req: any) {
     return "Scheduled and awaiting start";
   }
   return "Awaiting approver";
+}
+
+function requestMetaItems(req: any) {
+  return [
+    {
+      id: "requested",
+      label: "Requested",
+      value: formatDate(req.status?.conditions?.[0]?.lastTransitionTime),
+    },
+    {
+      id: "window",
+      label: "Preferred window",
+      value: req.spec?.scheduledStartTime ? format24Hour(req.spec.scheduledStartTime) : "Not scheduled",
+    },
+    {
+      id: "timeout",
+      label: "Times out",
+    },
+    {
+      id: "expires",
+      label: "Expires",
+    },
+    {
+      id: "requester",
+      label: "Requester",
+      value: requestUser(req),
+    },
+    {
+      id: "approver",
+      label: "Approver status",
+      value: approverCopy(req),
+    },
+  ];
 }
 
 onMounted(async () => {
@@ -244,56 +265,10 @@ onMounted(async () => {
   gap: 1.25rem;
 }
 
-.request-card {
-  padding: clamp(1rem, 4vw, 2rem);
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.card-header h3 {
-  margin: 0;
-  font-size: 1.35rem;
-}
-
-.eyebrow {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.85rem;
-  color: var(--telekom-color-text-and-icon-additional);
-  margin-bottom: 0.2rem;
-}
-
-.status-stack {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: flex-end;
-}
-
-.status-stack > * {
-  min-width: 8rem;
-}
-
 .status-chip {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-.pill-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 1rem;
 }
 
 .countdown-value {
@@ -305,6 +280,10 @@ onMounted(async () => {
 .countdown-value small {
   font-size: 0.8rem;
   color: var(--telekom-color-text-and-icon-additional);
+}
+
+.mono {
+  font-family: "IBM Plex Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .reason-panel {
@@ -328,19 +307,25 @@ onMounted(async () => {
   line-height: 1.45;
 }
 
-.meta-footer {
-  margin-top: 1rem;
+.request-card__footer {
+  width: 100%;
   display: flex;
-  flex-wrap: wrap;
+  justify-content: space-between;
   gap: 1rem;
-  font-size: 0.9rem;
-  color: var(--telekom-color-text-and-icon-additional);
+  flex-wrap: wrap;
+  align-items: center;
 }
 
-.meta-footer span {
+.request-card__deadlines {
   display: flex;
+  flex-direction: column;
   gap: 0.35rem;
-  align-items: center;
+  color: var(--telekom-color-text-and-icon-additional);
+  font-size: 0.9rem;
+}
+
+.withdraw-btn {
+  min-width: 8rem;
 }
 
 @media (max-width: 600px) {
@@ -349,13 +334,9 @@ onMounted(async () => {
     align-items: flex-start;
   }
 
-  .status-stack {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .status-stack > * {
-    width: 100%;
+  .request-card__footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

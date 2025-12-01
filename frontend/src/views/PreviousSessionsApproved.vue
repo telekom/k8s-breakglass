@@ -146,9 +146,7 @@ const approverSessions = computed(() =>
           </div>
           <div v-if="s.spec && s.spec.identityProviderIssuer" class="actor-item">
             <span class="actor-label">🔗 Issuer:</span>
-            <span class="actor-value" style="font-family: &quot;Courier New&quot;, monospace; font-size: 0.9rem">{{
-              s.spec.identityProviderIssuer
-            }}</span>
+            <span class="actor-value actor-value--mono">{{ s.spec.identityProviderIssuer }}</span>
           </div>
           <div class="actor-item">
             <span class="actor-label">✓ Approved by:</span>
@@ -242,7 +240,6 @@ h2 {
 }
 
 .session-card {
-  --scale-card-padding: 1.5rem;
   transition: all 0.2s ease;
 }
 
@@ -300,9 +297,13 @@ h2 {
   color: var(--telekom-color-text-and-icon-additional);
 }
 
+.actor-value--mono {
+  font-family: "Courier New", monospace;
+  font-size: 0.9rem;
+}
+
 .actor-value {
   color: var(--telekom-color-text-and-icon-standard);
-  font-family: "Courier New", monospace;
 }
 
 /* Timeline */

@@ -198,7 +198,6 @@ h2 {
 }
 
 .session-card {
-  --scale-card-padding: 1.5rem;
   transition: all 0.2s ease;
 }
 
@@ -236,7 +235,6 @@ h2 {
   flex-wrap: wrap;
 }
 
-/* User info */
 .user-info {
   padding: 0.75rem 0;
   color: var(--telekom-color-text-and-icon-standard);

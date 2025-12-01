@@ -250,14 +250,16 @@ async function onDrop(bg: any) {
     </div>
     <div v-else-if="state.breakglasses.length > 0">
       <div class="breakglass-toolbar">
-        <scale-text-field
-          id="breakglass-search"
-          type="search"
-          label="Search escalations"
-          placeholder="Cluster, group or approver"
-          :value="state.search"
-          @scaleChange="updateSearch"
-        ></scale-text-field>
+        <div class="breakglass-toolbar__field">
+          <scale-text-field
+            id="breakglass-search"
+            type="search"
+            label="Search escalations"
+            placeholder="Cluster, group or approver"
+            :value="state.search"
+            @scaleChange="updateSearch"
+          ></scale-text-field>
+        </div>
         <div class="toolbar-refresh">
           <span id="refresh-label" class="sr-only">Refresh list</span>
           <scale-loading-spinner v-if="state.refreshing"></scale-loading-spinner>
@@ -336,9 +338,13 @@ async function onDrop(bg: any) {
   border-radius: 8px;
 }
 
-.breakglass-toolbar scale-text-field {
+.breakglass-toolbar__field {
   min-width: 280px;
   flex: 1 1 280px;
+}
+
+.breakglass-toolbar__field > * {
+  width: 100%;
 }
 
 .toolbar-refresh {
@@ -346,13 +352,6 @@ async function onDrop(bg: any) {
   align-items: center;
   justify-content: center;
   min-width: 64px;
-}
-
-.toolbar-refresh scale-button {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
 }
 
 .toolbar-info {
