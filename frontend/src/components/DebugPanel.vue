@@ -228,15 +228,27 @@ const groupsDisplay = computed(() => {
 <style scoped>
 .debug-panel-container {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
+  bottom: var(--space-lg);
+  right: var(--space-lg);
   z-index: 9999;
   font-family: monospace;
 }
 
 .debug-toggle {
   border-radius: 50%;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-card);
+  background-color: var(--surface-card);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.debug-toggle:hover {
+  background-color: var(--telekom-color-ui-subtle);
 }
 
 .debug-panel-wrapper {
@@ -254,22 +266,22 @@ const groupsDisplay = computed(() => {
   flex-direction: column;
   max-height: 80vh;
   overflow: hidden;
-  --telekom-card-padding: 1rem;
+  --telekom-card-padding: var(--space-md);
 }
 
 .debug-content {
   overflow-y: auto;
   flex: 1;
-  padding-right: 0.5rem;
+  padding-right: var(--space-xs);
 }
 
 .debug-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-md);
   border-bottom: 2px solid var(--telekom-color-primary-standard);
-  padding-bottom: 0.5rem;
+  padding-bottom: var(--space-xs);
 }
 
 .debug-header h3 {
@@ -279,15 +291,16 @@ const groupsDisplay = computed(() => {
 }
 
 .debug-section {
-  margin-bottom: 1rem;
-  padding: 0.75rem;
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm);
   background-color: var(--telekom-color-ui-subtle);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   border-left: 3px solid var(--telekom-color-primary-standard);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .debug-section h4 {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 var(--space-xs) 0;
   color: var(--telekom-color-text-and-icon-standard);
   font-size: 0.95rem;
 }
@@ -295,8 +308,8 @@ const groupsDisplay = computed(() => {
 .debug-item {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
   font-size: 0.9rem;
 }
 
@@ -322,15 +335,15 @@ const groupsDisplay = computed(() => {
 }
 
 .token-details {
-  margin-top: 8px;
+  margin-top: var(--space-xs);
   cursor: pointer;
   color: var(--telekom-color-text-and-icon-additional);
 }
 
 .token-details summary {
-  padding: 6px 8px;
+  padding: var(--space-xs) var(--space-sm);
   background-color: var(--telekom-color-ui-background-surface);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   user-select: none;
 }
 
@@ -339,11 +352,11 @@ const groupsDisplay = computed(() => {
 }
 
 .token-details pre {
-  margin: 8px 0 0 0;
-  padding: 8px;
+  margin: var(--space-xs) 0 0 0;
+  padding: var(--space-xs);
   background-color: var(--telekom-color-ui-background-surface);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
   font-size: 0.85rem;
   color: var(--telekom-color-text-and-icon-standard);
@@ -351,21 +364,23 @@ const groupsDisplay = computed(() => {
 
 .debug-section.error {
   border-left-color: var(--telekom-color-functional-danger-standard);
-  background-color: var(--telekom-color-functional-danger-subtle);
+  background-color: var(--tone-chip-danger-bg);
+  border-color: var(--tone-chip-danger-border);
 }
 
 .error-message {
-  color: var(--telekom-color-functional-danger-standard);
-  padding: 8px;
+  color: var(--tone-chip-danger-text);
+  padding: var(--space-xs);
   background-color: var(--telekom-color-ui-background-surface);
-  border-radius: 3px;
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--radius-xs);
   word-break: break-all;
 }
 
 .debug-actions {
-  margin-top: 1rem;
+  margin-top: var(--space-md);
   border-top: 1px solid var(--telekom-color-ui-border-standard);
-  padding-top: 1rem;
+  padding-top: var(--space-md);
 }
 
 .debug-actions > * {
@@ -379,12 +394,12 @@ const groupsDisplay = computed(() => {
 
 .debug-content::-webkit-scrollbar-track {
   background: var(--telekom-color-ui-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .debug-content::-webkit-scrollbar-thumb {
   background: var(--telekom-color-primary-standard);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .debug-content::-webkit-scrollbar-thumb:hover {

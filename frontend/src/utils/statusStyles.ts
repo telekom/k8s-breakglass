@@ -6,6 +6,7 @@ const STATE_TONE_MAP: Record<string, StatusTone> = {
   running: "success",
   available: "info",
   pending: "warning",
+  pendingrequest: "warning",
   waitingforscheduledtime: "warning",
   scheduled: "info",
   queued: "info",

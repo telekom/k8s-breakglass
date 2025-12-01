@@ -119,18 +119,18 @@ const approverSessions = computed(() =>
           <div class="header-left">
             <div class="session-name">{{ s.name }}</div>
             <div class="cluster-group">
-              <scale-chip variant="primary">{{ s.cluster }}</scale-chip>
-              <scale-chip variant="success">{{ s.group }}</scale-chip>
+              <scale-tag variant="primary">{{ s.cluster }}</scale-tag>
+              <scale-tag variant="success">{{ s.group }}</scale-tag>
             </div>
           </div>
           <div class="header-right">
-            <scale-chip
+            <scale-tag
               :variant="
                 statusTone(s) === 'tone-success' ? 'success' : statusTone(s) === 'tone-warning' ? 'warning' : 'neutral'
               "
             >
               {{ s.state || "-" }}
-            </scale-chip>
+            </scale-tag>
           </div>
         </div>
 
@@ -143,10 +143,6 @@ const approverSessions = computed(() =>
           <div v-if="s.spec && s.spec.identityProviderName" class="actor-item">
             <span class="actor-label">🔐 IDP:</span>
             <span class="actor-value">{{ s.spec.identityProviderName }}</span>
-          </div>
-          <div v-if="s.spec && s.spec.identityProviderIssuer" class="actor-item">
-            <span class="actor-label">🔗 Issuer:</span>
-            <span class="actor-value actor-value--mono">{{ s.spec.identityProviderIssuer }}</span>
           </div>
           <div class="actor-item">
             <span class="actor-label">✓ Approved by:</span>
@@ -206,37 +202,37 @@ const approverSessions = computed(() =>
 .container {
   max-width: 900px;
   margin: 0 auto;
-  padding: 0 1rem;
+  padding: 0 var(--space-md);
 }
 
 h2 {
   color: var(--telekom-color-text-and-icon-standard);
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-lg);
   font-size: 1.8rem;
 }
 
 .loading-state,
 .empty-state {
   text-align: center;
-  padding: 2rem;
+  padding: var(--space-xl);
   color: var(--telekom-color-text-and-icon-additional);
   font-size: 1.1rem;
 }
 
 .error-state {
-  background-color: var(--telekom-color-functional-danger-subtle);
-  color: var(--telekom-color-functional-danger-standard);
-  padding: 1rem;
-  border-radius: 6px;
+  background-color: var(--chip-danger-bg);
+  color: var(--chip-danger-text);
+  padding: var(--space-md);
+  border-radius: var(--radius-sm);
   border-left: 4px solid var(--telekom-color-functional-danger-standard);
   text-align: center;
-  margin: 1rem 0;
+  margin: var(--space-md) 0;
 }
 
 .sessions-list {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--stack-gap-lg);
 }
 
 .session-card {
@@ -253,9 +249,9 @@ h2 {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 1rem;
-  gap: 1rem;
-  padding-bottom: 1rem;
+  margin-bottom: var(--space-md);
+  gap: var(--space-md);
+  padding-bottom: var(--space-md);
   border-bottom: 2px solid var(--telekom-color-ui-border-standard);
 }
 
@@ -267,21 +263,21 @@ h2 {
   font-size: 1.2rem;
   font-weight: bold;
   color: var(--telekom-color-functional-success-standard);
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-xs);
   font-family: "Courier New", monospace;
 }
 
 .cluster-group {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-xs);
   flex-wrap: wrap;
 }
 
 /* Actors section */
 .actors-section {
   display: flex;
-  gap: 2rem;
-  padding: 0.75rem 0;
+  gap: var(--space-xl);
+  padding: var(--space-sm) 0;
   flex-wrap: wrap;
   font-size: 0.95rem;
 }
@@ -289,7 +285,7 @@ h2 {
 .actor-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-xs);
 }
 
 .actor-label {
@@ -310,11 +306,11 @@ h2 {
 .timeline {
   display: flex;
   flex-wrap: wrap;
-  gap: 1.5rem;
-  padding: 1rem 0;
+  gap: var(--space-lg);
+  padding: var(--space-md) 0;
   border-top: 1px solid var(--telekom-color-ui-border-standard);
   border-bottom: 1px solid var(--telekom-color-ui-border-standard);
-  margin: 1rem 0;
+  margin: var(--space-md) 0;
   font-size: 0.9rem;
 }
 
@@ -327,7 +323,7 @@ h2 {
   font-weight: 600;
   color: var(--telekom-color-text-and-icon-additional);
   display: block;
-  margin-bottom: 0.25rem;
+  margin-bottom: var(--space-2xs);
 }
 
 .timeline-value {
@@ -341,15 +337,15 @@ h2 {
 .reasons-section {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  margin: 1rem 0;
+  gap: var(--space-md);
+  margin: var(--space-md) 0;
 }
 
 .reason-box {
   background-color: var(--telekom-color-ui-subtle);
   border-left: 3px solid var(--telekom-color-primary-standard);
-  padding: 1rem;
-  border-radius: 4px;
+  padding: var(--space-md);
+  border-radius: var(--radius-sm);
 }
 
 .reason-box.approval-reason {
@@ -359,7 +355,7 @@ h2 {
 .reason-title {
   color: var(--telekom-color-primary-standard);
   display: block;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-xs);
   font-size: 0.9rem;
 }
 
@@ -376,33 +372,33 @@ h2 {
 
 /* End reason */
 .end-reason {
-  background-color: var(--telekom-color-functional-danger-subtle);
+  background-color: var(--chip-danger-bg);
   border-left: 3px solid var(--telekom-color-functional-danger-standard);
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  color: var(--telekom-color-functional-danger-standard);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  color: var(--chip-danger-text);
   font-size: 0.9rem;
 }
 
 .end-reason strong {
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--chip-danger-text);
 }
 
 /* Responsive design */
 @media (max-width: 600px) {
   .card-header {
     flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--space-xs);
   }
 
   .actors-section {
     flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--space-xs);
   }
 
   .timeline {
     flex-direction: column;
-    gap: 0.75rem;
+    gap: var(--space-sm);
   }
 
   .timeline-item {

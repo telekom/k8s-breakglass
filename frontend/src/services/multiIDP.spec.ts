@@ -1,3 +1,4 @@
+import { vi, type Mock } from "vitest";
 import axios from "axios";
 import {
   getMultiIDPConfig,
@@ -7,20 +8,20 @@ import {
 } from "./multiIDP";
 import { error as logError } from "@/services/logger";
 
-jest.mock("axios", () => ({
+vi.mock("axios", () => ({
   __esModule: true,
   default: {
-    get: jest.fn(),
+    get: vi.fn(),
   },
 }));
 
-jest.mock("@/services/logger", () => ({
+vi.mock("@/services/logger", () => ({
   __esModule: true,
-  error: jest.fn(),
+  error: vi.fn(),
 }));
 
-const mockedAxios = axios as unknown as { get: jest.Mock };
-const mockedLogError = logError as jest.MockedFunction<typeof logError>;
+const mockedAxios = axios as unknown as { get: Mock };
+const mockedLogError = logError as Mock;
 
 describe("multiIDP service", () => {
   beforeEach(() => {

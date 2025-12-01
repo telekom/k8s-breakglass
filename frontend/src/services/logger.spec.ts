@@ -1,3 +1,4 @@
+import { vi, type Mock } from "vitest";
 /**
  * Tests for logger service
  *
@@ -17,13 +18,13 @@ import { info, warn, error, handleAxiosError } from "@/services/logger";
 describe("Logger Service", () => {
   beforeEach(() => {
     // Save original console methods
-    jest.spyOn(console, "info").mockImplementation();
-    jest.spyOn(console, "warn").mockImplementation();
-    jest.spyOn(console, "error").mockImplementation();
+    vi.spyOn(console, "info").mockImplementation();
+    vi.spyOn(console, "warn").mockImplementation();
+    vi.spyOn(console, "error").mockImplementation();
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   describe("info() - info logging", () => {
@@ -31,7 +32,7 @@ describe("Logger Service", () => {
       info("TestTag", "test message");
 
       expect(console.info).toHaveBeenCalled();
-      const args = (console.info as jest.Mock).mock.calls[0];
+      const args = (console.info as Mock).mock.calls[0];
       expect(args[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/); // timestamp
       expect(args[1]).toBe("[TestTag]");
       expect(args[2]).toBe("test message");
@@ -41,7 +42,7 @@ describe("Logger Service", () => {
       info("Tag", "msg1", "msg2", { key: "value" });
 
       expect(console.info).toHaveBeenCalled();
-      const args = (console.info as jest.Mock).mock.calls[0];
+      const args = (console.info as Mock).mock.calls[0];
       expect(args.length).toBeGreaterThanOrEqual(4);
     });
   });
@@ -51,7 +52,7 @@ describe("Logger Service", () => {
       warn("TestTag", "warning message");
 
       expect(console.warn).toHaveBeenCalled();
-      const args = (console.warn as jest.Mock).mock.calls[0];
+      const args = (console.warn as Mock).mock.calls[0];
       expect(args[1]).toBe("[TestTag]");
       expect(args[2]).toBe("warning message");
     });
@@ -59,7 +60,7 @@ describe("Logger Service", () => {
     it("includes timestamp", () => {
       warn("Service", "Warning occurred");
 
-      const args = (console.warn as jest.Mock).mock.calls[0];
+      const args = (console.warn as Mock).mock.calls[0];
       expect(args[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
   });
@@ -69,7 +70,7 @@ describe("Logger Service", () => {
       error("TestTag", "error message");
 
       expect(console.error).toHaveBeenCalled();
-      const args = (console.error as jest.Mock).mock.calls[0];
+      const args = (console.error as Mock).mock.calls[0];
       expect(args[1]).toBe("[TestTag]");
       expect(args[2]).toBe("error message");
     });
@@ -77,7 +78,7 @@ describe("Logger Service", () => {
     it("includes timestamp", () => {
       error("Service", "Error occurred");
 
-      const args = (console.error as jest.Mock).mock.calls[0];
+      const args = (console.error as Mock).mock.calls[0];
       expect(args[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
   });

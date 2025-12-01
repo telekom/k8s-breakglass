@@ -73,7 +73,7 @@ const expiryHumanized = computed(() => {
 
 <style scoped>
 .actions {
-  margin-top: 1rem;
+  margin-top: var(--space-md);
   text-align: center;
 }
 

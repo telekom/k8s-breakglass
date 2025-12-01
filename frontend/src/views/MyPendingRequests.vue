@@ -1,63 +1,67 @@
 <template>
   <main class="ui-page pending-page">
-    <header class="page-header">
-      <div>
-        <h1 class="ui-page-title">My Pending Requests</h1>
-        <p class="ui-page-subtitle">Track your pending access requests and cancel anything you no longer need.</p>
-      </div>
-      <scale-tag variant="secondary" class="open-count">{{ requests.length }} pending</scale-tag>
-    </header>
+    <PageHeader
+      title="My Pending Requests"
+      subtitle="Track your pending access requests and cancel anything you no longer need."
+      :badge="`${requests.length} pending`"
+      badge-variant="secondary"
+    />
 
-    <scale-loading-spinner v-if="loading" class="page-loading" />
-    <scale-notification v-else-if="error" variant="danger" :heading="error" />
+    <LoadingState v-if="loading" message="Loading your requests..." />
+    <ErrorBanner v-else-if="error" :message="error" show-retry @retry="loadRequests" />
 
     <section v-else class="requests-section">
-      <div v-if="requests.length === 0" class="empty-state">
-        <p>No pending requests.</p>
-      </div>
+      <EmptyState
+        v-if="requests.length === 0"
+        title="No pending requests"
+        description="You don't have any access requests waiting for approval."
+        icon="📭"
+      />
+
       <div v-else class="requests-list">
         <SessionSummaryCard
           v-for="req in requests"
-          :key="req.metadata?.name"
-          :eyebrow="req.spec.cluster || '-'"
-          :title="req.spec.grantedGroup || '-'"
-          :subtitle="requestUser(req)"
-          :status-tone="requestTone(req)"
+          :key="getSessionKey(req)"
+          :eyebrow="getSessionCluster(req)"
+          :title="getSessionGroup(req)"
+          :subtitle="getSessionUser(req)"
+          :status-tone="statusToneFor(getSessionState(req))"
         >
           <template #status>
-            <scale-tag class="status-chip" :variant="requestTone(req) === 'muted' ? 'neutral' : requestTone(req)">
-              {{ requestState(req) }}
-            </scale-tag>
-            <scale-tag v-if="req.status?.state === 'WaitingForScheduledTime'" class="status-chip" variant="warning">
-              Scheduled
-            </scale-tag>
+            <StatusTag :status="getSessionState(req)" />
+            <StatusTag
+              v-if="getSessionState(req) === 'WaitingForScheduledTime'"
+              status="Scheduled"
+              tone="warning"
+            />
           </template>
 
           <template #chips>
-            <scale-tag v-if="req.metadata?.name" variant="info">Request ID: {{ req.metadata.name }}</scale-tag>
-            <scale-tag v-if="req.spec?.identityProviderName" variant="info">
+            <scale-tag v-if="req.metadata?.name" variant="info">
+              Request ID: {{ req.metadata.name }}
+            </scale-tag>
+            <scale-tag v-if="req.spec?.identityProviderName" variant="neutral">
               IDP: {{ req.spec.identityProviderName }}
             </scale-tag>
-            <scale-tag v-if="req.spec?.identityProviderIssuer" variant="info">
-              Issuer: {{ req.spec.identityProviderIssuer }}
+            <scale-tag v-if="req.spec?.duration" variant="neutral">
+              Duration: {{ req.spec.duration }}
             </scale-tag>
-            <scale-tag v-if="req.spec?.duration" variant="neutral">Duration: {{ req.spec.duration }}</scale-tag>
           </template>
 
           <template #meta>
-            <SessionMetaGrid :items="requestMetaItems(req)">
+            <SessionMetaGrid :items="getMetaItems(req)">
               <template #item="{ item }">
                 <div v-if="item.id === 'timeout'" class="countdown-value">
-                  <template v-if="req.status?.timeoutAt && new Date(req.status.timeoutAt).getTime() > Date.now()">
+                  <template v-if="req.status?.timeoutAt && isFuture(req.status.timeoutAt)">
                     <CountdownTimer :expires-at="req.status.timeoutAt" />
-                    <small>({{ formatDate(req.status.timeoutAt) }})</small>
+                    <small>({{ formatDateTime(req.status.timeoutAt) }})</small>
                   </template>
                   <template v-else>—</template>
                 </div>
                 <div v-else-if="item.id === 'expires'" class="countdown-value">
-                  <template v-if="req.status?.expiresAt && new Date(req.status.expiresAt).getTime() > Date.now()">
+                  <template v-if="req.status?.expiresAt && isFuture(req.status.expiresAt)">
                     <CountdownTimer :expires-at="req.status.expiresAt" />
-                    <small>({{ formatDate(req.status.expiresAt) }})</small>
+                    <small>({{ formatDateTime(req.status.expiresAt) }})</small>
                   </template>
                   <template v-else>—</template>
                 </div>
@@ -66,31 +70,28 @@
             </SessionMetaGrid>
           </template>
 
-          <template v-if="requestReason(req)" #body>
-            <div class="reason-panel">
-              <span class="label">Reason</span>
-              <p>{{ requestReason(req) }}</p>
-            </div>
+          <template v-if="getRequestReason(req)" #body>
+            <ReasonPanel :reason="getRequestReason(req)" label="Request Reason" variant="request" />
           </template>
 
           <template #footer>
             <div class="request-card__footer">
               <div class="request-card__deadlines">
                 <span v-if="req.status?.timeoutAt" class="tone-chip tone-chip--warning">
-                  Timeout target: {{ formatDate(req.status.timeoutAt) }}
+                  Timeout target: {{ formatDateTime(req.status.timeoutAt) }}
                 </span>
                 <span v-if="req.status?.expiresAt" class="tone-chip tone-chip--info">
-                  Hard stop: {{ formatDate(req.status.expiresAt) }}
+                  Hard stop: {{ formatDateTime(req.status.expiresAt) }}
                 </span>
               </div>
-              <scale-button
-                class="withdraw-btn"
+              <ActionButton
+                label="Withdraw"
+                loading-label="Withdrawing..."
                 variant="secondary"
-                :disabled="withdrawing === req.metadata?.name"
-                @click="withdrawRequest(req)"
-              >
-                {{ withdrawing === req.metadata?.name ? "Withdrawing..." : "Withdraw" }}
-              </scale-button>
+                :loading="isActionRunning(req, 'withdraw')"
+                :disabled="isSessionBusy(req)"
+                @click="handleWithdraw(req)"
+              />
             </div>
           </template>
         </SessionSummaryCard>
@@ -100,60 +101,73 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, inject } from "vue";
+import { onMounted, inject } from "vue";
+
+// Common components
+import { PageHeader, LoadingState, ErrorBanner, EmptyState, StatusTag, ReasonPanel, ActionButton } from "@/components/common";
 import CountdownTimer from "@/components/CountdownTimer.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
+
+// Services
 import BreakglassService from "@/services/breakglass";
 import { AuthKey } from "@/keys";
-import { format24Hour } from "@/utils/dateTime";
-import { describeApprover } from "@/utils/sessionFilters";
+
+// Composables
+import {
+  usePendingRequests,
+  useSessionActions,
+  getSessionKey,
+  getSessionState,
+  getSessionUser,
+  getSessionCluster,
+  getSessionGroup,
+  formatDateTime,
+  isFuture,
+  type ActionHandlers,
+} from "@/composables";
+
+// Utilities
 import { statusToneFor } from "@/utils/statusStyles";
+import { describeApprover } from "@/utils/sessionFilters";
 
-const withdrawing = ref("");
+// Types
+import type { SessionCR } from "@/model/breakglass";
 
-async function withdrawRequest(req: any) {
-  if (!breakglassService) return;
-  withdrawing.value = req.metadata?.name;
-
-  try {
-    await breakglassService.withdrawMyRequest(req);
-    requests.value = requests.value.filter((r) => r.metadata?.name !== req.metadata?.name);
-  } catch (e: any) {
-    error.value = e?.message || "Failed to withdraw request";
-  } finally {
-    withdrawing.value = "";
-  }
-}
-
-const requests = ref<any[]>([]);
-const loading = ref(true);
-const error = ref("");
+// Setup services
 const auth = inject(AuthKey);
 const breakglassService = auth ? new BreakglassService(auth) : null;
 
-function formatDate(value?: string | null) {
-  return value ? format24Hour(value) : "—";
+// Session list state
+const { requests, loading, error, loadRequests } = usePendingRequests(breakglassService);
+
+// Session actions
+const actionHandlers: ActionHandlers = {
+  withdraw: async (session: SessionCR) => {
+    if (!breakglassService) throw new Error("Service not available");
+    await breakglassService.withdrawMyRequest(session);
+    // Remove from local list
+    const idx = requests.value.findIndex((r) => getSessionKey(r) === getSessionKey(session));
+    if (idx >= 0) {
+      requests.value.splice(idx, 1);
+    }
+  },
+};
+
+const { isSessionBusy, isActionRunning, withdraw } = useSessionActions(actionHandlers);
+
+// Handlers
+async function handleWithdraw(req: SessionCR) {
+  await withdraw(req);
 }
 
-function requestUser(req: any) {
-  return req.spec?.user || req.spec?.requester || req.spec?.subject || "—";
-}
-
-function requestState(req: any) {
-  return req.status?.state || "Pending";
-}
-
-function requestTone(req: any) {
-  return statusToneFor(req.status?.state);
-}
-
-function requestReason(req: any) {
+// Helper functions
+function getRequestReason(req: SessionCR): string {
   if (typeof req.spec?.requestReason === "string") return req.spec.requestReason;
-  return req.spec?.requestReason?.description || req.status?.reason || "";
+  return (req.spec?.requestReason as any)?.description || req.status?.reason || "";
 }
 
-function approverCopy(req: any) {
+function getApproverStatus(req: SessionCR): string {
   const description = describeApprover(req);
   if (description && description !== "-") {
     return description;
@@ -167,17 +181,17 @@ function approverCopy(req: any) {
   return "Awaiting approver";
 }
 
-function requestMetaItems(req: any) {
+function getMetaItems(req: SessionCR) {
   return [
     {
       id: "requested",
       label: "Requested",
-      value: formatDate(req.status?.conditions?.[0]?.lastTransitionTime),
+      value: formatDateTime(req.status?.conditions?.[0]?.lastTransitionTime),
     },
     {
       id: "window",
       label: "Preferred window",
-      value: req.spec?.scheduledStartTime ? format24Hour(req.spec.scheduledStartTime) : "Not scheduled",
+      value: req.spec?.scheduledStartTime ? formatDateTime(req.spec.scheduledStartTime) : "Not scheduled",
     },
     {
       id: "timeout",
@@ -190,91 +204,43 @@ function requestMetaItems(req: any) {
     {
       id: "requester",
       label: "Requester",
-      value: requestUser(req),
+      value: getSessionUser(req),
     },
     {
       id: "approver",
       label: "Approver status",
-      value: approverCopy(req),
+      value: getApproverStatus(req),
     },
   ];
 }
 
-onMounted(async () => {
-  if (!breakglassService) {
-    error.value = "Auth not available";
-    loading.value = false;
-    return;
-  }
-  try {
-    requests.value = await breakglassService.fetchMyOutstandingRequests();
-  } catch (e: any) {
-    error.value = e?.message || "Failed to load requests";
-  } finally {
-    loading.value = false;
-  }
+// Lifecycle
+onMounted(() => {
+  loadRequests();
 });
 </script>
 
 <style scoped>
 .pending-page {
-  padding-bottom: 3rem;
-}
-
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.page-header h1 {
-  margin-bottom: 0.15rem;
-}
-
-.page-header p {
-  margin: 0;
-}
-
-.open-count {
-  align-self: flex-start;
-}
-
-.page-loading {
-  margin: 2rem auto;
+  padding-bottom: var(--space-2xl);
 }
 
 .requests-section {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
-}
-
-.empty-state {
-  padding: 2rem;
-  border-radius: 20px;
-  border: 1px dashed var(--telekom-color-ui-border-standard);
-  text-align: center;
-  color: var(--telekom-color-text-and-icon-additional);
-  background: var(--surface-card-subtle);
+  gap: var(--space-lg);
 }
 
 .requests-list {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-}
-
-.status-chip {
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  gap: var(--stack-gap-lg);
 }
 
 .countdown-value {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-2xs);
 }
 
 .countdown-value small {
@@ -286,32 +252,11 @@ onMounted(async () => {
   font-family: "IBM Plex Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.reason-panel {
-  margin-top: 1.25rem;
-  padding: 1rem;
-  border-radius: 16px;
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  background: var(--surface-card-subtle);
-}
-
-.reason-panel .label {
-  text-transform: uppercase;
-  font-size: 0.8rem;
-  letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.reason-panel p {
-  margin: 0.3rem 0 0;
-  white-space: pre-wrap;
-  line-height: 1.45;
-}
-
 .request-card__footer {
   width: 100%;
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-md);
   flex-wrap: wrap;
   align-items: center;
 }
@@ -319,21 +264,14 @@ onMounted(async () => {
 .request-card__deadlines {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-2xs);
   color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.9rem;
 }
 
-.withdraw-btn {
-  min-width: 8rem;
-}
+/* tone-chip classes are now defined globally in base.css */
 
 @media (max-width: 600px) {
-  .page-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
   .request-card__footer {
     flex-direction: column;
     align-items: flex-start;

@@ -4,6 +4,7 @@ import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
 import { statusToneFor } from "@/utils/statusStyles";
+import { PageHeader, LoadingState, ErrorBanner, EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -80,12 +81,14 @@ function statusTone(s: any): string {
 
 <template>
   <main class="container">
-    <h2>My Previous Sessions</h2>
-    <scale-loading-spinner v-if="loading" />
-    <scale-notification v-else-if="error" variant="danger" :heading="error" />
-    <div v-else-if="sessions.length === 0" class="empty-state">
-      <p>No previous sessions found.</p>
-    </div>
+    <PageHeader title="My Previous Sessions" />
+    <LoadingState v-if="loading" message="Loading sessions..." />
+    <ErrorBanner v-else-if="error" :message="error" />
+    <EmptyState
+      v-else-if="sessions.length === 0"
+      icon="📋"
+      message="No previous sessions found."
+    />
     <div v-else class="sessions-list">
       <scale-card v-for="s in sessions" :key="s.id || s.name || s.group + s.cluster + s.expiry" class="session-card">
         <!-- Header -->
@@ -93,18 +96,18 @@ function statusTone(s: any): string {
           <div class="header-left">
             <div class="session-name">{{ s.name }}</div>
             <div class="cluster-group">
-              <scale-chip variant="primary">{{ s.cluster }}</scale-chip>
-              <scale-chip variant="success">{{ s.group }}</scale-chip>
+              <scale-tag variant="primary">{{ s.cluster }}</scale-tag>
+              <scale-tag variant="success">{{ s.group }}</scale-tag>
             </div>
           </div>
           <div class="header-right">
-            <scale-chip
+            <scale-tag
               :variant="
                 statusTone(s) === 'tone-success' ? 'success' : statusTone(s) === 'tone-warning' ? 'warning' : 'neutral'
               "
             >
               {{ s.state || "-" }}
-            </scale-chip>
+            </scale-tag>
           </div>
         </div>
 
@@ -114,43 +117,29 @@ function statusTone(s: any): string {
           <span v-if="s.spec && s.spec.identityProviderName" class="idp-info">
             | <strong>IDP:</strong> {{ s.spec.identityProviderName }}
           </span>
-          <span v-if="s.spec && s.spec.identityProviderIssuer" class="idp-issuer">
-            | <strong>Issuer:</strong> {{ s.spec.identityProviderIssuer }}
-          </span>
         </div>
 
         <!-- Timeline -->
-        <div class="timeline">
-          <div class="timeline-item">
-            <span class="timeline-label">Scheduled:</span>
-            <span class="timeline-value">{{
-              s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : "-"
-            }}</span>
-          </div>
-          <div class="timeline-item">
-            <span class="timeline-label">Started:</span>
-            <span class="timeline-value">{{
-              s.status && s.status.actualStartTime
-                ? formatDate(s.status.actualStartTime)
-                : formatDate(startedForDisplay(s))
-            }}</span>
-          </div>
-          <div class="timeline-item">
-            <span class="timeline-label">Ended:</span>
-            <span class="timeline-value">{{ formatDate(endedForDisplay(s)) }}</span>
-          </div>
-        </div>
+        <TimelineGrid
+          :scheduled-start="s.spec?.scheduledStartTime || null"
+          :actual-start="s.status?.actualStartTime || startedForDisplay(s)"
+          :ended="endedForDisplay(s)"
+        />
 
         <!-- Reasons section -->
         <div v-if="(s.spec && s.spec.requestReason) || (s.status && s.status.approvalReason)" class="reasons-section">
-          <div v-if="s.spec && s.spec.requestReason" class="reason-box">
-            <strong class="reason-title">📝 Request Reason:</strong>
-            <div class="reason-text">{{ s.spec.requestReason }}</div>
-          </div>
-          <div v-if="s.status && s.status.approvalReason" class="reason-box">
-            <strong class="reason-title">✓ Approval Reason:</strong>
-            <div class="reason-text">{{ s.status.approvalReason }}</div>
-          </div>
+          <ReasonPanel
+            v-if="s.spec?.requestReason"
+            :reason="s.spec.requestReason"
+            label="Request Reason"
+            variant="request"
+          />
+          <ReasonPanel
+            v-if="s.status?.approvalReason"
+            :reason="s.status.approvalReason"
+            label="Approval Reason"
+            variant="approval"
+          />
         </div>
 
         <!-- End reason -->
@@ -164,37 +153,13 @@ function statusTone(s: any): string {
 .container {
   max-width: 900px;
   margin: 0 auto;
-  padding: 0 1rem;
-}
-
-h2 {
-  color: var(--telekom-color-text-and-icon-standard);
-  margin-bottom: 1.5rem;
-  font-size: 1.8rem;
-}
-
-.loading-state,
-.empty-state {
-  text-align: center;
-  padding: 2rem;
-  color: var(--telekom-color-text-and-icon-additional);
-  font-size: 1.1rem;
-}
-
-.error-state {
-  background-color: var(--telekom-color-functional-danger-subtle);
-  color: var(--telekom-color-functional-danger-standard);
-  padding: 1rem;
-  border-radius: 6px;
-  border-left: 4px solid var(--telekom-color-functional-danger-standard);
-  text-align: center;
-  margin: 1rem 0;
+  padding: 0 var(--space-md);
 }
 
 .sessions-list {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--stack-gap-lg);
 }
 
 .session-card {
@@ -211,9 +176,9 @@ h2 {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 1rem;
-  gap: 1rem;
-  padding-bottom: 1rem;
+  margin-bottom: var(--space-md);
+  gap: var(--space-md);
+  padding-bottom: var(--space-md);
   border-bottom: 2px solid var(--telekom-color-ui-border-standard);
 }
 
@@ -225,23 +190,23 @@ h2 {
   font-size: 1.2rem;
   font-weight: bold;
   color: var(--telekom-color-primary-standard);
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-xs);
   font-family: "Courier New", monospace;
 }
 
 .cluster-group {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-xs);
   flex-wrap: wrap;
 }
 
 .user-info {
-  padding: 0.75rem 0;
+  padding: var(--space-sm) 0;
   color: var(--telekom-color-text-and-icon-standard);
   font-size: 0.95rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: var(--space-md);
   align-items: center;
 }
 
@@ -251,7 +216,7 @@ h2 {
 
 .idp-info {
   display: inline-flex;
-  gap: 0.25rem;
+  gap: var(--space-2xs);
   color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.9rem;
 }
@@ -260,106 +225,33 @@ h2 {
   color: var(--telekom-color-additional-magenta-standard);
 }
 
-.idp-issuer {
-  display: inline-flex;
-  gap: 0.25rem;
-  color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.9rem;
-  font-family: "Courier New", monospace;
-}
-
-.idp-issuer strong {
-  color: var(--telekom-color-additional-magenta-standard);
-}
-
-/* Timeline */
-.timeline {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  padding: 1rem 0;
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-  border-bottom: 1px solid var(--telekom-color-ui-border-standard);
-  margin: 1rem 0;
-  font-size: 0.9rem;
-}
-
-.timeline-item {
-  flex: 1;
-  min-width: 200px;
-}
-
-.timeline-label {
-  font-weight: 600;
-  color: var(--telekom-color-text-and-icon-additional);
-  display: block;
-  margin-bottom: 0.25rem;
-}
-
-.timeline-value {
-  color: var(--telekom-color-text-and-icon-standard);
-  display: block;
-  font-size: 0.85rem;
-  font-family: "Courier New", monospace;
-}
-
 /* Reasons section */
 .reasons-section {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  margin: 1rem 0;
-}
-
-.reason-box {
-  background-color: var(--telekom-color-ui-subtle);
-  border-left: 3px solid var(--telekom-color-primary-standard);
-  padding: 1rem;
-  border-radius: 4px;
-}
-
-.reason-title {
-  color: var(--telekom-color-primary-standard);
-  display: block;
-  margin-bottom: 0.5rem;
-  font-size: 0.9rem;
-}
-
-.reason-text {
-  color: var(--telekom-color-text-and-icon-standard);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
+  gap: var(--space-md);
+  margin: var(--space-md) 0;
 }
 
 /* End reason */
 .end-reason {
-  background-color: var(--telekom-color-functional-danger-subtle);
+  background-color: var(--chip-danger-bg);
   border-left: 3px solid var(--telekom-color-functional-danger-standard);
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  color: var(--telekom-color-functional-danger-standard);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  color: var(--chip-danger-text);
   font-size: 0.9rem;
 }
 
 .end-reason strong {
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--chip-danger-text);
 }
 
 /* Responsive design */
 @media (max-width: 600px) {
   .card-header {
     flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .timeline {
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .timeline-item {
-    min-width: auto;
+    gap: var(--space-xs);
   }
 }
 </style>

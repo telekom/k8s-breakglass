@@ -5,11 +5,12 @@
     "src/**/*",
     "src/**/*.vue",
     "src/**/*.test.ts",
-    "tests/unit/**/*.spec.ts"
+    "tests/**/*.ts",
+    "tests/**/*.spec.ts"
   ],
   "compilerOptions": {
-    "module": "ESNext", // Use ESNext module syntax
-    "target": "ESNext", // Target ESNext for compatibility
+    "module": "ESNext",
+    "target": "ESNext",
     "baseUrl": ".",
     "paths": {
       "@/*": [
@@ -19,8 +20,8 @@
     "composite": true,
     "lib": ["DOM", "ES2019"],
     "esModuleInterop": true,
-    "types": ["jest"], // Add Jest types
-    "verbatimModuleSyntax": false // Disable strict module syntax
+    "types": ["vitest/globals"],
+    "verbatimModuleSyntax": false
   },
   "references": [
     {

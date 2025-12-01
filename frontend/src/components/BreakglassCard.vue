@@ -4,7 +4,6 @@ import { computed, ref, watch } from "vue";
 import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
-import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
 
 const humanizeConfig = { round: true, largest: 2 };
 const props = defineProps<{ breakglass: any; time: number }>();
@@ -334,14 +333,6 @@ type TagVariant = "primary" | "secondary" | "info" | "warning" | "danger" | "suc
 
 type StatusTone = "neutral" | "info" | "warning" | "danger" | "success" | "muted";
 
-type MetaGridItem = {
-  id: string;
-  label: string;
-  value?: string | number | null;
-  mono?: boolean;
-  hint?: string;
-};
-
 const sessionSubtitle = computed(() => {
   const clusterLabel = props.breakglass?.cluster;
   if (!clusterLabel) {
@@ -388,66 +379,11 @@ const ctaCopy = computed(() => {
   return "Request access instantly or schedule a window.";
 });
 
-const metaGridItems = computed<MetaGridItem[]>(() => {
-  const items: MetaGridItem[] = [
-    { id: "cluster", label: "Cluster", value: props.breakglass?.cluster || "Global" },
-    { id: "duration", label: "Max duration", value: durationHumanized.value },
-  ];
-
-  items.push({
-    id: "reason-policy",
-    label: "Reason policy",
-    value: requiresReason.value ? "Mandatory" : "Optional",
-    hint: reasonDescription.value,
-  });
-
-  if (requesterGroups.value.length) {
-    const count = requesterGroups.value.length;
-    items.push({
-      id: "requester-groups",
-      label: "Requester groups",
-      value: `${count} group${count === 1 ? "" : "s"}`,
-    });
-  }
-
-  if (props.breakglass?.approvalGroups?.length) {
-    const count = props.breakglass.approvalGroups.length;
-    items.push({
-      id: "approval-groups",
-      label: "Approval groups",
-      value: `${count} group${count === 1 ? "" : "s"}`,
-    });
-  } else if (props.breakglass?.selfApproval) {
-    items.push({
-      id: "approval-groups",
-      label: "Approval",
-      value: "Self approval",
-    });
-  }
-
-  if (sessionPending.value?.metadata?.name) {
-    items.push({
-      id: "pending-id",
-      label: "Pending session",
-      value: sessionPending.value.metadata.name,
-      mono: true,
-    });
-  } else if (sessionActive.value?.metadata?.name) {
-    items.push({
-      id: "active-id",
-      label: "Active session",
-      value: sessionActive.value.metadata.name,
-      mono: true,
-    });
-  }
-
-  return items;
-});
-
 type MetaBadge = { label: string; variant: TagVariant };
 
 const metaBadges = computed<MetaBadge[]>(() => {
   const badges: MetaBadge[] = [];
+  // Status badge - only one at a time
   if (sessionActive.value) {
     badges.push({ label: "Active", variant: "success" });
   } else if (sessionPending.value) {
@@ -455,19 +391,13 @@ const metaBadges = computed<MetaBadge[]>(() => {
   } else {
     badges.push({ label: "Available", variant: "info" });
   }
-  if (requiresReason.value) {
-    badges.push({ label: "Reason required", variant: "danger" });
-  }
+  // Approval type badge
   if (!props.breakglass?.selfApproval && props.breakglass?.approvalGroups?.length) {
     badges.push({ label: "Needs approval", variant: "warning" });
   } else if (props.breakglass?.selfApproval) {
     badges.push({ label: "Self approval", variant: "success" });
   }
-  const clusterLabel = props.breakglass?.cluster || "Global";
-  badges.push({ label: clusterLabel, variant: "info" });
-  if (requesterGroups.value.length > 1) {
-    badges.push({ label: `${requesterGroups.value.length} requester groups`, variant: "neutral" });
-  }
+  // Note: Cluster, requester groups, and reason info are shown in the meta grid to avoid duplication
   return badges;
 });
 
@@ -580,22 +510,12 @@ function drop() {
     <template #status>
       <scale-tag size="small" :variant="stateChipVariant">{{ statusLabel }}</scale-tag>
       <p class="status-detail">{{ statusDetail }}</p>
-      <p v-if="breakglass.approvalGroups?.length" class="status-detail">
-        Needs approval from {{ breakglass.approvalGroups.length }} group<span
-          v-if="breakglass.approvalGroups.length > 1"
-          >s</span
-        >
-      </p>
     </template>
 
     <template v-if="metaBadges.length" #chips>
       <scale-tag v-for="badge in metaBadges" :key="badge.label" size="small" :variant="badge.variant">
         {{ badge.label }}
       </scale-tag>
-    </template>
-
-    <template #meta>
-      <SessionMetaGrid :items="metaGridItems" />
     </template>
 
     <template #body>
@@ -641,11 +561,6 @@ function drop() {
         </scale-button>
       </div>
 
-      <div v-if="reasonDescription" class="session-section session-section--reason">
-        <h4>Reason policy</h4>
-        <p>{{ reasonDescription }}</p>
-      </div>
-
       <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__requirement">
         This escalation requires a reason.
       </p>
@@ -656,10 +571,12 @@ function drop() {
         <div v-if="sessionPending" class="timeline-callout tone-chip tone-chip--warning">
           <span class="eyebrow">Pending request</span>
           <p>{{ timeoutHumanized || "Awaiting approver" }}</p>
+          <code v-if="sessionPending.metadata?.name" class="session-id">{{ sessionPending.metadata.name }}</code>
         </div>
         <div v-if="sessionActive" class="timeline-callout tone-chip tone-chip--success">
           <span class="eyebrow">Active session</span>
           <p>{{ expiryHumanized || "Running" }}</p>
+          <code v-if="sessionActive.metadata?.name" class="session-id">{{ sessionActive.metadata.name }}</code>
         </div>
       </div>
     </template>
@@ -802,25 +719,29 @@ function drop() {
 .breakglass-card {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--stack-gap-lg);
 }
 
 .status-detail {
   margin: 0;
   font-size: 0.9rem;
-  color: var(--telekom-color-text-and-icon-additional);
+  font-weight: 500;
+  color: var(--telekom-color-primary-standard);
 }
 
 .session-section {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem 0;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background-color: var(--surface-card-subtle);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--radius-md);
 }
 
 .session-section__header {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-xs);
   align-items: center;
   font-size: 0.85rem;
   text-transform: uppercase;
@@ -845,7 +766,7 @@ function drop() {
 .session-pill-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--space-xs);
 }
 
 .inline-action {
@@ -855,16 +776,27 @@ function drop() {
 .session-timeline {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: var(--space-sm);
 }
 
 .timeline-callout {
   flex: 1 1 220px;
-  padding: 1rem;
-  border-radius: var(--telekom-radius-large, 18px);
+  padding: var(--space-md);
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-2xs);
+}
+
+.timeline-callout p {
+  margin: 0;
+}
+
+.timeline-callout .session-id {
+  font-size: 0.8rem;
+  opacity: 0.85;
+  word-break: break-all;
+  margin-top: var(--space-2xs);
 }
 
 .eyebrow {
@@ -886,7 +818,7 @@ function drop() {
 .actions-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--space-xs);
   justify-content: flex-end;
 }
 
@@ -899,13 +831,13 @@ function drop() {
 .duration-selector,
 .schedule-section,
 .reason-field {
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-lg);
 }
 
 .helper {
   font-size: 0.85rem;
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: 0.25rem;
+  margin-top: var(--space-2xs);
 }
 
 .helper.warning {
@@ -917,18 +849,23 @@ function drop() {
 }
 
 .hint-box {
-  background: var(--telekom-color-background-surface-highlight);
-  padding: 0.5rem;
-  border-radius: var(--telekom-radius-standard);
-  margin-top: 0.5rem;
+  background: var(--tone-chip-info-bg);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--tone-chip-info-border);
+  border-left: 3px solid var(--telekom-color-functional-informational-standard);
+  margin-top: var(--space-xs);
   font-size: 0.9rem;
+  color: var(--tone-chip-info-text);
 }
 
 .schedule-details {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: var(--telekom-color-background-surface-highlight);
-  border-radius: var(--telekom-radius-standard);
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: var(--tone-chip-info-bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--tone-chip-info-border);
+  border-left: 3px solid var(--telekom-color-functional-informational-standard);
 }
 
 .schedule-intro {
@@ -939,24 +876,36 @@ function drop() {
 
 .schedule-picker {
   display: flex;
-  gap: 1rem;
+  gap: var(--space-md);
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-md);
 }
 
 .schedule-preview {
-  margin-top: 1rem;
-  padding-top: 0.5rem;
+  margin-top: var(--space-md);
+  padding-top: var(--space-xs);
   border-top: 1px solid var(--telekom-color-ui-border-standard);
   font-size: 0.9rem;
 }
 
 .modal-actions {
   display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  margin-top: 2rem;
-  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  justify-content: center;
+  margin-top: var(--space-xl);
+  padding: var(--space-lg) 0 var(--space-md);
+  border-top: 1px solid var(--telekom-color-ui-border-standard);
+}
+
+/* Ensure all buttons have pill shape */
+.modal-actions :deep(scale-button) {
+  --radius: 999px;
+}
+
+.modal-actions :deep(scale-button)::part(button),
+.modal-actions :deep(scale-button)::part(base) {
+  border-radius: 999px !important;
 }
 
 :deep(input::placeholder),

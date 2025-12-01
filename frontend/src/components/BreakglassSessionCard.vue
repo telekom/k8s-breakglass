@@ -21,7 +21,6 @@ import humanizeDuration from "humanize-duration";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
 import { statusToneFor } from "@/utils/statusStyles";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
-import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
 
 const humanizeConfig: humanizeDuration.Options = {
   round: true,
@@ -34,7 +33,29 @@ const props = defineProps<{
   currentUserEmail?: string;
 }>();
 
-const emit = defineEmits(["accept", "reject", "drop", "cancel"]);
+const emit = defineEmits(["review", "drop", "cancel"]);
+
+// Get normalized state for action logic
+const sessionState = computed(() => {
+  const state = props.breakglass.status?.state;
+  return typeof state === "string" ? state.toLowerCase() : "";
+});
+
+// Session is actionable if in a non-terminal state
+const isActionable = computed(() => {
+  const terminalStates = ["rejected", "withdrawn", "expired", "approvaltimeout"];
+  return !terminalStates.includes(sessionState.value);
+});
+
+// Session is pending approval (can be approved/rejected)
+const isPending = computed(() => {
+  return sessionState.value === "pending" || sessionState.value === "waitingforscheduledtime";
+});
+
+// Session is active/approved (can be dropped/cancelled)
+const isActive = computed(() => {
+  return sessionState.value === "approved" || sessionState.value === "active";
+});
 
 const retained = computed(
   () =>
@@ -45,26 +66,17 @@ const approved = computed(
   () => props.breakglass.status.expiresAt !== null && Date.parse(props.breakglass.status.expiresAt) - props.time > 0,
 );
 
-function accept() {
-  emit("accept");
+function openReview() {
+  emit("review");
 }
 
-function reject() {
+function handleActiveAction() {
   // For approved sessions: owner -> drop, others -> cancel
-  if (approved.value) {
-    if (ownerAction.value === "withdraw") {
-      emit("drop");
-    } else {
-      emit("cancel");
-    }
-    return;
-  }
-  // Non-approved/pending: Emit 'drop' when owner withdraw action expected, otherwise emit 'reject'
   if (ownerAction.value === "withdraw") {
     emit("drop");
-    return;
+  } else {
+    emit("cancel");
   }
-  emit("reject");
 }
 
 const expiryHumanized = computed(() => {
@@ -133,10 +145,10 @@ const ownerAction = computed(() => {
 
 // computed label for the reject/withdraw button to avoid template ref confusion
 const ownerActionLabel = computed(() => {
-  if (approved.value) {
+  if (isActive.value) {
     return ownerAction.value === "withdraw" ? "Drop" : "Cancel";
   }
-  return ownerAction.value === "withdraw" ? "Drop" : "Reject";
+  return ownerAction.value === "withdraw" ? "Withdraw" : "Reject";
 });
 
 const statusTone = computed(() => statusToneFor(props.breakglass.status?.state));
@@ -156,43 +168,6 @@ const requestReasonText = computed(() => {
     props.breakglass?.status?.approvalReason;
   return typeof reason === "string" ? reason.trim() : "";
 });
-const statusDetail = computed(() => {
-  if (approvedAt.value) return `Approved ${approvedAt.value}`;
-  if (rejectedAt.value) return `Rejected ${rejectedAt.value}`;
-  if (withdrawnAt.value) return `Withdrawn ${withdrawnAt.value}`;
-  if (requestedAt.value) return `Requested ${requestedAt.value}`;
-  return null;
-});
-
-const metaItems = computed(() => {
-  const items: Array<{ id: string; label: string; value?: string; mono?: boolean }> = [
-    { id: "user", label: "User", value: props.breakglass.spec?.user || "—" },
-  ];
-
-  if (props.breakglass.metadata?.name) {
-    items.push({ id: "requestId", label: "Request ID", value: props.breakglass.metadata.name, mono: true });
-  }
-
-  if (props.breakglass.spec?.identityProviderName) {
-    items.push({ id: "idp", label: "IDP", value: props.breakglass.spec.identityProviderName });
-  }
-
-  if (props.breakglass.spec?.identityProviderIssuer) {
-    items.push({ id: "issuer", label: "Issuer", value: props.breakglass.spec.identityProviderIssuer, mono: true });
-  }
-
-  if (approver.value) {
-    items.push({ id: "approver", label: "Approver", value: approver.value });
-  } else if (props.breakglass.status?.approvers?.length) {
-    items.push({ id: "approverGroups", label: "Approver groups", value: props.breakglass.status.approvers.join(", ") });
-  }
-
-  if (props.breakglass.status?.approvalReason) {
-    items.push({ id: "approvalReason", label: "Approval reason", value: props.breakglass.status.approvalReason });
-  }
-
-  return items;
-});
 </script>
 
 <template>
@@ -206,21 +181,16 @@ const metaItems = computed(() => {
   >
     <template #status>
       <scale-tag :variant="chipVariant">{{ breakglass.status.state || "Unknown" }}</scale-tag>
-      <p v-if="statusDetail" class="session-card__status-detail">{{ statusDetail }}</p>
     </template>
 
     <template #chips>
-      <scale-tag v-if="breakglass.metadata?.name" variant="info">Request ID: {{ breakglass.metadata.name }}</scale-tag>
-      <scale-tag v-if="breakglass.spec.identityProviderName" variant="info">
-        IDP: {{ breakglass.spec.identityProviderName }}
+      <scale-tag size="small" variant="neutral">{{ breakglass.spec?.user || "Unknown user" }}</scale-tag>
+      <scale-tag v-if="breakglass.spec?.identityProviderName" size="small" variant="info">
+        {{ breakglass.spec.identityProviderName }}
       </scale-tag>
-      <scale-tag v-if="breakglass.spec.identityProviderIssuer" variant="info">
-        Issuer: {{ breakglass.spec.identityProviderIssuer }}
+      <scale-tag v-if="breakglass.metadata?.name" size="small" variant="neutral" class="mono-tag">
+        {{ breakglass.metadata.name }}
       </scale-tag>
-    </template>
-
-    <template #meta>
-      <SessionMetaGrid :items="metaItems"></SessionMetaGrid>
     </template>
 
     <template v-if="requestReasonText" #body>
@@ -236,31 +206,29 @@ const metaItems = computed(() => {
           <span class="label">Requested</span>
           <span class="value">{{ requestedAt }}</span>
         </div>
-        <div v-if="approvedAt" class="timeline-item">
+        <div v-if="approvedAt" class="timeline-item timeline-item--success">
           <span class="label">Approved</span>
           <span class="value">{{ approvedAt }}</span>
         </div>
-        <div v-if="rejectedAt" class="timeline-item">
+        <div v-if="rejectedAt" class="timeline-item timeline-item--danger">
           <span class="label">Rejected</span>
           <span class="value">{{ rejectedAt }}</span>
         </div>
-        <div v-if="withdrawnAt" class="timeline-item">
+        <div v-if="withdrawnAt" class="timeline-item timeline-item--warning">
           <span class="label">Withdrawn</span>
           <span class="value">{{ withdrawnAt }}</span>
+        </div>
+        <div class="timeline-item" :class="{ 'timeline-item--muted': !isActionable }">
+          <span class="label">Status</span>
+          <span class="value">{{ isActionable ? (retained ? expiryHumanized : 'Awaiting action') : 'No longer actionable' }}</span>
         </div>
       </div>
     </template>
 
-    <template #footer>
+    <template v-if="isActionable" #footer>
       <div class="session-card__actions">
-        <div class="session-card__expiry" :class="{ 'session-card__expiry--inactive': !retained }">
-          <span class="label">{{ retained ? (approved ? "Expires in" : "Retention window") : "Status" }}</span>
-          <span class="value">{{ retained ? expiryHumanized : "No longer actionable" }}</span>
-        </div>
-        <div v-if="retained" class="session-card__buttons">
-          <scale-button v-if="!approved" @click="accept">Accept</scale-button>
-          <scale-button v-else variant="secondary" @click="reject">{{ ownerActionLabel }}</scale-button>
-        </div>
+        <scale-button v-if="isPending" @click="openReview">Review</scale-button>
+        <scale-button v-if="isActive" variant="danger" @click="handleActiveAction">{{ ownerActionLabel }}</scale-button>
       </div>
     </template>
   </SessionSummaryCard>
@@ -271,88 +239,99 @@ const metaItems = computed(() => {
   width: 100%;
 }
 
-.session-card__status-detail {
-  font-size: 0.9rem;
-  color: var(--telekom-color-text-and-icon-additional);
-  text-align: right;
+.mono-tag {
+  font-family: var(--telekom-typography-font-family-mono, monospace);
+  font-size: 0.8em;
 }
 
 .session-card__reason {
-  padding: 1rem;
-  border-radius: 14px;
-  border: 1px dashed var(--telekom-color-ui-border-standard);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--telekom-color-ui-border-standard);
   background-color: var(--surface-card-subtle);
 }
 
 .session-card__reason h4 {
-  margin-bottom: 0.35rem;
-  font-size: 1rem;
-}
-
-.session-card__timeline {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 0.75rem;
-}
-
-.timeline-item {
-  padding: 0.75rem;
-  border-radius: 12px;
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  background-color: color-mix(in srgb, var(--surface-card) 80%, transparent);
-}
-
-.timeline-item .label,
-.session-card__expiry .label {
-  font-size: 0.8rem;
+  margin: 0 0 var(--space-2xs);
+  font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-additional);
 }
 
-.timeline-item .value,
-.session-card__expiry .value {
+.session-card__reason p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.session-card__timeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-sm);
+}
+
+.timeline-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-card-subtle);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  min-width: 0; /* Allow text truncation */
+}
+
+.timeline-item--success {
+  background-color: var(--tone-chip-success-bg);
+  border-color: var(--tone-chip-success-border);
+  border-left: 3px solid var(--telekom-color-functional-success-standard);
+}
+
+.timeline-item--danger {
+  background-color: var(--tone-chip-danger-bg);
+  border-color: var(--tone-chip-danger-border);
+  border-left: 3px solid var(--telekom-color-functional-danger-standard);
+}
+
+.timeline-item--warning {
+  background-color: var(--tone-chip-warning-bg);
+  border-color: var(--tone-chip-warning-border);
+  border-left: 3px solid var(--telekom-color-functional-warning-standard);
+}
+
+.timeline-item--muted {
+  opacity: 0.7;
+}
+
+.timeline-item .label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--telekom-color-text-and-icon-additional);
+  white-space: nowrap;
+}
+
+.timeline-item .value {
   font-weight: 500;
+  font-size: 0.9rem;
   color: var(--telekom-color-text-and-icon-standard);
   word-break: break-word;
 }
 
 .session-card__actions {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.session-card__expiry {
-  padding: 0.75rem 1rem;
-  border-radius: 14px;
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  background-color: var(--surface-card-subtle);
-  min-width: 220px;
-}
-
-.session-card__expiry--inactive {
-  background-color: color-mix(in srgb, var(--telekom-color-red-100) 25%, transparent);
-}
-
-.session-card__buttons {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
 }
 
 @media (max-width: 540px) {
   .session-card__actions {
-    flex-direction: column;
-    align-items: stretch;
+    width: 100%;
   }
 
-  .session-card__buttons {
-    width: 100%;
-    justify-content: stretch;
+  .session-card__actions > * {
+    flex: 1;
   }
 }
 </style>

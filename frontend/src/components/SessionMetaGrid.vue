@@ -47,13 +47,13 @@ function formatValue(value?: string | number | null) {
   display: flex;
   flex-direction: column;
   width: 100%;
-  gap: 0.75rem;
+  gap: var(--space-md);
 }
 
 .meta-grid__row {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) 2fr;
-  gap: 0.75rem;
+  gap: var(--space-md);
   align-items: flex-start;
 }
 
@@ -65,6 +65,8 @@ function formatValue(value?: string | number | null) {
 
 .meta-grid__value {
   align-items: flex-start;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 640px) {
@@ -73,15 +75,15 @@ function formatValue(value?: string | number | null) {
   }
 
   .meta-grid__label {
-    margin-bottom: 0.25rem;
+    margin-bottom: var(--stack-gap-xs);
   }
 }
 
 .meta-label {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.85rem;
+  gap: var(--stack-gap-xs);
+  font: var(--telekom-text-style-small);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-additional);
@@ -103,14 +105,19 @@ function formatValue(value?: string | number | null) {
   color: inherit;
   padding: 0;
   cursor: pointer;
+  transition: background-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
+}
+
+.meta-label__hint:hover {
+  background-color: var(--telekom-color-ui-state-fill-hovered);
 }
 
 .meta-label__hint:focus-visible {
-  outline: 2px solid var(--telekom-color-primary-standard);
+  outline: 2px solid var(--telekom-color-functional-focus-standard);
   outline-offset: 2px;
 }
 
 .mono {
-  font-family: "IBM Plex Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--scl-font-family-mono, monospace);
 }
 </style>

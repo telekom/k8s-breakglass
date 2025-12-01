@@ -1,5 +1,18 @@
+/**
+ * Breakglass UI - Design Tokens and Base Styles
+ * 
+ * Uses Scale Design System tokens where available:
+ * - Spacing: --scl-spacing-* (1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 64, 80)
+ * - Typography: --scl-font-* and --telekom-text-style-*
+ * - Colors: --telekom-color-* (functional, additional, text-and-icon)
+ * - Radius: --telekom-radius-* (none, extra-small, small, medium-small, standard, large, pill, circle)
+ * - Shadows: --telekom-shadow-*
+ * 
+ * @see https://telekom.github.io/scale/?path=/docs/guidelines-spacing--page
+ */
+
 :root {
-  font-family: "TeleNeo Web", "TeleNeo", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--scl-font-family-sans, "TeleNeo Web", "TeleNeo", system-ui, sans-serif);
   font-weight: 400;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
@@ -7,81 +20,216 @@
   background-color: var(--surface-primary);
   color-scheme: light;
 
-  --surface-primary: var(--telekom-color-white);
-  --surface-elevated: var(--telekom-ui-color-surface-subtle);
-  --surface-card: var(--telekom-color-white);
-  --surface-card-subtle: color-mix(in srgb, var(--telekom-color-gray-200) 25%, transparent);
-  --surface-toolbar: var(--telekom-color-white);
-  --border-strong: color-mix(in srgb, var(--telekom-color-gray-900) 35%, transparent);
-  --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 15%, transparent);
+  /* ============================================
+   * SEMANTIC SPACING ALIASES
+   * Maps Scale spacing tokens to semantic names
+   * ============================================ */
+  
+  /* Component internal spacing */
+  --space-xs: var(--scl-spacing-4, 0.25rem);    /* 4px - tight internal padding */
+  --space-sm: var(--scl-spacing-8, 0.5rem);     /* 8px - small gaps, chip padding */
+  --space-md: var(--scl-spacing-12, 0.75rem);   /* 12px - default internal gaps */
+  --space-lg: var(--scl-spacing-16, 1rem);      /* 16px - section gaps */
+  --space-xl: var(--scl-spacing-24, 1.5rem);    /* 24px - large gaps, card padding */
+  --space-2xl: var(--scl-spacing-32, 2rem);     /* 32px - section separation */
+  --space-3xl: var(--scl-spacing-48, 3rem);     /* 48px - page-level gaps */
 
-  --focus-outline: var(--telekom-color-blue-500);
+  /* Card & Container padding */
+  --card-padding: var(--scl-spacing-24, 1.5rem);
+  --card-padding-sm: var(--scl-spacing-16, 1rem);
+  --card-gap: var(--scl-spacing-16, 1rem);
+  
+  /* Stack & flow gaps */
+  --stack-gap-xs: var(--scl-spacing-4, 0.25rem);
+  --stack-gap-sm: var(--scl-spacing-8, 0.5rem);
+  --stack-gap-md: var(--scl-spacing-12, 0.75rem);
+  --stack-gap-lg: var(--scl-spacing-16, 1rem);
+  --stack-gap-xl: var(--scl-spacing-24, 1.5rem);
+  
+  /* Grid gaps */
+  --grid-gap: var(--scl-spacing-16, 1rem);
+  --grid-gap-lg: var(--scl-spacing-24, 1.5rem);
 
-  --accent-telekom: var(--telekom-color-magenta-500);
-  --accent-warning: var(--telekom-color-amber-400);
-  --accent-success: var(--telekom-color-seafoam-400);
-  --accent-info: var(--telekom-color-blue-400);
-  --accent-critical: var(--telekom-color-red-400);
+  /* Border radius (using Telekom tokens) */
+  --radius-sm: var(--telekom-radius-small, 0.25rem);
+  --radius-md: var(--telekom-radius-standard, 0.5rem);
+  --radius-lg: var(--telekom-radius-large, 0.75rem);
+  --radius-pill: var(--telekom-radius-pill, 62.4375rem);
 
-  --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 7%, transparent);
-  --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
-  --chip-text: var(--telekom-color-magenta-600);
+  /* ============================================
+   * SURFACE & COLOR TOKENS
+   * ============================================ */
+  --surface-primary: var(--telekom-color-background-canvas, #ffffff);
+  --surface-elevated: var(--telekom-color-background-surface-subtle, #efeff0);
+  --surface-card: var(--telekom-color-background-surface, #ffffff);
+  --surface-card-subtle: color-mix(in srgb, var(--telekom-color-ui-subtle, #efeff0) 50%, transparent);
+  --surface-toolbar: var(--telekom-color-background-surface, #ffffff);
+  --border-strong: var(--telekom-color-ui-border-standard);
+  --shadow-card: var(--telekom-shadow-raised-standard, 0px 8px 32px 0px hsla(0, 0%, 0%, 0.1), 0px 4px 8px 0px hsla(0, 0%, 0%, 0.1));
 
-  --tone-chip-info-bg: color-mix(in srgb, var(--telekom-color-blue-400) 15%, transparent);
-  --tone-chip-info-border: color-mix(in srgb, var(--telekom-color-blue-500) 35%, transparent);
-  --tone-chip-info-text: var(--telekom-color-blue-800);
+  --focus-outline: var(--telekom-color-functional-focus-standard, #2238df);
 
-  --tone-chip-success-bg: color-mix(in srgb, var(--telekom-color-seafoam-400) 20%, transparent);
-  --tone-chip-success-border: color-mix(in srgb, var(--telekom-color-seafoam-500) 40%, transparent);
-  --tone-chip-success-text: var(--telekom-color-seafoam-900);
+  /* Accent colors using Telekom functional colors */
+  --accent-telekom: var(--telekom-color-primary-standard, #e20074);
+  --accent-warning: var(--telekom-color-functional-warning-standard, #f97012);
+  --accent-success: var(--telekom-color-functional-success-standard, #00b367);
+  --accent-info: var(--telekom-color-functional-informational-standard, #2238df);
+  --accent-critical: var(--telekom-color-functional-danger-standard, #e82010);
 
-  --tone-chip-warning-bg: color-mix(in srgb, var(--telekom-color-amber-300) 25%, transparent);
-  --tone-chip-warning-border: color-mix(in srgb, var(--telekom-color-amber-400) 50%, transparent);
-  --tone-chip-warning-text: var(--telekom-color-amber-900);
+  /* Chip/Tag colors - using Telekom additional colors */
+  --chip-bg: color-mix(in srgb, var(--telekom-color-primary-standard) 7%, transparent);
+  --chip-border: color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
+  --chip-text: var(--telekom-color-text-and-icon-primary-standard);
 
-  --tone-chip-danger-bg: color-mix(in srgb, var(--telekom-color-red-200) 30%, transparent);
-  --tone-chip-danger-border: color-mix(in srgb, var(--telekom-color-red-400) 55%, transparent);
-  --tone-chip-danger-text: var(--telekom-color-red-900);
+  /* Semantic tone chips using Telekom functional subtle colors */
+  --tone-chip-info-bg: var(--telekom-color-functional-informational-subtle, #d3d7f9);
+  --tone-chip-info-border: color-mix(in srgb, var(--telekom-color-functional-informational-standard) 35%, transparent);
+  --tone-chip-info-text: var(--telekom-color-text-and-icon-on-subtle-blue, #2238df);
 
-  --tone-chip-neutral-bg: color-mix(in srgb, var(--telekom-color-gray-200) 30%, transparent);
-  --tone-chip-neutral-border: color-mix(in srgb, var(--telekom-color-gray-400) 45%, transparent);
-  --tone-chip-neutral-text: var(--telekom-color-gray-900);
+  --tone-chip-success-bg: var(--telekom-color-functional-success-subtle, #ccf0e1);
+  --tone-chip-success-border: color-mix(in srgb, var(--telekom-color-functional-success-standard) 40%, transparent);
+  --tone-chip-success-text: var(--telekom-color-text-and-icon-on-subtle-green, #00774b);
+
+  --tone-chip-warning-bg: var(--telekom-color-functional-warning-subtle, #fee2d0);
+  --tone-chip-warning-border: color-mix(in srgb, var(--telekom-color-functional-warning-standard) 50%, transparent);
+  --tone-chip-warning-text: var(--telekom-color-text-and-icon-on-subtle-orange, #b63d00);
+
+  --tone-chip-danger-bg: var(--telekom-color-functional-danger-subtle, #fad2cf);
+  --tone-chip-danger-border: color-mix(in srgb, var(--telekom-color-functional-danger-standard) 55%, transparent);
+  --tone-chip-danger-text: var(--telekom-color-text-and-icon-on-subtle-red, #c30a03);
+
+  --tone-chip-neutral-bg: var(--telekom-color-ui-subtle, #efeff0);
+  --tone-chip-neutral-border: var(--telekom-color-ui-border-standard);
+  --tone-chip-neutral-text: var(--telekom-color-text-and-icon-standard);
 }
 
+/* ============================================
+ * DARK MODE OVERRIDES
+ * Scale automatically handles [data-mode="dark"]
+ * We use data-theme for app-level control
+ * ============================================ */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --surface-primary: var(--telekom-color-gray-950);
-  --surface-elevated: var(--telekom-ui-color-surface-strong);
-  --surface-card: var(--telekom-ui-color-surface-stronger);
-  --surface-card-subtle: color-mix(in srgb, var(--telekom-ui-color-surface-strong) 70%, transparent);
-  --surface-toolbar: var(--telekom-ui-color-surface);
-  --border-strong: color-mix(in srgb, var(--telekom-color-gray-100) 35%, transparent);
-  --shadow-card: 0 12px 40px color-mix(in srgb, var(--telekom-color-black) 45%, transparent);
-  --chip-bg: color-mix(in srgb, var(--telekom-color-magenta-500) 15%, transparent);
-  --chip-border: color-mix(in srgb, var(--telekom-color-magenta-500) 35%, transparent);
-  --chip-text: var(--telekom-color-magenta-200);
+  
+  /* Surface colors for dark mode */
+  --surface-primary: var(--telekom-color-background-canvas, #000000);
+  --surface-elevated: var(--telekom-color-background-surface-subtle, #242426);
+  --surface-card: var(--telekom-color-background-surface, #1c1c1e);
+  --surface-card-subtle: color-mix(in srgb, var(--telekom-color-ui-subtle, #1c1c1e) 70%, transparent);
+  --surface-toolbar: var(--telekom-color-background-surface, #1c1c1e);
+  --border-strong: var(--telekom-color-ui-border-standard);
+  --shadow-card: var(--telekom-shadow-raised-standard);
 
-  --tone-chip-info-bg: color-mix(in srgb, var(--telekom-color-blue-700) 25%, transparent);
-  --tone-chip-info-border: color-mix(in srgb, var(--telekom-color-blue-400) 55%, transparent);
-  --tone-chip-info-text: var(--telekom-color-blue-050);
+  /* Chip colors adjusted for dark mode */
+  --chip-bg: color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
+  --chip-border: color-mix(in srgb, var(--telekom-color-primary-standard) 35%, transparent);
+  --chip-text: var(--telekom-color-text-and-icon-primary-standard);
 
-  --tone-chip-success-bg: color-mix(in srgb, var(--telekom-color-seafoam-500) 30%, transparent);
-  --tone-chip-success-border: color-mix(in srgb, var(--telekom-color-seafoam-300) 60%, transparent);
-  --tone-chip-success-text: var(--telekom-color-seafoam-050);
+  /* Semantic tone chips - dark mode uses subtle backgrounds */
+  --tone-chip-info-bg: var(--telekom-color-functional-informational-subtle, #131f7b);
+  --tone-chip-info-border: color-mix(in srgb, var(--telekom-color-functional-informational-standard) 55%, transparent);
+  --tone-chip-info-text: var(--telekom-color-text-and-icon-on-subtle-blue, #7d94f9);
 
-  --tone-chip-warning-bg: color-mix(in srgb, var(--telekom-color-amber-400) 35%, transparent);
-  --tone-chip-warning-border: color-mix(in srgb, var(--telekom-color-amber-200) 65%, transparent);
-  --tone-chip-warning-text: var(--telekom-color-amber-050);
+  --tone-chip-success-bg: var(--telekom-color-functional-success-subtle, #004829);
+  --tone-chip-success-border: color-mix(in srgb, var(--telekom-color-functional-success-standard) 60%, transparent);
+  --tone-chip-success-text: var(--telekom-color-text-and-icon-on-subtle-green, #1bd27f);
 
-  --tone-chip-danger-bg: color-mix(in srgb, var(--telekom-color-red-500) 35%, transparent);
-  --tone-chip-danger-border: color-mix(in srgb, var(--telekom-color-red-200) 65%, transparent);
-  --tone-chip-danger-text: var(--telekom-color-red-050);
+  --tone-chip-warning-bg: var(--telekom-color-functional-warning-subtle, #642d07);
+  --tone-chip-warning-border: color-mix(in srgb, var(--telekom-color-functional-warning-standard) 65%, transparent);
+  --tone-chip-warning-text: var(--telekom-color-text-and-icon-on-subtle-orange, #fd9038);
 
-  --tone-chip-neutral-bg: color-mix(in srgb, var(--telekom-ui-color-surface-strong) 60%, transparent);
-  --tone-chip-neutral-border: color-mix(in srgb, var(--telekom-color-gray-200) 45%, transparent);
-  --tone-chip-neutral-text: var(--telekom-color-gray-050);
+  --tone-chip-danger-bg: var(--telekom-color-functional-danger-subtle, #5d0d06);
+  --tone-chip-danger-border: color-mix(in srgb, var(--telekom-color-functional-danger-standard) 65%, transparent);
+  --tone-chip-danger-text: var(--telekom-color-text-and-icon-on-subtle-red, #fb6a55);
+
+  --tone-chip-neutral-bg: var(--telekom-color-ui-subtle, #1c1c1e);
+  --tone-chip-neutral-border: var(--telekom-color-ui-border-standard);
+  --tone-chip-neutral-text: var(--telekom-color-text-and-icon-standard);
 }
 
+/* ============================================
+ * SCALE COMPONENT OVERRIDES
+ * Ensure consistent card styling with visible borders
+ * ============================================ */
+scale-card {
+  --background: var(--surface-card);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* Consistent button styling across all variants - use pill radius */
+scale-button {
+  --radius: 999px;
+  --button-radius: 999px;
+}
+
+/* Fallback for shadow DOM button parts */
+scale-button::part(button),
+scale-button::part(base) {
+  border-radius: 999px !important;
+}
+
+/* ============================================
+ * SCALE-TAG VARIANT COLORING
+ * Override Scale Design System defaults with our tone colors
+ * ============================================ */
+scale-tag[variant="info"] {
+  --background: var(--tone-chip-info-bg);
+  --color: var(--tone-chip-info-text);
+}
+
+scale-tag[variant="info"]::part(base) {
+  background-color: var(--tone-chip-info-bg) !important;
+  color: var(--tone-chip-info-text) !important;
+}
+
+scale-tag[variant="success"] {
+  --background: var(--tone-chip-success-bg);
+  --color: var(--tone-chip-success-text);
+}
+
+scale-tag[variant="success"]::part(base) {
+  background-color: var(--tone-chip-success-bg) !important;
+  color: var(--tone-chip-success-text) !important;
+}
+
+scale-tag[variant="warning"] {
+  --background: var(--tone-chip-warning-bg);
+  --color: var(--tone-chip-warning-text);
+}
+
+scale-tag[variant="warning"]::part(base) {
+  background-color: var(--tone-chip-warning-bg) !important;
+  color: var(--tone-chip-warning-text) !important;
+}
+
+scale-tag[variant="danger"] {
+  --background: var(--tone-chip-danger-bg);
+  --color: var(--tone-chip-danger-text);
+}
+
+scale-tag[variant="danger"]::part(base) {
+  background-color: var(--tone-chip-danger-bg) !important;
+  color: var(--tone-chip-danger-text) !important;
+}
+
+
+
+/* Modal content spacing consistency */
+scale-modal {
+  --spacing-y: var(--space-lg);
+}
+
+scale-modal::part(body) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* ============================================
+ * RESET & BASE STYLES
+ * ============================================ */
 * {
   box-sizing: border-box;
 }
@@ -103,14 +251,14 @@ body {
 .app-container {
   width: min(1240px, 100%);
   margin: 0 auto;
-  padding: 2.5rem clamp(1rem, 5vw, 3rem) 3.5rem;
+  padding: var(--space-2xl) clamp(var(--space-lg), 5vw, var(--space-3xl)) var(--space-3xl);
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: var(--space-2xl);
 }
 
 a {
-  color: var(--accent-info);
+  color: var(--telekom-color-text-and-icon-link-standard);
 }
 
 a:focus-visible,
@@ -151,21 +299,24 @@ select:focus {
   outline-offset: 3px;
 }
 
+/* ============================================
+ * ACCESSIBILITY
+ * ============================================ */
 .skip-link {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  top: 0.75rem;
+  top: var(--space-md);
   background-color: var(--surface-card);
   color: var(--telekom-color-text-and-icon-standard);
-  padding: 0.5rem 1rem;
-  border-radius: 999px;
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: var(--shadow-card);
   text-decoration: none;
   z-index: 99;
   translate: 0 -150%;
-  transition: translate 120ms ease;
+  transition: translate var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
 .skip-link:focus {
@@ -184,31 +335,35 @@ select:focus {
   border: 0;
 }
 
-/* Shared page chrome */
+/* ============================================
+ * PAGE LAYOUT UTILITIES
+ * ============================================ */
 .ui-page {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--stack-gap-xl);
 }
 
 .ui-page-title {
-  font-size: clamp(2rem, 4vw, 2.75rem);
+  font: var(--telekom-text-style-heading-2);
   color: var(--telekom-color-text-and-icon-standard);
 }
 
 .ui-page-subtitle {
+  font: var(--telekom-text-style-body);
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 1rem;
 }
 
-/* Toolbar (filters/search) */
+/* ============================================
+ * TOOLBAR COMPONENT
+ * ============================================ */
 .ui-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
-  padding: 1.25rem;
+  gap: var(--space-lg);
+  padding: var(--card-padding-sm);
   background-color: var(--surface-toolbar);
-  border-radius: 20px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--telekom-color-ui-border-standard);
   box-shadow: var(--shadow-card);
   align-items: center;
@@ -220,9 +375,9 @@ select:focus {
   max-width: 280px;
   background-color: var(--surface-card);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   color: var(--telekom-color-text-and-icon-standard);
-  padding: 0.6rem 0.85rem;
+  padding: var(--space-sm) var(--space-md);
 }
 
 .ui-toolbar-field {
@@ -236,7 +391,7 @@ select:focus {
 
 .ui-toolbar-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: var(--space-md);
   flex-wrap: wrap;
 }
 
@@ -246,78 +401,71 @@ select:focus {
 
 .ui-toolbar-info {
   display: flex;
-  gap: 0.5rem;
-  font-size: 0.95rem;
+  gap: var(--space-sm);
+  font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
-/* Card primitives */
-/* .ui-card-grid, .ui-card, .ui-chip, .ui-status-badge removed in favor of Scale components */
-
-/* Info grid */
+/* ============================================
+ * INFO GRID COMPONENT
+ * Key-value display grid for session details
+ * ============================================ */
 .ui-info-grid {
   display: grid;
-  gap: 0.75rem;
+  gap: var(--space-md);
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .ui-info-item {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.75rem;
+  gap: var(--stack-gap-xs);
+  padding: var(--space-md);
   background-color: color-mix(in srgb, var(--surface-card) 80%, transparent);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
 }
 
-.ui-info-item label {
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.ui-info-item span {
-  color: var(--telekom-color-text-and-icon-standard);
-  font-weight: 500;
-}
-
+.ui-info-item label,
 .ui-info-item .label {
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-small);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-additional);
 }
 
+.ui-info-item span,
 .ui-info-item .value {
   color: var(--telekom-color-text-and-icon-standard);
   font-weight: 500;
 }
 
+/* ============================================
+ * PILL & TAG UTILITIES
+ * ============================================ */
 .ui-pill-stack {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--space-sm);
 }
 
 .ui-pill-stack span {
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
+  padding: var(--stack-gap-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--telekom-color-ui-border-standard);
   background-color: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-additional);
-  font-size: 0.8rem;
+  font: var(--telekom-text-style-small);
 }
 
+/* Semantic tone chips for status indicators */
 .tone-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.2rem 0.8rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  font-weight: 600;
+  gap: var(--stack-gap-xs);
+  padding: var(--stack-gap-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font: var(--telekom-text-style-small-bold);
   letter-spacing: 0.02em;
   border: 1px solid var(--tone-chip-border, var(--telekom-color-ui-border-standard));
   background-color: var(--tone-chip-bg, var(--surface-card-subtle));
@@ -330,44 +478,55 @@ select:focus {
   --tone-chip-text: var(--tone-chip-info-text);
 }
 
-.tone-chip--success {
+.tone-chip--success,
+.tone-chip--active,
+.tone-chip--approved {
   --tone-chip-bg: var(--tone-chip-success-bg);
   --tone-chip-border: var(--tone-chip-success-border);
   --tone-chip-text: var(--tone-chip-success-text);
 }
 
-.tone-chip--warning {
+.tone-chip--warning,
+.tone-chip--high,
+.tone-chip--pending {
   --tone-chip-bg: var(--tone-chip-warning-bg);
   --tone-chip-border: var(--tone-chip-warning-border);
   --tone-chip-text: var(--tone-chip-warning-text);
 }
 
 .tone-chip--danger,
-.tone-chip--critical {
+.tone-chip--critical,
+.tone-chip--rejected {
   --tone-chip-bg: var(--tone-chip-danger-bg);
   --tone-chip-border: var(--tone-chip-danger-border);
   --tone-chip-text: var(--tone-chip-danger-text);
 }
 
 .tone-chip--neutral,
-.tone-chip--normal {
+.tone-chip--normal,
+.tone-chip--expired,
+.tone-chip--muted {
   --tone-chip-bg: var(--tone-chip-neutral-bg);
   --tone-chip-border: var(--tone-chip-neutral-border);
   --tone-chip-text: var(--tone-chip-neutral-text);
 }
 
-.tone-chip--high {
-  --tone-chip-bg: var(--tone-chip-warning-bg);
-  --tone-chip-border: var(--tone-chip-warning-border);
-  --tone-chip-text: var(--tone-chip-warning-text);
+.tone-chip--info,
+.tone-chip--available {
+  --tone-chip-bg: var(--tone-chip-info-bg);
+  --tone-chip-border: var(--tone-chip-info-border);
+  --tone-chip-text: var(--tone-chip-info-text);
 }
 
+/* ============================================
+ * SECTION & LAYOUT UTILITIES
+ * ============================================ */
 .ui-matching-summary {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.85rem;
-  border-radius: 14px;
+  gap: var(--stack-gap-sm);
+  padding: var(--space-md);
+  border-radius: var(--radius-lg);
   border: 1px dashed var(--telekom-color-ui-border-standard);
   background-color: var(--surface-card-subtle);
   color: var(--telekom-color-text-and-icon-additional);
@@ -376,11 +535,11 @@ select:focus {
 .ui-section {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--stack-gap-sm);
 }
 
 .ui-section h4 {
-  font-size: 1.05rem;
+  font: var(--telekom-text-style-heading-6);
   color: var(--telekom-color-text-and-icon-standard);
 }
 
@@ -391,8 +550,8 @@ select:focus {
 .ui-link-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  color: var(--accent-info);
+  gap: var(--stack-gap-xs);
+  color: var(--telekom-color-text-and-icon-link-standard);
   text-decoration: none;
   font-weight: 500;
 }
@@ -402,7 +561,7 @@ select:focus {
 }
 
 .ui-link-button.small {
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-small);
 }
 
 .ui-muted {
@@ -414,19 +573,25 @@ select:focus {
   width: 100%;
 }
 
+/* ============================================
+ * LOADING & EMPTY STATES
+ * ============================================ */
 .loading-state,
 .empty-state {
-  padding: 2.5rem;
-  border-radius: 18px;
+  padding: var(--space-2xl);
+  border-radius: var(--radius-lg);
   border: 1px dashed var(--telekom-color-ui-border-standard);
   background-color: var(--surface-elevated);
   color: var(--telekom-color-text-and-icon-additional);
   text-align: center;
 }
 
+/* ============================================
+ * RESPONSIVE ADJUSTMENTS
+ * ============================================ */
 @media (max-width: 768px) {
   main {
-    padding: 1.5rem 1rem 2.5rem;
+    padding: var(--space-xl) var(--space-lg) var(--space-2xl);
   }
 
   .ui-toolbar {
@@ -440,6 +605,74 @@ select:focus {
   }
 }
 
+/* ============================================
+ * TONE CHIP / CALLOUT UTILITY CLASSES
+ * Colored info boxes with left border indicators
+ * State-specific variants for consistent styling
+ * ============================================ */
+.tone-chip {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--tone-chip-neutral-border);
+  border-left: 3px solid var(--telekom-color-ui-border-standard);
+  background-color: var(--tone-chip-neutral-bg);
+  color: var(--tone-chip-neutral-text);
+}
+
+/* Info/Available states - Blue */
+.tone-chip--info,
+.tone-chip--available,
+.tone-chip--normal {
+  background-color: var(--tone-chip-info-bg);
+  border-color: var(--tone-chip-info-border);
+  border-left-color: var(--telekom-color-functional-informational-standard);
+  color: var(--tone-chip-info-text);
+}
+
+/* Success/Active/Approved states - Green */
+.tone-chip--success,
+.tone-chip--active,
+.tone-chip--approved {
+  background-color: var(--tone-chip-success-bg);
+  border-color: var(--tone-chip-success-border);
+  border-left-color: var(--telekom-color-functional-success-standard);
+  color: var(--tone-chip-success-text);
+}
+
+/* Warning/Pending/High urgency states - Orange */
+.tone-chip--warning,
+.tone-chip--pending,
+.tone-chip--high {
+  background-color: var(--tone-chip-warning-bg);
+  border-color: var(--tone-chip-warning-border);
+  border-left-color: var(--telekom-color-functional-warning-standard);
+  color: var(--tone-chip-warning-text);
+}
+
+/* Danger/Critical/Rejected states - Red */
+.tone-chip--danger,
+.tone-chip--critical,
+.tone-chip--rejected,
+.tone-chip--withdrawn {
+  background-color: var(--tone-chip-danger-bg);
+  border-color: var(--tone-chip-danger-border);
+  border-left-color: var(--telekom-color-functional-danger-standard);
+  color: var(--tone-chip-danger-text);
+}
+
+/* Neutral/Muted/Expired states - Gray */
+.tone-chip--neutral,
+.tone-chip--muted,
+.tone-chip--expired {
+  background-color: var(--tone-chip-neutral-bg);
+  border-color: var(--tone-chip-neutral-border);
+  border-left-color: var(--telekom-color-ui-border-standard);
+  color: var(--tone-chip-neutral-text);
+}
+
+/* ============================================
+ * HIGH CONTRAST / FORCED COLORS
+ * ============================================ */
 @media (forced-colors: active) {
   :root {
     --surface-primary: Canvas;

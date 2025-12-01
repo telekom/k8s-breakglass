@@ -342,7 +342,7 @@ watch(
         :logo-title="brandingTitle"
         :logo-href="homeHref"
       >
-        <scale-telekom-nav-list slot="main-nav" variant="main-nav">
+        <scale-telekom-nav-list v-if="authenticated" slot="main-nav" variant="main-nav">
           <scale-telekom-nav-item
             v-for="item in primaryNavItems"
             :key="item.id"
@@ -434,11 +434,11 @@ watch(
 }
 
 .login-gate {
-  margin: 2rem 0;
+  margin: var(--space-xl) 0;
 }
 
 .idp-login-actions {
-  margin-top: 1rem;
+  margin-top: var(--space-md);
 }
 
 .sr-only {
@@ -459,7 +459,7 @@ watch(
 .mobile-nav-trigger {
   display: inline-flex;
   justify-content: center;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   border: 1px solid transparent;
   background: transparent;
   width: 60px;

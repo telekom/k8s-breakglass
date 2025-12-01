@@ -81,44 +81,53 @@ const cardClasses = computed(() => ({
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--stack-gap-lg);
 }
 
 .session-summary-card--dense {
-  gap: 1rem;
+  gap: var(--stack-gap-md);
 }
 
 .session-summary-card__header {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-md);
   align-items: flex-start;
+}
+
+.session-summary-card__header > div:first-child {
+  flex: 1;
+  min-width: 0; /* Allow text truncation */
 }
 
 .session-summary-card__title {
   margin: 0;
-  font-size: clamp(1.25rem, 2vw, 1.5rem);
+  font: var(--telekom-text-style-heading-5);
+  word-break: break-word;
 }
 
 .session-summary-card__eyebrow {
-  font-size: 0.85rem;
+  font: var(--telekom-text-style-small);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--telekom-color-text-and-icon-additional);
-  margin: 0 0 0.25rem;
+  margin: 0 0 var(--stack-gap-xs);
 }
 
 .session-summary-card__subtitle {
-  color: var(--telekom-color-text-and-icon-additional);
-  margin: 0.35rem 0 0;
+  font: var(--telekom-text-style-caption);
+  color: var(--telekom-color-primary-standard);
+  margin: var(--stack-gap-xs) 0 0;
+  font-weight: 500;
 }
 
 .session-summary-card__status {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.35rem;
-  min-width: 120px;
+  gap: var(--stack-gap-xs);
+  flex-shrink: 0;
+  text-align: right;
 }
 
 .session-summary-card__status[data-tone="danger"] {
@@ -143,13 +152,20 @@ const cardClasses = computed(() => ({
 .session-summary-card__footer {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-lg);
 }
 
 .session-summary-card__chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--space-sm);
+}
+
+/* Ensure long tag content doesn't overflow */
+.session-summary-card__chips :deep(scale-tag) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-summary-card__meta :deep(.meta-grid) {
@@ -157,7 +173,7 @@ const cardClasses = computed(() => ({
 }
 
 .session-summary-card__timeline {
-  gap: 0.75rem;
+  gap: var(--space-md);
 }
 
 .session-summary-card__footer {
@@ -165,7 +181,7 @@ const cardClasses = computed(() => ({
   justify-content: space-between;
   flex-direction: row;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: var(--space-md);
 }
 
 @media (max-width: 640px) {
@@ -177,6 +193,7 @@ const cardClasses = computed(() => ({
 
   .session-summary-card__status {
     align-items: flex-start;
+    width: 100%;
   }
 }
 </style>

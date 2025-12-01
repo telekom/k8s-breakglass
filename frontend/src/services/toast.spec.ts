@@ -1,18 +1,19 @@
+import { vi, type MockInstance } from "vitest";
 import { dismissError, pushError, pushSuccess, useErrors } from "./toast";
 
 describe("toast service", () => {
   const store = useErrors();
-  let randomSpy: jest.SpyInstance;
+  let randomSpy: MockInstance;
 
   beforeEach(() => {
-    jest.useFakeTimers();
-    randomSpy = jest.spyOn(Math, "random").mockReturnValue(0.123456789);
+    vi.useFakeTimers();
+    randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.123456789);
     store.errors.splice(0, store.errors.length);
   });
 
   afterEach(() => {
-    jest.runOnlyPendingTimers();
-    jest.useRealTimers();
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
     randomSpy.mockRestore();
   });
 
@@ -27,7 +28,7 @@ describe("toast service", () => {
       opened: true,
     });
 
-    jest.advanceTimersByTime(11000);
+    vi.advanceTimersByTime(11000);
     expect(store.errors).toHaveLength(0);
   });
 
@@ -40,7 +41,7 @@ describe("toast service", () => {
       autoHideDuration: 6000,
     });
 
-    jest.advanceTimersByTime(7000);
+    vi.advanceTimersByTime(7000);
     expect(store.errors).toHaveLength(0);
   });
 

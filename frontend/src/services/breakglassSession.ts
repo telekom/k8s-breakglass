@@ -77,7 +77,9 @@ export default class BreakglassSessionService {
     // RESTful: POST /breakglassSessions/:name/approve
     if (!review.name) throw new Error("Missing session name for approve");
     try {
-      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/approve`);
+      const body: Record<string, any> = {};
+      if (review.reason && review.reason.trim().length > 0) body.reason = review.reason;
+      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/approve`, body);
     } catch (e) {
       handleAxiosError("BreakglassSessionService.approveReview", e, "Failed to approve session");
       throw e;
@@ -88,7 +90,9 @@ export default class BreakglassSessionService {
     // RESTful: POST /breakglassSessions/:name/reject
     if (!review.name) throw new Error("Missing session name for reject");
     try {
-      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/reject`);
+      const body: Record<string, any> = {};
+      if (review.reason && review.reason.trim().length > 0) body.reason = review.reason;
+      return await this.client.post(`/breakglassSessions/${encodeURIComponent(review.name)}/reject`, body);
     } catch (e) {
       handleAxiosError("BreakglassSessionService.rejectReview", e, "Failed to reject session");
       throw e;
