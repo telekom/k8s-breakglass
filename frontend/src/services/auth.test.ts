@@ -381,6 +381,29 @@ describe("AuthService", () => {
       expect(mockAuthService.getIdentityProviderName()).toBe("production-keycloak");
     });
 
+    it("issues synthetic access tokens and email with default profile", async () => {
+      await mockAuthService.login({ path: "/dashboard" });
+
+      const token = await mockAuthService.getAccessToken();
+      const email = await mockAuthService.getUserEmail();
+      const user = await mockAuthService.getUser();
+
+      expect(token.split(".")).toHaveLength(3);
+      expect(email).toBe("mock.ops@breakglass.dev");
+      expect(user?.profile?.preferred_username).toBe("mock.ops@breakglass.dev");
+    });
+
+    it("generates IDP-specific mock profiles when an idpName is provided", async () => {
+      await mockAuthService.login({ path: "/dashboard", idpName: "partners-azuread" });
+
+      const email = await mockAuthService.getUserEmail();
+      const user = await mockAuthService.getUser();
+
+      expect(mockAuthService.getIdentityProviderName()).toBe("partners-azuread");
+      expect(email).toBe("contractor@partner.example.com");
+      expect(user?.profile?.groups).toEqual(expect.arrayContaining(["partner-devops", "external-approvers"]));
+    });
+
     it("clears mock session on logout", async () => {
       await mockAuthService.login();
       await mockAuthService.logout();
