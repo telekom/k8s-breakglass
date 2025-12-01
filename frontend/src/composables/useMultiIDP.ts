@@ -1,5 +1,5 @@
 /**
- * Phase 9: useMultiIDP Composable Hook
+ * useMultiIDP Composable Hook
  *
  * Manages multi-IDP selection state and authorization validation
  * across components that need IDP functionality

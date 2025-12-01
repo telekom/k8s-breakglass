@@ -6,7 +6,8 @@ import { pushError, pushSuccess } from "@/services/toast";
 import { handleAxiosError } from "@/services/logger";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
-import useCurrentTime from "@/util/currentTime";
+import useCurrentTime from "@/utils/currentTime";
+import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
@@ -238,26 +239,24 @@ async function onDrop(bg: any) {
 
 <template>
   <main class="ui-page breakglass-page">
-    <header class="page-header">
-      <h2 class="ui-page-title">Request access</h2>
-      <p class="ui-page-subtitle">
-        Browse the escalations that match your groups. Use search to filter by cluster, requester group, or approver.
-      </p>
-    </header>
+    <PageHeader
+      title="Request access"
+      subtitle="Browse the escalations that match your groups. Use search to filter by cluster, requester group, or approver."
+    />
 
-    <div v-if="state.loading" class="loading">
-      <scale-loading-spinner size="large" />
-    </div>
+    <LoadingState v-if="state.loading" message="Loading escalations..." />
     <div v-else-if="state.breakglasses.length > 0">
       <div class="breakglass-toolbar">
-        <scale-text-field
-          id="breakglass-search"
-          type="search"
-          label="Search escalations"
-          placeholder="Cluster, group or approver"
-          :value="state.search"
-          @scaleChange="updateSearch"
-        ></scale-text-field>
+        <div class="breakglass-toolbar__field">
+          <scale-text-field
+            id="breakglass-search"
+            type="search"
+            label="Search escalations"
+            placeholder="Cluster, group or approver"
+            :value="state.search"
+            @scaleChange="updateSearch"
+          ></scale-text-field>
+        </div>
         <div class="toolbar-refresh">
           <span id="refresh-label" class="sr-only">Refresh list</span>
           <scale-loading-spinner v-if="state.refreshing"></scale-loading-spinner>
@@ -306,9 +305,11 @@ async function onDrop(bg: any) {
         </BreakglassCard>
       </div>
     </div>
-    <div v-else class="empty-state">
-      <p>No requestable breakglass groups found for your current identity provider or group membership.</p>
-    </div>
+    <EmptyState
+      v-else
+      icon="🔒"
+      message="No requestable breakglass groups found for your current identity provider or group membership."
+    />
   </main>
 </template>
 
@@ -317,28 +318,24 @@ async function onDrop(bg: any) {
   padding-bottom: clamp(2.5rem, 5vw, 4.5rem);
 }
 
-.page-header {
-  margin-bottom: 0.5rem;
-}
-
-.page-header .ui-page-subtitle {
-  max-width: 720px;
-}
-
 .breakglass-toolbar {
   align-items: flex-end;
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-lg);
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: var(--space-md);
   border: 1px solid var(--telekom-color-ui-border-standard);
-  padding: 1rem;
-  border-radius: 8px;
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
 }
 
-.breakglass-toolbar scale-text-field {
+.breakglass-toolbar__field {
   min-width: 280px;
   flex: 1 1 280px;
+}
+
+.breakglass-toolbar__field > * {
+  width: 100%;
 }
 
 .toolbar-refresh {
@@ -346,13 +343,6 @@ async function onDrop(bg: any) {
   align-items: center;
   justify-content: center;
   min-width: 64px;
-}
-
-.toolbar-refresh scale-button {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
 }
 
 .toolbar-info {
@@ -363,26 +353,15 @@ async function onDrop(bg: any) {
 }
 
 .breakglass-grid {
-  margin-top: 1rem;
+  margin-top: var(--space-md);
   column-width: 360px;
-  column-gap: 1.5rem;
+  column-gap: var(--space-lg);
 }
 
 .breakglass-grid > * {
   display: inline-block;
   width: 100%;
-  margin: 0 0 1.5rem;
+  margin: 0 0 var(--space-lg);
   break-inside: avoid;
-}
-
-.loading,
-.empty-state {
-  margin: 2rem auto;
-  text-align: center;
-}
-
-.empty-state {
-  max-width: 560px;
-  line-height: 1.5;
 }
 </style>

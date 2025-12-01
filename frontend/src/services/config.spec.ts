@@ -1,22 +1,28 @@
+import { vi, type Mock } from "vitest";
 import axios from "axios";
 import getConfig from "@/services/config";
 import { getIdentityProvider, extractOIDCConfig } from "@/services/identityProvider";
 
-jest.mock("axios");
-jest.mock("@/services/identityProvider", () => ({
-  getIdentityProvider: jest.fn(),
-  extractOIDCConfig: jest.fn(),
+vi.mock("axios");
+vi.mock("@/services/identityProvider", () => ({
+  getIdentityProvider: vi.fn(),
+  extractOIDCConfig: vi.fn(),
 }));
 
-const mockedAxios = axios as jest.Mocked<typeof axios>;
-const mockedGetIdentityProvider = getIdentityProvider as jest.MockedFunction<typeof getIdentityProvider>;
-const mockedExtractOIDC = extractOIDCConfig as jest.MockedFunction<typeof extractOIDCConfig>;
+const mockedAxios = axios as unknown as { get: Mock };
+const mockedGetIdentityProvider = getIdentityProvider as Mock<typeof getIdentityProvider>;
+const mockedExtractOIDC = extractOIDCConfig as Mock<typeof extractOIDCConfig>;
 
 describe("Config service", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     window.localStorage.clear();
-    window.history.replaceState({}, "", "http://localhost/");
+    // Use try-catch to handle jsdom SecurityError
+    try {
+      window.history.replaceState({}, "", "/");
+    } catch {
+      // Ignore SecurityError in jsdom
+    }
   });
 
   it("merges runtime uiFlavour when IdentityProvider omits branding fields", async () => {
@@ -65,7 +71,11 @@ describe("Config service", () => {
     });
     mockedAxios.get.mockResolvedValue({ data: { frontend: { brandingName: "Breakglass", uiFlavour: "telekom" } } });
 
-    window.history.replaceState({}, "", "http://localhost/?flavour=oss");
+    // Use Object.defineProperty to mock location.search without triggering SecurityError
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, search: "?flavour=oss" },
+      writable: true,
+    });
 
     const config = await getConfig();
 
@@ -105,7 +115,11 @@ describe("Config service", () => {
     mockedAxios.get.mockResolvedValue({ data: { frontend: { uiFlavour: "telekom" } } });
 
     window.localStorage.setItem("k8sBreakglassUiFlavourOverride", "oss");
-    window.history.replaceState({}, "", `http://localhost/?flavour=${token}`);
+    // Use Object.defineProperty to mock location.search without triggering SecurityError
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, search: `?flavour=${token}` },
+      writable: true,
+    });
 
     const config = await getConfig();
 

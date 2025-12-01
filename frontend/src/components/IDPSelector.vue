@@ -167,10 +167,10 @@ function handleIDPButtonClick(idpName: string) {
     <!-- Show individual buttons if multiple IDPs available -->
     <template v-if="hasMultipleIDPs">
       <div class="idp-selector-group">
-        <label class="idp-label">
+        <h2 class="idp-heading">
           Select Identity Provider
-          <span v-if="required" class="required">*</span>
-        </label>
+          <span v-if="required" class="required" aria-hidden="true">*</span>
+        </h2>
 
         <!-- Loading state -->
         <div v-if="loading" class="idp-loading">
@@ -182,18 +182,22 @@ function handleIDPButtonClick(idpName: string) {
 
         <!-- Individual login buttons for each IDP -->
         <div v-if="!loading && !error" class="idp-buttons-container">
-          <scale-button
-            v-for="idp in allowedIDPs"
-            :key="idp.name"
-            :variant="selectedIDPName === idp.name ? 'primary' : 'secondary'"
-            :disabled="disabled || !idp.enabled"
-            style="width: 100%; margin-bottom: 0.5rem"
-            @click="handleIDPButtonClick(idp.name)"
-          >
-            {{ idp.displayName }}
-            <span v-if="!idp.enabled"> (disabled)</span>
-            <span v-if="selectedIDPName === idp.name" class="idp-button-check">✓</span>
-          </scale-button>
+          <div v-for="idp in allowedIDPs" :key="idp.name" class="idp-button-row">
+            <scale-button
+              class="idp-button"
+              :variant="selectedIDPName === idp.name ? 'primary' : 'secondary'"
+              :disabled="disabled || !idp.enabled"
+              @click="handleIDPButtonClick(idp.name)"
+            >
+              <span class="idp-button-content">
+                <span class="idp-button-text">
+                  <span class="idp-button-label">{{ idp.displayName }}</span>
+                  <span v-if="!idp.enabled" class="idp-button-status">(disabled)</span>
+                </span>
+                <span v-if="selectedIDPName === idp.name" class="idp-button-check" aria-hidden="true"> ✓ </span>
+              </span>
+            </scale-button>
+          </div>
         </div>
 
         <!-- Info about selected IDP -->
@@ -210,45 +214,52 @@ function handleIDPButtonClick(idpName: string) {
 
 <style scoped>
 .idp-selector {
-  margin: 1rem 0;
+  margin: var(--space-md) 0;
 }
 
 .idp-single-mode {
-  padding: 0.75rem 1rem;
-  background-color: var(--scale-color-blue-10);
-  border: 1px solid var(--scale-color-blue-30);
-  border-radius: 4px;
-  margin-bottom: 1rem;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--tone-chip-info-bg);
+  border: 1px solid var(--tone-chip-info-border);
+  border-left: 3px solid var(--telekom-color-functional-informational-standard);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-md);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-sm);
   align-items: flex-start;
 }
 
 .idp-single-message {
   margin: 0;
-  color: var(--scale-color-blue-70);
+  color: var(--tone-chip-info-text);
   font-size: 0.95rem;
 }
 
 .idp-no-available {
-  padding: 0.75rem 1rem;
-  background-color: var(--scale-color-yellow-10);
-  border: 1px solid var(--scale-color-yellow-30);
-  border-radius: 4px;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--tone-chip-warning-bg);
+  border: 1px solid var(--tone-chip-warning-border);
+  border-left: 3px solid var(--telekom-color-functional-warning-standard);
+  border-radius: var(--radius-sm);
 }
 
 .idp-selector-group {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-sm);
 }
 
-.idp-label {
+.idp-heading {
+  margin: 0 auto;
+  font-size: 1.25rem;
   font-weight: 600;
-  color: var(--scale-color-gray-80);
+  color: var(--telekom-color-text-and-icon-standard);
   display: flex;
-  gap: 0.25rem;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--space-2xs);
 }
 
 .required {
@@ -259,40 +270,79 @@ function handleIDPButtonClick(idpName: string) {
 .idp-buttons-container {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-sm);
   width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.idp-button-row {
+  width: 100%;
+}
+
+.idp-button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.idp-button-content {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.idp-button-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.idp-button-label {
+  font-weight: 600;
+}
+
+.idp-button-status {
+  font-size: 0.85rem;
+  color: var(--telekom-color-text-disabled);
+  line-height: 1.1;
 }
 
 /* Info box */
 .idp-info {
-  padding: 0.75rem 1rem;
-  background-color: var(--telekom-color-ui-background-info);
-  border-left: 3px solid var(--telekom-color-ui-border-info);
-  border-radius: 2px;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--tone-chip-info-bg);
+  border: 1px solid var(--tone-chip-info-border);
+  border-left: 3px solid var(--telekom-color-functional-informational-standard);
+  border-radius: var(--radius-sm);
+  max-width: 320px;
+  margin: 0 auto;
+  text-align: center;
 }
 
 .idp-info-text {
   margin: 0;
   font-size: 0.9rem;
-  color: var(--telekom-color-text-info);
+  color: var(--tone-chip-info-text);
 }
 
 .idp-button-check {
-  margin-left: 0.5rem;
   font-weight: 600;
   display: inline-flex;
+  font-size: 1.25rem;
 }
 
 .warning {
   margin: 0;
-  color: var(--telekom-color-text-warning);
+  color: var(--chip-warning-text);
   font-weight: 500;
 }
 
 /* Responsive Design */
 @media (max-width: 768px) {
   .idp-buttons-container {
-    gap: 0.5rem;
+    gap: var(--space-xs);
   }
 }
 </style>

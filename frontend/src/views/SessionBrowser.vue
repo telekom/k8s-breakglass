@@ -4,12 +4,15 @@ import { AuthKey } from "@/keys";
 import BreakglassService, { type SessionSearchParams } from "@/services/breakglass";
 import BreakglassSessionService from "@/services/breakglassSession";
 import type { SessionCR } from "@/model/breakglass";
-import { format24Hour } from "@/utils/dateTime";
 import { useUser } from "@/services/auth";
 import { describeApprover, wasApprovedBy } from "@/utils/sessionFilters";
 import { pushError, pushSuccess } from "@/services/toast";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { statusToneFor } from "@/utils/statusStyles";
+import { useDateFormatting } from "@/composables";
+import { PageHeader, EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
+
+const { formatDateTime } = useDateFormatting();
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -76,7 +79,7 @@ const stateOptions = [
 function formatDate(ts?: string | number | null): string {
   if (!ts) return "-";
   const iso = typeof ts === "string" ? ts : new Date(ts).toISOString();
-  return format24Hour(iso);
+  return formatDateTime(iso);
 }
 
 function startedFor(session: SessionCR): string | null {
@@ -142,26 +145,6 @@ function sessionStatusVariant(session: SessionCR): TagVariant {
     return tone;
   }
   return "neutral";
-}
-
-function sessionStatusIntent(session: SessionCR): string {
-  const normalized = normalizedState(session);
-  if (normalized === "approvaltimeout" || normalized === "timeout") {
-    return "approval-timeout";
-  }
-  const tone = statusToneFor(sessionState(session));
-  switch (tone) {
-    case "success":
-      return "status-active";
-    case "warning":
-      return "status-pending";
-    case "danger":
-      return "status-critical";
-    case "info":
-      return "status-available";
-    default:
-      return "status-neutral";
-  }
 }
 
 function sessionUser(session: SessionCR): string {
@@ -493,8 +476,14 @@ onMounted(() => {
         <h3>Results ({{ visibleSessions.length }})</h3>
         <p v-if="loading">Loading sessions…</p>
         <p v-else-if="error" class="error">{{ error }}</p>
-        <p v-else-if="!visibleSessions.length" class="empty">No sessions matched the current filters.</p>
       </header>
+
+      <EmptyState 
+        v-if="!loading && !error && !visibleSessions.length"
+        icon="🔍"
+        message="No sessions matched the current filters."
+        :action-label="undefined"
+      />
 
       <div v-if="visibleSessions.length" class="sessions-list">
         <scale-card
@@ -506,40 +495,27 @@ onMounted(() => {
             <div>
               <div class="session-name">{{ session.metadata?.name || session.name }}</div>
               <div class="cluster-group">
-                <scale-tag
+                <scale-button
                   size="small"
-                  variant="info"
-                  data-intent="cluster"
-                  class="session-tag session-tag--interactive"
-                  role="button"
-                  tabindex="0"
+                  variant="ghost"
+                  :disabled="!(session.spec?.cluster || session.cluster)"
+                  aria-label="Filter by cluster"
                   @click="setFilter('cluster', session.spec?.cluster || session.cluster)"
-                  @keydown.enter.prevent="setFilter('cluster', session.spec?.cluster || session.cluster)"
-                  @keydown.space.prevent="setFilter('cluster', session.spec?.cluster || session.cluster)"
                 >
                   {{ session.spec?.cluster || session.cluster || "-" }}
-                </scale-tag>
-                <scale-tag
+                </scale-button>
+                <scale-button
                   size="small"
-                  variant="primary"
-                  data-intent="group"
-                  class="session-tag session-tag--interactive"
-                  role="button"
-                  tabindex="0"
+                  variant="ghost"
+                  :disabled="!(session.spec?.grantedGroup || session.group)"
+                  aria-label="Filter by group"
                   @click="setFilter('group', session.spec?.grantedGroup || session.group)"
-                  @keydown.enter.prevent="setFilter('group', session.spec?.grantedGroup || session.group)"
-                  @keydown.space.prevent="setFilter('group', session.spec?.grantedGroup || session.group)"
                 >
                   {{ session.spec?.grantedGroup || session.group || "-" }}
-                </scale-tag>
+                </scale-button>
               </div>
             </div>
-            <scale-tag
-              size="small"
-              :variant="sessionStatusVariant(session)"
-              :data-intent="sessionStatusIntent(session)"
-              class="session-tag"
-            >
+            <scale-tag size="small" :variant="sessionStatusVariant(session)">
               {{ sessionState(session) }}
             </scale-tag>
           </div>
@@ -548,9 +524,6 @@ onMounted(() => {
             <span><strong>User:</strong> {{ sessionUser(session) }}</span>
             <span v-if="session.spec?.identityProviderName">
               <strong>IDP:</strong> {{ session.spec.identityProviderName }}
-            </span>
-            <span v-if="session.spec?.identityProviderIssuer">
-              <strong>Issuer:</strong> {{ session.spec.identityProviderIssuer }}
             </span>
             <span><strong>Approved by:</strong> {{ describeApprover(session) }}</span>
           </div>
@@ -568,30 +541,25 @@ onMounted(() => {
             </scale-button>
           </div>
 
-          <div class="timeline">
-            <div>
-              <span class="label">Scheduled</span>
-              <span>{{ formatDate(session.spec?.scheduledStartTime || null) }}</span>
-            </div>
-            <div>
-              <span class="label">Started</span>
-              <span>{{ formatDate(startedFor(session)) }}</span>
-            </div>
-            <div>
-              <span class="label">Ended</span>
-              <span>{{ formatDate(endedFor(session)) }}</span>
-            </div>
-          </div>
+          <TimelineGrid
+            :scheduled-start="session.spec?.scheduledStartTime || null"
+            :actual-start="startedFor(session)"
+            :ended="endedFor(session)"
+          />
 
           <div v-if="session.spec?.requestReason || session.status?.approvalReason" class="reasons">
-            <div v-if="session.spec?.requestReason" class="reason-box">
-              <strong>Request Reason</strong>
-              <p>{{ session.spec.requestReason }}</p>
-            </div>
-            <div v-if="session.status?.approvalReason" class="reason-box">
-              <strong>Approval Reason</strong>
-              <p>{{ session.status.approvalReason }}</p>
-            </div>
+            <ReasonPanel
+              v-if="session.spec?.requestReason"
+              :reason="session.spec.requestReason"
+              label="Request Reason"
+              variant="request"
+            />
+            <ReasonPanel
+              v-if="session.status?.approvalReason"
+              :reason="session.status.approvalReason"
+              label="Approval Reason"
+              variant="approval"
+            />
           </div>
 
           <div v-if="reasonEndedLabel(session)" class="end-reason">
@@ -607,7 +575,7 @@ onMounted(() => {
 .session-browser {
   display: grid;
   grid-template-columns: minmax(320px, 380px) 1fr;
-  gap: 2rem;
+  gap: var(--space-xl);
   align-items: flex-start;
   color: var(--telekom-color-text-and-icon-standard);
   --session-surface: var(--surface-card);
@@ -616,7 +584,6 @@ onMounted(() => {
   --session-tag-bg: var(--chip-bg);
   --session-tag-text: var(--chip-text);
   --session-shadow: var(--shadow-card);
-  --session-tag-ring-color: 0 0 0 2px color-mix(in srgb, var(--accent-telekom) 45%, transparent);
 }
 
 @media (max-width: 960px) {
@@ -629,32 +596,32 @@ onMounted(() => {
 .results-card {
   background: var(--session-surface);
   border: 1px solid var(--session-border);
-  border-radius: 12px;
-  padding: 1.5rem;
+  border-radius: var(--radius-lg);
+  padding: var(--card-padding);
   box-shadow: var(--session-shadow);
 }
 
 header h2,
 header h3 {
-  margin: 0 0 0.25rem 0;
+  margin: 0 0 var(--space-2xs) 0;
 }
 
 header p {
-  margin: 0 0 0.75rem 0;
+  margin: 0 0 var(--space-sm) 0;
   color: var(--session-muted);
 }
 
 .preset-row {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
 }
 
 .preset-btn {
   border: 1px solid var(--session-border);
-  border-radius: 10px;
-  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
   background: var(--surface-card-subtle);
   text-align: left;
   font-weight: 600;
@@ -677,15 +644,15 @@ header p {
 
 .filters-grid {
   display: flex;
-  gap: 1rem;
+  gap: var(--space-md);
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-md);
 }
 
 .filter-flag {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-2xs);
   font-weight: 600;
   color: var(--telekom-color-text-and-icon-strong);
 }
@@ -695,7 +662,7 @@ header p {
 }
 
 .state-chooser {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-md);
 }
 
 .section-label {
@@ -708,16 +675,16 @@ header p {
 .state-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
 }
 
 .state-pill {
   border: 1px solid var(--session-border);
   border-radius: 999px;
-  padding: 0.25rem 0.75rem;
+  padding: var(--space-2xs) var(--space-sm);
   display: inline-flex;
-  gap: 0.35rem;
+  gap: var(--space-2xs);
   align-items: center;
   font-size: 0.9rem;
   background: var(--session-tag-bg);
@@ -727,8 +694,8 @@ header p {
 .text-filters {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 0.85rem;
-  margin-bottom: 1rem;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
 }
 
 .text-filters label {
@@ -740,10 +707,10 @@ header p {
 }
 
 .text-filters input {
-  margin-top: 0.35rem;
-  padding: 0.45rem 0.6rem;
+  margin-top: var(--space-2xs);
+  padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--session-border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 0.95rem;
   background: var(--surface-card);
   color: var(--telekom-color-text-and-icon-standard);
@@ -752,8 +719,8 @@ header p {
 .filters-actions {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 0.5rem;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xs);
 }
 
 .link-reset {
@@ -773,31 +740,30 @@ header p {
 .hint {
   font-size: 0.8rem;
   color: var(--telekom-color-text-warning);
-  margin-top: 0.25rem;
+  margin-top: var(--space-2xs);
 }
 
 .sessions-list {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  margin-top: 1rem;
+  gap: var(--stack-gap-lg);
+  margin-top: var(--space-md);
 }
 
 .session-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 0.5rem 0 0.25rem;
+  gap: var(--space-xs);
+  margin: var(--space-xs) 0 var(--space-2xs);
 }
 
-.session-actions scale-button {
+.session-actions > * {
   min-width: 120px;
 }
 
 .session-card {
-  --scale-card-padding: 1.25rem;
   border: 1px solid var(--session-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--session-shadow);
   background: var(--session-surface);
 }
@@ -806,7 +772,7 @@ header p {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-md);
 }
 
 .session-name {
@@ -818,99 +784,35 @@ header p {
 .cluster-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.35rem;
-}
-
-scale-tag.session-tag {
-  --session-tag-ring: var(--session-tag-ring-color);
-  font-weight: 600;
-  letter-spacing: 0;
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-}
-
-scale-tag.session-tag--interactive {
-  cursor: pointer;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-scale-tag.session-tag--interactive:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 20px color-mix(in srgb, var(--telekom-color-black) 20%, transparent);
-}
-
-scale-tag.session-tag--interactive:focus-visible {
-  outline: none;
-  box-shadow: var(--session-tag-ring);
-}
-
-scale-tag.session-tag--interactive:active {
-  transform: scale(0.97);
+  gap: var(--space-2xs);
+  margin-top: var(--space-2xs);
 }
 
 .actors {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: var(--space-md);
   font-size: 0.9rem;
   color: var(--telekom-color-text-and-icon-standard);
-  margin-bottom: 0.75rem;
-}
-
-.timeline {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 1rem;
-  margin: 1rem 0;
-  padding: 0.75rem 0;
-  border-top: 1px solid var(--session-border);
-  border-bottom: 1px solid var(--session-border);
-}
-
-.timeline .label {
-  font-weight: 600;
-  display: block;
-  font-size: 0.85rem;
-  color: var(--session-muted);
+  margin-bottom: var(--space-sm);
 }
 
 .reasons {
   display: grid;
-  gap: 0.75rem;
-}
-
-.reason-box {
-  background: var(--telekom-color-background-surface-subtle);
-  border-left: 3px solid color-mix(in srgb, var(--telekom-color-ui-regular) 60%, transparent);
-  padding: 0.75rem;
-  border-radius: 6px;
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.reason-box strong {
-  display: block;
-  margin-bottom: 0.35rem;
-  color: var(--telekom-color-text-and-icon-strong);
+  gap: var(--space-sm);
 }
 
 .end-reason {
-  background: var(--telekom-color-background-critical-subtle);
+  background: var(--tone-chip-danger-bg);
+  border: 1px solid var(--tone-chip-danger-border);
   border-left: 3px solid var(--accent-critical);
-  padding: 0.75rem;
-  border-radius: 6px;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
-  color: var(--telekom-color-text-error);
+  color: var(--tone-chip-danger-text);
 }
 
 .error {
   color: var(--telekom-color-text-error);
-}
-
-.empty {
-  color: var(--session-muted);
 }
 </style>

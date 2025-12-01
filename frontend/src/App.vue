@@ -22,16 +22,14 @@ const hasMultipleIDPs = ref(false);
 const route = useRoute();
 const router = useRouter();
 
-const isCompactHeader = ref(false);
-const mobileNavOpen = ref(false);
-const COMPACT_BREAKPOINT = 1040;
-
 const groupsRef = ref<string[]>([]);
 
 // Theme handling respects the user's system preference without offering a manual toggle
 const theme = ref<"light" | "dark">(getInitialTheme());
 let mediaQuery: MediaQueryList | null = null;
 let mediaQueryHandler: ((event: MediaQueryListEvent) => void) | null = null;
+let desktopBreakpointQuery: MediaQueryList | null = null;
+let desktopBreakpointHandler: ((event: MediaQueryListEvent) => void) | null = null;
 
 if (typeof document !== "undefined") {
   applyTheme(theme.value);
@@ -50,25 +48,6 @@ function applyTheme(value: "light" | "dark") {
   }
 }
 
-function updateHeaderLayout() {
-  if (typeof window === "undefined") return;
-  const shouldBeCompact = window.innerWidth <= COMPACT_BREAKPOINT;
-  if (shouldBeCompact !== isCompactHeader.value) {
-    isCompactHeader.value = shouldBeCompact;
-  }
-  if (!shouldBeCompact) {
-    mobileNavOpen.value = false;
-  }
-}
-
-function closeMobileNav() {
-  mobileNavOpen.value = false;
-}
-
-function toggleMobileNav() {
-  mobileNavOpen.value = !mobileNavOpen.value;
-}
-
 onMounted(() => {
   applyTheme(theme.value);
   if (typeof window === "undefined") return;
@@ -77,16 +56,22 @@ onMounted(() => {
     theme.value = event.matches ? "dark" : "light";
   };
   mediaQuery.addEventListener("change", mediaQueryHandler);
-  updateHeaderLayout();
-  window.addEventListener("resize", updateHeaderLayout);
+
+  desktopBreakpointQuery = window.matchMedia("(min-width: 1040px)");
+  desktopBreakpointHandler = (event: MediaQueryListEvent) => {
+    if (event.matches) {
+      closeMobileNav();
+    }
+  };
+  desktopBreakpointQuery.addEventListener("change", desktopBreakpointHandler);
 });
 
 onBeforeUnmount(() => {
   if (mediaQuery && mediaQueryHandler) {
     mediaQuery.removeEventListener("change", mediaQueryHandler);
   }
-  if (typeof window !== "undefined") {
-    window.removeEventListener("resize", updateHeaderLayout);
+  if (desktopBreakpointQuery && desktopBreakpointHandler) {
+    desktopBreakpointQuery.removeEventListener("change", desktopBreakpointHandler);
   }
 });
 
@@ -122,9 +107,9 @@ const primaryNavItems: PrimaryNavItem[] = [
   },
   {
     id: "requests",
-    label: "My Outstanding Requests",
-    to: { name: "myOutstandingRequests" },
-    matches: ["myOutstandingRequests"],
+    label: "My Pending Requests",
+    to: { name: "myPendingRequests" },
+    matches: ["myPendingRequests"],
   },
   {
     id: "sessions",
@@ -133,6 +118,8 @@ const primaryNavItems: PrimaryNavItem[] = [
     matches: ["sessionBrowser"],
   },
 ];
+
+const homeHref = computed(() => router.resolve({ name: "home" }).href);
 
 const activeNavId = computed(() => {
   const currentName = (route.name as string) ?? "";
@@ -143,6 +130,8 @@ const userDisplayName = computed(() => user.value?.profile.name || user.value?.p
 const userEmail = computed(() => user.value?.profile.email || "");
 
 const profileMenuRef = ref<HTMLElement | null>(null);
+type NavFlyoutElement = HTMLElement & { expanded: boolean };
+const mobileNavFlyoutRef = ref<NavFlyoutElement | null>(null);
 
 const profileMenuLabel = computed(() => userDisplayName.value || userEmail.value || "Account");
 const profileMenuAriaLabel = computed(() => {
@@ -152,6 +141,8 @@ const profileMenuAriaLabel = computed(() => {
   if (groupsRef.value.length) tokens.push(`${groupsRef.value.length} groups`);
   return `${tokens.join(" – ")} menu`;
 });
+
+const profileMenuCloseLabel = computed(() => `Close ${profileMenuLabel.value} menu`);
 
 const profileMenuUserInfo = computed(() => ({
   name: userDisplayName.value || userEmail.value || "Signed in user",
@@ -203,9 +194,18 @@ function navHref(item: PrimaryNavItem) {
 function handlePrimaryNavClick(event: Event, item: PrimaryNavItem) {
   event.preventDefault();
   router.push(item.to);
-  if (isCompactHeader.value) {
-    closeMobileNav();
+}
+
+function closeMobileNav() {
+  if (mobileNavFlyoutRef.value) {
+    mobileNavFlyoutRef.value.expanded = false;
   }
+}
+
+function handleMobileNavItemClick(event: Event, item: PrimaryNavItem) {
+  event.preventDefault();
+  closeMobileNav();
+  router.push(item.to);
 }
 
 async function refreshGroups() {
@@ -264,6 +264,13 @@ watch(
   { deep: true },
 );
 
+watch(
+  () => route.fullPath,
+  () => {
+    closeMobileNav();
+  },
+);
+
 // Check if multi-IDP is available
 async function checkMultiIDP() {
   try {
@@ -282,15 +289,6 @@ async function checkMultiIDP() {
 }
 
 onMounted(checkMultiIDP);
-
-watch(
-  () => route.fullPath,
-  () => {
-    if (isCompactHeader.value) {
-      closeMobileNav();
-    }
-  },
-);
 
 function login() {
   console.debug("[App] Login initiated", {
@@ -340,29 +338,11 @@ watch(
         slot="header"
         type="slim"
         :app-name="brandingTitle"
+        :app-name-link="homeHref"
         :logo-title="brandingTitle"
-        logo-href="/"
-        claim-lang="de"
+        :logo-href="homeHref"
       >
-        <button
-          v-if="isCompactHeader"
-          slot="logo"
-          type="button"
-          class="mobile-logo-toggle"
-          :aria-expanded="mobileNavOpen"
-          :aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
-          @click="toggleMobileNav"
-        >
-          <scale-logo class="compact-logo" aria-hidden="true"></scale-logo>
-          <span class="hamburger" :class="{ 'hamburger--open': mobileNavOpen }" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-          </span>
-          <span class="sr-only">Toggle navigation</span>
-        </button>
-
-        <scale-telekom-nav-list v-if="!isCompactHeader" slot="main-nav" variant="main-nav">
+        <scale-telekom-nav-list v-if="authenticated" slot="main-nav" variant="main-nav">
           <scale-telekom-nav-item
             v-for="item in primaryNavItems"
             :key="item.id"
@@ -375,51 +355,59 @@ watch(
           </scale-telekom-nav-item>
         </scale-telekom-nav-list>
 
-        <div slot="functions" class="header-functions">
-          <scale-telekom-profile-menu
-            v-if="authenticated"
-            ref="profileMenuRef"
-            class="profile-menu"
-            :label="profileMenuLabel"
-            :accessibility-label="profileMenuAriaLabel"
-            :app-name="brandingTitle"
-            :service-name="brandingTitle"
-            :service-description="profileMenuServiceDescription"
-            :logged-in="true"
-            hide-login-settings
-            logout-label="Logout"
-            logout-url="javascript:void(0);"
-            :user-info="profileMenuUserInfoJson"
-            :service-links="profileMenuServiceLinksJson"
-          ></scale-telekom-profile-menu>
-          <scale-button v-if="!authenticated" variant="secondary" @click="login"> Login </scale-button>
-        </div>
+        <scale-telekom-nav-list slot="functions" variant="functions" alignment="right" class="header-functions">
+          <scale-telekom-nav-item class="profile-nav-item">
+            <scale-telekom-profile-menu
+              v-if="authenticated"
+              ref="profileMenuRef"
+              class="profile-menu"
+              :label="profileMenuLabel"
+              :accessibility-label="profileMenuAriaLabel"
+              :close-menu-accessibility-label="profileMenuCloseLabel"
+              :app-name="brandingTitle"
+              :service-name="brandingTitle"
+              :service-description="profileMenuServiceDescription"
+              :logged-in="authenticated"
+              hide-login-settings
+              logout-label="Logout"
+              logout-url="javascript:void(0);"
+              :user-info="profileMenuUserInfoJson"
+              :service-links="profileMenuServiceLinksJson"
+            ></scale-telekom-profile-menu>
+          </scale-telekom-nav-item>
+
+          <scale-telekom-nav-item class="mobile-nav-item">
+            <button type="button" class="mobile-nav-trigger" aria-label="Open navigation menu">
+              <scale-icon-action-menu aria-hidden="true"></scale-icon-action-menu>
+              <span class="sr-only">Open navigation menu</span>
+            </button>
+            <scale-telekom-nav-flyout ref="mobileNavFlyoutRef" variant="mobile">
+              <scale-telekom-mobile-flyout-canvas :app-name="brandingTitle" :app-name-link="homeHref">
+                <scale-telekom-mobile-menu slot="mobile-main-nav">
+                  <scale-telekom-mobile-menu-item
+                    v-for="item in primaryNavItems"
+                    :key="`mobile-${item.id}`"
+                    :active="activeNavId === item.id"
+                  >
+                    <a :href="navHref(item)" @click="handleMobileNavItemClick($event, item)">
+                      {{ item.label }}
+                    </a>
+                  </scale-telekom-mobile-menu-item>
+                </scale-telekom-mobile-menu>
+              </scale-telekom-mobile-flyout-canvas>
+            </scale-telekom-nav-flyout>
+          </scale-telekom-nav-item>
+        </scale-telekom-nav-list>
       </scale-telekom-header>
 
-      <transition name="mobile-nav">
-        <div v-if="isCompactHeader && mobileNavOpen" class="mobile-nav-overlay" @click.self="closeMobileNav">
-          <nav class="mobile-nav-panel" aria-label="Primary navigation">
-            <ul>
-              <li v-for="item in primaryNavItems" :key="`mobile-${item.id}`">
-                <a
-                  :href="navHref(item)"
-                  :class="{ active: activeNavId === item.id }"
-                  @click="handlePrimaryNavClick($event, item)"
-                >
-                  {{ item.label }}
-                </a>
-              </li>
-            </ul>
-          </nav>
-        </div>
-      </transition>
-
       <div id="main" class="app-container">
-        <div v-if="!authenticated" class="center" style="margin: 2rem 0">
+        <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
             <IDPSelector v-model="selectedIDPName" escalation-name="default" required />
-            <scale-button :disabled="!selectedIDPName" style="margin-top: 1rem" @click="login"> Log In </scale-button>
+            <div class="idp-login-actions">
+              <scale-button :disabled="!selectedIDPName" @click="login"> Log In </scale-button>
+            </div>
           </div>
 
           <!-- Show simple login button if single IDP -->
@@ -445,25 +433,12 @@ watch(
   text-align: center;
 }
 
-.header-functions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
+.login-gate {
+  margin: var(--space-xl) 0;
 }
 
-.header-functions > * {
-  flex-shrink: 0;
-}
-
-.header-functions scale-button::part(button) {
-  min-width: 110px;
-}
-
-.profile-menu {
-  flex: 0 1 auto;
-  min-width: 220px;
+.idp-login-actions {
+  margin-top: var(--space-md);
 }
 
 .sr-only {
@@ -477,149 +452,24 @@ watch(
   border: 0;
 }
 
-.mobile-logo-toggle {
-  background: var(--surface-toolbar, #101010);
-  border: none;
-  border-radius: 0 0.5rem 0.5rem 0;
-  min-width: 84px;
-  height: 64px;
-  display: flex;
-  align-items: center;
+.mobile-nav-item {
+  display: none;
+}
+
+.mobile-nav-trigger {
+  display: inline-flex;
   justify-content: center;
-  gap: 0.75rem;
-  padding: 0 1.25rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  background: transparent;
+  width: 60px;
+  color: var(--telekom-color-text-and-icon-standard);
   cursor: pointer;
-  transition:
-    background 0.2s ease,
-    transform 0.2s ease;
-  position: relative;
-  isolation: isolate;
 }
 
-.mobile-logo-toggle:focus-visible {
-  outline: 2px solid var(--telekom-color-focus-outline, #00a0e1);
-  outline-offset: 2px;
-}
-
-.mobile-logo-toggle .compact-logo {
-  width: 30px;
-  height: 30px;
-}
-
-.hamburger {
-  width: 24px;
-  height: 18px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.hamburger span {
-  display: block;
-  height: 3px;
-  border-radius: 999px;
-  background: #fff;
-  transition:
-    transform 0.2s ease,
-    opacity 0.2s ease;
-}
-
-.hamburger--open span:nth-child(1) {
-  transform: translateY(7px) rotate(45deg);
-}
-
-.hamburger--open span:nth-child(2) {
-  opacity: 0;
-}
-
-.hamburger--open span:nth-child(3) {
-  transform: translateY(-7px) rotate(-45deg);
-}
-
-.mobile-nav-overlay {
-  position: relative;
-  width: 100%;
-  background: var(--surface-toolbar, #0f0f0f);
-  border-bottom: 1px solid var(--telekom-color-ui-border-standard);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
-  z-index: 5;
-}
-
-.mobile-nav-panel {
-  padding: 1rem clamp(1rem, 4vw, 2.5rem);
-}
-
-.mobile-nav-panel ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.mobile-nav-panel a {
-  display: block;
-  padding: 0.75rem 0.5rem;
-  font: var(--telekom-text-style-heading-5);
-  color: var(--telekom-color-text-and-icon-standard);
-  text-decoration: none;
-  border-radius: 0.4rem;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.mobile-nav-panel a:hover,
-.mobile-nav-panel a:focus-visible {
-  background: color-mix(in srgb, var(--accent-info) 10%, transparent);
-  color: var(--telekom-color-text-and-icon-standard);
-  outline: none;
-}
-
-.mobile-nav-panel a.active {
-  background: color-mix(in srgb, var(--accent-telekom) 12%, transparent);
-  color: var(--accent-telekom);
-}
-
-.mobile-nav-enter-active,
-.mobile-nav-leave-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
-}
-
-.mobile-nav-enter-from,
-.mobile-nav-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-
-@media (max-width: 1400px) {
-  .header-functions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 1100px) {
-  .header-functions {
-    flex-direction: column;
-    align-items: stretch;
-    width: 100%;
-    gap: 0.5rem;
-  }
-
-  .header-functions scale-button,
-  .header-functions scale-button::part(button),
-  .profile-menu {
-    width: 100%;
-  }
-}
-
-@media (max-width: 1040px) {
-  .profile-menu {
-    min-width: unset;
+@media (max-width: 1039px) {
+  .mobile-nav-item {
+    display: flex;
   }
 }
 </style>

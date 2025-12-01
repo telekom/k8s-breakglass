@@ -1,4 +1,4 @@
-import MyOutstandingRequests from "@/views/MyOutstandingRequests.vue";
+import MyPendingRequests from "@/views/MyPendingRequests.vue";
 
 import BreakglassView from "@/views/BreakglassView.vue";
 import BreaglassSessionReviewView from "@/views/BreakglassSessionReview.vue";
@@ -29,8 +29,8 @@ const router = createRouter({
     },
     {
       path: "/requests/mine",
-      name: "myOutstandingRequests",
-      component: MyOutstandingRequests,
+      name: "myPendingRequests",
+      component: MyPendingRequests,
     },
     {
       path: "/sessions",

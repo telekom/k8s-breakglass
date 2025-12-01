@@ -1,8 +1,9 @@
+import { vi, type Mock } from "vitest";
 import BreakglassService from "./breakglass";
 import { createAuthenticatedApiClient } from "@/services/httpClient";
 
-jest.mock("@/services/httpClient");
-const mockedCreateClient = createAuthenticatedApiClient as jest.MockedFunction<typeof createAuthenticatedApiClient>;
+vi.mock("@/services/httpClient");
+const mockedCreateClient = createAuthenticatedApiClient as Mock<typeof createAuthenticatedApiClient>;
 
 describe("BreakglassService", () => {
   const fakeAuth = { getAccessToken: async () => "fake-token" } as any;
@@ -11,11 +12,11 @@ describe("BreakglassService", () => {
 
   beforeEach(() => {
     mockClient = {
-      get: jest.fn(),
-      post: jest.fn(),
+      get: vi.fn(),
+      post: vi.fn(),
       interceptors: {
-        request: { use: jest.fn() },
-        response: { use: jest.fn() },
+        request: { use: vi.fn() },
+        response: { use: vi.fn() },
       },
     };
     mockedCreateClient.mockReturnValue(mockClient as any);
@@ -23,7 +24,7 @@ describe("BreakglassService", () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it("maps withdrawn and rejected sessions using status.state", async () => {
@@ -159,9 +160,9 @@ describe("BreakglassService", () => {
   it("includes provided reason when requesting breakglass for test-user", async () => {
     const fakeAuth2 = { getAccessToken: async () => "tok", getUserEmail: async () => "test-user@example.com" } as any;
     const mockClient2: any = {
-      post: jest.fn(),
-      get: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      get: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth2);
@@ -178,9 +179,9 @@ describe("BreakglassService", () => {
   it("includes custom duration when requesting breakglass", async () => {
     const fakeAuth = { getAccessToken: async () => "tok", getUserEmail: async () => "user@example.com" } as any;
     const mockClient: any = {
-      post: jest.fn(),
-      get: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      get: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient);
     const svc = new BreakglassService(fakeAuth);
@@ -198,9 +199,9 @@ describe("BreakglassService", () => {
   it("includes scheduled start time when requesting breakglass", async () => {
     const fakeAuth = { getAccessToken: async () => "tok", getUserEmail: async () => "user@example.com" } as any;
     const mockClient: any = {
-      post: jest.fn(),
-      get: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      get: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient);
     const svc = new BreakglassService(fakeAuth);
@@ -222,9 +223,9 @@ describe("BreakglassService", () => {
   it("omits duration when not provided (uses server default)", async () => {
     const fakeAuth = { getAccessToken: async () => "tok", getUserEmail: async () => "user@example.com" } as any;
     const mockClient: any = {
-      post: jest.fn(),
-      get: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      get: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient);
     const svc = new BreakglassService(fakeAuth);
@@ -241,8 +242,8 @@ describe("BreakglassService", () => {
 
   it("rejects a breakglass session with reason", async () => {
     const mockClient2: any = {
-      post: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
@@ -255,8 +256,8 @@ describe("BreakglassService", () => {
 
   it("rejects a breakglass session without reason", async () => {
     const mockClient2: any = {
-      post: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
@@ -269,8 +270,8 @@ describe("BreakglassService", () => {
 
   it("rejects a breakglass session and ignores empty reason string", async () => {
     const mockClient2: any = {
-      post: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
@@ -283,8 +284,8 @@ describe("BreakglassService", () => {
 
   it("approves a breakglass session with reason", async () => {
     const mockClient2: any = {
-      post: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);
@@ -297,8 +298,8 @@ describe("BreakglassService", () => {
 
   it("approves a breakglass session without reason", async () => {
     const mockClient2: any = {
-      post: jest.fn(),
-      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+      post: vi.fn(),
+      interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
     };
     mockedCreateClient.mockReturnValueOnce(mockClient2);
     const svc = new BreakglassService(fakeAuth);

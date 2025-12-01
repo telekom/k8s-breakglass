@@ -98,8 +98,8 @@ export default {
 <style scoped>
 .auto-logout-warning-container {
   position: fixed;
-  bottom: 1.5rem;
-  right: 1.5rem;
+  bottom: var(--space-lg);
+  right: var(--space-lg);
   z-index: 3000;
   max-width: 400px;
   width: 100%;
@@ -107,16 +107,16 @@ export default {
 
 .logout-notification {
   width: 100%;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-card);
 }
 
 .warning-copy {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-md);
 }
 
 .warning-actions {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-xs);
   justify-content: flex-end;
   flex-wrap: wrap;
 }
