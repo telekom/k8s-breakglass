@@ -9,16 +9,17 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"strings"
-
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -589,6 +590,47 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 	}
 	if impersonated != grp {
 		t.Fatalf("expected impersonated group to equal granted group %s got %s", grp, impersonated)
+	}
+}
+
+// Ensures sessions carrying an IdentityProviderName record the IDP authorization metric when allowed
+func TestAuthorizeViaSessions_WithIdentityProviderRecordsMetric(t *testing.T) {
+	controller := SetupController(nil)
+	metrics.EscalationIDPAuthorizationChecks.Reset()
+	defer metrics.EscalationIDPAuthorizationChecks.Reset()
+
+	ses := v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess-idp-1"},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			GrantedGroup:         "breakglass-create-all",
+			IdentityProviderName: "keycloak-prod",
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && (r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews" || r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":true}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	rc := &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
+
+	allowed, _, _, _ := controller.authorizeViaSessions(context.Background(), rc, []v1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	if !allowed {
+		t.Fatalf("expected IDP session SAR to allow but it did not")
+	}
+
+	metricValue := testutil.ToFloat64(metrics.EscalationIDPAuthorizationChecks.WithLabelValues(
+		ses.Spec.GrantedGroup,
+		ses.Spec.IdentityProviderName,
+		"allowed",
+	))
+	if metricValue != 1 {
+		t.Fatalf("expected EscalationIDPAuthorizationChecks to record 1 allowed event, got %v", metricValue)
 	}
 }
 
