@@ -251,5 +251,102 @@ describe("useSessionActions", () => {
 
       expect(getActionLabel(session, "approve")).toBe("Approving...");
     });
+
+    it("shows correct confirmation message for withdraw action", async () => {
+      const mockWithdraw = vi.fn().mockResolvedValue(undefined);
+      (window as any).confirm = vi.fn(() => true);
+      const { withdraw } = useSessionActions({ withdraw: mockWithdraw });
+
+      const session = createSession();
+      await withdraw(session);
+
+      expect((window as any).confirm).toHaveBeenCalledWith(
+        expect.stringContaining("Withdraw this request?")
+      );
+    });
+
+    it("shows correct confirmation message for drop action", async () => {
+      const mockDrop = vi.fn().mockResolvedValue(undefined);
+      (window as any).confirm = vi.fn(() => true);
+      const { drop } = useSessionActions({ drop: mockDrop });
+
+      const session = createSession("Approved");
+      await drop(session);
+
+      expect((window as any).confirm).toHaveBeenCalledWith(
+        expect.stringContaining("Drop active session")
+      );
+    });
+
+    it("shows correct confirmation message for cancel action", async () => {
+      const mockCancel = vi.fn().mockResolvedValue(undefined);
+      (window as any).confirm = vi.fn(() => true);
+      const { cancel } = useSessionActions({ cancel: mockCancel });
+
+      // Cancel requires session to be Active
+      const session = createSession("Active");
+      await cancel(session);
+
+      expect((window as any).confirm).toHaveBeenCalledWith(
+        expect.stringContaining("Cancel session")
+      );
+    });
+
+    it("withdraw returns false when user declines confirmation", async () => {
+      const mockWithdraw = vi.fn().mockResolvedValue(undefined);
+      (window as any).confirm = vi.fn(() => false);
+      const { withdraw } = useSessionActions({ withdraw: mockWithdraw });
+
+      const session = createSession();
+      const result = await withdraw(session);
+
+      expect(result).toBe(false);
+      expect(mockWithdraw).not.toHaveBeenCalled();
+    });
+
+    it("getRunningAction returns current action type", async () => {
+      let resolveApprove: () => void;
+      const mockApprove = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveApprove = resolve;
+          })
+      );
+      const { approve, getRunningAction } = useSessionActions({ approve: mockApprove });
+
+      const session = createSession();
+
+      expect(getRunningAction(session)).toBeUndefined();
+
+      const promise = approve(session);
+      expect(getRunningAction(session)).toBe("approve");
+
+      resolveApprove!();
+      await promise;
+
+      expect(getRunningAction(session)).toBeUndefined();
+    });
+
+    it("getAvailableActions respects custom permissions", () => {
+      const { getAvailableActions } = useSessionActions(
+        {
+          approve: vi.fn(),
+          reject: vi.fn(),
+          withdraw: vi.fn(),
+        },
+        {
+          canApprove: () => false,
+          canReject: () => true,
+          canWithdraw: () => true,
+        }
+      );
+
+      const session = createSession();
+      const actions = getAvailableActions(session);
+
+      expect(actions).not.toContain("approve");
+      expect(actions).toContain("reject");
+      expect(actions).toContain("withdraw");
+    });
   });
 });

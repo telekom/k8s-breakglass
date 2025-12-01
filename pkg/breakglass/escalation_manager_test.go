@@ -466,3 +466,279 @@ func TestEscalationManager_GetClusterGroupBreakglassEscalations(t *testing.T) {
 		})
 	}
 }
+
+func TestEscalationManager_GetBreakglassEscalation(t *testing.T) {
+	// TestEscalationManager_GetBreakglassEscalation
+	//
+	// Purpose:
+	//   Validates retrieving a single BreakglassEscalation by name and namespace.
+	//
+	// Reasoning:
+	//   Individual escalation lookup is needed for detailed views and actions.
+	//
+	scheme := breakglass.Scheme
+
+	escalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"cluster1"},
+				Groups:   []string{"admin"},
+			},
+			EscalatedGroup: "admin-access",
+		},
+	}
+
+	tests := []struct {
+		name            string
+		existingObjects []client.Object
+		searchName      string
+		searchNamespace string
+		expectError     bool
+	}{
+		{
+			name:            "escalation exists",
+			existingObjects: []client.Object{escalation},
+			searchName:      "test-escalation",
+			searchNamespace: "default",
+			expectError:     false,
+		},
+		{
+			name:            "escalation not found",
+			existingObjects: []client.Object{},
+			searchName:      "nonexistent",
+			searchNamespace: "default",
+			expectError:     true,
+		},
+		{
+			name:            "wrong namespace",
+			existingObjects: []client.Object{escalation},
+			searchName:      "test-escalation",
+			searchNamespace: "other-ns",
+			expectError:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.existingObjects...).
+				Build()
+
+			em := breakglass.EscalationManager{Client: fakeClient}
+
+			result, err := em.GetBreakglassEscalation(context.Background(), tt.searchNamespace, tt.searchName)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("GetBreakglassEscalation() expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("GetBreakglassEscalation() unexpected error: %v", err)
+				return
+			}
+
+			if result.Name != tt.searchName {
+				t.Errorf("GetBreakglassEscalation() name = %v, want %v", result.Name, tt.searchName)
+			}
+		})
+	}
+}
+
+func TestNewEscalationManagerWithClient(t *testing.T) {
+	// TestNewEscalationManagerWithClient
+	//
+	// Purpose:
+	//   Validates the constructor that creates an EscalationManager with an existing client.
+	//
+	scheme := breakglass.Scheme
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	em := breakglass.NewEscalationManagerWithClient(fakeClient, nil)
+
+	if em.Client == nil {
+		t.Error("NewEscalationManagerWithClient() returned nil client")
+	}
+}
+
+func TestEscalationManager_UpdateBreakglassEscalationStatus(t *testing.T) {
+	// TestEscalationManager_UpdateBreakglassEscalationStatus
+	//
+	// Purpose:
+	//   Validates updating the status subresource of a BreakglassEscalation.
+	//
+	scheme := breakglass.Scheme
+
+	escalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup: "admin-access",
+		},
+		Status: telekomv1alpha1.BreakglassEscalationStatus{
+			ObservedGeneration: 0,
+		},
+	}
+
+	t.Run("updates status successfully", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(escalation).
+			WithStatusSubresource(escalation).
+			Build()
+
+		em := breakglass.EscalationManager{Client: fakeClient}
+
+		// Modify the status
+		updatedEsc := *escalation
+		updatedEsc.Status.ObservedGeneration = 5
+
+		err := em.UpdateBreakglassEscalationStatus(context.Background(), updatedEsc)
+		if err != nil {
+			t.Errorf("UpdateBreakglassEscalationStatus() unexpected error: %v", err)
+		}
+
+		// Verify the status was updated
+		var fetched telekomv1alpha1.BreakglassEscalation
+		if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-escalation", Namespace: "default"}, &fetched); err != nil {
+			t.Fatalf("Failed to fetch escalation: %v", err)
+		}
+		if fetched.Status.ObservedGeneration != 5 {
+			t.Errorf("Status.ObservedGeneration was not updated, got %d", fetched.Status.ObservedGeneration)
+		}
+	})
+
+	t.Run("error when escalation does not exist", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		em := breakglass.EscalationManager{Client: fakeClient}
+
+		err := em.UpdateBreakglassEscalationStatus(context.Background(), *escalation)
+		if err == nil {
+			t.Error("UpdateBreakglassEscalationStatus() expected error for nonexistent escalation")
+		}
+	})
+}
+
+func TestEscalationManager_GetClusterGroupTargetBreakglassEscalation(t *testing.T) {
+	// TestEscalationManager_GetClusterGroupTargetBreakglassEscalation
+	//
+	// Purpose:
+	//   Validates retrieving escalations for specific cluster, user groups, AND target group.
+	//
+	scheme := breakglass.Scheme
+
+	escalation1 := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "escalation-1",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"cluster1"},
+				Groups:   []string{"admin"},
+			},
+			EscalatedGroup: "admin-access",
+		},
+	}
+
+	escalation2 := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "escalation-2",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"cluster1"},
+				Groups:   []string{"user"},
+			},
+			EscalatedGroup: "user-access",
+		},
+	}
+
+	tests := []struct {
+		name            string
+		existingObjects []client.Object
+		cluster         string
+		userGroups      []string
+		targetGroup     string
+		expectedCount   int
+	}{
+		{
+			name:            "matches cluster, groups, and target",
+			existingObjects: []client.Object{escalation1, escalation2},
+			cluster:         "cluster1",
+			userGroups:      []string{"admin"},
+			targetGroup:     "admin-access",
+			expectedCount:   1,
+		},
+		{
+			name:            "wrong target group",
+			existingObjects: []client.Object{escalation1, escalation2},
+			cluster:         "cluster1",
+			userGroups:      []string{"admin"},
+			targetGroup:     "user-access",
+			expectedCount:   0,
+		},
+		{
+			name:            "wrong cluster",
+			existingObjects: []client.Object{escalation1, escalation2},
+			cluster:         "cluster2",
+			userGroups:      []string{"admin"},
+			targetGroup:     "admin-access",
+			expectedCount:   0,
+		},
+		{
+			name:            "wrong user groups",
+			existingObjects: []client.Object{escalation1, escalation2},
+			cluster:         "cluster1",
+			userGroups:      []string{"guest"},
+			targetGroup:     "admin-access",
+			expectedCount:   0,
+		},
+		{
+			name:            "no escalations",
+			existingObjects: []client.Object{},
+			cluster:         "cluster1",
+			userGroups:      []string{"admin"},
+			targetGroup:     "admin-access",
+			expectedCount:   0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.existingObjects...).
+				Build()
+
+			em := breakglass.EscalationManager{Client: fakeClient}
+
+			result, err := em.GetClusterGroupTargetBreakglassEscalation(context.Background(), tt.cluster, tt.userGroups, tt.targetGroup)
+
+			if err != nil {
+				t.Errorf("GetClusterGroupTargetBreakglassEscalation() unexpected error: %v", err)
+				return
+			}
+
+			if len(result) != tt.expectedCount {
+				t.Errorf("GetClusterGroupTargetBreakglassEscalation() count = %v, want %v", len(result), tt.expectedCount)
+			}
+		})
+	}
+}

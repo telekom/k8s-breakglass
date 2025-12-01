@@ -1,7 +1,7 @@
 /**
  * Tests for dateTime utility functions
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   format24Hour,
   formatDate,
