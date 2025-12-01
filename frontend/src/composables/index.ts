@@ -23,10 +23,12 @@ export {
   getTimeRemaining,
   getUrgency,
   getUrgencyLabel,
+  getUrgencyLabelString,
   getUrgencyDescription,
   isExpired,
   isFuture,
   type UrgencyLevel,
+  type UrgencyLabel,
   type UrgencyConfig,
 } from "./useUrgency";
 
@@ -79,3 +81,10 @@ export {
   type ActionHandlers,
   type ActionPermissions,
 } from "./useSessionActions";
+
+// Multi-IDP management
+export {
+  useMultiIDP,
+  type UseMultiIDPOptions,
+  type UseMultiIDPReturn,
+} from "./useMultiIDP";

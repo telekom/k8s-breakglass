@@ -266,9 +266,9 @@ async function onCancel(bg: SessionCR) {
     <div v-if="state.loading" class="loading-state">Loading sessions…</div>
     <div v-else-if="filteredBreakglasses.length === 0" class="empty-state">
       <p>No sessions match the current filters.</p>
-      <p class="ui-muted">Try clearing the search or turning off “Active only”.</p>
+      <p class="ui-muted">Try clearing the search or turning off "Active only".</p>
     </div>
-    <div v-else class="breakglass-list">
+    <div v-else class="masonry-layout">
       <BreakglassSessionCard
         v-for="(bg, index) in filteredBreakglasses"
         :key="bg.metadata?.name || bg.name || index"
@@ -350,27 +350,9 @@ async function onCancel(bg: SessionCR) {
   color: var(--telekom-color-text-and-icon-standard);
 }
 
-.breakglass-list {
-  column-count: 3;
-  column-gap: var(--space-lg);
-}
-
-.breakglass-list > .card {
-  break-inside: avoid;
-  margin-bottom: var(--space-lg);
-}
-
-@media (max-width: 1200px) {
-  .breakglass-list {
-    column-count: 2;
-  }
-}
+/* Using global .masonry-layout class from base.css */
 
 @media (max-width: 768px) {
-  .breakglass-list {
-    column-count: 1;
-  }
-
   .review-toolbar {
     grid-template-columns: 1fr;
   }

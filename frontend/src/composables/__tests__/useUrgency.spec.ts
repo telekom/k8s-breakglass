@@ -7,6 +7,7 @@ import {
   getTimeRemaining,
   getUrgency,
   getUrgencyLabel,
+  getUrgencyLabelString,
   getUrgencyDescription,
   isExpired,
   isFuture,
@@ -89,10 +90,28 @@ describe("useUrgency", () => {
   });
 
   describe("getUrgencyLabel", () => {
-    it("returns correct labels with emojis", () => {
-      expect(getUrgencyLabel("critical")).toBe("⚠️ Critical");
-      expect(getUrgencyLabel("high")).toBe("⏱️ High");
-      expect(getUrgencyLabel("normal")).toBe("🕓 Normal");
+    it("returns structured label objects with icon, text, and ariaLabel", () => {
+      expect(getUrgencyLabel("critical")).toEqual({
+        icon: "⚠️",
+        text: "Critical",
+        ariaLabel: "Critical urgency",
+      });
+      expect(getUrgencyLabel("high")).toEqual({
+        icon: "⏱️",
+        text: "High",
+        ariaLabel: "High urgency",
+      });
+      expect(getUrgencyLabel("normal")).toEqual({
+        icon: "🕓",
+        text: "Normal",
+        ariaLabel: "Normal urgency",
+      });
+    });
+
+    it("provides backwards compatible string via getUrgencyLabelString", () => {
+      expect(getUrgencyLabelString("critical")).toBe("⚠️ Critical");
+      expect(getUrgencyLabelString("high")).toBe("⏱️ High");
+      expect(getUrgencyLabelString("normal")).toBe("🕓 Normal");
     });
   });
 

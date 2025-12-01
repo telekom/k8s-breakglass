@@ -2,13 +2,28 @@
 import { ref, onMounted, inject, computed } from "vue";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
-import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
+import { formatDateTime } from "@/composables";
 import { statusToneFor } from "@/utils/statusStyles";
+import type { SessionCR } from "@/model/breakglass";
+
+// Extended session type for historical sessions that may have legacy fields
+type HistoricalSession = SessionCR & {
+  id?: string;
+  state?: string;
+  user?: string;
+  requester?: string;
+  started?: string;
+  ended?: string;
+  createdAt?: string;
+  creationTimestamp?: string;
+  reasonEnded?: string;
+  terminationReason?: string;
+};
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
 
-const sessions = ref<any[]>([]);
+const sessions = ref<HistoricalSession[]>([]);
 const loading = ref(true);
 const error = ref("");
 
@@ -18,23 +33,17 @@ onMounted(async () => {
     // Fetch approved sessions and filter for those I could have approved
     const allApproved = await breakglassService.fetchSessionsIApproved();
     sessions.value = allApproved;
-  } catch (e: any) {
-    error.value = e?.Message || e?.message || "Failed to load previous sessions";
+  } catch (e: unknown) {
+    error.value = (e as any)?.Message || (e as Error)?.message || "Failed to load previous sessions";
   } finally {
     loading.value = false;
   }
 });
 
-function formatDate(ts: string | number) {
-  if (!ts) return "-";
-  debugLogDateTime("formatDate", typeof ts === "string" ? ts : new Date(ts).toISOString());
-  return format24Hour(typeof ts === "string" ? ts : new Date(ts).toISOString());
-}
-
-function startedForDisplay(s: any) {
+function startedForDisplay(s: HistoricalSession): string | null {
   return (
     s.started ||
-    (s.status && s.status.startedAt) ||
+    s.status?.startedAt ||
     s.metadata?.creationTimestamp ||
     s.createdAt ||
     s.creationTimestamp ||
@@ -42,13 +51,13 @@ function startedForDisplay(s: any) {
   );
 }
 
-function endedForDisplay(s: any) {
-  const st = s.status && s.status.state ? s.status.state.toString().toLowerCase() : (s.state || "").toLowerCase();
+function endedForDisplay(s: HistoricalSession): string | null {
+  const st = s.status?.state ? s.status.state.toString().toLowerCase() : (s.state || "").toLowerCase();
   if (st === "approved" || st === "active") return null;
-  return s.ended || (s.status && (s.status.endedAt || s.status.expiresAt)) || s.expiry || null;
+  return s.ended || s.status?.endedAt || s.status?.expiresAt || (s.expiry ? String(s.expiry) : null);
 }
 
-function reasonEndedLabel(s: any): string {
+function reasonEndedLabel(s: HistoricalSession): string {
   if (s.reasonEnded) return s.reasonEnded;
   if (s.terminationReason) return s.terminationReason;
   switch ((s.state || "").toLowerCase()) {
@@ -69,7 +78,7 @@ function reasonEndedLabel(s: any): string {
   }
 }
 
-function statusTone(s: any): string {
+function statusTone(s: HistoricalSession): string {
   const rawState = s.status?.state || s.state;
   return `tone-${statusToneFor(rawState)}`;
 }
@@ -111,7 +120,7 @@ const approverSessions = computed(() =>
     <div v-else class="sessions-list">
       <scale-card
         v-for="s in approverSessions"
-        :key="s.id || s.name || s.group + s.cluster + s.expiry"
+        :key="s.id || s.name || (s.group ?? '') + (s.cluster ?? '') + (s.expiry ?? '')"
         class="session-card"
       >
         <!-- Header -->
@@ -162,20 +171,20 @@ const approverSessions = computed(() =>
           <div class="timeline-item">
             <span class="timeline-label">Scheduled:</span>
             <span class="timeline-value">{{
-              s.spec && s.spec.scheduledStartTime ? formatDate(s.spec.scheduledStartTime) : "-"
+              s.spec && s.spec.scheduledStartTime ? formatDateTime(s.spec.scheduledStartTime) : "-"
             }}</span>
           </div>
           <div class="timeline-item">
             <span class="timeline-label">Started:</span>
             <span class="timeline-value">{{
               s.status && s.status.actualStartTime
-                ? formatDate(s.status.actualStartTime)
-                : formatDate(startedForDisplay(s))
+                ? formatDateTime(s.status.actualStartTime)
+                : formatDateTime(startedForDisplay(s))
             }}</span>
           </div>
           <div class="timeline-item">
             <span class="timeline-label">Ended:</span>
-            <span class="timeline-value">{{ formatDate(endedForDisplay(s)) }}</span>
+            <span class="timeline-value">{{ formatDateTime(endedForDisplay(s)) }}</span>
           </div>
         </div>
 

@@ -2,7 +2,7 @@
  * Composable for calculating urgency levels based on time remaining
  */
 
-import { computed, type Ref, ref } from "vue";
+import { computed, type Ref } from "vue";
 
 export type UrgencyLevel = "critical" | "high" | "normal";
 
@@ -48,18 +48,32 @@ export function getUrgency(
   return "normal";
 }
 
+export type UrgencyLabel = {
+  icon: string;
+  text: string;
+  ariaLabel: string;
+};
+
 /**
- * Get urgency label with emoji
+ * Get urgency label with icon and accessible text
  */
-export function getUrgencyLabel(level: UrgencyLevel): string {
+export function getUrgencyLabel(level: UrgencyLevel): UrgencyLabel {
   switch (level) {
     case "critical":
-      return "⚠️ Critical";
+      return { icon: "⚠️", text: "Critical", ariaLabel: "Critical urgency" };
     case "high":
-      return "⏱️ High";
+      return { icon: "⏱️", text: "High", ariaLabel: "High urgency" };
     default:
-      return "🕓 Normal";
+      return { icon: "🕓", text: "Normal", ariaLabel: "Normal urgency" };
   }
+}
+
+/**
+ * Get urgency label as a simple string (for backwards compatibility)
+ */
+export function getUrgencyLabelString(level: UrgencyLevel): string {
+  const label = getUrgencyLabel(level);
+  return `${label.icon} ${label.text}`;
 }
 
 /**
@@ -121,6 +135,7 @@ export function useUrgencyUtils(config: UrgencyConfig = DEFAULT_CONFIG) {
     getTimeRemaining,
     getUrgency: (expiresAt: string | Date | undefined | null) => getUrgency(expiresAt, config),
     getUrgencyLabel,
+    getUrgencyLabelString,
     getUrgencyDescription,
     isExpired,
     isFuture,

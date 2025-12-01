@@ -54,7 +54,7 @@
       :icon="pendingSessions.length === 0 ? '✅' : '🔍'"
     />
 
-    <div v-else class="sessions-list">
+    <div v-else class="masonry-layout">
       <SessionSummaryCard
         v-for="session in sortedSessions"
         :key="getSessionKey(session)"
@@ -83,8 +83,9 @@
               </template>
               <template v-else>No expiry set</template>
             </small>
-            <span class="tone-chip" :class="`tone-chip--${session.urgency}`">
-              {{ getUrgencyLabel(session.urgency) }}
+            <span class="tone-chip" :class="`tone-chip--${session.urgency}`" :aria-label="getUrgencyLabel(session.urgency).ariaLabel">
+              <span aria-hidden="true">{{ getUrgencyLabel(session.urgency).icon }}</span>
+              {{ getUrgencyLabel(session.urgency).text }}
             </span>
             <StatusTag :status="getSessionState(session)" />
           </div>
@@ -211,6 +212,13 @@ import {
   getUrgency,
   getTimeRemaining,
   getUrgencyLabel,
+  type UrgencyLabel,
+  getSessionKey,
+  getSessionState,
+  getSessionCluster,
+  getSessionGroup,
+  collectApproverGroups,
+  dedupeSessions,
 } from "@/composables";
 import type { SessionCR } from "@/model/breakglass";
 
@@ -274,22 +282,7 @@ function handleUrgencyChange(ev: Event) {
   }
 }
 
-// Session helpers
-function getSessionKey(session: SessionCR): string {
-  return session.metadata?.name || `${session.spec?.cluster}-${session.spec?.grantedGroup}-${Date.now()}`;
-}
-
-function getSessionCluster(session: SessionCR): string {
-  return session.spec?.cluster || session.cluster || "Unknown cluster";
-}
-
-function getSessionGroup(session: SessionCR): string {
-  return session.spec?.grantedGroup || session.group || "Unknown group";
-}
-
-function getSessionState(session: SessionCR): string {
-  return session.status?.state || "Pending";
-}
+// Session helpers (using imports from @/composables for getSessionKey, getSessionState, getSessionCluster, getSessionGroup)
 
 function getSessionSubtitle(session: SessionCR): string {
   if (session.spec?.requester && session.spec.requester !== session.spec.user) {
@@ -348,71 +341,7 @@ function getApprovalMetaItems(session: SessionCR) {
   ];
 }
 
-// Helper to collect matching approver groups
-function collectMatchingGroups(session: SessionCR): string[] {
-  const collected = new Set<string>();
-  const tryAdd = (value?: string | string[]) => {
-    if (!value) return;
-    if (Array.isArray(value)) {
-      value.filter(Boolean).forEach((entry) => collected.add(String(entry)));
-      return;
-    }
-    String(value)
-      .split(/[\s,]+/)
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .forEach((entry) => collected.add(entry));
-  };
-
-  const metadata = session.metadata as Record<string, unknown> | undefined;
-  const annotations = metadata?.annotations as Record<string, string> | undefined;
-  const labels = metadata?.labels as Record<string, string> | undefined;
-  const spec = session.spec as Record<string, unknown> | undefined;
-  const status = session.status as Record<string, unknown> | undefined;
-
-  tryAdd(annotations?.["breakglass.telekom.com/approver-groups"]);
-  tryAdd(annotations?.["breakglass.t-caas.telekom.com/approver-groups"]);
-  tryAdd(labels?.["breakglass.telekom.com/approver-groups"]);
-  tryAdd(labels?.["breakglass.t-caas.telekom.com/approver-groups"]);
-  tryAdd(spec?.approverGroup as string | string[] | undefined);
-  tryAdd(spec?.approverGroups as string | string[] | undefined);
-  tryAdd(status?.approverGroup as string | string[] | undefined);
-  tryAdd(status?.approverGroups as string | string[] | undefined);
-  
-  return Array.from(collected);
-}
-
-function dedupePendingSessions(sessions: SessionCR[]): SessionCR[] {
-  const map = new Map<string, SessionCR & { matchingApproverGroups?: string[] }>();
-  
-  sessions.forEach((session) => {
-    const key =
-      session.metadata?.name ||
-      `${session.spec?.cluster || "unknown"}::${session.spec?.grantedGroup || "unknown"}::${session.metadata?.creationTimestamp || ""}`;
-    
-    const existing = map.get(key);
-    if (!existing) {
-      const clone = { ...session } as SessionCR & { matchingApproverGroups?: string[] };
-      const matching = collectMatchingGroups(session);
-      if (matching.length) {
-        clone.matchingApproverGroups = matching;
-      }
-      map.set(key, clone);
-      return;
-    }
-
-    const nextGroups = collectMatchingGroups(session);
-    const combined = new Set<string>(existing.matchingApproverGroups || []);
-    nextGroups.forEach((g) => combined.add(g));
-    if (combined.size) {
-      existing.matchingApproverGroups = Array.from(combined).sort();
-    }
-  });
-  
-  return Array.from(map.values());
-}
-
-// Enhanced sessions with urgency
+// Enhanced sessions with urgency (using dedupeSessions and collectApproverGroups from @/composables)
 type SessionWithUrgency = SessionCR & {
   urgency: "critical" | "high" | "normal";
   timeRemaining: number;
@@ -462,7 +391,7 @@ async function fetchPendingApprovals() {
   loading.value = true;
   try {
     const sessions = await breakglassService.fetchPendingSessionsForApproval();
-    pendingSessions.value = Array.isArray(sessions) ? dedupePendingSessions(sessions) : [];
+    pendingSessions.value = Array.isArray(sessions) ? dedupeSessions(sessions) : [];
   } catch {
     pushError("Failed to fetch pending approvals");
   }
@@ -569,27 +498,7 @@ onMounted(fetchPendingApprovals);
   font-size: 0.9rem;
 }
 
-.sessions-list {
-  column-count: 3;
-  column-gap: var(--space-lg);
-}
-
-.sessions-list > * {
-  break-inside: avoid;
-  margin-bottom: var(--space-lg);
-}
-
-@media (max-width: 1200px) {
-  .sessions-list {
-    column-count: 2;
-  }
-}
-
-@media (max-width: 768px) {
-  .sessions-list {
-    column-count: 1;
-  }
-}
+/* Using global .masonry-layout class from base.css for sessions-list */
 
 .approval-card-shell {
   border-left: 5px solid transparent;

@@ -2,14 +2,29 @@
 import { ref, onMounted, inject } from "vue";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
-import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
+import { formatDateTime } from "@/composables";
 import { statusToneFor } from "@/utils/statusStyles";
 import { PageHeader, LoadingState, ErrorBanner, EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
+import type { SessionCR } from "@/model/breakglass";
+
+// Extended session type for historical sessions that may have legacy fields
+type HistoricalSession = SessionCR & {
+  id?: string;
+  state?: string;
+  user?: string;
+  requester?: string;
+  started?: string;
+  ended?: string;
+  createdAt?: string;
+  creationTimestamp?: string;
+  reasonEnded?: string;
+  terminationReason?: string;
+};
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
 
-const sessions = ref<any[]>([]);
+const sessions = ref<HistoricalSession[]>([]);
 const loading = ref(true);
 const error = ref("");
 
@@ -18,24 +33,18 @@ onMounted(async () => {
   try {
     // Fetch my active and historical sessions
     sessions.value = await breakglassService.fetchMySessions();
-  } catch (e: any) {
-    error.value = e?.message || "Failed to load previous sessions";
+  } catch (e: unknown) {
+    error.value = (e as Error)?.message || "Failed to load previous sessions";
   } finally {
     loading.value = false;
   }
 });
 
-function formatDate(ts: string | number) {
-  if (!ts) return "-";
-  debugLogDateTime("formatDate", typeof ts === "string" ? ts : new Date(ts).toISOString());
-  return format24Hour(typeof ts === "string" ? ts : new Date(ts).toISOString());
-}
-
-function startedForDisplay(s: any) {
+function startedForDisplay(s: HistoricalSession): string | null {
   // prefer explicit started fields from status, then metadata creation timestamp
   return (
     s.started ||
-    (s.status && s.status.startedAt) ||
+    s.status?.startedAt ||
     s.metadata?.creationTimestamp ||
     s.createdAt ||
     s.creationTimestamp ||
@@ -43,16 +52,16 @@ function startedForDisplay(s: any) {
   );
 }
 
-function endedForDisplay(s: any) {
+function endedForDisplay(s: HistoricalSession): string | null {
   // Only show an ended timestamp when the session is not active/approved
-  const st = s.status && s.status.state ? s.status.state.toString().toLowerCase() : (s.state || "").toLowerCase();
+  const st = s.status?.state ? s.status.state.toString().toLowerCase() : (s.state || "").toLowerCase();
   if (st === "approved" || st === "active") return null;
-  return s.ended || (s.status && (s.status.endedAt || s.status.expiresAt)) || s.expiry || null;
+  return s.ended || s.status?.endedAt || s.status?.expiresAt || (s.expiry ? String(s.expiry) : null);
 }
 
-function reasonEndedLabel(s: any): string {
-  if (s.status && s.status.reasonEnded) return s.status.reasonEnded;
-  if (s.status && s.status.reason) return s.status.reason;
+function reasonEndedLabel(s: HistoricalSession): string {
+  if (s.status?.reasonEnded) return s.status.reasonEnded;
+  if ((s.status as any)?.reason) return (s.status as any).reason;
   if (s.reasonEnded) return s.reasonEnded;
   if (s.terminationReason) return s.terminationReason;
   switch ((s.state || "").toLowerCase()) {
@@ -73,7 +82,7 @@ function reasonEndedLabel(s: any): string {
   }
 }
 
-function statusTone(s: any): string {
+function statusTone(s: HistoricalSession): string {
   const rawState = s.status?.state || s.state;
   return `tone-${statusToneFor(rawState)}`;
 }
@@ -90,7 +99,7 @@ function statusTone(s: any): string {
       message="No previous sessions found."
     />
     <div v-else class="sessions-list">
-      <scale-card v-for="s in sessions" :key="s.id || s.name || s.group + s.cluster + s.expiry" class="session-card">
+      <scale-card v-for="s in sessions" :key="s.id || s.name || (s.group ?? '') + (s.cluster ?? '') + (s.expiry ?? '')" class="session-card">
         <!-- Header -->
         <div class="card-header">
           <div class="header-left">

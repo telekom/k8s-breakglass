@@ -63,6 +63,7 @@
   --surface-elevated: var(--telekom-color-background-surface-subtle, #efeff0);
   --surface-card: var(--telekom-color-background-surface, #ffffff);
   --surface-card-subtle: color-mix(in srgb, var(--telekom-color-ui-subtle, #efeff0) 50%, transparent);
+  --surface-card-translucent: color-mix(in srgb, var(--surface-card) 80%, transparent);
   --surface-toolbar: var(--telekom-color-background-surface, #ffffff);
   --border-strong: var(--telekom-color-ui-border-standard);
   --shadow-card: var(--telekom-shadow-raised-standard, 0px 8px 32px 0px hsla(0, 0%, 0%, 0.1), 0px 4px 8px 0px hsla(0, 0%, 0%, 0.1));
@@ -116,6 +117,7 @@
   --surface-elevated: var(--telekom-color-background-surface-subtle, #242426);
   --surface-card: var(--telekom-color-background-surface, #1c1c1e);
   --surface-card-subtle: color-mix(in srgb, var(--telekom-color-ui-subtle, #1c1c1e) 70%, transparent);
+  --surface-card-translucent: color-mix(in srgb, var(--surface-card) 80%, transparent);
   --surface-toolbar: var(--telekom-color-background-surface, #1c1c1e);
   --border-strong: var(--telekom-color-ui-border-standard);
   --shadow-card: var(--telekom-shadow-raised-standard);
@@ -421,7 +423,7 @@ select:focus {
   flex-direction: column;
   gap: var(--stack-gap-xs);
   padding: var(--space-md);
-  background-color: color-mix(in srgb, var(--surface-card) 80%, transparent);
+  background-color: var(--surface-card-translucent);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-md);
 }
@@ -668,6 +670,32 @@ select:focus {
   border-color: var(--tone-chip-neutral-border);
   border-left-color: var(--telekom-color-ui-border-standard);
   color: var(--tone-chip-neutral-text);
+}
+
+/* ============================================
+ * MASONRY LAYOUT UTILITY
+ * Responsive multi-column layout for card grids
+ * ============================================ */
+.masonry-layout {
+  column-count: 3;
+  column-gap: var(--space-lg);
+}
+
+.masonry-layout > * {
+  break-inside: avoid;
+  margin-bottom: var(--space-lg);
+}
+
+@media (max-width: 1200px) {
+  .masonry-layout {
+    column-count: 2;
+  }
+}
+
+@media (max-width: 768px) {
+  .masonry-layout {
+    column-count: 1;
+  }
 }
 
 /* ============================================

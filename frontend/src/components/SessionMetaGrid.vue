@@ -14,7 +14,7 @@ const slots = useSlots();
 const hasCustomRenderer = computed(() => Boolean(slots.item));
 
 function formatValue(value?: string | number | null) {
-  if (value === null || value === undefined || value === "") {
+  if (value === null || value === undefined || (typeof value === "string" && value === "")) {
     return "—";
   }
   return value;
@@ -23,20 +23,22 @@ function formatValue(value?: string | number | null) {
 
 <template>
   <div class="meta-grid" role="table">
-    <div v-for="item in items" :key="item.id" class="meta-grid__row" role="row">
-      <div class="meta-grid__label" role="rowheader">
-        <div class="meta-label">
-          <span class="meta-label__text">{{ item.label }}</span>
-          <scale-tooltip v-if="item.hint" :label="item.hint" position="top">
-            <button type="button" class="meta-label__hint" :aria-label="`More info about ${item.label}`">
-              <scale-icon-action-info aria-hidden="true"></scale-icon-action-info>
-            </button>
-          </scale-tooltip>
+    <div role="rowgroup">
+      <div v-for="item in items" :key="item.id" class="meta-grid__row" role="row">
+        <div class="meta-grid__label" role="rowheader">
+          <div class="meta-label">
+            <span class="meta-label__text">{{ item.label }}</span>
+            <scale-tooltip v-if="item.hint" :label="item.hint" position="top">
+              <button type="button" class="meta-label__hint" :aria-label="`More info about ${item.label}`">
+                <scale-icon-action-info aria-hidden="true"></scale-icon-action-info>
+              </button>
+            </scale-tooltip>
+          </div>
         </div>
-      </div>
-      <div class="meta-grid__value" role="cell">
-        <slot v-if="hasCustomRenderer" name="item" :item="item"></slot>
-        <span v-else :class="{ mono: item.mono }">{{ formatValue(item.value) }}</span>
+        <div class="meta-grid__value" role="cell">
+          <slot v-if="hasCustomRenderer" name="item" :item="item"></slot>
+          <span v-else :class="{ mono: item.mono }">{{ formatValue(item.value) }}</span>
+        </div>
       </div>
     </div>
   </div>

@@ -2,7 +2,7 @@
  * Composable for session action management (approve, reject, withdraw, drop, cancel)
  */
 
-import { ref, reactive, computed } from "vue";
+import { ref, reactive } from "vue";
 import type { SessionCR } from "@/model/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
 import { debug, warn } from "@/services/logger";
@@ -49,6 +49,7 @@ const ACTION_CONFIGS: Record<SessionActionType, SessionActionConfig> = {
     loadingLabel: "Withdrawing...",
     successMessage: "Withdrew request {name}",
     errorMessage: "Failed to withdraw request",
+    confirmMessage: "Withdraw this request? This action cannot be undone.",
   },
   drop: {
     label: "Drop",
