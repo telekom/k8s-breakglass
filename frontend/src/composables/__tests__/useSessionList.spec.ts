@@ -2,7 +2,7 @@
  * Tests for useSessionList composable
  */
 
-import { vi, type Mock } from "vitest";
+import { vi } from "vitest";
 import { flushPromises } from "@vue/test-utils";
 import {
   useSessionList,
@@ -554,9 +554,7 @@ describe("useSessionList", () => {
 
       const sorted = sortSessions(sessions, "cluster");
       // Order should be preserved for equal cluster values
-      expect(sorted.map(s => s.metadata?.name)).toContain("first");
-      expect(sorted.map(s => s.metadata?.name)).toContain("second");
-      expect(sorted.map(s => s.metadata?.name)).toContain("third");
+      expect(sorted.map((s) => s.metadata?.name)).toEqual(["first", "second", "third"]);
     });
 
     it("handles sessions with missing expiry for urgent sort", () => {
@@ -578,8 +576,9 @@ describe("useSessionList", () => {
       ];
 
       const sorted = sortSessions(sessions, "recent");
-      // Both have same timestamp, but zebra should be first (newer alphabetically is a tie-breaker or order preserved)
+      // Both have same timestamp - order may be preserved or sorted by secondary criteria
       expect(sorted.length).toBe(2);
+      expect(sorted.map((s) => s.metadata?.name)).toEqual(["zebra", "alpha"]);
     });
   });
 

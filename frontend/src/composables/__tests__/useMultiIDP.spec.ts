@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
-import { defineComponent, h, nextTick } from "vue";
+import { defineComponent, h } from "vue";
 import { useMultiIDP } from "@/composables/useMultiIDP";
 import type { MultiIDPConfig, IDPInfo } from "@/model/multiIDP";
 
