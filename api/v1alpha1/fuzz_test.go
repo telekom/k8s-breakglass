@@ -147,9 +147,7 @@ func FuzzValidateStringListNoDuplicates(f *testing.F) {
 		// Split input into a list
 		var values []string
 		if input != "" {
-			for _, v := range splitByComma(input) {
-				values = append(values, v)
-			}
+			values = append(values, splitByComma(input)...)
 		}
 
 		// validateStringListNoDuplicates should never panic
