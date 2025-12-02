@@ -113,7 +113,10 @@ func indexCaseInsensitive(s, pattern string) int {
 	// we start at valid UTF-8 character boundaries.
 	// strings.EqualFold handles Unicode case folding correctly.
 	for i := range s {
-		if i+len(pattern) <= len(s) && strings.EqualFold(s[i:i+len(pattern)], pattern) {
+		if i+len(pattern) > len(s) {
+			break // No room for pattern to fit, exit early
+		}
+		if strings.EqualFold(s[i:i+len(pattern)], pattern) {
 			return i
 		}
 	}
