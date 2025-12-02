@@ -94,7 +94,13 @@ func (r *BreakglassSessionRequest) SanitizeReason() error {
 }
 
 // indexCaseInsensitive finds the byte index of pattern in s using case-insensitive matching.
-// Returns -1 if not found. This is safe for multi-byte characters.
+// Returns -1 if not found. This returns the index in the ORIGINAL string s, which is required
+// for safe slicing.
+//
+// IMPORTANT: We cannot use strings.Index(strings.ToLower(s), strings.ToLower(pattern)) because
+// ToLower can change byte lengths for certain Unicode characters (e.g., some multi-byte chars).
+// Using an index from the lowercased string to slice the original would cause panics or
+// incorrect results. This was discovered via fuzz testing.
 func indexCaseInsensitive(s, pattern string) int {
 	if len(pattern) == 0 {
 		return 0
@@ -103,9 +109,9 @@ func indexCaseInsensitive(s, pattern string) int {
 		return -1
 	}
 
-	// Iterate through each possible starting position in the original string
+	// Iterate through each possible starting position in the original string.
+	// strings.EqualFold handles Unicode case folding correctly.
 	for i := 0; i <= len(s)-len(pattern); i++ {
-		// Check if substring starting at i matches pattern case-insensitively
 		if strings.EqualFold(s[i:i+len(pattern)], pattern) {
 			return i
 		}

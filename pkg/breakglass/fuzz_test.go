@@ -1,6 +1,7 @@
 package breakglass
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -127,44 +128,8 @@ func FuzzValidateDuration(f *testing.F) {
 }
 
 // containsIgnoreCase checks if s contains substr (case-insensitive)
+// Note: This uses ToLower which is safe here since we only need to check existence,
+// not find the exact byte position in the original string.
 func containsIgnoreCase(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		len(substr) == 0 ||
-		findIgnoreCase(s, substr) >= 0)
-}
-
-func findIgnoreCase(s, substr string) int {
-	if len(substr) == 0 {
-		return 0
-	}
-	if len(substr) > len(s) {
-		return -1
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if equalFoldAt(s, i, substr) {
-			return i
-		}
-	}
-	return -1
-}
-
-func equalFoldAt(s string, start int, substr string) bool {
-	for j := 0; j < len(substr); j++ {
-		c1 := s[start+j]
-		c2 := substr[j]
-		if c1 == c2 {
-			continue
-		}
-		// Simple ASCII case folding
-		if c1 >= 'A' && c1 <= 'Z' {
-			c1 += 'a' - 'A'
-		}
-		if c2 >= 'A' && c2 <= 'Z' {
-			c2 += 'a' - 'A'
-		}
-		if c1 != c2 {
-			return false
-		}
-	}
-	return true
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }

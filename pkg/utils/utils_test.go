@@ -36,13 +36,6 @@ func TestCreateScheme(t *testing.T) {
 		t.Fatal("CreateScheme() returned nil scheme")
 	}
 
-	t.Run("returns valid scheme", func(t *testing.T) {
-		// scheme already validated above
-		if scheme == nil {
-			t.Fatal("CreateScheme() returned nil scheme")
-		}
-	})
-
 	t.Run("scheme contains corev1 types", func(t *testing.T) {
 		// Check that corev1.Secret is known to the scheme
 		gvk := corev1.SchemeGroupVersion.WithKind("Secret")
