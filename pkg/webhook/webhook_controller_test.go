@@ -35,7 +35,7 @@ import (
 )
 
 var testGroupData = breakglass.ClusterUserGroup{
-	Clustername: "telekom.tenat1",
+	Clustername: "telekom.tenant1",
 	Username:    "anon@deutsche.telekom.de",
 	GroupName:   "breakglass-create-all",
 }
@@ -367,8 +367,8 @@ func TestStatusReasons(t *testing.T) {
 	if respReview.Status.Allowed {
 		t.Fatalf("Expected status allowed to be false")
 	}
-	if outReson := respReview.Status.Reason; outReson != expReason {
-		t.Fatalf("Expected %s reason, but got %s instead", expReason, outReson)
+	if outReason := respReview.Status.Reason; outReason != expReason {
+		t.Fatalf("Expected %s reason, but got %s instead", expReason, outReason)
 	}
 }
 
@@ -433,7 +433,20 @@ func TestDenyPolicyGlobal(t *testing.T) {
 	}
 
 	// Additional wildcard policy (any resource delete in any ns) to ensure non-matching when verb differs
-	pol2 := &v1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-delete"}, Spec: v1alpha1.DenyPolicySpec{AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{testGroupData.Clustername}}, Rules: []v1alpha1.DenyRule{{Verbs: []string{"delete"}, APIGroups: []string{"*"}, Resources: []string{"*"}, Namespaces: []string{"*"}}}}}
+	pol2 := &v1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "deny-any-delete"},
+		Spec: v1alpha1.DenyPolicySpec{
+			AppliesTo: &v1alpha1.DenyPolicyScope{
+				Clusters: []string{testGroupData.Clustername},
+			},
+			Rules: []v1alpha1.DenyRule{{
+				Verbs:      []string{"delete"},
+				APIGroups:  []string{"*"},
+				Resources:  []string{"*"},
+				Namespaces: []string{"*"},
+			}},
+		},
+	}
 	if err := controller.escalManager.Create(context.Background(), pol2); err != nil {
 		t.Fatalf("failed creating wildcard deny policy: %v", err)
 	}

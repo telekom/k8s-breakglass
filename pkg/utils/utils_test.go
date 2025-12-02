@@ -27,21 +27,23 @@ func TestSetupLogger_ProductionMode(t *testing.T) {
 }
 
 func TestCreateScheme(t *testing.T) {
+	// Create scheme once and reuse across all subtests for better performance
+	scheme, err := CreateScheme()
+	if err != nil {
+		t.Fatalf("CreateScheme() error = %v", err)
+	}
+	if scheme == nil {
+		t.Fatal("CreateScheme() returned nil scheme")
+	}
+
 	t.Run("returns valid scheme", func(t *testing.T) {
-		scheme, err := CreateScheme()
-		if err != nil {
-			t.Fatalf("CreateScheme() error = %v", err)
-		}
+		// scheme already validated above
 		if scheme == nil {
 			t.Fatal("CreateScheme() returned nil scheme")
 		}
 	})
 
 	t.Run("scheme contains corev1 types", func(t *testing.T) {
-		scheme, err := CreateScheme()
-		if err != nil {
-			t.Fatalf("CreateScheme() error = %v", err)
-		}
 		// Check that corev1.Secret is known to the scheme
 		gvk := corev1.SchemeGroupVersion.WithKind("Secret")
 		if !scheme.Recognizes(gvk) {
@@ -50,10 +52,6 @@ func TestCreateScheme(t *testing.T) {
 	})
 
 	t.Run("scheme contains v1alpha1 types", func(t *testing.T) {
-		scheme, err := CreateScheme()
-		if err != nil {
-			t.Fatalf("CreateScheme() error = %v", err)
-		}
 		// Check that BreakglassSession is known to the scheme
 		gvk := v1alpha1.GroupVersion.WithKind("BreakglassSession")
 		if !scheme.Recognizes(gvk) {
@@ -62,10 +60,6 @@ func TestCreateScheme(t *testing.T) {
 	})
 
 	t.Run("scheme contains IdentityProvider type", func(t *testing.T) {
-		scheme, err := CreateScheme()
-		if err != nil {
-			t.Fatalf("CreateScheme() error = %v", err)
-		}
 		gvk := v1alpha1.GroupVersion.WithKind("IdentityProvider")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize IdentityProvider")
@@ -73,10 +67,6 @@ func TestCreateScheme(t *testing.T) {
 	})
 
 	t.Run("scheme contains ClusterConfig type", func(t *testing.T) {
-		scheme, err := CreateScheme()
-		if err != nil {
-			t.Fatalf("CreateScheme() error = %v", err)
-		}
 		gvk := v1alpha1.GroupVersion.WithKind("ClusterConfig")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize ClusterConfig")
@@ -84,10 +74,6 @@ func TestCreateScheme(t *testing.T) {
 	})
 
 	t.Run("scheme contains BreakglassEscalation type", func(t *testing.T) {
-		scheme, err := CreateScheme()
-		if err != nil {
-			t.Fatalf("CreateScheme() error = %v", err)
-		}
 		gvk := v1alpha1.GroupVersion.WithKind("BreakglassEscalation")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize BreakglassEscalation")
@@ -95,10 +81,6 @@ func TestCreateScheme(t *testing.T) {
 	})
 
 	t.Run("scheme contains DenyPolicy type", func(t *testing.T) {
-		scheme, err := CreateScheme()
-		if err != nil {
-			t.Fatalf("CreateScheme() error = %v", err)
-		}
 		gvk := v1alpha1.GroupVersion.WithKind("DenyPolicy")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize DenyPolicy")
@@ -106,10 +88,6 @@ func TestCreateScheme(t *testing.T) {
 	})
 
 	t.Run("scheme contains MailProvider type", func(t *testing.T) {
-		scheme, err := CreateScheme()
-		if err != nil {
-			t.Fatalf("CreateScheme() error = %v", err)
-		}
 		gvk := v1alpha1.GroupVersion.WithKind("MailProvider")
 		if !scheme.Recognizes(gvk) {
 			t.Errorf("scheme does not recognize MailProvider")

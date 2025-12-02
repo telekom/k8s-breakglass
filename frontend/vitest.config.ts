@@ -1,4 +1,3 @@
-import { fileURLToPath } from "url";
 import { defineConfig, mergeConfig } from "vitest/config";
 import viteConfig from "./vite.config";
 
@@ -25,9 +24,6 @@ export default mergeConfig(
         ],
       },
       setupFiles: ["./tests/setup.ts"],
-      alias: {
-        "@": fileURLToPath(new URL("./src", import.meta.url)),
-      },
     },
   })
 );

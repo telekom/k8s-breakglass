@@ -122,7 +122,7 @@ describe("useSessionActions", () => {
       const { reject } = useSessionActions({ reject: mockReject });
 
       // User cancels
-      ((window as any).confirm as jest.Mock).mockReturnValueOnce(false);
+      ((window as any).confirm as ReturnType<typeof vi.fn>).mockReturnValueOnce(false);
 
       const session = createSession();
       const result = await reject(session);

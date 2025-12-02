@@ -49,21 +49,6 @@ describe("useMultiIDP", () => {
     vi.clearAllMocks();
   });
 
-  function createTestComponent(
-    escalationName: string | (() => string),
-    options = {},
-  ) {
-    return defineComponent({
-      setup() {
-        const result = useMultiIDP(escalationName, options);
-        return { result };
-      },
-      render() {
-        return h("div");
-      },
-    });
-  }
-
   it("initializes with loading state", async () => {
     let capturedResult: ReturnType<typeof useMultiIDP> | null = null;
 

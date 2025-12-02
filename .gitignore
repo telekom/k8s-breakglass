@@ -56,3 +56,4 @@ apiserver.log
 main
 cover.out
 config/dev/certs
+pkg/breakglass/testdata/fuzz/*
