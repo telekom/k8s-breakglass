@@ -88,7 +88,7 @@ users:
 				Labels:    map[string]string{"e2e-test": "true"},
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secretName,
 					Namespace: namespace,
 				},
@@ -109,7 +109,7 @@ users:
 				Labels:    map[string]string{"e2e-test": "true"},
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      "nonexistent-secret",
 					Namespace: namespace,
 				},
@@ -260,7 +260,7 @@ func TestEscalationClusterConfigRefs(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "dev-cluster-1",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      "dummy-kubeconfig",
 					Namespace: namespace,
 				},
@@ -278,7 +278,7 @@ func TestEscalationClusterConfigRefs(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "dev-cluster-2",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      "dummy-kubeconfig",
 					Namespace: namespace,
 				},

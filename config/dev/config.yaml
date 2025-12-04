@@ -2,15 +2,15 @@ server:
   listenAddress: 0.0.0.0:8080
   # TLS disabled for dev; manager will serve HTTP on port 8081
 authorizationServer:
-  # Use the kustomize rendered Keycloak service name and dev namespace (kustomize adds namePrefix 'breakglass-dev-')
+  # Use the kustomize rendered Keycloak service name and system namespace (kustomize adds namePrefix 'breakglass-')
   # Prefer the HTTPS endpoint inside cluster
-  url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
+  url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443
   jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
   # Self-signed cert used for e2e/dev; skip verification (alternative would be to inline CA in config)
   insecureSkipVerify: true
 frontend:
   # Use the in-cluster Keycloak host; browser will access via /api/oidc/authority proxy
-  oidcAuthority: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e
+  oidcAuthority: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e
   oidcClientID: breakglass-ui
   baseURL: http://localhost:8080
 # NOTE: Mail configuration moved to MailProvider CRD - see config/dev/resources/ for dev mail provider
@@ -18,3 +18,5 @@ kubernetes:
   context: ""
   oidcPrefixes:
     - "keycloak:"
+  # Short interval for e2e testing - ClusterConfig validation runs every 10s
+  clusterConfigCheckInterval: "10s"

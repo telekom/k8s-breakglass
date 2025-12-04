@@ -84,7 +84,7 @@ func TestAuditLogging(t *testing.T) {
 		t.Log("Starting port-forward for Kafka on localhost:9094")
 		// Try to start port forward
 		// Note: This might fail if port is taken but not responding, or if we don't have permissions
-		_, stopPF := helpers.StartPortForward(t, ctx, "breakglass-dev-system", "breakglass-dev-kafka", 9094, 9094)
+		_, stopPF := helpers.StartPortForward(t, ctx, "breakglass-system", "breakglass-kafka", 9094, 9094)
 		defer stopPF()
 	}
 
@@ -117,8 +117,8 @@ func TestAuditLogging(t *testing.T) {
 	// 2. Build sinks (Kafka, webhook, log)
 	// 3. Reload the audit service
 	// Without this wait, audit events may be silently dropped because IsEnabled() returns false.
-	// The AuditConfig name is "breakglass-dev-e2e-audit-config" (prefixed by kind-setup-single.sh)
-	auditConfigName := "breakglass-dev-e2e-audit-config"
+	// The AuditConfig name is "breakglass-e2e-audit-config" (prefixed by kind-setup-single.sh)
+	auditConfigName := "breakglass-e2e-audit-config"
 	t.Logf("Waiting for AuditConfig %s to be Ready...", auditConfigName)
 	auditCfg := helpers.WaitForAuditConfigReady(t, ctx, cli, auditConfigName, 60*time.Second)
 	t.Logf("AuditConfig %s is Ready with sinks: %v", auditConfigName, auditCfg.Status.ActiveSinks)

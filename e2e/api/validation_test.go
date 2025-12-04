@@ -841,7 +841,7 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      "kubeconfig-secret-that-does-not-exist",
 					Namespace: namespace,
 					Key:       "kubeconfig",
@@ -882,7 +882,7 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig", // Key that doesn't exist
@@ -924,7 +924,7 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig",

@@ -12,7 +12,20 @@ The `ClusterConfig` custom resource enables the breakglass hub cluster to manage
 - Perform authorization checks (Subject Access Reviews)
 - Validate breakglass session permissions
 
+## Authentication Methods
+
+ClusterConfig supports two authentication methods for connecting to managed clusters:
+
+1. **Kubeconfig-based authentication** (traditional) - Uses a kubeconfig file stored in a Secret
+2. **OIDC-based authentication** - Uses OIDC tokens obtained via client credentials flow
+
+Only one authentication method can be configured per ClusterConfig. The method is determined by either:
+- The `authType` field (explicit)
+- The presence of `kubeconfigSecretRef` or `oidcAuth` fields (implicit)
+
 ## Resource Definition
+
+### Using Kubeconfig Authentication (Default)
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -20,11 +33,14 @@ kind: ClusterConfig
 metadata:
   name: <cluster-name>
 spec:
-  # Required: Reference to kubeconfig secret
+  # Optional: Explicit auth type (defaults to Kubeconfig if kubeconfigSecretRef is present)
+  authType: Kubeconfig
+  
+  # Required for kubeconfig auth: Reference to kubeconfig secret
   kubeconfigSecretRef:
     name: <secret-name>
     namespace: <secret-namespace>
-    key: value  # Optional, defaults to "value" (compatible with cluster-api)
+    key: value  # Optional, defaults to "value" for Cluster API compatibility
   
   # Optional: Cluster identification
   clusterID: <canonical-cluster-id>  # Defaults to metadata.name
@@ -38,9 +54,112 @@ spec:
   burst: 200    # Burst capacity
 ```
 
-## Required Fields
+### Using OIDC Authentication
 
-### kubeconfigSecretRef
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: <cluster-name>
+spec:
+  # Required: Set auth type to OIDC
+  authType: OIDC
+  
+  # Required for OIDC auth: OIDC configuration
+  oidcAuth:
+    # Required: OIDC issuer URL (must match cluster API server OIDC config)
+    issuerURL: https://keycloak.example.com/realms/kubernetes
+    
+    # Required: OIDC client ID registered for the breakglass controller
+    clientID: breakglass-controller
+    
+    # Required: Reference to secret containing client secret
+    clientSecretRef:
+      name: <secret-name>
+      namespace: <secret-namespace>
+      key: client-secret  # Optional, defaults to "client-secret"
+    
+    # Required: Target cluster's API server URL
+    server: https://my-cluster.example.com:6443
+    
+    # Optional: CA certificate for the cluster API server
+    caSecretRef:
+      name: <ca-secret-name>
+      namespace: <secret-namespace>
+      key: ca.crt  # Optional, defaults to "ca.crt"
+    
+    # Optional: Token audience (defaults to server URL)
+    audience: https://my-cluster.example.com:6443
+    
+    # Optional: Additional OIDC scopes to request
+    scopes:
+      - groups
+      - email
+    
+    # Optional: Enable token exchange flow (RFC 8693)
+    # Use this when you need to exchange a service token for a cluster-scoped token
+    tokenExchange:
+      enabled: true
+      subjectTokenSecretRef:
+        name: service-account-token
+        namespace: breakglass-system
+        key: token
+      resource: https://my-cluster.example.com:6443
+  
+  # Optional: Cluster identification (same as kubeconfig auth)
+  clusterID: <canonical-cluster-id>
+  
+  # Optional: Restrict which IdentityProviders can authenticate users for this cluster
+  identityProviderRefs:
+    - my-keycloak-idp
+  
+  # Optional: Client configuration
+  qps: 100
+  burst: 200
+```
+
+## Understanding OIDC in Breakglass
+
+Breakglass uses OIDC in **two distinct ways**:
+
+1. **User Authentication (IdentityProvider)**: Users authenticate to the Breakglass UI/API via OIDC. This is configured through `IdentityProvider` resources.
+
+2. **Cluster Authentication (ClusterConfig.oidcAuth)**: The breakglass controller authenticates to managed clusters via OIDC client credentials. This is configured in `ClusterConfig.spec.oidcAuth`.
+
+These are independent configurations that can use the same or different OIDC providers.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         User Authentication                          │
+│  User → Keycloak → Breakglass UI/API (IdentityProvider)              │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                       Cluster Authentication                         │
+│  Breakglass Controller → Keycloak → Target Cluster API (oidcAuth)    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Linking Clusters to Identity Providers
+
+Use `identityProviderRefs` to restrict which IdentityProviders can authenticate users for a specific cluster:
+
+```yaml
+spec:
+  # Only users authenticated via 'corp-keycloak' can access this cluster
+  identityProviderRefs:
+    - corp-keycloak
+```
+
+If `identityProviderRefs` is empty or omitted, all enabled IdentityProviders are accepted.
+
+## Authentication Method Details
+
+### Kubeconfig Authentication
+
+The traditional method using a kubeconfig file stored in a Secret.
+
+**kubeconfigSecretRef**
 
 References a Kubernetes Secret containing an admin-level kubeconfig for the target cluster.
 
@@ -48,7 +167,7 @@ References a Kubernetes Secret containing an admin-level kubeconfig for the targ
 kubeconfigSecretRef:
   name: tenant-cluster-admin      # Secret name
   namespace: default              # Secret namespace  
-  key: value                     # Secret key (optional, defaults to "value")
+  key: value                      # Secret key (optional, defaults to "value")
 ```
 
 **Requirements:**
@@ -57,6 +176,242 @@ kubeconfigSecretRef:
 - The kubeconfig MUST provide admin-level access to the target cluster
 - The kubeconfig should be valid and accessible from the hub cluster
 - `metadata.name` MUST be unique across **all namespaces**. The controller now enforces globally-unique names and will raise an error if two namespaces contain the same ClusterConfig name. Pick descriptive names that remain unique even when teams manage their own namespaces.
+
+### OIDC Authentication
+
+OIDC authentication allows the breakglass controller to obtain tokens from an OIDC provider (like Keycloak) instead of using static kubeconfig credentials. This is useful when:
+
+- You want to avoid storing long-lived credentials
+- The managed cluster's API server supports OIDC authentication
+- You're using a centralized identity provider
+
+**oidcAuth Configuration**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `issuerURL` | Yes | OIDC issuer URL (must match cluster API server config) |
+| `clientID` | Yes | OIDC client ID for the breakglass controller |
+| `clientSecretRef` | Yes | Reference to secret containing client secret |
+| `server` | Yes | URL of the target cluster's API server |
+| `caSecretRef` | No | CA certificate for the cluster API server |
+| `insecureSkipTLSVerify` | No | Skip TLS verification (NOT for production) |
+| `audience` | No | Token audience (defaults to server) |
+| `scopes` | No | Additional OIDC scopes to request |
+| `tokenExchange` | No | Token exchange configuration |
+
+**Prerequisites for OIDC:**
+
+1. The target cluster's API server must be configured to accept OIDC tokens:
+   ```yaml
+   # kube-apiserver flags
+   --oidc-issuer-url=https://keycloak.example.com/realms/kubernetes
+   --oidc-client-id=kubernetes
+   --oidc-username-claim=preferred_username
+   --oidc-groups-claim=groups
+   ```
+
+2. A client must be registered in your OIDC provider for the breakglass controller
+3. The client must have permissions to use the client credentials grant
+
+### Keycloak Setup for Cluster OIDC Authentication
+
+To use OIDC authentication with Keycloak, you need to configure a **service account client** that the breakglass controller uses to authenticate to managed clusters.
+
+**Step 1: Create a Keycloak Client**
+
+```
+1. Go to Keycloak Admin Console → Your Realm → Clients → Create
+2. Client ID: `breakglass-controller`
+3. Client Protocol: `openid-connect`
+4. Access Type: `confidential`
+5. Service Accounts Enabled: `ON`
+6. Direct Access Grants Enabled: `ON` (for client credentials flow)
+```
+
+**Step 2: Configure Client Credentials**
+
+```
+1. Go to Client → Credentials tab
+2. Copy the Client Secret
+3. Create a Kubernetes Secret:
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oidc-client-secret
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  client-secret: <your-client-secret>
+```
+
+**Step 3: Configure Token Mappers (Optional)**
+
+If you need specific claims in the token:
+
+```
+1. Go to Client → Mappers → Add Builtin
+2. Add: groups, preferred_username, email
+3. Or create custom mappers for your use case
+```
+
+**Step 4: Configure the ClusterConfig**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: my-cluster
+spec:
+  authType: OIDC
+  oidcAuth:
+    issuerURL: https://keycloak.example.com/realms/kubernetes
+    clientID: breakglass-controller
+    clientSecretRef:
+      name: oidc-client-secret
+      namespace: breakglass-system
+      key: client-secret
+    server: https://my-cluster-api.example.com:6443
+```
+
+### Reusing OIDC Settings from IdentityProvider
+
+If you have an `IdentityProvider` already configured for user authentication, you can reuse its OIDC settings for cluster authentication using `oidcFromIdentityProvider`. This avoids duplicating configuration and ensures consistency.
+
+**oidcFromIdentityProvider Configuration**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Name of the IdentityProvider resource to inherit OIDC settings from |
+| `server` | Yes | URL of the target cluster's API server (cluster-specific) |
+| `clientID` | No | Override the client ID (defaults to IdentityProvider's clientID) |
+| `clientSecretRef` | No | Override the client secret (falls back to Keycloak service account) |
+| `caSecretRef` | No | CA certificate for the cluster API server |
+| `insecureSkipTLSVerify` | No | Skip TLS verification (NOT for production) |
+
+**Example: Inheriting from IdentityProvider**
+
+Given an IdentityProvider:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: corp-keycloak
+spec:
+  oidc:
+    authority: https://keycloak.example.com/realms/kubernetes
+    clientID: breakglass-ui
+  keycloak:
+    baseURL: https://keycloak.example.com
+    realm: kubernetes
+    clientID: breakglass-service
+    clientSecretRef:
+      name: keycloak-credentials
+      namespace: breakglass-system
+```
+
+You can reference it in ClusterConfig:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: my-cluster
+spec:
+  authType: OIDC
+  oidcFromIdentityProvider:
+    name: corp-keycloak
+    server: https://my-cluster-api.example.com:6443
+    # Optional: Override client credentials for cluster auth
+    # clientID: cluster-auth-client
+    # clientSecretRef:
+    #   name: cluster-oidc-secret
+    #   namespace: breakglass-system
+```
+
+**How It Works:**
+
+1. The controller looks up the referenced IdentityProvider
+2. Inherits `issuerURL` from the IdentityProvider's `oidc.authority`
+3. Uses `clientID` from:
+   - `oidcFromIdentityProvider.clientID` (if specified)
+   - Or falls back to IdentityProvider's `keycloak.clientID` or `oidc.clientID`
+4. Uses client secret from:
+   - `oidcFromIdentityProvider.clientSecretRef` (if specified)
+   - Or falls back to IdentityProvider's `keycloak.clientSecretRef`
+5. Combines with cluster-specific settings (`server`, `caSecretRef`)
+
+**When to Use:**
+
+- Use `oidcFromIdentityProvider` when:
+  - You already have an IdentityProvider configured with Keycloak service account
+  - You want to avoid duplicating OIDC issuer configuration
+  - Multiple ClusterConfigs share the same identity provider
+
+- Use direct `oidcAuth` when:
+  - You need different OIDC settings than the IdentityProvider
+  - You don't have an IdentityProvider configured
+  - The cluster uses a different OIDC issuer than user authentication
+
+**Note:** `oidcAuth` and `oidcFromIdentityProvider` are mutually exclusive. Configure one or the other, not both.
+
+### Token Refresh and TOFU
+
+**Automatic Token Refresh:**
+
+The OIDC token provider automatically:
+- Caches tokens until 30 seconds before expiry
+- Uses refresh tokens when available
+- Falls back to client credentials flow if refresh fails
+
+**TOFU (Trust On First Use):**
+
+If `caSecretRef` is not specified and `insecureSkipTLSVerify` is false, the controller performs TOFU:
+1. Connects to the API server with TLS verification disabled (first time only)
+2. Captures the server's CA certificate
+3. Stores it in a Secret for future connections
+4. Logs the certificate fingerprint for security auditing
+
+**Token Exchange (RFC 8693):**
+
+Token exchange enables the controller to exchange a subject token for a cluster-scoped token. This is useful for:
+- Cross-realm authentication where tokens need to be exchanged for a different audience
+- Delegation scenarios where the controller acts on behalf of a service account
+- Advanced OIDC configurations that require token transformation
+
+```yaml
+tokenExchange:
+  enabled: true
+  # Required: Reference to secret containing the subject token to exchange
+  subjectTokenSecretRef:
+    name: service-account-token
+    namespace: breakglass-system
+    key: token
+  # Optional: Token type identifiers (defaults shown)
+  subjectTokenType: "urn:ietf:params:oauth:token-type:access_token"
+  requestedTokenType: "urn:ietf:params:oauth:token-type:access_token"
+  # Optional: Target resource for the exchanged token
+  resource: "https://my-cluster.example.com:6443"
+  # Optional: Actor token for delegation scenarios
+  actorTokenSecretRef:
+    name: controller-token
+    namespace: breakglass-system
+    key: token
+  actorTokenType: "urn:ietf:params:oauth:token-type:access_token"
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `enabled` | Yes | Set to `true` to enable token exchange |
+| `subjectTokenSecretRef` | Yes | Reference to secret containing the subject token |
+| `subjectTokenType` | No | Token type URI (default: access_token) |
+| `requestedTokenType` | No | Requested token type URI (default: access_token) |
+| `resource` | No | Target resource URI for the exchanged token |
+| `actorTokenSecretRef` | No | Optional actor token for delegation |
+| `actorTokenType` | No | Actor token type URI (default: access_token) |
 
 ## Optional Fields
 
@@ -76,6 +431,29 @@ location: "eu-west-1"               # Region/location
 qps: 100    # Maximum queries per second to target cluster
 burst: 200  # Maximum burst capacity for API calls
 ```
+
+### Identity Provider Restrictions
+
+Use `identityProviderRefs` to restrict which IdentityProviders can authenticate users for this cluster:
+
+```yaml
+# Only users authenticated via specified IDPs can access this cluster
+identityProviderRefs:
+  - corp-keycloak
+  - azure-ad
+```
+
+| Behavior | Configuration |
+|----------|--------------|
+| Accept all IDPs | Omit `identityProviderRefs` or set to `[]` |
+| Restrict to specific IDPs | List IDP names in `identityProviderRefs` |
+
+This is useful for:
+- Multi-tenant environments where different clusters trust different IDPs
+- Restricting production clusters to corporate-only authentication
+- Compliance requirements mandating specific identity providers
+
+**Note:** The IDP names must match the `metadata.name` of existing `IdentityProvider` resources.
 
 ### Loopback kubeconfig rewrite
 
@@ -142,13 +520,33 @@ kubectl get clusterconfig <name> -o jsonpath='{.status.conditions[?(@.type=="Rea
 
 ### Condition Reasons
 
+**Kubeconfig Authentication Reasons:**
+
 | Reason | Status | Description |
 |--------|--------|-------------|
-| `ConfigurationValid` | True | All configuration is valid and verified |
-| `KubeconfigValidationFailed` | False | Referenced kubeconfig secret is invalid or missing |
-| `ConnectionFailed` | False | Cannot connect to target cluster |
-| `AuthorizationCheckFailed` | False | Cluster connection lacks required permissions |
-| `ReconciliationInProgress` | Unknown | Configuration is being validated |
+| `KubeconfigValidated` | True | Kubeconfig is valid and cluster connection verified |
+| `SecretMissing` | False | Referenced kubeconfig secret doesn't exist |
+| `SecretKeyMissing` | False | Secret exists but is missing the required key |
+| `KubeconfigParseFailed` | False | Kubeconfig data is invalid or malformed |
+
+**OIDC Authentication Reasons:**
+
+| Reason | Status | Description |
+|--------|--------|-------------|
+| `OIDCValidated` | True | OIDC configuration is valid and token acquired |
+| `OIDCConfigMissing` | False | authType=OIDC but no oidcAuth configuration |
+| `OIDCDiscoveryFailed` | False | Cannot reach OIDC discovery endpoint |
+| `OIDCTokenFetchFailed` | False | Failed to obtain OIDC token (client credentials) |
+| `OIDCRefreshFailed` | False | Failed to refresh OIDC token |
+| `OIDCCASecretMissing` | False | Referenced cluster CA secret doesn't exist |
+
+**Common Reasons:**
+
+| Reason | Status | Description |
+|--------|--------|-------------|
+| `ClusterUnreachable` | False | Cannot connect to target cluster API server |
+| `TOFUFailed` | False | TOFU (Trust On First Use) certificate fetch failed |
+| `ValidationFailed` | False | Generic validation failure |
 
 ### Example Status Output
 

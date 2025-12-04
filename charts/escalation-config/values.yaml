@@ -2,9 +2,94 @@ cluster:
   clusterID: tenant-b-virtual-test
   tenant: tenant-b
   environment: development
+  # Optional cluster identification fields
+  # site: eu-west
+  # location: eu-west-1
+  
+  # ==========================================
+  # Authentication Configuration
+  # ==========================================
+  # Choose ONE of the following auth types:
+  # - authType: Kubeconfig (default) - uses kubeconfigSecretRef
+  # - authType: OIDC - uses either oidcAuth or oidcFromIdentityProvider
+  
+  # Default: Kubeconfig authentication
+  # authType: Kubeconfig
   kubeconfigSecretRef:
     name: tenant-b-admin
     namespace: default
+    # key: kubeconfig  # Optional, defaults to "kubeconfig"
+  
+  # ==========================================
+  # OIDC Authentication (when authType=OIDC)
+  # ==========================================
+  # Option 1: Direct OIDC configuration
+  # authType: OIDC
+  # oidcAuth:
+  #   # Required: OIDC issuer URL
+  #   issuerURL: https://keycloak.example.com/realms/kubernetes
+  #   # Required: OIDC client ID
+  #   clientID: breakglass-controller
+  #   # Required: Target cluster API server URL
+  #   server: https://api.cluster.example.com:6443
+  #   # Required: Client secret reference
+  #   clientSecretRef:
+  #     name: oidc-client-secret
+  #     namespace: breakglass-system
+  #     key: client-secret
+  #   # Optional: CA certificate for cluster API server
+  #   caSecretRef:
+  #     name: cluster-ca
+  #     namespace: breakglass-system
+  #     key: ca.crt
+  #   # Optional: Token audience (defaults to server URL)
+  #   audience: https://api.cluster.example.com:6443
+  #   # Optional: Additional OIDC scopes
+  #   scopes:
+  #     - groups
+  #     - email
+  #   # Optional: Skip TLS verification (not recommended for production)
+  #   insecureSkipTLSVerify: false
+  #   # Optional: Token exchange configuration (RFC 8693)
+  #   tokenExchange:
+  #     enabled: false
+  #     subjectTokenSecretRef:
+  #       name: subject-token-secret
+  #       namespace: breakglass-system
+  #       key: token
+  #     resource: https://api.cluster.example.com:6443
+  
+  # Option 2: OIDC from IdentityProvider reference
+  # authType: OIDC
+  # oidcFromIdentityProvider:
+  #   # Required: Name of the IdentityProvider resource
+  #   name: my-keycloak-idp
+  #   # Required: Target cluster API server URL
+  #   server: https://api.cluster.example.com:6443
+  #   # Optional: Override client ID from IdentityProvider
+  #   clientID: cluster-specific-client
+  #   # Optional: Client secret for this cluster
+  #   clientSecretRef:
+  #     name: cluster-client-secret
+  #     namespace: breakglass-system
+  #   # Optional: CA certificate for cluster API server
+  #   caSecretRef:
+  #     name: cluster-ca
+  #     namespace: breakglass-system
+  #   # Optional: Skip TLS verification
+  #   insecureSkipTLSVerify: false
+  
+  # ==========================================
+  # Additional Options
+  # ==========================================
+  # Restrict which IdentityProviders can authenticate for this cluster
+  # identityProviderRefs:
+  #   - my-keycloak-idp
+  
+  # Client rate limiting
+  # qps: 100
+  # burst: 200
+  
   blockSelfApproval: false
   allowedApproverDomains: []
 

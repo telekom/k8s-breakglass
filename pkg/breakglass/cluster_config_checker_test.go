@@ -32,7 +32,7 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 	// Setup: ClusterConfig referencing a secret that doesn't exist
 	cc := &telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "default"},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "missing", Namespace: "default"}},
+		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "missing", Namespace: "default"}},
 	}
 	cl := newTestFakeClient(cc)
 	fakeRecorder := record.NewFakeRecorder(10)
@@ -52,7 +52,7 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 func TestClusterConfigChecker_MissingKey(t *testing.T) {
 	// secret exists but missing key 'value'
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "default"}, Data: map[string][]byte{"other": []byte("x")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s1", Namespace: "default"}}}
+	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s1", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
 	fakeRecorder := record.NewFakeRecorder(10)
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
@@ -69,7 +69,7 @@ func TestClusterConfigChecker_MissingKey(t *testing.T) {
 func TestClusterConfigChecker_ParseFail(t *testing.T) {
 	// secret contains key but invalid kubeconfig
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s2", Namespace: "default"}, Data: map[string][]byte{"value": []byte("not-a-kubeconfig")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-c", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s2", Namespace: "default"}}}
+	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-c", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s2", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
 	fakeRecorder := record.NewFakeRecorder(10)
 	// stub RestConfigFromKubeConfig to return error
@@ -90,7 +90,7 @@ func TestClusterConfigChecker_ParseFail(t *testing.T) {
 func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	// secret contains key and parse OK, but cluster unreachable
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s3", Namespace: "default"}, Data: map[string][]byte{"value": []byte("fake-kubeconfig")}}
-	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-d", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s3", Namespace: "default"}}}
+	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-d", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s3", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
 	fakeRecorder := record.NewFakeRecorder(10)
 	// stub RestConfigFromKubeConfig to return non-nil config
@@ -118,7 +118,7 @@ func TestClusterConfigChecker_SuccessfulValidation(t *testing.T) {
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "valid-secret", Namespace: "default"}, Data: map[string][]byte{"value": []byte("valid-kubeconfig")}}
 	cc := &telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-success", Namespace: "default", Generation: 1},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "valid-secret", Namespace: "default"}},
+		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "valid-secret", Namespace: "default"}},
 	}
 	cl := newTestFakeClient(cc, sec)
 	fakeRecorder := record.NewFakeRecorder(10)
@@ -150,7 +150,7 @@ func TestClusterConfigChecker_StatusUpdatePersisted(t *testing.T) {
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "test-secret", Namespace: "default"}, Data: map[string][]byte{"value": []byte("kubeconfig")}}
 	cc := &telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-persist-test", Namespace: "default", Generation: 5},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "test-secret", Namespace: "default"}},
+		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "test-secret", Namespace: "default"}},
 		// Start with an old condition
 		Status: telekomv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
@@ -198,7 +198,7 @@ func TestClusterConfigChecker_TransitionFromFailToSuccess(t *testing.T) {
 	// Start with a ClusterConfig in a failed state (missing secret)
 	cc := &telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-transition", Namespace: "default", Generation: 2},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "transition-secret", Namespace: "default"}},
+		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "transition-secret", Namespace: "default"}},
 		Status: telekomv1alpha1.ClusterConfigStatus{
 			Conditions: []metav1.Condition{
 				{
@@ -277,7 +277,7 @@ func TestClusterConfigChecker_NoKubeconfigSecretRef(t *testing.T) {
 func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
 	cc := &telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-leader", Namespace: "default"},
-		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "sec", Namespace: "default"}},
+		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "sec", Namespace: "default"}},
 	}
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "sec", Namespace: "default"}, Data: map[string][]byte{"value": []byte("kubeconfig")}}
 	cl := newTestFakeClient(cc, sec)
@@ -322,47 +322,202 @@ func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
 	<-ctx.Done()
 }
 
-// TestClusterConfigChecker_DescribeFailure tests the DescribeFailure helper function
-func TestClusterConfigChecker_DescribeFailure(t *testing.T) {
+// OIDC-specific tests
+
+func TestClusterConfigChecker_OIDCAuthType_MissingOIDCConfig(t *testing.T) {
+	// ClusterConfig with authType=OIDC but no oidcAuth configuration
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			// OIDCAuth not set
+		},
+	}
+	cl := newTestFakeClient(cc)
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "oidcAuth")
+}
+
+func TestClusterConfigChecker_OIDCAuthType_MissingClientSecret(t *testing.T) {
+	// ClusterConfig with OIDC auth but missing client secret
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster-2", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				IssuerURL: "https://idp.example.com",
+				ClientID:  "test-client",
+				Server:    "https://api.example.com:6443",
+				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+					Name:      "missing-secret",
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+			},
+		},
+	}
+	cl := newTestFakeClient(cc)
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "secret")
+}
+
+func TestClusterConfigChecker_OIDCAuthType_MissingCASecret(t *testing.T) {
+	// OIDC config with caSecretRef pointing to missing secret
+	clientSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-client-secret", Namespace: "default"},
+		Data:       map[string][]byte{"client-secret": []byte("test-secret")},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster-3", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				IssuerURL: "https://idp.example.com",
+				ClientID:  "test-client",
+				Server:    "https://api.example.com:6443",
+				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+					Name:      "oidc-client-secret",
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+				CASecretRef: &telekomv1alpha1.SecretKeyReference{
+					Name:      "missing-ca-secret",
+					Namespace: "default",
+					Key:       "ca.crt",
+				},
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, clientSecret)
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "CA secret")
+}
+
+func TestClusterConfigChecker_OIDCAuthType_MissingRequiredFields(t *testing.T) {
+	// OIDC config missing required fields (issuerURL, clientID, server)
+	clientSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-client-secret", Namespace: "default"},
+		Data:       map[string][]byte{"client-secret": []byte("test-secret")},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-cluster-4", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &telekomv1alpha1.OIDCAuthConfig{
+				// Missing IssuerURL
+				ClientID: "test-client",
+				Server:   "https://api.example.com:6443",
+				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+					Name:      "oidc-client-secret",
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, clientSecret)
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "Required value")
+}
+
+// TestDescribeFailure tests the DescribeFailure helper function (Merged Generic + OIDC)
+func TestDescribeFailure(t *testing.T) {
 	tests := []struct {
-		failureType      string
-		message          string
-		expectedCategory string
+		name        string
+		failureType string
+		message     string
+		expectedCat string
 	}{
-		{"connection", "dial tcp timeout", "connection_failed"},
-		{"parse", "invalid yaml", "kubeconfig_parse_error"},
-		{"secret_missing", "", "secret_not_found"},
-		{"secret_key_missing", "", "secret_key_missing"},
-		{"not_configured", "", "not_configured"},
-		{"unknown", "something else", "validation_failed"},
+		// Generic Cases
+		{"connection", "connection", "dial tcp timeout", "connection_failed"},
+		{"parse", "parse", "invalid yaml", "kubeconfig_parse_error"},
+		{"secret_missing", "secret_missing", "", "secret_not_found"},
+		{"secret_key_missing", "secret_key_missing", "", "secret_key_missing"},
+		{"not_configured", "not_configured", "", "not_configured"},
+		{"unknown", "unknown", "something else", "validation_failed"},
+		// OIDC Cases
+		{"oidc_discovery", "oidc_discovery", "connection refused", "oidc_discovery_failed"},
+		{"oidc_token", "oidc_token", "invalid client", "oidc_token_failed"},
+		{"oidc_refresh", "oidc_refresh", "token revoked", "oidc_refresh_failed"},
+		{"oidc_config", "oidc_config", "", "oidc_config_missing"},
+		{"oidc_ca_missing", "oidc_ca_missing", "", "oidc_ca_secret_missing"},
+		{"tofu", "tofu", "TLS handshake failed", "tofu_failed"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.failureType, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			category, advice := DescribeFailure(tt.failureType, tt.message)
-			require.Equal(t, tt.expectedCategory, category)
+			require.Equal(t, tt.expectedCat, category)
 			require.NotEmpty(t, advice)
 		})
 	}
 }
 
-// TestClusterConfigChecker_DetermineFailureType tests the determineClusterConfigFailureType function
-func TestClusterConfigChecker_DetermineFailureType(t *testing.T) {
+// TestDetermineClusterConfigFailureType tests the determineClusterConfigFailureType function
+func TestDetermineClusterConfigFailureType(t *testing.T) {
 	tests := []struct {
+		name     string
 		message  string
 		expected string
 	}{
-		{"secret missing or inaccessible", "secret_missing"},
-		{"Resource not found in namespace", "secret_missing"},
-		{"Kubeconfig is missing key: value", "secret_key_missing"},
-		{"kubeconfig parse failed: invalid yaml", "parse"},
-		{"cluster unreachable: dial tcp", "connection"},
-		{"failed to dial remote server", "connection"},
-		{"something else went wrong", "validation"},
+		// OIDC cases
+		{"oidc_discovery", "OIDC discovery failed: connection refused", "oidc_discovery"},
+		{"oidc_token", "failed to get OIDC token: invalid client", "oidc_token"},
+		{"oidc_refresh", "refresh token expired", "oidc_refresh"},
+		{"oidc_config", "OIDC config missing", "oidc_config"},
+		{"tofu_failed", "TOFU failed to fetch certificate", "tofu"},
+		{"ca_secret_missing", "cluster CA secret missing", "oidc_ca_missing"},
+
+		// Kubeconfig cases
+		{"secret_missing", "secret missing or not found", "secret_missing"},
+		{"secret_key_missing", "missing key 'value'", "secret_key_missing"},
+		{"parse_failed", "kubeconfig parse failed", "parse"},
+		{"connection", "cluster unreachable: dial timeout", "connection"},
+		{"validation", "other validation error", "validation"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.message, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			result := determineClusterConfigFailureType(tt.message)
 			require.Equal(t, tt.expected, result)
 		})

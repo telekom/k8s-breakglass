@@ -347,11 +347,8 @@ func ValidateClusterConfig(cc *ClusterConfig) *ValidationResult {
 
 	specPath := field.NewPath("spec")
 
-	// Validate required kubeconfig reference
-	secretRefPath := specPath.Child("kubeconfigSecretRef")
-	if cc.Spec.KubeconfigSecretRef.Name == "" || cc.Spec.KubeconfigSecretRef.Namespace == "" {
-		result.Errors = append(result.Errors, field.Required(secretRefPath, "kubeconfigSecretRef name and namespace are required"))
-	}
+	// Validate auth config (includes kubeconfigSecretRef or OIDC)
+	result.Errors = append(result.Errors, validateClusterAuthConfig(cc.Spec, specPath)...)
 
 	// Validate QPS/Burst if specified
 	if cc.Spec.QPS != nil && *cc.Spec.QPS < 1 {

@@ -167,7 +167,7 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 				ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "default"},
 				Spec: v1alpha1.ClusterConfigSpec{
 					Tenant:              fmt.Sprintf("tenant-%s", clusterName),
-					KubeconfigSecretRef: v1alpha1.SecretKeyReference{Name: secretName, Namespace: "default"},
+					KubeconfigSecretRef: &v1alpha1.SecretKeyReference{Name: secretName, Namespace: "default"},
 				},
 			},
 		)

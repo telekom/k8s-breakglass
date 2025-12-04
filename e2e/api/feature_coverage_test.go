@@ -565,7 +565,7 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 				Labels:    map[string]string{"e2e-test": "true", "feature": "qps-burst"},
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      "e2e-qps-burst-kubeconfig",
 					Namespace: namespace,
 				},
@@ -614,7 +614,7 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 				Labels:    map[string]string{"e2e-test": "true", "feature": "cluster-tags"},
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      "e2e-tags-kubeconfig",
 					Namespace: namespace,
 				},

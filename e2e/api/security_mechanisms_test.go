@@ -392,7 +392,7 @@ func TestSecurityUnreachableClusterDenied(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "e2e-unreachable-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					// Reference a non-existent secret to simulate unreachable cluster
 					Name:      "nonexistent-kubeconfig-secret",
 					Namespace: namespace,
@@ -1606,7 +1606,7 @@ func TestSecurityBlockSelfApprovalAtClusterLevel(t *testing.T) {
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID:         "e2e-sec-block-self-approve-cluster",
 				BlockSelfApproval: true, // Enforce at cluster level
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      "nonexistent-kubeconfig", // Will fail connectivity but tests config
 					Namespace: namespace,
 					Key:       "value",

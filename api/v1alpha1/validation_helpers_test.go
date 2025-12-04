@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1477,6 +1478,115 @@ func TestIsValidSpecialCharForID_All(t *testing.T) {
 	}
 }
 
+// TestValidateClusterAuthConfig_KubeconfigOnly tests that kubeconfig auth is valid
+func TestValidateClusterAuthConfig_KubeconfigOnly(t *testing.T) {
+	spec := ClusterConfigSpec{
+		KubeconfigSecretRef: &SecretKeyReference{
+			Name:      "my-secret",
+			Namespace: "default",
+		},
+	}
+	errs := validateClusterAuthConfig(spec, field.NewPath("spec"))
+	assert.Empty(t, errs, "kubeconfig-only config should be valid")
+}
+
+// TestValidateClusterAuthConfig_OIDCOnly tests that OIDC auth is valid
+func TestValidateClusterAuthConfig_OIDCOnly(t *testing.T) {
+	spec := ClusterConfigSpec{
+		AuthType: ClusterAuthTypeOIDC,
+		OIDCAuth: &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/test",
+			ClientID:  "breakglass",
+			Server:    "https://api.cluster.example.com:6443",
+			ClientSecretRef: &SecretKeyReference{
+				Name:      "oidc-secret",
+				Namespace: "default",
+			},
+		},
+	}
+	errs := validateClusterAuthConfig(spec, field.NewPath("spec"))
+	assert.Empty(t, errs, "OIDC-only config should be valid")
+}
+
+// TestValidateClusterAuthConfig_NoAuth tests that missing auth fails validation
+func TestValidateClusterAuthConfig_NoAuth(t *testing.T) {
+	spec := ClusterConfigSpec{}
+	errs := validateClusterAuthConfig(spec, field.NewPath("spec"))
+	assert.NotEmpty(t, errs, "no auth config should fail validation")
+	assert.Contains(t, errs[0].Error(), "either kubeconfigSecretRef, oidcAuth, or oidcFromIdentityProvider must be specified")
+}
+
+// TestValidateClusterAuthConfig_BothAuth tests that both auth methods fails validation
+func TestValidateClusterAuthConfig_BothAuth(t *testing.T) {
+	spec := ClusterConfigSpec{
+		KubeconfigSecretRef: &SecretKeyReference{
+			Name:      "my-secret",
+			Namespace: "default",
+		},
+		OIDCAuth: &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/test",
+			ClientID:  "breakglass",
+			Server:    "https://api.cluster.example.com:6443",
+		},
+	}
+	errs := validateClusterAuthConfig(spec, field.NewPath("spec"))
+	assert.NotEmpty(t, errs, "both auth methods should fail validation")
+	assert.Contains(t, errs[0].Error(), "mutually exclusive")
+}
+
+// TestValidateClusterAuthConfig_WrongAuthType tests mismatched authType field
+func TestValidateClusterAuthConfig_WrongAuthType(t *testing.T) {
+	spec := ClusterConfigSpec{
+		AuthType: ClusterAuthTypeOIDC, // Says OIDC
+		KubeconfigSecretRef: &SecretKeyReference{ // But provides kubeconfig
+			Name:      "my-secret",
+			Namespace: "default",
+		},
+	}
+	errs := validateClusterAuthConfig(spec, field.NewPath("spec"))
+	assert.NotEmpty(t, errs, "mismatched authType should fail validation")
+}
+
+// TestValidateOIDCAuthConfig_MissingRequiredFields tests OIDC config with missing fields
+func TestValidateOIDCAuthConfig_MissingRequiredFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		oidc   *OIDCAuthConfig
+		expect string
+	}{
+		{
+			name:   "missing issuerURL",
+			oidc:   &OIDCAuthConfig{ClientID: "test", Server: "https://api.example.com"},
+			expect: "issuerURL",
+		},
+		{
+			name:   "missing clientID",
+			oidc:   &OIDCAuthConfig{IssuerURL: "https://idp.example.com", Server: "https://api.example.com"},
+			expect: "clientID",
+		},
+		{
+			name:   "missing server",
+			oidc:   &OIDCAuthConfig{IssuerURL: "https://idp.example.com", ClientID: "test"},
+			expect: "server",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateOIDCAuthConfig(tt.oidc, field.NewPath("spec", "oidcAuth"))
+			assert.NotEmpty(t, errs, "should have validation errors")
+			found := false
+			for _, err := range errs {
+				if assert.NotNil(t, err.Field) && containsIgnoreCase(err.Error(), tt.expect) {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "expected error about %s, got: %v", tt.expect, errs)
+		})
+	}
+}
+
 // Test containsDot
 func TestContainsDot(t *testing.T) {
 	assert.True(t, containsDot("example.com"))
@@ -1494,4 +1604,146 @@ func TestIsValidDomainChar(t *testing.T) {
 	assert.False(t, isValidDomainChar(' '))
 	assert.False(t, isValidDomainChar('_'))
 	assert.False(t, isValidDomainChar('@'))
+}
+
+// TestValidateOIDCAuthConfig_InvalidURLs tests OIDC config with non-HTTPS URLs
+func TestValidateOIDCAuthConfig_InvalidURLs(t *testing.T) {
+	oidc := &OIDCAuthConfig{
+		IssuerURL: "http://insecure.example.com", // Should be https
+		ClientID:  "test",
+		Server:    "http://insecure-api.example.com", // Should be https
+	}
+	errs := validateOIDCAuthConfig(oidc, field.NewPath("spec", "oidcAuth"))
+	assert.NotEmpty(t, errs, "non-HTTPS URLs should fail validation")
+}
+
+// TestValidateOIDCAuthConfig_ValidComplete tests a complete valid OIDC config
+func TestValidateOIDCAuthConfig_ValidComplete(t *testing.T) {
+	oidc := &OIDCAuthConfig{
+		IssuerURL: "https://keycloak.example.com/realms/kubernetes",
+		ClientID:  "breakglass-controller",
+		Server:    "https://api.cluster.example.com:6443",
+		ClientSecretRef: &SecretKeyReference{
+			Name:      "oidc-secret",
+			Namespace: "breakglass-system",
+		},
+		CASecretRef: &SecretKeyReference{
+			Name:      "cluster-ca",
+			Namespace: "breakglass-system",
+		},
+		Audience: "https://api.cluster.example.com:6443",
+		Scopes:   []string{"openid", "groups"},
+		TokenExchange: &TokenExchangeConfig{
+			Enabled: true,
+			SubjectTokenSecretRef: &SecretKeyReference{
+				Name:      "subject-token",
+				Namespace: "breakglass-system",
+			},
+		},
+	}
+	errs := validateOIDCAuthConfig(oidc, field.NewPath("spec", "oidcAuth"))
+	assert.Empty(t, errs, "complete valid OIDC config should pass validation")
+}
+
+// TestValidateOIDCAuthConfig_TokenExchangeMissingSubjectToken tests that token exchange requires subject token
+func TestValidateOIDCAuthConfig_TokenExchangeMissingSubjectToken(t *testing.T) {
+	oidc := &OIDCAuthConfig{
+		IssuerURL: "https://keycloak.example.com/realms/kubernetes",
+		ClientID:  "breakglass-controller",
+		Server:    "https://api.cluster.example.com:6443",
+		ClientSecretRef: &SecretKeyReference{
+			Name:      "oidc-secret",
+			Namespace: "breakglass-system",
+		},
+		TokenExchange: &TokenExchangeConfig{
+			Enabled: true,
+			// Missing SubjectTokenSecretRef
+		},
+	}
+	errs := validateOIDCAuthConfig(oidc, field.NewPath("spec", "oidcAuth"))
+	assert.NotEmpty(t, errs, "token exchange without subjectTokenSecretRef should fail")
+	errStr := errs.ToAggregate().Error()
+	assert.Contains(t, errStr, "subjectTokenSecretRef")
+}
+
+// TestValidateClusterAuthConfig_OIDCFromIdentityProviderOnly tests that oidcFromIdentityProvider alone passes validation
+func TestValidateClusterAuthConfig_OIDCFromIdentityProviderOnly(t *testing.T) {
+	spec := ClusterConfigSpec{
+		AuthType: ClusterAuthTypeOIDC,
+		OIDCFromIdentityProvider: &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+		},
+	}
+	errs := validateClusterAuthConfig(spec, field.NewPath("spec"))
+	assert.Empty(t, errs, "oidcFromIdentityProvider alone should pass validation")
+}
+
+// TestValidateClusterAuthConfig_OIDCFromIdentityProvider_MissingFields tests required fields
+func TestValidateClusterAuthConfig_OIDCFromIdentityProvider_MissingFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		spec   ClusterConfigSpec
+		expect string
+	}{
+		{
+			name: "missing name",
+			spec: ClusterConfigSpec{
+				AuthType: ClusterAuthTypeOIDC,
+				OIDCFromIdentityProvider: &OIDCFromIdentityProviderConfig{
+					Server: "https://api.cluster.example.com:6443",
+				},
+			},
+			expect: "name",
+		},
+		{
+			name: "missing server",
+			spec: ClusterConfigSpec{
+				AuthType: ClusterAuthTypeOIDC,
+				OIDCFromIdentityProvider: &OIDCFromIdentityProviderConfig{
+					Name: "my-idp",
+				},
+			},
+			expect: "server",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateClusterAuthConfig(tt.spec, field.NewPath("spec"))
+			assert.NotEmpty(t, errs, "missing fields should fail validation")
+			found := false
+			for _, err := range errs {
+				if containsIgnoreCase(err.Error(), tt.expect) {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "error should mention %s", tt.expect)
+		})
+	}
+}
+
+// TestValidateClusterAuthConfig_OIDCFromIdentityProvider_ConflictsWithOIDCAuth tests mutual exclusion
+func TestValidateClusterAuthConfig_OIDCFromIdentityProvider_ConflictsWithOIDCAuth(t *testing.T) {
+	spec := ClusterConfigSpec{
+		AuthType: ClusterAuthTypeOIDC,
+		OIDCAuth: &OIDCAuthConfig{
+			IssuerURL: "https://keycloak.example.com/realms/test",
+			ClientID:  "breakglass",
+			Server:    "https://api.cluster.example.com:6443",
+		},
+		OIDCFromIdentityProvider: &OIDCFromIdentityProviderConfig{
+			Name:   "my-idp",
+			Server: "https://api.cluster.example.com:6443",
+		},
+	}
+	errs := validateClusterAuthConfig(spec, field.NewPath("spec"))
+	assert.NotEmpty(t, errs, "oidcAuth and oidcFromIdentityProvider together should fail")
+	assert.Contains(t, errs[0].Error(), "mutually exclusive")
+}
+
+// containsIgnoreCase is a helper for case-insensitive string matching in tests
+func containsIgnoreCase(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }

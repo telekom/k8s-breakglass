@@ -23,6 +23,193 @@ const (
 	ClusterConfigConditionReady ClusterConfigConditionType = "Ready"
 )
 
+// ClusterConfigConditionReason provides machine-readable reasons for ClusterConfig conditions.
+type ClusterConfigConditionReason string
+
+const (
+	// Kubeconfig auth reasons
+	ClusterConfigReasonKubeconfigValidated ClusterConfigConditionReason = "KubeconfigValidated"
+	ClusterConfigReasonSecretMissing       ClusterConfigConditionReason = "SecretMissing"
+	ClusterConfigReasonSecretKeyMissing    ClusterConfigConditionReason = "SecretKeyMissing"
+	ClusterConfigReasonKubeconfigInvalid   ClusterConfigConditionReason = "KubeconfigParseFailed"
+
+	// OIDC auth reasons
+	ClusterConfigReasonOIDCValidated       ClusterConfigConditionReason = "OIDCValidated"
+	ClusterConfigReasonOIDCConfigMissing   ClusterConfigConditionReason = "OIDCConfigMissing"
+	ClusterConfigReasonOIDCDiscoveryFailed ClusterConfigConditionReason = "OIDCDiscoveryFailed"
+	ClusterConfigReasonOIDCTokenFailed     ClusterConfigConditionReason = "OIDCTokenFetchFailed"
+	ClusterConfigReasonOIDCRefreshFailed   ClusterConfigConditionReason = "OIDCRefreshFailed"
+	ClusterConfigReasonOIDCCAMissing       ClusterConfigConditionReason = "OIDCCASecretMissing"
+
+	// Common reasons
+	ClusterConfigReasonClusterUnreachable ClusterConfigConditionReason = "ClusterUnreachable"
+	ClusterConfigReasonTOFUFailed         ClusterConfigConditionReason = "TOFUFailed"
+	ClusterConfigReasonValidationFailed   ClusterConfigConditionReason = "ValidationFailed"
+)
+
+// ClusterAuthType specifies the authentication method for connecting to the target cluster.
+// +kubebuilder:validation:Enum=Kubeconfig;OIDC
+type ClusterAuthType string
+
+const (
+	// ClusterAuthTypeKubeconfig uses a kubeconfig file stored in a secret.
+	ClusterAuthTypeKubeconfig ClusterAuthType = "Kubeconfig"
+	// ClusterAuthTypeOIDC uses OIDC tokens for authentication (e.g., Keycloak, AWS IAM).
+	ClusterAuthTypeOIDC ClusterAuthType = "OIDC"
+)
+
+// OIDCAuthConfig configures OIDC-based authentication for the target cluster.
+// Supports client credentials flow and token exchange for obtaining cluster access tokens.
+type OIDCAuthConfig struct {
+	// ========================================
+	// OIDC Provider Configuration
+	// ========================================
+
+	// issuerURL is the OIDC issuer URL (e.g., https://keycloak.example.com/realms/myrealm).
+	// Must match the issuer configured on the target cluster's API server.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https://.+`
+	IssuerURL string `json:"issuerURL"`
+
+	// clientID is the OIDC client ID for authenticating the breakglass controller.
+	// +kubebuilder:validation:MinLength=1
+	ClientID string `json:"clientID"`
+
+	// clientSecretRef references a secret containing the OIDC client secret.
+	// Required for client credentials flow.
+	// +optional
+	ClientSecretRef *SecretKeyReference `json:"clientSecretRef,omitempty"`
+
+	// audience specifies the intended audience for the token (typically the cluster's API server).
+	// If empty, defaults to the target server URL.
+	// +optional
+	Audience string `json:"audience,omitempty"`
+
+	// scopes specifies additional OIDC scopes to request.
+	// Default scopes (openid, email, groups) are always included.
+	// +optional
+	Scopes []string `json:"scopes,omitempty"`
+
+	// certificateAuthority contains a PEM-encoded CA certificate for validating the OIDC issuer's TLS cert.
+	// +optional
+	CertificateAuthority string `json:"certificateAuthority,omitempty"`
+
+	// ========================================
+	// Target Cluster Configuration
+	// ========================================
+
+	// server is the URL of the target cluster's Kubernetes API server.
+	// Required when using OIDC auth to know where to send authenticated requests.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https://.+`
+	Server string `json:"server"`
+
+	// caSecretRef references a secret containing the CA certificate for the target cluster.
+	// The CA is used to verify the target server's TLS certificate.
+	// +optional
+	CASecretRef *SecretKeyReference `json:"caSecretRef,omitempty"`
+
+	// insecureSkipTLSVerify skips TLS verification for the target cluster (NOT recommended for production).
+	// +optional
+	InsecureSkipTLSVerify bool `json:"insecureSkipTLSVerify,omitempty"`
+
+	// ========================================
+	// Token Exchange Configuration (Optional)
+	// ========================================
+
+	// tokenExchange enables token exchange flow instead of client credentials.
+	// When enabled, the controller exchanges the user's token for a cluster-scoped token.
+	// +optional
+	TokenExchange *TokenExchangeConfig `json:"tokenExchange,omitempty"`
+}
+
+// TokenExchangeConfig configures OAuth 2.0 token exchange (RFC 8693).
+// Token exchange allows the controller to exchange a subject token (stored in a secret)
+// for a cluster-scoped access token. This is useful for scenarios where:
+// - A service account token needs to be exchanged for a cluster-specific token
+// - Cross-realm authentication is required
+// - The OIDC provider supports token exchange for delegation
+type TokenExchangeConfig struct {
+	// enabled activates token exchange flow.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// subjectTokenSecretRef references a secret containing the subject token to exchange.
+	// This is required when enabled=true. The controller reads this token and exchanges
+	// it for a cluster-scoped token using RFC 8693 token exchange.
+	// +optional
+	SubjectTokenSecretRef *SecretKeyReference `json:"subjectTokenSecretRef,omitempty"`
+
+	// subjectTokenType specifies the type of the subject token being exchanged.
+	// Default: urn:ietf:params:oauth:token-type:access_token
+	// +optional
+	SubjectTokenType string `json:"subjectTokenType,omitempty"`
+
+	// requestedTokenType specifies the type of token to request.
+	// Default: urn:ietf:params:oauth:token-type:access_token
+	// +optional
+	RequestedTokenType string `json:"requestedTokenType,omitempty"`
+
+	// resource specifies the target resource for the exchanged token.
+	// This typically identifies the target API server or service.
+	// +optional
+	Resource string `json:"resource,omitempty"`
+
+	// actorTokenSecretRef optionally references a secret containing an actor token.
+	// This is used in delegation scenarios where the actor (controller) is acting
+	// on behalf of the subject (user/service).
+	// +optional
+	ActorTokenSecretRef *SecretKeyReference `json:"actorTokenSecretRef,omitempty"`
+
+	// actorTokenType specifies the type of the actor token.
+	// Default: urn:ietf:params:oauth:token-type:access_token
+	// +optional
+	ActorTokenType string `json:"actorTokenType,omitempty"`
+}
+
+// OIDCFromIdentityProviderConfig allows ClusterConfig to inherit OIDC settings from an IdentityProvider.
+// This reduces duplication when the same OIDC provider is used for both user authentication
+// and cluster authentication.
+type OIDCFromIdentityProviderConfig struct {
+	// ========================================
+	// IdentityProvider Reference
+	// ========================================
+
+	// name is the name of the IdentityProvider resource to inherit OIDC settings from.
+	// The IdentityProvider must exist and be enabled.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// clientID overrides the client ID from the IdentityProvider.
+	// Use this when the controller needs a different client (service account) than the UI.
+	// If empty, uses the IdentityProvider's clientID.
+	// +optional
+	ClientID string `json:"clientID,omitempty"`
+
+	// clientSecretRef references a secret containing the client secret for the controller.
+	// Required for client credentials flow when using a service account client.
+	// +optional
+	ClientSecretRef *SecretKeyReference `json:"clientSecretRef,omitempty"`
+
+	// ========================================
+	// Target Cluster Configuration
+	// ========================================
+
+	// server is the URL of the target cluster's Kubernetes API server.
+	// Required - this is cluster-specific and cannot be inherited from IdentityProvider.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https://.+`
+	Server string `json:"server"`
+
+	// caSecretRef references a secret containing the CA certificate for the target cluster.
+	// +optional
+	CASecretRef *SecretKeyReference `json:"caSecretRef,omitempty"`
+
+	// insecureSkipTLSVerify skips TLS verification for the target cluster (NOT recommended for production).
+	// +optional
+	InsecureSkipTLSVerify bool `json:"insecureSkipTLSVerify,omitempty"`
+}
+
 // ClusterConfigSpec defines metadata and secret reference for a managed tenant cluster.
 // This enables the hub (breakglass) instance to perform authorization checks (SAR) on the target cluster.
 type ClusterConfigSpec struct {
@@ -51,9 +238,31 @@ type ClusterConfigSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	Location string `json:"location,omitempty"`
 
+	// authType specifies the authentication method for connecting to the target cluster.
+	// Defaults to "Kubeconfig" if kubeconfigSecretRef is specified, "OIDC" if oidcAuth is specified.
+	// +optional
+	// +kubebuilder:validation:Enum=Kubeconfig;OIDC
+	// +kubebuilder:default=Kubeconfig
+	AuthType ClusterAuthType `json:"authType,omitempty"`
+
 	// kubeconfigSecretRef references a secret containing an admin-level kubeconfig for the target cluster.
-	// The referenced Secret MUST exist in the specified namespace and contain the key (default: "value", compatible with cluster-api).
-	KubeconfigSecretRef SecretKeyReference `json:"kubeconfigSecretRef"`
+	// Required when authType is "Kubeconfig". The referenced Secret MUST exist in the specified namespace and contain the key (default: "value", compatible with cluster-api).
+	// +optional
+	KubeconfigSecretRef *SecretKeyReference `json:"kubeconfigSecretRef,omitempty"`
+
+	// oidcAuth configures OIDC-based authentication for the target cluster.
+	// Required when authType is "OIDC" (unless oidcFromIdentityProvider is set).
+	// Supports client credentials and token exchange flows.
+	// +optional
+	OIDCAuth *OIDCAuthConfig `json:"oidcAuth,omitempty"`
+
+	// oidcFromIdentityProvider references an IdentityProvider to inherit OIDC configuration from.
+	// When set, the cluster uses the referenced IdentityProvider's OIDC issuer URL and settings.
+	// You must still provide clusterAPIServer and optionally clientSecretRef for controller authentication.
+	// This is useful when the same OIDC provider is used for both user auth and cluster auth.
+	// Mutually exclusive with oidcAuth.issuerURL - if both are set, oidcAuth.issuerURL takes precedence.
+	// +optional
+	OIDCFromIdentityProvider *OIDCFromIdentityProviderConfig `json:"oidcFromIdentityProvider,omitempty"`
 
 	// qps configures the client QPS against the target cluster.
 	// +optional
@@ -151,6 +360,9 @@ func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object)
 
 	// Additional webhook-only validations (require k8s client)
 	specPath := field.NewPath("spec")
+
+	// Validate auth configuration - either kubeconfigSecretRef OR oidcAuth is required
+	allErrs = append(allErrs, validateClusterAuthConfig(clusterConfig.Spec, specPath)...)
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
 
 	// Multi-IDP: Validate IdentityProviderRefs existence (requires k8s client)
@@ -179,6 +391,12 @@ func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runt
 
 	// Additional webhook-only validations (require k8s client)
 	specPath := field.NewPath("spec")
+
+	// Validate auth configuration - either kubeconfigSecretRef OR oidcAuth is required
+	allErrs = append(allErrs, validateClusterAuthConfig(clusterConfig.Spec, specPath)...)
+
+	// no immutability enforcement for ClusterConfig
+	// still ensure the name is unique across the cluster
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
 
 	// Multi-IDP: Validate IdentityProviderRefs existence (requires k8s client)

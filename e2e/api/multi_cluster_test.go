@@ -100,7 +100,7 @@ users:
 				Tenant:      "test-tenant",
 				Environment: "e2e-test",
 				Location:    "eu-central-1",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      kubeconfigSecret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig",
@@ -226,7 +226,7 @@ users:
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "idp-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      kubeconfigSecret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig",
@@ -453,7 +453,7 @@ func TestClusterConfigValidation(t *testing.T) {
 				},
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig",

@@ -6,11 +6,11 @@ spec:
   displayName: "Development MailHog"
   default: true
   smtp:
-    host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
+    host: breakglass-mailhog.breakglass-system.svc.cluster.local
     port: 1025
     insecureSkipVerify: true
   sender:
-    address: noreply@breakglass-dev.local
+    address: noreply@breakglass.local
     name: "Breakglass Dev"
   retry:
     count: 3

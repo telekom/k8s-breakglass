@@ -133,7 +133,7 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 			Namespace: e2eNamespace,
 		},
 		Spec: v1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: v1alpha1.SecretKeyReference{
+			KubeconfigSecretRef: &v1alpha1.SecretKeyReference{
 				Name:      "ccfg-secret",
 				Namespace: e2eNamespace,
 				Key:       "value",
@@ -147,7 +147,7 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 			Namespace: e2eNamespace,
 		},
 		Spec: v1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: v1alpha1.SecretKeyReference{
+			KubeconfigSecretRef: &v1alpha1.SecretKeyReference{
 				Name:      "ccfg-secret",
 				Namespace: e2eNamespace,
 				Key:       "value",

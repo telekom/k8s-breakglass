@@ -51,7 +51,7 @@ func DefaultOIDCProvider() *OIDCTokenProvider {
 		ClientID:     getEnvOrDefault("KEYCLOAK_CLIENT_ID", "breakglass-ui"),
 		ClientSecret: getEnvOrDefault("KEYCLOAK_CLIENT_SECRET", ""),
 		// IssuerHost should match the authority in the IdentityProvider CR
-		// e.g., "breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443"
+		// e.g., "breakglass-keycloak.breakglass-system.svc.cluster.local:8443"
 		IssuerHost: getEnvOrDefault("KEYCLOAK_ISSUER_HOST", ""),
 	}
 }

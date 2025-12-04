@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
   labels:
     app: mailhog
   name: mailhog
@@ -37,7 +37,7 @@ metadata:
   labels:
     app: mailhog
   name: mailhog
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   ipFamilyPolicy: SingleStack
   ports:
