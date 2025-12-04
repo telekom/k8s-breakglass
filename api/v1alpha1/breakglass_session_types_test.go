@@ -136,7 +136,7 @@ func TestBreakglassSessionClusterConfigRefCrossNamespaceAccepted(t *testing.T) {
 	_ = AddToScheme(scheme)
 	clusterConfig := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "team-b"},
-		Spec:       ClusterConfigSpec{KubeconfigSecretRef: SecretKeyReference{Name: "kc", Namespace: "system"}},
+		Spec:       ClusterConfigSpec{KubeconfigSecretRef: &SecretKeyReference{Name: "kc", Namespace: "system"}},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig).Build()
 	origClient := webhookClient
@@ -163,7 +163,7 @@ func TestBreakglassSessionClusterConfigRefHappyPath(t *testing.T) {
 	_ = AddToScheme(scheme)
 	clusterConfig := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "team-a"},
-		Spec:       ClusterConfigSpec{KubeconfigSecretRef: SecretKeyReference{Name: "kc", Namespace: "system"}},
+		Spec:       ClusterConfigSpec{KubeconfigSecretRef: &SecretKeyReference{Name: "kc", Namespace: "system"}},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig).Build()
 	origClient := webhookClient

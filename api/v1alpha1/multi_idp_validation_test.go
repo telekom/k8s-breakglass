@@ -113,7 +113,7 @@ func TestClusterConfigIdentityProviderRefsValidation(t *testing.T) {
 	clusterConfig := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{
+			KubeconfigSecretRef: &SecretKeyReference{
 				Name:      "kubeconfig",
 				Namespace: "default",
 			},
@@ -149,7 +149,7 @@ func TestClusterConfigIdentityProviderRefsValidationDisabled(t *testing.T) {
 	clusterConfig := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{
+			KubeconfigSecretRef: &SecretKeyReference{
 				Name:      "kubeconfig",
 				Namespace: "default",
 			},
@@ -172,7 +172,7 @@ func TestClusterConfigEmptyIdentityProviderRefsAllowed(t *testing.T) {
 	clusterConfig := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{
+			KubeconfigSecretRef: &SecretKeyReference{
 				Name:      "kubeconfig",
 				Namespace: "default",
 			},

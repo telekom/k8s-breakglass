@@ -232,6 +232,34 @@ spec:
   disabled: true
 ```
 
+## Integration with ClusterConfig
+
+IdentityProviders can be linked to specific clusters using `ClusterConfig.spec.identityProviderRefs`:
+
+```yaml
+# ClusterConfig restricting access to specific IDPs
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: production-cluster
+spec:
+  identityProviderRefs:
+    - prod-primary      # Only users from these IDPs
+    - prod-fallback     # can access this cluster
+  # ... other config
+```
+
+**Behavior:**
+- If `identityProviderRefs` is empty/omitted → All enabled IDPs are accepted
+- If `identityProviderRefs` has values → Only users authenticated via listed IDPs can access
+
+**Use Cases:**
+- Restrict production clusters to corporate IDP only
+- Allow different tenants to use different IDPs
+- Enforce compliance requirements for specific clusters
+
+See [ClusterConfig](./cluster-config.md#identity-provider-restrictions) for more details.
+
 ## Configuration Integration
 
 The IdentityProvider CRD is the **sole source** of OIDC/IDP configuration. No additional config.yaml settings are required.

@@ -100,6 +100,50 @@ Format: [ID] [Area] — Short description
 
 ---
 
+## OIDC Authentication (ClusterConfig with authType=OIDC)
+
+[O-001] ClusterConfig with OIDC auth validates secrets
+- Steps: Create a ClusterConfig with authType=OIDC pointing to a client secret and CA secret. Wait for the controller to validate. Check status conditions.
+- Expected: ClusterConfig status shows Ready=True with reason OIDCValidated when secrets are present and valid.
+- Priority: High
+
+[O-002] ClusterConfig with OIDC auth fails on missing client secret
+- Steps: Create a ClusterConfig with authType=OIDC but with clientSecretRef pointing to a non-existent secret.
+- Expected: ClusterConfig status shows Ready=False with reason SecretMissing and message mentioning "OIDC client secret".
+- Priority: High
+
+[O-003] OIDC token acquisition from Keycloak
+- Steps: Create ClusterConfig pointing to the e2e Keycloak instance. Configure a Keycloak client with client_credentials grant. Verify controller can obtain a token.
+- Expected: ClusterConfig reaches Ready=True, logs show successful token acquisition from Keycloak.
+- Priority: High
+
+[O-004] OIDC token refresh on expiry
+- Steps: Configure ClusterConfig with OIDC auth. Wait for initial token. Wait for token to near expiry (or force by manipulating cache). Verify refresh token is used.
+- Expected: Logs show "refreshing OIDC token" and new token is obtained without re-authenticating.
+- Priority: Medium
+
+[O-005] TOFU (Trust On First Use) populates CA secret
+- Steps: Create ClusterConfig with authType=OIDC but without clusterCASecretRef. Enable TOFU. Connect to an API server.
+- Expected: Controller automatically creates a secret with the API server's CA certificate. ClusterConfig status shows Ready=True.
+- Priority: Medium
+
+[O-006] OIDC discovery failure condition
+- Steps: Create ClusterConfig with authType=OIDC pointing to an invalid/unreachable issuer URL.
+- Expected: ClusterConfig status shows Ready=False with reason OIDCDiscoveryFailed and helpful error message.
+- Priority: High
+
+[O-007] OIDC token exchange flow (if enabled)
+- Steps: Configure ClusterConfig with tokenExchange.enabled=true. Verify the controller performs RFC 8693 token exchange.
+- Expected: Controller exchanges initial token for a cluster-scoped token. Logs show token exchange flow.
+- Priority: Low
+
+[O-008] Mixed auth types in same namespace
+- Steps: Create two ClusterConfigs in the same namespace: one with authType=Kubeconfig, one with authType=OIDC. Both pointing to different clusters.
+- Expected: Both ClusterConfigs are validated independently and reach Ready state with appropriate reasons.
+- Priority: Medium
+
+---
+
 How to use
 
 - Each item is intentionally singular and executable by a script. Implement tests in the language of your choice (bash, Go, Python). Each test should:
@@ -113,3 +157,4 @@ Next steps I can implement for you
 - Add a `make e2e-smoke` to run a subset (C-001, K-001, W-001, T-001) in CI.
 
 Generated on: 2025-10-23
+Updated on: 2025-12-02 (Added OIDC authentication test scenarios O-001 through O-008)

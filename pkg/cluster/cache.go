@@ -31,6 +31,8 @@ type ClientProvider struct {
 	clusterToSecret map[string]string
 	// secretToClusters tracks all clusters backed by a given secret (keyed by namespace/name)
 	secretToClusters map[string]map[string]struct{}
+	// oidcProvider handles OIDC token acquisition for clusters using OIDC auth
+	oidcProvider *OIDCTokenProvider
 }
 
 func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvider {
@@ -41,6 +43,7 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 		rest:             map[string]*rest.Config{},
 		clusterToSecret:  map[string]string{},
 		secretToClusters: map[string]map[string]struct{}{},
+		oidcProvider:     NewOIDCTokenProvider(c, log),
 	}
 }
 
@@ -107,7 +110,8 @@ func (p *ClientProvider) GetInNamespace(ctx context.Context, namespace, name str
 	return &cp, nil
 }
 
-// GetRESTConfig returns a rest.Config built from the referenced kubeconfig secret, caching it.
+// GetRESTConfig returns a rest.Config for the cluster, supporting both kubeconfig and OIDC authentication.
+// The auth method is determined by the ClusterConfig's authType field.
 func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.Config, error) {
 	p.mu.RLock()
 	rc, ok := p.rest[name]
@@ -120,6 +124,47 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	if err != nil {
 		return nil, err
 	}
+
+	// Determine auth type - check explicit authType or infer from configuration
+	authType := cc.Spec.AuthType
+	if authType == "" {
+		// Infer from configuration
+		if cc.Spec.OIDCAuth != nil {
+			authType = telekomv1alpha1.ClusterAuthTypeOIDC
+		} else if cc.Spec.KubeconfigSecretRef != nil {
+			authType = telekomv1alpha1.ClusterAuthTypeKubeconfig
+		} else {
+			return nil, fmt.Errorf("no authentication method configured for cluster %s", name)
+		}
+	}
+
+	var cfg *rest.Config
+
+	switch authType {
+	case telekomv1alpha1.ClusterAuthTypeOIDC:
+		cfg, err = p.getRESTConfigFromOIDC(ctx, cc)
+	case telekomv1alpha1.ClusterAuthTypeKubeconfig:
+		cfg, err = p.getRESTConfigFromKubeconfig(ctx, cc)
+	default:
+		return nil, fmt.Errorf("unsupported auth type: %s", authType)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	p.rest[name] = cfg
+	p.mu.Unlock()
+	return cfg, nil
+}
+
+// getRESTConfigFromKubeconfig builds a rest.Config from a kubeconfig stored in a secret.
+func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *telekomv1alpha1.ClusterConfig) (*rest.Config, error) {
+	if cc.Spec.KubeconfigSecretRef == nil {
+		return nil, fmt.Errorf("kubeconfigSecretRef is required for kubeconfig auth")
+	}
+
 	secretDataKey := cc.Spec.KubeconfigSecretRef.Key
 	if secretDataKey == "" {
 		// default to 'value' for Cluster API compatibility
@@ -152,16 +197,24 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	if cc.Spec.Burst != nil {
 		cfg.Burst = int(*cc.Spec.Burst)
 	}
-	p.mu.Lock()
-	p.rest[name] = cfg
+
+	// Track secret reference for cache invalidation
 	secretRefKey := secretCacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
-	p.clusterToSecret[name] = secretRefKey
+	p.clusterToSecret[cc.Name] = secretRefKey
 	if _, ok := p.secretToClusters[secretRefKey]; !ok {
 		p.secretToClusters[secretRefKey] = map[string]struct{}{}
 	}
-	p.secretToClusters[secretRefKey][name] = struct{}{}
-	p.mu.Unlock()
+	p.secretToClusters[secretRefKey][cc.Name] = struct{}{}
+
 	return cfg, nil
+}
+
+// getRESTConfigFromOIDC builds a rest.Config using OIDC token authentication.
+func (p *ClientProvider) getRESTConfigFromOIDC(ctx context.Context, cc *telekomv1alpha1.ClusterConfig) (*rest.Config, error) {
+	if p.oidcProvider == nil {
+		return nil, fmt.Errorf("OIDC provider not initialized")
+	}
+	return p.oidcProvider.GetRESTConfig(ctx, cc)
 }
 
 // Invalidate removes an entry (called by informer/controller update hooks later).

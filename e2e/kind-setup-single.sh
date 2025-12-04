@@ -42,9 +42,9 @@ PF_FILE=${PF_FILE:-e2e/port-forward-pids}
 
 # --- Keycloak realm / issuer ---
 # Default to the in-cluster service name that the `config/dev` overlay creates
-# (the dev overlay uses a namePrefix breakglass-dev- and namespace breakglass-dev-system).
+# (the dev overlay uses a namePrefix breakglass- and namespace breakglass-system).
 # This ensures the apiserver OIDC issuer points at a DNS name resolvable inside the cluster.
-KEYCLOAK_HOST=${KEYCLOAK_HOST:-breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local}
+KEYCLOAK_HOST=${KEYCLOAK_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local}
 KEYCLOAK_HTTPS_PORT=${KEYCLOAK_HTTPS_PORT:-8443}
 KEYCLOAK_REALM=${KEYCLOAK_REALM:-breakglass-e2e}
 
@@ -142,7 +142,7 @@ apply_kustomize() {
   # Usage: apply_kustomize path
   local path="$1"
   log "Applying kustomize overlay: $path"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUSTOMIZE build "$path" | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
+  KUBECONFIG="$HUB_KUBECONFIG" $KUSTOMIZE build --load-restrictor LoadRestrictionsNone "$path" | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
 }
 
 set_image_and_wait_by_label() {
@@ -203,7 +203,7 @@ DNS.3 = keycloak.keycloak.svc
 DNS.4 = keycloak.keycloak.svc.cluster.local
 DNS.5 = localhost
 DNS.6 = ${KEYCLOAK_HOST}
-DNS.7 = breakglass-dev-keycloak
+DNS.7 = breakglass-keycloak
 DNS.8 = breakglass.system.svc.cluster.local
 EOF
 openssl genrsa -out "$TLS_DIR/ca.key" 2048
@@ -455,14 +455,31 @@ load_image_into_kind "curlimages/curl:8.4.0"
 # Preload netshoot so we can create a persistent debug pod without image pull delays
 load_image_into_kind "nicolaka/netshoot"
 
+log 'Installing cert-manager for webhook certificate management'
+CERT_MANAGER_VERSION=${CERT_MANAGER_VERSION:-v1.16.2}
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
+# Wait for cert-manager to be ready
+log 'Waiting for cert-manager deployments to be ready...'
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n cert-manager rollout status deployment/cert-manager --timeout=120s || true
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n cert-manager rollout status deployment/cert-manager-webhook --timeout=120s || true
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n cert-manager rollout status deployment/cert-manager-cainjector --timeout=120s || true
+log 'cert-manager installed and ready'
+
 log 'Deploy development stack via kustomize (config/dev)'
 # Create TLS secret data for kustomize resources (if keycloak expects a secret, we create it first)
-# Use the dev namespace kustomize writes to (namePrefix on config/dev is breakglass-dev- and namespace is breakglass-dev-system)
-DEV_NS=breakglass-dev-system
+# Use the dev namespace kustomize writes to (namePrefix on config/dev is breakglass- and namespace is breakglass-system)
+DEV_NS=breakglass-system
 KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create namespace "$DEV_NS" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
 KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret tls keycloak-tls -n "$DEV_NS" --cert="$TLS_DIR/server.crt" --key="$TLS_DIR/server.key" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
-# Create breakglass-dev-certs ConfigMap from generated CA so deployments mounting it succeed
-KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create configmap breakglass-dev-certs -n "$DEV_NS" --from-file=ca.crt="$TLS_DIR/ca.crt" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
+# Create breakglass-certs ConfigMap from generated CA so deployments mounting it succeed
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create configmap breakglass-certs -n "$DEV_NS" --from-file=ca.crt="$TLS_DIR/ca.crt" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
+
+# Create symlink for kustomize to find TLS certs (kustomization.yaml references certs/kind-setup-single-tls/)
+log "Creating symlink for TLS certs in config/dev/certs"
+mkdir -p "$REPO_ROOT/config/dev/certs"
+rm -f "$REPO_ROOT/config/dev/certs/kind-setup-single-tls"
+ln -sf "$TLS_DIR" "$REPO_ROOT/config/dev/certs/kind-setup-single-tls"
+
 # Apply the whole development overlay via kustomize so all resources come from config/dev
 ensure_no_placeholders "config/dev/resources/keycloak.yaml"
 # explicitly apply CRDs first
@@ -473,7 +490,7 @@ apply_kustomize config/dev
 
 # Patch the generated config ConfigMap in-cluster to embed the generated CA so the
 # running controller can validate Keycloak TLS. The configMap created by the kustomize
-# overlay is namePrefix'd to 'breakglass-dev-config' in namespace $DEV_NS.
+# overlay is namePrefix'd to 'breakglass-config' in namespace $DEV_NS.
 TMP_CFG="$TDIR/tmp-config-with-ca.yaml"
 if [ -f "$TLS_DIR/ca.crt" ]; then
   # indent CA so it nests properly under data.config.yaml -> authorizationServer -> certificateAuthority
@@ -485,14 +502,14 @@ cat > "$TMP_CFG" <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: breakglass-dev-config
+  name: breakglass-config
   namespace: $DEV_NS
 data:
   config.yaml: |
     server:
       listenAddress: 0.0.0.0:8080
     authorizationServer:
-      url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
+      url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443
       jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
       certificateAuthority: |
 $CA_INLINE
@@ -501,7 +518,7 @@ $CA_INLINE
       oidcClientID: breakglass-ui
       baseURL: http://localhost:${CONTROLLER_FORWARD_PORT}
     mail:
-      host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
+      host: breakglass-mailhog.breakglass-system.svc.cluster.local
       port: 1025
       insecureSkipVerify: true
     kubernetes:
@@ -516,7 +533,7 @@ EOF
 # Wait for the kustomize-generated ConfigMap to appear; it has a hash suffix and may not be immediately present
 TARGET_NAME=""
 for i in {1..60}; do
-  CFG_NAME=$($KUBECTL -n "$DEV_NS" get cm -o name 2>/dev/null | sed 's#configmap/##' | grep '^breakglass-dev-config' | head -n1 || true)
+  CFG_NAME=$($KUBECTL -n "$DEV_NS" get cm -o name 2>/dev/null | sed 's#configmap/##' | grep '^breakglass-config' | head -n1 || true)
   if [ -n "$CFG_NAME" ]; then
     TARGET_NAME="$CFG_NAME"
     log "Detected rendered configmap name: $TARGET_NAME"
@@ -525,8 +542,8 @@ for i in {1..60}; do
   sleep 1
 done
 if [ -z "$TARGET_NAME" ]; then
-  log "Could not detect rendered breakglass-dev-config name after wait; using base name breakglass-dev-config"
-  TARGET_NAME=breakglass-dev-config
+  log "Could not detect rendered breakglass-config name after wait; using base name breakglass-config"
+  TARGET_NAME=breakglass-config
 fi
 
 # Rewrite TMP_CFG with the actual target name so apply updates the live ConfigMap
@@ -541,7 +558,7 @@ data:
     server:
       listenAddress: 0.0.0.0:8080
     authorizationServer:
-      url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
+      url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443
       jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
       certificateAuthority: |
 $CA_INLINE
@@ -550,7 +567,7 @@ $CA_INLINE
       oidcClientID: breakglass-ui
       baseURL: http://localhost:${CONTROLLER_FORWARD_PORT}
     mail:
-      host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
+      host: breakglass-mailhog.breakglass-system.svc.cluster.local
       port: 1025
       insecureSkipVerify: true
     kubernetes:
@@ -585,7 +602,7 @@ done
 [ -n "$KC_SVC_NAME" ] || { log "Keycloak service not found after wait"; exit 1; }
 
 PF=$(start_port_forward "$KC_SVC_NS" "$KC_SVC_NAME" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT})
-JWKS_URL="https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
+JWKS_URL="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
 # Prefer using the generated CA for TLS validation when available; fall back to insecure if not present
 if [ -n "${KEYCLOAK_CA_FILE:-}" ] && [ -f "${KEYCLOAK_CA_FILE}" ]; then
   KC_CURL_CA=(--cacert "$KEYCLOAK_CA_FILE")
@@ -814,7 +831,7 @@ log 'Deploy controller and supporting resources via kustomize (config/dev)'
 KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create namespace system --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
 
 # Render and apply the dev overlay; this includes controller, rbac, mailhog, and other dev resources
-KUBECONFIG="$HUB_KUBECONFIG" $KUSTOMIZE build config/dev | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
+KUBECONFIG="$HUB_KUBECONFIG" $KUSTOMIZE build --load-restrictor LoadRestrictionsNone config/dev | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
 
 
 # Render and apply cluster-config overrides used for single-cluster setup (substitute placeholders)
@@ -938,6 +955,37 @@ for t in "${TENANTS[@]}"; do
   create_tenant "$t"
 done
 
+# Create OIDC-auth ClusterConfig for testing (optional, requires OIDC_TEST_ENABLED=true)
+if [ "${OIDC_TEST_ENABLED:-false}" = "true" ]; then
+  log 'Creating OIDC ClusterConfig for testing (OIDC_TEST_ENABLED=true)'
+  # Create client secret for OIDC testing (using a test client configured in Keycloak)
+  OIDC_CLIENT_SECRET="${OIDC_CLIENT_SECRET:-breakglass-test-secret}"
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret generic oidc-client-secret -n default \
+    --from-literal=client-secret="$OIDC_CLIENT_SECRET" --dry-run=client -o yaml | \
+    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
+
+  # Create OIDC-authenticated ClusterConfig pointing to the same cluster
+  cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: tenant-oidc
+spec:
+  authType: OIDC
+  oidcAuth:
+    issuerURL: "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/${KEYCLOAK_REALM}"
+    clientID: "breakglass-controller"
+    clientSecretRef:
+      name: oidc-client-secret
+      namespace: default
+      key: client-secret
+    server: "https://kubernetes.default.svc"
+    # Skip TLS verification for self-signed test certificates
+    insecureSkipTLSVerify: true
+YAML
+  log 'OIDC ClusterConfig created: tenant-oidc'
+fi
+
 log 'Create IdentityProvider for OIDC authentication'
 # IdentityProvider is a mandatory cluster-scoped resource that configures user authentication.
 # It must be created before the controller can fully function.
@@ -951,7 +999,7 @@ spec:
   primary: true
   oidc:
     # Authority URL pointing to test Keycloak instance (in-cluster DNS)
-    authority: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/${KEYCLOAK_REALM}"
+    authority: "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/${KEYCLOAK_REALM}"
     # OIDC client ID (must match realm configuration)
     clientID: "breakglass-ui"
     # Skip TLS verification for self-signed test certificates (NOT for production!)
@@ -963,9 +1011,9 @@ rm -f "$PF_FILE" || true
 # Expose controller only (keycloak port-forward is already running from JWKS step)
 # Use the discovered breakglass service name/namespace (BG_SVC_NAME/BG_SVC_NS) when available
 if [ -n "${BG_SVC_NAME:-}" ] && [ -n "${BG_SVC_NS:-}" ]; then
-  start_port_forward "$BG_SVC_NS" "$BG_SVC_NAME" ${CONTROLLER_FORWARD_PORT} 8081 >/dev/null 2>&1 || true
+  start_port_forward "$BG_SVC_NS" "$BG_SVC_NAME" ${CONTROLLER_FORWARD_PORT} 8080 >/dev/null 2>&1 || true
 else
-  start_port_forward "$DEV_NS" "breakglass" ${CONTROLLER_FORWARD_PORT} 8081 >/dev/null 2>&1 || true
+  start_port_forward "$DEV_NS" "breakglass" ${CONTROLLER_FORWARD_PORT} 8080 >/dev/null 2>&1 || true
 fi
 for i in {1..40}; do
   c=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${CONTROLLER_FORWARD_PORT}/api/config" || true)
@@ -1035,7 +1083,7 @@ log 'Single-cluster setup complete'
 OIDC_TEST_USERNAME=${OIDC_TEST_USERNAME:-test-user}
 OIDC_TEST_PASSWORD=${OIDC_TEST_PASSWORD:-test-password}
 OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-kubernetes}
-OIDC_ISSUER="https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}"
+OIDC_ISSUER="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}"
 OIDC_KUBECONFIG="$TDIR/oidc-test-user.kubeconfig"
 
 log "Generating kubeconfig for OIDC test user (kubelogin exec) : $OIDC_TEST_USERNAME -> $OIDC_KUBECONFIG"

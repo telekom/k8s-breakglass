@@ -53,7 +53,7 @@ func TestClusterConfigIdentityProviderRefs(t *testing.T) {
 		},
 		Spec: ClusterConfigSpec{
 			ClusterID: "test-cluster-id",
-			KubeconfigSecretRef: SecretKeyReference{
+			KubeconfigSecretRef: &SecretKeyReference{
 				Name:      "test-secret",
 				Namespace: "default",
 			},
@@ -129,7 +129,7 @@ func TestEmptyIdentityProviderRefsAllowsAllIDPs(t *testing.T) {
 		},
 		Spec: ClusterConfigSpec{
 			ClusterID: "unrestricted-cluster-id",
-			KubeconfigSecretRef: SecretKeyReference{
+			KubeconfigSecretRef: &SecretKeyReference{
 				Name:      "kubeconfig",
 				Namespace: "default",
 			},

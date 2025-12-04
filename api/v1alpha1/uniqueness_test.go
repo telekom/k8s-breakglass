@@ -65,12 +65,12 @@ func TestCrossNamespaceNameUniqueness_ClusterConfig(t *testing.T) {
 		t.Fatalf("failed to add scheme: %v", err)
 	}
 
-	existing := &ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "same-name", Namespace: "namespace-a"}, Spec: ClusterConfigSpec{KubeconfigSecretRef: SecretKeyReference{}}}
+	existing := &ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "same-name", Namespace: "namespace-a"}, Spec: ClusterConfigSpec{KubeconfigSecretRef: &SecretKeyReference{}}}
 	fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(existing).Build()
 	webhookClient = fakeClient
 	webhookCache = nil
 
-	attempt := &ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "same-name", Namespace: "namespace-b"}, Spec: ClusterConfigSpec{KubeconfigSecretRef: SecretKeyReference{}}}
+	attempt := &ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "same-name", Namespace: "namespace-b"}, Spec: ClusterConfigSpec{KubeconfigSecretRef: &SecretKeyReference{}}}
 	_, err := attempt.ValidateCreate(context.Background(), attempt)
 	if err == nil {
 		t.Fatalf("expected validation error due to name collision, got nil")

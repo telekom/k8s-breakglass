@@ -21,7 +21,7 @@ func TestClusterConfig_ValidateCreate_Success(t *testing.T) {
 	cc := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-1"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 		},
 	}
 	_, err := cc.ValidateCreate(context.Background(), cc)
@@ -34,7 +34,7 @@ func TestClusterConfig_ValidateCreate_DuplicateIdentityProviderRefs(t *testing.T
 	cc := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-dup"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef:  SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef:  &SecretKeyReference{Name: "k", Namespace: "ns"},
 			IdentityProviderRefs: []string{"idp-a", "idp-a"},
 		},
 	}
@@ -49,7 +49,7 @@ func TestClusterConfig_ValidateCreate_InvalidApproverDomains(t *testing.T) {
 	cc := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-domain"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef:    SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef:    &SecretKeyReference{Name: "k", Namespace: "ns"},
 			AllowedApproverDomains: []string{"invalid_domain"},
 		},
 	}
@@ -91,7 +91,7 @@ func TestClusterConfig_ValidateCreate_MailProviderReference(t *testing.T) {
 	valid := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-valid"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 			MailProvider:        "mail-enabled",
 		},
 	}
@@ -103,7 +103,7 @@ func TestClusterConfig_ValidateCreate_MailProviderReference(t *testing.T) {
 	disabled := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-disabled"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 			MailProvider:        "mail-disabled",
 		},
 	}
@@ -115,7 +115,7 @@ func TestClusterConfig_ValidateCreate_MailProviderReference(t *testing.T) {
 	missing := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-missing"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 			MailProvider:        "does-not-exist",
 		},
 	}
@@ -129,7 +129,7 @@ func TestClusterConfig_ValidateUpdate_Immutable(t *testing.T) {
 	old := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-2"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 		},
 	}
 	modified := old.DeepCopy()
