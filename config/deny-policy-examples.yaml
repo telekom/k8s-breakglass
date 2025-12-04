@@ -87,3 +87,106 @@ spec:
       resources: ["pods"]
       subresources: ["exec", "attach"]
   precedence: 25
+---
+# 7. Risk-based pod security evaluation for exec/attach/portforward
+# Evaluates pod security posture before allowing interactive access
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: risky-pod-exec-protection
+spec:
+  appliesTo:
+    clusters: ["prod-cluster", "staging-cluster"]
+  podSecurityRules:
+    # Defines which subresources trigger this evaluation (defaults shown)
+    appliesTo:
+      subresources: ["exec", "attach", "portforward"]
+    # Risk factor weights - higher values indicate greater security risk
+    riskFactors:
+      hostNetwork: 20          # Pod uses host network namespace
+      hostPID: 25              # Pod uses host PID namespace  
+      hostIPC: 15              # Pod uses host IPC namespace
+      privilegedContainer: 50  # Container runs in privileged mode
+      hostPathWritable: 30     # Writable hostPath volume mounts
+      hostPathReadOnly: 10     # Read-only hostPath volume mounts
+      runAsRoot: 20            # Container runs as root (UID 0)
+      # Map Linux capabilities to risk scores
+      capabilities:
+        NET_ADMIN: 30          # Network configuration access
+        SYS_ADMIN: 50          # Full system access
+        SYS_PTRACE: 40         # Process trace capability
+        NET_RAW: 25            # Raw socket access
+    # Actions based on cumulative risk score (evaluated in order)
+    thresholds:
+      - maxScore: 30
+        action: allow          # Low risk - allow silently
+      - maxScore: 60
+        action: warn           # Medium risk - allow but log warning
+        reason: "Pod has elevated risk score ({{.Score}}): {{.Factors}}"
+      - maxScore: 100
+        action: deny           # High risk - block access
+        reason: "Access denied: pod {{.Pod}} in {{.Namespace}} has risk score {{.Score}} (factors: {{.Factors}})"
+    # Block factors - immediate deny regardless of score
+    blockFactors:
+      - privilegedContainer    # Never allow exec into privileged pods
+      - hostPID                # Never allow exec into hostPID pods
+    # Exemptions - skip evaluation for certain pods
+    exemptions:
+      namespaces:
+        - kube-system          # Trust system namespace
+        - monitoring           # Allow monitoring access
+      podLabels:
+        breakglass.telekom.com/security-exempt: "true"
+    # Fail mode when pod spec cannot be fetched
+    failMode: closed           # "closed" = deny if fetch fails (more secure)
+  precedence: 15
+---
+# 8. Example BreakglassEscalation with pod security overrides
+# This allows SREs to bypass pod security restrictions for emergency access
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: sre-emergency-privileged-access
+spec:
+  escalatedGroup: "cluster-admin"
+  allowed:
+    clusters: ["prod-cluster", "staging-cluster"]
+    groups: ["site-reliability-engineers"]
+  approvers:
+    groups: ["security-team"]
+  maxValidFor: "2h"
+  # Reference the pod security deny policy
+  denyPolicyRefs: ["risky-pod-exec-protection"]
+  # Override pod security rules for this escalation
+  podSecurityOverrides:
+    enabled: true
+    maxAllowedScore: 100       # Allow high-risk pods (normally denied at 60+)
+    exemptFactors:             # Bypass these block factors
+      - privilegedContainer    # SREs can exec into privileged pods
+      - hostPID                # SREs can access hostPID pods
+    namespaceScope:            # Only allow overrides in these namespaces
+      - kube-system
+      - monitoring
+      - logging
+---
+# 9. Example: Monitoring team with limited overrides
+# Allows monitoring access to specific namespace without full overrides
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: monitoring-team-access
+spec:
+  escalatedGroup: "namespace-admin"
+  allowed:
+    clusters: ["prod-cluster"]
+    groups: ["monitoring-team"]
+  approvers:
+    groups: ["platform-leads"]
+  maxValidFor: "4h"
+  denyPolicyRefs: ["risky-pod-exec-protection"]
+  podSecurityOverrides:
+    enabled: true
+    maxAllowedScore: 60        # Allow medium-risk pods (warn threshold)
+    namespaceScope:            # Only in monitoring namespace
+      - monitoring
+      - prometheus

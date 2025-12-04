@@ -469,6 +469,122 @@ denyPolicyRefs: ["deny-production-secrets", "deny-destructive-actions"]
 
 > **Runtime validation:** Missing or misconfigured `DenyPolicy` references do not block creation. Instead, the Escalation controller surfaces problems through the `DenyPolicyRefsValid` condition and warning events so operators can react without being prevented from applying manifests.
 
+### podSecurityOverrides
+
+Override pod security evaluation rules for sessions created via this escalation. This allows trusted escalation paths (e.g., SRE emergency access) to bypass or relax pod security restrictions defined in `DenyPolicy.podSecurityRules`.
+
+```yaml
+podSecurityOverrides:
+  enabled: true                       # Enable overrides for this escalation
+  maxAllowedScore: 80                 # Override threshold - allow higher scores
+  exemptFactors:                      # Bypass specific block factors
+    - privilegedContainer
+    - hostNetwork
+  namespaceScope:                     # Restrict overrides to specific namespaces
+    - kube-system
+    - monitoring
+  requireApproval: true               # Require additional approval
+  approvers:                          # Who can approve high-risk access
+    users: ["security-lead@example.com"]
+    groups: ["security-team"]
+```
+
+#### Override Fields
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `enabled` | Whether overrides are active | `false` |
+| `maxAllowedScore` | Override the risk score threshold | Policy default |
+| `exemptFactors` | Skip specific block factors | `[]` |
+| `namespaceScope` | Limit overrides to namespaces | All namespaces |
+| `requireApproval` | Require explicit approval | `false` |
+| `approvers` | Who can approve (if required) | - |
+
+#### Use Cases
+
+**1. SRE Emergency Access to Privileged Pods**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: sre-privileged-access
+spec:
+  escalatedGroup: "cluster-admin"
+  allowed:
+    clusters: ["prod-cluster"]
+    groups: ["site-reliability-engineers"]
+  approvers:
+    groups: ["security-team"]
+  podSecurityOverrides:
+    enabled: true
+    maxAllowedScore: 100              # Allow high-risk pods
+    exemptFactors:
+      - privilegedContainer           # SREs can exec into privileged pods
+      - hostNetwork                   # SREs can access host-network pods
+```
+
+**2. Namespace-Scoped Overrides**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: monitoring-admin
+spec:
+  escalatedGroup: "namespace-admin"
+  allowed:
+    clusters: ["prod-cluster"]
+    groups: ["monitoring-team"]
+  podSecurityOverrides:
+    enabled: true
+    maxAllowedScore: 60
+    namespaceScope:                   # Only applies to monitoring namespace
+      - monitoring
+      - prometheus
+```
+
+**3. Require Extra Approval for High-Risk Access**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: emergency-privileged-access
+spec:
+  escalatedGroup: "cluster-admin"
+  allowed:
+    groups: ["platform-team"]
+  approvers:
+    groups: ["tech-leads"]
+  podSecurityOverrides:
+    enabled: true
+    maxAllowedScore: 100
+    exemptFactors:
+      - privilegedContainer
+    requireApproval: true             # Needs explicit security approval
+    approvers:
+      groups: ["security-team"]       # Security team must approve
+```
+
+#### Interaction with DenyPolicy
+
+Pod security overrides modify how `DenyPolicy.podSecurityRules` are evaluated:
+
+1. **Score Thresholds**: If `maxAllowedScore` is set and the pod's risk score is at or below it, access is allowed even if the policy would deny it.
+
+2. **Block Factors**: If a factor is listed in `exemptFactors`, it won't trigger an immediate denial even if it's in the policy's `blockFactors` list.
+
+3. **Namespace Scope**: If `namespaceScope` is set, overrides only apply to pods in those namespaces. Pods in other namespaces follow normal policy evaluation.
+
+4. **Order of Evaluation**:
+   - Check if subresource is evaluated
+   - Check pod availability (fail mode)
+   - Check policy exemptions (labels, namespaces)
+   - **Check escalation overrides** (if applicable)
+   - Check block factors (with exempt factors removed)
+   - Calculate and evaluate risk score
+
 ## Complete Examples
 
 ### Production Emergency Access

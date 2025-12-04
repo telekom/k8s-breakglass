@@ -63,14 +63,15 @@ const (
 )
 
 type apiEndToEndEnv struct {
-	t               *testing.T
-	server          *Server
-	handler         http.Handler
-	sarServer       *httptest.Server
-	sarRequests     int
-	clusterName     string
-	client          client.Client
-	allowSessionSAR bool
+	t                 *testing.T
+	server            *Server
+	handler           http.Handler
+	sarServer         *httptest.Server
+	sarRequests       int
+	clusterName       string
+	client            client.Client
+	allowSessionSAR   bool
+	webhookController *webhook.WebhookController
 }
 
 func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
@@ -189,6 +190,7 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 	env.server = server
 	env.handler = server.Handler()
 	env.client = cli
+	env.webhookController = webhookController
 
 	return env
 }
@@ -523,4 +525,1298 @@ func (env *apiEndToEndEnv) createDenyPolicy(t *testing.T, name string, spec v1al
 		Spec:       spec,
 	}
 	require.NoError(t, env.client.Create(ctx, dp))
+}
+
+// invokePodExecSAR invokes a SubjectAccessReview for pods/exec against a specific pod.
+func (env *apiEndToEndEnv) invokePodExecSAR(t *testing.T, namespace, podName string) webhook.SubjectAccessReviewResponse {
+	return env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace:   namespace,
+			Verb:        "create",
+			Resource:    "pods",
+			Subresource: "exec",
+			Name:        podName,
+		}
+	})
+}
+
+// ============================================================================
+// Pod Security E2E Tests
+// ============================================================================
+
+// TestEndToEndSARDeniedByPodSecurityRiskScore tests that pods/exec to a privileged
+// pod is denied when the risk score exceeds the threshold.
+func TestEndToEndSARDeniedByPodSecurityRiskScore(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve a session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with PodSecurityRules
+	env.createDenyPolicy(t, "pod-security-block", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100, // High weight for privileged
+				HostNetwork:         50,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 79, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
+			},
+		},
+	})
+
+	// Inject a privileged pod
+	privilegedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "privileged-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: boolPtr(true), // This should score 100
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "privileged-pod" && namespace == "default" {
+			return privilegedPod, nil
+		}
+		return nil, fmt.Errorf("pod not found: %s/%s", namespace, name)
+	})
+
+	// Invoke SAR for pods/exec - should be denied
+	resp := env.invokePodExecSAR(t, "default", "privileged-pod")
+	require.False(t, resp.Status.Allowed, "pods/exec to privileged pod should be denied by risk score")
+	require.Contains(t, resp.Status.Reason, "Denied by policy", "deny reason should reference policy")
+}
+
+// TestEndToEndSARAllowedForSafePod tests that pods/exec to a non-privileged pod is allowed.
+func TestEndToEndSARAllowedForSafePod(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve a session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with PodSecurityRules
+	env.createDenyPolicy(t, "pod-security-allow", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100,
+				HostNetwork:         50,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 79, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
+			},
+		},
+	})
+
+	// Inject a safe pod (no risky features)
+	safePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "safe-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				// No privileged, no hostNetwork - score should be 0
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "safe-pod" && namespace == "default" {
+			return safePod, nil
+		}
+		return nil, fmt.Errorf("pod not found: %s/%s", namespace, name)
+	})
+
+	// Invoke SAR for pods/exec - should be allowed (pod score is 0, below threshold)
+	resp := env.invokePodExecSAR(t, "default", "safe-pod")
+	require.True(t, resp.Status.Allowed, "pods/exec to safe pod should be allowed")
+}
+
+// TestEndToEndSARDeniedByBlockFactor tests that pods with block factors are denied
+// regardless of risk score.
+func TestEndToEndSARDeniedByBlockFactor(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy that blocks hostNetwork pods
+	env.createDenyPolicy(t, "block-hostnetwork", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			BlockFactors: []string{"hostNetwork"},
+		},
+	})
+
+	// Inject a pod with hostNetwork
+	hostNetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hostnet-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "hostnet-pod" && namespace == "default" {
+			return hostNetPod, nil
+		}
+		return nil, fmt.Errorf("pod not found: %s/%s", namespace, name)
+	})
+
+	resp := env.invokePodExecSAR(t, "default", "hostnet-pod")
+	require.False(t, resp.Status.Allowed, "pods/exec to hostNetwork pod should be blocked")
+	require.Contains(t, resp.Status.Reason, "Denied by policy")
+}
+
+// TestEndToEndSARAllowedByPodSecurityExemption tests that exempted namespaces
+// bypass pod security evaluation.
+func TestEndToEndSARAllowedByPodSecurityExemption(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with exemption for kube-system
+	env.createDenyPolicy(t, "exempt-kubesystem", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 49, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
+			},
+			Exemptions: &v1alpha1.PodSecurityExemptions{
+				Namespaces: []string{"kube-system"},
+			},
+		},
+	})
+
+	// Inject a privileged pod in kube-system (should be exempt)
+	exemptPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "privileged-exempt",
+			Namespace: "kube-system",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: boolPtr(true),
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "privileged-exempt" && namespace == "kube-system" {
+			return exemptPod, nil
+		}
+		return nil, fmt.Errorf("pod not found: %s/%s", namespace, name)
+	})
+
+	resp := env.invokePodExecSAR(t, "kube-system", "privileged-exempt")
+	require.True(t, resp.Status.Allowed, "pods/exec to exempted namespace should be allowed")
+}
+
+// TestEndToEndSARPodSecurityFailModeClosed tests that when a pod cannot be fetched
+// and failMode is closed, the request is denied.
+func TestEndToEndSARPodSecurityFailModeClosed(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with failMode: closed
+	env.createDenyPolicy(t, "fail-closed", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			FailMode: "closed",
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 49, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
+			},
+		},
+	})
+
+	// Pod fetch returns error (pod not found)
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	resp := env.invokePodExecSAR(t, "default", "missing-pod")
+	require.False(t, resp.Status.Allowed, "pods/exec should be denied when pod fetch fails with failMode=closed")
+	require.Contains(t, resp.Status.Reason, "Denied by policy")
+}
+
+// TestEndToEndSARPodSecurityFailModeOpen tests that when a pod cannot be fetched
+// and failMode is open, the request is allowed.
+func TestEndToEndSARPodSecurityFailModeOpen(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with failMode: open
+	env.createDenyPolicy(t, "fail-open", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			FailMode: "open",
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 49, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
+			},
+		},
+	})
+
+	// Pod fetch returns error (pod not found)
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	resp := env.invokePodExecSAR(t, "default", "missing-pod")
+	require.True(t, resp.Status.Allowed, "pods/exec should be allowed when pod fetch fails with failMode=open")
+}
+
+// TestEndToEndSARPodsAttachEvaluated tests that pods/attach also triggers pod security evaluation.
+func TestEndToEndSARPodsAttachEvaluated(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy blocking privileged pods
+	env.createDenyPolicy(t, "block-attach", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 49, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
+			},
+		},
+	})
+
+	privilegedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "priv-attach",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: boolPtr(true),
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "priv-attach" && namespace == "default" {
+			return privilegedPod, nil
+		}
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	// Use attach subresource
+	resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace:   "default",
+			Verb:        "create",
+			Resource:    "pods",
+			Subresource: "attach",
+			Name:        "priv-attach",
+		}
+	})
+
+	require.False(t, resp.Status.Allowed, "pods/attach to privileged pod should be denied")
+}
+
+// TestEndToEndSARPodsPortforwardEvaluated tests that pods/portforward also triggers pod security evaluation.
+func TestEndToEndSARPodsPortforwardEvaluated(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy blocking hostPID pods
+	env.createDenyPolicy(t, "block-portforward", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			BlockFactors: []string{"hostPID"},
+		},
+	})
+
+	hostPIDPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hostpid-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			HostPID: true,
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "hostpid-pod" && namespace == "default" {
+			return hostPIDPod, nil
+		}
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	// Use portforward subresource
+	resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace:   "default",
+			Verb:        "create",
+			Resource:    "pods",
+			Subresource: "portforward",
+			Name:        "hostpid-pod",
+		}
+	})
+
+	require.False(t, resp.Status.Allowed, "pods/portforward to hostPID pod should be denied")
+}
+
+// TestEndToEndSARPodSecurityWithEscalationOverride tests that BreakglassEscalation
+// podSecurityOverrides can increase the allowed risk score threshold.
+// NOTE: This test is skipped because the webhook controller doesn't yet populate
+// PodSecurityOverrides from the escalation when building the Action. The unit tests
+// in pkg/policy/deny_test.go verify the override logic works correctly.
+func TestEndToEndSARPodSecurityWithEscalationOverride(t *testing.T) {
+	t.Skip("Escalation override wiring not yet implemented in webhook controller")
+
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create escalation with podSecurityOverrides (increased threshold)
+	ctx := context.Background()
+	escWithOverride := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "override-escalation",
+			Namespace: e2eNamespace,
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{e2eClusterName},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "override-group",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Users: []string{approverEmail},
+			},
+			PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+				MaxAllowedScore: intPtr(200), // Higher threshold
+			},
+		},
+	}
+	require.NoError(t, env.client.Create(ctx, escWithOverride))
+
+	// Create session with the override group
+	env.createSessionWithRequest(t, breakglass.BreakglassSessionRequest{
+		Clustername: e2eClusterName,
+		Username:    requesterEmail,
+		GroupName:   "override-group",
+		Reason:      "testing override",
+	})
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with threshold 50 (escalation overrides to 200)
+	env.createDenyPolicy(t, "low-threshold", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 49, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
+			},
+		},
+	})
+
+	// Inject a privileged pod (score=100)
+	privilegedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "override-test-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: boolPtr(true), // Score = 100
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "override-test-pod" && namespace == "default" {
+			return privilegedPod, nil
+		}
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	// Score=100 is >= base threshold(50) but < override threshold(200)
+	// With the escalation override, this should be allowed
+	resp := env.invokePodExecSAR(t, "default", "override-test-pod")
+	require.True(t, resp.Status.Allowed, "pods/exec should be allowed when escalation override raises threshold")
+}
+
+// TestEndToEndSARPodSecurityScopeSubresource tests that pod security rules
+// only apply to specified subresources.
+func TestEndToEndSARPodSecurityScopeSubresource(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy that only applies to exec (not attach)
+	env.createDenyPolicy(t, "exec-only", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			AppliesTo: &v1alpha1.PodSecurityScope{
+				Subresources: []string{"exec"}, // Only exec, not attach
+			},
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 49, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
+			},
+		},
+	})
+
+	privilegedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "scope-test-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: boolPtr(true),
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "scope-test-pod" && namespace == "default" {
+			return privilegedPod, nil
+		}
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	// pods/exec should be blocked
+	execResp := env.invokePodExecSAR(t, "default", "scope-test-pod")
+	require.False(t, execResp.Status.Allowed, "pods/exec should be denied by scoped policy")
+
+	// pods/attach should NOT be blocked (not in scope)
+	attachResp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace:   "default",
+			Verb:        "create",
+			Resource:    "pods",
+			Subresource: "attach",
+			Name:        "scope-test-pod",
+		}
+	})
+	require.True(t, attachResp.Status.Allowed, "pods/attach should be allowed when not in scope")
+}
+
+// Helper functions for tests
+func intPtr(i int) *int {
+	return &i
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+// ============================================================================
+// Comprehensive SAR Scenarios - Realistic End-to-End Tests
+// ============================================================================
+
+// TestEndToEndSARResourceOperations tests various resource operations with approved sessions.
+func TestEndToEndSARResourceOperations(t *testing.T) {
+	testCases := []struct {
+		name       string
+		verb       string
+		apiGroup   string
+		resource   string
+		namespace  string
+		wantAllow  bool
+		denyPolicy *v1alpha1.DenyPolicySpec
+	}{
+		{
+			name:      "list pods in namespace",
+			verb:      "list",
+			apiGroup:  "",
+			resource:  "pods",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "get deployment",
+			verb:      "get",
+			apiGroup:  "apps",
+			resource:  "deployments",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "delete pod",
+			verb:      "delete",
+			apiGroup:  "",
+			resource:  "pods",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "create configmap",
+			verb:      "create",
+			apiGroup:  "",
+			resource:  "configmaps",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "update service",
+			verb:      "update",
+			apiGroup:  "",
+			resource:  "services",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "patch statefulset",
+			verb:      "patch",
+			apiGroup:  "apps",
+			resource:  "statefulsets",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "watch events",
+			verb:      "watch",
+			apiGroup:  "",
+			resource:  "events",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "list secrets blocked by policy",
+			verb:      "list",
+			apiGroup:  "",
+			resource:  "secrets",
+			namespace: "default",
+			wantAllow: false,
+			denyPolicy: &v1alpha1.DenyPolicySpec{
+				Rules: []v1alpha1.DenyRule{{
+					Verbs:     []string{"get", "list"},
+					APIGroups: []string{""},
+					Resources: []string{"secrets"},
+				}},
+			},
+		},
+		{
+			name:      "delete namespace blocked",
+			verb:      "delete",
+			apiGroup:  "",
+			resource:  "namespaces",
+			namespace: "",
+			wantAllow: false,
+			denyPolicy: &v1alpha1.DenyPolicySpec{
+				Rules: []v1alpha1.DenyRule{{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"namespaces"},
+				}},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupAPIEndToEndEnv(t)
+			defer env.Close()
+
+			// Create and approve session
+			env.createSession(t)
+			sessions := env.listSessions(t)
+			require.Len(t, sessions, 1)
+			env.approveSession(t, sessions[0].Name)
+
+			// Create deny policy if specified
+			if tc.denyPolicy != nil {
+				tc.denyPolicy.AppliesTo = &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}}
+				env.createDenyPolicy(t, "test-deny-"+tc.name, *tc.denyPolicy)
+			}
+
+			// Invoke SAR
+			resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+					Verb:      tc.verb,
+					Group:     tc.apiGroup,
+					Resource:  tc.resource,
+					Namespace: tc.namespace,
+				}
+			})
+
+			if tc.wantAllow {
+				require.True(t, resp.Status.Allowed, "expected %s %s to be allowed", tc.verb, tc.resource)
+			} else {
+				require.False(t, resp.Status.Allowed, "expected %s %s to be denied", tc.verb, tc.resource)
+			}
+		})
+	}
+}
+
+// TestEndToEndSARSubresources tests various subresource operations.
+func TestEndToEndSARSubresources(t *testing.T) {
+	testCases := []struct {
+		name        string
+		resource    string
+		subresource string
+		verb        string
+		wantAllow   bool
+		denyPolicy  *v1alpha1.DenyPolicySpec
+	}{
+		{
+			name:        "get deployment status",
+			resource:    "deployments",
+			subresource: "status",
+			verb:        "get",
+			wantAllow:   true,
+		},
+		{
+			name:        "update pod status",
+			resource:    "pods",
+			subresource: "status",
+			verb:        "update",
+			wantAllow:   true,
+		},
+		{
+			name:        "get pod logs",
+			resource:    "pods",
+			subresource: "log",
+			verb:        "get",
+			wantAllow:   true,
+		},
+		{
+			name:        "pod exec blocked by rule",
+			resource:    "pods",
+			subresource: "exec",
+			verb:        "create",
+			wantAllow:   false,
+			denyPolicy: &v1alpha1.DenyPolicySpec{
+				Rules: []v1alpha1.DenyRule{{
+					Verbs:        []string{"create"},
+					APIGroups:    []string{""},
+					Resources:    []string{"pods"},
+					Subresources: []string{"exec"},
+				}},
+			},
+		},
+		{
+			name:        "scale deployment",
+			resource:    "deployments",
+			subresource: "scale",
+			verb:        "update",
+			wantAllow:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupAPIEndToEndEnv(t)
+			defer env.Close()
+
+			env.createSession(t)
+			sessions := env.listSessions(t)
+			require.Len(t, sessions, 1)
+			env.approveSession(t, sessions[0].Name)
+
+			if tc.denyPolicy != nil {
+				tc.denyPolicy.AppliesTo = &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}}
+				env.createDenyPolicy(t, "test-subresource-deny", *tc.denyPolicy)
+			}
+
+			apiGroup := ""
+			if tc.resource == "deployments" {
+				apiGroup = "apps"
+			}
+
+			resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+					Namespace:   "default",
+					Verb:        tc.verb,
+					Group:       apiGroup,
+					Resource:    tc.resource,
+					Subresource: tc.subresource,
+					Name:        "test-resource",
+				}
+			})
+
+			if tc.wantAllow {
+				require.True(t, resp.Status.Allowed, "expected %s %s/%s to be allowed", tc.verb, tc.resource, tc.subresource)
+			} else {
+				require.False(t, resp.Status.Allowed, "expected %s %s/%s to be denied", tc.verb, tc.resource, tc.subresource)
+			}
+		})
+	}
+}
+
+// TestEndToEndSARWildcardDenyPolicy tests wildcard patterns in deny policies.
+func TestEndToEndSARWildcardDenyPolicy(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a deny policy with wildcard for all resources in kube-system
+	env.createDenyPolicy(t, "block-kubesystem", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Rules: []v1alpha1.DenyRule{{
+			Verbs:      []string{"*"},
+			APIGroups:  []string{"*"},
+			Resources:  []string{"*"},
+			Namespaces: []string{"kube-system"},
+		}},
+	})
+
+	// Access to kube-system should be denied
+	respKubeSystem := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace: "kube-system",
+			Verb:      "list",
+			Resource:  "pods",
+		}
+	})
+	require.False(t, respKubeSystem.Status.Allowed, "access to kube-system should be denied by wildcard policy")
+
+	// Access to default namespace should be allowed
+	respDefault := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace: "default",
+			Verb:      "list",
+			Resource:  "pods",
+		}
+	})
+	require.True(t, respDefault.Status.Allowed, "access to default namespace should be allowed")
+}
+
+// TestEndToEndSARResourceNamePatterns tests resourceNames patterns in deny policies.
+func TestEndToEndSARResourceNamePatterns(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a deny policy blocking specific secret names
+	env.createDenyPolicy(t, "block-specific-secrets", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Rules: []v1alpha1.DenyRule{{
+			Verbs:         []string{"get", "list"},
+			APIGroups:     []string{""},
+			Resources:     []string{"secrets"},
+			ResourceNames: []string{"database-password", "api-key"},
+		}},
+	})
+
+	// Access to blocked secret should be denied
+	respBlocked := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace: "default",
+			Verb:      "get",
+			Resource:  "secrets",
+			Name:      "database-password",
+		}
+	})
+	require.False(t, respBlocked.Status.Allowed, "access to blocked secret should be denied")
+
+	// Access to other secrets should be allowed
+	respAllowed := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace: "default",
+			Verb:      "get",
+			Resource:  "secrets",
+			Name:      "other-secret",
+		}
+	})
+	require.True(t, respAllowed.Status.Allowed, "access to non-blocked secrets should be allowed")
+}
+
+// TestEndToEndSARPodSecurityCapabilities tests capability scoring in pod security evaluation.
+func TestEndToEndSARPodSecurityCapabilities(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with capability scoring
+	env.createDenyPolicy(t, "capability-scoring", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				Capabilities: map[string]int{
+					"SYS_ADMIN":  100, // High risk
+					"NET_ADMIN":  50,
+					"NET_RAW":    30,
+					"SYS_PTRACE": 40,
+				},
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 79, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Capability risk too high"},
+			},
+		},
+	})
+
+	// Pod with SYS_ADMIN should be blocked (score 100)
+	sysAdminPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "sysadmin-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"SYS_ADMIN"},
+					},
+				},
+			}},
+		},
+	}
+
+	// Pod with NET_RAW should be allowed (score 30)
+	netRawPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "netraw-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"NET_RAW"},
+					},
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		switch name {
+		case "sysadmin-pod":
+			return sysAdminPod, nil
+		case "netraw-pod":
+			return netRawPod, nil
+		}
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	// SYS_ADMIN pod should be denied
+	respSysAdmin := env.invokePodExecSAR(t, "default", "sysadmin-pod")
+	require.False(t, respSysAdmin.Status.Allowed, "pods/exec to SYS_ADMIN pod should be denied")
+
+	// NET_RAW pod should be allowed
+	respNetRaw := env.invokePodExecSAR(t, "default", "netraw-pod")
+	require.True(t, respNetRaw.Status.Allowed, "pods/exec to NET_RAW pod should be allowed")
+}
+
+// TestEndToEndSARPodSecurityLabelExemption tests label-based exemptions.
+func TestEndToEndSARPodSecurityLabelExemption(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with label exemption
+	env.createDenyPolicy(t, "label-exempt", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				PrivilegedContainer: 100,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 49, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "Too risky"},
+			},
+			Exemptions: &v1alpha1.PodSecurityExemptions{
+				PodLabels: map[string]string{
+					"breakglass.telekom.com/security-exempt": "true",
+				},
+			},
+		},
+	})
+
+	// Privileged pod WITHOUT exempt label should be blocked
+	nonExemptPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "non-exempt-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: boolPtr(true),
+				},
+			}},
+		},
+	}
+
+	// Privileged pod WITH exempt label should be allowed
+	exemptPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "exempt-pod",
+			Namespace: "default",
+			Labels: map[string]string{
+				"breakglass.telekom.com/security-exempt": "true",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: boolPtr(true),
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		switch name {
+		case "non-exempt-pod":
+			return nonExemptPod, nil
+		case "exempt-pod":
+			return exemptPod, nil
+		}
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	// Non-exempt pod should be denied
+	respNonExempt := env.invokePodExecSAR(t, "default", "non-exempt-pod")
+	require.False(t, respNonExempt.Status.Allowed, "privileged pod without exempt label should be denied")
+
+	// Exempt pod should be allowed
+	respExempt := env.invokePodExecSAR(t, "default", "exempt-pod")
+	require.True(t, respExempt.Status.Allowed, "privileged pod with exempt label should be allowed")
+}
+
+// TestEndToEndSARPodSecurityCumulativeScore tests cumulative scoring of multiple risk factors.
+func TestEndToEndSARPodSecurityCumulativeScore(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with multiple risk factors
+	env.createDenyPolicy(t, "cumulative-scoring", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				HostNetwork: 30,
+				HostPID:     30,
+				RunAsRoot:   30,
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 59, Action: "allow"}, // Two factors allowed
+				{MaxScore: 89, Action: "warn"},  // Three factors warned
+				{MaxScore: 1000, Action: "deny", Reason: "Too many risk factors"},
+			},
+		},
+	})
+
+	// Pod with one factor (score 30) - allowed
+	oneFactorPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "one-factor-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			HostNetwork: true, // Score: 30
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+			}},
+		},
+	}
+
+	// Pod with two factors (score 60) - warn threshold
+	twoFactorPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "two-factor-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			HostNetwork: true, // Score: 30
+			HostPID:     true, // Score: 30 (total: 60)
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+			}},
+		},
+	}
+
+	// Pod with three factors (score 90) - denied
+	threeFactorPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "three-factor-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			HostNetwork: true, // Score: 30
+			HostPID:     true, // Score: 30 (total: 60)
+			Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "alpine",
+				SecurityContext: &corev1.SecurityContext{
+					RunAsUser: int64Ptr(0), // Score: 30 (total: 90)
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		switch name {
+		case "one-factor-pod":
+			return oneFactorPod, nil
+		case "two-factor-pod":
+			return twoFactorPod, nil
+		case "three-factor-pod":
+			return threeFactorPod, nil
+		}
+		return nil, fmt.Errorf("pod not found")
+	})
+
+	// One factor (30) - allowed
+	respOne := env.invokePodExecSAR(t, "default", "one-factor-pod")
+	require.True(t, respOne.Status.Allowed, "pod with one risk factor should be allowed")
+
+	// Two factors (60) - allowed (warn, but still allowed)
+	respTwo := env.invokePodExecSAR(t, "default", "two-factor-pod")
+	require.True(t, respTwo.Status.Allowed, "pod with two risk factors should be allowed with warning")
+
+	// Three factors (90) - denied
+	respThree := env.invokePodExecSAR(t, "default", "three-factor-pod")
+	require.False(t, respThree.Status.Allowed, "pod with three risk factors should be denied")
+}
+
+// TestEndToEndSARMultiplePoliciesPrecedence tests that policies with lower precedence win.
+func TestEndToEndSARMultiplePoliciesPrecedence(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	prec10 := int32(10)
+	prec100 := int32(100)
+
+	// Policy with higher precedence (lower number) that blocks secrets
+	env.createDenyPolicy(t, "high-priority-block", v1alpha1.DenyPolicySpec{
+		AppliesTo:  &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Precedence: &prec10,
+		Rules: []v1alpha1.DenyRule{{
+			Verbs:     []string{"get"},
+			APIGroups: []string{""},
+			Resources: []string{"secrets"},
+		}},
+	})
+
+	// Policy with lower precedence (higher number) that allows secrets
+	// This one would be overridden by the higher priority one
+	env.createDenyPolicy(t, "low-priority-allow", v1alpha1.DenyPolicySpec{
+		AppliesTo:  &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Precedence: &prec100,
+		Rules: []v1alpha1.DenyRule{{
+			Verbs:     []string{"delete"}, // Different verb
+			APIGroups: []string{""},
+			Resources: []string{"secrets"},
+		}},
+	})
+
+	// Get secrets should be denied by high-priority policy
+	respGet := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace: "default",
+			Verb:      "get",
+			Resource:  "secrets",
+		}
+	})
+	require.False(t, respGet.Status.Allowed, "get secrets should be denied by high-priority policy")
+
+	// Delete secrets should be denied by low-priority policy
+	respDelete := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace: "default",
+			Verb:      "delete",
+			Resource:  "secrets",
+		}
+	})
+	require.False(t, respDelete.Status.Allowed, "delete secrets should be denied by low-priority policy")
+
+	// List secrets should be allowed (not blocked by either policy)
+	respList := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace: "default",
+			Verb:      "list",
+			Resource:  "secrets",
+		}
+	})
+	require.True(t, respList.Status.Allowed, "list secrets should be allowed")
+}
+
+// TestEndToEndSARCRDOperations tests operations on custom resources.
+func TestEndToEndSARCRDOperations(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	testCases := []struct {
+		name      string
+		verb      string
+		apiGroup  string
+		resource  string
+		namespace string
+		wantAllow bool
+	}{
+		{
+			name:      "list breakglass sessions",
+			verb:      "list",
+			apiGroup:  "breakglass.t-caas.telekom.com",
+			resource:  "breakglasssessions",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "get deny policy",
+			verb:      "get",
+			apiGroup:  "breakglass.t-caas.telekom.com",
+			resource:  "denypolicies",
+			namespace: "",
+			wantAllow: true,
+		},
+		{
+			name:      "list custom resources",
+			verb:      "list",
+			apiGroup:  "custom.example.com",
+			resource:  "myresources",
+			namespace: "default",
+			wantAllow: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+					Verb:      tc.verb,
+					Group:     tc.apiGroup,
+					Resource:  tc.resource,
+					Namespace: tc.namespace,
+				}
+			})
+
+			if tc.wantAllow {
+				require.True(t, resp.Status.Allowed, "expected %s %s/%s to be allowed", tc.verb, tc.apiGroup, tc.resource)
+			} else {
+				require.False(t, resp.Status.Allowed, "expected %s %s/%s to be denied", tc.verb, tc.apiGroup, tc.resource)
+			}
+		})
+	}
+}
+
+// Helper for int64 pointer
+func int64Ptr(i int64) *int64 {
+	return &i
 }

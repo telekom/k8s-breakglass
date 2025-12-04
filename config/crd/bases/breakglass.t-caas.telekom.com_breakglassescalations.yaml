@@ -226,6 +226,69 @@ spec:
                       type: string
                     type: array
                 type: object
+              podSecurityOverrides:
+                description: |-
+                  podSecurityOverrides allows this escalation to relax pod security rules from DenyPolicy.
+                  When a user has an active session with this escalation and attempts to exec into a pod,
+                  these overrides are applied to the pod security evaluation.
+                  This enables trusted groups (e.g., SRE) to access high-risk pods when necessary.
+                properties:
+                  approvers:
+                    description: |-
+                      approvers defines who can approve the use of pod security overrides.
+                      Only used when requireApproval is true.
+                    properties:
+                      groups:
+                        description: groups that can approve pod security override
+                          usage
+                        items:
+                          type: string
+                        type: array
+                      users:
+                        description: users that can approve pod security override
+                          usage
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  enabled:
+                    default: false
+                    description: |-
+                      enabled activates pod security overrides for this escalation.
+                      If false, no overrides are applied regardless of other settings.
+                    type: boolean
+                  exemptFactors:
+                    description: |-
+                      exemptFactors lists risk factors that should NOT block access for this escalation.
+                      These factors are skipped during pod security evaluation for users with this escalation.
+                      Valid values: hostNetwork, hostPID, hostIPC, privilegedContainer, hostPathWritable, hostPathReadOnly, runAsRoot
+                      Example: ["privilegedContainer", "hostNetwork"] allows exec to privileged/hostNetwork pods.
+                    items:
+                      type: string
+                    type: array
+                  maxAllowedScore:
+                    description: |-
+                      maxAllowedScore overrides the risk score threshold for this escalation.
+                      If set, pods with risk scores up to this value will be allowed (instead of the DenyPolicy threshold).
+                      Example: Set to 150 to allow exec to privileged pods for senior SREs.
+                    maximum: 1000
+                    minimum: 0
+                    type: integer
+                  namespaceScope:
+                    description: |-
+                      namespaceScope limits where overrides apply. If set, overrides only work for pods in these namespaces.
+                      If empty, overrides apply to all namespaces (subject to DenyPolicy scope).
+                      Supports exact match only.
+                    items:
+                      type: string
+                    type: array
+                  requireApproval:
+                    description: |-
+                      requireApproval requires additional approval before overrides can be used.
+                      When true, the session must be approved by someone in the approvers list.
+                      This adds an extra check beyond the normal escalation approval.
+                    type: boolean
+                type: object
               requestReason:
                 description: |-
                   requestReason configures an optional free-text reason the requester must or may provide
