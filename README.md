@@ -3,6 +3,7 @@
 [![](https://img.shields.io/badge/license-Apache%20License%202.0-blue)](https://img.shields.io/badge/license-Apache%20License%202.0-blue)
 [![REUSE Compliance Check](https://github.com/telekom/k8s-breakglass/actions/workflows/reuse-compliance.yml/badge.svg)](https://github.com/telekom/k8s-breakglass/actions/workflows/reuse-compliance.yml)
 [![OpenSSF Scorecard Score](https://api.scorecard.dev/projects/github.com/telekom/k8s-breakglass/badge)](https://scorecard.dev/viewer/?uri=github.com/telekom/k8s-breakglass)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/11553/badge)](https://www.bestpractices.dev/projects/11553)
 
 **Kubernetes Breakglass** is a secure, auditable privilege escalation system for Kubernetes clusters. It enables users to request temporary elevated access through a structured approval workflow, with real-time webhook integration for immediate Kubernetes RBAC enforcement.
 
