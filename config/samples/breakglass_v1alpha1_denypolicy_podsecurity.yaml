@@ -1,0 +1,168 @@
+# Example DenyPolicy with Pod Security Risk Classification
+#
+# This policy evaluates the security posture of pods before allowing
+# exec, attach, or portforward operations. High-risk pods (privileged,
+# hostNetwork, etc.) are blocked or warned based on configured thresholds.
+#
+# Use this as a starting point and adjust scores/thresholds based on
+# your security requirements.
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: pod-security-evaluation
+spec:
+  # Optional: Scope to specific clusters (global if omitted)
+  appliesTo:
+    clusters: ["prod-*", "staging-*"]
+  
+  # Pod security rules for exec/attach/portforward
+  podSecurityRules:
+    # Which subresources trigger evaluation (defaults shown)
+    appliesTo:
+      subresources: ["exec", "attach", "portforward"]
+    
+    # Risk factor weights (0-100 recommended)
+    # Higher scores = more dangerous = more likely to be blocked
+    riskFactors:
+      # Host namespace access
+      hostNetwork: 20          # Pod uses host network namespace
+      hostPID: 25              # Pod uses host PID namespace
+      hostIPC: 15              # Pod uses host IPC namespace
+      
+      # Container privileges
+      privilegedContainer: 50  # Container runs in privileged mode
+      runAsRoot: 20            # Container runs as root (UID 0)
+      
+      # Volume mounts
+      hostPathWritable: 30     # Writable hostPath volume mounts
+      hostPathReadOnly: 10     # Read-only hostPath volume mounts
+      
+      # Linux capabilities (per capability)
+      capabilities:
+        NET_ADMIN: 30          # Network configuration
+        SYS_ADMIN: 50          # Full system administration
+        SYS_PTRACE: 40         # Process tracing
+        NET_RAW: 25            # Raw socket access
+        DAC_OVERRIDE: 35       # Bypass file permissions
+        SETUID: 30             # Set user ID
+        SETGID: 30             # Set group ID
+    
+    # Actions based on cumulative risk score
+    # Evaluated in order - first matching threshold applies
+    thresholds:
+      - maxScore: 30
+        action: allow          # Low risk - allow silently
+      
+      - maxScore: 60
+        action: warn           # Medium risk - allow but log warning
+        reason: "Elevated risk pod access: score={{.Score}}, factors={{.Factors}}"
+      
+      - maxScore: 100
+        action: deny           # High risk - block access
+        reason: "Access denied: pod {{.Pod}} in {{.Namespace}} has risk score {{.Score}} exceeding threshold. Factors: {{.Factors}}"
+    
+    # Block factors - immediate deny regardless of score
+    # Use for configurations that should NEVER be allowed
+    blockFactors:
+      - privilegedContainer    # Never allow exec into privileged pods
+      - hostPID                # Never allow access to host PID namespace
+    
+    # Exemptions - skip evaluation for these pods
+    exemptions:
+      # Trusted system namespaces
+      namespaces:
+        - kube-system
+        - monitoring
+        - logging
+      
+      # Pods with this label are exempt
+      podLabels:
+        breakglass.telekom.com/security-exempt: "true"
+    
+    # Behavior when pod spec cannot be fetched
+    # "closed" = deny request (more secure, recommended for prod)
+    # "open" = allow request (less secure, may be needed for network issues)
+    failMode: closed
+  
+  # Policy precedence (lower number = evaluated first)
+  precedence: 15
+
+---
+# Example: Development-friendly policy (more permissive)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: pod-security-dev-permissive
+spec:
+  appliesTo:
+    clusters: ["dev-*"]
+  
+  podSecurityRules:
+    riskFactors:
+      hostNetwork: 15
+      hostPID: 20
+      privilegedContainer: 40
+      runAsRoot: 10
+    
+    thresholds:
+      # In dev, warn but don't block
+      - maxScore: 100
+        action: warn
+        reason: "Dev cluster: allowing access to risky pod (score={{.Score}})"
+    
+    # No block factors in dev - allow everything with warnings
+    blockFactors: []
+    
+    exemptions:
+      namespaces:
+        - kube-system
+    
+    # Fail-open in dev for convenience
+    failMode: open
+  
+  precedence: 100
+
+---
+# Example: Strict production policy (very restrictive)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: pod-security-prod-strict
+spec:
+  appliesTo:
+    clusters: ["prod-critical-*"]
+  
+  podSecurityRules:
+    riskFactors:
+      hostNetwork: 100         # Immediately deny
+      hostPID: 100             # Immediately deny
+      hostIPC: 50
+      privilegedContainer: 100 # Immediately deny
+      hostPathWritable: 80
+      hostPathReadOnly: 30
+      runAsRoot: 40
+      capabilities:
+        SYS_ADMIN: 100         # Immediately deny
+        NET_ADMIN: 60
+        SYS_PTRACE: 80
+    
+    thresholds:
+      - maxScore: 20
+        action: allow
+      - maxScore: 50
+        action: deny
+        reason: "Production critical: pod {{.Pod}} exceeds security threshold (score={{.Score}})"
+    
+    blockFactors:
+      - privilegedContainer
+      - hostPID
+      - hostNetwork
+    
+    exemptions:
+      namespaces: []  # No exemptions in critical prod
+    
+    failMode: closed
+  
+  # Highest priority for critical prod
+  precedence: 1

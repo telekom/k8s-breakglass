@@ -151,6 +151,66 @@ type BreakglassEscalationSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	MailProvider string `json:"mailProvider,omitempty"`
+
+	// podSecurityOverrides allows this escalation to relax pod security rules from DenyPolicy.
+	// When a user has an active session with this escalation and attempts to exec into a pod,
+	// these overrides are applied to the pod security evaluation.
+	// This enables trusted groups (e.g., SRE) to access high-risk pods when necessary.
+	// +optional
+	PodSecurityOverrides *PodSecurityOverrides `json:"podSecurityOverrides,omitempty"`
+}
+
+// PodSecurityOverrides defines how an escalation can relax pod security rules.
+// These overrides apply when evaluating DenyPolicy.podSecurityRules for users with this escalation.
+type PodSecurityOverrides struct {
+	// enabled activates pod security overrides for this escalation.
+	// If false, no overrides are applied regardless of other settings.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// maxAllowedScore overrides the risk score threshold for this escalation.
+	// If set, pods with risk scores up to this value will be allowed (instead of the DenyPolicy threshold).
+	// Example: Set to 150 to allow exec to privileged pods for senior SREs.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	MaxAllowedScore *int `json:"maxAllowedScore,omitempty"`
+
+	// exemptFactors lists risk factors that should NOT block access for this escalation.
+	// These factors are skipped during pod security evaluation for users with this escalation.
+	// Valid values: hostNetwork, hostPID, hostIPC, privilegedContainer, hostPathWritable, hostPathReadOnly, runAsRoot
+	// Example: ["privilegedContainer", "hostNetwork"] allows exec to privileged/hostNetwork pods.
+	// +optional
+	ExemptFactors []string `json:"exemptFactors,omitempty"`
+
+	// namespaceScope limits where overrides apply. If set, overrides only work for pods in these namespaces.
+	// If empty, overrides apply to all namespaces (subject to DenyPolicy scope).
+	// Supports exact match only.
+	// +optional
+	NamespaceScope []string `json:"namespaceScope,omitempty"`
+
+	// requireApproval requires additional approval before overrides can be used.
+	// When true, the session must be approved by someone in the approvers list.
+	// This adds an extra check beyond the normal escalation approval.
+	// +optional
+	RequireApproval bool `json:"requireApproval,omitempty"`
+
+	// approvers defines who can approve the use of pod security overrides.
+	// Only used when requireApproval is true.
+	// +optional
+	Approvers *PodSecurityApprovers `json:"approvers,omitempty"`
+}
+
+// PodSecurityApprovers defines who can approve pod security override usage.
+type PodSecurityApprovers struct {
+	// groups that can approve pod security override usage
+	// +optional
+	Groups []string `json:"groups,omitempty"`
+
+	// users that can approve pod security override usage
+	// +optional
+	Users []string `json:"users,omitempty"`
 }
 
 // NotificationExclusions defines which users/groups should be excluded from email notifications

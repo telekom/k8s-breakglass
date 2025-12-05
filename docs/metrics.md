@@ -200,6 +200,49 @@ sum(rate(breakglass_clusterconfigs_failed_total[5m])) by (cluster)
 sum(rate(breakglass_clusterconfigs_checked_total[5m])) by (cluster)
 ```
 
+## Pod Security Evaluation Metrics
+
+Track risk-based pod security evaluation for exec/attach/portforward operations. See [DenyPolicy - Pod Security Rules](./deny-policy.md#podsecurityrules) for configuration.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_pod_security_evaluations_total` | Counter | `cluster`, `policy`, `action` | Total evaluations (action: allowed/denied/warned) |
+| `breakglass_pod_security_risk_score` | Histogram | `cluster` | Distribution of calculated risk scores |
+| `breakglass_pod_security_factors_total` | Counter | `cluster`, `factor` | Count of detected risk factors (e.g., hostNetwork, privilegedContainer) |
+| `breakglass_pod_security_denied_total` | Counter | `cluster`, `policy` | Exec/attach requests denied by security policy |
+| `breakglass_pod_security_warnings_total` | Counter | `cluster`, `policy` | Exec/attach requests allowed with security warnings |
+
+**Example Queries:**
+
+```promql
+# Deny rate by policy
+sum(rate(breakglass_pod_security_denied_total[5m])) by (policy)
+
+# Average risk score by cluster
+histogram_quantile(0.50, sum(rate(breakglass_pod_security_risk_score_bucket[5m])) by (le, cluster))
+
+# Most common risk factors
+topk(5, sum(rate(breakglass_pod_security_factors_total[5m])) by (factor))
+
+# Warning vs denial ratio
+sum(rate(breakglass_pod_security_warnings_total[5m])) by (cluster)
+/
+sum(rate(breakglass_pod_security_denied_total[5m])) by (cluster)
+```
+
+**Risk Factor Labels:**
+
+| Factor Label | Description |
+|--------------|-------------|
+| `hostNetwork` | Pod uses host network namespace |
+| `hostPID` | Pod uses host PID namespace |
+| `hostIPC` | Pod uses host IPC namespace |
+| `privilegedContainer` | Container runs in privileged mode |
+| `hostPathWritable` | Pod has writable hostPath mounts |
+| `hostPathReadOnly` | Pod has read-only hostPath mounts |
+| `runAsRoot` | Container runs as UID 0 |
+| `capability:*` | Linux capability detected (e.g., `capability:SYS_ADMIN`) |
+
 ## Alerting Recommendations
 
 Use these alert rules to monitor system health:

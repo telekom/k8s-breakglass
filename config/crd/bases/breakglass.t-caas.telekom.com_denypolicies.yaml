@@ -69,6 +69,138 @@ spec:
                       type: string
                     type: array
                 type: object
+              podSecurityRules:
+                description: |-
+                  podSecurityRules evaluates pod specifications for exec/attach/portforward requests.
+                  When a user attempts to exec into a pod, the pod's security context is analyzed
+                  and a risk score is calculated based on configured risk factors.
+                properties:
+                  appliesTo:
+                    description: |-
+                      appliesTo specifies which pod subresources trigger this evaluation.
+                      Default: exec, attach, portforward
+                    properties:
+                      subresources:
+                        description: subresources to evaluate. If empty, defaults
+                          to ["exec", "attach", "portforward"].
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  blockFactors:
+                    description: |-
+                      blockFactors immediately deny if ANY listed factor is present, regardless of score.
+                      Valid values: hostNetwork, hostPID, hostIPC, privilegedContainer, hostPathWritable, runAsRoot
+                    items:
+                      type: string
+                    type: array
+                  exemptions:
+                    description: exemptions exclude certain pods from security evaluation.
+                    properties:
+                      namespaces:
+                        description: |-
+                          namespaces to skip evaluation for (exact match).
+                          Common exemptions: kube-system, monitoring, logging
+                        items:
+                          type: string
+                        type: array
+                      podLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          podLabels: pods with ALL specified labels are exempt.
+                          Example: {"breakglass.telekom.com/security-exempt": "true"}
+                        type: object
+                    type: object
+                  failMode:
+                    default: closed
+                    description: |-
+                      failMode determines behavior when pod spec cannot be fetched from target cluster.
+                      "open" = allow request if fetch fails (fail-open)
+                      "closed" = deny request if fetch fails (fail-closed, more secure)
+                    enum:
+                    - open
+                    - closed
+                    type: string
+                  riskFactors:
+                    description: |-
+                      riskFactors assigns numeric weights (0-100) to dangerous pod configurations.
+                      The total risk score is the sum of all detected factors.
+                    properties:
+                      capabilities:
+                        additionalProperties:
+                          type: integer
+                        description: |-
+                          capabilities maps Linux capability names to risk scores.
+                          Example: {"NET_ADMIN": 50, "SYS_ADMIN": 80, "SYS_PTRACE": 60}
+                        type: object
+                      hostIPC:
+                        description: 'hostIPC: pod uses host IPC namespace (can access
+                          host shared memory)'
+                        type: integer
+                      hostNetwork:
+                        description: 'hostNetwork: pod uses host network namespace
+                          (enables network sniffing, bypasses network policies)'
+                        type: integer
+                      hostPID:
+                        description: 'hostPID: pod uses host PID namespace (can see/signal
+                          all host processes)'
+                        type: integer
+                      hostPathReadOnly:
+                        description: 'hostPathReadOnly: pod has read-only hostPath
+                          volume mounts (lower risk than writable)'
+                        type: integer
+                      hostPathWritable:
+                        description: 'hostPathWritable: pod has writable hostPath
+                          volume mounts'
+                        type: integer
+                      privilegedContainer:
+                        description: 'privilegedContainer: container runs in privileged
+                          mode (full host access)'
+                        type: integer
+                      runAsRoot:
+                        description: 'runAsRoot: container runs as root user (UID
+                          0)'
+                        type: integer
+                    type: object
+                  thresholds:
+                    description: |-
+                      thresholds define actions based on cumulative risk score.
+                      Evaluated in order; first matching threshold determines the action.
+                    items:
+                      description: RiskThreshold defines an action to take when risk
+                        score falls within a range.
+                      properties:
+                        action:
+                          description: |-
+                            action to take when score <= maxScore: "allow", "warn", or "deny"
+                            - allow: permit the request silently
+                            - warn: permit but log a warning and emit metrics
+                            - deny: block the request with reason message
+                          enum:
+                          - allow
+                          - warn
+                          - deny
+                          type: string
+                        maxScore:
+                          description: |-
+                            maxScore is the upper bound (inclusive) for this threshold.
+                            Thresholds are evaluated in order; use ascending maxScore values.
+                          type: integer
+                        reason:
+                          description: |-
+                            reason is the message returned to user when action is "deny".
+                            Supports Go template variables: {{.Score}}, {{.Factors}}, {{.Pod}}, {{.Namespace}}
+                          type: string
+                      required:
+                      - action
+                      - maxScore
+                      type: object
+                    type: array
+                required:
+                - riskFactors
+                - thresholds
+                type: object
               precedence:
                 description: precedence (lower wins). If unset defaults to 100.
                 format: int32
@@ -119,8 +251,6 @@ spec:
                   - verbs
                   type: object
                 type: array
-            required:
-            - rules
             type: object
           status:
             description: DenyPolicyStatus holds policy evaluation state tracked via

@@ -50,6 +50,12 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 - **[Advanced Features](./advanced-features.md)** - Request/approval reasons, self-approval prevention, domain restrictions
 
+## Security & Policy
+
+- **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions and pod security rules
+- **[Pod Security Evaluation](./deny-policy.md#podsecurityrules)** - Risk-based exec/attach/portforward controls
+- **[BreakglassEscalation - Security Overrides](./breakglass-escalation.md#podsecurityoverrides)** - Per-escalation pod security exemptions
+
 ## Architecture
 
 ```text

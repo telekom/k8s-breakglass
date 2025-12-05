@@ -57,3 +57,5 @@ main
 cover.out
 config/dev/certs
 pkg/breakglass/testdata/fuzz/*
+**/.DS_Store
+.DS_Store

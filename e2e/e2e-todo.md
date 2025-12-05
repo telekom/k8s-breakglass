@@ -79,6 +79,180 @@ Format: [ID] [Area] — Short description
 - Expected: Creation is blocked and error references deny policy.
 - Priority: Medium
 
+## Pod Security Evaluation (pods/exec)
+
+[PS-001] Exec to privileged pod blocked by risk score
+- Steps: Create a DenyPolicy with PodSecurityRules (privilegedContainer=100, threshold=80). Exec into a pod with `privileged: true`.
+- Expected: Request denied with "Risk score too high" message.
+- Priority: High
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARDeniedByPodSecurityRiskScore
+
+[PS-002] Exec to safe pod allowed when below threshold
+- Steps: Create a DenyPolicy with PodSecurityRules (privilegedContainer=100, threshold=80). Exec into a pod with no risky features.
+- Expected: Request allowed (score=0 < threshold=80).
+- Priority: High
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARAllowedForSafePod
+
+[PS-003] Exec blocked by blockFactors (hostNetwork)
+- Steps: Create a DenyPolicy with `blockFactors: ["hostNetwork"]`. Exec into a pod with `hostNetwork: true`.
+- Expected: Request denied regardless of risk score.
+- Priority: High
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARDeniedByBlockFactor
+
+[PS-004] Exec to exempted namespace allowed
+- Steps: Create a DenyPolicy with `exemptions.namespaces: ["kube-system"]`. Exec into a privileged pod in kube-system.
+- Expected: Request allowed (namespace is exempt).
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARAllowedByPodSecurityExemption
+
+[PS-005] Exec denied when pod not found (failMode=closed)
+- Steps: Create a DenyPolicy with `failMode: closed`. Exec into a pod that doesn't exist.
+- Expected: Request denied (fail-closed behavior).
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodSecurityFailModeClosed
+
+[PS-006] Exec allowed when pod not found (failMode=open)
+- Steps: Create a DenyPolicy with `failMode: open`. Exec into a pod that doesn't exist.
+- Expected: Request allowed (fail-open behavior).
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodSecurityFailModeOpen
+
+[PS-007] Attach to privileged pod blocked
+- Steps: Create a DenyPolicy with PodSecurityRules. Attach to a privileged pod.
+- Expected: Request denied (attach triggers same evaluation as exec).
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodsAttachEvaluated
+
+[PS-008] Portforward to hostPID pod blocked
+- Steps: Create a DenyPolicy with `blockFactors: ["hostPID"]`. Portforward to a pod with `hostPID: true`.
+- Expected: Request denied (portforward triggers security evaluation).
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodsPortforwardEvaluated
+
+[PS-009] Policy applies only to specified subresources
+- Steps: Create a DenyPolicy with `appliesTo.subresources: ["exec"]`. Exec should be blocked, attach should be allowed.
+- Expected: Exec denied, attach allowed (scoped to exec only).
+- Priority: Low
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodSecurityScopeSubresource
+
+[PS-010] Escalation override raises risk threshold
+- Steps: Create BreakglassEscalation with `podSecurityOverrides.maxAllowedScore: 200`. Exec into privileged pod (score=100).
+- Expected: Request allowed (override raises threshold from 50 to 200).
+- Priority: Low
+- Implemented: Skipped (webhook doesn't wire PodSecurityOverrides to Action yet)
+
+[PS-011] Capability scoring blocks SYS_ADMIN containers
+- Steps: Create DenyPolicy with `capabilities: {SYS_ADMIN: 100}` and threshold 80. Exec into pod with SYS_ADMIN capability.
+- Expected: Request denied due to capability risk score.
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodSecurityCapabilities
+
+[PS-012] Label-based exemption allows privileged pods with exempt label
+- Steps: Create DenyPolicy with `exemptions.podLabels: {"breakglass.telekom.com/security-exempt": "true"}`. Exec into labeled privileged pod.
+- Expected: Request allowed (label exemption).
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodSecurityLabelExemption
+
+[PS-013] Cumulative risk score from multiple factors
+- Steps: Create DenyPolicy with multiple risk factors (hostNetwork=30, hostPID=30, runAsRoot=30, threshold=60). Test pods with 1, 2, 3 factors.
+- Expected: 1 factor allowed, 2 factors warned, 3 factors denied.
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodSecurityCumulativeScore
+
+## Resource Operations (SAR)
+
+[RO-001] List pods in namespace allowed with approved session
+- Steps: Create and approve session. Invoke SAR for `list pods` in default namespace.
+- Expected: Request allowed.
+- Priority: High
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARResourceOperations
+
+[RO-002] Get deployment allowed with approved session
+- Steps: Create and approve session. Invoke SAR for `get deployments` in apps group.
+- Expected: Request allowed.
+- Priority: High
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARResourceOperations
+
+[RO-003] Delete pod allowed with approved session
+- Steps: Create and approve session. Invoke SAR for `delete pods`.
+- Expected: Request allowed.
+- Priority: High
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARResourceOperations
+
+[RO-004] List secrets blocked by deny policy
+- Steps: Create deny policy blocking `get`/`list` on secrets. Invoke SAR for `list secrets`.
+- Expected: Request denied by policy.
+- Priority: High
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARResourceOperations
+
+[RO-005] Delete namespace blocked by deny policy
+- Steps: Create deny policy blocking `delete` on namespaces. Invoke SAR for `delete namespace`.
+- Expected: Request denied by policy.
+- Priority: High
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARResourceOperations
+
+## Subresource Operations
+
+[SR-001] Get deployment status allowed
+- Steps: Create and approve session. Invoke SAR for `get deployments/status`.
+- Expected: Request allowed.
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARSubresources
+
+[SR-002] Get pod logs allowed
+- Steps: Create and approve session. Invoke SAR for `get pods/log`.
+- Expected: Request allowed.
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARSubresources
+
+[SR-003] Pod exec blocked by rule-based deny policy
+- Steps: Create deny policy with rule blocking `create pods/exec`. Invoke SAR for pods/exec.
+- Expected: Request denied by rule (not pod security).
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARSubresources
+
+[SR-004] Scale deployment allowed
+- Steps: Create and approve session. Invoke SAR for `update deployments/scale`.
+- Expected: Request allowed.
+- Priority: Low
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARSubresources
+
+## Wildcard and Pattern Matching
+
+[WP-001] Wildcard deny policy blocks all operations in namespace
+- Steps: Create deny policy with `verbs: ["*"], resources: ["*"], namespaces: ["kube-system"]`. Test access to kube-system vs default.
+- Expected: kube-system denied, default allowed.
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARWildcardDenyPolicy
+
+[WP-002] ResourceNames pattern blocks specific secrets
+- Steps: Create deny policy with `resourceNames: ["database-password", "api-key"]`. Test access to blocked vs non-blocked secrets.
+- Expected: Blocked secrets denied, other secrets allowed.
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARResourceNamePatterns
+
+## Policy Precedence
+
+[PP-001] Multiple policies evaluated by precedence
+- Steps: Create two deny policies with different precedence (10 and 100) blocking different verbs. Test both verbs.
+- Expected: Both policies enforce, lower precedence evaluated first.
+- Priority: Medium
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARMultiplePoliciesPrecedence
+
+## Custom Resources
+
+[CR-001] List breakglass sessions allowed
+- Steps: Create and approve session. Invoke SAR for `list breakglasssessions` in breakglass.t-caas.telekom.com group.
+- Expected: Request allowed.
+- Priority: Low
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARCRDOperations
+
+[CR-002] Get deny policy allowed
+- Steps: Create and approve session. Invoke SAR for `get denypolicies`.
+- Expected: Request allowed.
+- Priority: Low
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARCRDOperations
+
 ## Notifications & MailHog
 
 [M-001] Controller sends escalation email and MailHog receives it
