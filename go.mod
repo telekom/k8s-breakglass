@@ -1,6 +1,6 @@
 module github.com/telekom/k8s-breakglass
 
-go 1.24.9
+go 1.25.0
 
 require (
 	github.com/MicahParks/keyfunc v1.9.0
@@ -20,12 +20,15 @@ require (
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.34.2
-	k8s.io/apimachinery v0.34.2
+	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.34.2
 	sigs.k8s.io/controller-runtime v0.22.4
 )
 
-require go.uber.org/atomic v1.11.0 // indirect
+require (
+	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
+)
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
