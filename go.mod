@@ -21,14 +21,11 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
-	k8s.io/client-go v0.34.2
+	k8s.io/client-go v0.35.0
 	sigs.k8s.io/controller-runtime v0.22.4
 )
 
-require (
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
-	go.uber.org/atomic v1.11.0 // indirect
-)
+require go.uber.org/atomic v1.11.0 // indirect
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
