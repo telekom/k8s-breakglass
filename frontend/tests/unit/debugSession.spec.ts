@@ -1,6 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount } from '@vue/test-utils';
-import { nextTick } from 'vue';
+import { describe, it, expect } from 'vitest';
 
 // Mock the debug session types
 interface DebugSessionSummary {
@@ -216,10 +214,6 @@ describe('Debug Session Participant Management', () => {
 
   const isOwner = (participants: Participant[], user: string): boolean => {
     return participants.some(p => p.user === user && p.role === 'owner');
-  };
-
-  const isParticipant = (participants: Participant[], user: string): boolean => {
-    return participants.some(p => p.user === user);
   };
 
   const canLeave = (participants: Participant[], user: string): boolean => {
