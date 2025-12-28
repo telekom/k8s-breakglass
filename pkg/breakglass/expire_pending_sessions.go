@@ -24,7 +24,7 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 			ses.Status.State = telekomv1alpha1.SessionStateTimeout
 
 			// Set RetainedUntil for timeout sessions (same logic as other terminal states)
-			var retainFor time.Duration = DefaultRetainForDuration
+			retainFor := DefaultRetainForDuration
 			if ses.Spec.RetainFor != "" {
 				if d, err := time.ParseDuration(ses.Spec.RetainFor); err == nil && d > 0 {
 					retainFor = d

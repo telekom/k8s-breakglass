@@ -143,7 +143,7 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "connection_failed").Inc()
 		return false, fmt.Errorf("connection failed: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Create SMTP client from connection
 	client, err := smtp.NewClient(conn, mp.Spec.SMTP.Host)
@@ -152,7 +152,7 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "connection_failed").Inc()
 		return false, fmt.Errorf("client creation failed: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Try STARTTLS with proper TLS config
 	if !mp.Spec.SMTP.InsecureSkipVerify {

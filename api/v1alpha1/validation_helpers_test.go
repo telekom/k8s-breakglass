@@ -535,7 +535,7 @@ func TestEnsureClusterWideUniqueName_NilContext(t *testing.T) {
 	webhookClient = fakeClient
 
 	// nil context should use Background context
-	errs := ensureClusterWideUniqueName(nil, &BreakglassSessionList{}, "ns", "name", field.NewPath("test"))
+	errs := ensureClusterWideUniqueName(context.TODO(), &BreakglassSessionList{}, "ns", "name", field.NewPath("test"))
 	assert.Nil(t, errs, "should handle nil context")
 }
 
@@ -913,7 +913,7 @@ func TestEnsureClusterWideUniqueIssuer_NilContext(t *testing.T) {
 	webhookClient = fakeClient
 
 	// nil context should use TODO context
-	errs := ensureClusterWideUniqueIssuer(nil, "https://example.com", "new-idp", field.NewPath("issuer"))
+	errs := ensureClusterWideUniqueIssuer(context.TODO(), "https://example.com", "new-idp", field.NewPath("issuer"))
 	assert.Nil(t, errs, "should handle nil context")
 }
 
@@ -992,7 +992,7 @@ func TestValidateIdentityProviderFields_NilContext(t *testing.T) {
 
 	// nil context should use Background context
 	errs := validateIdentityProviderFields(
-		nil, // nil context
+		context.TODO(),
 		"my-idp", "https://issuer.com",
 		field.NewPath("spec").Child("identityProviderName"),
 		field.NewPath("spec").Child("identityProviderIssuer"),
@@ -1204,7 +1204,7 @@ func TestValidateMailProviderReference_NilContext(t *testing.T) {
 	webhookClient = fakeClient
 
 	// nil context should use Background context
-	errs := validateMailProviderReference(nil, "valid-mail", field.NewPath("test"))
+	errs := validateMailProviderReference(context.TODO(), "valid-mail", field.NewPath("test"))
 	assert.Nil(t, errs, "should handle nil context")
 }
 
@@ -1306,7 +1306,7 @@ func TestValidateIdentityProviderRefs_NilContext(t *testing.T) {
 	webhookClient = fakeClient
 
 	// nil context should use Background context
-	errs := validateIdentityProviderRefs(nil, []string{"my-idp"}, field.NewPath("test"))
+	errs := validateIdentityProviderRefs(context.TODO(), []string{"my-idp"}, field.NewPath("test"))
 	assert.Nil(t, errs, "should handle nil context")
 }
 

@@ -267,7 +267,7 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 
 	// List active debug sessions for this cluster
 	debugSessionList := &v1alpha1.DebugSessionList{}
-	if err := wc.escalManager.Client.List(ctx, debugSessionList); err != nil {
+	if err := wc.escalManager.List(ctx, debugSessionList); err != nil {
 		reqLog.Warnw("Failed to list debug sessions for pod exec check", "error", err)
 		return false, "", ""
 	}

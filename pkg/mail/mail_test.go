@@ -291,15 +291,15 @@ func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		defer ln.Close()
+		defer func() { _ = ln.Close() }()
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		r := bufio.NewReader(conn)
 		// Welcome
-		fmt.Fprintf(conn, "220 localhost Test SMTP Service Ready\r\n")
+		_, _ = fmt.Fprintf(conn, "220 localhost Test SMTP Service Ready\r\n")
 		for {
 			line, err := r.ReadString('\n')
 			if err != nil {
@@ -307,19 +307,19 @@ func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
 			}
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "EHLO") || strings.HasPrefix(line, "HELO") {
-				fmt.Fprintf(conn, "250-localhost Hello\r\n250 OK\r\n")
+				_, _ = fmt.Fprintf(conn, "250-localhost Hello\r\n250 OK\r\n")
 				continue
 			}
 			if strings.HasPrefix(line, "MAIL FROM:") {
-				fmt.Fprintf(conn, "250 OK\r\n")
+				_, _ = fmt.Fprintf(conn, "250 OK\r\n")
 				continue
 			}
 			if strings.HasPrefix(line, "RCPT TO:") {
-				fmt.Fprintf(conn, "250 OK\r\n")
+				_, _ = fmt.Fprintf(conn, "250 OK\r\n")
 				continue
 			}
 			if strings.HasPrefix(line, "DATA") {
-				fmt.Fprintf(conn, "354 End data with <CR><LF>.<CR><LF>\r\n")
+				_, _ = fmt.Fprintf(conn, "354 End data with <CR><LF>.<CR><LF>\r\n")
 				// read until dot line
 				for {
 					dline, derr := r.ReadString('\n')
@@ -330,15 +330,15 @@ func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
 						break
 					}
 				}
-				fmt.Fprintf(conn, "250 OK: queued as 12345\r\n")
+				_, _ = fmt.Fprintf(conn, "250 OK: queued as 12345\r\n")
 				continue
 			}
 			if strings.HasPrefix(line, "QUIT") {
-				fmt.Fprintf(conn, "221 Bye\r\n")
+				_, _ = fmt.Fprintf(conn, "221 Bye\r\n")
 				break
 			}
 			// Unknown command – respond generically
-			fmt.Fprintf(conn, "250 OK\r\n")
+			_, _ = fmt.Fprintf(conn, "250 OK\r\n")
 		}
 		wg.Done()
 	}()
@@ -348,13 +348,13 @@ func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
 	var p int
 	_, err = fmt.Sscanf(addr, "127.0.0.1:%d", &p)
 	if err != nil {
-		ln.Close()
+		_ = ln.Close()
 		t.Fatalf("failed to parse listen addr: %v", err)
 	}
 
 	stop = func() {
 		// ensure listener closed and goroutine finished
-		ln.Close()
+		_ = ln.Close()
 		wg.Wait()
 	}
 	return host, p, stop

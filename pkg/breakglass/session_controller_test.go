@@ -1587,7 +1587,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 		}
 		// verify status updated
 		var bs v1alpha1.BreakglassSession
-		if err := ss.Client.Get(context.Background(), client.ObjectKey{Name: "w-pending"}, &bs); err != nil {
+		if err := ss.Get(context.Background(), client.ObjectKey{Name: "w-pending"}, &bs); err != nil {
 			t.Fatalf("failed to get session after withdraw: %v", err)
 		}
 		if bs.Status.State != v1alpha1.SessionStateWithdrawn {

@@ -131,7 +131,7 @@ func Setup(ctx context.Context, kubeClient client.Client, brandingName string, l
 
 	defaultProvider, err := mailProviderLoader.GetDefaultMailProvider(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("No default mail provider found in cluster - mail notifications will be disabled: %w", err)
+		return nil, fmt.Errorf("no default mail provider found in cluster - mail notifications will be disabled: %w", err)
 	} else {
 		log.Infow("Using default mail provider from cluster",
 			"provider", defaultProvider.Name,

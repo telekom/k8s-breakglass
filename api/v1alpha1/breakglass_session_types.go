@@ -258,7 +258,7 @@ func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj runtime.Obj
 		if session.Spec.ScheduledStartTime.Time.Before(now.Time) {
 			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), session.Spec.ScheduledStartTime.Time, "scheduledStartTime must be in the future"))
 		}
-		minLeadTime := now.Time.Add(5 * 60 * 1e9) // 5 minutes
+		minLeadTime := now.Add(5 * 60 * 1e9) // 5 minutes
 		if session.Spec.ScheduledStartTime.Time.Before(minLeadTime) {
 			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), session.Spec.ScheduledStartTime.Time, "scheduledStartTime must be at least 5 minutes in the future"))
 		}
