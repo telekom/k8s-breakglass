@@ -670,8 +670,8 @@ func TestEdgeCase_ScheduledSessionNotWaitingUntilActivation(t *testing.T) {
 			// Simulate approval logic
 			if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
 				session.Status.State = v1alpha1.SessionStateWaitingForScheduledTime
-				session.Status.ExpiresAt = metav1.NewTime(session.Spec.ScheduledStartTime.Time.Add(validFor))
-				session.Status.RetainedUntil = metav1.NewTime(session.Spec.ScheduledStartTime.Time.Add(validFor).Add(retainFor))
+				session.Status.ExpiresAt = metav1.NewTime(session.Spec.ScheduledStartTime.Add(validFor))
+				session.Status.RetainedUntil = metav1.NewTime(session.Spec.ScheduledStartTime.Add(validFor).Add(retainFor))
 				session.Status.ActualStartTime = metav1.Time{}
 			} else {
 				session.Status.State = v1alpha1.SessionStateApproved

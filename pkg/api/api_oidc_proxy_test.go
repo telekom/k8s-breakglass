@@ -196,7 +196,7 @@ func TestOIDCProxyMultiIDPValidation(t *testing.T) {
 	mockKeycloak := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/openid-configuration" {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"issuer":"https://keycloak.example.com","authorization_endpoint":"https://keycloak.example.com/auth"}`)
+			_, _ = fmt.Fprintf(w, `{"issuer":"https://keycloak.example.com","authorization_endpoint":"https://keycloak.example.com/auth"}`)
 		} else {
 			http.NotFound(w, r)
 		}
@@ -596,7 +596,7 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 		expectedPath := "/auth/realms/schiff/.well-known/openid-configuration"
 		if r.URL.Path == expectedPath {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{
+			_, _ = fmt.Fprintf(w, `{
 				"issuer":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
 				"authorization_endpoint":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/auth",
 				"token_endpoint":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/token"
@@ -607,7 +607,7 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 		if r.URL.Path == "/.well-known/openid-configuration" {
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprintf(w, "Forbidden: realm path required")
+			_, _ = fmt.Fprintf(w, "Forbidden: realm path required")
 			return
 		}
 		http.NotFound(w, r)

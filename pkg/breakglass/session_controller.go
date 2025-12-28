@@ -954,7 +954,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		bs.Status.ReasonEnded = "rejected"
 
 		// Set RetainedUntil for rejected sessions (same logic as approved sessions)
-		var retainFor time.Duration = DefaultRetainForDuration
+		retainFor := DefaultRetainForDuration
 		if bs.Spec.RetainFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 				retainFor = d
@@ -1263,7 +1263,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	bs.Status.Approvers = nil
 
 	// Set RetainedUntil for withdrawn sessions (same logic as other terminal states)
-	var retainFor time.Duration = DefaultRetainForDuration
+	retainFor := DefaultRetainForDuration
 	if bs.Spec.RetainFor != "" {
 		if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 			retainFor = d
@@ -1332,7 +1332,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		bs.Status.ReasonEnded = "dropped"
 
 		// Set RetainedUntil for expired sessions (same logic as other terminal states)
-		var retainFor time.Duration = DefaultRetainForDuration
+		retainFor := DefaultRetainForDuration
 		if bs.Spec.RetainFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 				retainFor = d
@@ -2470,12 +2470,12 @@ func dropK8sInternalFieldsSession(s *v1alpha1.BreakglassSession) {
 	if s == nil {
 		return
 	}
-	s.ObjectMeta.ManagedFields = nil
-	s.ObjectMeta.UID = ""
-	s.ObjectMeta.ResourceVersion = ""
-	s.ObjectMeta.Generation = 0
-	if s.ObjectMeta.Annotations != nil {
-		delete(s.ObjectMeta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
+	s.ManagedFields = nil
+	s.UID = ""
+	s.ResourceVersion = ""
+	s.Generation = 0
+	if s.Annotations != nil {
+		delete(s.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
 	}
 }
 
