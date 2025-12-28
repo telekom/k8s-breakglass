@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
@@ -232,6 +233,9 @@ type SubjectAccessReviewResponse struct {
 	Status     SubjectAccessReviewResponseStatus `json:"status"`
 }
 
+// PodFetchFunction is the signature for functions that fetch pods from a cluster.
+type PodFetchFunction func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error)
+
 type WebhookController struct {
 	log          *zap.SugaredLogger
 	config       config.Config
@@ -240,6 +244,7 @@ type WebhookController struct {
 	canDoFn      breakglass.CanGroupsDoFunction
 	ccProvider   *cluster.ClientProvider
 	denyEval     *policy.Evaluator
+	podFetchFn   PodFetchFunction // optional override for testing
 }
 
 // getClusterConfigAcrossNamespaces performs a ClusterConfig lookup across all namespaces
@@ -414,6 +419,21 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			ClusterID:   clusterName,
 			Tenant:      tenant,
 		}
+
+		// Fetch pod spec for exec/attach/portforward requests to enable security evaluation
+		if act.Resource == "pods" && isExecSubresource(act.Subresource) && act.Name != "" {
+			pod, err := wc.fetchPodFromCluster(ctx, clusterName, act.Namespace, act.Name)
+			if err != nil {
+				reqLog.Warnw("Failed to fetch pod for security evaluation",
+					"error", err.Error(), "pod", act.Name, "namespace", act.Namespace)
+				// Pod will be nil; policy failMode determines behavior
+			} else {
+				act.Pod = pod
+				reqLog.Debugw("Fetched pod for security evaluation",
+					"pod", pod.Name, "namespace", pod.Namespace)
+			}
+		}
+
 		if denied, pol, derr := wc.denyEval.Match(ctx, act); derr != nil {
 			reqLog.With("error", derr.Error(), "action", act).Error("deny evaluation error")
 		} else if denied {
@@ -1007,4 +1027,41 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 
 func (wc *WebhookController) SetCanDoFn(f func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clustername string) (bool, error)) {
 	wc.canDoFn = f
+}
+
+// SetPodFetchFn sets a custom function for fetching pods from clusters.
+// This is primarily used for testing to inject mock pods.
+func (wc *WebhookController) SetPodFetchFn(f PodFetchFunction) {
+	wc.podFetchFn = f
+}
+
+// isExecSubresource returns true if the subresource is exec, attach, or portforward.
+// These subresources allow interactive access to pods and require security evaluation.
+func isExecSubresource(subresource string) bool {
+	return subresource == "exec" || subresource == "attach" || subresource == "portforward"
+}
+
+// fetchPodFromCluster retrieves a pod spec from the target cluster for security evaluation.
+func (wc *WebhookController) fetchPodFromCluster(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+	// Use injected function if available (for testing)
+	if wc.podFetchFn != nil {
+		return wc.podFetchFn(ctx, clusterName, namespace, name)
+	}
+
+	if wc.ccProvider == nil {
+		return nil, fmt.Errorf("cluster client provider not configured")
+	}
+	rc, err := wc.ccProvider.GetRESTConfig(ctx, clusterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
+	}
+	clientset, err := kubernetes.NewForConfig(rc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clientset for cluster %s: %w", clusterName, err)
+	}
+	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pod %s/%s from cluster %s: %w", namespace, name, clusterName, err)
+	}
+	return pod, nil
 }

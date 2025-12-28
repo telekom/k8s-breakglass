@@ -314,6 +314,29 @@ var (
 		Help:    "Duration of API endpoint requests",
 		Buckets: []float64{.01, .05, .1, .25, .5, 1},
 	}, []string{"endpoint"})
+
+	// Pod Security Evaluation metrics
+	PodSecurityEvaluations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_pod_security_evaluations_total",
+		Help: "Total pod security evaluations for exec/attach/portforward requests",
+	}, []string{"cluster", "policy", "action"})
+	PodSecurityRiskScore = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_pod_security_risk_score",
+		Help:    "Distribution of pod security risk scores",
+		Buckets: []float64{10, 30, 50, 70, 90, 100, 150, 200},
+	}, []string{"cluster"})
+	PodSecurityFactors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_pod_security_factors_total",
+		Help: "Count of detected risk factors in pod security evaluations",
+	}, []string{"cluster", "factor"})
+	PodSecurityDenied = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_pod_security_denied_total",
+		Help: "Total pod exec/attach requests denied by security evaluation",
+	}, []string{"cluster", "policy"})
+	PodSecurityWarnings = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_pod_security_warnings_total",
+		Help: "Total pod exec/attach requests allowed with security warnings",
+	}, []string{"cluster", "policy"})
 )
 
 func init() {
@@ -398,6 +421,13 @@ func init() {
 	prometheus.MustRegister(APIEndpointRequests)
 	prometheus.MustRegister(APIEndpointErrors)
 	prometheus.MustRegister(APIEndpointDuration)
+
+	// Register pod security metrics
+	prometheus.MustRegister(PodSecurityEvaluations)
+	prometheus.MustRegister(PodSecurityRiskScore)
+	prometheus.MustRegister(PodSecurityFactors)
+	prometheus.MustRegister(PodSecurityDenied)
+	prometheus.MustRegister(PodSecurityWarnings)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.
