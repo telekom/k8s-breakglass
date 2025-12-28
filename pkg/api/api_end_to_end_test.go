@@ -1820,3 +1820,603 @@ func TestEndToEndSARCRDOperations(t *testing.T) {
 func int64Ptr(i int64) *int64 {
 	return &i
 }
+
+// ============================================================================
+// Use Case Tests - Explicit tests for documented use cases
+// ============================================================================
+
+// TestUseCaseRolloutRestart tests the rollout restart use case (kubectl rollout restart).
+// This simulates patching a deployment to trigger a rolling update.
+func TestUseCaseRolloutRestart(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	testCases := []struct {
+		name      string
+		verb      string
+		apiGroup  string
+		resource  string
+		namespace string
+		wantAllow bool
+	}{
+		{
+			name:      "patch deployment for rollout restart",
+			verb:      "patch",
+			apiGroup:  "apps",
+			resource:  "deployments",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "patch statefulset for rollout restart",
+			verb:      "patch",
+			apiGroup:  "apps",
+			resource:  "statefulsets",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "patch daemonset for rollout restart",
+			verb:      "patch",
+			apiGroup:  "apps",
+			resource:  "daemonsets",
+			namespace: "default",
+			wantAllow: true,
+		},
+		{
+			name:      "get deployment rollout status",
+			verb:      "get",
+			apiGroup:  "apps",
+			resource:  "deployments",
+			namespace: "default",
+			wantAllow: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+					Verb:      tc.verb,
+					Group:     tc.apiGroup,
+					Resource:  tc.resource,
+					Namespace: tc.namespace,
+					Name:      "my-app",
+				}
+			})
+
+			if tc.wantAllow {
+				require.True(t, resp.Status.Allowed, "expected %s %s to be allowed for rollout restart", tc.verb, tc.resource)
+			} else {
+				require.False(t, resp.Status.Allowed, "expected %s %s to be denied", tc.verb, tc.resource)
+			}
+		})
+	}
+}
+
+// TestUseCaseFluxHelmReleaseDeletion tests deletion of Flux HelmRelease CRDs.
+// This is a common emergency operation when Helm releases are stuck.
+func TestUseCaseFluxHelmReleaseDeletion(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	testCases := []struct {
+		name      string
+		verb      string
+		apiGroup  string
+		resource  string
+		namespace string
+		wantAllow bool
+	}{
+		{
+			name:      "delete HelmRelease",
+			verb:      "delete",
+			apiGroup:  "helm.toolkit.fluxcd.io",
+			resource:  "helmreleases",
+			namespace: "flux-system",
+			wantAllow: true,
+		},
+		{
+			name:      "list HelmReleases",
+			verb:      "list",
+			apiGroup:  "helm.toolkit.fluxcd.io",
+			resource:  "helmreleases",
+			namespace: "flux-system",
+			wantAllow: true,
+		},
+		{
+			name:      "get HelmRelease",
+			verb:      "get",
+			apiGroup:  "helm.toolkit.fluxcd.io",
+			resource:  "helmreleases",
+			namespace: "flux-system",
+			wantAllow: true,
+		},
+		{
+			name:      "patch HelmRelease to suspend",
+			verb:      "patch",
+			apiGroup:  "helm.toolkit.fluxcd.io",
+			resource:  "helmreleases",
+			namespace: "flux-system",
+			wantAllow: true,
+		},
+		{
+			name:      "delete Kustomization",
+			verb:      "delete",
+			apiGroup:  "kustomize.toolkit.fluxcd.io",
+			resource:  "kustomizations",
+			namespace: "flux-system",
+			wantAllow: true,
+		},
+		{
+			name:      "delete GitRepository source",
+			verb:      "delete",
+			apiGroup:  "source.toolkit.fluxcd.io",
+			resource:  "gitrepositories",
+			namespace: "flux-system",
+			wantAllow: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+					Verb:      tc.verb,
+					Group:     tc.apiGroup,
+					Resource:  tc.resource,
+					Namespace: tc.namespace,
+					Name:      "my-helm-release",
+				}
+			})
+
+			if tc.wantAllow {
+				require.True(t, resp.Status.Allowed, "expected %s %s/%s to be allowed", tc.verb, tc.apiGroup, tc.resource)
+			} else {
+				require.False(t, resp.Status.Allowed, "expected %s %s/%s to be denied", tc.verb, tc.apiGroup, tc.resource)
+			}
+		})
+	}
+}
+
+// TestUseCaseFluxHelmReleaseBlockedByDenyPolicy tests that DenyPolicy can block Flux operations.
+func TestUseCaseFluxHelmReleaseBlockedByDenyPolicy(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a deny policy blocking HelmRelease deletion
+	env.createDenyPolicy(t, "block-helmrelease-delete", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		Rules: []v1alpha1.DenyRule{{
+			Verbs:     []string{"delete"},
+			APIGroups: []string{"helm.toolkit.fluxcd.io"},
+			Resources: []string{"helmreleases"},
+		}},
+	})
+
+	// Delete should be blocked
+	resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Verb:      "delete",
+			Group:     "helm.toolkit.fluxcd.io",
+			Resource:  "helmreleases",
+			Namespace: "flux-system",
+			Name:      "critical-release",
+		}
+	})
+	require.False(t, resp.Status.Allowed, "delete HelmRelease should be blocked by deny policy")
+
+	// List should still be allowed
+	respList := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+		sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Verb:      "list",
+			Group:     "helm.toolkit.fluxcd.io",
+			Resource:  "helmreleases",
+			Namespace: "flux-system",
+		}
+	})
+	require.True(t, respList.Status.Allowed, "list HelmReleases should be allowed")
+}
+
+// TestUseCaseScalingWorkloads tests scaling operations for emergency capacity management.
+func TestUseCaseScalingWorkloads(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	testCases := []struct {
+		name        string
+		verb        string
+		apiGroup    string
+		resource    string
+		subresource string
+		namespace   string
+		wantAllow   bool
+	}{
+		{
+			name:        "scale deployment up",
+			verb:        "update",
+			apiGroup:    "apps",
+			resource:    "deployments",
+			subresource: "scale",
+			namespace:   "default",
+			wantAllow:   true,
+		},
+		{
+			name:        "scale statefulset",
+			verb:        "update",
+			apiGroup:    "apps",
+			resource:    "statefulsets",
+			subresource: "scale",
+			namespace:   "default",
+			wantAllow:   true,
+		},
+		{
+			name:        "scale replicaset",
+			verb:        "update",
+			apiGroup:    "apps",
+			resource:    "replicasets",
+			subresource: "scale",
+			namespace:   "default",
+			wantAllow:   true,
+		},
+		{
+			name:        "patch HPA for emergency scaling",
+			verb:        "patch",
+			apiGroup:    "autoscaling",
+			resource:    "horizontalpodautoscalers",
+			subresource: "",
+			namespace:   "default",
+			wantAllow:   true,
+		},
+		{
+			name:        "get deployment scale",
+			verb:        "get",
+			apiGroup:    "apps",
+			resource:    "deployments",
+			subresource: "scale",
+			namespace:   "default",
+			wantAllow:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+					Verb:        tc.verb,
+					Group:       tc.apiGroup,
+					Resource:    tc.resource,
+					Subresource: tc.subresource,
+					Namespace:   tc.namespace,
+					Name:        "my-workload",
+				}
+			})
+
+			if tc.wantAllow {
+				require.True(t, resp.Status.Allowed, "expected %s %s/%s to be allowed for scaling", tc.verb, tc.resource, tc.subresource)
+			} else {
+				require.False(t, resp.Status.Allowed, "expected %s %s/%s to be denied", tc.verb, tc.resource, tc.subresource)
+			}
+		})
+	}
+}
+
+// TestUseCaseResourceDeletion tests various resource deletion scenarios.
+func TestUseCaseResourceDeletion(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	testCases := []struct {
+		name       string
+		verb       string
+		apiGroup   string
+		resource   string
+		namespace  string
+		name_      string
+		wantAllow  bool
+		denyPolicy *v1alpha1.DenyPolicySpec
+	}{
+		{
+			name:      "delete stuck pod",
+			verb:      "delete",
+			apiGroup:  "",
+			resource:  "pods",
+			namespace: "default",
+			name_:     "stuck-pod",
+			wantAllow: true,
+		},
+		{
+			name:      "delete job",
+			verb:      "delete",
+			apiGroup:  "batch",
+			resource:  "jobs",
+			namespace: "default",
+			name_:     "failed-job",
+			wantAllow: true,
+		},
+		{
+			name:      "delete configmap",
+			verb:      "delete",
+			apiGroup:  "",
+			resource:  "configmaps",
+			namespace: "default",
+			name_:     "stale-config",
+			wantAllow: true,
+		},
+		{
+			name:      "delete PVC",
+			verb:      "delete",
+			apiGroup:  "",
+			resource:  "persistentvolumeclaims",
+			namespace: "default",
+			name_:     "orphaned-pvc",
+			wantAllow: true,
+		},
+		{
+			name:      "delete namespace blocked by policy",
+			verb:      "delete",
+			apiGroup:  "",
+			resource:  "namespaces",
+			namespace: "",
+			name_:     "production",
+			wantAllow: false,
+			denyPolicy: &v1alpha1.DenyPolicySpec{
+				AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{e2eClusterName}},
+				Rules: []v1alpha1.DenyRule{{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"namespaces"},
+				}},
+			},
+		},
+		{
+			name:      "delete secret blocked by policy",
+			verb:      "delete",
+			apiGroup:  "",
+			resource:  "secrets",
+			namespace: "default",
+			name_:     "database-password",
+			wantAllow: false,
+			denyPolicy: &v1alpha1.DenyPolicySpec{
+				AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{e2eClusterName}},
+				Rules: []v1alpha1.DenyRule{{
+					Verbs:         []string{"delete"},
+					APIGroups:     []string{""},
+					Resources:     []string{"secrets"},
+					ResourceNames: []string{"database-password", "api-key"},
+				}},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create deny policy if specified
+			if tc.denyPolicy != nil {
+				env.createDenyPolicy(t, "test-delete-deny-"+tc.name, *tc.denyPolicy)
+			}
+
+			resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+					Verb:      tc.verb,
+					Group:     tc.apiGroup,
+					Resource:  tc.resource,
+					Namespace: tc.namespace,
+					Name:      tc.name_,
+				}
+			})
+
+			if tc.wantAllow {
+				require.True(t, resp.Status.Allowed, "expected delete %s to be allowed", tc.resource)
+			} else {
+				require.False(t, resp.Status.Allowed, "expected delete %s to be denied by policy", tc.resource)
+			}
+		})
+	}
+}
+
+// TestUseCaseNetworkDebuggingPodSecurity tests pods/exec access for network debugging.
+// This validates the pod security rules for pods that require special capabilities.
+func TestUseCaseNetworkDebuggingPodSecurity(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	// Create a DenyPolicy with pod security rules for network debugging
+	env.createDenyPolicy(t, "network-debug-policy", v1alpha1.DenyPolicySpec{
+		AppliesTo: &v1alpha1.DenyPolicyScope{Clusters: []string{env.clusterName}},
+		PodSecurityRules: &v1alpha1.PodSecurityRules{
+			RiskFactors: v1alpha1.RiskFactors{
+				HostNetwork: 30,
+				HostPID:     50,
+				HostIPC:     30,
+				Capabilities: map[string]int{
+					"NET_ADMIN": 20,  // Allow NET_ADMIN (needed for tcpdump)
+					"NET_RAW":   20,  // Allow NET_RAW
+					"SYS_ADMIN": 100, // Block SYS_ADMIN
+				},
+			},
+			Thresholds: []v1alpha1.RiskThreshold{
+				{MaxScore: 80, Action: "allow"},
+				{MaxScore: 1000, Action: "deny", Reason: "High-risk pod security configuration"},
+			},
+		},
+	})
+
+	// Test 1: Pod with NET_ADMIN capability only (score = 20, allowed)
+	netAdminPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-tcpdump", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "tcpdump",
+				Image: "nicolaka/netshoot",
+				SecurityContext: &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"NET_ADMIN", "NET_RAW"},
+					},
+				},
+			}},
+		},
+	}
+
+	env.webhookController.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		if name == "debug-tcpdump" {
+			return netAdminPod, nil
+		}
+		if name == "debug-hostnetwork" {
+			return &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "debug-hostnetwork", Namespace: "default"},
+				Spec: corev1.PodSpec{
+					HostNetwork: true,
+					Containers: []corev1.Container{{
+						Name:  "netshoot",
+						Image: "nicolaka/netshoot",
+						SecurityContext: &corev1.SecurityContext{
+							Capabilities: &corev1.Capabilities{
+								Add: []corev1.Capability{"NET_ADMIN"},
+							},
+						},
+					}},
+				},
+			}, nil
+		}
+		if name == "debug-sysadmin" {
+			return &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "debug-sysadmin", Namespace: "default"},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "sysadmin",
+						Image: "alpine",
+						SecurityContext: &corev1.SecurityContext{
+							Capabilities: &corev1.Capabilities{
+								Add: []corev1.Capability{"SYS_ADMIN"},
+							},
+						},
+					}},
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("pod not found: %s/%s", namespace, name)
+	})
+
+	// Test 1: Exec into pod with NET_ADMIN+NET_RAW should be allowed (score = 40)
+	resp := env.invokePodExecSAR(t, "default", "debug-tcpdump")
+	require.True(t, resp.Status.Allowed, "exec into NET_ADMIN/NET_RAW pod should be allowed for tcpdump")
+
+	// Test 2: Exec into pod with hostNetwork + NET_ADMIN (score = 30 + 20 = 50, allowed)
+	resp2 := env.invokePodExecSAR(t, "default", "debug-hostnetwork")
+	require.True(t, resp2.Status.Allowed, "exec into hostNetwork+NET_ADMIN pod should be allowed (score 50 < 80)")
+
+	// Test 3: Exec into pod with SYS_ADMIN should be blocked (score = 100)
+	resp3 := env.invokePodExecSAR(t, "default", "debug-sysadmin")
+	require.False(t, resp3.Status.Allowed, "exec into SYS_ADMIN pod should be blocked")
+}
+
+// TestUseCaseCustomerIngressRestart tests restarting ingress controller pods.
+func TestUseCaseCustomerIngressRestart(t *testing.T) {
+	env := setupAPIEndToEndEnv(t)
+	defer env.Close()
+
+	// Create and approve session
+	env.createSession(t)
+	sessions := env.listSessions(t)
+	require.Len(t, sessions, 1)
+	env.approveSession(t, sessions[0].Name)
+
+	testCases := []struct {
+		name      string
+		verb      string
+		apiGroup  string
+		resource  string
+		namespace string
+		wantAllow bool
+	}{
+		{
+			name:      "delete ingress controller pod",
+			verb:      "delete",
+			apiGroup:  "",
+			resource:  "pods",
+			namespace: "ingress-nginx",
+			wantAllow: true,
+		},
+		{
+			name:      "patch ingress deployment for rollout",
+			verb:      "patch",
+			apiGroup:  "apps",
+			resource:  "deployments",
+			namespace: "ingress-nginx",
+			wantAllow: true,
+		},
+		{
+			name:      "get ingress logs",
+			verb:      "get",
+			apiGroup:  "",
+			resource:  "pods",
+			namespace: "ingress-nginx",
+			wantAllow: true,
+		},
+		{
+			name:      "list ingress pods",
+			verb:      "list",
+			apiGroup:  "",
+			resource:  "pods",
+			namespace: "ingress-nginx",
+			wantAllow: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := env.invokeSARForClusterWithModifier(t, env.clusterName, func(sar *authorizationv1.SubjectAccessReview) {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+					Verb:      tc.verb,
+					Group:     tc.apiGroup,
+					Resource:  tc.resource,
+					Namespace: tc.namespace,
+					Name:      "ingress-nginx-controller-xyz",
+				}
+			})
+
+			if tc.wantAllow {
+				require.True(t, resp.Status.Allowed, "expected %s %s in ingress-nginx to be allowed", tc.verb, tc.resource)
+			} else {
+				require.False(t, resp.Status.Allowed, "expected %s %s to be denied", tc.verb, tc.resource)
+			}
+		})
+	}
+}

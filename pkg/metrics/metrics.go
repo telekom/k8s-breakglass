@@ -337,6 +337,49 @@ var (
 		Name: "breakglass_pod_security_warnings_total",
 		Help: "Total pod exec/attach requests allowed with security warnings",
 	}, []string{"cluster", "policy"})
+
+	// Debug Session metrics
+	DebugSessionsCreated = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_sessions_created_total",
+		Help: "Total number of debug sessions created",
+	}, []string{"cluster", "template"})
+	DebugSessionsActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_debug_sessions_active",
+		Help: "Number of currently active debug sessions",
+	}, []string{"cluster"})
+	DebugSessionsTerminated = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_sessions_terminated_total",
+		Help: "Total number of debug sessions terminated",
+	}, []string{"cluster", "reason"})
+	DebugSessionsExpired = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_sessions_expired_total",
+		Help: "Total number of debug sessions that expired",
+	}, []string{"cluster"})
+	DebugSessionDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_debug_session_duration_seconds",
+		Help:    "Duration of debug sessions in seconds",
+		Buckets: []float64{60, 300, 600, 1800, 3600, 7200, 14400, 28800},
+	}, []string{"cluster", "template"})
+	DebugSessionParticipants = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_debug_session_participants",
+		Help: "Number of participants in active debug sessions",
+	}, []string{"cluster", "session"})
+	DebugSessionPodsDeployed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_debug_session_pods_deployed",
+		Help: "Number of debug pods deployed for debug sessions",
+	}, []string{"cluster"})
+	DebugSessionApprovalRequired = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_approval_required_total",
+		Help: "Total debug sessions requiring approval",
+	}, []string{"cluster", "template"})
+	DebugSessionApproved = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_approved_total",
+		Help: "Total debug sessions approved",
+	}, []string{"cluster", "approver_type"})
+	DebugSessionRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_rejected_total",
+		Help: "Total debug sessions rejected",
+	}, []string{"cluster", "reason"})
 )
 
 func init() {
@@ -428,6 +471,18 @@ func init() {
 	prometheus.MustRegister(PodSecurityFactors)
 	prometheus.MustRegister(PodSecurityDenied)
 	prometheus.MustRegister(PodSecurityWarnings)
+
+	// Register debug session metrics
+	prometheus.MustRegister(DebugSessionsCreated)
+	prometheus.MustRegister(DebugSessionsActive)
+	prometheus.MustRegister(DebugSessionsTerminated)
+	prometheus.MustRegister(DebugSessionsExpired)
+	prometheus.MustRegister(DebugSessionDuration)
+	prometheus.MustRegister(DebugSessionParticipants)
+	prometheus.MustRegister(DebugSessionPodsDeployed)
+	prometheus.MustRegister(DebugSessionApprovalRequired)
+	prometheus.MustRegister(DebugSessionApproved)
+	prometheus.MustRegister(DebugSessionRejected)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.

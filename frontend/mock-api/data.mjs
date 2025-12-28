@@ -4,6 +4,513 @@ export const CURRENT_USER_EMAIL = "mock.user@breakglass.dev";
 export const PARTNER_USER_EMAIL = "partner.user@breakglass.dev";
 export const MOCK_APPROVER_GROUPS = ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"];
 
+// ============================================================================
+// DEBUG SESSION MOCK DATA
+// ============================================================================
+
+const debugPodTemplates = new Map();
+const debugSessionTemplates = new Map();
+const debugSessions = new Map();
+
+// Debug Pod Templates
+const mockDebugPodTemplates = [
+  {
+    metadata: {
+      name: "netshoot-base",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "Netshoot Debug Pod",
+      description: "Network troubleshooting tools including curl, dig, nmap, tcpdump",
+      template: {
+        spec: {
+          containers: [
+            {
+              name: "netshoot",
+              image: "nicolaka/netshoot:latest",
+              command: ["sleep", "infinity"],
+              securityContext: {
+                runAsNonRoot: false,
+                capabilities: {
+                  add: ["NET_ADMIN", "SYS_PTRACE"],
+                },
+              },
+            },
+          ],
+          tolerations: [{ operator: "Exists" }],
+        },
+      },
+    },
+  },
+  {
+    metadata: {
+      name: "alpine-minimal",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "Alpine Minimal",
+      description: "Lightweight Alpine Linux container for basic debugging",
+      template: {
+        spec: {
+          containers: [
+            {
+              name: "alpine",
+              image: "alpine:3.19",
+              command: ["sleep", "infinity"],
+              securityContext: {
+                runAsNonRoot: true,
+                runAsUser: 1000,
+              },
+              resources: {
+                requests: { cpu: "100m", memory: "128Mi" },
+                limits: { cpu: "500m", memory: "256Mi" },
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
+  {
+    metadata: {
+      name: "busybox-tools",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "BusyBox Tools",
+      description: "BusyBox with common Unix utilities",
+      template: {
+        spec: {
+          containers: [
+            {
+              name: "busybox",
+              image: "busybox:1.36",
+              command: ["sleep", "infinity"],
+            },
+          ],
+        },
+      },
+    },
+  },
+];
+
+// Debug Session Templates
+const mockDebugSessionTemplates = [
+  {
+    metadata: {
+      name: "standard-debug",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "Standard Debug Access",
+      description: "Network debugging tools deployed as DaemonSet on all nodes",
+      mode: "workload",
+      workloadType: "DaemonSet",
+      podTemplateRef: "netshoot-base",
+      targetNamespace: "breakglass-debug",
+      constraints: {
+        maxDuration: "4h",
+        defaultDuration: "1h",
+        allowRenewal: true,
+        maxRenewals: 3,
+        renewalDuration: "1h",
+      },
+      allowedClusters: ["production-*", "staging-*", "t-sec-1st.dtmd11"],
+      allowedGroups: ["sre-team", "platform-oncall", "dtcaas-platform_emergency"],
+      requiresApproval: true,
+      approverGroups: ["platform-oncall", "security-leads"],
+    },
+  },
+  {
+    metadata: {
+      name: "ephemeral-debug",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "Ephemeral Container Debug",
+      description: "Inject ephemeral containers into running pods for live debugging",
+      mode: "kubectl-debug",
+      podTemplateRef: "alpine-minimal",
+      targetNamespace: "breakglass-debug",
+      kubectlDebug: {
+        ephemeralContainers: { enabled: true },
+        nodeDebug: { enabled: false },
+        podCopy: { enabled: true },
+      },
+      constraints: {
+        maxDuration: "2h",
+        defaultDuration: "30m",
+        allowRenewal: true,
+        maxRenewals: 2,
+      },
+      allowedClusters: ["*"],
+      allowedGroups: ["developers", "sre-team"],
+      requiresApproval: false,
+    },
+  },
+  {
+    metadata: {
+      name: "node-debug",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "Node-Level Debug",
+      description: "Full node access with host namespaces for deep debugging",
+      mode: "hybrid",
+      workloadType: "DaemonSet",
+      podTemplateRef: "netshoot-base",
+      targetNamespace: "breakglass-debug",
+      kubectlDebug: {
+        ephemeralContainers: { enabled: true },
+        nodeDebug: { enabled: true },
+        podCopy: { enabled: false },
+      },
+      constraints: {
+        maxDuration: "1h",
+        defaultDuration: "30m",
+        allowRenewal: false,
+        maxRenewals: 0,
+      },
+      allowedClusters: ["staging-*"],
+      allowedGroups: ["sre-team"],
+      requiresApproval: true,
+      approverGroups: ["security-leads"],
+    },
+  },
+  {
+    metadata: {
+      name: "lab-debug",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "Lab Cluster Debug",
+      description: "Unrestricted debug access for lab environments",
+      mode: "workload",
+      workloadType: "Deployment",
+      podTemplateRef: "busybox-tools",
+      targetNamespace: "debug-sessions",
+      constraints: {
+        maxDuration: "8h",
+        defaultDuration: "2h",
+        allowRenewal: true,
+        maxRenewals: 5,
+      },
+      allowedClusters: ["lab-*", "dev-*"],
+      allowedGroups: ["developers", "qa-team"],
+      requiresApproval: false,
+    },
+  },
+];
+
+// Initialize debug pod templates
+mockDebugPodTemplates.forEach((t) => debugPodTemplates.set(t.metadata.name, t));
+
+// Initialize debug session templates
+mockDebugSessionTemplates.forEach((t) => debugSessionTemplates.set(t.metadata.name, t));
+
+// Mock debug sessions
+function baseDebugSession({
+  name,
+  templateRef = "standard-debug",
+  cluster = "t-sec-1st.dtmd11",
+  requestedBy = CURRENT_USER_EMAIL,
+  state = "Pending",
+  reason = "Investigating network connectivity issues",
+  requestedDuration = "1h",
+  expiresInMinutes = 60,
+  participants = [],
+  allowedPods = [],
+  renewalCount = 0,
+  approvedBy,
+  rejectedBy,
+  rejectionReason,
+  scheduledStartTime,
+}) {
+  const creationTimestamp = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const startsAt = scheduledStartTime || (state === "Active" ? new Date(Date.now() - 15 * 60 * 1000).toISOString() : undefined);
+  const expiresAt = state === "Active" || state === "PendingApproval" 
+    ? new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString()
+    : state === "Expired" 
+      ? new Date(Date.now() - 30 * 60 * 1000).toISOString()
+      : undefined;
+
+  return {
+    metadata: {
+      name,
+      namespace: "breakglass-system",
+      creationTimestamp,
+    },
+    spec: {
+      templateRef,
+      cluster,
+      requestedBy,
+      requestedDuration,
+      reason,
+      ...(scheduledStartTime && { scheduledStartTime }),
+    },
+    status: {
+      state,
+      startsAt,
+      expiresAt,
+      renewalCount,
+      participants: [
+        { user: requestedBy, role: "owner", joinedAt: creationTimestamp },
+        ...participants,
+      ],
+      allowedPods,
+      ...(approvedBy && { approvedBy, approvedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString() }),
+      ...(rejectedBy && { rejectedBy, rejectedAt: new Date().toISOString(), rejectionReason }),
+    },
+    mock: {
+      owner: requestedBy,
+    },
+  };
+}
+
+const mockDebugSessions = [
+  baseDebugSession({
+    name: "debug-network-001",
+    templateRef: "standard-debug",
+    cluster: "t-sec-1st.dtmd11",
+    state: "Active",
+    reason: "Investigating pod network connectivity issues in production",
+    expiresInMinutes: 45,
+    approvedBy: "approver@breakglass.dev",
+    allowedPods: [
+      { name: "netshoot-abc12", namespace: "breakglass-debug", nodeName: "node-1", ready: true, phase: "Running" },
+      { name: "netshoot-def34", namespace: "breakglass-debug", nodeName: "node-2", ready: true, phase: "Running" },
+    ],
+    participants: [
+      { user: PARTNER_USER_EMAIL, role: "participant", joinedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+    ],
+  }),
+  baseDebugSession({
+    name: "debug-pending-approval",
+    templateRef: "node-debug",
+    cluster: "staging-eu-west-1",
+    state: "PendingApproval",
+    reason: "Need node-level access for kernel debugging",
+    expiresInMinutes: 120,
+  }),
+  baseDebugSession({
+    name: "debug-ephemeral-002",
+    templateRef: "ephemeral-debug",
+    cluster: "production-us-east-1",
+    state: "Active",
+    reason: "Attaching debugger to crashing pod",
+    expiresInMinutes: 20,
+    renewalCount: 1,
+    allowedPods: [
+      { name: "debug-target-pod", namespace: "app-namespace", nodeName: "node-3", ready: true, phase: "Running" },
+    ],
+  }),
+  baseDebugSession({
+    name: "debug-expired-001",
+    templateRef: "standard-debug",
+    cluster: "t-sec-1st.dtmd11",
+    state: "Expired",
+    requestedBy: PARTNER_USER_EMAIL,
+    reason: "Previous debugging session that expired",
+    expiresInMinutes: -60,
+    approvedBy: CURRENT_USER_EMAIL,
+  }),
+  baseDebugSession({
+    name: "debug-rejected-001",
+    templateRef: "node-debug",
+    cluster: "production-critical",
+    state: "Failed",
+    reason: "Requested node access without proper justification",
+    rejectedBy: "security-lead@breakglass.dev",
+    rejectionReason: "Insufficient justification for node-level access",
+  }),
+  baseDebugSession({
+    name: "debug-terminated-001",
+    templateRef: "lab-debug",
+    cluster: "lab-cluster-01",
+    state: "Terminated",
+    reason: "Lab testing completed early",
+  }),
+  baseDebugSession({
+    name: "debug-scheduled-001",
+    templateRef: "standard-debug",
+    cluster: "production-apac",
+    state: "Pending",
+    reason: "Scheduled maintenance window debugging",
+    scheduledStartTime: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+  }),
+];
+
+// Initialize debug sessions
+mockDebugSessions.forEach((s) => debugSessions.set(s.metadata.name, s));
+
+// Debug Session API functions
+export function listDebugSessions(query = {}) {
+  const clusterFilter = query.cluster;
+  const stateFilter = query.state;
+  const userFilter = query.user;
+  const mine = query.mine === "true";
+
+  let results = Array.from(debugSessions.values()).filter((session) => {
+    if (clusterFilter && session.spec.cluster !== clusterFilter) return false;
+    if (stateFilter && session.status.state.toLowerCase() !== stateFilter.toLowerCase()) return false;
+    if (userFilter && session.spec.requestedBy !== userFilter) return false;
+    if (mine && session.mock?.owner !== CURRENT_USER_EMAIL) return false;
+    return true;
+  });
+
+  return {
+    sessions: results.map((s) => ({
+      name: s.metadata.name,
+      templateRef: s.spec.templateRef,
+      cluster: s.spec.cluster,
+      requestedBy: s.spec.requestedBy,
+      state: s.status.state,
+      startsAt: s.status.startsAt,
+      expiresAt: s.status.expiresAt,
+      participants: s.status.participants?.length || 0,
+      allowedPods: s.status.allowedPods?.length || 0,
+    })),
+    total: results.length,
+  };
+}
+
+export function findDebugSession(name) {
+  return debugSessions.get(name);
+}
+
+export function createDebugSession(body = {}) {
+  const name = `debug-${randomUUID().slice(0, 8)}`;
+  const session = baseDebugSession({
+    name,
+    templateRef: body.templateRef || "standard-debug",
+    cluster: body.cluster || "t-sec-1st.dtmd11",
+    requestedBy: CURRENT_USER_EMAIL,
+    reason: body.reason || "Debug session created via UI",
+    requestedDuration: body.requestedDuration || "1h",
+    scheduledStartTime: body.scheduledStartTime,
+    state: "Pending",
+  });
+  debugSessions.set(name, session);
+  return session;
+}
+
+export function updateDebugSessionState(name, state, opts = {}) {
+  const session = debugSessions.get(name);
+  if (!session) return null;
+  
+  session.status.state = state;
+  
+  if (state === "Active") {
+    session.status.approvedBy = opts.approvedBy || CURRENT_USER_EMAIL;
+    session.status.approvedAt = new Date().toISOString();
+    session.status.startsAt = new Date().toISOString();
+    session.status.expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    session.status.allowedPods = [
+      { name: `netshoot-${randomUUID().slice(0, 5)}`, namespace: "breakglass-debug", nodeName: "node-1", ready: true, phase: "Running" },
+    ];
+  }
+  
+  if (state === "Failed" || state === "Rejected") {
+    session.status.rejectedBy = opts.rejectedBy || CURRENT_USER_EMAIL;
+    session.status.rejectedAt = new Date().toISOString();
+    session.status.rejectionReason = opts.reason || "Rejected via mock API";
+  }
+  
+  if (state === "Terminated") {
+    session.status.terminatedBy = CURRENT_USER_EMAIL;
+    session.status.terminatedAt = new Date().toISOString();
+    session.status.terminationReason = opts.reason || "Terminated by user";
+  }
+  
+  return session;
+}
+
+export function joinDebugSession(name, role = "viewer") {
+  const session = debugSessions.get(name);
+  if (!session) return null;
+  
+  const existing = session.status.participants?.find((p) => p.user === CURRENT_USER_EMAIL);
+  if (!existing) {
+    session.status.participants = session.status.participants || [];
+    session.status.participants.push({
+      user: CURRENT_USER_EMAIL,
+      role,
+      joinedAt: new Date().toISOString(),
+    });
+  }
+  
+  return session;
+}
+
+export function leaveDebugSession(name) {
+  const session = debugSessions.get(name);
+  if (!session) return null;
+  
+  const participant = session.status.participants?.find((p) => p.user === CURRENT_USER_EMAIL);
+  if (participant && participant.role !== "owner") {
+    participant.leftAt = new Date().toISOString();
+  }
+  
+  return session;
+}
+
+export function renewDebugSession(name, extendBy = "1h") {
+  const session = debugSessions.get(name);
+  if (!session) return null;
+  
+  // Parse extendBy (simple parsing for mock)
+  const hours = parseInt(extendBy) || 1;
+  session.status.expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+  session.status.renewalCount = (session.status.renewalCount || 0) + 1;
+  
+  return session;
+}
+
+export function listDebugSessionTemplates(userGroups = []) {
+  // In real API, this filters by user's group membership
+  // For mock, we return all templates
+  const templates = Array.from(debugSessionTemplates.values()).map((t) => ({
+    name: t.metadata.name,
+    displayName: t.spec.displayName,
+    description: t.spec.description,
+    mode: t.spec.mode,
+    workloadType: t.spec.workloadType,
+    podTemplateRef: t.spec.podTemplateRef,
+    targetNamespace: t.spec.targetNamespace,
+    constraints: t.spec.constraints,
+    allowedClusters: t.spec.allowedClusters,
+    allowedGroups: t.spec.allowedGroups,
+    requiresApproval: t.spec.requiresApproval,
+  }));
+
+  return {
+    templates,
+    total: templates.length,
+  };
+}
+
+export function findDebugSessionTemplate(name) {
+  return debugSessionTemplates.get(name);
+}
+
+export function listDebugPodTemplates() {
+  const templates = Array.from(debugPodTemplates.values()).map((t) => ({
+    name: t.metadata.name,
+    displayName: t.spec.displayName,
+    description: t.spec.description,
+    containers: t.spec.template?.spec?.containers?.length || 0,
+  }));
+
+  return {
+    templates,
+    total: templates.length,
+  };
+}
+
+export function findDebugPodTemplate(name) {
+  return debugPodTemplates.get(name);
+}
+
 const buildGroupRange = (prefix, count) =>
   Array.from({ length: count }, (_, idx) => `${prefix}-${String(idx + 1).padStart(2, "0")}`);
 

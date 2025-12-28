@@ -274,6 +274,85 @@ Format: [ID] [Area] — Short description
 
 ---
 
+## Debug Sessions
+
+[D-001] DebugPodTemplate creation and validation
+- Steps: Apply a DebugPodTemplate CR with a valid pod spec. Verify the resource is created successfully.
+- Expected: `kubectl get debugpodtemplates` shows the template with correct displayName.
+- Priority: High
+
+[D-002] DebugSessionTemplate creation with pod template reference
+- Steps: Apply a DebugSessionTemplate CR that references an existing DebugPodTemplate. Verify the resource is created successfully.
+- Expected: `kubectl get debugsessiontemplates` shows the template with mode=workload.
+- Priority: High
+
+[D-003] DebugSession creation via API
+- Steps: Create a DebugSession CR via the REST API POST endpoint. Verify the session is created and enters Pending state.
+- Expected: DebugSession CR exists with status.state=Pending or PendingApproval.
+- Priority: High
+
+[D-004] DebugSession auto-approval for allowed clusters
+- Steps: Create a DebugSessionTemplate with autoApproveFor.clusters matching the test cluster. Create a DebugSession. Verify auto-approval.
+- Expected: DebugSession transitions to Active state without manual approval.
+- Priority: High
+
+[D-005] DebugSession manual approval workflow
+- Steps: Create a DebugSessionTemplate without autoApproveFor. Create a DebugSession. Approve via API.
+- Expected: DebugSession transitions from PendingApproval to Active after approval.
+- Priority: High
+
+[D-006] DebugSession rejection workflow
+- Steps: Create a DebugSession requiring approval. Reject via API with reason.
+- Expected: DebugSession transitions to Failed state with rejection reason in status.
+- Priority: Medium
+
+[D-007] DebugSession workload deployment
+- Steps: Create an Active DebugSession with mode=workload. Verify DaemonSet/Deployment is created on target cluster.
+- Expected: status.deployedResources lists the created workload. Pods are running in target namespace.
+- Priority: High
+
+[D-008] DebugSession participant join
+- Steps: Create an Active DebugSession. Use API to join as another user.
+- Expected: status.participants includes both owner and joined participant.
+- Priority: Medium
+
+[D-009] DebugSession renewal
+- Steps: Create an Active DebugSession. Use API to renew the session.
+- Expected: status.expiresAt is extended. status.renewalCount is incremented.
+- Priority: Medium
+
+[D-010] DebugSession termination
+- Steps: Create an Active DebugSession. Use API to terminate.
+- Expected: DebugSession transitions to Terminated state. Deployed resources are cleaned up.
+- Priority: High
+
+[D-011] DebugSession expiration
+- Steps: Create a DebugSession with very short duration (e.g., 1m). Wait for expiration.
+- Expected: DebugSession transitions to Expired state. Deployed resources are cleaned up.
+- Priority: Medium
+
+[D-012] DebugSession kubectl-debug mode (ephemeral containers)
+- Steps: Create a DebugSessionTemplate with mode=kubectl-debug and ephemeralContainers.enabled=true. Create a DebugSession. Verify webhook allows ephemeral container injection.
+- Expected: Session is active and kubectl debug commands are permitted.
+- Priority: Medium
+
+[D-013] DebugSession constraints enforcement
+- Steps: Create a DebugSessionTemplate with maxDuration=1h. Try to create a DebugSession requesting 4h.
+- Expected: Session is created with duration capped at maxDuration (1h).
+- Priority: Medium
+
+[D-014] DebugSession access control - allowed groups
+- Steps: Create a DebugSessionTemplate with allowed.groups=[sre-team]. Try to create session as user not in sre-team.
+- Expected: Session creation is rejected with authorization error.
+- Priority: High
+
+[D-015] DebugSession cleanup after termination
+- Steps: Create and terminate a DebugSession. Verify all deployed resources are removed.
+- Expected: No orphaned DaemonSets/Deployments in target namespace from the session.
+- Priority: High
+
+---
+
 How to use
 
 - Each item is intentionally singular and executable by a script. Implement tests in the language of your choice (bash, Go, Python). Each test should:
@@ -287,3 +366,4 @@ Next steps I can implement for you
 - Add a `make e2e-smoke` to run a subset (C-001, K-001, W-001, T-001) in CI.
 
 Generated on: 2025-10-23
+Updated on: 2025-01-xx (Added Debug Sessions section)

@@ -1,0 +1,58 @@
+# Sample DebugSession - Active debug session
+# This is an example of a DebugSession resource created via API
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSession
+metadata:
+  name: debug-session-example
+  namespace: breakglass
+spec:
+  # Target cluster for the debug session
+  cluster: dev-cluster-1
+  
+  # Reference to the DebugSessionTemplate to use
+  templateRef: standard-debug
+  
+  # User who requested the session
+  requestedBy: engineer@example.com
+  
+  # Requested session duration (subject to template constraints)
+  requestedDuration: "2h"
+  
+  # Reason for the debug session (for audit purposes)
+  reason: "Investigating pod networking issues in application namespace"
+  
+  # Optional: Restrict debug pods to specific nodes
+  nodeSelector:
+    node-pool: application
+  
+  # Optional: Invite other users to the session
+  invitedParticipants:
+    - colleague@example.com
+---
+# Sample DebugSession - Production debug session (pending approval)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSession
+metadata:
+  name: debug-session-prod-example
+  namespace: breakglass
+spec:
+  cluster: prod-cluster-1
+  templateRef: production-debug
+  requestedBy: sre@example.com
+  requestedDuration: "30m"
+  reason: |
+    Incident INC-12345: Production database connection timeouts.
+    Need to investigate network connectivity between app pods and database.
+---
+# Sample DebugSession - Kubectl debug session
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSession
+metadata:
+  name: debug-session-kubectl-example
+  namespace: breakglass
+spec:
+  cluster: staging-cluster-1
+  templateRef: kubectl-debug
+  requestedBy: developer@example.com
+  requestedDuration: "1h"
+  reason: "Debugging memory leak in payment-service pods"

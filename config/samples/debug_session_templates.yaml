@@ -1,0 +1,235 @@
+# Sample DebugSessionTemplate - Standard debug session
+# This template allows debugging on dev/test clusters with auto-approval
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: standard-debug
+spec:
+  displayName: "Standard Debug Session"
+  description: "Standard debug session with 2-hour duration and auto-approval for dev clusters"
+  mode: workload
+  podTemplateRef:
+    name: basic-debug
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - platform-engineers
+      - sre-team
+    clusters:
+      - "dev-*"
+      - "test-*"
+      - "staging-*"
+  
+  approvers:
+    groups:
+      - platform-leads
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "test-*"
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "2h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 3
+  
+  terminalSharing:
+    enabled: true
+    provider: tmux
+    maxParticipants: 3
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: false
+---
+# Sample DebugSessionTemplate - Production debug session
+# This template requires approval for production clusters
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: production-debug
+spec:
+  displayName: "Production Debug Session"
+  description: "Debug session for production clusters - requires approval"
+  mode: workload
+  podTemplateRef:
+    name: secure-debug
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - sre-team
+      - incident-responders
+    clusters:
+      - "prod-*"
+      - "production-*"
+  
+  approvers:
+    groups:
+      - sre-leads
+      - incident-commanders
+    # No auto-approve - all production access requires explicit approval
+  
+  constraints:
+    maxDuration: "1h"
+    defaultDuration: "30m"
+    allowRenewal: true
+    maxRenewals: 1
+    maxConcurrentSessions: 1
+  
+  terminalSharing:
+    enabled: false
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "180d"
+    destinations:
+      - type: breakglass
+      - type: kubernetes
+---
+# Sample DebugSessionTemplate - Kubectl Debug mode
+# This template uses kubectl debug for ephemeral containers
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: kubectl-debug
+spec:
+  displayName: "Kubectl Debug Session"
+  description: "Debug session using kubectl debug ephemeral containers"
+  mode: kubectl-debug
+  targetNamespace: breakglass-debug
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: true
+      allowedNamespaces:
+        - "default"
+        - "app-*"
+      deniedNamespaces:
+        - "kube-system"
+        - "kube-public"
+      allowedImages:
+        - "nicolaka/netshoot:*"
+        - "busybox:*"
+      requireImageDigest: false
+      allowPrivileged: false
+      requireNonRoot: true
+      maxCapabilities:
+        - NET_RAW
+        - NET_ADMIN
+    nodeDebug:
+      enabled: false
+    podCopy:
+      enabled: false
+  
+  allowed:
+    groups:
+      - developers
+      - platform-engineers
+    clusters:
+      - "*"
+  
+  approvers:
+    autoApproveFor:
+      groups:
+        - sre-team
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+---
+# Sample DebugSessionTemplate - Privileged node debugging
+# This template allows privileged debugging for emergency scenarios
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: emergency-node-debug
+spec:
+  displayName: "Emergency Node Debug"
+  description: "Privileged node debugging for emergency scenarios - requires approval"
+  mode: hybrid
+  podTemplateRef:
+    name: privileged-debug
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: false
+    nodeDebug:
+      enabled: true
+      allowedImages:
+        - "nicolaka/netshoot:*"
+      hostNamespaces:
+        hostNetwork: true
+        hostPID: true
+        hostIPC: false
+    podCopy:
+      enabled: false
+  
+  podOverrides:
+    spec:
+      hostNetwork: true
+      hostPID: true
+  
+  additionalTolerations:
+    - operator: Exists
+      effect: NoSchedule
+    - operator: Exists
+      effect: NoExecute
+  
+  allowed:
+    groups:
+      - sre-leads
+      - incident-commanders
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - platform-leads
+      - security-team
+    # No auto-approve for emergency access
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "1h"
+    allowRenewal: false
+    maxRenewals: 0
+    maxConcurrentSessions: 1
+  
+  terminalSharing:
+    enabled: true
+    provider: tmux
+    maxParticipants: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "365d"
+    destinations:
+      - type: breakglass
+      - type: kubernetes
+      - type: webhook
+        endpoint: https://audit.example.com/debug-sessions

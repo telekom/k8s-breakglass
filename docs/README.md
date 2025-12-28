@@ -6,6 +6,7 @@ Complete documentation for the breakglass privilege escalation system.
 
 - **[Quick Start](./quickstart.md)** - Get up and running in 5 minutes
 - **[Installation](./installation.md)** - Complete step-by-step installation
+- **[Use Cases](./use-cases.md)** - Real-world use cases with configuration examples
 - **[Building](./building.md)** - Build breakglass from source
 - **[CLI Flags Reference](./cli-flags-reference.md)** - All configuration flags
 - **[Troubleshooting](./troubleshooting.md)** - Common issues and solutions
@@ -42,6 +43,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[ClusterConfig](./cluster-config.md)** - Manage tenant cluster connections
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
+- **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions
 - **[IdentityProvider](./identity-provider.md)** - OIDC identity provider configuration
 - **[MailProvider](./mail-provider.md)** - SMTP mail provider configuration

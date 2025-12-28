@@ -288,12 +288,31 @@ func (l *IdentityProviderLoader) LoadAllIdentityProviders(ctx context.Context) (
 		l.logger.Errorw("Some IdentityProviders were skipped due to conversion errors - users may be unable to authenticate with these providers",
 			"count", len(conversionErrors),
 			"skipped_idps", conversionErrors)
-		// TODO: Emit metrics to track IDP conversion failures
-		// Implementation: Add idp_conversion_errors_total counter metric with labels:
-		//   - idp_name: name of failed provider
-		//   - failure_reason: parsing_error|validation_error|network_error, etc.
-		// This enables alerting on repeated failures and tracks trends over time
-		// Reference: See pkg/metrics/metrics.go for metric initialization patterns
+		// Emit metrics to track IDP conversion failures for alerting
+		for _, errStr := range conversionErrors {
+			parts := strings.SplitN(errStr, ":", 2)
+			if len(parts) >= 1 {
+				idpName := strings.TrimSpace(parts[0])
+				reason := "conversion_error"
+				if len(parts) >= 2 {
+					// Categorize the error reason
+					errMsg := strings.ToLower(parts[1])
+					switch {
+					case strings.Contains(errMsg, "missing"):
+						reason = "missing_field"
+					case strings.Contains(errMsg, "invalid"):
+						reason = "invalid_config"
+					case strings.Contains(errMsg, "parse"):
+						reason = "parse_error"
+					case strings.Contains(errMsg, "secret"):
+						reason = "secret_error"
+					case strings.Contains(errMsg, "network") || strings.Contains(errMsg, "connect"):
+						reason = "network_error"
+					}
+				}
+				metrics.IdentityProviderConversionErrors.WithLabelValues(idpName, reason).Inc()
+			}
+		}
 	}
 
 	l.logger.Debugw("Loaded enabled IdentityProviders", "count", len(result))

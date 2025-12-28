@@ -1334,3 +1334,193 @@ func TestMailProviderRealWorldConfigurations(t *testing.T) {
 		})
 	}
 }
+
+func TestMailProviderValidateCreate_WrongType(t *testing.T) {
+	mp := &MailProvider{}
+	wrongType := &BreakglassSession{}
+	_, err := mp.ValidateCreate(context.Background(), wrongType)
+	if err == nil {
+		t.Fatal("expected error when obj is wrong type")
+	}
+}
+
+func TestMailProviderValidateUpdate_WrongNewType(t *testing.T) {
+	mp := &MailProvider{
+		Spec: MailProviderSpec{
+			SMTP:   SMTPConfig{Host: "smtp.example.com", Port: 587},
+			Sender: SenderConfig{Address: "test@example.com"},
+		},
+	}
+	wrongType := &BreakglassSession{}
+	_, err := mp.ValidateUpdate(context.Background(), mp, wrongType)
+	if err == nil {
+		t.Fatal("expected error when new obj is wrong type")
+	}
+}
+
+func TestMailProviderValidateUpdate_WrongOldType(t *testing.T) {
+	mp := &MailProvider{
+		Spec: MailProviderSpec{
+			SMTP:   SMTPConfig{Host: "smtp.example.com", Port: 587},
+			Sender: SenderConfig{Address: "test@example.com"},
+		},
+	}
+	wrongType := &BreakglassSession{}
+	_, err := mp.ValidateUpdate(context.Background(), wrongType, mp)
+	if err == nil {
+		t.Fatal("expected error when old obj is wrong type")
+	}
+}
+
+func TestMailProviderValidateUpdate_BecomingDefault(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	existingDefault := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-default"},
+		Spec: MailProviderSpec{
+			Default: true,
+			SMTP:    SMTPConfig{Host: "smtp.old.com", Port: 587},
+			Sender:  SenderConfig{Address: "old@example.com"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingDefault).Build()
+	webhookClient = fakeClient
+	defer func() { webhookClient = nil }()
+
+	oldMp := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "another-provider"},
+		Spec: MailProviderSpec{
+			Default: false,
+			SMTP:    SMTPConfig{Host: "smtp.new.com", Port: 587},
+			Sender:  SenderConfig{Address: "new@example.com"},
+		},
+	}
+
+	newMp := oldMp.DeepCopy()
+	newMp.Spec.Default = true // becoming default
+
+	_, err := newMp.ValidateUpdate(context.Background(), oldMp, newMp)
+	if err == nil {
+		t.Fatal("expected error when becoming default with another default already existing")
+	}
+}
+
+func TestMailProviderValidateUpdate_SameNameDefault(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	existingDefault := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "the-default"},
+		Spec: MailProviderSpec{
+			Default: true,
+			SMTP:    SMTPConfig{Host: "smtp.old.com", Port: 587},
+			Sender:  SenderConfig{Address: "old@example.com"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingDefault).Build()
+	webhookClient = fakeClient
+	defer func() { webhookClient = nil }()
+
+	// Same provider updating other fields
+	newMp := existingDefault.DeepCopy()
+	newMp.Spec.SMTP.Port = 465
+
+	_, err := newMp.ValidateUpdate(context.Background(), existingDefault, newMp)
+	if err != nil {
+		t.Fatalf("expected success when updating same default provider, got: %v", err)
+	}
+}
+
+func TestMailProviderValidateDefaultUniqueness_NilReader(t *testing.T) {
+	oldClient := webhookClient
+	oldCache := webhookCache
+	webhookClient = nil
+	webhookCache = nil
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+
+	mp := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-default"},
+		Spec: MailProviderSpec{
+			Default: true,
+			SMTP:    SMTPConfig{Host: "smtp.test.com", Port: 587},
+			Sender:  SenderConfig{Address: "test@example.com"},
+		},
+	}
+
+	err := mp.validateDefaultUniqueness(context.Background(), "")
+	if err != nil {
+		t.Fatalf("expected nil error when reader is nil, got: %v", err)
+	}
+}
+
+func TestMailProviderValidateDefaultUniqueness_NoConflict(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	// Create a non-default mail provider
+	existingMp := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-provider"},
+		Spec: MailProviderSpec{
+			Default: false,
+			SMTP:    SMTPConfig{Host: "smtp.test.com", Port: 587},
+			Sender:  SenderConfig{Address: "test@example.com"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingMp).Build()
+	webhookClient = fakeClient
+	defer func() { webhookClient = nil }()
+
+	mp := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-default"},
+		Spec: MailProviderSpec{
+			Default: true,
+			SMTP:    SMTPConfig{Host: "smtp.new.com", Port: 587},
+			Sender:  SenderConfig{Address: "new@example.com"},
+		},
+	}
+
+	err := mp.validateDefaultUniqueness(context.Background(), "")
+	if err != nil {
+		t.Fatalf("expected nil error when no conflict, got: %v", err)
+	}
+}
+
+func TestMailProviderValidateDefaultUniqueness_WithConflict(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	// Create an existing default mail provider
+	existingMp := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-default"},
+		Spec: MailProviderSpec{
+			Default: true, // Already marked as default
+			SMTP:    SMTPConfig{Host: "smtp.test.com", Port: 587},
+			Sender:  SenderConfig{Address: "test@example.com"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingMp).Build()
+	webhookClient = fakeClient
+	defer func() { webhookClient = nil }()
+
+	mp := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-default"},
+		Spec: MailProviderSpec{
+			Default: true, // Also wants to be default - conflict!
+			SMTP:    SMTPConfig{Host: "smtp.new.com", Port: 587},
+			Sender:  SenderConfig{Address: "new@example.com"},
+		},
+	}
+
+	err := mp.validateDefaultUniqueness(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error when there's already a default MailProvider")
+	}
+}

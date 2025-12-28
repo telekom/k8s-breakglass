@@ -659,9 +659,238 @@ Returns Prometheus metrics in standard format (text/plain).
 
 See [Metrics Documentation](./metrics.md) for complete metric reference, alerting recommendations, and dashboard setup.
 
+---
+
+## Debug Sessions API
+
+The debug sessions API provides endpoints for managing temporary debug access to clusters. For full feature documentation, see [Debug Session](./debug-session.md).
+
+### List Debug Sessions
+
+```http
+GET /api/debugSessions
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cluster` | string | Filter by cluster name |
+| `state` | string | Filter by state (Pending, Active, Expired, etc.) |
+| `user` | string | Filter by requesting user |
+| `mine` | boolean | Show only sessions owned by current user |
+
+**Response:**
+
+```json
+{
+  "sessions": [
+    {
+      "name": "debug-user-cluster-1703706123",
+      "templateRef": "standard-debug",
+      "cluster": "production",
+      "requestedBy": "user@example.com",
+      "state": "Active",
+      "startsAt": "2024-01-15T10:00:00Z",
+      "expiresAt": "2024-01-15T12:00:00Z",
+      "participants": 2,
+      "allowedPods": 3
+    }
+  ],
+  "total": 1
+}
+```
+
+### Get Debug Session
+
+```http
+GET /api/debugSessions/:name
+```
+
+**Response:** Full `DebugSession` object including status and participants.
+
+### Create Debug Session
+
+```http
+POST /api/debugSessions
+```
+
+**Request Body:**
+
+```json
+{
+  "templateRef": "standard-debug",
+  "cluster": "production",
+  "requestedDuration": "2h",
+  "nodeSelector": {
+    "zone": "us-east-1a"
+  },
+  "reason": "Investigating issue #12345"
+}
+```
+
+**Response:** Created `DebugSession` object (201 Created).
+
+### Join Debug Session
+
+```http
+POST /api/debugSessions/:name/join
+```
+
+**Request Body:**
+
+```json
+{
+  "role": "participant"
+}
+```
+
+Role can be `participant` or `viewer` (default: `viewer`).
+
+### Leave Debug Session
+
+```http
+POST /api/debugSessions/:name/leave
+```
+
+Allows a participant (not owner) to leave a session. Owners must use terminate instead.
+
+### Renew Debug Session
+
+```http
+POST /api/debugSessions/:name/renew
+```
+
+**Request Body:**
+
+```json
+{
+  "extendBy": "1h"
+}
+```
+
+Extends the session duration. Subject to template constraints (maxDuration, maxRenewals).
+
+### Terminate Debug Session
+
+```http
+POST /api/debugSessions/:name/terminate
+```
+
+Terminates the session early. Only the session owner can terminate.
+
+### Approve Debug Session
+
+```http
+POST /api/debugSessions/:name/approve
+```
+
+**Request Body (optional):**
+
+```json
+{
+  "reason": "Approved for incident response"
+}
+```
+
+Approves a session in `PendingApproval` state.
+
+### Reject Debug Session
+
+```http
+POST /api/debugSessions/:name/reject
+```
+
+**Request Body:**
+
+```json
+{
+  "reason": "Insufficient justification"
+}
+```
+
+Rejects a session in `PendingApproval` state.
+
+### List Debug Session Templates
+
+```http
+GET /api/debugSessions/templates
+```
+
+Returns templates the current user has access to (based on group membership).
+
+**Response:**
+
+```json
+{
+  "templates": [
+    {
+      "name": "standard-debug",
+      "displayName": "Standard Debug Access",
+      "description": "Network debugging tools on all nodes",
+      "mode": "workload",
+      "workloadType": "DaemonSet",
+      "podTemplateRef": "netshoot-base",
+      "targetNamespace": "breakglass-debug",
+      "constraints": {
+        "maxDuration": "4h",
+        "defaultDuration": "1h",
+        "allowRenewal": true,
+        "maxRenewals": 3
+      },
+      "allowedClusters": ["production-*", "staging-*"],
+      "allowedGroups": ["sre-team"],
+      "requiresApproval": true
+    }
+  ],
+  "total": 1
+}
+```
+
+### Get Debug Session Template
+
+```http
+GET /api/debugSessions/templates/:name
+```
+
+Returns full `DebugSessionTemplate` CRD object.
+
+### List Debug Pod Templates
+
+```http
+GET /api/debugSessions/podTemplates
+```
+
+**Response:**
+
+```json
+{
+  "templates": [
+    {
+      "name": "netshoot-base",
+      "displayName": "Netshoot Debug Pod",
+      "description": "Network troubleshooting tools",
+      "containers": 1
+    }
+  ],
+  "total": 1
+}
+```
+
+### Get Debug Pod Template
+
+```http
+GET /api/debugSessions/podTemplates/:name
+```
+
+Returns full `DebugPodTemplate` CRD object.
+
+---
+
 ## Related Resources
 
 - [ClusterConfig](./cluster-config.md) - Cluster configuration
 - [BreakglassEscalation](./breakglass-escalation.md) - Escalation policies
 - [BreakglassSession](./breakglass-session.md) - Session management
+- [Debug Session](./debug-session.md) - Debug session feature guide
 - [Webhook Setup](./webhook-setup.md) - Authorization webhook configuration

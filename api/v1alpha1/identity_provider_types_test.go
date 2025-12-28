@@ -474,6 +474,37 @@ func TestIdentityProviderValidateCreateRejectsInvalidKeycloakDurations(t *testin
 	assert.True(t, apierrors.IsInvalid(err))
 }
 
+func TestIdentityProviderValidateCreateRejectsInvalidRequestTimeout(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-timeout-idp",
+		},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			Issuer:            "https://issuer.example.com",
+			GroupSyncProvider: GroupSyncProviderKeycloak,
+			Keycloak: &KeycloakGroupSync{
+				BaseURL:  "https://keycloak.example.com",
+				Realm:    "master",
+				ClientID: "sync-client",
+				ClientSecretRef: SecretKeyReference{
+					Name:      "keycloak-secret",
+					Namespace: "default",
+				},
+				CacheTTL:       "5m",
+				RequestTimeout: "invalid", // Invalid duration
+			},
+		},
+	}
+
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsInvalid(err))
+}
+
 // TestIdentityProviderValidateUpdateValidSpec verifies update validation
 func TestIdentityProviderValidateUpdateValidSpec(t *testing.T) {
 	oldIDP := &IdentityProvider{
@@ -506,6 +537,13 @@ func TestIdentityProviderValidateUpdateValidSpec(t *testing.T) {
 	assert.NotNil(t, newIDP)
 	_ = err // Error is expected in unit test without full webhook setup
 	_ = warnings
+}
+
+func TestIdentityProviderValidateCreate_WrongType(t *testing.T) {
+	idp := &IdentityProvider{}
+	wrongType := &BreakglassSession{}
+	_, err := idp.ValidateCreate(context.Background(), wrongType)
+	require.Error(t, err, "expected error when object is wrong type")
 }
 
 // TestIdentityProviderValidateDelete verifies delete validation
@@ -609,4 +647,211 @@ func TestIdentityProviderIntegration(t *testing.T) {
 	readyCondition := idp.GetCondition(string(IdentityProviderConditionReady))
 	require.NotNil(t, readyCondition)
 	assert.Equal(t, metav1.ConditionTrue, readyCondition.Status)
+}
+
+// TestIdentityProvider_ValidateCreate_WrongType verifies type check
+func TestIdentityProvider_ValidateCreate_WrongType(t *testing.T) {
+	idp := &IdentityProvider{}
+	wrongType := &BreakglassSession{}
+	_, err := idp.ValidateCreate(context.Background(), wrongType)
+	assert.Error(t, err, "expected error when obj is wrong type")
+}
+
+// TestIdentityProvider_ValidateCreate_MissingAuthority verifies required authority field
+func TestIdentityProvider_ValidateCreate_MissingAuthority(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-no-authority"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				ClientID: "client-id",
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.Error(t, err, "expected error when authority is missing")
+}
+
+// TestIdentityProvider_ValidateCreate_MissingClientID verifies required clientID field
+func TestIdentityProvider_ValidateCreate_MissingClientID(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-no-client"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.Error(t, err, "expected error when clientID is missing")
+}
+
+// TestIdentityProvider_ValidateCreate_InvalidJWKSEndpoint verifies JWKS validation
+func TestIdentityProvider_ValidateCreate_InvalidJWKSEndpoint(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-bad-jwks"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority:    "https://auth.example.com",
+				ClientID:     "client-id",
+				JWKSEndpoint: "not-a-valid-url",
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.Error(t, err, "expected error when JWKSEndpoint is invalid")
+}
+
+// TestIdentityProvider_ValidateCreate_KeycloakMissingConfig verifies Keycloak config requirement
+func TestIdentityProvider_ValidateCreate_KeycloakMissingConfig(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-cfg"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			GroupSyncProvider: GroupSyncProviderKeycloak,
+			// Keycloak config is nil
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.Error(t, err, "expected error when Keycloak config is missing")
+}
+
+// TestIdentityProvider_ValidateCreate_KeycloakMissingBaseURL verifies Keycloak baseURL requirement
+func TestIdentityProvider_ValidateCreate_KeycloakMissingBaseURL(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-url"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			GroupSyncProvider: GroupSyncProviderKeycloak,
+			Keycloak: &KeycloakGroupSync{
+				// BaseURL is empty
+				Realm:    "master",
+				ClientID: "kc-client",
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.Error(t, err, "expected error when Keycloak baseURL is missing")
+}
+
+// TestIdentityProvider_ValidateDelete verifies delete always succeeds
+func TestIdentityProvider_ValidateDelete(t *testing.T) {
+	idp := &IdentityProvider{}
+	warnings, err := idp.ValidateDelete(context.Background(), idp)
+	assert.NoError(t, err)
+	assert.Nil(t, warnings)
+}
+
+func TestIdentityProvider_ValidateCreate_KeycloakMissingRealm(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-realm"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			GroupSyncProvider: GroupSyncProviderKeycloak,
+			Keycloak: &KeycloakGroupSync{
+				BaseURL: "https://keycloak.example.com",
+				// Realm is empty
+				ClientID: "kc-client",
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.Error(t, err, "expected error when Keycloak realm is missing")
+}
+
+func TestIdentityProvider_ValidateCreate_KeycloakMissingClientID(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-clientid"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			GroupSyncProvider: GroupSyncProviderKeycloak,
+			Keycloak: &KeycloakGroupSync{
+				BaseURL: "https://keycloak.example.com",
+				Realm:   "master",
+				// ClientID is empty
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.Error(t, err, "expected error when Keycloak clientID is missing")
+}
+
+func TestIdentityProvider_ValidateCreate_KeycloakMissingSecretRef(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-secretref"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			GroupSyncProvider: GroupSyncProviderKeycloak,
+			Keycloak: &KeycloakGroupSync{
+				BaseURL:  "https://keycloak.example.com",
+				Realm:    "master",
+				ClientID: "kc-client",
+				// ClientSecretRef is empty
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.Error(t, err, "expected error when Keycloak clientSecretRef is missing")
+}
+
+func TestIdentityProvider_ValidateCreate_ValidKeycloak(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-valid"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			GroupSyncProvider: GroupSyncProviderKeycloak,
+			Keycloak: &KeycloakGroupSync{
+				BaseURL:  "https://keycloak.example.com",
+				Realm:    "master",
+				ClientID: "kc-client",
+				ClientSecretRef: SecretKeyReference{
+					Name:      "kc-secret",
+					Namespace: "default",
+				},
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	assert.NoError(t, err, "expected success with valid Keycloak config")
+}
+
+func TestIdentityProvider_ValidateCreate_KeycloakWithoutGroupSyncProvider(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-gsp"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			// GroupSyncProvider not set but Keycloak config provided
+			Keycloak: &KeycloakGroupSync{
+				BaseURL:  "https://keycloak.example.com",
+				Realm:    "master",
+				ClientID: "kc-client",
+				ClientSecretRef: SecretKeyReference{
+					Name:      "kc-secret",
+					Namespace: "default",
+				},
+			},
+		},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	require.Error(t, err, "expected error when keycloak provided without groupSyncProvider set")
 }

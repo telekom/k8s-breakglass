@@ -117,6 +117,12 @@ const primaryNavItems: PrimaryNavItem[] = [
     to: { name: "sessionBrowser" },
     matches: ["sessionBrowser"],
   },
+  {
+    id: "debugSessions",
+    label: "Debug Sessions",
+    to: { name: "debugSessionBrowser" },
+    matches: ["debugSessionBrowser", "debugSessionCreate", "debugSessionDetails"],
+  },
 ];
 
 const homeHref = computed(() => router.resolve({ name: "home" }).href);

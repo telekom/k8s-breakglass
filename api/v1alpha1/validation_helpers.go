@@ -719,3 +719,16 @@ func validateNonEmptyStringList(values []string, fieldPath *field.Path, minItems
 
 	return errs
 }
+
+// validateDurationFormat validates that a string is a valid Go duration format
+func validateDurationFormat(duration string, fieldPath *field.Path) field.ErrorList {
+	if duration == "" || fieldPath == nil {
+		return nil
+	}
+
+	if _, err := time.ParseDuration(duration); err != nil {
+		return field.ErrorList{field.Invalid(fieldPath, duration, fmt.Sprintf("invalid duration format: %v", err))}
+	}
+
+	return nil
+}

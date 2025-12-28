@@ -1,8 +1,17 @@
 package v1alpha1
 
 import (
+	"context"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // DenyPolicyConditionType defines condition types for DenyPolicy resources.
@@ -199,6 +208,8 @@ type DenyPolicy struct {
 	Status DenyPolicyStatus `json:"status,omitempty"`
 }
 
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-denypolicy,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=denypolicies,verbs=create;update,versions=v1alpha1,name=denypolicy.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
+
 // SetCondition updates or adds a condition in the DenyPolicy status
 func (dp *DenyPolicy) SetCondition(condition metav1.Condition) {
 	apimeta.SetStatusCondition(&dp.Status.Conditions, condition)
@@ -207,6 +218,90 @@ func (dp *DenyPolicy) SetCondition(condition metav1.Condition) {
 // GetCondition retrieves a condition from the DenyPolicy status by type
 func (dp *DenyPolicy) GetCondition(condType string) *metav1.Condition {
 	return apimeta.FindStatusCondition(dp.Status.Conditions, condType)
+}
+
+// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
+func (dp *DenyPolicy) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	policy, ok := obj.(*DenyPolicy)
+	if !ok {
+		return nil, fmt.Errorf("expected a DenyPolicy object but got %T", obj)
+	}
+
+	var allErrs field.ErrorList
+	allErrs = append(allErrs, validateDenyPolicySpec(policy)...)
+
+	if len(allErrs) == 0 {
+		return nil, nil
+	}
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, policy.Name, allErrs)
+}
+
+// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
+func (dp *DenyPolicy) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	policy, ok := newObj.(*DenyPolicy)
+	if !ok {
+		return nil, fmt.Errorf("expected a DenyPolicy object but got %T", newObj)
+	}
+
+	var allErrs field.ErrorList
+	allErrs = append(allErrs, validateDenyPolicySpec(policy)...)
+
+	if len(allErrs) == 0 {
+		return nil, nil
+	}
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, policy.Name, allErrs)
+}
+
+// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
+func (dp *DenyPolicy) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	return nil, nil
+}
+
+// SetupWebhookWithManager registers webhooks for DenyPolicy
+func (dp *DenyPolicy) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	webhookClient = mgr.GetClient()
+	if c := mgr.GetCache(); c != nil {
+		webhookCache = c
+	}
+	return ctrl.NewWebhookManagedBy(mgr).
+		For(dp).
+		WithValidator(dp).
+		Complete()
+}
+
+func validateDenyPolicySpec(policy *DenyPolicy) field.ErrorList {
+	if policy == nil {
+		return nil
+	}
+
+	specPath := field.NewPath("spec")
+	var allErrs field.ErrorList
+
+	// Validate rules
+	for i, rule := range policy.Spec.Rules {
+		rulePath := specPath.Child("rules").Index(i)
+		if len(rule.Verbs) == 0 {
+			allErrs = append(allErrs, field.Required(rulePath.Child("verbs"), "verbs are required"))
+		}
+		if len(rule.APIGroups) == 0 {
+			allErrs = append(allErrs, field.Required(rulePath.Child("apiGroups"), "apiGroups are required"))
+		}
+		if len(rule.Resources) == 0 {
+			allErrs = append(allErrs, field.Required(rulePath.Child("resources"), "resources are required"))
+		}
+	}
+
+	// Validate podSecurityRules thresholds if specified
+	if policy.Spec.PodSecurityRules != nil {
+		for i, threshold := range policy.Spec.PodSecurityRules.Thresholds {
+			thresholdPath := specPath.Child("podSecurityRules").Child("thresholds").Index(i)
+			if threshold.MaxScore < 0 {
+				allErrs = append(allErrs, field.Invalid(thresholdPath.Child("maxScore"), threshold.MaxScore, "maxScore must be non-negative"))
+			}
+		}
+	}
+
+	return allErrs
 }
 
 // +kubebuilder:object:root=true

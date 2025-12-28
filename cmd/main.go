@@ -199,9 +199,12 @@ func main() {
 	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager,
 		auth.Middleware(), cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).WithQueue(mailQueue)
 
+	// Setup debug session API controller
+	debugSessionAPICtrl := breakglass.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, auth.Middleware())
+
 	// Register API controllers based on component flags
 	apiControllers := api.Setup(sessionController, &escalationManager, &sessionManager, cliConfig.EnableFrontend,
-		cliConfig.EnableAPI, cliConfig.ConfigPath, auth, ccProvider, denyEval, &cfg, log)
+		cliConfig.EnableAPI, cliConfig.ConfigPath, auth, ccProvider, denyEval, &cfg, log, debugSessionAPICtrl)
 
 	// Make IdentityProvider available to API server for frontend configuration
 	if idpConfig != nil {
@@ -366,7 +369,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, log); err != nil {
+		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, log); err != nil {
 			recMgrErr <- err
 		}
 	}()

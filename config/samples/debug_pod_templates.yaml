@@ -1,0 +1,134 @@
+# Sample DebugPodTemplate - Basic debug container
+# This template provides a minimal debug pod with common debugging tools
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: basic-debug
+spec:
+  displayName: "Basic Debug Pod"
+  description: "Minimal debug container with common tools like curl, netcat, and dig"
+  template:
+    metadata:
+      labels:
+        app: breakglass-debug
+        security-profile: baseline
+    spec:
+      containers:
+        - name: debug
+          image: nicolaka/netshoot:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      automountServiceAccountToken: false
+---
+# Sample DebugPodTemplate - Privileged debug container for node debugging
+# This template provides a privileged container for advanced debugging scenarios
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: privileged-debug
+spec:
+  displayName: "Privileged Debug Pod"
+  description: "Privileged container for node-level debugging with host access"
+  template:
+    metadata:
+      labels:
+        app: breakglass-debug
+        security-profile: privileged
+    spec:
+      hostNetwork: true
+      hostPID: true
+      hostIPC: false
+      containers:
+        - name: debug
+          image: nicolaka/netshoot:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+              readOnly: true
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+---
+# Sample DebugPodTemplate - Secure debug container
+# This template provides a restricted debug container for production environments
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: secure-debug
+spec:
+  displayName: "Secure Debug Pod"
+  description: "Restricted debug container for production environments with minimal privileges"
+  template:
+    metadata:
+      labels:
+        app: breakglass-debug
+        security-profile: restricted
+    spec:
+      containers:
+        - name: debug
+          image: busybox:stable
+          imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
+          resources:
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault

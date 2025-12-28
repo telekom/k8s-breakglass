@@ -20,6 +20,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -211,5 +212,88 @@ func TestBreakglassSessionDenyPolicyRefsValidationDeferred(t *testing.T) {
 	session.Spec.DenyPolicyRefs = []string{"missing"}
 	if _, err := session.ValidateCreate(context.Background(), session); err != nil {
 		t.Fatalf("expected webhook to accept missing denyPolicyRefs, got %v", err)
+	}
+}
+
+func TestBreakglassSession_ValidateCreate_WrongType(t *testing.T) {
+	session := &BreakglassSession{}
+	wrongType := &ClusterConfig{}
+	_, err := session.ValidateCreate(context.Background(), wrongType)
+	if err == nil {
+		t.Fatal("expected error when obj is wrong type")
+	}
+}
+
+func TestBreakglassSession_ValidateCreate_MissingCluster(t *testing.T) {
+	session := &BreakglassSession{
+		Spec: BreakglassSessionSpec{
+			User:         "user@example.com",
+			GrantedGroup: "group",
+			// Cluster is missing
+		},
+	}
+	_, err := session.ValidateCreate(context.Background(), session)
+	if err == nil {
+		t.Fatal("expected error when cluster is missing")
+	}
+}
+
+func TestBreakglassSession_ValidateCreate_MissingUser(t *testing.T) {
+	session := &BreakglassSession{
+		Spec: BreakglassSessionSpec{
+			Cluster:      "cluster1",
+			GrantedGroup: "group",
+			// User is missing
+		},
+	}
+	_, err := session.ValidateCreate(context.Background(), session)
+	if err == nil {
+		t.Fatal("expected error when user is missing")
+	}
+}
+
+func TestBreakglassSession_ValidateCreate_MissingGrantedGroup(t *testing.T) {
+	session := &BreakglassSession{
+		Spec: BreakglassSessionSpec{
+			Cluster: "cluster1",
+			User:    "user@example.com",
+			// GrantedGroup is missing
+		},
+	}
+	_, err := session.ValidateCreate(context.Background(), session)
+	if err == nil {
+		t.Fatal("expected error when grantedGroup is missing")
+	}
+}
+
+func TestBreakglassSession_ValidateCreate_ScheduledStartTimePast(t *testing.T) {
+	pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+	session := &BreakglassSession{
+		Spec: BreakglassSessionSpec{
+			Cluster:            "cluster1",
+			User:               "user@example.com",
+			GrantedGroup:       "group",
+			ScheduledStartTime: &pastTime,
+		},
+	}
+	_, err := session.ValidateCreate(context.Background(), session)
+	if err == nil {
+		t.Fatal("expected error when scheduledStartTime is in the past")
+	}
+}
+
+func TestBreakglassSession_ValidateCreate_ScheduledStartTimeTooSoon(t *testing.T) {
+	soonTime := metav1.NewTime(time.Now().Add(1 * time.Minute))
+	session := &BreakglassSession{
+		Spec: BreakglassSessionSpec{
+			Cluster:            "cluster1",
+			User:               "user@example.com",
+			GrantedGroup:       "group",
+			ScheduledStartTime: &soonTime,
+		},
+	}
+	_, err := session.ValidateCreate(context.Background(), session)
+	if err == nil {
+		t.Fatal("expected error when scheduledStartTime is less than 5 minutes in the future")
 	}
 }

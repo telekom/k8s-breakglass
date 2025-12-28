@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/telekom/k8s-breakglass/pkg/api"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -65,6 +67,7 @@ func NewManager(
 // - Metrics server configuration with secure serving
 // - Field index setup for efficient queries
 // - IdentityProvider reconciler setup
+// - DebugSession reconciler setup
 // - Manager startup and leader election
 // - Broadcasting leadership signal to background loops when acquired
 func Setup(
@@ -72,6 +75,7 @@ func Setup(
 	mgr ctrl.Manager,
 	idpLoader *config.IdentityProviderLoader,
 	server *api.Server,
+	ccProvider *cluster.ClientProvider,
 	log *zap.SugaredLogger,
 ) error {
 	// Register health check handlers for liveness and readiness probes
@@ -135,6 +139,14 @@ func Setup(
 		return fmt.Errorf("failed to setup BreakglassEscalation reconciler with manager: %w", err)
 	}
 	log.Infow("Successfully registered BreakglassEscalation reconciler", "resyncPeriod", "10m")
+
+	// Register DebugSession Reconciler with controller-runtime manager
+	log.Debugw("Setting up DebugSession reconciler")
+	debugSessionReconciler := breakglass.NewDebugSessionController(log, mgr.GetClient(), ccProvider)
+	if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
+	}
+	log.Infow("Successfully registered DebugSession reconciler")
 
 	// Note: Leadership election is NOT handled by the manager at this level.
 	// Background loops (cleanup, escalation updater, cluster config checker) use the resourcelock
