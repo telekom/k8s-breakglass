@@ -51,6 +51,15 @@ lint: golangci-lint ## Run golangci-lint linter
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix --timeout=5m
 
+.PHONY: lint-strict
+lint-strict: golangci-lint ## Run golangci-lint with all checks enabled (stricter than default)
+	$(GOLANGCI_LINT) run --timeout=5m --enable-all \
+		--disable=gochecknoglobals,gochecknoinits,exhaustruct,varnamelen,wsl_v5,nlreturn,lll,funlen,gocognit,cyclop,maintidx,nestif,godox,wrapcheck,ireturn,paralleltest,tparallel,testpackage,depguard,tagliatelle,nonamedreturns,exhaustive,forcetypeassert,goerr113,dupl,godot,prealloc
+
+.PHONY: lint-new
+lint-new: golangci-lint ## Run golangci-lint only on new/changed code (requires git)
+	$(GOLANGCI_LINT) run --timeout=5m --new
+
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...

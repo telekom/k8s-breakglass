@@ -485,8 +485,8 @@ func TestAuthMiddleware_RefreshOnMissingKid(t *testing.T) {
 	privNew, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	kid := "refresh-kid"
-	nB64New := base64.RawURLEncoding.EncodeToString(privNew.PublicKey.N.Bytes())
-	eBytesNew := big.NewInt(int64(privNew.PublicKey.E)).Bytes()
+	nB64New := base64.RawURLEncoding.EncodeToString(privNew.N.Bytes())
+	eBytesNew := big.NewInt(int64(privNew.E)).Bytes()
 	eB64New := base64.RawURLEncoding.EncodeToString(eBytesNew)
 	jwksWithKey := map[string]interface{}{"keys": []interface{}{map[string]interface{}{"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": nB64New, "e": eB64New}}}
 	jwksWithKeyBytes, err := json.Marshal(jwksWithKey)

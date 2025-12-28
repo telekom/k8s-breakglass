@@ -706,7 +706,7 @@ func TestOIDCProxyRealmPathIntegration(t *testing.T) {
 				scheme = "https"
 			}
 			actualBaseURL := scheme + "://" + r.Host
-			fmt.Fprintf(w, `{
+			_, _ = fmt.Fprintf(w, `{
 				"issuer": "%s/auth/realms/production",
 				"authorization_endpoint": "%s/auth/realms/production/protocol/openid-connect/auth",
 				"token_endpoint": "%s/auth/realms/production/protocol/openid-connect/token",

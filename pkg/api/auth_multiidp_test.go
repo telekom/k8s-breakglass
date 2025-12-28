@@ -44,8 +44,8 @@ func TestMultiIDPJWKSCaching(t *testing.T) {
 	jwksHandler := func(privKey *rsa.PrivateKey) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			kid := "test-kid"
-			nB64 := base64.RawURLEncoding.EncodeToString(privKey.PublicKey.N.Bytes())
-			eBytes := big.NewInt(int64(privKey.PublicKey.E)).Bytes()
+			nB64 := base64.RawURLEncoding.EncodeToString(privKey.N.Bytes())
+			eBytes := big.NewInt(int64(privKey.E)).Bytes()
 			eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
 			jwksObj := map[string]interface{}{
 				"keys": []interface{}{

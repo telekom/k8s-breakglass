@@ -184,7 +184,7 @@ func wait(webhookCertPath, webhookCertName string, timeout, tick time.Duration) 
 			// check if file contains proper PEM data
 			data, err := os.ReadFile(p)
 			if err == nil {
-				b, _ := pem.Decode([]byte(data))
+				b, _ := pem.Decode(data)
 				if b != nil {
 					return nil
 				}

@@ -1350,7 +1350,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		bs.Status.Approvers = nil
 
 		// Set RetainedUntil for withdrawn sessions (same logic as other terminal states)
-		var retainFor time.Duration = DefaultRetainForDuration
+		retainFor := DefaultRetainForDuration
 		if bs.Spec.RetainFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 				retainFor = d
@@ -1411,7 +1411,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	bs.Status.State = v1alpha1.SessionStateExpired
 
 	// Set RetainedUntil for expired sessions (same logic as other terminal states)
-	var retainFor time.Duration = DefaultRetainForDuration
+	retainFor := DefaultRetainForDuration
 	if bs.Spec.RetainFor != "" {
 		if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 			retainFor = d

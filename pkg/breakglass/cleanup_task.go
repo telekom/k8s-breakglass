@@ -143,7 +143,6 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		if ds.Status.State == telekomv1alpha1.DebugSessionStateExpired ||
 			ds.Status.State == telekomv1alpha1.DebugSessionStateTerminated ||
 			ds.Status.State == telekomv1alpha1.DebugSessionStateFailed {
-
 			// Check if session should be deleted after retention period
 			// Use ExpiresAt or CreationTimestamp to determine retention eligibility
 			retentionStart := ds.CreationTimestamp.Time
