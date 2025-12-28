@@ -6,8 +6,6 @@ run:
 
 linters:
   enable:
-    - gofmt
-    - goimports
     - govet
     - ineffassign
     - misspell
@@ -15,3 +13,8 @@ linters:
     - staticcheck
     - unused
     - gosimple
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
