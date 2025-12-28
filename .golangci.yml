@@ -12,7 +12,6 @@ linters:
     - errcheck
     - staticcheck
     - unused
-    - gosimple
 
 formatters:
   enable:
