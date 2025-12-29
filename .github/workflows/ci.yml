@@ -232,7 +232,8 @@ jobs:
           path: sbom.json
 
       - name: Push image to Artifactory (OCI)
-        if: ${{ (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
+        # Skip for Dependabot PRs (no access to secrets) and fork PRs
+        if: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || steps.fork_check.outputs.push_to_registry == 'true') && steps.build.outputs.digest != '' }}
         env:
           ARTIFACTORY_URL: artifactory.devops.telekom.de
           ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas
