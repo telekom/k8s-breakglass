@@ -1,0 +1,68 @@
+# CodeQL static analysis for security vulnerabilities
+#
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Sunday at 3am
+    - cron: '0 3 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze-go:
+    name: Analyze Go
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1b168cd39490f61582a9beae412bb7057a6b2c4e # v4.31.8
+        with:
+          languages: go
+          queries: +security-extended,security-and-quality
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@1b168cd39490f61582a9beae412bb7057a6b2c4e # v4.31.8
+        with:
+          category: "/language:go"
+
+  analyze-javascript:
+    name: Analyze JavaScript/TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1b168cd39490f61582a9beae412bb7057a6b2c4e # v4.31.8
+        with:
+          languages: javascript-typescript
+          queries: +security-extended,security-and-quality
+          # Limit to frontend directory
+          source-root: frontend
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@1b168cd39490f61582a9beae412bb7057a6b2c4e # v4.31.8
+        with:
+          category: "/language:javascript-typescript"

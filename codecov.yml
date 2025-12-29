@@ -1,5 +1,8 @@
 # Codecov configuration for k8s-breakglass
 # https://docs.codecov.com/docs/codecovyml-reference
+#
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
 
 coverage:
   precision: 2
@@ -47,4 +50,8 @@ flags:
       - pkg/
       - api/
       - cmd/
+    carryforward: true
+  frontend:
+    paths:
+      - frontend/src/
     carryforward: true
