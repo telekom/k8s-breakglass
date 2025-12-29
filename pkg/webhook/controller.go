@@ -247,6 +247,67 @@ type WebhookController struct {
 	podFetchFn   PodFetchFunction // optional override for testing
 }
 
+// checkDebugSessionAccess checks if a pod exec request is allowed by an active debug session.
+// Returns (allowed, sessionName, reason) where allowed is true if the user can exec into the pod
+// via a debug session they are participating in.
+func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (bool, string, string) {
+	// Only check for pods/exec requests
+	if ra == nil || ra.Resource != "pods" || ra.Subresource != "exec" {
+		return false, "", ""
+	}
+
+	if ra.Name == "" || ra.Namespace == "" {
+		return false, "", ""
+	}
+
+	if wc.escalManager == nil || wc.escalManager.Client == nil {
+		reqLog.Debug("Debug session check skipped: no client available")
+		return false, "", ""
+	}
+
+	// List active debug sessions for this cluster
+	debugSessionList := &v1alpha1.DebugSessionList{}
+	if err := wc.escalManager.List(ctx, debugSessionList); err != nil {
+		reqLog.Warnw("Failed to list debug sessions for pod exec check", "error", err)
+		return false, "", ""
+	}
+
+	// Check each active debug session
+	for _, ds := range debugSessionList.Items {
+		// Only check active sessions for this cluster
+		if ds.Status.State != v1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
+			continue
+		}
+
+		// Check if the pod is in the allowed pods list
+		podAllowed := false
+		for _, ap := range ds.Status.AllowedPods {
+			if ap.Namespace == ra.Namespace && ap.Name == ra.Name {
+				podAllowed = true
+				break
+			}
+		}
+		if !podAllowed {
+			continue
+		}
+
+		// Check if the user is a participant of this session
+		for _, p := range ds.Status.Participants {
+			if p.User == username {
+				reason := fmt.Sprintf("Allowed by debug session %s (role: %s)", ds.Name, p.Role)
+				reqLog.Infow("Debug session pod exec allowed",
+					"session", ds.Name,
+					"pod", fmt.Sprintf("%s/%s", ra.Namespace, ra.Name),
+					"user", username,
+					"role", p.Role)
+				return true, ds.Name, reason
+			}
+		}
+	}
+
+	return false, "", ""
+}
+
 // getClusterConfigAcrossNamespaces performs a ClusterConfig lookup across all namespaces
 // by delegating to the ClientProvider legacy behavior (empty namespace). The Webhook
 // controller does not have an escalation namespace context, so callers should use this
@@ -575,6 +636,18 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				allowDetail = fmt.Sprintf("group=%s session=%s impersonated=%s", grp, sesName, impersonated)
 				// Emit a single correlated info log showing the final accepted impersonated group for observability
 				reqLog.Infow("Final accepted impersonated group", "username", username, "cluster", clusterName, "grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
+			}
+		}
+
+		// Debug session pod exec check: allow exec into debug pods if user is a session participant
+		if !allowed && sar.Spec.ResourceAttributes != nil {
+			if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(ctx, username, clusterName, sar.Spec.ResourceAttributes, reqLog); debugAllowed {
+				allowed = true
+				allowSource = "debug-session"
+				allowDetail = fmt.Sprintf("session=%s", debugSession)
+				reason = debugReason
+				// Emit metric for debug session authorization
+				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, sar.Spec.ResourceAttributes.Verb, sar.Spec.ResourceAttributes.Group, sar.Spec.ResourceAttributes.Resource, sar.Spec.ResourceAttributes.Namespace, sar.Spec.ResourceAttributes.Subresource, "allowed", "debug-session").Inc()
 			}
 		}
 

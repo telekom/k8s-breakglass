@@ -680,7 +680,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 
 	// Compute retained-until at creation so sessions always expose when they will be cleaned up.
-	var retainFor time.Duration = DefaultRetainForDuration
+	retainFor := DefaultRetainForDuration
 	if spec.RetainFor != "" {
 		if d, err := time.ParseDuration(spec.RetainFor); err == nil && d > 0 {
 			retainFor = d
@@ -886,7 +886,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		bs.Status.ApprovedAt = metav1.Now()
 
 		// Determine expiry based on session spec MaxValidFor if provided, otherwise use default
-		var validFor time.Duration = DefaultValidForDuration
+		validFor := DefaultValidForDuration
 		if bs.Spec.MaxValidFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				validFor = d
@@ -896,7 +896,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		}
 
 		// Determine retention based on session spec RetainFor if provided, otherwise use default
-		var retainFor time.Duration = DefaultRetainForDuration
+		retainFor := DefaultRetainForDuration
 		if bs.Spec.RetainFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 				retainFor = d
@@ -913,8 +913,8 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 			// RBAC group will NOT be applied until activation time is reached
 			bs.Status.State = v1alpha1.SessionStateWaitingForScheduledTime
 			// Calculate expiry and retention from ScheduledStartTime, not from now
-			bs.Status.ExpiresAt = metav1.NewTime(bs.Spec.ScheduledStartTime.Time.Add(validFor))
-			bs.Status.RetainedUntil = metav1.NewTime(bs.Spec.ScheduledStartTime.Time.Add(validFor).Add(retainFor))
+			bs.Status.ExpiresAt = metav1.NewTime(bs.Spec.ScheduledStartTime.Add(validFor))
+			bs.Status.RetainedUntil = metav1.NewTime(bs.Spec.ScheduledStartTime.Add(validFor).Add(retainFor))
 			// ActualStartTime will be set during activation
 			bs.Status.ActualStartTime = metav1.Time{}
 			reqLog.Infow("Session approved with scheduled start time",
@@ -954,7 +954,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		bs.Status.ReasonEnded = "rejected"
 
 		// Set RetainedUntil for rejected sessions (same logic as approved sessions)
-		var retainFor time.Duration = DefaultRetainForDuration
+		retainFor := DefaultRetainForDuration
 		if bs.Spec.RetainFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 				retainFor = d
@@ -1177,7 +1177,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		if includeApprovedByMe && hasApproved {
 			include = true
 		}
-		if !(includeMine || includeApprover || includeApprovedByMe) {
+		if !includeMine && !includeApprover && !includeApprovedByMe {
 			include = isMine || isApprover || hasApproved
 		}
 		if !include {
@@ -1263,7 +1263,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	bs.Status.Approvers = nil
 
 	// Set RetainedUntil for withdrawn sessions (same logic as other terminal states)
-	var retainFor time.Duration = DefaultRetainForDuration
+	retainFor := DefaultRetainForDuration
 	if bs.Spec.RetainFor != "" {
 		if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 			retainFor = d
@@ -1332,7 +1332,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		bs.Status.ReasonEnded = "dropped"
 
 		// Set RetainedUntil for expired sessions (same logic as other terminal states)
-		var retainFor time.Duration = DefaultRetainForDuration
+		retainFor := DefaultRetainForDuration
 		if bs.Spec.RetainFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 				retainFor = d
@@ -1350,7 +1350,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		bs.Status.Approvers = nil
 
 		// Set RetainedUntil for withdrawn sessions (same logic as other terminal states)
-		var retainFor time.Duration = DefaultRetainForDuration
+		retainFor := DefaultRetainForDuration
 		if bs.Spec.RetainFor != "" {
 			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 				retainFor = d
@@ -1411,7 +1411,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	bs.Status.State = v1alpha1.SessionStateExpired
 
 	// Set RetainedUntil for expired sessions (same logic as other terminal states)
-	var retainFor time.Duration = DefaultRetainForDuration
+	retainFor := DefaultRetainForDuration
 	if bs.Spec.RetainFor != "" {
 		if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
 			retainFor = d
@@ -2470,12 +2470,12 @@ func dropK8sInternalFieldsSession(s *v1alpha1.BreakglassSession) {
 	if s == nil {
 		return
 	}
-	s.ObjectMeta.ManagedFields = nil
-	s.ObjectMeta.UID = ""
-	s.ObjectMeta.ResourceVersion = ""
-	s.ObjectMeta.Generation = 0
-	if s.ObjectMeta.Annotations != nil {
-		delete(s.ObjectMeta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
+	s.ManagedFields = nil
+	s.UID = ""
+	s.ResourceVersion = ""
+	s.Generation = 0
+	if s.Annotations != nil {
+		delete(s.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
 	}
 }
 

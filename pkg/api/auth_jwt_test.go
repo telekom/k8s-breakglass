@@ -28,8 +28,8 @@ func TestAuthMiddleware_ExposesTokenAndRawClaims(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	kid := "expose-kid"
-	nB64 := base64.RawURLEncoding.EncodeToString(priv.PublicKey.N.Bytes())
-	eBytes := big.NewInt(int64(priv.PublicKey.E)).Bytes()
+	nB64 := base64.RawURLEncoding.EncodeToString(priv.N.Bytes())
+	eBytes := big.NewInt(int64(priv.E)).Bytes()
 	eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
 	jwksObj := map[string]interface{}{"keys": []interface{}{map[string]interface{}{"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": nB64, "e": eB64}}}
 	jwksBytes, err := json.Marshal(jwksObj)
@@ -85,8 +85,8 @@ func TestAuthMiddleware_GroupNormalizationCases(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	kid := "groups-kid"
-	nB64 := base64.RawURLEncoding.EncodeToString(priv.PublicKey.N.Bytes())
-	eBytes := big.NewInt(int64(priv.PublicKey.E)).Bytes()
+	nB64 := base64.RawURLEncoding.EncodeToString(priv.N.Bytes())
+	eBytes := big.NewInt(int64(priv.E)).Bytes()
 	eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
 	jwksObj := map[string]interface{}{"keys": []interface{}{map[string]interface{}{"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": nB64, "e": eB64}}}
 	jwksBytes, err := json.Marshal(jwksObj)
@@ -173,8 +173,8 @@ func TestAuthMiddleware_JWKSUnreachable(t *testing.T) {
 	privNew, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	kid := "unreach-kid"
-	nB64New := base64.RawURLEncoding.EncodeToString(privNew.PublicKey.N.Bytes())
-	eBytesNew := big.NewInt(int64(privNew.PublicKey.E)).Bytes()
+	nB64New := base64.RawURLEncoding.EncodeToString(privNew.N.Bytes())
+	eBytesNew := big.NewInt(int64(privNew.E)).Bytes()
 	eB64New := base64.RawURLEncoding.EncodeToString(eBytesNew)
 	jwksWithKey := map[string]interface{}{"keys": []interface{}{map[string]interface{}{"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": nB64New, "e": eB64New}}}
 	jwksWithKeyBytes, err := json.Marshal(jwksWithKey)
@@ -233,8 +233,8 @@ func TestAuthMiddleware_NegativeTokenCases(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	kid := "neg-kid"
-	nB64 := base64.RawURLEncoding.EncodeToString(priv.PublicKey.N.Bytes())
-	eBytes := big.NewInt(int64(priv.PublicKey.E)).Bytes()
+	nB64 := base64.RawURLEncoding.EncodeToString(priv.N.Bytes())
+	eBytes := big.NewInt(int64(priv.E)).Bytes()
 	eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
 	jwksObj := map[string]interface{}{"keys": []interface{}{map[string]interface{}{"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": nB64, "e": eB64}}}
 	jwksBytes, err := json.Marshal(jwksObj)
@@ -302,8 +302,8 @@ func TestAuthMiddleware_ValidAndInvalidJWT(t *testing.T) {
 
 	// Create a kid and build a JWKS with the RSA public key
 	kid := "test-kid"
-	nB64 := base64.RawURLEncoding.EncodeToString(priv.PublicKey.N.Bytes())
-	eBytes := big.NewInt(int64(priv.PublicKey.E)).Bytes()
+	nB64 := base64.RawURLEncoding.EncodeToString(priv.N.Bytes())
+	eBytes := big.NewInt(int64(priv.E)).Bytes()
 	eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
 
 	jwksObj := map[string]interface{}{
@@ -437,8 +437,8 @@ func TestAuthMiddleware_MissingOrWrongHeader(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	kid := "hdr-kid"
-	nB64 := base64.RawURLEncoding.EncodeToString(priv.PublicKey.N.Bytes())
-	eBytes := big.NewInt(int64(priv.PublicKey.E)).Bytes()
+	nB64 := base64.RawURLEncoding.EncodeToString(priv.N.Bytes())
+	eBytes := big.NewInt(int64(priv.E)).Bytes()
 	eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
 	jwksObj := map[string]interface{}{
 		"keys": []interface{}{
@@ -485,8 +485,8 @@ func TestAuthMiddleware_RefreshOnMissingKid(t *testing.T) {
 	privNew, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	kid := "refresh-kid"
-	nB64New := base64.RawURLEncoding.EncodeToString(privNew.PublicKey.N.Bytes())
-	eBytesNew := big.NewInt(int64(privNew.PublicKey.E)).Bytes()
+	nB64New := base64.RawURLEncoding.EncodeToString(privNew.N.Bytes())
+	eBytesNew := big.NewInt(int64(privNew.E)).Bytes()
 	eB64New := base64.RawURLEncoding.EncodeToString(eBytesNew)
 	jwksWithKey := map[string]interface{}{"keys": []interface{}{map[string]interface{}{"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": nB64New, "e": eB64New}}}
 	jwksWithKeyBytes, err := json.Marshal(jwksWithKey)

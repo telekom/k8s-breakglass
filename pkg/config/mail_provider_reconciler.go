@@ -33,6 +33,12 @@ type MailProviderReconciler struct {
 	OnMailProviderChange func(providerName string)
 }
 
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=mailproviders,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=mailproviders/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=mailproviders/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+
 // Reconcile handles MailProvider create/update/delete events
 func (r *MailProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := r.Log.With("mailprovider", req.Name)
@@ -143,7 +149,7 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "connection_failed").Inc()
 		return false, fmt.Errorf("connection failed: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Create SMTP client from connection
 	client, err := smtp.NewClient(conn, mp.Spec.SMTP.Host)
@@ -152,7 +158,7 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "connection_failed").Inc()
 		return false, fmt.Errorf("client creation failed: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Try STARTTLS with proper TLS config
 	if !mp.Spec.SMTP.InsecureSkipVerify {

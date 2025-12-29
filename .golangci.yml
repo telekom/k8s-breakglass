@@ -1,15 +1,112 @@
+# golangci-lint configuration for breakglass controller
+# Pragmatic settings: catches real bugs while avoiding excessive noise
+
+version: "2"
+
 run:
   timeout: 5m
   modules-download-mode: readonly
+  relative-path-mode: gomod
+
+output:
+  formats:
+    text:
+      path: stderr
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 linters:
+  default: standard
+  enable:
+    # Core linters - catch real bugs
+    - govet
+    - staticcheck
+    - ineffassign
+    - errcheck
+    - unused
+    # Style and quality
+    - gocritic
+    - misspell
+    - usestdlibvars
+    # Additional useful linters
+    - bodyclose
+    - unconvert
+    - whitespace
+
+  # Disabled linters with rationale:
+  # - revive: Too noisy requiring comments on all exports; k8s-style code often omits these
+  # - noctx: Most violations are in tests where context isn't critical
+  # - testifylint: Style preferences for test assertions, not bugs
+  # - gosec: Many false positives for intentional TLS config (InsecureSkipVerify options)
+  # - errorlint: Would require significant refactoring for marginal benefit
+  # - unparam: Many false positives in interface implementations
+
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        # Disable quick-fix suggestions that are style preferences
+        - "-QF1001"   # Apply De Morgan's law
+        - "-QF1002"   # Convert untagged switch to tagged switch
+        - "-QF1003"   # Convert if/else-if chain to tagged switch
+        - "-QF1008"   # Omit embedded fields from selector expression
+        - "-QF1011"   # Omit redundant type from declaration
+        # Disable style checks
+        - "-ST1000"   # Package comment
+        - "-ST1003"   # Underscores in names
+        - "-ST1005"   # Error string capitalization
+        - "-ST1016"   # Method receiver names
+        - "-ST1019"   # Duplicate imports (sometimes needed for aliasing)
+        - "-ST1020"   # Function comment format
+        - "-ST1021"   # Type comment format
+        - "-ST1022"   # Variable comment format
+        - "-ST1023"   # Redundant type in declaration
+        # Disable some SA checks
+        - "-SA1012"   # nil context (often valid in tests)
+
+    gocritic:
+      enabled-checks:
+        - boolExprSimplify
+        - equalFold
+      disabled-checks:
+        - appendAssign
+        - assignOp
+        - captLocal
+        - commentFormatting
+        - deprecatedComment
+        - dupBranchBody
+        - elseif
+        - exitAfterDefer
+        - hugeParam
+        - ifElseChain
+        - regexpMust
+        - sloppyLen
+        - typeSwitchVar
+        - underef
+        - unlambda
+        - unslice
+
+  exclusions:
+    paths:
+      # Exclude generated files
+      - "zz_generated.*\\.go$"
+      - "_generated\\.go$"
+      - ".*\\.pb\\.go$"
+
+    rules:
+      # Exclude some linters from test files
+      - path: _test\.go$
+        linters:
+          - errcheck
+
+formatters:
   enable:
     - gofmt
     - goimports
-    - govet
-    - ineffassign
-    - misspell
-    - errcheck
-    - staticcheck
-    - unused
-    - gosimple
+  exclusions:
+    paths:
+      - "zz_generated.*\\.go$"
+      - "_generated\\.go$"
+      - ".*\\.pb\\.go$"

@@ -19,7 +19,7 @@ const props = withDefaults(
     subtitle: "",
     badge: "",
     badgeVariant: "secondary",
-  }
+  },
 );
 
 const slots = useSlots();

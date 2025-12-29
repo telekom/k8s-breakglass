@@ -26,12 +26,12 @@ func dropK8sInternalFieldsEscalation(e *v1alpha1.BreakglassEscalation) {
 	if e == nil {
 		return
 	}
-	e.ObjectMeta.ManagedFields = nil
-	e.ObjectMeta.UID = ""
-	e.ObjectMeta.ResourceVersion = ""
-	e.ObjectMeta.Generation = 0
-	if e.ObjectMeta.Annotations != nil {
-		delete(e.ObjectMeta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
+	e.ManagedFields = nil
+	e.UID = ""
+	e.ResourceVersion = ""
+	e.Generation = 0
+	if e.Annotations != nil {
+		delete(e.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
 	}
 	e.Status.ApproverGroupMembers = nil
 	e.Status.IDPGroupMemberships = nil

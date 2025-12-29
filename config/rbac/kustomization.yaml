@@ -1,9 +1,13 @@
 resources:
 - service_account.yaml
+- auditconfig_role.yaml
+- auditconfig_role_binding.yaml
 - breakglassescalation_role.yaml
 - breakglasssession_role.yaml
 - breakglassescalation_role_binding.yaml
 - breakglasssession_role_binding.yaml
+- debugsession_role.yaml
+- debugsession_role_binding.yaml
 - impersonate_role.yaml
 - impersonate_role_binding.yaml
 - secrets_role.yaml

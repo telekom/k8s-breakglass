@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Development AuditConfig - logs all audit events to stdout
+# NOTE: AuditConfig is cluster-scoped (no namespace)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: dev-audit-config
+spec:
+  enabled: true
+  
+  queue:
+    size: 10000
+    workers: 2
+    dropOnFull: true
+  
+  sinks:
+    - name: dev-log
+      type: log
+      log:
+        level: info
+        format: json

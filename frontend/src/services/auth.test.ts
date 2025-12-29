@@ -281,7 +281,7 @@ describe("AuthService", () => {
     // The functionality is covered by integration tests
     it.skip("skips managers with authority mismatches and restores IDP context", async () => {
       sessionStorage.setItem("oidc_idp_name", "corp");
-      
+
       // Mock URLSearchParams as a class
       const MockURLSearchParams = vi.fn().mockImplementation(() => ({
         get: (key: string) => {

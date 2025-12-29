@@ -25,7 +25,7 @@ const props = withDefaults(
     variant: "default",
     collapsible: false,
     collapsed: false,
-  }
+  },
 );
 
 const variantIcons: Record<ReasonVariant, string> = {
@@ -40,13 +40,7 @@ const hasReason = computed(() => Boolean(props.reason?.trim()));
 </script>
 
 <template>
-  <div
-    v-if="hasReason"
-    class="reason-panel"
-    :class="[`reason-panel--${variant}`]"
-    role="region"
-    :aria-label="label"
-  >
+  <div v-if="hasReason" class="reason-panel" :class="[`reason-panel--${variant}`]" role="region" :aria-label="label">
     <span class="reason-panel__label">
       <span v-if="displayIcon" class="reason-panel__icon" aria-hidden="true">{{ displayIcon }}</span>
       {{ label }}

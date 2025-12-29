@@ -96,12 +96,12 @@ func TestDropK8sInternalFieldsEscalationStripsMetadataAndStatus(t *testing.T) {
 
 	dropK8sInternalFieldsEscalation(esc)
 
-	assert.Equal(t, "", string(esc.ObjectMeta.UID))
-	assert.Equal(t, "", esc.ObjectMeta.ResourceVersion)
-	assert.EqualValues(t, 0, esc.ObjectMeta.Generation)
-	assert.Nil(t, esc.ObjectMeta.ManagedFields)
-	assert.Equal(t, "keep", esc.ObjectMeta.Annotations["visible"])
-	if _, exists := esc.ObjectMeta.Annotations["kubectl.kubernetes.io/last-applied-configuration"]; exists {
+	assert.Equal(t, "", string(esc.UID))
+	assert.Equal(t, "", esc.ResourceVersion)
+	assert.EqualValues(t, 0, esc.Generation)
+	assert.Nil(t, esc.ManagedFields)
+	assert.Equal(t, "keep", esc.Annotations["visible"])
+	if _, exists := esc.Annotations["kubectl.kubernetes.io/last-applied-configuration"]; exists {
 		assert.Fail(t, "kubectl last-applied annotation should be removed")
 	}
 	assert.Nil(t, esc.Status.ApproverGroupMembers)

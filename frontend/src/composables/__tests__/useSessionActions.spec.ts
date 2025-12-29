@@ -175,7 +175,7 @@ describe("useSessionActions", () => {
         {
           canWithdraw: (s) => isPending(s),
           canDrop: (s) => isActive(s),
-        }
+        },
       );
 
       const pendingSession = createSession("Pending");
@@ -193,7 +193,7 @@ describe("useSessionActions", () => {
         () =>
           new Promise<void>((resolve) => {
             resolveApprove = resolve;
-          })
+          }),
       );
       const { approve, canPerformAction } = useSessionActions({ approve: mockApprove });
 
@@ -239,7 +239,7 @@ describe("useSessionActions", () => {
 
     it("returns correct action label based on loading state", () => {
       const mockApprove = vi.fn(
-        () => new Promise<void>(() => {}) // Never resolves
+        () => new Promise<void>(() => {}), // Never resolves
       );
       const { approve, getActionLabel } = useSessionActions({ approve: mockApprove });
 
@@ -260,9 +260,7 @@ describe("useSessionActions", () => {
       const session = createSession();
       await withdraw(session);
 
-      expect((window as any).confirm).toHaveBeenCalledWith(
-        expect.stringContaining("Withdraw this request?")
-      );
+      expect((window as any).confirm).toHaveBeenCalledWith(expect.stringContaining("Withdraw this request?"));
     });
 
     it("shows correct confirmation message for drop action", async () => {
@@ -273,9 +271,7 @@ describe("useSessionActions", () => {
       const session = createSession("Approved");
       await drop(session);
 
-      expect((window as any).confirm).toHaveBeenCalledWith(
-        expect.stringContaining("Drop active session")
-      );
+      expect((window as any).confirm).toHaveBeenCalledWith(expect.stringContaining("Drop active session"));
     });
 
     it("shows correct confirmation message for cancel action", async () => {
@@ -287,9 +283,7 @@ describe("useSessionActions", () => {
       const session = createSession("Active");
       await cancel(session);
 
-      expect((window as any).confirm).toHaveBeenCalledWith(
-        expect.stringContaining("Cancel session")
-      );
+      expect((window as any).confirm).toHaveBeenCalledWith(expect.stringContaining("Cancel session"));
     });
 
     it("withdraw returns false when user declines confirmation", async () => {
@@ -310,7 +304,7 @@ describe("useSessionActions", () => {
         () =>
           new Promise<void>((resolve) => {
             resolveApprove = resolve;
-          })
+          }),
       );
       const { approve, getRunningAction } = useSessionActions({ approve: mockApprove });
 
@@ -338,7 +332,7 @@ describe("useSessionActions", () => {
           canApprove: () => false,
           canReject: () => true,
           canWithdraw: () => true,
-        }
+        },
       );
 
       const session = createSession();

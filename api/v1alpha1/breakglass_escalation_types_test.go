@@ -86,6 +86,15 @@ func TestBreakglassEscalationValidateDelete(t *testing.T) {
 	}
 }
 
+func TestBreakglassEscalationValidateCreate_WrongType(t *testing.T) {
+	esc := &BreakglassEscalation{}
+	wrongType := &BreakglassSession{}
+	_, err := esc.ValidateCreate(context.Background(), wrongType)
+	if err == nil {
+		t.Fatal("expected error when object is wrong type")
+	}
+}
+
 func TestBreakglassEscalationClusterConfigRefsSatisfyClusterRequirement(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)
@@ -275,5 +284,358 @@ func TestBreakglassEscalationMailProviderHappyPath(t *testing.T) {
 
 	if _, err := esc.ValidateCreate(context.Background(), esc); err != nil {
 		t.Fatalf("expected success when referencing enabled MailProvider, got %v", err)
+	}
+}
+
+func TestBreakglassEscalationValidateUpdate_WrongNewType(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	// Pass wrong type as new object
+	wrongType := &BreakglassSession{}
+	_, err := esc.ValidateUpdate(context.Background(), esc, wrongType)
+	if err == nil {
+		t.Fatal("expected error when new object is wrong type")
+	}
+}
+
+func TestBreakglassEscalationValidateUpdate_WithValidationErrors(t *testing.T) {
+	old := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	// Update with missing required fields
+	new := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec:       BreakglassEscalationSpec{}, // Empty spec, missing escalatedGroup
+	}
+
+	_, err := old.ValidateUpdate(context.Background(), old, new)
+	if err == nil {
+		t.Fatal("expected error when updated object has validation errors")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_DuplicateHiddenFromUI(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers: BreakglassEscalationApprovers{
+				Users:        []string{"approver@example.com"},
+				HiddenFromUI: []string{"user1", "user1"}, // duplicate
+			},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when hiddenFromUI has duplicates")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_EmptyHiddenFromUIEntry(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers: BreakglassEscalationApprovers{
+				Users:        []string{"approver@example.com"},
+				HiddenFromUI: []string{"user1", ""}, // empty entry
+			},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when hiddenFromUI has empty entry")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_DuplicateClusterConfigRefs(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:    "ops",
+			Allowed:           BreakglassEscalationAllowed{},
+			Approvers:         BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			ClusterConfigRefs: []string{"cluster-a", "cluster-a"}, // duplicate
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when clusterConfigRefs has duplicates")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_EmptyClusterConfigRefsEntry(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:    "ops",
+			Allowed:           BreakglassEscalationAllowed{},
+			Approvers:         BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			ClusterConfigRefs: []string{"cluster-a", ""}, // empty entry
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when clusterConfigRefs has empty entry")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_DuplicateDenyPolicyRefs(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			DenyPolicyRefs: []string{"policy-a", "policy-a"}, // duplicate
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when denyPolicyRefs has duplicates")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_NotificationExclusions(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			NotificationExclusions: &NotificationExclusions{
+				Users:  []string{"user1", "user1"}, // duplicate
+				Groups: []string{"group1"},
+			},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when notificationExclusions has duplicate users")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_NotificationExclusionsDuplicateGroups(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			NotificationExclusions: &NotificationExclusions{
+				Users:  []string{"user1"},
+				Groups: []string{"group1", "group1"}, // duplicate
+			},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when notificationExclusions has duplicate groups")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_NotificationExclusionsEmptyUser(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			NotificationExclusions: &NotificationExclusions{
+				Users:  []string{"user1", ""}, // empty
+				Groups: []string{"group1"},
+			},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when notificationExclusions has empty user")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_NotificationExclusionsEmptyGroup(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			NotificationExclusions: &NotificationExclusions{
+				Users:  []string{"user1"},
+				Groups: []string{"group1", ""}, // empty
+			},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when notificationExclusions has empty group")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_TimeoutRelationships(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:  "ops",
+			Allowed:         BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:       BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			MaxValidFor:     "1h",
+			ApprovalTimeout: "2h", // greater than MaxValidFor
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when approvalTimeout > maxValidFor")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_ValidTimeouts(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:  "ops",
+			Allowed:         BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:       BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			MaxValidFor:     "2h",
+			ApprovalTimeout: "30m",
+			IdleTimeout:     "1h",
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err != nil {
+		t.Fatalf("expected success with valid timeouts, got %v", err)
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_IDPFieldMutualExclusion(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:                       "ops",
+			Allowed:                              BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:                            BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			AllowedIdentityProviders:             []string{"idp1"},
+			AllowedIdentityProvidersForRequests:  []string{"idp2"}, // mutual exclusion with old field
+			AllowedIdentityProvidersForApprovers: []string{"idp3"},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when mixing old and new IDP fields")
+	}
+}
+
+func TestValidateBreakglassEscalationSpec_Nil(t *testing.T) {
+	errs := validateBreakglassEscalationSpec(context.Background(), nil)
+	if errs != nil {
+		t.Fatalf("expected nil for nil escalation, got: %v", errs)
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_WithClusterConfigRefs(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:    "ops",
+			ClusterConfigRefs: []string{"cluster-config-1"}, // using clusterConfigRefs instead of allowed.clusters
+			Approvers:         BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err != nil {
+		t.Fatalf("expected success with clusterConfigRefs, got %v", err)
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_ApproverGroupsOnly(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Groups: []string{"approvers-group"}}, // groups only
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err != nil {
+		t.Fatalf("expected success with approver groups only, got %v", err)
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_AllowedGroupsOnly(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Groups: []string{"allowed-group"}}, // groups only, no clusters
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err != nil {
+		t.Fatalf("expected success with allowed groups only, got %v", err)
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_MissingEscalatedGroup(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "", // missing
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err == nil {
+		t.Fatal("expected error when escalatedGroup is missing")
+	}
+}
+
+func TestBreakglassEscalationValidateCreate_AllowedApproverDomains(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:         "ops",
+			Allowed:                BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:              BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+			AllowedApproverDomains: []string{"example.com", "corp.com"},
+		},
+	}
+
+	_, err := esc.ValidateCreate(context.Background(), esc)
+	if err != nil {
+		t.Fatalf("expected success with valid approver domains, got %v", err)
 	}
 }

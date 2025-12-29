@@ -62,7 +62,8 @@ const retained = computed(
     props.breakglass.status.retainedUntil !== null &&
     Date.parse(props.breakglass.status.retainedUntil) - props.time > 0,
 );
-const approved = computed(
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _approved = computed(
   () => props.breakglass.status.expiresAt !== null && Date.parse(props.breakglass.status.expiresAt) - props.time > 0,
 );
 
@@ -120,7 +121,8 @@ const requestedAt = computed(() => {
   return null;
 });
 
-const approver = computed(() => {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _approver = computed(() => {
   // Prefer explicit approver field
   if (props.breakglass.status) {
     const st: any = props.breakglass.status;
@@ -220,7 +222,9 @@ const requestReasonText = computed(() => {
         </div>
         <div class="timeline-item" :class="{ 'timeline-item--muted': !isActionable }">
           <span class="label">Status</span>
-          <span class="value">{{ isActionable ? (retained ? expiryHumanized : 'Awaiting action') : 'No longer actionable' }}</span>
+          <span class="value">{{
+            isActionable ? (retained ? expiryHumanized : "Awaiting action") : "No longer actionable"
+          }}</span>
         </div>
       </div>
     </template>

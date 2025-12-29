@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Development DebugSessionTemplate - allows debug sessions on test clusters
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: dev-debug-template
+spec:
+  displayName: "Development Debug Session"
+  description: "Debug session for development and testing"
+  mode: workload
+  podTemplateRef:
+    name: basic-debug
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - platform-engineers
+      - developers
+    clusters:
+      - "dev-*"
+      - "test-*"
+      - "local-*"
+      - "kind-*"
+  
+  approvers:
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "test-*"
+        - "local-*"
+        - "kind-*"
+  
+  constraints:
+    maxDuration: "8h"
+    defaultDuration: "2h"
+    allowRenewal: true
+    maxRenewals: 5
+    maxConcurrentSessions: 10
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+---
+# Development DebugPodTemplate - basic debug pod
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: basic-debug
+spec:
+  displayName: "Basic Debug Pod"
+  description: "Minimal debug container with common tools"
+  template:
+    metadata:
+      labels:
+        app: breakglass-debug
+    spec:
+      containers:
+        - name: debug
+          image: nicolaka/netshoot:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      automountServiceAccountToken: false

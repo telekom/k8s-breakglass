@@ -1,0 +1,237 @@
+# Example: Full Kafka audit configuration with TLS and SASL
+# This captures ALL cluster actions with extremely granular auditing
+# NOTE: AuditConfig is cluster-scoped (no namespace in metadata)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-kafka-full
+  # No namespace - cluster-scoped resource
+spec:
+  enabled: true
+  
+  # Configure the async queue for high-throughput, non-blocking operation
+  queue:
+    size: 100000      # Buffer 100k events
+    workers: 5        # 5 concurrent writers
+    dropOnFull: true  # Never block - drop events if queue full
+  
+  # Capture everything - extremely granular
+  filtering:
+    # Exclude noisy system namespaces if needed
+    excludeNamespaces:
+      - kube-system
+    # Exclude service account noise
+    excludeUsers:
+      - "system:serviceaccount:kube-system:*"
+  
+  # No sampling - capture 100% of events
+  sampling:
+    rate: "1.0"
+  
+  sinks:
+    # Primary: Kafka with TLS and SCRAM authentication
+    - name: kafka-primary
+      type: kafka
+      kafka:
+        brokers:
+          - kafka-0.kafka.kafka-system.svc.cluster.local:9093
+          - kafka-1.kafka.kafka-system.svc.cluster.local:9093
+          - kafka-2.kafka.kafka-system.svc.cluster.local:9093
+        topic: breakglass-audit-events
+        
+        # TLS configuration for secure transport
+        tls:
+          enabled: true
+          # Secrets MUST be in the controller namespace (breakglass-system)
+          caSecretRef:
+            name: kafka-ca-cert
+            namespace: breakglass-system
+          # Enable mTLS with client certificates
+          clientCertSecretRef:
+            name: kafka-client-cert
+            namespace: breakglass-system
+        
+        # SASL authentication
+        sasl:
+          mechanism: SCRAM-SHA-512
+          credentialsSecretRef:
+            name: kafka-credentials
+            namespace: breakglass-system
+        
+        # Batch settings for high throughput
+        batchSize: 100
+        batchTimeoutSeconds: 1
+        requiredAcks: -1  # Wait for all replicas
+        compression: snappy
+        async: false  # Ensure delivery
+    
+    # Secondary: Local logs as backup
+    - name: log-backup
+      type: log
+      log:
+        level: info
+        format: json
+---
+# Example: Minimal Kafka audit (no auth, for dev/testing)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-kafka-dev
+spec:
+  enabled: true
+  
+  queue:
+    size: 10000
+    workers: 2
+    dropOnFull: true
+  
+  sinks:
+    - name: kafka-dev
+      type: kafka
+      kafka:
+        brokers:
+          - localhost:9092
+        topic: breakglass-audit-dev
+        batchSize: 50
+        batchTimeoutSeconds: 2
+        async: true  # Fire-and-forget for dev
+---
+# Example: Webhook sink to external SIEM
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-siem
+spec:
+  enabled: true
+  
+  # Only capture security-relevant events
+  filtering:
+    includeEventTypes:
+      - session.requested
+      - session.approved
+      - session.denied
+      - session.revoked
+      - access.denied
+      - access.denied.policy
+      - policy.violation
+      - secret.accessed
+      - secret.created
+      - secret.updated
+      - secret.deleted
+      - auth.failure
+      - debug_session.created
+      - debug_session.terminated
+      # Non-resource URL access (metrics server, etc.)
+      - nonresource.metrics
+      - nonresource.logs
+  
+  sinks:
+    - name: siem-splunk
+      type: webhook
+      minSeverity: warning  # Only warnings and critical
+      webhook:
+        url: https://splunk.example.com/services/collector/event
+        headers:
+          Content-Type: application/json
+        authSecretRef:
+          name: splunk-hec-token
+          namespace: breakglass-system
+        timeoutSeconds: 10
+        tls:
+          caSecretRef:
+            name: splunk-ca
+            namespace: breakglass-system
+        batchSize: 50
+---
+# Example: Multi-sink with Kafka + Webhook + Logs
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-multi-sink
+spec:
+  enabled: true
+  
+  queue:
+    size: 200000    # Large buffer for multiple sinks
+    workers: 10     # More workers for parallel writes
+    dropOnFull: true
+  
+  # Sample high-volume events
+  sampling:
+    rate: "0.1"  # 10% sampling for high-volume
+    highVolumeEventTypes:
+      - resource.get
+      - resource.list
+      - resource.watch
+      - api.request
+      - api.response
+      - nonresource.healthz
+      - nonresource.readyz
+      - nonresource.metrics
+    alwaysCaptureEventTypes:
+      - session.requested
+      - session.approved
+      - session.denied
+      - access.denied
+      - policy.violation
+      - secret.accessed
+  
+  sinks:
+    # Kafka for all events
+    - name: kafka-all
+      type: kafka
+      kafka:
+        brokers:
+          - kafka.example.com:9093
+        topic: breakglass-audit-all
+        tls:
+          enabled: true
+          caSecretRef:
+            name: kafka-ca
+            namespace: breakglass-system
+        sasl:
+          mechanism: PLAIN
+          credentialsSecretRef:
+            name: kafka-creds
+            namespace: breakglass-system
+        compression: zstd
+    
+    # Webhook for security events only
+    - name: security-webhook
+      type: webhook
+      eventTypes:
+        - session.revoked
+        - access.denied
+        - policy.violation
+        - secret.deleted
+        - auth.failure
+      minSeverity: warning
+      webhook:
+        url: https://security-alerts.example.com/webhook
+        authSecretRef:
+          name: security-webhook-token
+          namespace: breakglass-system
+        timeoutSeconds: 5
+    
+    # Kubernetes Events for session lifecycle
+    - name: k8s-events
+      type: kubernetes
+      eventTypes:
+        - session.requested
+        - session.approved
+        - session.denied
+        - session.activated
+        - session.expired
+        - session.revoked
+      kubernetes:
+        eventTypes:
+          - session.requested
+          - session.approved
+          - session.denied
+    
+    # Structured logs for everything
+    - name: structured-logs
+      type: log
+      log:
+        level: info
+        format: json

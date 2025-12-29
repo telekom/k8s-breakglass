@@ -172,3 +172,76 @@ func TestClusterConfigValidateDelete(t *testing.T) {
 		t.Fatalf("expected ValidateDelete to allow deletes, warnings=%v err=%v", warnings, err)
 	}
 }
+
+func TestClusterConfig_ValidateCreate_WrongType(t *testing.T) {
+	cc := &ClusterConfig{}
+	wrongType := &BreakglassSession{}
+	_, err := cc.ValidateCreate(context.Background(), wrongType)
+	if err == nil {
+		t.Fatal("expected error when obj is wrong type")
+	}
+}
+
+func TestClusterConfig_ValidateUpdate_WrongNewType(t *testing.T) {
+	cc := &ClusterConfig{
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+		},
+	}
+	wrongType := &BreakglassSession{}
+	_, err := cc.ValidateUpdate(context.Background(), cc, wrongType)
+	if err == nil {
+		t.Fatal("expected error when new obj is wrong type")
+	}
+}
+
+func TestClusterConfig_ValidateCreate_EmptyIdentityProviderRef(t *testing.T) {
+	cc := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-empty-idp"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef:  SecretKeyReference{Name: "k", Namespace: "ns"},
+			IdentityProviderRefs: []string{"idp-a", ""},
+		},
+	}
+
+	_, err := cc.ValidateCreate(context.Background(), cc)
+	if err == nil {
+		t.Fatalf("expected ValidateCreate to fail due to empty identityProviderRef")
+	}
+}
+
+func TestClusterConfig_ValidateCreate_DuplicateApproverDomains(t *testing.T) {
+	cc := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-dup-domain"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef:    SecretKeyReference{Name: "k", Namespace: "ns"},
+			AllowedApproverDomains: []string{"example.com", "example.com"},
+		},
+	}
+
+	_, err := cc.ValidateCreate(context.Background(), cc)
+	if err == nil {
+		t.Fatalf("expected ValidateCreate to fail due to duplicate approver domains")
+	}
+}
+
+func TestClusterConfig_ValidateUpdate_DuplicateIdentityProviderRefs(t *testing.T) {
+	old := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-upd"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+		},
+	}
+	updated := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-upd"},
+		Spec: ClusterConfigSpec{
+			KubeconfigSecretRef:  SecretKeyReference{Name: "k", Namespace: "ns"},
+			IdentityProviderRefs: []string{"idp-a", "idp-a"}, // duplicate
+		},
+	}
+
+	_, err := updated.ValidateUpdate(context.Background(), old, updated)
+	if err == nil {
+		t.Fatalf("expected ValidateUpdate to fail due to duplicate identityProviderRefs")
+	}
+}

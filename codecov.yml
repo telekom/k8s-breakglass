@@ -1,0 +1,57 @@
+# Codecov configuration for k8s-breakglass
+# https://docs.codecov.com/docs/codecovyml-reference
+#
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+coverage:
+  precision: 2
+  round: down
+  range: "40...80"
+  
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
+        # Don't fail the build if coverage drops slightly
+        informational: true
+    patch:
+      default:
+        target: 70%
+        threshold: 5%
+        # Patch coverage is informational only
+        informational: true
+
+# Exclude auto-generated files from coverage
+ignore:
+  - "api/v1alpha1/zz_generated.deepcopy.go"
+  - "**/*_generated.go"
+  - "**/zz_generated*.go"
+  - "frontend/**"  # Frontend has its own coverage
+  - "e2e/**"  # E2E tests are not unit tests
+  - "hack/**"
+  - "charts/**"
+  - "config/**"
+  - "docs/**"
+
+# Comment configuration
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+
+# Flags for different test types
+flags:
+  unittests:
+    paths:
+      - pkg/
+      - api/
+      - cmd/
+    carryforward: true
+  frontend:
+    paths:
+      - frontend/src/
+    carryforward: true

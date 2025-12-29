@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -309,33 +310,12 @@ type BreakglassEscalation struct {
 
 // SetCondition updates or adds a condition in the BreakglassEscalation status
 func (be *BreakglassEscalation) SetCondition(condition metav1.Condition) {
-	if be.Status.Conditions == nil {
-		be.Status.Conditions = []metav1.Condition{}
-	}
-
-	// Find and update existing condition, or append new one
-	found := false
-	for i, c := range be.Status.Conditions {
-		if c.Type == condition.Type {
-			be.Status.Conditions[i] = condition
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		be.Status.Conditions = append(be.Status.Conditions, condition)
-	}
+	apimeta.SetStatusCondition(&be.Status.Conditions, condition)
 }
 
 // GetCondition retrieves a condition by type from the BreakglassEscalation status
 func (be *BreakglassEscalation) GetCondition(condType string) *metav1.Condition {
-	for i := range be.Status.Conditions {
-		if be.Status.Conditions[i].Type == condType {
-			return &be.Status.Conditions[i]
-		}
-	}
-	return nil
+	return apimeta.FindStatusCondition(be.Status.Conditions, condType)
 }
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type

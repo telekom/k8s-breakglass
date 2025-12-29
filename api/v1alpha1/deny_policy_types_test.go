@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -502,5 +503,435 @@ func TestDenyPolicyObjectName(t *testing.T) {
 				assert.Empty(t, errs)
 			}
 		})
+	}
+}
+
+// Webhook validation tests
+
+func TestDenyPolicy_ValidateCreate_Valid(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "valid-policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	warnings, err := policy.ValidateCreate(ctx, policy)
+	if err != nil {
+		t.Errorf("ValidateCreate() unexpected error: %v", err)
+	}
+	if len(warnings) > 0 {
+		t.Errorf("ValidateCreate() unexpected warnings: %v", warnings)
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_MissingVerbs(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{}, // missing
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("ValidateCreate() expected error for missing verbs")
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_MissingAPIGroups(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{}, // missing
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("ValidateCreate() expected error for missing apiGroups")
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_MissingResources(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{}, // missing
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("ValidateCreate() expected error for missing resources")
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_NegativeMaxScore(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+			PodSecurityRules: &PodSecurityRules{
+				Thresholds: []RiskThreshold{
+					{
+						MaxScore: -10, // negative
+					},
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("ValidateCreate() expected error for negative maxScore")
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_MultipleRules(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "multi-rule-policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+				{
+					Verbs:     []string{"patch"},
+					APIGroups: []string{"apps"},
+					Resources: []string{"deployments"},
+				},
+			},
+		},
+	}
+
+	warnings, err := policy.ValidateCreate(ctx, policy)
+	if err != nil {
+		t.Errorf("ValidateCreate() unexpected error: %v", err)
+	}
+	if len(warnings) > 0 {
+		t.Errorf("ValidateCreate() unexpected warnings: %v", warnings)
+	}
+}
+
+func TestDenyPolicy_ValidateUpdate(t *testing.T) {
+	ctx := context.Background()
+	oldPolicy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+	newPolicy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete", "patch"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	warnings, err := newPolicy.ValidateUpdate(ctx, oldPolicy, newPolicy)
+	if err != nil {
+		t.Errorf("ValidateUpdate() unexpected error: %v", err)
+	}
+	if len(warnings) > 0 {
+		t.Errorf("ValidateUpdate() unexpected warnings: %v", warnings)
+	}
+}
+
+func TestDenyPolicy_ValidateDelete(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "policy",
+		},
+	}
+
+	warnings, err := policy.ValidateDelete(ctx, policy)
+	if err != nil {
+		t.Errorf("ValidateDelete() unexpected error: %v", err)
+	}
+	if len(warnings) > 0 {
+		t.Errorf("ValidateDelete() unexpected warnings: %v", warnings)
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_WrongType(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{}
+
+	wrongType := &DebugSession{}
+	_, err := policy.ValidateCreate(ctx, wrongType)
+	if err == nil {
+		t.Error("ValidateCreate() expected error for wrong type")
+	}
+}
+
+func TestDenyPolicy_ValidateUpdate_WrongType(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{}
+
+	oldPolicy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	// Pass wrong type for newObj
+	wrongType := &DebugSession{}
+	_, err := policy.ValidateUpdate(ctx, oldPolicy, wrongType)
+	if err == nil {
+		t.Error("ValidateUpdate() expected error for wrong newObj type")
+	}
+}
+
+func TestDenyPolicy_ValidateUpdate_Invalid(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{}
+
+	oldPolicy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	newPolicy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{}, // empty - invalid
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateUpdate(ctx, oldPolicy, newPolicy)
+	if err == nil {
+		t.Error("ValidateUpdate() expected error for invalid spec")
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_EmptyRules(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "empty-rules-policy",
+		},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{}, // empty rules is valid
+		},
+	}
+
+	warnings, err := policy.ValidateCreate(ctx, policy)
+	if err != nil {
+		t.Errorf("ValidateCreate() unexpected error for empty rules: %v", err)
+	}
+	if len(warnings) > 0 {
+		t.Errorf("ValidateCreate() unexpected warnings: %v", warnings)
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_WithScope(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "scoped-policy",
+		},
+		Spec: DenyPolicySpec{
+			AppliesTo: &DenyPolicyScope{
+				Clusters: []string{"cluster-1"},
+				Tenants:  []string{"tenant-a"},
+			},
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	warnings, err := policy.ValidateCreate(ctx, policy)
+	if err != nil {
+		t.Errorf("ValidateCreate() unexpected error: %v", err)
+	}
+	if len(warnings) > 0 {
+		t.Errorf("ValidateCreate() unexpected warnings: %v", warnings)
+	}
+}
+
+func TestValidateDenyPolicySpec_Nil(t *testing.T) {
+	errs := validateDenyPolicySpec(nil)
+	if errs != nil {
+		t.Errorf("validateDenyPolicySpec(nil) expected nil, got %v", errs)
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_EmptyAPIGroups(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-apigroups"},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{}, // empty
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("expected error for empty apiGroups")
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_EmptyResourcesTwo(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-resources"},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{}, // empty
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("expected error for empty resources")
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_NegativeMaxScoreTwo(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "negative-score"},
+		Spec: DenyPolicySpec{
+			PodSecurityRules: &PodSecurityRules{
+				Thresholds: []RiskThreshold{
+					{
+						MaxScore: -5, // negative
+						Action:   "warn",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("expected error for negative maxScore")
+	}
+}
+
+func TestDenyPolicy_ValidateCreate_ValidPodSecurityRules(t *testing.T) {
+	ctx := context.Background()
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid-psr"},
+		Spec: DenyPolicySpec{
+			PodSecurityRules: &PodSecurityRules{
+				Thresholds: []RiskThreshold{
+					{
+						MaxScore: 10,
+						Action:   "deny",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err != nil {
+		t.Errorf("unexpected error for valid podSecurityRules: %v", err)
 	}
 }

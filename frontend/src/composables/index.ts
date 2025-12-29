@@ -83,8 +83,4 @@ export {
 } from "./useSessionActions";
 
 // Multi-IDP management
-export {
-  useMultiIDP,
-  type UseMultiIDPOptions,
-  type UseMultiIDPReturn,
-} from "./useMultiIDP";
+export { useMultiIDP, type UseMultiIDPOptions, type UseMultiIDPReturn } from "./useMultiIDP";

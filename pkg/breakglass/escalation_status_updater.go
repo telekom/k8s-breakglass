@@ -9,7 +9,6 @@ import (
 
 	"github.com/Nerzal/gocloak/v13"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/config"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	"k8s.io/client-go/tools/record"
@@ -859,7 +858,7 @@ func deduplicateMembersFromHierarchy(hierarchy map[string]map[string][]string, g
 
 // End of EscalationStatusUpdater methods
 
-func SetupResolver(idpConfig *config.IdentityProviderConfig, log *zap.SugaredLogger) GroupMemberResolver {
+func SetupResolver(idpConfig *cfgpkg.IdentityProviderConfig, log *zap.SugaredLogger) GroupMemberResolver {
 	// Setup GroupMemberResolver for escalation approver expansion
 	var resolver GroupMemberResolver
 	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" {

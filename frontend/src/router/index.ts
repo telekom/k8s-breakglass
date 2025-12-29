@@ -6,6 +6,11 @@ import PendingApprovalsView from "@/views/PendingApprovalsView.vue";
 import SessionBrowser from "@/views/SessionBrowser.vue";
 import NotFoundView from "@/views/NotFoundView.vue";
 
+// Debug Session Views
+import DebugSessionBrowser from "@/views/DebugSessionBrowser.vue";
+import DebugSessionCreate from "@/views/DebugSessionCreate.vue";
+import DebugSessionDetails from "@/views/DebugSessionDetails.vue";
+
 import { createRouter, createWebHistory } from "vue-router";
 
 const router = createRouter({
@@ -36,6 +41,22 @@ const router = createRouter({
       path: "/sessions",
       name: "sessionBrowser",
       component: SessionBrowser,
+    },
+    // Debug Session Routes
+    {
+      path: "/debug-sessions",
+      name: "debugSessionBrowser",
+      component: DebugSessionBrowser,
+    },
+    {
+      path: "/debug-sessions/create",
+      name: "debugSessionCreate",
+      component: DebugSessionCreate,
+    },
+    {
+      path: "/debug-sessions/:name",
+      name: "debugSessionDetails",
+      component: DebugSessionDetails,
     },
     {
       path: "/:pathMatch(.*)*",

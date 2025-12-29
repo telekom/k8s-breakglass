@@ -44,10 +44,7 @@ describe("usePendingRequests", () => {
 
     expect(state.error.value).toBe("Auth not available");
     expect(state.loading.value).toBe(false);
-    expect(warnMock).toHaveBeenCalledWith(
-      "usePendingRequests.loadRequests",
-      "Missing BreakglassService instance",
-    );
+    expect(warnMock).toHaveBeenCalledWith("usePendingRequests.loadRequests", "Missing BreakglassService instance");
   });
 
   it("loads pending requests and clears errors", async () => {
@@ -62,11 +59,7 @@ describe("usePendingRequests", () => {
     expect(service.fetchMyOutstandingRequests).toHaveBeenCalledTimes(1);
     expect(state.requests.value).toEqual([request]);
     expect(state.error.value).toBe("");
-    expect(debugMock).toHaveBeenCalledWith(
-      "usePendingRequests.loadRequests",
-      "Loaded pending requests",
-      { count: 1 },
-    );
+    expect(debugMock).toHaveBeenCalledWith("usePendingRequests.loadRequests", "Loaded pending requests", { count: 1 });
   });
 
   it("surfaces fetch failures and logs warning", async () => {
@@ -78,11 +71,9 @@ describe("usePendingRequests", () => {
     await state.loadRequests();
 
     expect(state.error.value).toBe("boom");
-    expect(warnMock).toHaveBeenCalledWith(
-      "usePendingRequests.loadRequests",
-      "Failed to load pending requests",
-      { errorMessage: "boom" },
-    );
+    expect(warnMock).toHaveBeenCalledWith("usePendingRequests.loadRequests", "Failed to load pending requests", {
+      errorMessage: "boom",
+    });
   });
 
   it("withdraws a request and prunes it locally", async () => {
@@ -98,11 +89,9 @@ describe("usePendingRequests", () => {
     expect(state.requests.value).toEqual([second]);
     expect(state.withdrawing.value).toBe("");
     expect(state.error.value).toBe("");
-    expect(debugMock).toHaveBeenCalledWith(
-      "usePendingRequests.withdrawRequest",
-      "Withdraw complete",
-      { sessionName: "req-1" },
-    );
+    expect(debugMock).toHaveBeenCalledWith("usePendingRequests.withdrawRequest", "Withdraw complete", {
+      sessionName: "req-1",
+    });
   });
 
   it("captures withdraw failures and keeps entry", async () => {
@@ -117,10 +106,9 @@ describe("usePendingRequests", () => {
 
     expect(state.requests.value).toHaveLength(1);
     expect(state.error.value).toBe("nope");
-    expect(warnMock).toHaveBeenCalledWith(
-      "usePendingRequests.withdrawRequest",
-      "Withdraw failed",
-      { sessionName: "req-1", errorMessage: "nope" },
-    );
+    expect(warnMock).toHaveBeenCalledWith("usePendingRequests.withdrawRequest", "Withdraw failed", {
+      sessionName: "req-1",
+      errorMessage: "nope",
+    });
   });
 });

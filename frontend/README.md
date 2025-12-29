@@ -85,6 +85,31 @@ The dataset includes:
   approver group chips for stress testing UI layouts
 - Scale-testing hook: append `?mockScale=250` (or `scaleCount` / `total`) to `/api/breakglassSessions` to
   generate synthetic records without editing the seed data
+- **Debug Sessions**: Full mock data for `DebugSession`, `DebugSessionTemplate`, and `DebugPodTemplate` resources
+
+#### Debug Session Mock Data
+
+The mock API includes comprehensive debug session data:
+
+- **Debug Pod Templates**: `netshoot-base`, `alpine-minimal`, `busybox-tools`
+- **Debug Session Templates**: `standard-debug`, `ephemeral-debug`, `node-debug`, `lab-debug`
+- **Debug Sessions**: Various states including `Active`, `Pending`, `PendingApproval`, `Expired`, `Terminated`, `Failed`
+
+Debug session endpoints:
+
+- `GET /api/debugSessions` - List sessions with filters
+- `GET /api/debugSessions/:name` - Get session details
+- `POST /api/debugSessions` - Create new session
+- `POST /api/debugSessions/:name/join` - Join session
+- `POST /api/debugSessions/:name/leave` - Leave session
+- `POST /api/debugSessions/:name/renew` - Renew session
+- `POST /api/debugSessions/:name/terminate` - Terminate session
+- `POST /api/debugSessions/:name/approve` - Approve session
+- `POST /api/debugSessions/:name/reject` - Reject session
+- `GET /api/debugSessions/templates` - List session templates
+- `GET /api/debugSessions/templates/:name` - Get template
+- `GET /api/debugSessions/podTemplates` - List pod templates
+- `GET /api/debugSessions/podTemplates/:name` - Get pod template
 
 Edit `frontend/mock-api/data.mjs` if you want to pin additional permutations. The Node `--watch` flag reloads the
 Express server automatically after each save.

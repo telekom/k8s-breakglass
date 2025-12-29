@@ -120,7 +120,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 				"cluster", cc.Name,
 				"secret", ref.Name,
 				"secretNamespace", ref.Namespace,
-				"secretCreation", sec.CreationTimestamp.Time.Format(time.RFC3339))
+				"secretCreation", sec.CreationTimestamp.Format(time.RFC3339))
 			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}

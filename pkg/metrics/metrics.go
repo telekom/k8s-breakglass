@@ -337,6 +337,96 @@ var (
 		Name: "breakglass_pod_security_warnings_total",
 		Help: "Total pod exec/attach requests allowed with security warnings",
 	}, []string{"cluster", "policy"})
+
+	// Debug Session metrics
+	DebugSessionsCreated = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_sessions_created_total",
+		Help: "Total number of debug sessions created",
+	}, []string{"cluster", "template"})
+	DebugSessionsActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_debug_sessions_active",
+		Help: "Number of currently active debug sessions",
+	}, []string{"cluster"})
+	DebugSessionsTerminated = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_sessions_terminated_total",
+		Help: "Total number of debug sessions terminated",
+	}, []string{"cluster", "reason"})
+	DebugSessionsExpired = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_sessions_expired_total",
+		Help: "Total number of debug sessions that expired",
+	}, []string{"cluster"})
+	DebugSessionDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_debug_session_duration_seconds",
+		Help:    "Duration of debug sessions in seconds",
+		Buckets: []float64{60, 300, 600, 1800, 3600, 7200, 14400, 28800},
+	}, []string{"cluster", "template"})
+	DebugSessionParticipants = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_debug_session_participants",
+		Help: "Number of participants in active debug sessions",
+	}, []string{"cluster", "session"})
+	DebugSessionPodsDeployed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_debug_session_pods_deployed",
+		Help: "Number of debug pods deployed for debug sessions",
+	}, []string{"cluster"})
+	DebugSessionApprovalRequired = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_approval_required_total",
+		Help: "Total debug sessions requiring approval",
+	}, []string{"cluster", "template"})
+	DebugSessionApproved = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_approved_total",
+		Help: "Total debug sessions approved",
+	}, []string{"cluster", "approver_type"})
+	DebugSessionRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_rejected_total",
+		Help: "Total debug sessions rejected",
+	}, []string{"cluster", "reason"})
+
+	// Audit metrics
+	AuditEventsProcessed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "breakglass_audit_events_processed_total",
+		Help: "Total number of audit events processed",
+	})
+	AuditEventsDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "breakglass_audit_events_dropped_total",
+		Help: "Total number of audit events dropped due to queue overflow",
+	})
+	AuditSinkErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_audit_sink_errors_total",
+		Help: "Total number of errors per audit sink",
+	}, []string{"sink", "error_type"})
+	AuditSinkLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_audit_sink_latency_seconds",
+		Help:    "Latency of audit sink writes",
+		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+	}, []string{"sink"})
+	AuditQueueLength = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_queue_length",
+		Help: "Current number of events in the audit queue",
+	}, []string{"sink"})
+	AuditQueueCapacity = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_queue_capacity",
+		Help: "Maximum capacity of the audit queue",
+	}, []string{"sink"})
+	AuditSinkConnected = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_sink_connected",
+		Help: "Whether the audit sink is connected (1) or not (0)",
+	}, []string{"sink"})
+	AuditKafkaBatchesSent = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_audit_kafka_batches_sent_total",
+		Help: "Total number of Kafka batches sent",
+	}, []string{"sink"})
+	AuditKafkaMessagesInFlight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_kafka_messages_inflight",
+		Help: "Number of messages currently being sent to Kafka",
+	}, []string{"sink"})
+	AuditKafkaRetries = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_audit_kafka_retries_total",
+		Help: "Total number of Kafka write retries",
+	}, []string{"sink"})
+	AuditConfigReloads = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_audit_config_reloads_total",
+		Help: "Total number of audit config reloads",
+	}, []string{"status"})
 )
 
 func init() {
@@ -428,6 +518,31 @@ func init() {
 	prometheus.MustRegister(PodSecurityFactors)
 	prometheus.MustRegister(PodSecurityDenied)
 	prometheus.MustRegister(PodSecurityWarnings)
+
+	// Register debug session metrics
+	prometheus.MustRegister(DebugSessionsCreated)
+	prometheus.MustRegister(DebugSessionsActive)
+	prometheus.MustRegister(DebugSessionsTerminated)
+	prometheus.MustRegister(DebugSessionsExpired)
+	prometheus.MustRegister(DebugSessionDuration)
+	prometheus.MustRegister(DebugSessionParticipants)
+	prometheus.MustRegister(DebugSessionPodsDeployed)
+	prometheus.MustRegister(DebugSessionApprovalRequired)
+	prometheus.MustRegister(DebugSessionApproved)
+	prometheus.MustRegister(DebugSessionRejected)
+
+	// Register audit metrics
+	prometheus.MustRegister(AuditEventsProcessed)
+	prometheus.MustRegister(AuditEventsDropped)
+	prometheus.MustRegister(AuditSinkErrors)
+	prometheus.MustRegister(AuditSinkLatency)
+	prometheus.MustRegister(AuditQueueLength)
+	prometheus.MustRegister(AuditQueueCapacity)
+	prometheus.MustRegister(AuditSinkConnected)
+	prometheus.MustRegister(AuditKafkaBatchesSent)
+	prometheus.MustRegister(AuditKafkaMessagesInFlight)
+	prometheus.MustRegister(AuditKafkaRetries)
+	prometheus.MustRegister(AuditConfigReloads)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.

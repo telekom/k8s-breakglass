@@ -744,7 +744,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch from authority", "detail": err.Error(), "target": target})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	s.log.Sugar().Debugw("oidc_proxy_upstream_response", "status", resp.StatusCode, "target", target, "elapsed", time.Since(start))
 
 	for k, vs := range resp.Header {
@@ -937,7 +937,7 @@ func isAllowedOIDCProxyResponseHeader(name string) bool {
 func Setup(sessionController *breakglass.BreakglassSessionController, escalationManager *breakglass.EscalationManager,
 	sessionManager *breakglass.SessionManager, enableFrontend, enableAPI bool, configPath string,
 	auth *AuthHandler, ccProvider *cluster.ClientProvider, denyEval *policy.Evaluator,
-	cfg *config.Config, log *zap.SugaredLogger) []APIController {
+	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *breakglass.DebugSessionAPIController) []APIController {
 	// Register API controllers based on component flags
 	apiControllers := []APIController{}
 
@@ -948,6 +948,11 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	if enableAPI {
 		apiControllers = append(apiControllers, sessionController)
 		apiControllers = append(apiControllers, breakglass.NewBreakglassEscalationController(log, escalationManager, auth.Middleware(), configPath))
+		// Register debug session API controller if provided
+		if debugSessionCtrl != nil {
+			apiControllers = append(apiControllers, debugSessionCtrl)
+			log.Infow("Debug session API controller enabled")
+		}
 		log.Infow("API controllers enabled", "components", "BreakglassSession, BreakglassEscalation")
 	}
 

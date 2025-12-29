@@ -2,9 +2,7 @@
   <div class="approve-modal-content">
     <p><b>User:</b> {{ session.spec?.user }}</p>
     <p><b>Group:</b> {{ session.spec?.grantedGroup }} @ {{ session.spec?.cluster }}</p>
-    <p v-if="session.spec?.identityProviderName">
-      <b>IDP:</b> {{ session.spec.identityProviderName }}
-    </p>
+    <p v-if="session.spec?.identityProviderName"><b>IDP:</b> {{ session.spec.identityProviderName }}</p>
 
     <!-- Duration information -->
     <div v-if="sessionSpec?.maxValidFor" class="modal-info-block tone-info">
@@ -31,10 +29,7 @@
     </div>
 
     <!-- Immediate session timing -->
-    <div
-      v-else-if="session.status?.expiresAt && !sessionSpec?.scheduledStartTime"
-      class="modal-info-row"
-    >
+    <div v-else-if="session.status?.expiresAt && !sessionSpec?.scheduledStartTime" class="modal-info-row">
       <strong>Session expires at:</strong> {{ formatDateTime(session.status.expiresAt) }}
     </div>
 
@@ -52,20 +47,12 @@
       @scaleChange="handleNoteChange"
     />
 
-    <p v-if="isNoteRequired && !approverNote.trim()" class="approval-note-required">
-      This field is required.
-    </p>
+    <p v-if="isNoteRequired && !approverNote.trim()" class="approval-note-required">This field is required.</p>
 
     <div class="modal-actions">
-      <scale-button :disabled="isApproving" @click="$emit('approve')">
-        Confirm Approve
-      </scale-button>
-      <scale-button variant="danger" :disabled="isApproving" @click="$emit('reject')">
-        Reject
-      </scale-button>
-      <scale-button variant="secondary" @click="$emit('cancel')">
-        Cancel
-      </scale-button>
+      <scale-button :disabled="isApproving" @click="$emit('approve')"> Confirm Approve </scale-button>
+      <scale-button variant="danger" :disabled="isApproving" @click="$emit('reject')"> Reject </scale-button>
+      <scale-button variant="secondary" @click="$emit('cancel')"> Cancel </scale-button>
     </div>
   </div>
 </template>

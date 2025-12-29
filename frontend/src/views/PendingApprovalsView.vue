@@ -10,12 +10,7 @@
     <!-- Filter and Sort Controls -->
     <div class="approvals-toolbar">
       <div class="approvals-toolbar__control">
-        <scale-dropdown-select
-          id="sort-select"
-          label="Sort by"
-          :value="sortBy"
-          @scaleChange="handleSortChange"
-        >
+        <scale-dropdown-select id="sort-select" label="Sort by" :value="sortBy" @scaleChange="handleSortChange">
           <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
           <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
           <scale-dropdown-select-option value="groups">By Group</scale-dropdown-select-option>
@@ -83,7 +78,11 @@
               </template>
               <template v-else>No expiry set</template>
             </small>
-            <span class="tone-chip" :class="`tone-chip--${session.urgency}`" :aria-label="getUrgencyLabel(session.urgency).ariaLabel">
+            <span
+              class="tone-chip"
+              :class="`tone-chip--${session.urgency}`"
+              :aria-label="getUrgencyLabel(session.urgency).ariaLabel"
+            >
               <span aria-hidden="true">{{ getUrgencyLabel(session.urgency).icon }}</span>
               {{ getUrgencyLabel(session.urgency).text }}
             </span>
@@ -212,20 +211,16 @@ import {
   getUrgency,
   getTimeRemaining,
   getUrgencyLabel,
-  type UrgencyLabel,
   getSessionKey,
   getSessionState,
   getSessionCluster,
   getSessionGroup,
-  collectApproverGroups,
   dedupeSessions,
 } from "@/composables";
 import type { SessionCR } from "@/model/breakglass";
 
 // Lazy load the modal content component
-const ApprovalModalContent = defineAsyncComponent(
-  () => import("@/components/ApprovalModalContent.vue")
-);
+const ApprovalModalContent = defineAsyncComponent(() => import("@/components/ApprovalModalContent.vue"));
 
 // Services
 const auth = inject(AuthKey);
@@ -294,7 +289,7 @@ function getSessionSubtitle(session: SessionCR): string {
 function getSessionReason(session: SessionCR): string {
   const spec = session.spec as Record<string, unknown> | undefined;
   const status = session.status as Record<string, unknown> | undefined;
-  
+
   if (spec?.requestReason) return String(spec.requestReason);
   if (status?.reason) return String(status.reason);
   if (status?.approvalReason) return String(status.approvalReason);
@@ -424,13 +419,13 @@ async function confirmApprove() {
     const note = approverNotes[name] || undefined;
     const sessionAny = modalSession.value as Record<string, unknown>;
     const approvalReason = sessionAny.approvalReason as { mandatory?: boolean } | undefined;
-    
+
     if (approvalReason?.mandatory && !(note || "").trim()) {
       pushError("Approval note is required for this escalation");
       approving.value = null;
       return;
     }
-    
+
     await breakglassService.approveBreakglass(name, note);
     pushSuccess(`Approved request for ${modalSession.value.spec?.user} (${modalSession.value.spec?.grantedGroup})!`);
     showApproveModal.value = false;

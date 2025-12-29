@@ -74,6 +74,90 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-debugpodtemplate
+  failurePolicy: Fail
+  name: debugpodtemplate.validation.breakglass.t-caas.telekom.com
+  rules:
+  - apiGroups:
+    - breakglass.t-caas.telekom.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - debugpodtemplates
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-debugsession
+  failurePolicy: Fail
+  name: debugsession.validation.breakglass.t-caas.telekom.com
+  rules:
+  - apiGroups:
+    - breakglass.t-caas.telekom.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - debugsessions
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-debugsessiontemplate
+  failurePolicy: Fail
+  name: debugsessiontemplate.validation.breakglass.t-caas.telekom.com
+  rules:
+  - apiGroups:
+    - breakglass.t-caas.telekom.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - debugsessiontemplates
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-denypolicy
+  failurePolicy: Fail
+  name: denypolicy.validation.breakglass.t-caas.telekom.com
+  rules:
+  - apiGroups:
+    - breakglass.t-caas.telekom.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - denypolicies
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-breakglass-t-caas-telekom-com-v1alpha1-identityprovider
   failurePolicy: Fail
   name: identityprovider.validation.breakglass.t-caas.telekom.com

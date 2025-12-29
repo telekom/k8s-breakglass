@@ -18,6 +18,11 @@ type CleanupRoutine struct {
 
 const CleanupInterval = 5 * time.Minute
 
+// DebugSessionRetentionPeriod defines how long terminated/expired debug sessions are kept
+// for audit purposes before being deleted. This can be configured via environment variable
+// DEBUG_SESSION_RETENTION_PERIOD (default: 168h = 7 days)
+var DebugSessionRetentionPeriod = 168 * time.Hour // 7 days default
+
 func (cr CleanupRoutine) CleanupRoutine(ctx context.Context) {
 	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
 	if cr.LeaderElected != nil {
@@ -59,6 +64,8 @@ func (cr CleanupRoutine) clean() {
 		ctrl.ExpireApprovedSessions()
 	}
 	cr.markCleanupExpiredSession(context.Background())
+	// Cleanup expired debug sessions
+	cr.cleanupExpiredDebugSessions(context.Background())
 	cr.Log.Info("Finished breakglass session cleanup task")
 }
 
@@ -112,4 +119,97 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 		}
 	}
 	routine.Log.Infow("Expired breakglass sessions deletion completed", "deleted", deletedCount)
+}
+
+// cleanupExpiredDebugSessions marks debug sessions as expired when their ExpiresAt timestamp has passed.
+// It also deletes terminated/expired debug sessions that are past their retention period.
+func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
+	routine.Log.Debug("Starting expired debug session cleanup")
+	var expiredCount, deletedCount int
+
+	// List debug sessions across all namespaces
+	dsl := telekomv1alpha1.DebugSessionList{}
+	if err := routine.Manager.List(ctx, &dsl); err != nil {
+		routine.Log.Error("error listing debug sessions for cleanup", zap.Error(err))
+		return
+	}
+
+	now := time.Now()
+	for _, ds := range dsl.Items {
+		routine.Log.Debugw("Checking debug session for expiration",
+			system.NamespacedFields(ds.Name, ds.Namespace)...)
+
+		// Skip sessions that are already in terminal states (Expired, Terminated, Failed)
+		if ds.Status.State == telekomv1alpha1.DebugSessionStateExpired ||
+			ds.Status.State == telekomv1alpha1.DebugSessionStateTerminated ||
+			ds.Status.State == telekomv1alpha1.DebugSessionStateFailed {
+			// Check if session should be deleted after retention period
+			// Use ExpiresAt or CreationTimestamp to determine retention eligibility
+			retentionStart := ds.CreationTimestamp.Time
+			if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
+				retentionStart = ds.Status.ExpiresAt.Time
+			}
+
+			if now.After(retentionStart.Add(DebugSessionRetentionPeriod)) {
+				routine.Log.Infow("Deleting debug session past retention period",
+					append(system.NamespacedFields(ds.Name, ds.Namespace),
+						"state", ds.Status.State,
+						"retentionPeriod", DebugSessionRetentionPeriod.String())...)
+
+				if err := routine.Manager.Delete(ctx, &ds); err != nil {
+					routine.Log.Errorw("error deleting debug session past retention",
+						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
+				deletedCount++
+				continue
+			}
+
+			routine.Log.Debugw("Skipping terminal debug session (within retention period)",
+				system.NamespacedFields(ds.Name, ds.Namespace)...)
+			continue
+		}
+
+		// Check if active session has expired
+		if ds.Status.State == telekomv1alpha1.DebugSessionStateActive {
+			if ds.Status.ExpiresAt != nil && now.After(ds.Status.ExpiresAt.Time) {
+				routine.Log.Infow("Debug session expired, marking as Expired",
+					system.NamespacedFields(ds.Name, ds.Namespace)...)
+
+				ds.Status.State = telekomv1alpha1.DebugSessionStateExpired
+				ds.Status.Message = "Session expired (cleanup routine)"
+
+				if err := routine.Manager.Status().Update(ctx, &ds); err != nil {
+					routine.Log.Errorw("error updating expired debug session status",
+						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
+				expiredCount++
+				metrics.DebugSessionsExpired.WithLabelValues(ds.Spec.Cluster).Inc()
+			}
+		}
+
+		// Check pending approval sessions that have timed out
+		if ds.Status.State == telekomv1alpha1.DebugSessionStatePendingApproval {
+			// If approval times out (e.g., 24 hours), mark as failed
+			if ds.Status.Approval != nil && ds.CreationTimestamp.Add(24*time.Hour).Before(now) {
+				routine.Log.Infow("Debug session approval timed out, marking as Failed",
+					system.NamespacedFields(ds.Name, ds.Namespace)...)
+
+				ds.Status.State = telekomv1alpha1.DebugSessionStateFailed
+				ds.Status.Message = "Approval timed out after 24 hours"
+
+				if err := routine.Manager.Status().Update(ctx, &ds); err != nil {
+					routine.Log.Errorw("error updating timed-out debug session status",
+						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
+				deletedCount++
+			}
+		}
+	}
+
+	routine.Log.Infow("Debug session cleanup completed",
+		"expired", expiredCount,
+		"timedOut", deletedCount)
 }

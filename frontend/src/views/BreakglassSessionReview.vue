@@ -12,9 +12,7 @@ import { handleAxiosError } from "@/services/logger";
 import { pushError, pushSuccess } from "@/services/toast";
 
 // Lazy load the modal content component
-const ApprovalModalContent = defineAsyncComponent(
-  () => import("@/components/ApprovalModalContent.vue")
-);
+const ApprovalModalContent = defineAsyncComponent(() => import("@/components/ApprovalModalContent.vue"));
 
 const route = useRoute();
 const user = useUser();

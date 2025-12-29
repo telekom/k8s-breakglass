@@ -10,6 +10,18 @@ import {
   findSession,
   updateSessionState,
   CURRENT_USER_EMAIL,
+  // Debug session exports
+  listDebugSessions,
+  findDebugSession,
+  createDebugSession,
+  updateDebugSessionState,
+  joinDebugSession,
+  leaveDebugSession,
+  renewDebugSession,
+  listDebugSessionTemplates,
+  findDebugSessionTemplate,
+  listDebugPodTemplates,
+  findDebugPodTemplate,
 } from "./data.mjs";
 
 const app = express();
@@ -97,6 +109,120 @@ app.get("/api/breakglassSessions/:name", (req, res) => {
   const session = findSession(req.params.name);
   if (!session) {
     return res.status(404).json({ message: "session not found" });
+  }
+  res.json(session);
+});
+
+// ============================================================================
+// DEBUG SESSION API ROUTES
+// ============================================================================
+
+// List debug sessions
+app.get("/api/debugSessions", (req, res) => {
+  const result = listDebugSessions(req.query || {});
+  res.json(result);
+});
+
+// List debug session templates
+app.get("/api/debugSessions/templates", (req, res) => {
+  const result = listDebugSessionTemplates();
+  res.json(result);
+});
+
+// Get debug session template
+app.get("/api/debugSessions/templates/:name", (req, res) => {
+  const template = findDebugSessionTemplate(req.params.name);
+  if (!template) {
+    return res.status(404).json({ message: "template not found" });
+  }
+  res.json(template);
+});
+
+// List debug pod templates
+app.get("/api/debugSessions/podTemplates", (req, res) => {
+  const result = listDebugPodTemplates();
+  res.json(result);
+});
+
+// Get debug pod template
+app.get("/api/debugSessions/podTemplates/:name", (req, res) => {
+  const template = findDebugPodTemplate(req.params.name);
+  if (!template) {
+    return res.status(404).json({ message: "pod template not found" });
+  }
+  res.json(template);
+});
+
+// Get debug session
+app.get("/api/debugSessions/:name", (req, res) => {
+  const session = findDebugSession(req.params.name);
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json(session);
+});
+
+// Create debug session
+app.post("/api/debugSessions", (req, res) => {
+  const session = createDebugSession(req.body || {});
+  res.status(201).json(session);
+});
+
+// Join debug session
+app.post("/api/debugSessions/:name/join", (req, res) => {
+  const role = req.body?.role || "viewer";
+  const session = joinDebugSession(req.params.name, role);
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json(session);
+});
+
+// Leave debug session
+app.post("/api/debugSessions/:name/leave", (req, res) => {
+  const session = leaveDebugSession(req.params.name);
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json(session);
+});
+
+// Renew debug session
+app.post("/api/debugSessions/:name/renew", (req, res) => {
+  const extendBy = req.body?.extendBy || "1h";
+  const session = renewDebugSession(req.params.name, extendBy);
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json(session);
+});
+
+// Terminate debug session
+app.post("/api/debugSessions/:name/terminate", (req, res) => {
+  const session = updateDebugSessionState(req.params.name, "Terminated", { reason: req.body?.reason });
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json(session);
+});
+
+// Approve debug session
+app.post("/api/debugSessions/:name/approve", (req, res) => {
+  const session = updateDebugSessionState(req.params.name, "Active", { approvedBy: CURRENT_USER_EMAIL });
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
+  }
+  res.json(session);
+});
+
+// Reject debug session
+app.post("/api/debugSessions/:name/reject", (req, res) => {
+  const session = updateDebugSessionState(req.params.name, "Failed", {
+    rejectedBy: CURRENT_USER_EMAIL,
+    reason: req.body?.reason || "Rejected",
+  });
+  if (!session) {
+    return res.status(404).json({ message: "debug session not found" });
   }
   res.json(session);
 });

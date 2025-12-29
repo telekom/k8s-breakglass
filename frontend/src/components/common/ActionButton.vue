@@ -30,7 +30,7 @@ const props = withDefaults(
     disabled: false,
     size: "medium",
     icon: "",
-  }
+  },
 );
 
 const emit = defineEmits<{

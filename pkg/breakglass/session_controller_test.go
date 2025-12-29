@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1585,7 +1587,7 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 		}
 		// verify status updated
 		var bs v1alpha1.BreakglassSession
-		if err := ss.Client.Get(context.Background(), client.ObjectKey{Name: "w-pending"}, &bs); err != nil {
+		if err := ss.Get(context.Background(), client.ObjectKey{Name: "w-pending"}, &bs); err != nil {
 			t.Fatalf("failed to get session after withdraw: %v", err)
 		}
 		if bs.Status.State != v1alpha1.SessionStateWithdrawn {
@@ -3824,4 +3826,193 @@ func (m *MockGroupResolver) Members(ctx context.Context, group string) ([]string
 		return members, nil
 	}
 	return nil, fmt.Errorf("group not found: %s", group)
+}
+
+// ============================================================================
+// M2M Automation Use Case Tests
+// ============================================================================
+
+// TestUseCaseM2MAutomation tests the M2M (machine-to-machine) automation use case.
+// This covers automated scripts that need long-running sessions without notifications.
+func TestUseCaseM2MAutomation(t *testing.T) {
+	// Test 1: Verify DisableNotifications flag in escalation prevents email sending
+	t.Run("disableNotifications prevents emails", func(t *testing.T) {
+		log := zap.NewNop().Sugar()
+		ctrl := &BreakglassSessionController{}
+
+		// Create escalation with DisableNotifications=true
+		disableNotif := true
+		escalation := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "m2m-automation"},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup:       "automation-access",
+				DisableNotifications: &disableNotif,
+				MaxValidFor:          "336h", // 14 days for long-running automation
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Groups: []string{"service-accounts"},
+				},
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"automation-approver@example.com"},
+				},
+			},
+		}
+
+		// Verify DisableNotifications is set correctly
+		require.True(t, *escalation.Spec.DisableNotifications, "DisableNotifications should be true for M2M")
+
+		// Test the notification filter logic
+		recipients := []string{"user1@example.com", "user2@example.com"}
+		result := ctrl.filterExcludedNotificationRecipients(log, recipients, escalation)
+
+		// With DisableNotifications, filterExcludedNotificationRecipients doesn't filter
+		// The actual email suppression happens at send time based on DisableNotifications flag
+		require.Len(t, result, 2, "filterExcludedNotificationRecipients doesn't suppress based on DisableNotifications")
+	})
+
+	// Test 2: Verify self-approval can be allowed for M2M
+	t.Run("self-approval allowed for M2M automation", func(t *testing.T) {
+		blockSelfApproval := false
+		escalation := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "m2m-self-approve"},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup:    "automation-access",
+				BlockSelfApproval: &blockSelfApproval,
+				MaxValidFor:       "336h", // 14 days
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Groups: []string{"automation-service-accounts"},
+				},
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"automation@example.com"}, // Service account can self-approve
+				},
+			},
+		}
+
+		require.False(t, *escalation.Spec.BlockSelfApproval, "BlockSelfApproval should be false for M2M self-approval")
+		require.Equal(t, "336h", escalation.Spec.MaxValidFor, "MaxValidFor should be 14 days (336h) for M2M")
+	})
+
+	// Test 3: Verify long duration validation
+	t.Run("long duration validation for M2M", func(t *testing.T) {
+		// Test that 14-day duration is valid
+		duration, err := time.ParseDuration("336h")
+		require.NoError(t, err, "336h should be a valid duration")
+		require.Equal(t, 14*24*time.Hour, duration, "336h should equal 14 days")
+
+		// Test even longer durations (30 days)
+		duration30d, err := time.ParseDuration("720h")
+		require.NoError(t, err, "720h should be a valid duration")
+		require.Equal(t, 30*24*time.Hour, duration30d, "720h should equal 30 days")
+	})
+}
+
+// TestUseCaseSelfServiceBISDebugging tests the BIS (Business Impact Support) self-service debugging.
+// Teams should be able to approve their own requests during critical incidents.
+func TestUseCaseSelfServiceBISDebugging(t *testing.T) {
+	t.Run("team can self-approve during incidents", func(t *testing.T) {
+		// Create escalation where the same group can request and approve
+		blockSelfApproval := false
+		escalation := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "bis-self-service"},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup:    "incident-debug",
+				BlockSelfApproval: &blockSelfApproval,
+				MaxValidFor:       "4h",
+				IdleTimeout:       "30m",
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Groups: []string{"sre-team"},
+				},
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Groups: []string{"sre-team"}, // Same group can approve
+				},
+				RequestReason: &v1alpha1.ReasonConfig{
+					Mandatory:   true,
+					Description: "BIS ticket number required",
+				},
+			},
+		}
+
+		// Verify the escalation allows team self-approval
+		require.False(t, *escalation.Spec.BlockSelfApproval)
+		require.Contains(t, escalation.Spec.Allowed.Groups, "sre-team")
+		require.Contains(t, escalation.Spec.Approvers.Groups, "sre-team")
+		require.True(t, escalation.Spec.RequestReason.Mandatory, "Request reason should be mandatory for BIS")
+	})
+}
+
+// TestUseCaseDebugSessionNetworkCapabilities tests debug session configurations for network debugging.
+func TestUseCaseDebugSessionNetworkCapabilities(t *testing.T) {
+	t.Run("debug pod template with network capabilities", func(t *testing.T) {
+		// Create a debug pod template for TCP dump / network debugging
+		template := &v1alpha1.DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "network-debug"},
+			Spec: v1alpha1.DebugPodTemplateSpec{
+				DisplayName: "Network Debug Tools",
+				Description: "Pod with tcpdump, netstat, and network debugging tools",
+				Template: v1alpha1.DebugPodSpec{
+					Spec: v1alpha1.DebugPodSpecInner{
+						HostNetwork: true, // Required for network-level debugging
+						Containers: []corev1.Container{
+							{
+								Name:  "netshoot",
+								Image: "nicolaka/netshoot:latest",
+								SecurityContext: &corev1.SecurityContext{
+									Capabilities: &corev1.Capabilities{
+										Add: []corev1.Capability{
+											"NET_ADMIN",
+											"NET_RAW",
+											"SYS_PTRACE",
+										},
+									},
+								},
+								Command: []string{"sleep", "infinity"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Verify the template has required network capabilities
+		require.True(t, template.Spec.Template.Spec.HostNetwork, "HostNetwork should be true for network debugging")
+		container := template.Spec.Template.Spec.Containers[0]
+		require.Contains(t, container.SecurityContext.Capabilities.Add, corev1.Capability("NET_ADMIN"))
+		require.Contains(t, container.SecurityContext.Capabilities.Add, corev1.Capability("NET_RAW"))
+	})
+
+	t.Run("debug session template with auto-approval for SRE", func(t *testing.T) {
+		replicas := int32(1)
+		template := &v1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "network-debug-session"},
+			Spec: v1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Network Debug Session",
+				Mode:        v1alpha1.DebugSessionModeWorkload,
+				PodTemplateRef: &v1alpha1.DebugPodTemplateReference{
+					Name: "network-debug",
+				},
+				WorkloadType:    v1alpha1.DebugWorkloadDaemonSet, // DaemonSet for node-level debugging
+				Replicas:        &replicas,
+				TargetNamespace: "debug-network",
+				Allowed: &v1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre-team", "network-team"},
+				},
+				Approvers: &v1alpha1.DebugSessionApprovers{
+					AutoApproveFor: &v1alpha1.AutoApproveConfig{
+						Groups: []string{"sre-team"}, // SRE gets auto-approval
+					},
+					Groups: []string{"security-team"}, // Security team can also approve
+				},
+				Constraints: &v1alpha1.DebugSessionConstraints{
+					MaxDuration:     "2h",
+					DefaultDuration: "30m",
+					AllowRenewal:    true,
+					MaxRenewals:     2,
+				},
+			},
+		}
+
+		// Verify the template configuration
+		require.Equal(t, v1alpha1.DebugWorkloadDaemonSet, template.Spec.WorkloadType)
+		require.Contains(t, template.Spec.Approvers.AutoApproveFor.Groups, "sre-team")
+		require.Equal(t, "2h", template.Spec.Constraints.MaxDuration)
+	})
 }

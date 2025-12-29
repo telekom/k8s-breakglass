@@ -240,10 +240,7 @@ describe("useSessionList", () => {
       jest.useRealTimers();
     });
 
-    function createWithUrgency(
-      name: string,
-      overrides: Partial<SessionCR> = {}
-    ): SessionWithUrgency {
+    function createWithUrgency(name: string, overrides: Partial<SessionCR> = {}): SessionWithUrgency {
       const session = createSession({ metadata: { name }, ...overrides });
       return enrichWithUrgency([session])[0]!;
     }
@@ -605,7 +602,7 @@ describe("useSessionList", () => {
 
     it("handles many duplicates efficiently", () => {
       const sessions = Array.from({ length: 100 }, (_, i) =>
-        createSession({ metadata: { name: i < 50 ? "duplicate" : `unique-${i}` } })
+        createSession({ metadata: { name: i < 50 ? "duplicate" : `unique-${i}` } }),
       );
 
       const result = dedupeSessions(sessions);
@@ -752,10 +749,7 @@ describe("useSessionList", () => {
     });
 
     it("loads sessions successfully", async () => {
-      const mockSessions = [
-        createSession({ metadata: { name: "s1" } }),
-        createSession({ metadata: { name: "s2" } }),
-      ];
+      const mockSessions = [createSession({ metadata: { name: "s1" } }), createSession({ metadata: { name: "s2" } })];
       const fetchFn = vi.fn().mockResolvedValue(mockSessions);
       const { loadSessions, sessions, loading, totalCount } = useSessionList(fetchFn);
 
@@ -855,10 +849,7 @@ describe("useSessionList", () => {
     });
 
     it("removeSession accepts session object", async () => {
-      const mockSessions = [
-        createSession({ metadata: { name: "s1" } }),
-        createSession({ metadata: { name: "s2" } }),
-      ];
+      const mockSessions = [createSession({ metadata: { name: "s1" } }), createSession({ metadata: { name: "s2" } })];
       const fetchFn = vi.fn().mockResolvedValue(mockSessions);
       const { loadSessions, sessions, removeSession } = useSessionList(fetchFn);
 
@@ -872,9 +863,7 @@ describe("useSessionList", () => {
     });
 
     it("updateSession updates existing session", async () => {
-      const mockSessions = [
-        createSession({ metadata: { name: "s1" }, status: { state: "Pending" } }),
-      ];
+      const mockSessions = [createSession({ metadata: { name: "s1" }, status: { state: "Pending" } })];
       const fetchFn = vi.fn().mockResolvedValue(mockSessions);
       const { loadSessions, rawSessions, updateSession } = useSessionList(fetchFn);
 
@@ -892,9 +881,18 @@ describe("useSessionList", () => {
     it("urgencyBreakdown computes correctly", async () => {
       const mockSessions = [
         createSession({ status: { expiresAt: new Date(NOW + 30 * 60 * 1000).toISOString() } }), // critical
-        createSession({ metadata: { name: "s2" }, status: { expiresAt: new Date(NOW + 30 * 60 * 1000).toISOString() } }), // critical
-        createSession({ metadata: { name: "s3" }, status: { expiresAt: new Date(NOW + 2 * 3600 * 1000).toISOString() } }), // high
-        createSession({ metadata: { name: "s4" }, status: { expiresAt: new Date(NOW + 8 * 3600 * 1000).toISOString() } }), // normal
+        createSession({
+          metadata: { name: "s2" },
+          status: { expiresAt: new Date(NOW + 30 * 60 * 1000).toISOString() },
+        }), // critical
+        createSession({
+          metadata: { name: "s3" },
+          status: { expiresAt: new Date(NOW + 2 * 3600 * 1000).toISOString() },
+        }), // high
+        createSession({
+          metadata: { name: "s4" },
+          status: { expiresAt: new Date(NOW + 8 * 3600 * 1000).toISOString() },
+        }), // normal
       ];
       const fetchFn = vi.fn().mockResolvedValue(mockSessions);
       const { loadSessions, urgencyBreakdown } = useSessionList(fetchFn);
@@ -945,9 +943,7 @@ describe("useSessionList", () => {
     });
 
     it("disables urgency calculation when option is false", async () => {
-      const mockSessions = [
-        createSession({ status: { expiresAt: new Date(NOW + 30 * 60 * 1000).toISOString() } }),
-      ];
+      const mockSessions = [createSession({ status: { expiresAt: new Date(NOW + 30 * 60 * 1000).toISOString() } })];
       const fetchFn = vi.fn().mockResolvedValue(mockSessions);
       const { loadSessions, sessions } = useSessionList(fetchFn, { calculateUrgency: false });
 

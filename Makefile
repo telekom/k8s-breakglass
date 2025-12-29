@@ -51,6 +51,14 @@ lint: golangci-lint ## Run golangci-lint linter
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix --timeout=5m
 
+.PHONY: lint-verbose
+lint-verbose: golangci-lint ## Run golangci-lint with verbose output
+	$(GOLANGCI_LINT) run --timeout=5m -v
+
+.PHONY: lint-new
+lint-new: golangci-lint ## Run golangci-lint only on new/changed code (requires git)
+	$(GOLANGCI_LINT) run --timeout=5m --new
+
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...
@@ -145,7 +153,7 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.16.4
 ENVTEST_VERSION ?= release-1.19
-GOLANGCI_LINT_VERSION ?= v1.64.4
+GOLANGCI_LINT_VERSION ?= v2.7.2
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -160,7 +168,7 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 .PHONY: helm-validate
 helm-validate: ## Validate Helm chart syntax and templates for escalation-config
