@@ -7,6 +7,55 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
   - secrets
   verbs:
   - get
@@ -21,5 +70,89 @@ rules:
   verbs:
   - get
   - list
+  - update
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - auditconfigs
+  - breakglassescalations
+  - identityproviders
+  - mailproviders
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - auditconfigs/finalizers
+  - breakglassescalations/finalizers
+  - breakglasssessions/finalizers
+  - debugsessions/finalizers
+  - identityproviders/finalizers
+  - mailproviders/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - auditconfigs/status
+  - breakglassescalations/status
+  - breakglasssessions/status
+  - clusterconfigs/status
+  - debugsessions/status
+  - debugsessiontemplates/status
+  - identityproviders/status
+  - mailproviders/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - breakglasssessions
+  - debugsessions
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - clusterconfigs
+  - debugpodtemplates
+  - debugsessiontemplates
+  - denypolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - denypolicies/status
+  verbs:
+  - get
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
   - update
   - watch

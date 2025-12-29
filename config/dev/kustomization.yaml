@@ -22,7 +22,9 @@ resources:
 # - ../webhook
 - ./resources/keycloak.yaml
 - ./resources/mailhog.yaml
+- ./resources/crs/audit-config-test.yaml
 - ./resources/crs/cluster-configs-test.yaml
+- ./resources/crs/debug-templates-test.yaml
 - ./resources/crs/deny-policies-test.yaml
 - ./resources/crs/escalations-test.yaml
 - ./resources/rbac/rbac-hub-test.yaml

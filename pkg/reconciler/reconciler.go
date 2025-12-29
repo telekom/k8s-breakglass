@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
@@ -147,6 +148,32 @@ func Setup(
 		return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
 	}
 	log.Infow("Successfully registered DebugSession reconciler")
+
+	// Register AuditConfig Reconciler with controller-runtime manager
+	log.Debugw("Setting up AuditConfig reconciler")
+	auditConfigReconciler := config.NewAuditConfigReconciler(
+		mgr.GetClient(),
+		log,
+		mgr.GetEventRecorderFor("breakglass-audit-controller"),
+		func(ctx context.Context, auditCfg *breakglassv1alpha1.AuditConfig) error {
+			// TODO: Wire up audit manager reload when audit system is fully integrated
+			if auditCfg == nil {
+				log.Infow("AuditConfig deleted or disabled - audit logging stopped")
+				return nil
+			}
+			log.Infow("AuditConfig reloaded", "name", auditCfg.Name, "enabled", auditCfg.Spec.Enabled, "sinks", len(auditCfg.Spec.Sinks))
+			return nil
+		},
+		func(ctx context.Context, err error) {
+			log.Errorw("AuditConfig reconciliation error", "error", err)
+			metrics.AuditConfigReloads.WithLabelValues("reconciler_error").Inc()
+		},
+		10*time.Minute,
+	)
+	if err := auditConfigReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup AuditConfig reconciler with manager: %w", err)
+	}
+	log.Infow("Successfully registered AuditConfig reconciler", "resyncPeriod", "10m")
 
 	// Note: Leadership election is NOT handled by the manager at this level.
 	// Background loops (cleanup, escalation updater, cluster config checker) use the resourcelock

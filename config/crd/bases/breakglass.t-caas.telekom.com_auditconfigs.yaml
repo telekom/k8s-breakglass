@@ -1,0 +1,589 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.4
+  name: auditconfigs.breakglass.t-caas.telekom.com
+spec:
+  group: breakglass.t-caas.telekom.com
+  names:
+    kind: AuditConfig
+    listKind: AuditConfigList
+    plural: auditconfigs
+    shortNames:
+    - ac
+    singular: auditconfig
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.enabled
+      name: Enabled
+      type: boolean
+    - jsonPath: .status.activeSinks
+      name: Sinks
+      type: string
+    - jsonPath: .status.eventsProcessed
+      name: Processed
+      type: integer
+    - jsonPath: .status.eventsDropped
+      name: Dropped
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AuditConfig is the Schema for the auditconfigs API.
+          It defines how audit events are captured, filtered, and delivered to sinks.
+          AuditConfig is cluster-scoped and applies globally to all audit events.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              AuditConfigSpec defines the audit trail configuration.
+              The audit system is designed for EXTREMELY granular, non-blocking capture
+              of all cluster actions with multiple sink options.
+            properties:
+              enabled:
+                default: true
+                description: Enabled controls whether auditing is active.
+                type: boolean
+              filtering:
+                description: Filtering controls which events are captured.
+                properties:
+                  excludeEventTypes:
+                    description: |-
+                      ExcludeEventTypes excludes these event types.
+                      Takes precedence over IncludeEventTypes.
+                    items:
+                      type: string
+                    type: array
+                  excludeNamespaces:
+                    description: |-
+                      ExcludeNamespaces excludes events from these namespaces.
+                      Useful for filtering out kube-system.
+                    items:
+                      type: string
+                    type: array
+                  excludeResources:
+                    description: ExcludeResources excludes events for these resource
+                      kinds.
+                    items:
+                      type: string
+                    type: array
+                  excludeUsers:
+                    description: |-
+                      ExcludeUsers excludes events from these users.
+                      Useful for filtering out service accounts.
+                    items:
+                      type: string
+                    type: array
+                  includeEventTypes:
+                    description: |-
+                      IncludeEventTypes explicitly includes these event types.
+                      Empty means include all.
+                    items:
+                      type: string
+                    type: array
+                  includeNamespaces:
+                    description: IncludeNamespaces only captures events in these namespaces.
+                    items:
+                      type: string
+                    type: array
+                  includeResources:
+                    description: IncludeResources only captures events for these resource
+                      kinds.
+                    items:
+                      type: string
+                    type: array
+                  includeUsers:
+                    description: |-
+                      IncludeUsers only captures events from these users.
+                      Supports glob patterns (e.g., "system:*").
+                    items:
+                      type: string
+                    type: array
+                type: object
+              queue:
+                description: Queue configures the async event queue.
+                properties:
+                  dropOnFull:
+                    default: true
+                    description: |-
+                      DropOnFull silently drops events when queue is full.
+                      If false, a warning is logged for each dropped event.
+                    type: boolean
+                  size:
+                    default: 100000
+                    description: |-
+                      Size is the queue capacity.
+                      Larger queues handle traffic spikes better but use more memory.
+                    maximum: 10000000
+                    minimum: 1000
+                    type: integer
+                  workers:
+                    default: 5
+                    description: Workers is the number of concurrent sink writers.
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                type: object
+              sampling:
+                description: Sampling controls event sampling for high-volume scenarios.
+                properties:
+                  alwaysCaptureEventTypes:
+                    description: AlwaysCaptureEventTypes are never sampled (always
+                      100%).
+                    items:
+                      type: string
+                    type: array
+                  highVolumeEventTypes:
+                    description: |-
+                      HighVolumeEventTypes are sampled at the configured rate.
+                      Other events are always captured at 100%.
+                    items:
+                      type: string
+                    type: array
+                  rate:
+                    default: 1
+                    description: |-
+                      Rate is the sampling rate (0.0 to 1.0).
+                      1.0 = capture all, 0.1 = capture 10%.
+                    type: string
+                type: object
+              sinks:
+                description: |-
+                  Sinks defines where audit events are sent.
+                  Multiple sinks can be configured for redundancy.
+                items:
+                  description: AuditSinkConfig defines a single audit sink destination.
+                  properties:
+                    eventTypes:
+                      description: |-
+                        EventTypes limits this sink to specific event types.
+                        Empty means all events.
+                      items:
+                        type: string
+                      type: array
+                    kafka:
+                      description: Kafka configuration (required when type=kafka).
+                      properties:
+                        async:
+                          default: false
+                          description: Async enables fire-and-forget writes.
+                          type: boolean
+                        batchSize:
+                          default: 100
+                          description: BatchSize is the number of events to batch
+                            before sending.
+                          maximum: 10000
+                          minimum: 1
+                          type: integer
+                        batchTimeoutSeconds:
+                          default: 1
+                          description: BatchTimeoutSeconds is the max time to wait
+                            before sending a partial batch.
+                          maximum: 60
+                          minimum: 0
+                          type: integer
+                        brokers:
+                          description: Brokers is the list of Kafka broker addresses.
+                          items:
+                            type: string
+                          minItems: 1
+                          type: array
+                        compression:
+                          default: snappy
+                          description: Compression codec for messages.
+                          enum:
+                          - none
+                          - gzip
+                          - snappy
+                          - lz4
+                          - zstd
+                          type: string
+                        requiredAcks:
+                          default: -1
+                          description: |-
+                            RequiredAcks determines acknowledgment level.
+                            -1: all replicas, 0: none, 1: leader only
+                          maximum: 1
+                          minimum: -1
+                          type: integer
+                        sasl:
+                          description: SASL authentication configuration.
+                          properties:
+                            credentialsSecretRef:
+                              description: |-
+                                CredentialsSecretRef references a Secret containing SASL credentials.
+                                The Secret must have keys "username" and "password".
+                              properties:
+                                name:
+                                  description: Name of the Secret.
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace of the Secret.
+                                    MUST be in the same namespace as the breakglass controller (typically breakglass-system).
+                                    This is enforced by the controller for security - secrets cannot be read from arbitrary namespaces.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              - namespace
+                              type: object
+                            mechanism:
+                              description: Mechanism is the SASL mechanism.
+                              enum:
+                              - PLAIN
+                              - SCRAM-SHA-256
+                              - SCRAM-SHA-512
+                              type: string
+                          required:
+                          - credentialsSecretRef
+                          - mechanism
+                          type: object
+                        tls:
+                          description: TLS configuration for secure connections.
+                          properties:
+                            caSecretRef:
+                              description: |-
+                                CASecretRef references a Secret containing the CA certificate.
+                                The Secret must have a key named "ca.crt".
+                              properties:
+                                name:
+                                  description: Name of the Secret.
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace of the Secret.
+                                    MUST be in the same namespace as the breakglass controller (typically breakglass-system).
+                                    This is enforced by the controller for security - secrets cannot be read from arbitrary namespaces.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              - namespace
+                              type: object
+                            clientCertSecretRef:
+                              description: |-
+                                ClientCertSecretRef references a Secret containing client cert and key for mTLS.
+                                The Secret must have keys "tls.crt" and "tls.key".
+                              properties:
+                                name:
+                                  description: Name of the Secret.
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace of the Secret.
+                                    MUST be in the same namespace as the breakglass controller (typically breakglass-system).
+                                    This is enforced by the controller for security - secrets cannot be read from arbitrary namespaces.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              - namespace
+                              type: object
+                            enabled:
+                              default: true
+                              description: Enabled turns on TLS.
+                              type: boolean
+                            insecureSkipVerify:
+                              default: false
+                              description: |-
+                                InsecureSkipVerify skips server certificate verification.
+                                WARNING: Only for testing. Never use in production.
+                              type: boolean
+                          required:
+                          - enabled
+                          type: object
+                        topic:
+                          description: Topic is the Kafka topic for audit events.
+                          maxLength: 249
+                          minLength: 1
+                          type: string
+                      required:
+                      - brokers
+                      - topic
+                      type: object
+                    kubernetes:
+                      description: Kubernetes configuration (optional when type=kubernetes).
+                      properties:
+                        eventTypes:
+                          description: |-
+                            EventTypes limits which audit events create K8s Events.
+                            Empty means use sensible defaults (session/escalation events only).
+                          items:
+                            type: string
+                          type: array
+                      type: object
+                    log:
+                      description: Log configuration (optional when type=log).
+                      properties:
+                        format:
+                          default: json
+                          description: Format sets the log format.
+                          enum:
+                          - json
+                          - console
+                          type: string
+                        level:
+                          default: info
+                          description: Level sets the log level for audit events.
+                          enum:
+                          - debug
+                          - info
+                          - warn
+                          - error
+                          type: string
+                      type: object
+                    minSeverity:
+                      description: |-
+                        MinSeverity sets the minimum severity level for this sink.
+                        Events below this severity are not sent to this sink.
+                      enum:
+                      - info
+                      - warning
+                      - critical
+                      type: string
+                    name:
+                      description: Name is a unique identifier for this sink.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    type:
+                      allOf:
+                      - enum:
+                        - log
+                        - webhook
+                        - kafka
+                        - kubernetes
+                      - enum:
+                        - log
+                        - webhook
+                        - kafka
+                        - kubernetes
+                      description: Type is the sink type.
+                      type: string
+                    webhook:
+                      description: Webhook configuration (required when type=webhook).
+                      properties:
+                        authSecretRef:
+                          description: |-
+                            AuthSecretRef references a Secret for authentication.
+                            The Secret can have keys "token" (Bearer) or "username"/"password" (Basic).
+                          properties:
+                            name:
+                              description: Name of the Secret.
+                              minLength: 1
+                              type: string
+                            namespace:
+                              description: |-
+                                Namespace of the Secret.
+                                MUST be in the same namespace as the breakglass controller (typically breakglass-system).
+                                This is enforced by the controller for security - secrets cannot be read from arbitrary namespaces.
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          - namespace
+                          type: object
+                        batchSize:
+                          default: 1
+                          description: |-
+                            BatchSize for batched webhook calls.
+                            If > 1, events are sent as JSON arrays.
+                          maximum: 1000
+                          minimum: 1
+                          type: integer
+                        headers:
+                          additionalProperties:
+                            type: string
+                          description: Headers to include in requests.
+                          type: object
+                        timeoutSeconds:
+                          default: 5
+                          description: TimeoutSeconds for HTTP requests.
+                          maximum: 30
+                          minimum: 1
+                          type: integer
+                        tls:
+                          description: TLS configuration.
+                          properties:
+                            caSecretRef:
+                              description: CASecretRef references a Secret containing
+                                the CA certificate.
+                              properties:
+                                name:
+                                  description: Name of the Secret.
+                                  minLength: 1
+                                  type: string
+                                namespace:
+                                  description: |-
+                                    Namespace of the Secret.
+                                    MUST be in the same namespace as the breakglass controller (typically breakglass-system).
+                                    This is enforced by the controller for security - secrets cannot be read from arbitrary namespaces.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              - namespace
+                              type: object
+                            insecureSkipVerify:
+                              default: false
+                              description: InsecureSkipVerify skips server certificate
+                                verification.
+                              type: boolean
+                          type: object
+                        url:
+                          description: URL is the webhook endpoint.
+                          minLength: 1
+                          pattern: ^https?://.+
+                          type: string
+                      required:
+                      - url
+                      type: object
+                  required:
+                  - name
+                  - type
+                  type: object
+                minItems: 1
+                type: array
+            required:
+            - sinks
+            type: object
+          status:
+            description: AuditConfigStatus defines the observed state of AuditConfig.
+            properties:
+              activeSinks:
+                description: ActiveSinks lists currently active sink names.
+                items:
+                  type: string
+                type: array
+              conditions:
+                description: Conditions represent the current state of the AuditConfig.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              eventsDropped:
+                description: EventsDropped is the total number of events dropped.
+                format: int64
+                type: integer
+              eventsProcessed:
+                description: EventsProcessed is the total number of events processed.
+                format: int64
+                type: integer
+              lastEventTime:
+                description: LastEventTime is when the last event was processed.
+                format: date-time
+                type: string
+              sinkStatuses:
+                description: SinkStatuses contains per-sink status information.
+                items:
+                  description: AuditSinkStatus contains status for a single sink.
+                  properties:
+                    eventsWritten:
+                      description: EventsWritten is the number of events written to
+                        this sink.
+                      format: int64
+                      type: integer
+                    lastError:
+                      description: LastError is the most recent error, if any.
+                      type: string
+                    lastSuccessTime:
+                      description: LastSuccessTime is when the sink last successfully
+                        processed an event.
+                      format: date-time
+                      type: string
+                    name:
+                      description: Name of the sink.
+                      type: string
+                    ready:
+                      description: Ready indicates if the sink is operational.
+                      type: boolean
+                  required:
+                  - name
+                  - ready
+                  type: object
+                type: array
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

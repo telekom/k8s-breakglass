@@ -74,6 +74,14 @@ func NewEscalationReconciler(
 	}
 }
 
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglassescalations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglassescalations/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglassescalations/finalizers,verbs=update
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=clusterconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=clusterconfigs/status,verbs=get
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=denypolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+
 // Reconcile implements controller-runtime's Reconciler interface.
 // Called whenever a BreakglassEscalation CR changes.
 func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {

@@ -36,6 +36,20 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 )
 
+// RBAC markers for resources managed by non-reconciler components (cleanup, API handlers, etc.)
+// These are collected here so `make manifests` generates the complete RBAC role.
+
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglasssessions,verbs=get;list;watch;create;update;patch;delete;deletecollection
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglasssessions/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=breakglasssessions/finalizers,verbs=update
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=clusterconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=clusterconfigs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=denypolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=denypolicies/status,verbs=get
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
+
 func main() {
 	// DEPLOYMENT PATTERNS
 	// ===================

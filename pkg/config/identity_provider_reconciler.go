@@ -128,6 +128,12 @@ func (r *IdentityProviderReconciler) WithResyncPeriod(period time.Duration) *Ide
 	return r
 }
 
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+
 // Reconcile implements the Reconciler interface
 // It reloads the IdentityProvider configuration when changes are detected
 func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {

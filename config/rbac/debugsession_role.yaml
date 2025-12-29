@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: debugsession-manager-role
+rules:
+# DebugSession resources
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - debugsessions
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  - deletecollection
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - debugsessions/status
+  verbs:
+  - get
+  - patch
+  - update
+# DebugSessionTemplate resources
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - debugsessiontemplates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - debugsessiontemplates/status
+  verbs:
+  - get
+  - patch
+  - update
+# DebugPodTemplate resources
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - debugpodtemplates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - debugpodtemplates/status
+  verbs:
+  - get
+  - patch
+  - update
+# Pods - required for creating debug pods
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+# Pods/exec - required for exec into debug pods
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+# Pods/log - required for reading debug pod logs
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+  - list
+# Events for debug sessions
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update

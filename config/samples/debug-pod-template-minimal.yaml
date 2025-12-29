@@ -1,0 +1,51 @@
+# Minimal Debug Pod Template
+# Highly restricted template with minimal capabilities
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: minimal-debug
+spec:
+  displayName: "Minimal Debug"
+  description: "Minimal debug container with no special capabilities (restricted baseline)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: minimal
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/debug: runtime/default
+        breakglass.t-caas.telekom.com/purpose: "General purpose debugging"
+    spec:
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: debug
+        image: alpine:3.19
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh"]
+        args: ["-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "100m"
+            memory: "64Mi"
+          requests:
+            cpu: "10m"
+            memory: "16Mi"
