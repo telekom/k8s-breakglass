@@ -324,11 +324,6 @@ const hiddenApprovalGroupCount = computed(() => {
   return Math.max(approvalGroupsList.value.length - MAX_VISIBLE_APPROVAL_GROUPS, 0);
 });
 
-const reasonDescription = computed(() => {
-  const desc = props.breakglass?.requestReason?.description;
-  return typeof desc === "string" ? desc.trim() : "";
-});
-
 type TagVariant = "primary" | "secondary" | "info" | "warning" | "danger" | "success" | "neutral";
 
 type StatusTone = "neutral" | "info" | "warning" | "danger" | "success" | "muted";

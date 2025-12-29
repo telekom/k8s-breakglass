@@ -86,10 +86,7 @@ export default class DebugSessionService {
   public async joinSession(name: string, request?: JoinDebugSessionRequest): Promise<DebugSession> {
     try {
       const body = request || { role: "viewer" };
-      const response = await this.client.post<DebugSession>(
-        `/debugSessions/${encodeURIComponent(name)}/join`,
-        body,
-      );
+      const response = await this.client.post<DebugSession>(`/debugSessions/${encodeURIComponent(name)}/join`, body);
       return response.data;
     } catch (e) {
       handleAxiosError("DebugSessionService.joinSession", e, "Failed to join debug session");
@@ -102,9 +99,7 @@ export default class DebugSessionService {
    */
   public async leaveSession(name: string): Promise<DebugSession> {
     try {
-      const response = await this.client.post<DebugSession>(
-        `/debugSessions/${encodeURIComponent(name)}/leave`,
-      );
+      const response = await this.client.post<DebugSession>(`/debugSessions/${encodeURIComponent(name)}/leave`);
       return response.data;
     } catch (e) {
       handleAxiosError("DebugSessionService.leaveSession", e, "Failed to leave debug session");
@@ -133,9 +128,7 @@ export default class DebugSessionService {
    */
   public async terminateSession(name: string): Promise<DebugSession> {
     try {
-      const response = await this.client.post<DebugSession>(
-        `/debugSessions/${encodeURIComponent(name)}/terminate`,
-      );
+      const response = await this.client.post<DebugSession>(`/debugSessions/${encodeURIComponent(name)}/terminate`);
       return response.data;
     } catch (e) {
       handleAxiosError("DebugSessionService.terminateSession", e, "Failed to terminate debug session");

@@ -29,23 +29,15 @@
         >
           <template #status>
             <StatusTag :status="getSessionState(req)" />
-            <StatusTag
-              v-if="getSessionState(req) === 'WaitingForScheduledTime'"
-              status="Scheduled"
-              tone="warning"
-            />
+            <StatusTag v-if="getSessionState(req) === 'WaitingForScheduledTime'" status="Scheduled" tone="warning" />
           </template>
 
           <template #chips>
-            <scale-tag v-if="req.metadata?.name" variant="info">
-              Request ID: {{ req.metadata.name }}
-            </scale-tag>
+            <scale-tag v-if="req.metadata?.name" variant="info"> Request ID: {{ req.metadata.name }} </scale-tag>
             <scale-tag v-if="req.spec?.identityProviderName" variant="neutral">
               IDP: {{ req.spec.identityProviderName }}
             </scale-tag>
-            <scale-tag v-if="req.spec?.duration" variant="neutral">
-              Duration: {{ req.spec.duration }}
-            </scale-tag>
+            <scale-tag v-if="req.spec?.duration" variant="neutral"> Duration: {{ req.spec.duration }} </scale-tag>
           </template>
 
           <template #meta>
@@ -104,7 +96,15 @@
 import { onMounted, inject } from "vue";
 
 // Common components
-import { PageHeader, LoadingState, ErrorBanner, EmptyState, StatusTag, ReasonPanel, ActionButton } from "@/components/common";
+import {
+  PageHeader,
+  LoadingState,
+  ErrorBanner,
+  EmptyState,
+  StatusTag,
+  ReasonPanel,
+  ActionButton,
+} from "@/components/common";
 import CountdownTimer from "@/components/CountdownTimer.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";

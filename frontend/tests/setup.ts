@@ -122,7 +122,7 @@ if (!customElements.get("scale-card")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -133,7 +133,7 @@ if (!customElements.get("scale-tag")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -144,7 +144,7 @@ if (!customElements.get("scale-button")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -155,7 +155,7 @@ if (!customElements.get("scale-divider")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -166,7 +166,7 @@ if (!customElements.get("scale-modal")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -177,7 +177,7 @@ if (!customElements.get("scale-dropdown-select")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -188,7 +188,7 @@ if (!customElements.get("scale-dropdown-select-option")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -199,7 +199,7 @@ if (!customElements.get("scale-table")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -210,7 +210,7 @@ if (!customElements.get("scale-text-field")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }
 
@@ -221,6 +221,6 @@ if (!customElements.get("scale-checkbox")) {
       connectedCallback() {
         this.attachShadow({ mode: "open" });
       }
-    }
+    },
   );
 }

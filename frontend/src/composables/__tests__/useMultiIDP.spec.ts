@@ -332,7 +332,7 @@ describe("useMultiIDP", () => {
   });
 
   it("supports dynamic escalation name via getter function", async () => {
-    let currentEscalation = "first-escalation";
+    const currentEscalation = "first-escalation";
     const escalationGetter = () => currentEscalation;
 
     let capturedResult: ReturnType<typeof useMultiIDP> | null = null;

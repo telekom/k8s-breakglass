@@ -15,7 +15,7 @@ withDefaults(
     message: "Loading...",
     size: "medium",
     inline: false,
-  }
+  },
 );
 </script>
 

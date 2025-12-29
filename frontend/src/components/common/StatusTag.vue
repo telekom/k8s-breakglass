@@ -24,7 +24,7 @@ const props = withDefaults(
     size: "medium",
     showIcon: false,
     uppercase: true,
-  }
+  },
 );
 
 const statusIcons: Record<string, string> = {

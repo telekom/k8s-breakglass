@@ -302,7 +302,7 @@ export function filterSessions(sessions: SessionWithUrgency[], filters: SessionL
  */
 export function useSessionList<T extends SessionCR = SessionCR>(
   fetchFn: () => Promise<T[]>,
-  options: SessionListOptions = {}
+  options: SessionListOptions = {},
 ) {
   const { defaultSort = "recent", defaultFilters = {}, calculateUrgency = true } = options;
 

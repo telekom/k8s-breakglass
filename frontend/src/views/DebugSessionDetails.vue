@@ -27,7 +27,7 @@ const error = ref("");
 async function fetchSession() {
   loading.value = true;
   error.value = "";
-  
+
   try {
     session.value = await debugSessionService.getSession(sessionName.value);
   } catch (e: any) {
@@ -83,7 +83,8 @@ async function handleJoin() {
   }
 }
 
-async function handleLeave() {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _handleLeave() {
   try {
     await debugSessionService.leaveSession(sessionName.value);
     pushSuccess("Left session successfully");
@@ -168,21 +169,12 @@ function podStatusVariant(pod: DebugPodInfo): string {
 
     <LoadingState v-if="loading" message="Loading session details..." />
 
-    <EmptyState
-      v-else-if="error"
-      icon="❌"
-      :message="error"
-    >
-      <scale-button variant="primary" @click="goBack">
-        Back to Sessions
-      </scale-button>
+    <EmptyState v-else-if="error" icon="❌" :message="error">
+      <scale-button variant="primary" @click="goBack"> Back to Sessions </scale-button>
     </EmptyState>
 
     <template v-else-if="session">
-      <PageHeader
-        :title="session.metadata.name"
-        :subtitle="`Debug session on ${session.spec.cluster}`"
-      />
+      <PageHeader :title="session.metadata.name" :subtitle="`Debug session on ${session.spec.cluster}`" />
 
       <div class="details-grid">
         <!-- Status Section -->
@@ -190,58 +182,48 @@ function podStatusVariant(pod: DebugPodInfo): string {
           <h3>Status</h3>
           <div class="status-header">
             <scale-tag :variant="stateVariant" size="large">
-              {{ session.status?.state || 'Unknown' }}
+              {{ session.status?.state || "Unknown" }}
             </scale-tag>
           </div>
-          
+
           <div class="status-details">
-            <div class="status-item" v-if="session.status?.message">
+            <div v-if="session.status?.message" class="status-item">
               <span class="label">Message</span>
               <span class="value">{{ session.status.message }}</span>
             </div>
-            <div class="status-item" v-if="session.status?.startsAt">
+            <div v-if="session.status?.startsAt" class="status-item">
               <span class="label">Started At</span>
               <span class="value">{{ formatDateTime(session.status.startsAt) }}</span>
             </div>
-            <div class="status-item" v-if="session.status?.expiresAt">
+            <div v-if="session.status?.expiresAt" class="status-item">
               <span class="label">Expires At</span>
               <span class="value">{{ formatDateTime(session.status.expiresAt) }}</span>
               <span class="relative">({{ formatRelativeTime(session.status.expiresAt) }})</span>
             </div>
-            <div class="status-item" v-if="session.status?.renewalCount">
+            <div v-if="session.status?.renewalCount" class="status-item">
               <span class="label">Renewals</span>
               <span class="value">{{ session.status.renewalCount }}</span>
             </div>
-            <div class="status-item" v-if="session.status?.approvedBy">
+            <div v-if="session.status?.approvedBy" class="status-item">
               <span class="label">Approved By</span>
               <span class="value">{{ session.status.approvedBy }}</span>
             </div>
-            <div class="status-item" v-if="session.status?.rejectedBy">
+            <div v-if="session.status?.rejectedBy" class="status-item">
               <span class="label">Rejected By</span>
               <span class="value">{{ session.status.rejectedBy }}</span>
             </div>
-            <div class="status-item" v-if="session.status?.rejectionReason">
+            <div v-if="session.status?.rejectionReason" class="status-item">
               <span class="label">Rejection Reason</span>
               <span class="value">{{ session.status.rejectionReason }}</span>
             </div>
           </div>
 
-          <div class="actions" v-if="canJoin || canTerminate || canRenew || canApprove || canReject">
-            <scale-button v-if="canJoin" variant="primary" @click="handleJoin">
-              Join Session
-            </scale-button>
-            <scale-button v-if="canRenew" variant="secondary" @click="handleRenew">
-              Renew (+1h)
-            </scale-button>
-            <scale-button v-if="canTerminate" variant="secondary" @click="handleTerminate">
-              Terminate
-            </scale-button>
-            <scale-button v-if="canApprove" variant="primary" @click="handleApprove">
-              Approve
-            </scale-button>
-            <scale-button v-if="canReject" variant="secondary" @click="handleReject">
-              Reject
-            </scale-button>
+          <div v-if="canJoin || canTerminate || canRenew || canApprove || canReject" class="actions">
+            <scale-button v-if="canJoin" variant="primary" @click="handleJoin"> Join Session </scale-button>
+            <scale-button v-if="canRenew" variant="secondary" @click="handleRenew"> Renew (+1h) </scale-button>
+            <scale-button v-if="canTerminate" variant="secondary" @click="handleTerminate"> Terminate </scale-button>
+            <scale-button v-if="canApprove" variant="primary" @click="handleApprove"> Approve </scale-button>
+            <scale-button v-if="canReject" variant="secondary" @click="handleReject"> Reject </scale-button>
           </div>
         </div>
 
@@ -263,9 +245,9 @@ function podStatusVariant(pod: DebugPodInfo): string {
             </div>
             <div class="info-item">
               <dt>Requested Duration</dt>
-              <dd>{{ session.spec.requestedDuration || 'Default' }}</dd>
+              <dd>{{ session.spec.requestedDuration || "Default" }}</dd>
             </div>
-            <div class="info-item" v-if="session.spec.reason">
+            <div v-if="session.spec.reason" class="info-item">
               <dt>Reason</dt>
               <dd>{{ session.spec.reason }}</dd>
             </div>
@@ -279,9 +261,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
         <!-- Participants -->
         <div class="detail-card">
           <h3>Participants ({{ participants.length }})</h3>
-          <div v-if="participants.length === 0" class="empty-section">
-            No participants yet.
-          </div>
+          <div v-if="participants.length === 0" class="empty-section">No participants yet.</div>
           <ul v-else class="participant-list">
             <li v-for="participant in participants" :key="participant.user" class="participant-item">
               <div class="participant-info">
@@ -292,7 +272,9 @@ function podStatusVariant(pod: DebugPodInfo): string {
               </div>
               <div class="participant-meta">
                 <span v-if="participant.joinedAt">Joined {{ formatRelativeTime(participant.joinedAt) }}</span>
-                <span v-if="participant.leftAt" class="left-marker">Left {{ formatRelativeTime(participant.leftAt) }}</span>
+                <span v-if="participant.leftAt" class="left-marker"
+                  >Left {{ formatRelativeTime(participant.leftAt) }}</span
+                >
               </div>
             </li>
           </ul>
@@ -301,9 +283,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
         <!-- Debug Pods -->
         <div class="detail-card">
           <h3>Debug Pods ({{ allowedPods.length }})</h3>
-          <div v-if="allowedPods.length === 0" class="empty-section">
-            No debug pods deployed yet.
-          </div>
+          <div v-if="allowedPods.length === 0" class="empty-section">No debug pods deployed yet.</div>
           <ul v-else class="pod-list">
             <li v-for="pod in allowedPods" :key="pod.name" class="pod-item">
               <div class="pod-header">
@@ -316,7 +296,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
                 <span><strong>Namespace:</strong> {{ pod.namespace }}</span>
                 <span><strong>Node:</strong> {{ pod.nodeName }}</span>
               </div>
-              <div class="pod-actions" v-if="pod.ready && pod.phase === 'Running'">
+              <div v-if="pod.ready && pod.phase === 'Running'" class="pod-actions">
                 <code class="exec-command">kubectl exec -it {{ pod.name }} -n {{ pod.namespace }} -- /bin/sh</code>
               </div>
             </li>

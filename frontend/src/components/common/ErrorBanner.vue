@@ -27,7 +27,7 @@ const props = withDefaults(
     dismissible: false,
     showRetry: false,
     retryLabel: "Retry",
-  }
+  },
 );
 
 const emit = defineEmits<{

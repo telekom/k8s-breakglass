@@ -54,13 +54,13 @@ const stateOptions = [
 async function fetchSessions() {
   loading.value = true;
   error.value = "";
-  
+
   try {
     const params: any = {};
     if (filters.mine) params.mine = true;
     if (filters.cluster) params.cluster = filters.cluster;
     // For simplicity, we fetch all and filter client-side
-    
+
     const result = await debugSessionService.listSessions(params);
     sessions.value = result.sessions;
   } catch (e: any) {
@@ -83,12 +83,12 @@ onMounted(() => {
 
 const filteredSessions = computed(() => {
   let result = sessions.value;
-  
+
   // Filter by states
   if (filters.states.length > 0) {
     result = result.filter((s) => filters.states.includes(s.state));
   }
-  
+
   // Filter by search
   if (filters.search) {
     const searchLower = filters.search.toLowerCase();
@@ -97,10 +97,10 @@ const filteredSessions = computed(() => {
         s.name.toLowerCase().includes(searchLower) ||
         s.cluster.toLowerCase().includes(searchLower) ||
         s.templateRef.toLowerCase().includes(searchLower) ||
-        s.requestedBy.toLowerCase().includes(searchLower)
+        s.requestedBy.toLowerCase().includes(searchLower),
     );
   }
-  
+
   return result;
 });
 
@@ -199,10 +199,7 @@ function toggleState(state: string) {
 
 <template>
   <main class="ui-page debug-session-browser">
-    <PageHeader
-      title="Debug Sessions"
-      subtitle="Browse and manage debug sessions for temporary cluster access."
-    />
+    <PageHeader title="Debug Sessions" subtitle="Browse and manage debug sessions for temporary cluster access." />
 
     <div class="toolbar">
       <div class="toolbar-left">
@@ -215,7 +212,7 @@ function toggleState(state: string) {
           @scaleChange="updateSearch"
         ></scale-text-field>
       </div>
-      
+
       <div class="toolbar-filters">
         <scale-checkbox
           :checked="filters.mine"
@@ -226,16 +223,10 @@ function toggleState(state: string) {
 
       <div class="toolbar-right">
         <scale-loading-spinner v-if="refreshing" size="small"></scale-loading-spinner>
-        <scale-button
-          v-else
-          icon-only
-          variant="secondary"
-          aria-label="Refresh"
-          @click="refresh()"
-        >
+        <scale-button v-else icon-only variant="secondary" aria-label="Refresh" @click="refresh()">
           <scale-icon-action-refresh></scale-icon-action-refresh>
         </scale-button>
-        
+
         <scale-button variant="primary" @click="navigateToCreate">
           <scale-icon-action-add slot="icon"></scale-icon-action-add>
           New Session
@@ -251,15 +242,15 @@ function toggleState(state: string) {
         :variant="filters.states.includes(opt.value) ? 'standard' : 'strong'"
         size="small"
         dismissible
-        @click="toggleState(opt.value)"
         :class="{ 'tag-active': filters.states.includes(opt.value) }"
+        @click="toggleState(opt.value)"
       >
         {{ opt.label }}
       </scale-tag>
     </div>
 
     <LoadingState v-if="loading" message="Loading debug sessions..." />
-    
+
     <div v-else-if="filteredSessions.length > 0" class="sessions-grid">
       <DebugSessionCard
         v-for="session in filteredSessions"
@@ -275,18 +266,12 @@ function toggleState(state: string) {
         @view-details="handleViewDetails(session)"
       />
     </div>
-    
-    <EmptyState
-      v-else
-      icon="🔧"
-      message="No debug sessions found matching your filters."
-    >
-      <scale-button variant="primary" @click="navigateToCreate">
-        Create Debug Session
-      </scale-button>
+
+    <EmptyState v-else icon="🔧" message="No debug sessions found matching your filters.">
+      <scale-button variant="primary" @click="navigateToCreate"> Create Debug Session </scale-button>
     </EmptyState>
 
-    <div class="results-info" v-if="!loading">
+    <div v-if="!loading" class="results-info">
       Showing {{ filteredSessions.length }} of {{ sessions.length }} sessions
     </div>
   </main>

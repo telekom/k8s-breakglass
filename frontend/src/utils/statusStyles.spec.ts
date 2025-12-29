@@ -2,7 +2,7 @@
  * Tests for statusStyles utility
  */
 import { describe, it, expect } from "vitest";
-import { statusToneFor, type StatusTone } from "./statusStyles";
+import { statusToneFor } from "./statusStyles";
 
 describe("statusStyles", () => {
   describe("statusToneFor", () => {

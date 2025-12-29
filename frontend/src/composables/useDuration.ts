@@ -84,7 +84,7 @@ export function formatDurationFromSeconds(seconds: number | undefined | null): s
  */
 export function computeEndTime(
   startTimeStr: string | undefined | null,
-  durationStr: string | undefined | null
+  durationStr: string | undefined | null,
 ): Date | null {
   if (!startTimeStr || !durationStr) return null;
 
@@ -105,7 +105,7 @@ export function computeEndTime(
 export function formatEndTime(
   startTimeStr: string | undefined | null,
   durationStr: string | undefined | null,
-  formatter: (date: string) => string = (d) => d
+  formatter: (date: string) => string = (d) => d,
 ): string {
   const endTime = computeEndTime(startTimeStr, durationStr);
   if (!endTime) return "Not available";

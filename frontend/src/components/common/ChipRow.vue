@@ -16,6 +16,7 @@ export type ChipItem = {
   truncate?: boolean;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const props = withDefaults(
   defineProps<{
     /** Array of chip items to display */
@@ -32,7 +33,7 @@ const props = withDefaults(
     defaultVariant: "neutral",
     maxWidth: "300px",
     compact: false,
-  }
+  },
 );
 
 const slots = useSlots();
@@ -102,7 +103,7 @@ function getDisplayText(item: ChipItem): string {
   .chip-row {
     --chip-max-width: 100%;
   }
-  
+
   .chip-row__chip {
     max-width: 100%;
     width: auto;

@@ -9,10 +9,7 @@ import { describeApprover, wasApprovedBy } from "@/utils/sessionFilters";
 import { pushError, pushSuccess } from "@/services/toast";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { statusToneFor } from "@/utils/statusStyles";
-import { useDateFormatting } from "@/composables";
-import { PageHeader, EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
-
-const { formatDateTime } = useDateFormatting();
+import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -75,12 +72,6 @@ const stateOptions = [
   { value: "active", label: "Active" },
   { value: "expired", label: "Expired" },
 ];
-
-function formatDate(ts?: string | number | null): string {
-  if (!ts) return "-";
-  const iso = typeof ts === "string" ? ts : new Date(ts).toISOString();
-  return formatDateTime(iso);
-}
 
 function startedFor(session: SessionCR): string | null {
   return (
@@ -478,7 +469,7 @@ onMounted(() => {
         <p v-else-if="error" class="error">{{ error }}</p>
       </header>
 
-      <EmptyState 
+      <EmptyState
         v-if="!loading && !error && !visibleSessions.length"
         icon="🔍"
         message="No sessions matched the current filters."

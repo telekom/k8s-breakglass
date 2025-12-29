@@ -38,7 +38,7 @@ export function getTimeRemaining(expiresAt: string | Date | undefined | null): n
  */
 export function getUrgency(
   expiresAt: string | Date | undefined | null,
-  config: UrgencyConfig = DEFAULT_CONFIG
+  config: UrgencyConfig = DEFAULT_CONFIG,
 ): UrgencyLevel {
   const secondsRemaining = getTimeRemaining(expiresAt);
 

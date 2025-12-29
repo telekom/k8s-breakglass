@@ -36,7 +36,7 @@ const props = withDefaults(
     expiresAt: null,
     compact: false,
     extraItems: () => [],
-  }
+  },
 );
 
 const timelineItems = computed((): TimelineItem[] => {

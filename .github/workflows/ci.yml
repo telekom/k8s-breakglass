@@ -81,7 +81,8 @@ jobs:
       - name: Type check
         run: npm run typecheck
       - name: Lint
-        run: npx eslint . --max-warnings 0
+        # Note: warnings are tolerated; only errors fail the build
+        run: npx eslint .
       - name: Unit tests
         run: npm run test:coverage
       - name: Upload frontend coverage

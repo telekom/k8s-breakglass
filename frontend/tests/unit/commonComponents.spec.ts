@@ -115,7 +115,7 @@ describe("Common UI Component Utilities", () => {
       scheduledStart: string | null,
       actualStart: string | null,
       ended: string | null,
-      expiresAt: string | null
+      expiresAt: string | null,
     ): TimelineItem[] {
       const items: TimelineItem[] = [];
 
@@ -146,12 +146,7 @@ describe("Common UI Component Utilities", () => {
     });
 
     it("returns multiple items when provided", () => {
-      const items = buildTimelineItems(
-        "2024-01-15T10:00:00Z",
-        "2024-01-15T10:30:00Z",
-        null,
-        "2024-01-15T12:00:00Z"
-      );
+      const items = buildTimelineItems("2024-01-15T10:00:00Z", "2024-01-15T10:30:00Z", null, "2024-01-15T12:00:00Z");
       expect(items).toHaveLength(3);
       expect(items.map((i) => i.id)).toEqual(["scheduled", "started", "expires"]);
     });
@@ -161,7 +156,7 @@ describe("Common UI Component Utilities", () => {
         "2024-01-15T10:00:00Z",
         "2024-01-15T10:30:00Z",
         "2024-01-15T11:30:00Z",
-        "2024-01-15T12:00:00Z"
+        "2024-01-15T12:00:00Z",
       );
       expect(items).toHaveLength(4);
     });

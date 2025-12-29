@@ -52,12 +52,7 @@ const durationOptions = [
 ];
 
 const isValid = computed(() => {
-  return (
-    form.templateRef &&
-    form.cluster &&
-    form.requestedDuration &&
-    form.reason.trim().length > 0
-  );
+  return form.templateRef && form.cluster && form.requestedDuration && form.reason.trim().length > 0;
 });
 
 async function fetchTemplates() {
@@ -65,7 +60,7 @@ async function fetchTemplates() {
   try {
     const result = await debugSessionService.listTemplates();
     templates.value = result.templates;
-    
+
     // Auto-select first template if available
     const firstTemplate = templates.value[0];
     if (firstTemplate && !form.templateRef) {
@@ -84,9 +79,9 @@ onMounted(() => {
 
 async function handleSubmit() {
   if (!isValid.value || submitting.value) return;
-  
+
   submitting.value = true;
-  
+
   try {
     const request: CreateDebugSessionRequest = {
       templateRef: form.templateRef,
@@ -94,11 +89,11 @@ async function handleSubmit() {
       requestedDuration: form.requestedDuration,
       reason: form.reason,
     };
-    
+
     if (form.useScheduledStart && form.scheduledStartTime) {
       request.scheduledStartTime = new Date(form.scheduledStartTime).toISOString();
     }
-    
+
     const session = await debugSessionService.createSession(request);
     pushSuccess(`Debug session ${session.metadata.name} created successfully`);
     router.push({ name: "debugSessionBrowser" });
@@ -162,17 +157,8 @@ function handleScheduleTimeChange(ev: Event) {
           Select a debug session template that defines the access level and constraints.
         </p>
 
-        <scale-dropdown-select
-          label="Template"
-          :value="form.templateRef"
-          @scaleChange="handleTemplateChange"
-          required
-        >
-          <scale-dropdown-select-item
-            v-for="template in templates"
-            :key="template.name"
-            :value="template.name"
-          >
+        <scale-dropdown-select label="Template" :value="form.templateRef" required @scaleChange="handleTemplateChange">
+          <scale-dropdown-select-item v-for="template in templates" :key="template.name" :value="template.name">
             {{ template.displayName || template.name }}
           </scale-dropdown-select-item>
         </scale-dropdown-select>
@@ -180,16 +166,14 @@ function handleScheduleTimeChange(ev: Event) {
         <div v-if="selectedTemplate" class="template-info">
           <p class="template-description">{{ selectedTemplate.description }}</p>
           <div class="template-details">
-            <span class="detail">
-              <strong>Mode:</strong> {{ selectedTemplate.mode }}
-            </span>
-            <span class="detail" v-if="selectedTemplate.workloadType">
+            <span class="detail"> <strong>Mode:</strong> {{ selectedTemplate.mode }} </span>
+            <span v-if="selectedTemplate.workloadType" class="detail">
               <strong>Workload:</strong> {{ selectedTemplate.workloadType }}
             </span>
             <span class="detail">
-              <strong>Approval Required:</strong> {{ selectedTemplate.requiresApproval ? 'Yes' : 'No' }}
+              <strong>Approval Required:</strong> {{ selectedTemplate.requiresApproval ? "Yes" : "No" }}
             </span>
-            <span class="detail" v-if="selectedTemplate.constraints?.maxDuration">
+            <span v-if="selectedTemplate.constraints?.maxDuration" class="detail">
               <strong>Max Duration:</strong> {{ selectedTemplate.constraints.maxDuration }}
             </span>
           </div>
@@ -198,22 +182,16 @@ function handleScheduleTimeChange(ev: Event) {
 
       <div class="form-section">
         <h3>Target Cluster</h3>
-        <p class="section-description">
-          Select the cluster where you need debug access.
-        </p>
+        <p class="section-description">Select the cluster where you need debug access.</p>
 
         <scale-dropdown-select
           label="Cluster"
           :value="form.cluster"
-          @scaleChange="handleClusterChange"
           :disabled="!form.templateRef || availableClusters.length === 0"
           required
+          @scaleChange="handleClusterChange"
         >
-          <scale-dropdown-select-item
-            v-for="cluster in availableClusters"
-            :key="cluster"
-            :value="cluster"
-          >
+          <scale-dropdown-select-item v-for="cluster in availableClusters" :key="cluster" :value="cluster">
             {{ cluster }}
           </scale-dropdown-select-item>
         </scale-dropdown-select>
@@ -226,16 +204,8 @@ function handleScheduleTimeChange(ev: Event) {
       <div class="form-section">
         <h3>Session Details</h3>
 
-        <scale-dropdown-select
-          label="Duration"
-          :value="form.requestedDuration"
-          @scaleChange="handleDurationChange"
-        >
-          <scale-dropdown-select-item
-            v-for="opt in durationOptions"
-            :key="opt.value"
-            :value="opt.value"
-          >
+        <scale-dropdown-select label="Duration" :value="form.requestedDuration" @scaleChange="handleDurationChange">
+          <scale-dropdown-select-item v-for="opt in durationOptions" :key="opt.value" :value="opt.value">
             {{ opt.label }}
           </scale-dropdown-select-item>
         </scale-dropdown-select>
@@ -243,10 +213,10 @@ function handleScheduleTimeChange(ev: Event) {
         <scale-textarea
           label="Reason"
           :value="form.reason"
-          @scaleChange="handleReasonChange"
           placeholder="Explain why you need debug access..."
           rows="3"
           required
+          @scaleChange="handleReasonChange"
         ></scale-textarea>
 
         <div class="schedule-section">
@@ -267,16 +237,10 @@ function handleScheduleTimeChange(ev: Event) {
       </div>
 
       <div class="form-actions">
-        <scale-button variant="secondary" @click="handleCancel">
-          Cancel
-        </scale-button>
-        <scale-button
-          variant="primary"
-          @click="handleSubmit"
-          :disabled="!isValid || submitting"
-        >
-          <scale-loading-spinner v-if="submitting" size="small" slot="icon"></scale-loading-spinner>
-          {{ submitting ? 'Creating...' : 'Create Session' }}
+        <scale-button variant="secondary" @click="handleCancel"> Cancel </scale-button>
+        <scale-button variant="primary" :disabled="!isValid || submitting" @click="handleSubmit">
+          <scale-loading-spinner v-if="submitting" slot="icon" size="small"></scale-loading-spinner>
+          {{ submitting ? "Creating..." : "Create Session" }}
         </scale-button>
       </div>
     </div>

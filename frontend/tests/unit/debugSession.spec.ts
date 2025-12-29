@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from "vitest";
 
 // Mock the debug session types
 interface DebugSessionSummary {
@@ -14,139 +14,139 @@ interface DebugSessionSummary {
 }
 
 // Tests for debug session functionality
-describe('Debug Session Types', () => {
-  describe('DebugSessionSummary', () => {
-    it('should have required fields', () => {
+describe("Debug Session Types", () => {
+  describe("DebugSessionSummary", () => {
+    it("should have required fields", () => {
       const summary: DebugSessionSummary = {
-        name: 'debug-test-123',
-        templateRef: 'standard-debug',
-        cluster: 'production',
-        requestedBy: 'user@example.com',
-        state: 'Active',
+        name: "debug-test-123",
+        templateRef: "standard-debug",
+        cluster: "production",
+        requestedBy: "user@example.com",
+        state: "Active",
         participants: 2,
-        allowedPods: 5
+        allowedPods: 5,
       };
 
-      expect(summary.name).toBe('debug-test-123');
-      expect(summary.templateRef).toBe('standard-debug');
-      expect(summary.cluster).toBe('production');
-      expect(summary.requestedBy).toBe('user@example.com');
-      expect(summary.state).toBe('Active');
+      expect(summary.name).toBe("debug-test-123");
+      expect(summary.templateRef).toBe("standard-debug");
+      expect(summary.cluster).toBe("production");
+      expect(summary.requestedBy).toBe("user@example.com");
+      expect(summary.state).toBe("Active");
       expect(summary.participants).toBe(2);
       expect(summary.allowedPods).toBe(5);
     });
 
-    it('should handle optional fields', () => {
+    it("should handle optional fields", () => {
       const summary: DebugSessionSummary = {
-        name: 'test',
-        templateRef: 'template',
-        cluster: 'cluster',
-        requestedBy: 'user',
-        state: 'Pending',
-        startsAt: '2025-01-01T00:00:00Z',
-        expiresAt: '2025-01-01T02:00:00Z',
+        name: "test",
+        templateRef: "template",
+        cluster: "cluster",
+        requestedBy: "user",
+        state: "Pending",
+        startsAt: "2025-01-01T00:00:00Z",
+        expiresAt: "2025-01-01T02:00:00Z",
         participants: 1,
-        allowedPods: 0
+        allowedPods: 0,
       };
 
-      expect(summary.startsAt).toBe('2025-01-01T00:00:00Z');
-      expect(summary.expiresAt).toBe('2025-01-01T02:00:00Z');
+      expect(summary.startsAt).toBe("2025-01-01T00:00:00Z");
+      expect(summary.expiresAt).toBe("2025-01-01T02:00:00Z");
     });
   });
 });
 
-describe('Debug Session State Mapping', () => {
+describe("Debug Session State Mapping", () => {
   const stateColors: Record<string, string> = {
-    'Pending': 'warning',
-    'PendingApproval': 'warning',
-    'Active': 'success',
-    'Expired': 'error',
-    'Terminated': 'error',
-    'Failed': 'error'
+    Pending: "warning",
+    PendingApproval: "warning",
+    Active: "success",
+    Expired: "error",
+    Terminated: "error",
+    Failed: "error",
   };
 
-  it('maps Pending state to warning color', () => {
-    expect(stateColors['Pending']).toBe('warning');
+  it("maps Pending state to warning color", () => {
+    expect(stateColors["Pending"]).toBe("warning");
   });
 
-  it('maps Active state to success color', () => {
-    expect(stateColors['Active']).toBe('success');
+  it("maps Active state to success color", () => {
+    expect(stateColors["Active"]).toBe("success");
   });
 
-  it('maps terminal states to error color', () => {
-    expect(stateColors['Expired']).toBe('error');
-    expect(stateColors['Terminated']).toBe('error');
-    expect(stateColors['Failed']).toBe('error');
-  });
-});
-
-describe('Debug Session Actions', () => {
-  const canJoin = (state: string) => state === 'Active';
-  const canRenew = (state: string, isOwner: boolean) => state === 'Active' && isOwner;
-  const canTerminate = (state: string, isOwner: boolean) => 
-    (state === 'Active' || state === 'Pending' || state === 'PendingApproval') && isOwner;
-  const canApprove = (state: string) => state === 'PendingApproval';
-
-  it('allows joining only Active sessions', () => {
-    expect(canJoin('Active')).toBe(true);
-    expect(canJoin('Pending')).toBe(false);
-    expect(canJoin('Expired')).toBe(false);
-  });
-
-  it('allows renewing only Active sessions as owner', () => {
-    expect(canRenew('Active', true)).toBe(true);
-    expect(canRenew('Active', false)).toBe(false);
-    expect(canRenew('Pending', true)).toBe(false);
-  });
-
-  it('allows terminating active-like sessions as owner', () => {
-    expect(canTerminate('Active', true)).toBe(true);
-    expect(canTerminate('Pending', true)).toBe(true);
-    expect(canTerminate('PendingApproval', true)).toBe(true);
-    expect(canTerminate('Expired', true)).toBe(false);
-    expect(canTerminate('Active', false)).toBe(false);
-  });
-
-  it('allows approval only for PendingApproval sessions', () => {
-    expect(canApprove('PendingApproval')).toBe(true);
-    expect(canApprove('Pending')).toBe(false);
-    expect(canApprove('Active')).toBe(false);
+  it("maps terminal states to error color", () => {
+    expect(stateColors["Expired"]).toBe("error");
+    expect(stateColors["Terminated"]).toBe("error");
+    expect(stateColors["Failed"]).toBe("error");
   });
 });
 
-describe('Debug Session Validation', () => {
+describe("Debug Session Actions", () => {
+  const canJoin = (state: string) => state === "Active";
+  const canRenew = (state: string, isOwner: boolean) => state === "Active" && isOwner;
+  const canTerminate = (state: string, isOwner: boolean) =>
+    (state === "Active" || state === "Pending" || state === "PendingApproval") && isOwner;
+  const canApprove = (state: string) => state === "PendingApproval";
+
+  it("allows joining only Active sessions", () => {
+    expect(canJoin("Active")).toBe(true);
+    expect(canJoin("Pending")).toBe(false);
+    expect(canJoin("Expired")).toBe(false);
+  });
+
+  it("allows renewing only Active sessions as owner", () => {
+    expect(canRenew("Active", true)).toBe(true);
+    expect(canRenew("Active", false)).toBe(false);
+    expect(canRenew("Pending", true)).toBe(false);
+  });
+
+  it("allows terminating active-like sessions as owner", () => {
+    expect(canTerminate("Active", true)).toBe(true);
+    expect(canTerminate("Pending", true)).toBe(true);
+    expect(canTerminate("PendingApproval", true)).toBe(true);
+    expect(canTerminate("Expired", true)).toBe(false);
+    expect(canTerminate("Active", false)).toBe(false);
+  });
+
+  it("allows approval only for PendingApproval sessions", () => {
+    expect(canApprove("PendingApproval")).toBe(true);
+    expect(canApprove("Pending")).toBe(false);
+    expect(canApprove("Active")).toBe(false);
+  });
+});
+
+describe("Debug Session Validation", () => {
   const validateDuration = (duration: string): boolean => {
     if (!duration) return true; // Empty is valid (uses default)
     const pattern = /^\d+[hms]$/;
     if (!pattern.test(duration)) return false;
     const value = parseInt(duration.slice(0, -1));
     const unit = duration.slice(-1);
-    
+
     // Convert to seconds
     let seconds = value;
-    if (unit === 'm') seconds = value * 60;
-    if (unit === 'h') seconds = value * 3600;
-    
+    if (unit === "m") seconds = value * 60;
+    if (unit === "h") seconds = value * 3600;
+
     // Minimum 1 minute, maximum 24 hours
     return seconds >= 60 && seconds <= 86400;
   };
 
-  it('validates correct durations', () => {
-    expect(validateDuration('1h')).toBe(true);
-    expect(validateDuration('30m')).toBe(true);
-    expect(validateDuration('2h')).toBe(true);
-    expect(validateDuration('')).toBe(true); // Empty uses default
+  it("validates correct durations", () => {
+    expect(validateDuration("1h")).toBe(true);
+    expect(validateDuration("30m")).toBe(true);
+    expect(validateDuration("2h")).toBe(true);
+    expect(validateDuration("")).toBe(true); // Empty uses default
   });
 
-  it('rejects invalid duration formats', () => {
-    expect(validateDuration('invalid')).toBe(false);
-    expect(validateDuration('1')).toBe(false);
-    expect(validateDuration('abc')).toBe(false);
+  it("rejects invalid duration formats", () => {
+    expect(validateDuration("invalid")).toBe(false);
+    expect(validateDuration("1")).toBe(false);
+    expect(validateDuration("abc")).toBe(false);
   });
 
-  it('rejects durations outside allowed range', () => {
-    expect(validateDuration('30s')).toBe(false); // Too short
-    expect(validateDuration('48h')).toBe(false); // Too long
+  it("rejects durations outside allowed range", () => {
+    expect(validateDuration("30s")).toBe(false); // Too short
+    expect(validateDuration("48h")).toBe(false); // Too long
   });
 
   const validateReason = (reason: string): boolean => {
@@ -154,15 +154,15 @@ describe('Debug Session Validation', () => {
     return reason.length >= 10 && reason.length <= 1000;
   };
 
-  it('validates reason length', () => {
-    expect(validateReason('')).toBe(true); // Optional
-    expect(validateReason('Short')).toBe(false); // Too short
-    expect(validateReason('This is a valid reason for debugging')).toBe(true);
-    expect(validateReason('x'.repeat(1001))).toBe(false); // Too long
+  it("validates reason length", () => {
+    expect(validateReason("")).toBe(true); // Optional
+    expect(validateReason("Short")).toBe(false); // Too short
+    expect(validateReason("This is a valid reason for debugging")).toBe(true);
+    expect(validateReason("x".repeat(1001))).toBe(false); // Too long
   });
 });
 
-describe('Debug Session Template Selection', () => {
+describe("Debug Session Template Selection", () => {
   interface Template {
     name: string;
     displayName: string;
@@ -171,74 +171,74 @@ describe('Debug Session Template Selection', () => {
   }
 
   const templates: Template[] = [
-    { name: 'standard-debug', displayName: 'Standard Debug', mode: 'workload', allowedClusters: ['*'] },
-    { name: 'prod-debug', displayName: 'Production Debug', mode: 'workload', allowedClusters: ['prod-*'] },
-    { name: 'kubectl-debug', displayName: 'Kubectl Debug', mode: 'kubectl-debug' }
+    { name: "standard-debug", displayName: "Standard Debug", mode: "workload", allowedClusters: ["*"] },
+    { name: "prod-debug", displayName: "Production Debug", mode: "workload", allowedClusters: ["prod-*"] },
+    { name: "kubectl-debug", displayName: "Kubectl Debug", mode: "kubectl-debug" },
   ];
 
   const matchPattern = (pattern: string, value: string): boolean => {
-    if (pattern === '*') return true;
-    if (pattern.endsWith('*')) {
+    if (pattern === "*") return true;
+    if (pattern.endsWith("*")) {
       return value.startsWith(pattern.slice(0, -1));
     }
-    if (pattern.startsWith('*')) {
+    if (pattern.startsWith("*")) {
       return value.endsWith(pattern.slice(1));
     }
     return pattern === value;
   };
 
   const filterTemplatesForCluster = (templates: Template[], cluster: string): Template[] => {
-    return templates.filter(t => {
+    return templates.filter((t) => {
       if (!t.allowedClusters || t.allowedClusters.length === 0) return true;
-      return t.allowedClusters.some(pattern => matchPattern(pattern, cluster));
+      return t.allowedClusters.some((pattern) => matchPattern(pattern, cluster));
     });
   };
 
-  it('filters templates by cluster', () => {
-    const prodTemplates = filterTemplatesForCluster(templates, 'prod-east');
+  it("filters templates by cluster", () => {
+    const prodTemplates = filterTemplatesForCluster(templates, "prod-east");
     expect(prodTemplates).toHaveLength(3); // standard-debug (*) + prod-debug (prod-*) + kubectl-debug (no restriction)
   });
 
-  it('shows all templates for unrestricted clusters', () => {
-    const allTemplates = filterTemplatesForCluster(templates, 'dev-cluster');
+  it("shows all templates for unrestricted clusters", () => {
+    const allTemplates = filterTemplatesForCluster(templates, "dev-cluster");
     expect(allTemplates.length).toBeGreaterThanOrEqual(2);
   });
 });
 
-describe('Debug Session Participant Management', () => {
+describe("Debug Session Participant Management", () => {
   interface Participant {
     user: string;
-    role: 'owner' | 'participant' | 'viewer';
+    role: "owner" | "participant" | "viewer";
     joinedAt: string;
   }
 
   const isOwner = (participants: Participant[], user: string): boolean => {
-    return participants.some(p => p.user === user && p.role === 'owner');
+    return participants.some((p) => p.user === user && p.role === "owner");
   };
 
   const canLeave = (participants: Participant[], user: string): boolean => {
     // Owners cannot leave, only terminate
-    const participant = participants.find(p => p.user === user);
-    return participant !== undefined && participant.role !== 'owner';
+    const participant = participants.find((p) => p.user === user);
+    return participant !== undefined && participant.role !== "owner";
   };
 
-  it('identifies session owner', () => {
+  it("identifies session owner", () => {
     const participants: Participant[] = [
-      { user: 'owner@example.com', role: 'owner', joinedAt: '2025-01-01T00:00:00Z' },
-      { user: 'viewer@example.com', role: 'viewer', joinedAt: '2025-01-01T00:05:00Z' }
+      { user: "owner@example.com", role: "owner", joinedAt: "2025-01-01T00:00:00Z" },
+      { user: "viewer@example.com", role: "viewer", joinedAt: "2025-01-01T00:05:00Z" },
     ];
 
-    expect(isOwner(participants, 'owner@example.com')).toBe(true);
-    expect(isOwner(participants, 'viewer@example.com')).toBe(false);
+    expect(isOwner(participants, "owner@example.com")).toBe(true);
+    expect(isOwner(participants, "viewer@example.com")).toBe(false);
   });
 
-  it('prevents owner from leaving', () => {
+  it("prevents owner from leaving", () => {
     const participants: Participant[] = [
-      { user: 'owner@example.com', role: 'owner', joinedAt: '2025-01-01T00:00:00Z' },
-      { user: 'participant@example.com', role: 'participant', joinedAt: '2025-01-01T00:05:00Z' }
+      { user: "owner@example.com", role: "owner", joinedAt: "2025-01-01T00:00:00Z" },
+      { user: "participant@example.com", role: "participant", joinedAt: "2025-01-01T00:05:00Z" },
     ];
 
-    expect(canLeave(participants, 'owner@example.com')).toBe(false);
-    expect(canLeave(participants, 'participant@example.com')).toBe(true);
+    expect(canLeave(participants, "owner@example.com")).toBe(false);
+    expect(canLeave(participants, "participant@example.com")).toBe(true);
   });
 });

@@ -227,12 +227,14 @@ function baseDebugSession({
   scheduledStartTime,
 }) {
   const creationTimestamp = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-  const startsAt = scheduledStartTime || (state === "Active" ? new Date(Date.now() - 15 * 60 * 1000).toISOString() : undefined);
-  const expiresAt = state === "Active" || state === "PendingApproval" 
-    ? new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString()
-    : state === "Expired" 
-      ? new Date(Date.now() - 30 * 60 * 1000).toISOString()
-      : undefined;
+  const startsAt =
+    scheduledStartTime || (state === "Active" ? new Date(Date.now() - 15 * 60 * 1000).toISOString() : undefined);
+  const expiresAt =
+    state === "Active" || state === "PendingApproval"
+      ? new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString()
+      : state === "Expired"
+        ? new Date(Date.now() - 30 * 60 * 1000).toISOString()
+        : undefined;
 
   return {
     metadata: {
@@ -253,10 +255,7 @@ function baseDebugSession({
       startsAt,
       expiresAt,
       renewalCount,
-      participants: [
-        { user: requestedBy, role: "owner", joinedAt: creationTimestamp },
-        ...participants,
-      ],
+      participants: [{ user: requestedBy, role: "owner", joinedAt: creationTimestamp }, ...participants],
       allowedPods,
       ...(approvedBy && { approvedBy, approvedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString() }),
       ...(rejectedBy && { rejectedBy, rejectedAt: new Date().toISOString(), rejectionReason }),
@@ -397,38 +396,44 @@ export function createDebugSession(body = {}) {
 export function updateDebugSessionState(name, state, opts = {}) {
   const session = debugSessions.get(name);
   if (!session) return null;
-  
+
   session.status.state = state;
-  
+
   if (state === "Active") {
     session.status.approvedBy = opts.approvedBy || CURRENT_USER_EMAIL;
     session.status.approvedAt = new Date().toISOString();
     session.status.startsAt = new Date().toISOString();
     session.status.expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     session.status.allowedPods = [
-      { name: `netshoot-${randomUUID().slice(0, 5)}`, namespace: "breakglass-debug", nodeName: "node-1", ready: true, phase: "Running" },
+      {
+        name: `netshoot-${randomUUID().slice(0, 5)}`,
+        namespace: "breakglass-debug",
+        nodeName: "node-1",
+        ready: true,
+        phase: "Running",
+      },
     ];
   }
-  
+
   if (state === "Failed" || state === "Rejected") {
     session.status.rejectedBy = opts.rejectedBy || CURRENT_USER_EMAIL;
     session.status.rejectedAt = new Date().toISOString();
     session.status.rejectionReason = opts.reason || "Rejected via mock API";
   }
-  
+
   if (state === "Terminated") {
     session.status.terminatedBy = CURRENT_USER_EMAIL;
     session.status.terminatedAt = new Date().toISOString();
     session.status.terminationReason = opts.reason || "Terminated by user";
   }
-  
+
   return session;
 }
 
 export function joinDebugSession(name, role = "viewer") {
   const session = debugSessions.get(name);
   if (!session) return null;
-  
+
   const existing = session.status.participants?.find((p) => p.user === CURRENT_USER_EMAIL);
   if (!existing) {
     session.status.participants = session.status.participants || [];
@@ -438,35 +443,36 @@ export function joinDebugSession(name, role = "viewer") {
       joinedAt: new Date().toISOString(),
     });
   }
-  
+
   return session;
 }
 
 export function leaveDebugSession(name) {
   const session = debugSessions.get(name);
   if (!session) return null;
-  
+
   const participant = session.status.participants?.find((p) => p.user === CURRENT_USER_EMAIL);
   if (participant && participant.role !== "owner") {
     participant.leftAt = new Date().toISOString();
   }
-  
+
   return session;
 }
 
 export function renewDebugSession(name, extendBy = "1h") {
   const session = debugSessions.get(name);
   if (!session) return null;
-  
+
   // Parse extendBy (simple parsing for mock)
   const hours = parseInt(extendBy) || 1;
   session.status.expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
   session.status.renewalCount = (session.status.renewalCount || 0) + 1;
-  
+
   return session;
 }
 
-export function listDebugSessionTemplates(userGroups = []) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function listDebugSessionTemplates(_userGroups = []) {
   // In real API, this filters by user's group membership
   // For mock, we return all templates
   const templates = Array.from(debugSessionTemplates.values()).map((t) => ({

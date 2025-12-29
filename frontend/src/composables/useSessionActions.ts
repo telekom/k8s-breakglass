@@ -217,7 +217,7 @@ export function useSessionActions(handlers: ActionHandlers, permissions?: Action
   async function executeAction(
     session: SessionCR,
     action: SessionActionType,
-    options: { skipConfirm?: boolean; onSuccess?: () => void; onError?: (error: string) => void } = {}
+    options: { skipConfirm?: boolean; onSuccess?: () => void; onError?: (error: string) => void } = {},
   ): Promise<boolean> {
     const handler = handlers[action];
     if (!handler) {
