@@ -15,14 +15,17 @@ on:
     - cron: '0 3 * * 0'
   workflow_dispatch: {}
 
+# Declare minimal permissions at workflow level, grant write at job level
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   analyze-go:
     name: Analyze Go
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -50,6 +53,9 @@ jobs:
   analyze-javascript:
     name: Analyze JavaScript/TypeScript
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
