@@ -33,7 +33,7 @@ jobs:
           make manifests
           tar -czf manifests-${{ github.ref_name }}.tgz config/crd/bases
       - name: Upload manifests artifact
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: manifests
           path: manifests-${{ github.ref_name }}.tgz
@@ -46,7 +46,7 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           install: true
       - name: Docker meta
@@ -129,7 +129,7 @@ jobs:
             manifests-${{ github.ref_name }}.tgz
           generate_release_notes: true
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@43a17d6e7add2b5535efe4dcae9952337c479a93 # v0.20.11
+        uses: anchore/sbom-action@a930d0ac434e3182448fe678398ba5713717112a # v0.21.0
         if: ${{ false }}
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
@@ -165,7 +165,7 @@ jobs:
         # Temporarily disabled because ACTIONS_ID_TOKEN_REQUEST_URL isn't available in some runners
         # Re-enable by removing or changing the `if` condition when the environment supports id-token requests.
         if: ${{ false }}
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        uses: actions/attest-build-provenance@00014ed6ed5efc5b1ab7f7f34a39eb55d41aa4f8 # v3.1.0
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
