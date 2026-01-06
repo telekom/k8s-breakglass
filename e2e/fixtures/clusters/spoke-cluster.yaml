@@ -1,0 +1,49 @@
+# Test ClusterConfig: Spoke Cluster
+# Configuration for a spoke cluster in hub-spoke topology
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: test-spoke-cluster
+  labels:
+    e2e-test: "true"
+    environment: test
+    region: eu
+spec:
+  clusterID: spoke-cluster-1
+  tenant: test-tenant
+  environment: e2e
+  location: eu-central-1
+  kubeconfigSecretRef:
+    name: spoke-cluster-kubeconfig
+    namespace: default
+    key: kubeconfig
+  blockSelfApproval: true
+---
+# Secret containing mock kubeconfig for test
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spoke-cluster-kubeconfig
+  namespace: default
+  labels:
+    e2e-test: "true"
+type: Opaque
+stringData:
+  kubeconfig: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+    - cluster:
+        server: https://spoke-cluster.example.com:6443
+        certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUM9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+      name: spoke-cluster
+    contexts:
+    - context:
+        cluster: spoke-cluster
+        user: admin
+      name: spoke-cluster
+    current-context: spoke-cluster
+    users:
+    - name: admin
+      user:
+        token: test-token-placeholder

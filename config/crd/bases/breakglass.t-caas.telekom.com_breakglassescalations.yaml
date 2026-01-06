@@ -189,12 +189,6 @@ spec:
                 minLength: 1
                 pattern: ^[a-zA-Z0-9._-]+$
                 type: string
-              idleTimeout:
-                default: 1h
-                description: idleTimeout is the maximum amount of time a session for
-                  this escalation can sit idle without being used.
-                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
-                type: string
               mailProvider:
                 description: |-
                   mailProvider specifies which MailProvider to use for email notifications for this escalation.

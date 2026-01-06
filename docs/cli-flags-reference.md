@@ -759,6 +759,25 @@ Priority order (highest to lowest):
 2. Environment variable
 3. Default value
 
+### Runtime Environment Variables
+
+The following environment variables control runtime behavior that are not exposed as CLI flags:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CLEANUP_INTERVAL` | How often the cleanup routine runs to check for expired sessions. Use shorter values (e.g., `10s`) for testing. | `5m` |
+| `DEBUG_SESSION_RETENTION_PERIOD` | How long terminated/expired debug sessions are kept for audit purposes before being deleted. | `168h` (7 days) |
+
+**Example:**
+
+```bash
+# Set faster cleanup for testing
+export CLEANUP_INTERVAL=10s
+
+# Keep debug sessions for 30 days
+export DEBUG_SESSION_RETENTION_PERIOD=720h
+```
+
 ---
 
 ## Deployment Examples

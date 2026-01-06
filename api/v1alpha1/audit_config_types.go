@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,7 +17,15 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // AuditConfigSpec defines the audit trail configuration.
@@ -226,6 +234,13 @@ type WebhookSinkSpec struct {
 	// +kubebuilder:validation:Maximum=1000
 	// +optional
 	BatchSize int `json:"batchSize,omitempty"`
+
+	// BatchURL is an optional separate endpoint for batch requests.
+	// If not specified, the main URL is used for both single and batch writes.
+	// This allows using different endpoints for single vs batch operations.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https?://.+`
+	BatchURL string `json:"batchUrl,omitempty"`
 }
 
 // WebhookTLSSpec configures TLS for webhook connections.
@@ -345,7 +360,7 @@ type AuditFilterConfig struct {
 type AuditSamplingConfig struct {
 	// Rate is the sampling rate (0.0 to 1.0).
 	// 1.0 = capture all, 0.1 = capture 10%.
-	// +kubebuilder:default=1.0
+	// +kubebuilder:default="1.0"
 	// +optional
 	Rate string `json:"rate,omitempty"`
 
@@ -426,6 +441,67 @@ type AuditConfig struct {
 	Spec   AuditConfigSpec   `json:"spec,omitempty"`
 	Status AuditConfigStatus `json:"status,omitempty"`
 }
+
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-auditconfig,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=auditconfigs,verbs=create;update,versions=v1alpha1,name=auditconfig.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
+
+// SetupWebhookWithManager registers webhooks for AuditConfig
+func (ac *AuditConfig) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	webhookClient = mgr.GetClient()
+	if c := mgr.GetCache(); c != nil {
+		webhookCache = c
+	}
+	return ctrl.NewWebhookManagedBy(mgr).
+		For(ac).
+		WithValidator(ac).
+		Complete()
+}
+
+// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
+func (ac *AuditConfig) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	auditConfig, ok := obj.(*AuditConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected an AuditConfig object but got %T", obj)
+	}
+
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateAuditConfig(auditConfig)
+	if len(result.Errors) == 0 {
+		return result.Warnings, nil
+	}
+	return result.Warnings, apierrors.NewInvalid(
+		schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "AuditConfig"},
+		auditConfig.Name,
+		result.Errors,
+	)
+}
+
+// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
+func (ac *AuditConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	auditConfig, ok := newObj.(*AuditConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected an AuditConfig object but got %T", newObj)
+	}
+
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateAuditConfig(auditConfig)
+	if len(result.Errors) == 0 {
+		return result.Warnings, nil
+	}
+	return result.Warnings, apierrors.NewInvalid(
+		schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "AuditConfig"},
+		auditConfig.Name,
+		result.Errors,
+	)
+}
+
+// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
+func (ac *AuditConfig) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	// No validation needed for delete
+	return nil, nil
+}
+
+// Ensure AuditConfig implements the CustomValidator interface
+var _ admission.CustomValidator = &AuditConfig{}
 
 // +kubebuilder:object:root=true
 

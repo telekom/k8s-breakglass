@@ -5,6 +5,10 @@ metadata:
   namespace: breakglass-dev-system
 spec:
   primary: true
+  # Issuer URL must match the 'iss' claim in JWT tokens from Keycloak
+  issuer: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e"
   oidc:
     authority: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e"
     clientID: "breakglass-ui"
+    # Skip TLS verification for self-signed Keycloak certificate in dev/e2e environment
+    insecureSkipVerify: true

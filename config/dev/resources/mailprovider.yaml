@@ -1,7 +1,7 @@
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: MailProvider
 metadata:
-  name: dev-mailhog
+  name: mailhog
 spec:
   displayName: "Development MailHog"
   default: true

@@ -8,11 +8,13 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/api"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
+	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -68,7 +70,9 @@ func NewManager(
 // - Metrics server configuration with secure serving
 // - Field index setup for efficient queries
 // - IdentityProvider reconciler setup
+// - MailProvider reconciler setup with mail service hot-reload
 // - DebugSession reconciler setup
+// - AuditConfig reconciler setup with audit service wiring
 // - Manager startup and leader election
 // - Broadcasting leadership signal to background loops when acquired
 func Setup(
@@ -77,6 +81,8 @@ func Setup(
 	idpLoader *config.IdentityProviderLoader,
 	server *api.Server,
 	ccProvider *cluster.ClientProvider,
+	auditService *audit.Service,
+	mailService *mail.Service,
 	log *zap.SugaredLogger,
 ) error {
 	// Register health check handlers for liveness and readiness probes
@@ -118,6 +124,27 @@ func Setup(
 	}
 	log.Infow("Successfully registered IdentityProvider reconciler", "resyncPeriod", "10m")
 
+	// Register MailProvider Reconciler with controller-runtime manager
+	log.Debugw("Setting up MailProvider reconciler")
+	mailProviderReconciler := &config.MailProviderReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Log:    log.Named("mail-provider-reconciler"),
+		Loader: config.NewMailProviderLoader(mgr.GetClient()).WithLogger(log),
+		OnMailProviderChange: func(providerName string) {
+			log.Infow("MailProvider changed, reloading mail service", "provider", providerName)
+			if mailService != nil {
+				if err := mailService.Reload(context.Background()); err != nil {
+					log.Warnw("Failed to reload mail service after MailProvider change", "error", err)
+				}
+			}
+		},
+	}
+	if err := mailProviderReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup MailProvider reconciler with manager: %w", err)
+	}
+	log.Infow("Successfully registered MailProvider reconciler")
+
 	// Register BreakglassEscalation Reconciler with controller-runtime manager
 	log.Debugw("Setting up BreakglassEscalation reconciler")
 	escalationReconciler := config.NewEscalationReconciler(
@@ -155,13 +182,27 @@ func Setup(
 		mgr.GetClient(),
 		log,
 		mgr.GetEventRecorderFor("breakglass-audit-controller"),
-		func(ctx context.Context, auditCfg *breakglassv1alpha1.AuditConfig) error {
-			// TODO: Wire up audit manager reload when audit system is fully integrated
-			if auditCfg == nil {
-				log.Infow("AuditConfig deleted or disabled - audit logging stopped")
+		func(ctx context.Context, auditConfigs []*breakglassv1alpha1.AuditConfig) error {
+			// Reload audit service with aggregated configuration from all AuditConfigs
+			if auditService == nil {
+				log.Warnw("AuditConfig changed but audit service is nil - skipping reload")
 				return nil
 			}
-			log.Infow("AuditConfig reloaded", "name", auditCfg.Name, "enabled", auditCfg.Spec.Enabled, "sinks", len(auditCfg.Spec.Sinks))
+			if err := auditService.ReloadMultiple(ctx, auditConfigs); err != nil {
+				log.Errorw("Failed to reload audit service", "error", err)
+				return err
+			}
+			if len(auditConfigs) == 0 {
+				log.Infow("No enabled AuditConfigs found - audit logging stopped")
+			} else {
+				var names []string
+				totalSinks := 0
+				for _, cfg := range auditConfigs {
+					names = append(names, cfg.Name)
+					totalSinks += len(cfg.Spec.Sinks)
+				}
+				log.Infow("AuditConfigs reloaded (aggregated)", "configs", names, "totalSinks", totalSinks)
+			}
 			return nil
 		},
 		func(ctx context.Context, err error) {
@@ -170,6 +211,25 @@ func Setup(
 		},
 		10*time.Minute,
 	)
+
+	// Set up sink health provider to report circuit breaker status
+	if auditService != nil {
+		auditConfigReconciler.SetSinkHealthProvider(func() []config.SinkHealthInfo {
+			sinkHealth := auditService.GetSinkHealth()
+			result := make([]config.SinkHealthInfo, len(sinkHealth))
+			for i, h := range sinkHealth {
+				result[i] = config.SinkHealthInfo{
+					Name:                h.Name,
+					Ready:               h.Healthy,
+					CircuitState:        h.CircuitState,
+					ConsecutiveFailures: h.ConsecutiveFailures,
+					LastError:           h.LastError,
+				}
+			}
+			return result
+		})
+	}
+
 	if err := auditConfigReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup AuditConfig reconciler with manager: %w", err)
 	}

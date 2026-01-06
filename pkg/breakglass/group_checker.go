@@ -65,10 +65,28 @@ func CanGroupsDo(ctx context.Context,
 		zap.S().Errorw("Failed to create client for CanGroupsDo", "error", err.Error())
 		return false, errors.Wrap(err, "failed to create client")
 	}
-	if sar.Spec.ResourceAttributes == nil {
-		return false, errors.New("sar spec.resourceAttributes is nil")
+
+	// Build SelfSubjectAccessReview spec based on whether we have resource or non-resource attributes
+	var v1SarSpec authorizationv1.SelfSubjectAccessReviewSpec
+	if sar.Spec.ResourceAttributes != nil {
+		v1SarSpec.ResourceAttributes = &authorizationv1.ResourceAttributes{
+			Namespace:   sar.Spec.ResourceAttributes.Namespace,
+			Verb:        sar.Spec.ResourceAttributes.Verb,
+			Group:       sar.Spec.ResourceAttributes.Group,
+			Resource:    sar.Spec.ResourceAttributes.Resource,
+			Subresource: sar.Spec.ResourceAttributes.Subresource,
+			Name:        sar.Spec.ResourceAttributes.Name,
+		}
+	} else if sar.Spec.NonResourceAttributes != nil {
+		v1SarSpec.NonResourceAttributes = &authorizationv1.NonResourceAttributes{
+			Path: sar.Spec.NonResourceAttributes.Path,
+			Verb: sar.Spec.NonResourceAttributes.Verb,
+		}
+	} else {
+		return false, errors.New("sar spec must have either resourceAttributes or nonResourceAttributes")
 	}
-	v1Sar := authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: sar.Spec.ResourceAttributes.Namespace, Verb: sar.Spec.ResourceAttributes.Verb, Group: sar.Spec.ResourceAttributes.Group, Resource: sar.Spec.ResourceAttributes.Resource, Subresource: sar.Spec.ResourceAttributes.Subresource, Name: sar.Spec.ResourceAttributes.Resource}}}
+
+	v1Sar := authorizationv1.SelfSubjectAccessReview{Spec: v1SarSpec}
 	response, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &v1Sar, metav1.CreateOptions{})
 	if err != nil {
 		zap.S().Errorw("Failed to create SelfSubjectAccessReview", "error", err.Error())

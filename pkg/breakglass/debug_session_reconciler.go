@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
@@ -53,9 +54,10 @@ const (
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	log        *zap.SugaredLogger
-	client     ctrlclient.Client
-	ccProvider *cluster.ClientProvider
+	log          *zap.SugaredLogger
+	client       ctrlclient.Client
+	ccProvider   *cluster.ClientProvider
+	auditManager *audit.Manager
 }
 
 // NewDebugSessionController creates a new DebugSessionController
@@ -65,6 +67,12 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 		client:     client,
 		ccProvider: ccProvider,
 	}
+}
+
+// WithAuditManager sets the audit manager for the controller
+func (c *DebugSessionController) WithAuditManager(am *audit.Manager) *DebugSessionController {
+	c.auditManager = am
+	return c
 }
 
 // SetupWithManager sets up the controller with the Manager
@@ -97,6 +105,24 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		log.Errorw("Failed to get DebugSession", "error", err)
 		return ctrl.Result{}, err
+	}
+
+	// Perform structural validation using shared validation function.
+	// This catches malformed resources that somehow bypassed the admission webhook.
+	validationResult := v1alpha1.ValidateDebugSession(ds)
+	if !validationResult.IsValid() {
+		log.Warnw("DebugSession failed structural validation, skipping reconciliation",
+			"errors", validationResult.ErrorMessage())
+
+		// Update status condition to reflect validation failure
+		ds.Status.State = v1alpha1.DebugSessionStateFailed
+		ds.Status.Message = fmt.Sprintf("Validation failed: %s", validationResult.ErrorMessage())
+		if statusErr := c.client.Status().Update(ctx, ds); statusErr != nil {
+			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
+		}
+
+		// Return nil error to skip requeue - malformed resource won't fix itself
+		return ctrl.Result{}, nil
 	}
 
 	log = log.With("state", ds.Status.State, "cluster", ds.Spec.Cluster)
@@ -276,10 +302,33 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
 }
 
-// failSession marks a session as failed
+// failSession marks a session as failed and logs the failure
 func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.DebugSession, reason string) (ctrl.Result, error) {
+	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
+
+	// Log the failure with full context
+	log.Errorw("Debug session failed",
+		"reason", reason,
+		"template", ds.Spec.TemplateRef,
+		"requestedBy", ds.Spec.RequestedBy,
+		"previousState", ds.Status.State,
+	)
+
+	// Emit audit event if audit manager is configured
+	if c.auditManager != nil {
+		c.auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, map[string]interface{}{
+			"template":       ds.Spec.TemplateRef,
+			"requested_by":   ds.Spec.RequestedBy,
+			"previous_state": string(ds.Status.State),
+		})
+	}
+
 	ds.Status.State = v1alpha1.DebugSessionStateFailed
 	ds.Status.Message = reason
+
+	// Increment failure metric
+	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
+
 	return ctrl.Result{}, c.client.Status().Update(ctx, ds)
 }
 
@@ -373,6 +422,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 		return fmt.Errorf("failed to build workload: %w", err)
 	}
 
+	// Capture GVK before Create call as Kubernetes client clears TypeMeta after creation
+	gvk := workload.GetObjectKind().GroupVersionKind()
+
 	if err := targetClient.Create(ctx, workload); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			log.Infow("Debug workload already exists", "name", workload.GetName())
@@ -382,10 +434,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 		}
 	}
 
-	// Record deployed resource
+	// Record deployed resource using captured GVK
 	ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
-		APIVersion: workload.GetObjectKind().GroupVersionKind().GroupVersion().String(),
-		Kind:       workload.GetObjectKind().GroupVersionKind().Kind,
+		APIVersion: gvk.GroupVersion().String(),
+		Kind:       gvk.Kind,
 		Name:       workload.GetName(),
 		Namespace:  targetNs,
 	})
@@ -393,7 +445,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 	log.Infow("Deployed debug workload",
 		"name", workload.GetName(),
 		"namespace", targetNs,
-		"kind", workload.GetObjectKind().GroupVersionKind().Kind)
+		"kind", gvk.Kind)
 
 	return nil
 }
@@ -419,6 +471,19 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 	workloadType := template.Spec.WorkloadType
 	if workloadType == "" {
 		workloadType = v1alpha1.DebugWorkloadDaemonSet
+	}
+
+	// Enforce RestartPolicy: Always for DaemonSets and Deployments
+	// These workload types require Always restart policy
+	if workloadType == v1alpha1.DebugWorkloadDaemonSet || workloadType == v1alpha1.DebugWorkloadDeployment {
+		if podSpec.RestartPolicy != corev1.RestartPolicyAlways {
+			c.log.Debugw("Overriding RestartPolicy to Always for workload type",
+				"workloadType", workloadType,
+				"originalPolicy", podSpec.RestartPolicy,
+				"debugSession", ds.Name,
+			)
+			podSpec.RestartPolicy = corev1.RestartPolicyAlways
+		}
 	}
 
 	switch workloadType {
@@ -562,11 +627,13 @@ func (c *DebugSessionController) convertDebugPodSpec(dps v1alpha1.DebugPodSpecIn
 	return spec
 }
 
-// updateAllowedPods updates the list of pods users can exec into
+// updateAllowedPods updates the list of pods users can exec into and monitors pod health
 func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1alpha1.DebugSession) error {
 	if c.ccProvider == nil {
 		return nil
 	}
+
+	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
@@ -597,6 +664,10 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1al
 				break
 			}
 		}
+
+		// Monitor pod phase for failures
+		c.monitorPodHealth(ctx, ds, &pod, log)
+
 		allowedPods = append(allowedPods, v1alpha1.AllowedPodRef{
 			Namespace: pod.Namespace,
 			Name:      pod.Name,
@@ -607,6 +678,87 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1al
 
 	ds.Status.AllowedPods = allowedPods
 	return c.client.Status().Update(ctx, ds)
+}
+
+// monitorPodHealth checks pod status and emits audit events for failures/restarts
+func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *v1alpha1.DebugSession, pod *corev1.Pod, log *zap.SugaredLogger) {
+	// Check for pod phase failures
+	if pod.Status.Phase == corev1.PodFailed {
+		reason := pod.Status.Reason
+		message := pod.Status.Message
+		if reason == "" {
+			reason = "Unknown"
+		}
+		if message == "" {
+			message = "Pod failed without message"
+		}
+
+		log.Warnw("Debug session pod failed",
+			"pod", pod.Name,
+			"podNamespace", pod.Namespace,
+			"reason", reason,
+			"message", message,
+			"node", pod.Spec.NodeName,
+		)
+
+		if c.auditManager != nil {
+			c.auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, reason, message)
+		}
+		metrics.DebugSessionPodFailures.WithLabelValues(ds.Spec.Cluster, ds.Name, reason).Inc()
+	}
+
+	// Check container statuses for restarts and failures
+	for _, cs := range pod.Status.ContainerStatuses {
+		// Check for container restarts
+		if cs.RestartCount > 0 {
+			lastTerminationReason := ""
+			if cs.LastTerminationState.Terminated != nil {
+				lastTerminationReason = cs.LastTerminationState.Terminated.Reason
+				if lastTerminationReason == "" {
+					lastTerminationReason = fmt.Sprintf("ExitCode=%d", cs.LastTerminationState.Terminated.ExitCode)
+				}
+			}
+
+			log.Warnw("Debug session container has restarted",
+				"pod", pod.Name,
+				"podNamespace", pod.Namespace,
+				"container", cs.Name,
+				"restartCount", cs.RestartCount,
+				"lastTerminationReason", lastTerminationReason,
+			)
+
+			if c.auditManager != nil {
+				c.auditManager.DebugSessionPodRestarted(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, cs.RestartCount, lastTerminationReason)
+			}
+			metrics.DebugSessionPodRestarts.WithLabelValues(ds.Spec.Cluster, ds.Name).Inc()
+		}
+
+		// Check for waiting state issues (CrashLoopBackOff, ImagePullBackOff, etc.)
+		if cs.State.Waiting != nil {
+			waitingReason := cs.State.Waiting.Reason
+			waitingMessage := cs.State.Waiting.Message
+
+			// Log significant waiting states
+			if waitingReason == "CrashLoopBackOff" ||
+				waitingReason == "ImagePullBackOff" ||
+				waitingReason == "ErrImagePull" ||
+				waitingReason == "CreateContainerConfigError" ||
+				waitingReason == "CreateContainerError" {
+				log.Warnw("Debug session container in problematic waiting state",
+					"pod", pod.Name,
+					"podNamespace", pod.Namespace,
+					"container", cs.Name,
+					"waitingReason", waitingReason,
+					"waitingMessage", waitingMessage,
+				)
+
+				if c.auditManager != nil {
+					c.auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, waitingReason, waitingMessage)
+				}
+				metrics.DebugSessionPodFailures.WithLabelValues(ds.Spec.Cluster, ds.Name, waitingReason).Inc()
+			}
+		}
+	}
 }
 
 // cleanupResources removes deployed resources from the target cluster

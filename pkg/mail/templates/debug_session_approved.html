@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+  <style>
+    body {
+      font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
+      color: #333;
+      line-height: 1.6;
+      background-color: #f5f5f5;
+    }
+
+    .container {
+      max-width: 650px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: white;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+      color: white;
+      padding: 30px 20px;
+      text-align: center;
+      border-radius: 12px 12px 0 0;
+      margin: -20px -20px 0 -20px;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: bold;
+    }
+
+    .header-subtitle {
+      margin: 10px 0 0 0;
+      font-size: 0.95rem;
+      opacity: 0.95;
+    }
+
+    .success-badge {
+      display: inline-block;
+      background-color: rgba(255, 255, 255, 0.3);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      margin-top: 10px;
+    }
+
+    .section {
+      margin: 25px 0;
+      padding: 20px;
+      border-radius: 8px;
+      border-left: 4px solid #4CAF50;
+    }
+
+    .section.primary {
+      background-color: #f0f8f0;
+      border-left-color: #4CAF50;
+    }
+
+    .section.info {
+      background-color: #f8f9fa;
+      border-left-color: #2196F3;
+    }
+
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: bold;
+      margin: 0 0 15px 0;
+      color: #1b5e20;
+    }
+
+    .section.info .section-title {
+      color: #1565c0;
+    }
+
+    .detail-row {
+      display: flex;
+      margin: 12px 0;
+      font-size: 0.95rem;
+    }
+
+    .detail-label {
+      font-weight: 600;
+      color: #555;
+      min-width: 140px;
+      flex-shrink: 0;
+    }
+
+    .detail-value {
+      color: #333;
+      word-break: break-word;
+      flex: 1;
+    }
+
+    .approver-card {
+      background-color: #e8f5e9;
+      border: 1px solid #c8e6c9;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 15px 0;
+    }
+
+    .approver-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #2e7d32;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .approver-name {
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #1b5e20;
+      margin: 4px 0;
+    }
+
+    .approver-email {
+      font-size: 0.9rem;
+      color: #666;
+      margin: 0;
+    }
+
+    .next-steps {
+      background-color: #e3f2fd;
+      border-left-color: #2196F3;
+      border-left: 4px solid #2196F3;
+      padding: 16px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+
+    .next-steps-title {
+      font-weight: bold;
+      color: #1565c0;
+      margin: 0 0 10px 0;
+      font-size: 1rem;
+    }
+
+    .next-steps ul {
+      margin: 10px 0 0 0;
+      padding-left: 20px;
+      color: #1565c0;
+    }
+
+    .next-steps li {
+      margin: 6px 0;
+      font-size: 0.95rem;
+    }
+
+    .highlight {
+      font-weight: bold;
+      color: #1b5e20;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #e0e0e0;
+      margin: 20px 0;
+    }
+
+    .audit-notice {
+      background-color: #f3e5f5;
+      border-left: 4px solid #9c27b0;
+      padding: 16px;
+      border-radius: 8px;
+      margin: 20px 0;
+      font-size: 0.9rem;
+    }
+
+    .audit-notice-title {
+      font-weight: bold;
+      color: #6a1b9a;
+      margin: 0 0 8px 0;
+    }
+
+    .audit-notice-text {
+      color: #4a148c;
+      line-height: 1.5;
+    }
+
+    .debug-badge {
+      display: inline-block;
+      background-color: #9c27b0;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      margin-left: 8px;
+    }
+
+    .icon {
+      margin-right: 6px;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+    }
+
+    .footer-text {
+      font-size: 0.85rem;
+      color: #999;
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>✓ Debug Session Approved</h1>
+      <p class="header-subtitle">Your debug session request has been approved</p>
+      <div class="success-badge">✓ APPROVED</div>
+    </div>
+
+    <!-- Requester Section -->
+    <div class="section primary">
+      <div class="detail-row">
+        <div class="detail-label"><span class="icon">👤</span> Requestor:</div>
+        <div>
+          <div class="detail-value" style="font-weight: bold; font-size: 1rem;">{{ .RequesterName }}</div>
+          <div class="detail-value" style="font-size: 0.9rem; color: #666;">{{ .RequesterEmail }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Session Details Section -->
+    <div class="section info">
+      <div class="section-title"><span class="icon">🔧</span> Debug Session Details</div>
+      
+      <div class="detail-row">
+        <div class="detail-label">Session ID:</div>
+        <div class="detail-value" style="font-family: monospace; font-size: 0.9rem;">{{ .SessionID }}<span class="debug-badge">DEBUG</span></div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Cluster:</div>
+        <div class="detail-value"><span class="highlight">{{ .Cluster }}</span></div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Template:</div>
+        <div class="detail-value">{{ .TemplateName }}</div>
+      </div>
+
+      {{ if .Namespace }}
+      <div class="detail-row">
+        <div class="detail-label">Namespace:</div>
+        <div class="detail-value">{{ .Namespace }}</div>
+      </div>
+      {{ end }}
+
+      <div class="approver-card">
+        <div class="approver-label">Approved By</div>
+        <div class="approver-name">{{ .ApproverName }}</div>
+        <div class="approver-email">{{ .ApproverEmail }}</div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Approved At:</div>
+        <div class="detail-value">{{ .ApprovedAt }}</div>
+      </div>
+
+      {{ if .ApprovalReason }}
+      <div class="detail-row">
+        <div class="detail-label">Approver Notes:</div>
+        <div class="detail-value" style="font-style: italic;">{{ .ApprovalReason }}</div>
+      </div>
+      {{ end }}
+    </div>
+
+    <!-- Timing Information -->
+    <div class="section info">
+      <div class="section-title"><span class="icon">📅</span> Session Timing</div>
+      
+      <div class="detail-row">
+        <div class="detail-label">Status:</div>
+        <div class="detail-value"><span style="background-color: #c8e6c9; padding: 2px 6px; border-radius: 4px; font-weight: bold;">READY TO START</span></div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Duration:</div>
+        <div class="detail-value">{{ .Duration }}</div>
+      </div>
+
+      {{ if .ExpiresAt }}
+      <div class="detail-row">
+        <div class="detail-label">Expires At:</div>
+        <div class="detail-value"><span class="highlight">{{ .ExpiresAt }}</span></div>
+      </div>
+      {{ end }}
+    </div>
+
+    <!-- Audit Notice -->
+    <div class="audit-notice">
+      <div class="audit-notice-title">🔐 Audit & Compliance Notice</div>
+      <div class="audit-notice-text">
+        <strong>All activity in this debug session is recorded.</strong><br>
+        Every command executed, file accessed, and action taken will be logged for compliance and security review.
+      </div>
+    </div>
+
+    <!-- Next Steps -->
+    <div class="next-steps">
+      <div class="next-steps-title">📋 What Happens Next?</div>
+      <ul>
+        <li>The debug pod will be created in the target cluster</li>
+        <li>You will be able to connect once the pod is running</li>
+        <li>All terminal activity will be logged and audited</li>
+        <li>The session will automatically terminate after the duration expires</li>
+        <li>You can invite other participants to join your session</li>
+      </ul>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Support Section -->
+    <div style="text-align: center; font-size: 0.9rem; color: #666; margin-top: 20px;">
+      <p style="margin: 0;">
+        <strong>Questions?</strong> Contact your cluster administrator or escalation team.
+      </p>
+      <p style="margin: 5px 0 0 0; font-size: 0.85rem; color: #999;">
+        This is an automated notification from {{ .BrandingName }}. Do not reply to this email.
+      </p>
+    </div>
+
+    <div class="footer">
+      <p class="footer-text">
+        Debug sessions provide temporary pod access for troubleshooting. Use responsibly and follow your organization's policies.
+      </p>
+    </div>
+  </div>
+</body>
+
+</html>

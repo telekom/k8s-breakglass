@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -253,54 +253,15 @@ func (mp *MailProvider) ValidateDelete(ctx context.Context, obj runtime.Object) 
 
 // validate performs validation on MailProvider
 func (mp *MailProvider) validate() (admission.Warnings, error) {
-	var allErrs field.ErrorList
 	warnings := admission.Warnings{}
 
-	// Validate SMTP configuration
-	if err := mp.validateSMTP(); err != nil {
-		allErrs = append(allErrs, err...)
-	}
-
-	// Validate sender configuration
-	if err := mp.validateSender(); err != nil {
-		allErrs = append(allErrs, err...)
-	}
-
-	// Warn if insecureSkipVerify is enabled
-	if mp.Spec.SMTP.InsecureSkipVerify {
-		warnings = append(warnings, "insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing!")
-	}
-
-	// Warn if authentication is not configured
-	if mp.Spec.SMTP.Username == "" && mp.Spec.SMTP.PasswordRef == nil {
-		warnings = append(warnings, "No SMTP authentication configured - ensure your SMTP server allows unauthenticated connections")
-	}
-
-	if len(allErrs) > 0 {
-		return warnings, apierrors.NewInvalid(
-			schema.GroupKind{Group: GroupVersion.Group, Kind: "MailProvider"},
-			mp.Name,
-			allErrs,
-		)
-	}
-
-	return warnings, nil
-}
-
-// validateSMTP validates SMTP configuration
-func (mp *MailProvider) validateSMTP() field.ErrorList {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateMailProvider(mp)
 	var allErrs field.ErrorList
+	allErrs = append(allErrs, result.Errors...)
+
+	// Additional webhook-specific validations (SMTP auth consistency)
 	smtpPath := field.NewPath("spec", "smtp")
-
-	// Validate host is not empty
-	if mp.Spec.SMTP.Host == "" {
-		allErrs = append(allErrs, field.Required(smtpPath.Child("host"), "SMTP host is required"))
-	}
-
-	// Validate port range
-	if mp.Spec.SMTP.Port < 1 || mp.Spec.SMTP.Port > 65535 {
-		allErrs = append(allErrs, field.Invalid(smtpPath.Child("port"), mp.Spec.SMTP.Port, "port must be between 1 and 65535"))
-	}
 
 	// Validate username/password consistency
 	if mp.Spec.SMTP.Username != "" && mp.Spec.SMTP.PasswordRef == nil {
@@ -323,20 +284,25 @@ func (mp *MailProvider) validateSMTP() field.ErrorList {
 		}
 	}
 
-	return allErrs
-}
-
-// validateSender validates sender configuration
-func (mp *MailProvider) validateSender() field.ErrorList {
-	var allErrs field.ErrorList
-	senderPath := field.NewPath("spec", "sender")
-
-	// Validate sender address is not empty
-	if mp.Spec.Sender.Address == "" {
-		allErrs = append(allErrs, field.Required(senderPath.Child("address"), "sender address is required"))
+	// Warn if insecureSkipVerify is enabled
+	if mp.Spec.SMTP.InsecureSkipVerify {
+		warnings = append(warnings, "insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing!")
 	}
 
-	return allErrs
+	// Warn if authentication is not configured
+	if mp.Spec.SMTP.Username == "" && mp.Spec.SMTP.PasswordRef == nil {
+		warnings = append(warnings, "No SMTP authentication configured - ensure your SMTP server allows unauthenticated connections")
+	}
+
+	if len(allErrs) > 0 {
+		return warnings, apierrors.NewInvalid(
+			schema.GroupKind{Group: GroupVersion.Group, Kind: "MailProvider"},
+			mp.Name,
+			allErrs,
+		)
+	}
+
+	return warnings, nil
 }
 
 // validateDefaultUniqueness ensures only one MailProvider is marked as default

@@ -52,8 +52,8 @@ func (l *IdentityProviderLoader) WithLogger(logger *zap.SugaredLogger) *Identity
 }
 
 // ValidateIdentityProviderExists checks that at least one enabled IdentityProvider exists
-// This is called during startup to ensure the system is properly configured
-// Returns error if no providers exist or all are disabled
+// This is called during startup to check configuration status
+// Returns error if no providers exist or all are disabled (caller decides severity)
 func (l *IdentityProviderLoader) ValidateIdentityProviderExists(ctx context.Context) error {
 	l.logger.Debug("Validating IdentityProvider configuration exists")
 
@@ -65,8 +65,8 @@ func (l *IdentityProviderLoader) ValidateIdentityProviderExists(ctx context.Cont
 	}
 
 	if len(idpList.Items) == 0 {
-		l.logger.Error("No IdentityProvider resources found - this is a required configuration")
-		return fmt.Errorf("no IdentityProvider resources found; IdentityProvider is MANDATORY for cluster operation")
+		l.logger.Warn("No IdentityProvider resources found - session/escalation features will be limited until one is created")
+		return fmt.Errorf("no IdentityProvider resources found")
 	}
 
 	// Check that at least one is enabled
@@ -77,8 +77,8 @@ func (l *IdentityProviderLoader) ValidateIdentityProviderExists(ctx context.Cont
 		}
 	}
 
-	l.logger.Error("All IdentityProvider resources are disabled - at least one must be enabled")
-	return fmt.Errorf("all IdentityProvider resources are disabled; at least one enabled provider is required")
+	l.logger.Warn("All IdentityProvider resources are disabled - session/escalation features will be limited")
+	return fmt.Errorf("all IdentityProvider resources are disabled")
 }
 
 // LoadIdentityProvider loads the primary identity provider configuration from IdentityProvider CR
@@ -515,10 +515,14 @@ func DefaultIdentityProviderLoader(ctx context.Context, kubeClient client.Client
 		metrics.IdentityProviderConversionErrors.WithLabelValues(idpName, failureReason).Inc()
 	})
 
-	// Validate IdentityProvider exists (mandatory)
+	// Check if IdentityProvider exists (warn if missing, don't fail)
+	// This allows the controller to start and serve webhooks even without IdentityProvider
 	if err := idpLoader.ValidateIdentityProviderExists(ctx); err != nil {
 		metrics.IdentityProviderValidationFailed.WithLabelValues("not_found").Inc()
-		return nil, fmt.Errorf("IdentityProvider validation failed: %w", err)
+		log.Warnw("IdentityProvider not found - controller will start with limited functionality",
+			"error", err,
+			"note", "Webhooks will be served, but session/escalation processing requires IdentityProvider")
+		// Return the loader anyway - it can be used once IdentityProvider is created
 	}
 
 	return idpLoader, nil

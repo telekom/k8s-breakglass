@@ -29,6 +29,7 @@ e2e/kind-setup-single-tls/req.cnf
 e2e/kind-setup-single-tls/server.crt
 e2e/kind-setup-single-tls/server.csr
 e2e/kind-setup-single-tls/server.key
+e2e/kind-setup-single-tls/webhook/
 e2e/kind-setup-single-hub-kubeconfig.yaml
 e2e/kind-setup-single-kind-cfg.yaml
 e2e/kind-setup-single-tdir/e2e-cluster-configs-rendered.yaml

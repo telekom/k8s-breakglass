@@ -12,6 +12,7 @@ spec:
     passwordRef:
       name: smtp-credentials
       key: password
+      namespace: default
     insecureSkipVerify: false
   sender:
     address: noreply@example.com

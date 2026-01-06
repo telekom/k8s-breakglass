@@ -1,23 +1,40 @@
 # SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-# Development AuditConfig - logs all audit events to stdout
-# NOTE: AuditConfig is cluster-scoped (no namespace)
+# AuditConfig resource to configure Kafka audit sink for E2E tests
+# NOTE: Previously in kafka.yaml, moved here to be applied after webhook is ready
+# NOTE: Uses breakglass-dev-kafka service name (kustomize adds prefix)
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig
 metadata:
-  name: dev-audit-config
+  name: e2e-audit-config
 spec:
   enabled: true
-  
-  queue:
-    size: 10000
-    workers: 2
-    dropOnFull: true
-  
   sinks:
-    - name: dev-log
-      type: log
-      log:
-        level: info
-        format: json
+  - name: kafka-audit
+    type: kafka
+    kafka:
+      brokers:
+      - "breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092"
+      topic: "breakglass-audit-events"
+      batchSize: 10
+      batchTimeoutSeconds: 1
+      requiredAcks: 1
+      compression: snappy
+      async: false
+  - name: log-audit
+    type: log
+    log:
+      level: info
+      format: json
+  - name: webhook-audit
+    type: webhook
+    webhook:
+      url: "http://breakglass-dev-audit-webhook-receiver.breakglass-dev-system.svc.cluster.local:80/audit"
+      headers:
+        Content-Type: application/json
+      timeoutSeconds: 10
+  queue:
+    size: 1000
+    workers: 2
+    dropOnFull: false

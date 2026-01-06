@@ -9,6 +9,25 @@ Format: [ID] [Area] — Short description
 
 ---
 
+## Use Case Coverage (docs/use-cases.md)
+
+The following tests in `e2e/api/use_cases_test.go` cover real-world scenarios documented in `docs/use-cases.md`:
+
+| Use Case | Test Function | Happy Path | Bad Path |
+|----------|--------------|------------|----------|
+| Pod Shell Access (kubectl exec) | `TestUseCasePodShellAccess` | ✅ `HappyPath_PodExecWithApproval` | ✅ `ErrorPath_SessionWithoutReason`, `ErrorPath_UnauthorizedUser` |
+| Pod Restart and Rollout | `TestUseCasePodRestart` | ✅ `HappyPath_DeploymentRestart` | ✅ `ErrorPath_SessionRejected` |
+| Scaling Workloads | `TestUseCaseWorkloadScaling` | ✅ `HappyPath_EmergencyScaleUp` | ✅ `ErrorPath_ApprovalTimeout` |
+| Resource Deletion | `TestUseCaseResourceDeletion` | ✅ `HappyPath_PodDeletion` | ✅ `ErrorPath_DenyPolicyBlocks` |
+| Debug Tool Pods | `TestDebugSessionLifecycle` (existing) | ✅ | ✅ Validation errors |
+| M2M Automated Access | `TestUseCaseM2MAutomatedAccess` | ✅ `HappyPath_AutomationSession` | ✅ `ErrorPath_LongDurationRejected` |
+| Self-Service Debugging (BIS) | `TestUseCaseBISDebugging` | ✅ `HappyPath_SelfServiceDebug` | ✅ `ErrorPath_BlockSelfApproval` |
+| Ingress Pod Restart | `TestUseCaseIngressRestart` | ✅ `HappyPath_IngressRestart` | - |
+| Pod Security Rules | `TestUseCasePodSecurityRules` | ✅ `HappyPath_SREPrivilegedAccess` | ✅ `ErrorPath_RegularUserBlockedFromPrivileged` |
+| Session Lifecycle | `TestUseCaseSessionLifecycle` | ✅ `SessionWithdrawal`, `SessionExpiration`, `MultipleSessionsPerUser`, `SessionWithScheduledStart` | ✅ Various lifecycle scenarios |
+
+---
+
 ## Cluster & bootstrap
 
 [C-001] Cluster: kind single-cluster creates control-plane and node
@@ -366,4 +385,938 @@ Next steps I can implement for you
 - Add a `make e2e-smoke` to run a subset (C-001, K-001, W-001, T-001) in CI.
 
 Generated on: 2025-10-23
-Updated on: 2025-01-xx (Added Debug Sessions section)
+Updated on: 2025-01-03 (Comprehensive kitchen-sink coverage)
+
+---
+
+## Multi-User & Multi-Group Authorization
+
+[MU-001] Multiple users from same group can request sessions
+- Steps: Create escalation with `allowed.groups: ["dev-team"]`. Have 3 users from dev-team create separate sessions.
+- Expected: All 3 sessions created successfully with unique names.
+- Priority: High
+
+[MU-002] User in multiple groups can request for any matching escalation
+- Steps: Create user in groups ["dev", "ops", "sre"]. Create 3 escalations each allowing one group. User requests each.
+- Expected: All 3 requests succeed because user has membership in each.
+- Priority: High
+
+[MU-003] User NOT in allowed group cannot request session
+- Steps: Create escalation with `allowed.groups: ["admin-only"]`. User in ["dev"] group attempts request.
+- Expected: Request rejected with authorization error.
+- Priority: High
+
+[MU-004] Group-based approver can approve session
+- Steps: Create escalation with `approvers.groups: ["senior-ops"]`. User in senior-ops group approves pending session.
+- Expected: Session approved successfully.
+- Priority: High
+
+[MU-005] Multiple approvers from same group - first wins
+- Steps: Create escalation with `approvers.groups: ["approvers"]`. Two users from group both attempt to approve.
+- Expected: First approval succeeds, second gets "already approved" error.
+- Priority: Medium
+
+[MU-006] User in both requester and approver group - blockSelfApproval enforced
+- Steps: Create escalation with user's group in both allowed.groups and approvers.groups. Set `blockSelfApproval: true`. User requests then tries to approve own session.
+- Expected: Self-approval rejected.
+- Priority: High
+
+[MU-007] User in both requester and approver group - blockSelfApproval disabled
+- Steps: Same as MU-006 but `blockSelfApproval: false`.
+- Expected: Self-approval succeeds.
+- Priority: Medium
+
+[MU-008] Cross-group escalation chain
+- Steps: Create escalation where dev group can request, ops group approves. Verify dev cannot approve, ops cannot request.
+- Expected: Each group can only perform their allowed action.
+- Priority: High
+
+[MU-009] User added to group mid-session
+- Steps: Create session. Add user to approver group. User attempts to approve.
+- Expected: Approval succeeds (groups evaluated at action time, not session creation).
+- Priority: Medium
+
+[MU-010] User removed from group mid-session
+- Steps: Create active session. Remove user from escalation's allowed group. Session should still be active.
+- Expected: Existing session remains active (no revocation on group removal).
+- Priority: Medium
+
+---
+
+## Complete Session State Machine
+
+[SS-001] Pending → Approved → Active → Expired (happy path)
+- Steps: Create session, approve, wait for activation, wait for expiry.
+- Expected: Session transitions through all states correctly with timestamps.
+- Priority: High
+
+[SS-002] Pending → Rejected (rejection path)
+- Steps: Create session, reject with reason.
+- Expected: Session in Rejected state with rejection reason and rejector identity.
+- Priority: High
+
+[SS-003] Pending → Withdrawn (requester cancels before approval)
+- Steps: Create session, requester withdraws before any approver action.
+- Expected: Session in Withdrawn state with withdrawal timestamp.
+- Priority: High
+
+[SS-004] Pending → ApprovalTimeout (timeout path)
+- Steps: Create escalation with `approvalTimeout: 1m`. Create session, wait 70s.
+- Expected: Session transitions to ApprovalTimeout state automatically.
+- Priority: High
+
+[SS-005] Active → Cancelled (admin cancels active session)
+- Steps: Create and approve session. Admin cancels active session.
+- Expected: Session in Cancelled state, permissions revoked immediately.
+- Priority: High
+
+[SS-006] Active → Dropped (approver revokes)
+- Steps: Create and approve session. Approver drops the session.
+- Expected: Session in Dropped state, original requester notified.
+- Priority: High
+
+[SS-007] Pending → WaitingForScheduledTime → Active
+- Steps: Create session with `scheduledStartTime` 2 minutes in future. Approve immediately.
+- Expected: Session waits until scheduled time, then becomes Active.
+- Priority: High
+
+[SS-008] WaitingForScheduledTime → Cancelled
+- Steps: Create scheduled session, approve, then cancel before scheduled time.
+- Expected: Session cancelled without ever becoming Active.
+- Priority: Medium
+
+[SS-009] Active with IdleTimeout detection
+- Steps: Create session with `idleTimeout: 2m`. Let session sit idle.
+- Expected: Session expires with idle timeout reason after 2m of no activity.
+- Priority: High
+
+[SS-010] Session extension before expiry
+- Steps: Create active session. Before expiry, request extension.
+- Expected: Session `validUntil` extended, extension count incremented.
+- Priority: Medium
+
+[SS-011] Session extension denied after max extensions
+- Steps: Create session with `maxExtensions: 2`. Extend twice successfully, third fails.
+- Expected: Third extension rejected with "max extensions reached" error.
+- Priority: Medium
+
+[SS-012] Multiple pending sessions for same escalation
+- Steps: Create 3 pending sessions for same escalation by same user.
+- Expected: All 3 created (or limited by `maxPendingPerUser` if configured).
+- Priority: Medium
+
+[SS-013] Session with notes/justification required
+- Steps: Create escalation with `requireJustification: true`. Create session without reason.
+- Expected: Session creation rejected for missing justification.
+- Priority: High
+
+[SS-014] Session with approval notes required
+- Steps: Create escalation with `requireApprovalNotes: true`. Approve without notes.
+- Expected: Approval rejected for missing notes.
+- Priority: Medium
+
+---
+
+## Approval Workflows
+
+[AW-001] Single approver workflow
+- Steps: Create escalation with single user in `approvers.users`. That user approves.
+- Expected: Session approved by listed user.
+- Priority: High
+
+[AW-002] Any approver from list can approve
+- Steps: Create escalation with 5 users in `approvers.users`. Third user approves.
+- Expected: Session approved, approver field shows third user.
+- Priority: High
+
+[AW-003] Approver not in list cannot approve
+- Steps: Create escalation with specific approvers. Random user attempts approval.
+- Expected: Approval rejected with 401 Unauthorized.
+- Priority: High
+
+[AW-004] AllowedApproverDomains restriction
+- Steps: Create escalation with `allowedApproverDomains: ["telekom.de"]`. User with @example.com email tries to approve.
+- Expected: Approval rejected due to domain restriction.
+- Priority: High
+
+[AW-005] AllowedApproverDomains allows valid domain
+- Steps: Same escalation as AW-004. User with @telekom.de email approves.
+- Expected: Approval succeeds.
+- Priority: High
+
+[AW-006] Rejection with mandatory reason
+- Steps: Create escalation with `requireRejectionReason: true`. Reject without reason.
+- Expected: Rejection fails for missing reason.
+- Priority: Medium
+
+[AW-007] Rejection workflow with reason
+- Steps: Create session, reject with detailed reason.
+- Expected: Session rejected, reason stored in status, requester notified.
+- Priority: High
+
+[AW-008] Approver comment stored on approval
+- Steps: Approve session with comment "Approved for production debugging".
+- Expected: Comment stored in session status.
+- Priority: Medium
+
+[AW-009] Auto-approval for specific clusters
+- Steps: Create escalation with `autoApproveFor.clusters: ["dev-cluster"]`. Request for dev-cluster.
+- Expected: Session auto-approved without manual intervention.
+- Priority: High
+
+[AW-010] Auto-approval does not apply to other clusters
+- Steps: Same escalation as AW-009. Request for prod-cluster.
+- Expected: Session requires manual approval.
+- Priority: High
+
+---
+
+## Identity Provider Tests
+
+[IDP-001] Single IdentityProvider authentication
+- Steps: Create one IdentityProvider CR. Authenticate via that IDP.
+- Expected: Token validated, user identity extracted correctly.
+- Priority: High
+
+[IDP-002] Multiple IdentityProviders - correct one selected by issuer
+- Steps: Create 2 IdentityProviders with different issuers. Authenticate with each.
+- Expected: Correct IDP used based on token issuer claim.
+- Priority: High
+
+[IDP-003] IdentityProvider with custom email claim
+- Steps: Create IDP with `emailClaim: "preferred_email"`. Token has that claim.
+- Expected: Email extracted from custom claim.
+- Priority: Medium
+
+[IDP-004] IdentityProvider with group claim mapping
+- Steps: Create IDP with `groupsClaim: "realm_access.roles"`. Verify groups extracted.
+- Expected: Groups correctly mapped from nested claim.
+- Priority: Medium
+
+[IDP-005] IdentityProvider group sync to status
+- Steps: Create IDP with `syncGroups: true`. Controller populates status.syncedGroups.
+- Expected: Status shows synced group memberships.
+- Priority: Medium
+
+[IDP-006] AllowedIdentityProvidersForRequests restriction
+- Steps: Create escalation with `allowedIdentityProvidersForRequests: ["corp-idp"]`. User from different IDP requests.
+- Expected: Request rejected due to IDP restriction.
+- Priority: High
+
+[IDP-007] AllowedIdentityProvidersForApprovers restriction
+- Steps: Create escalation with `allowedIdentityProvidersForApprovers: ["admin-idp"]`. Approver from different IDP tries to approve.
+- Expected: Approval rejected due to IDP restriction.
+- Priority: High
+
+[IDP-008] IdentityProvider JWKS refresh
+- Steps: Rotate JWKS keys in IDP. Wait for refresh interval. Authenticate with new key.
+- Expected: New keys picked up, authentication succeeds.
+- Priority: Medium
+
+[IDP-009] IdentityProvider status shows health
+- Steps: Create IDP pointing to valid issuer.
+- Expected: Status shows Ready condition, lastSuccessfulSync timestamp.
+- Priority: Medium
+
+[IDP-010] IdentityProvider invalid issuer URL
+- Steps: Create IDP with unreachable issuer URL.
+- Expected: Status shows Error condition with reason.
+- Priority: Medium
+
+---
+
+## Mail Provider Tests
+
+[MP-001] MailProvider sends session request notification
+- Steps: Create session. Check MailHog for notification email.
+- Expected: Email received with session details and approval link.
+- Priority: High
+
+[MP-002] MailProvider sends approval notification
+- Steps: Approve session. Check MailHog for approval confirmation.
+- Expected: Email to requester confirming approval.
+- Priority: High
+
+[MP-003] MailProvider sends rejection notification
+- Steps: Reject session. Check MailHog for rejection email.
+- Expected: Email to requester with rejection reason.
+- Priority: High
+
+[MP-004] MailProvider sends expiry warning
+- Steps: Create session about to expire. Check for warning email.
+- Expected: Warning email sent before expiry.
+- Priority: Medium
+
+[MP-005] MailProvider with custom templates
+- Steps: Create MailProvider with custom template configmap. Trigger notification.
+- Expected: Email uses custom template content.
+- Priority: Medium
+
+[MP-006] MailProvider SMTP authentication
+- Steps: Create MailProvider with SMTP auth credentials.
+- Expected: Emails sent successfully with authentication.
+- Priority: Medium
+
+[MP-007] MailProvider TLS configuration
+- Steps: Create MailProvider with `tls.enabled: true` and CA cert.
+- Expected: SMTP connection uses TLS.
+- Priority: Medium
+
+[MP-008] MailProvider retry on temporary failure
+- Steps: Temporarily block SMTP. Trigger notification. Restore SMTP.
+- Expected: Email delivered after retry.
+- Priority: Low
+
+[MP-009] MailProvider status shows health
+- Steps: Create MailProvider with valid SMTP config.
+- Expected: Status shows Ready, successful connection test timestamp.
+- Priority: Medium
+
+[MP-010] NotificationExclusions skip specific users
+- Steps: Create escalation with `notificationExclusions.users: ["bot@example.com"]`. Bot creates session.
+- Expected: No notification email sent.
+- Priority: Low
+
+---
+
+## Audit Logging - All Sinks
+
+[AU-001] AuditConfig Log sink writes to stdout
+- Steps: Create AuditConfig with log sink. Perform session actions.
+- Expected: Audit events appear in controller logs.
+- Priority: High
+
+[AU-002] AuditConfig Kafka sink writes to topic
+- Steps: Create AuditConfig with Kafka sink. Perform actions. Consume from Kafka topic.
+- Expected: Audit events in Kafka with correct schema.
+- Priority: High
+
+[AU-003] AuditConfig Webhook sink POSTs to endpoint
+- Steps: Create AuditConfig with webhook sink pointing to test endpoint. Perform actions.
+- Expected: Webhook receives POST with audit event payload.
+- Priority: High
+
+[AU-004] AuditConfig Kubernetes Events sink
+- Steps: Create AuditConfig with k8s event sink. Perform session approval.
+- Expected: Kubernetes Event created in session's namespace.
+- Priority: Medium
+
+[AU-005] AuditConfig multi-sink configuration
+- Steps: Create AuditConfig with log + Kafka + webhook sinks.
+- Expected: Events written to all 3 sinks.
+- Priority: High
+
+[AU-006] AuditConfig event filtering by type
+- Steps: Create AuditConfig with `filter.eventTypes: ["session.approved", "session.rejected"]`.
+- Expected: Only filtered event types written to sink.
+- Priority: Medium
+
+[AU-007] AuditConfig event filtering by severity
+- Steps: Create AuditConfig with `filter.minSeverity: "warning"`.
+- Expected: Info-level events excluded, warning+ included.
+- Priority: Medium
+
+[AU-008] AuditConfig Kafka SASL authentication
+- Steps: Create AuditConfig with Kafka SASL credentials.
+- Expected: Events written to authenticated Kafka cluster.
+- Priority: Medium
+
+[AU-009] AuditConfig Kafka TLS configuration
+- Steps: Create AuditConfig with Kafka TLS settings.
+- Expected: TLS connection to Kafka brokers.
+- Priority: Medium
+
+[AU-010] Audit event for session.requested
+- Steps: Create session. Check audit sink.
+- Expected: Event with type="session.requested", actor=requester email.
+- Priority: High
+
+[AU-011] Audit event for session.approved
+- Steps: Approve session. Check audit sink.
+- Expected: Event with type="session.approved", actor=approver email, target=session.
+- Priority: High
+
+[AU-012] Audit event for session.rejected
+- Steps: Reject session. Check audit sink.
+- Expected: Event with type="session.rejected", includes rejection reason.
+- Priority: High
+
+[AU-013] Audit event for session.expired
+- Steps: Let session expire. Check audit sink.
+- Expected: Event with type="session.expired".
+- Priority: Medium
+
+[AU-014] Audit event for authorization.granted
+- Steps: Send SAR request that's allowed. Check audit sink.
+- Expected: Event with resource details, user, decision=allowed.
+- Priority: High
+
+[AU-015] Audit event for authorization.denied
+- Steps: Send SAR request that's denied. Check audit sink.
+- Expected: Event with resource details, user, decision=denied, reason.
+- Priority: High
+
+[AU-016] Audit event for policy.violation
+- Steps: Trigger DenyPolicy violation. Check audit sink.
+- Expected: Event with policy name, violating request details.
+- Priority: Medium
+
+[AU-017] Audit queue overflow handling
+- Steps: Generate many events rapidly with small queue size.
+- Expected: Metrics show dropped events, sink doesn't block.
+- Priority: Low
+
+---
+
+## DenyPolicy Comprehensive Tests
+
+[DP-001] DenyPolicy blocks specific verbs
+- Steps: Create policy denying "delete" on pods. Attempt delete vs get.
+- Expected: Delete blocked, get allowed.
+- Priority: High
+
+[DP-002] DenyPolicy blocks specific resources
+- Steps: Create policy denying all verbs on secrets. Attempt secret vs configmap access.
+- Expected: Secrets blocked, configmaps allowed.
+- Priority: High
+
+[DP-003] DenyPolicy blocks specific namespaces
+- Steps: Create policy denying access to "production" namespace.
+- Expected: Production access blocked, other namespaces allowed.
+- Priority: High
+
+[DP-004] DenyPolicy blocks specific API groups
+- Steps: Create policy denying "apps" group. Attempt deployment vs pod access.
+- Expected: Deployments blocked, pods allowed.
+- Priority: High
+
+[DP-005] DenyPolicy blocks specific resource names
+- Steps: Create policy denying access to secret "database-password".
+- Expected: That specific secret blocked, others allowed.
+- Priority: Medium
+
+[DP-006] DenyPolicy with label selector
+- Steps: Create policy with `selector.matchLabels: {env: prod}`. Apply to prod-labeled resources.
+- Expected: Only resources with label blocked.
+- Priority: Medium
+
+[DP-007] DenyPolicy precedence ordering
+- Steps: Create 2 overlapping policies with different precedence.
+- Expected: Lower precedence policy evaluated first.
+- Priority: Medium
+
+[DP-008] DenyPolicy exemption by namespace
+- Steps: Create policy with `exemptions.namespaces: ["kube-system"]`.
+- Expected: kube-system exempt from policy.
+- Priority: Medium
+
+[DP-009] DenyPolicy exemption by user
+- Steps: Create policy with `exemptions.users: ["admin@example.com"]`.
+- Expected: Admin user exempt from policy.
+- Priority: Medium
+
+[DP-010] DenyPolicy exemption by group
+- Steps: Create policy with `exemptions.groups: ["cluster-admins"]`.
+- Expected: Cluster-admins group exempt from policy.
+- Priority: Medium
+
+[DP-011] DenyPolicy appliesTo clusters filter
+- Steps: Create policy with `appliesTo.clusters: ["prod-cluster"]`. Test on dev-cluster.
+- Expected: Policy only enforced on prod-cluster.
+- Priority: Medium
+
+[DP-012] DenyPolicy appliesTo escalations filter
+- Steps: Create policy with `appliesTo.escalations: ["emergency-access"]`. Test with different escalation.
+- Expected: Policy only enforced for specified escalation.
+- Priority: Medium
+
+---
+
+## ClusterConfig & Multi-Cluster
+
+[CC-001] ClusterConfig with kubeconfig secret
+- Steps: Create ClusterConfig referencing kubeconfig secret.
+- Expected: Controller can connect to target cluster.
+- Priority: High
+
+[CC-002] ClusterConfig status shows connectivity
+- Steps: Create valid ClusterConfig. Check status.
+- Expected: Status shows Ready, lastSuccessfulCheck timestamp.
+- Priority: High
+
+[CC-003] ClusterConfig with invalid kubeconfig
+- Steps: Create ClusterConfig with bad kubeconfig data.
+- Expected: Status shows Error with connection failure reason.
+- Priority: Medium
+
+[CC-004] ClusterConfig QPS/Burst settings
+- Steps: Create ClusterConfig with custom `qps: 100, burst: 200`.
+- Expected: Client uses those rate limit settings.
+- Priority: Low
+
+[CC-005] ClusterConfig blockSelfApproval setting
+- Steps: Create ClusterConfig with `blockSelfApproval: true`. Override at escalation level with false.
+- Expected: Escalation-level setting takes precedence.
+- Priority: Medium
+
+[CC-006] ClusterConfig allowedApproverDomains setting
+- Steps: Create ClusterConfig with domain restriction. Test approvals.
+- Expected: Cluster-level restriction enforced.
+- Priority: Medium
+
+[CC-007] Hub cluster can manage spoke cluster sessions
+- Steps: Create session for spoke cluster from hub. Approve on hub. Verify spoke access.
+- Expected: Session grants access on spoke cluster.
+- Priority: High
+
+[CC-008] Spoke cluster webhook calls back to hub
+- Steps: Configure spoke authorization webhook to call hub. SAR on spoke.
+- Expected: Hub validates session, spoke enforces decision.
+- Priority: High
+
+[CC-009] ClusterConfig secret rotation
+- Steps: Update kubeconfig secret with new credentials. Wait for controller reconcile.
+- Expected: Controller uses new credentials without restart.
+- Priority: Medium
+
+[CC-010] Multiple ClusterConfigs for different clusters
+- Steps: Create 3 ClusterConfigs. Create sessions for each cluster.
+- Expected: Each session targets correct cluster.
+- Priority: High
+
+---
+
+## Webhook & Authorization
+
+[WH-001] Webhook returns Allow for approved session
+- Steps: Create and approve session. Send SAR matching session.
+- Expected: Webhook returns allowed=true.
+- Priority: High
+
+[WH-002] Webhook returns Deny for no session
+- Steps: Send SAR for user with no active session.
+- Expected: Webhook returns allowed=false or NoOpinion.
+- Priority: High
+
+[WH-003] Webhook returns Deny for expired session
+- Steps: Create session, let expire. Send SAR.
+- Expected: Webhook returns denied (session not active).
+- Priority: High
+
+[WH-004] Webhook handles high concurrency
+- Steps: Send 100 concurrent SAR requests.
+- Expected: All requests processed within timeout, no errors.
+- Priority: Medium
+
+[WH-005] Webhook timeout handling
+- Steps: Configure webhook with short timeout. Simulate slow response.
+- Expected: Timeout handled gracefully, failure policy applied.
+- Priority: Low
+
+[WH-006] Webhook TLS certificate validation
+- Steps: Send request to webhook with valid TLS.
+- Expected: TLS handshake succeeds.
+- Priority: High
+
+[WH-007] Webhook metrics exposed
+- Steps: Query /metrics endpoint after webhook requests.
+- Expected: Metrics show request counts, latencies, decisions.
+- Priority: Medium
+
+[WH-008] Webhook matchConditions CEL filter
+- Steps: Configure webhook with CEL matchConditions.
+- Expected: Only matching requests reach webhook.
+- Priority: Low
+
+[WH-009] Webhook failure policy Fail
+- Steps: Configure webhook with failurePolicy=Fail. Make webhook unavailable.
+- Expected: Requests denied when webhook unreachable.
+- Priority: Medium
+
+[WH-010] Webhook failure policy Ignore
+- Steps: Configure webhook with failurePolicy=Ignore. Make webhook unavailable.
+- Expected: Requests allowed to pass when webhook unreachable.
+- Priority: Medium
+
+---
+
+## BreakglassEscalation Features
+
+[BE-001] Escalation with multiple permission sets
+- Steps: Create escalation granting pods read + deployments full access.
+- Expected: Approved session has both permission sets.
+- Priority: High
+
+[BE-002] Escalation with namespace restrictions
+- Steps: Create escalation allowing access only to "app" namespace.
+- Expected: Access to other namespaces denied.
+- Priority: High
+
+[BE-003] Escalation with resourceNames restrictions
+- Steps: Create escalation allowing specific pod names only.
+- Expected: Only named pods accessible.
+- Priority: Medium
+
+[BE-004] Escalation maxValidFor enforced
+- Steps: Create escalation with `maxValidFor: 2h`. Request 4h session.
+- Expected: Session capped at 2h.
+- Priority: High
+
+[BE-005] Escalation minValidFor enforced
+- Steps: Create escalation with `minValidFor: 30m`. Request 10m session.
+- Expected: Session minimum enforced at 30m.
+- Priority: Medium
+
+[BE-006] Escalation with multiple allowed clusters
+- Steps: Create escalation with `allowed.clusters: [dev, staging, prod]`.
+- Expected: Sessions can target any of the 3 clusters.
+- Priority: High
+
+[BE-007] Escalation cluster not in allowed list
+- Steps: Create escalation for specific clusters. Request for unlisted cluster.
+- Expected: Request rejected.
+- Priority: High
+
+[BE-008] Escalation with hidden approvers
+- Steps: Create escalation with `approvers.hiddenFromUI: true`.
+- Expected: API doesn't expose approver list to non-admin users.
+- Priority: Low
+
+[BE-009] Escalation with podSecurityOverrides
+- Steps: Create escalation with higher `maxAllowedScore`. Access privileged pod.
+- Expected: Access allowed due to override.
+- Priority: Medium
+
+[BE-010] Escalation status shows usage stats
+- Steps: Create sessions using escalation. Check escalation status.
+- Expected: Status shows session count, last used timestamp.
+- Priority: Low
+
+---
+
+## Debug Session Advanced Features
+
+[DS-001] DebugSession with tmux terminal sharing
+- Steps: Create debug session with `terminalSharing.enabled: true`. Second user joins.
+- Expected: Both users share same terminal session.
+- Priority: Medium
+
+[DS-002] DebugSession with command logging
+- Steps: Create session with `logCommands: true`. Execute commands.
+- Expected: Commands logged to audit sink.
+- Priority: Medium
+
+[DS-003] DebugSession renewal workflow
+- Steps: Create session with `allowRenewal: true, maxRenewals: 3`. Renew 3 times, fail on 4th.
+- Expected: First 3 renewals succeed, 4th rejected.
+- Priority: Medium
+
+[DS-004] DebugSession participant roles
+- Steps: Create session. Add participant as "viewer" role.
+- Expected: Viewer can see but not execute commands.
+- Priority: Medium
+
+[DS-005] DebugSession invited participants
+- Steps: Create session with `invitedParticipants`. Invited user joins.
+- Expected: Pre-invited user can join without additional approval.
+- Priority: Low
+
+[DS-006] DebugSession pod node selector
+- Steps: Create DebugPodTemplate with nodeSelector. Deploy debug session.
+- Expected: Debug pod scheduled on matching nodes.
+- Priority: Low
+
+[DS-007] DebugSession resource limits
+- Steps: Create template with CPU/memory limits. Deploy session.
+- Expected: Debug pod has specified resource limits.
+- Priority: Medium
+
+[DS-008] DebugSession with custom image
+- Steps: Create template with custom debug image.
+- Expected: Debug pod uses specified image.
+- Priority: Medium
+
+[DS-009] DebugSession network policy
+- Steps: Create template with network access restrictions.
+- Expected: Debug pod has limited network access.
+- Priority: Low
+
+[DS-010] DebugSession ephemeral container mode
+- Steps: Create session in kubectl-debug mode. Inject ephemeral container.
+- Expected: Ephemeral container created in target pod.
+- Priority: Medium
+
+---
+
+## Metrics & Observability
+
+[MO-001] Session count metrics
+- Steps: Create multiple sessions. Query Prometheus metrics.
+- Expected: `breakglass_sessions_total` shows correct counts by state.
+- Priority: High
+
+[MO-002] Authorization decision metrics
+- Steps: Make allow and deny decisions. Query metrics.
+- Expected: `breakglass_authorization_decisions_total` with decision labels.
+- Priority: High
+
+[MO-003] Webhook latency histogram
+- Steps: Make webhook requests. Query histogram.
+- Expected: `breakglass_webhook_request_duration_seconds` populated.
+- Priority: Medium
+
+[MO-004] Cluster cache hit/miss metrics
+- Steps: Access cluster configs. Query cache metrics.
+- Expected: Cache hits/misses tracked.
+- Priority: Medium
+
+[MO-005] JWT validation metrics
+- Steps: Authenticate with valid/invalid tokens. Query metrics.
+- Expected: Success/failure counts by issuer.
+- Priority: Medium
+
+[MO-006] Pod security evaluation metrics
+- Steps: Trigger pod security evaluations. Query metrics.
+- Expected: Risk scores, factor counts, decisions tracked.
+- Priority: Medium
+
+[MO-007] Audit sink metrics
+- Steps: Generate audit events. Query sink metrics.
+- Expected: Events processed, errors by sink.
+- Priority: Medium
+
+[MO-008] Controller health endpoints
+- Steps: Query /healthz and /readyz endpoints.
+- Expected: Endpoints return healthy status.
+- Priority: High
+
+[MO-009] Metrics scrape by Prometheus
+- Steps: Configure Prometheus to scrape /metrics.
+- Expected: All metrics scraped successfully.
+- Priority: Medium
+
+[MO-010] Custom resource metrics
+- Steps: Check controller emits CR-related metrics.
+- Expected: Counts for each CRD type.
+- Priority: Low
+
+---
+
+## Resilience & Error Handling
+
+[RE-001] Controller restart preserves active sessions
+- Steps: Create active sessions. Restart controller. Verify sessions still active.
+- Expected: Sessions survive controller restart.
+- Priority: High
+
+[RE-002] Controller handles Kubernetes API unavailability
+- Steps: Temporarily block API access. Controller continues gracefully.
+- Expected: Controller recovers when API returns.
+- Priority: Medium
+
+[RE-003] Webhook handles malformed SAR requests
+- Steps: Send invalid SAR payload to webhook.
+- Expected: Webhook returns error without crashing.
+- Priority: Medium
+
+[RE-004] Controller handles concurrent CRD updates
+- Steps: Rapidly update same CRD from multiple clients.
+- Expected: Controller handles conflicts gracefully.
+- Priority: Medium
+
+[RE-005] Controller memory pressure handling
+- Steps: Create many resources to increase memory usage.
+- Expected: Controller doesn't OOM, garbage collects properly.
+- Priority: Low
+
+[RE-006] Cleanup task removes expired sessions
+- Steps: Create sessions with short expiry. Wait for cleanup.
+- Expected: Cleanup task transitions expired sessions.
+- Priority: High
+
+[RE-007] Cleanup handles orphaned resources
+- Steps: Create debug session, delete CR manually, leave pod.
+- Expected: Orphan cleanup removes leftover pods.
+- Priority: Medium
+
+[RE-008] Leader election failover
+- Steps: Run 2 controller replicas. Kill leader.
+- Expected: Standby takes over leadership.
+- Priority: Medium
+
+---
+
+## End-to-End Scenarios
+
+[E2E-001] Complete breakglass flow with all notifications
+- Steps: Request session, approve, use, expire. Verify all emails sent.
+- Expected: Request, approval, activation, expiry warning, expiry emails all received.
+- Priority: High
+
+[E2E-002] Emergency access scenario
+- Steps: Create high-priority escalation. Request for production incident. Approve rapidly. Use for debugging.
+- Expected: Full flow completes in under 2 minutes.
+- Priority: High
+
+[E2E-003] Multi-cluster incident response
+- Steps: Create escalation for multiple clusters. Request access to all. Use debug session on each.
+- Expected: Single escalation grants access across clusters.
+- Priority: Medium
+
+[E2E-004] Audit trail complete for compliance
+- Steps: Perform all session operations. Export audit log.
+- Expected: Complete trail from request to expiry with all actors and timestamps.
+- Priority: High
+
+[E2E-005] Role-based access control validation
+- Steps: Create users with different roles. Each attempts operations matching their role.
+- Expected: Only authorized operations succeed.
+- Priority: High
+
+[E2E-006] Session handoff between shifts
+- Steps: User A creates and uses session. User A invites User B as participant before leaving.
+- Expected: User B can continue using session after User A leaves.
+- Priority: Medium
+
+[E2E-007] Escalation update mid-session
+- Steps: Create active session. Update escalation permissions. Create new session.
+- Expected: Old session has old permissions, new session has new permissions.
+- Priority: Medium
+
+[E2E-008] Full stack with all components
+- Steps: Deploy with Keycloak, MailHog, Kafka, multiple clusters. Test complete flow.
+- Expected: All integrations work together.
+- Priority: High
+
+---
+
+## Test Coverage Summary
+
+| Category | Count | Priority High | Priority Medium | Priority Low |
+|----------|-------|---------------|-----------------|--------------|
+| Multi-User & Groups | 10 | 6 | 4 | 0 |
+| Session State Machine | 14 | 8 | 6 | 0 |
+| Approval Workflows | 10 | 6 | 4 | 0 |
+| Identity Providers | 10 | 4 | 6 | 0 |
+| Mail Providers | 10 | 4 | 5 | 1 |
+| Audit Logging | 17 | 8 | 8 | 1 |
+| DenyPolicy | 12 | 5 | 7 | 0 |
+| ClusterConfig | 10 | 4 | 6 | 0 |
+| Webhook | 10 | 4 | 5 | 1 |
+| Escalation Features | 10 | 5 | 4 | 1 |
+| Debug Sessions | 10 | 2 | 6 | 2 |
+| Metrics | 10 | 3 | 6 | 1 |
+| Resilience | 8 | 3 | 4 | 1 |
+| E2E Scenarios | 8 | 5 | 3 | 0 |
+| **TOTAL** | **139** | **67** | **74** | **8** |
+
+**Target: 100% feature coverage across all CRDs and integrations.**
+---
+
+## E2E Coverage Gap Analysis (as of January 2026)
+
+This section documents the current E2E test coverage status based on a comprehensive code flow analysis.
+
+### Coverage Status by Functional Area
+
+| Area | Total Flows | Covered | Partial | Uncovered | Coverage % |
+|------|-------------|---------|---------|-----------|------------|
+| **Session Lifecycle** | 12 | 10 | 1 | 1 | 88% |
+| **Escalation Management** | 8 | 6 | 1 | 1 | 81% |
+| **DenyPolicy** | 10 | 7 | 2 | 1 | 80% |
+| **ClusterConfig** | 7 | 5 | 1 | 1 | 79% |
+| **IdentityProvider** | 10 | 6 | 2 | 2 | 70% |
+| **MailProvider/Notifications** | 6 | 4 | 1 | 1 | 75% |
+| **Debug Sessions** | 15 | 5 | 3 | 7 | 47% |
+| **Webhook Authorization** | 12 | 9 | 2 | 1 | 83% |
+| **Multi-Cluster** | 6 | 4 | 1 | 1 | 75% |
+| **Audit Logging** | 5 | 0 | 1 | 4 | 10% |
+| **API Endpoints** | 15 | 13 | 2 | 0 | 93% |
+| **TOTAL** | **106** | **69** | **17** | **20** | **74%** |
+
+### Critical Gaps (High Priority)
+
+#### 1. Audit Logging (pkg/audit/) - 10% Coverage
+**Production Risk**: Compliance failures, missing audit trail
+
+| Gap | Code Location | Missing Test | Risk |
+|-----|--------------|--------------|------|
+| Event generation on session approval | `pkg/audit/emitter.go` | Verify audit event emitted after ApproveSession | Audit trail missing for approvals |
+| Event generation on session rejection | `pkg/audit/emitter.go` | Verify audit event emitted after RejectSession | Audit trail missing for rejections |
+| Kafka sink delivery | `pkg/audit/kafka_sink.go` | Produce event, verify Kafka receives it | Events lost silently |
+| API audit endpoint | `pkg/api/audit_handler.go` | GET /api/audit/events returns events | No way to retrieve audit data |
+| AuditConfig sink validation | `api/v1alpha1/audit_config_types.go` | Invalid sink config rejected | Silent failures |
+
+#### 2. Debug Sessions (pkg/breakglass/debug_session_*.go) - 47% Coverage
+**Production Risk**: Core feature broken, security vulnerabilities
+
+| Gap | Code Location | Missing Test | Risk |
+|-----|--------------|--------------|------|
+| Workload deployment on target | `debug_session_workload.go` | Create debug session, verify Pod created | No pods get created |
+| Pod cleanup on termination | `debug_session_controller.go` | Terminate session, verify Pod deleted | Orphan pods left running |
+| Participant join | `debug_session_manager.go` | Second user joins active session | Collaboration broken |
+| Session renewal/extension | `debug_session_controller.go` | Extend session duration | Sessions expire unexpectedly |
+| Target cluster kubeconfig | `debug_session_workload.go` | Session on spoke cluster | Multi-cluster debug broken |
+| Security context validation | `api/v1alpha1/debug_session_types.go` | Privileged container blocked | Security bypass |
+
+#### 3. Session Cleanup Task (pkg/breakglass/cleanup_task.go) - 0% Direct Coverage
+**Production Risk**: Sessions never expire, storage leaks
+
+| Gap | Code Location | Missing Test | Risk |
+|-----|--------------|--------------|------|
+| Scheduled session activation | `cleanup_task.go:activateScheduledSessions()` | Create scheduled session, verify activation at time | Scheduled sessions never activate |
+| Session retention expiry | `cleanup_task.go:cleanupExpiredSessions()` | Session past retention, verify deleted | Storage leaks |
+| Background task startup | `cleanup_task.go:Start()` | Verify task running in controller | Silent failures |
+
+### Medium Priority Gaps
+
+#### 4. Multi-Cluster (pkg/cluster/) - 75% Coverage
+
+| Gap | Code Location | Missing Test | Risk |
+|-----|--------------|--------------|------|
+| ClusterConfigRefs resolution | `pkg/cluster/client_provider.go` | Escalation refs cluster by name | Escalation fails to resolve cluster |
+| Cross-cluster SAR authorization | `pkg/webhook/handler.go` | SAR from spoke validated by hub | Auth bypass in multi-cluster |
+| Secret rotation cache invalidation | `pkg/cluster/cache.go` | Rotate kubeconfig secret, verify reconnect | Auth failures after rotation |
+
+#### 5. Policy Evaluation (pkg/policy/) - 80% Coverage
+
+| Gap | Code Location | Missing Test | Risk |
+|-----|--------------|--------------|------|
+| DenyPolicy precedence ordering | `pkg/policy/evaluator.go` | Multiple overlapping policies | Wrong policy applied |
+| PodSecurityRules webhook enforcement | `pkg/webhook/handler.go` | SAR for privileged pod denied | Security bypass |
+
+### Lower Priority Gaps
+
+| Feature | Gap | Risk |
+|---------|-----|------|
+| MailProvider | Email template customization test | Wrong template used |
+| IdentityProvider | Issuer URL validation at runtime | Silent auth failures |
+| Metrics | Prometheus endpoint scraping | Observability gaps |
+
+### Recommendations
+
+**Sprint 1 (Immediate - Week 1-2)**:
+1. Add audit event generation tests (compliance requirement)
+2. Add debug session workload deployment test (core feature)
+3. Add scheduled session activation test (production use case)
+
+**Sprint 2 (Week 3-4)**:
+1. Add cleanup task integration tests
+2. Add debug session pod cleanup test
+3. Add cross-cluster SAR test (requires multi-kind setup)
+
+**Sprint 3 (Week 5-6)**:
+1. Add multi-cluster ClusterConfigRefs test
+2. Add DenyPolicy precedence test
+3. Add debug session renewal test
+
+### Infrastructure Requirements
+
+Some tests require enhanced e2e infrastructure:
+
+| Test Category | Requirement |
+|--------------|-------------|
+| Multi-cluster SAR | Second kind cluster as spoke |
+| Kafka audit sink | Kafka container in e2e env |
+| Scheduled activation | Time control or short durations |
+| Debug session cleanup | Pod watching for termination |

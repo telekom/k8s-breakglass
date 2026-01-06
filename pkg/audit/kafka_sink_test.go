@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,7 +18,16 @@ package audit
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"testing"
 	"time"
 
@@ -638,4 +647,238 @@ func TestKafkaSink_NilBrokersList(t *testing.T) {
 	}, logger)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least one Kafka broker is required")
+}
+
+// --- mTLS Tests ---
+
+// generateTestCertificates generates a CA, server, and client certificate for testing.
+// Returns caCert, serverCert, serverKey, clientCert, clientKey as PEM-encoded bytes.
+func generateTestCertificates(t *testing.T) (caCert, serverCert, serverKey, clientCert, clientKey []byte) {
+	t.Helper()
+
+	// Generate CA key
+	caPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// Create CA certificate template
+	caTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Test CA"},
+			CommonName:   "Test Root CA",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+	}
+
+	// Self-sign CA certificate
+	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caPrivKey.PublicKey, caPrivKey)
+	require.NoError(t, err)
+
+	// PEM encode CA cert
+	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
+
+	// Parse CA cert for signing
+	caCertParsed, err := x509.ParseCertificate(caCertDER)
+	require.NoError(t, err)
+
+	// Generate server key
+	serverPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// Create server certificate template
+	serverTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject: pkix.Name{
+			Organization: []string{"Test Server"},
+			CommonName:   "localhost",
+		},
+		DNSNames:    []string{"localhost", "kafka"},
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+
+	// Sign server cert with CA
+	serverCertDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCertParsed, &serverPrivKey.PublicKey, caPrivKey)
+	require.NoError(t, err)
+
+	// PEM encode server cert and key
+	serverCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCertDER})
+	serverKeyDER, err := x509.MarshalECPrivateKey(serverPrivKey)
+	require.NoError(t, err)
+	serverKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: serverKeyDER})
+
+	// Generate client key
+	clientPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// Create client certificate template
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject: pkix.Name{
+			Organization: []string{"Test Client"},
+			CommonName:   "test-client",
+		},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+
+	// Sign client cert with CA
+	clientCertDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caCertParsed, &clientPrivKey.PublicKey, caPrivKey)
+	require.NoError(t, err)
+
+	// PEM encode client cert and key
+	clientCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCertDER})
+	clientKeyDER, err := x509.MarshalECPrivateKey(clientPrivKey)
+	require.NoError(t, err)
+	clientKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: clientKeyDER})
+
+	return caCertPEM, serverCertPEM, serverKeyPEM, clientCertPEM, clientKeyPEM
+}
+
+func TestBuildTLSConfig_WithValidCACert(t *testing.T) {
+	caCert, _, _, _, _ := generateTestCertificates(t)
+
+	cfg := &KafkaTLSConfig{
+		Enabled: true,
+		CACert:  caCert,
+	}
+
+	tlsCfg, err := buildTLSConfig(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, tlsCfg)
+	assert.NotNil(t, tlsCfg.RootCAs, "RootCAs should be set")
+	assert.Equal(t, uint16(tls.VersionTLS12), tlsCfg.MinVersion)
+}
+
+func TestBuildTLSConfig_WithValidClientCert_mTLS(t *testing.T) {
+	caCert, _, _, clientCert, clientKey := generateTestCertificates(t)
+
+	cfg := &KafkaTLSConfig{
+		Enabled:    true,
+		CACert:     caCert,
+		ClientCert: clientCert,
+		ClientKey:  clientKey,
+	}
+
+	tlsCfg, err := buildTLSConfig(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, tlsCfg)
+	assert.NotNil(t, tlsCfg.RootCAs, "RootCAs should be set")
+	assert.Len(t, tlsCfg.Certificates, 1, "should have client certificate loaded")
+}
+
+func TestBuildTLSConfig_ClientCertWithoutKey(t *testing.T) {
+	_, _, _, clientCert, _ := generateTestCertificates(t)
+
+	cfg := &KafkaTLSConfig{
+		Enabled:    true,
+		ClientCert: clientCert,
+		// ClientKey missing
+	}
+
+	// Should work - only loads if both are present
+	tlsCfg, err := buildTLSConfig(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, tlsCfg)
+	// No client cert should be loaded
+	assert.Empty(t, tlsCfg.Certificates, "should not load cert without key")
+}
+
+func TestBuildTLSConfig_ClientKeyWithoutCert(t *testing.T) {
+	_, _, _, _, clientKey := generateTestCertificates(t)
+
+	cfg := &KafkaTLSConfig{
+		Enabled:   true,
+		ClientKey: clientKey,
+		// ClientCert missing
+	}
+
+	// Should work - only loads if both are present
+	tlsCfg, err := buildTLSConfig(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, tlsCfg)
+	// No client cert should be loaded
+	assert.Empty(t, tlsCfg.Certificates, "should not load key without cert")
+}
+
+func TestKafkaSink_mTLSConfiguration(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	caCert, _, _, clientCert, clientKey := generateTestCertificates(t)
+
+	// This tests that a KafkaSink can be created with full mTLS configuration.
+	// Note: It won't connect to an actual Kafka broker, but validates the TLS setup.
+	sink, err := NewKafkaSink(KafkaSinkConfig{
+		Name:    "mtls-test",
+		Brokers: []string{"localhost:9093"},
+		Topic:   "audit-events",
+		TLS: &KafkaTLSConfig{
+			Enabled:            true,
+			CACert:             caCert,
+			ClientCert:         clientCert,
+			ClientKey:          clientKey,
+			InsecureSkipVerify: false,
+		},
+	}, logger)
+	require.NoError(t, err)
+	require.NotNil(t, sink)
+	defer func() { _ = sink.Close() }()
+
+	assert.Equal(t, "mtls-test", sink.Name())
+}
+
+func TestKafkaSink_TLSWithSASLCombination(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	caCert, _, _, clientCert, clientKey := generateTestCertificates(t)
+
+	// This tests that TLS + SASL can be configured together (common in production Kafka)
+	sink, err := NewKafkaSink(KafkaSinkConfig{
+		Name:    "tls-sasl-test",
+		Brokers: []string{"kafka-secure:9093"},
+		Topic:   "audit-events",
+		TLS: &KafkaTLSConfig{
+			Enabled:            true,
+			CACert:             caCert,
+			ClientCert:         clientCert,
+			ClientKey:          clientKey,
+			InsecureSkipVerify: false,
+		},
+		SASL: &KafkaSASLConfig{
+			Mechanism: "SCRAM-SHA-512",
+			Username:  "audit-service",
+			Password:  "secret-password",
+		},
+	}, logger)
+	require.NoError(t, err)
+	require.NotNil(t, sink)
+	defer func() { _ = sink.Close() }()
+
+	assert.Equal(t, "tls-sasl-test", sink.Name())
+}
+
+func TestKafkaSink_InvalidClientCertKeyMismatch(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	caCert, _, serverKey, clientCert, _ := generateTestCertificates(t)
+
+	// Use client cert with server key (mismatched)
+	_, err := NewKafkaSink(KafkaSinkConfig{
+		Brokers: []string{"localhost:9093"},
+		Topic:   "audit-events",
+		TLS: &KafkaTLSConfig{
+			Enabled:    true,
+			CACert:     caCert,
+			ClientCert: clientCert,
+			ClientKey:  serverKey, // Wrong key for this cert
+		},
+	}, logger)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "client certificate")
 }

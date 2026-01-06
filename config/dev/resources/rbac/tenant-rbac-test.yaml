@@ -162,3 +162,456 @@ roleRef:
 subjects:
 - kind: Group
   name: breakglass-multi-cluster-ops
+---
+# Additional test groups for e2e test escalation scenarios
+# These groups are used by various e2e tests that create escalations
+
+# complete-flow-test-admins - used by TestCompleteFlowWithScheduledSession
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: complete-flow-test-admins-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: complete-flow-test-admins-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: complete-flow-test-admins-role
+subjects:
+- kind: Group
+  name: complete-flow-test-admins
+---
+# e2e-test-group - used by escalation_flow_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: e2e-test-group-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: e2e-test-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: e2e-test-group-role
+subjects:
+- kind: Group
+  name: e2e-test-group
+---
+# test-group - used by escalation_flow_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: test-group-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: test-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: test-group-role
+subjects:
+- kind: Group
+  name: test-group
+---
+# valid-group - used by escalation_flow_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: valid-group-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: valid-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: valid-group-role
+subjects:
+- kind: Group
+  name: valid-group
+---
+# notification-test-group - used by notification_exclusion_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: notification-test-group-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: notification-test-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: notification-test-group-role
+subjects:
+- kind: Group
+  name: notification-test-group
+---
+# notification-group-test - used by notification_exclusion_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: notification-group-test-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: notification-test-group-role
+subjects:
+- kind: Group
+  name: notification-group-test
+---
+# hidden-approvers-group - used by notification_exclusion_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hidden-approvers-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: notification-test-group-role
+subjects:
+- kind: Group
+  name: hidden-approvers-group
+---
+# approver-groups-test - used by notification_exclusion_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: approver-groups-test-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: notification-test-group-role
+subjects:
+- kind: Group
+  name: approver-groups-test
+---
+# mandatory-reason-group - used by notification_exclusion_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mandatory-reason-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: notification-test-group-role
+subjects:
+- kind: Group
+  name: mandatory-reason-group
+---
+# cross-cluster-group - used by multi_cluster_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cross-cluster-group-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps"]
+  verbs: ["get", "list", "create", "update", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cross-cluster-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cross-cluster-group-role
+subjects:
+- kind: Group
+  name: cross-cluster-group
+---
+# clusterconfig-ref-group - used by multi_cluster_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: clusterconfig-ref-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cross-cluster-group-role
+subjects:
+- kind: Group
+  name: clusterconfig-ref-group
+---
+# target-cluster-group - used by multi_cluster_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: target-cluster-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cross-cluster-group-role
+subjects:
+- kind: Group
+  name: target-cluster-group
+---
+# audit-functional-test-group - used by functional_verification_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: audit-functional-test-group-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: audit-functional-test-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: audit-functional-test-group-role
+subjects:
+- kind: Group
+  name: audit-functional-test-group
+---
+# ghost-cluster-admins - used by edge_cases_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ghost-cluster-admins-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ghost-cluster-admins-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ghost-cluster-admins-role
+subjects:
+- kind: Group
+  name: ghost-cluster-admins
+---
+# concurrent-admins - used by edge_cases_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: concurrent-admins-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: concurrent-admins-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: concurrent-admins-role
+subjects:
+- kind: Group
+  name: concurrent-admins
+---
+# state-transition-admins - used by edge_cases_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: state-transition-admins-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: concurrent-admins-role
+subjects:
+- kind: Group
+  name: state-transition-admins
+---
+# recreate-admins - used by edge_cases_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: recreate-admins-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: concurrent-admins-role
+subjects:
+- kind: Group
+  name: recreate-admins
+---
+# recreate-admins-v2 - used by edge_cases_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: recreate-admins-v2-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: concurrent-admins-role
+subjects:
+- kind: Group
+  name: recreate-admins-v2
+---
+# update-test-admins - used by full_flow_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: update-test-admins-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: breakglass-pods-admin-role-test
+subjects:
+- kind: Group
+  name: update-test-admins
+---
+# Generic escalated group role for dynamic notification test groups
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: escalated-notif-group-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "create"]
+---
+# webhook-test-group - used by webhook_authorization_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: webhook-test-group-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: breakglass-pods-admin-role-test
+subjects:
+- kind: Group
+  name: webhook-test-group
+---
+# domain-restricted-access - used by feature_coverage_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: domain-restricted-access-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: breakglass-read-only-role-test
+subjects:
+- kind: Group
+  name: domain-restricted-access
+---
+# validation-admins - used by validation_test.go
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: validation-admins-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: breakglass-pods-admin-role-test
+subjects:
+- kind: Group
+  name: validation-admins

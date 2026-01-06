@@ -30,13 +30,25 @@ func CreateScheme() (*runtime.Scheme, error) {
 
 // SetupLogger creates and configures a zap logger for the application.
 // If debug is true, it uses development mode; otherwise production mode.
+// Stacktraces are only added for DPanic level and above to reduce log noise
+// during normal error handling (transient network errors, etc.).
 func SetupLogger(debug bool) (*zap.Logger, error) {
 	var logger *zap.Logger
 	var err error
 	if debug {
-		logger, err = zap.NewDevelopment()
+		// Development config with stacktraces only for DPanic+
+		cfg := zap.NewDevelopmentConfig()
+		cfg.EncoderConfig.StacktraceKey = "" // Disable stacktrace field entirely
+		logger, err = cfg.Build(
+			zap.AddStacktrace(zap.DPanicLevel), // Only add stacktraces for DPanic+
+		)
 	} else {
-		logger, err = zap.NewProduction()
+		// Production config with stacktraces only for DPanic+
+		cfg := zap.NewProductionConfig()
+		cfg.EncoderConfig.StacktraceKey = "" // Disable stacktrace field entirely
+		logger, err = cfg.Build(
+			zap.AddStacktrace(zap.DPanicLevel), // Only add stacktraces for DPanic+
+		)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("unable to create logger (debug: %t): %w", debug, err)

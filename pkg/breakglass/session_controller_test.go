@@ -803,6 +803,9 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 // helper to get *bool
 func ptrBool(b bool) *bool { return &b }
 
+// helper to get *int32
+func ptrInt32(i int32) *int32 { return &i }
+
 // TestFilterBreakglassSessionsByUser
 //
 // Purpose:
@@ -1160,14 +1163,10 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("/breakglassSessions/%s", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	gotList := []v1alpha1.BreakglassSession{}
-	if err := json.NewDecoder(w.Result().Body).Decode(&gotList); err != nil {
+	var got v1alpha1.BreakglassSession
+	if err := json.NewDecoder(w.Result().Body).Decode(&got); err != nil {
 		t.Fatalf("failed to decode session status: %v", err)
 	}
-	if len(gotList) == 0 {
-		t.Fatalf("expected session in response, got none")
-	}
-	got := gotList[0]
 	if got.Status.State != v1alpha1.SessionStateApproved || got.Status.ApprovedAt.IsZero() {
 		t.Fatalf("expected approved session, got state=%s approvedAt=%v", got.Status.State, got.Status.ApprovedAt)
 	}
@@ -1184,18 +1183,14 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("/breakglassSessions/%s", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	gotList = []v1alpha1.BreakglassSession{}
-	if err := json.NewDecoder(w.Result().Body).Decode(&gotList); err != nil {
+	var gotAfterDrop v1alpha1.BreakglassSession
+	if err := json.NewDecoder(w.Result().Body).Decode(&gotAfterDrop); err != nil {
 		t.Fatalf("failed to decode session status after drop: %v", err)
 	}
-	if len(gotList) == 0 {
-		t.Fatalf("expected session in response after drop, got none")
+	if gotAfterDrop.Status.State != v1alpha1.SessionStateExpired {
+		t.Fatalf("expected expired session after drop, got state=%s", gotAfterDrop.Status.State)
 	}
-	got = gotList[0]
-	if got.Status.State != v1alpha1.SessionStateExpired {
-		t.Fatalf("expected expired session after drop, got state=%s", got.Status.State)
-	}
-	if got.Status.ExpiresAt.IsZero() {
+	if gotAfterDrop.Status.ExpiresAt.IsZero() {
 		t.Fatalf("expected ExpiresAt to be set for expired session")
 	}
 
@@ -3917,7 +3912,6 @@ func TestUseCaseSelfServiceBISDebugging(t *testing.T) {
 				EscalatedGroup:    "incident-debug",
 				BlockSelfApproval: &blockSelfApproval,
 				MaxValidFor:       "4h",
-				IdleTimeout:       "30m",
 				Allowed: v1alpha1.BreakglassEscalationAllowed{
 					Groups: []string{"sre-team"},
 				},
@@ -4004,8 +3998,8 @@ func TestUseCaseDebugSessionNetworkCapabilities(t *testing.T) {
 				Constraints: &v1alpha1.DebugSessionConstraints{
 					MaxDuration:     "2h",
 					DefaultDuration: "30m",
-					AllowRenewal:    true,
-					MaxRenewals:     2,
+					AllowRenewal:    ptrBool(true),
+					MaxRenewals:     ptrInt32(2),
 				},
 			},
 		}
@@ -4015,4 +4009,311 @@ func TestUseCaseDebugSessionNetworkCapabilities(t *testing.T) {
 		require.Contains(t, template.Spec.Approvers.AutoApproveFor.Groups, "sre-team")
 		require.Equal(t, "2h", template.Spec.Constraints.MaxDuration)
 	})
+}
+
+// TestFormatDuration covers the formatDuration helper function
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		expected string
+	}{
+		// Zero
+		{"zero", 0, "0"},
+
+		// Seconds
+		{"1 second", 1 * time.Second, "1 second"},
+		{"30 seconds", 30 * time.Second, "30 seconds"},
+
+		// Minutes
+		{"1 minute", 1 * time.Minute, "1 minute"},
+		{"5 minutes", 5 * time.Minute, "5 minutes"},
+		{"59 minutes", 59 * time.Minute, "59 minutes"},
+
+		// Hours
+		{"1 hour exact", 1 * time.Hour, "1 hour"},
+		{"2 hours exact", 2 * time.Hour, "2 hours"},
+		{"1 hour 1 minute", 1*time.Hour + 1*time.Minute, "1 hour 1 minute"},
+		{"1 hour 30 minutes", 1*time.Hour + 30*time.Minute, "1 hour 30 minutes"},
+		{"2 hours 1 minute", 2*time.Hour + 1*time.Minute, "2 hours 1 minute"},
+		{"2 hours 15 minutes", 2*time.Hour + 15*time.Minute, "2 hours 15 minutes"},
+		{"23 hours", 23 * time.Hour, "23 hours"},
+
+		// Days
+		{"1 day exact", 24 * time.Hour, "1 day"},
+		{"2 days exact", 48 * time.Hour, "2 days"},
+		{"1 day 1 hour", 25 * time.Hour, "1 day 1 hour"},
+		{"1 day 5 hours", 29 * time.Hour, "1 day 5 hours"},
+		{"2 days 1 hour", 49 * time.Hour, "2 days 1 hour"},
+		{"2 days 12 hours", 60 * time.Hour, "2 days 12 hours"},
+		{"7 days", 168 * time.Hour, "7 days"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatDuration(tt.duration)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestIsSessionRetained covers the IsSessionRetained helper function
+func TestIsSessionRetained(t *testing.T) {
+	t.Run("session retained - retention time in past", func(t *testing.T) {
+		session := v1alpha1.BreakglassSession{
+			Status: v1alpha1.BreakglassSessionStatus{
+				RetainedUntil: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+			},
+		}
+		// Should be "not retained" (ready for removal) since time has passed
+		require.True(t, IsSessionRetained(session))
+	})
+
+	t.Run("session not ready for removal - retention time in future", func(t *testing.T) {
+		session := v1alpha1.BreakglassSession{
+			Status: v1alpha1.BreakglassSessionStatus{
+				RetainedUntil: metav1.NewTime(time.Now().Add(1 * time.Hour)),
+			},
+		}
+		// Should be "retained" (not ready for removal) since time has not passed
+		require.False(t, IsSessionRetained(session))
+	})
+}
+
+// TestSessionControllerBasePath verifies the BasePath function
+func TestSessionControllerBasePath(t *testing.T) {
+	ctrl := BreakglassSessionController{}
+	require.Equal(t, "breakglassSessions", ctrl.BasePath())
+}
+
+// TestIsSessionRejected covers the IsSessionRejected function
+func TestIsSessionRejectedFunction(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    v1alpha1.BreakglassSessionState
+		expected bool
+	}{
+		{"rejected state", v1alpha1.SessionStateRejected, true},
+		{"approved state", v1alpha1.SessionStateApproved, false},
+		{"pending state", v1alpha1.SessionStatePending, false},
+		{"withdrawn state", v1alpha1.SessionStateWithdrawn, false},
+		{"expired state", v1alpha1.SessionStateExpired, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: tt.state,
+				},
+			}
+			require.Equal(t, tt.expected, IsSessionRejected(session))
+		})
+	}
+}
+
+// TestIsSessionWithdrawn covers the IsSessionWithdrawn function
+func TestIsSessionWithdrawnFunction(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    v1alpha1.BreakglassSessionState
+		expected bool
+	}{
+		{"withdrawn state", v1alpha1.SessionStateWithdrawn, true},
+		{"approved state", v1alpha1.SessionStateApproved, false},
+		{"pending state", v1alpha1.SessionStatePending, false},
+		{"rejected state", v1alpha1.SessionStateRejected, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: tt.state,
+				},
+			}
+			require.Equal(t, tt.expected, IsSessionWithdrawn(session))
+		})
+	}
+}
+
+// TestIsSessionExpired covers the IsSessionExpired function
+func TestIsSessionExpiredFunction(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     v1alpha1.BreakglassSessionState
+		expiresAt *metav1.Time
+		expected  bool
+	}{
+		// State-first: Expired state takes precedence
+		{"expired state", v1alpha1.SessionStateExpired, nil, true},
+		{"expired state with past time", v1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), true},
+		{"expired state with future time", v1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), true},
+
+		// Approved state checks timestamp
+		{"approved state with past time", v1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), true},
+		{"approved state with future time", v1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), false},
+		{"approved state with zero time", v1alpha1.SessionStateApproved, nil, false},
+
+		// Other states are not expired
+		{"pending state", v1alpha1.SessionStatePending, nil, false},
+		{"rejected state", v1alpha1.SessionStateRejected, nil, false},
+		{"withdrawn state", v1alpha1.SessionStateWithdrawn, nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: tt.state,
+				},
+			}
+			if tt.expiresAt != nil {
+				session.Status.ExpiresAt = *tt.expiresAt
+			}
+			require.Equal(t, tt.expected, IsSessionExpired(session))
+		})
+	}
+}
+
+// ptr is a helper to get pointer to metav1.Time
+func ptr(t metav1.Time) *metav1.Time {
+	return &t
+}
+
+// TestIsSessionValid covers additional cases for IsSessionValid
+func TestIsSessionValidFunction(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     v1alpha1.BreakglassSessionState
+		expiresAt *metav1.Time
+		expected  bool
+	}{
+		// Terminal states are never valid
+		{"rejected state", v1alpha1.SessionStateRejected, nil, false},
+		{"withdrawn state", v1alpha1.SessionStateWithdrawn, nil, false},
+		{"expired state", v1alpha1.SessionStateExpired, nil, false},
+		{"timeout state", v1alpha1.SessionStateTimeout, nil, false},
+		{"waiting for scheduled time", v1alpha1.SessionStateWaitingForScheduledTime, nil, false},
+
+		// Approved state with valid expiry
+		{"approved with future expiry", v1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(1 * time.Hour))), true},
+		{"approved with past expiry", v1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().Add(-1 * time.Hour))), false},
+
+		// Pending is valid
+		{"pending state", v1alpha1.SessionStatePending, nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := v1alpha1.BreakglassSession{
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: tt.state,
+				},
+			}
+			if tt.expiresAt != nil {
+				session.Status.ExpiresAt = *tt.expiresAt
+			}
+			require.Equal(t, tt.expected, IsSessionValid(session))
+		})
+	}
+}
+
+// TestToRFC1123SubdomainEdgeCases covers edge cases in toRFC1123Subdomain
+func TestToRFC1123SubdomainEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty string returns x", "", "x"},
+		{"already valid", "valid-name", "valid-name"},
+		{"uppercase", "UPPERCASE", "uppercase"},
+		{"spaces", "hello world", "hello-world"},
+		{"leading hyphen", "-leading", "leading"},
+		{"trailing hyphen", "trailing-", "trailing"},
+		{"consecutive hyphens", "hello--world", "hello-world"},
+		{"special characters", "hello@world.com", "hello-world.com"},
+		{"numbers", "test123", "test123"},
+		{"mixed case with special", "User@Example.COM", "user-example.com"},
+		{"underscores", "hello_world_test", "hello-world-test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := toRFC1123Subdomain(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestToRFC1123LabelEdgeCases covers edge cases in toRFC1123Label
+func TestToRFC1123LabelEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty string returns x", "", "x"},
+		{"already valid", "valid-name", "valid-name"},
+		{"uppercase", "UPPERCASE", "uppercase"},
+		{"special characters", "hello@world", "hello-world"},
+		{"long string truncated", strings.Repeat("a", 100), strings.Repeat("a", 63)},
+		{"leading hyphen after conversion", "@leading", "leading"},
+		{"trailing hyphen after conversion", "trailing@", "trailing"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := toRFC1123Label(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestIsAlnum covers the isAlnum helper
+// Note: isAlnum only checks lowercase letters since input is lowercased before use
+func TestIsAlnumFunction(t *testing.T) {
+	tests := []struct {
+		input    rune
+		expected bool
+	}{
+		{'a', true},
+		{'z', true},
+		{'A', false}, // uppercase not valid (input is lowercased before isAlnum is called)
+		{'Z', false}, // uppercase not valid
+		{'0', true},
+		{'9', true},
+		{'-', false},
+		{'_', false},
+		{'@', false},
+		{' ', false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.input), func(t *testing.T) {
+			require.Equal(t, tt.expected, isAlnum(tt.input))
+		})
+	}
+}
+
+// TestAddIfNotPresent covers the addIfNotPresent helper
+func TestAddIfNotPresentFunction(t *testing.T) {
+	tests := []struct {
+		name     string
+		slice    []string
+		item     string
+		expected []string
+	}{
+		{"add to empty", []string{}, "item", []string{"item"}},
+		{"add new item", []string{"a", "b"}, "c", []string{"a", "b", "c"}},
+		{"item already present", []string{"a", "b", "c"}, "b", []string{"a", "b", "c"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := addIfNotPresent(tt.slice, tt.item)
+			require.Equal(t, tt.expected, result)
+		})
+	}
 }

@@ -1,0 +1,295 @@
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Audit Webhook Receiver - A simple echo server for testing webhook audit sinks in e2e tests.
+# Receives POST requests and stores them for later retrieval via GET.
+# Supports both single events (POST /events) and batch events (POST /events with array or {events:[]}).
+# NOTE: We use a minimal Python-based receiver for flexibility.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-webhook-receiver-config
+data:
+  server.py: |
+    #!/usr/bin/env python3
+    """
+    Verbose Audit Webhook Receiver for E2E testing.
+    
+    Endpoints:
+    - POST /events or /audit - Receive and store audit events (single or batch)
+    - GET /events - Retrieve all stored events
+    - GET /events/count - Get event count only
+    - DELETE /events - Clear stored events
+    - GET /health, /healthz - Health check
+    - GET /ready, /readyz - Readiness check
+    
+    Features:
+    - Verbose logging of ALL received events with full JSON payload
+    - Support for batch events (array or {events: []} format)
+    - Thread-safe event storage
+    - Metadata tracking (_received_at, _headers, _batch_index)
+    """
+    import json
+    import threading
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from datetime import datetime
+    import os
+    import sys
+    
+    # Configuration
+    VERBOSE = os.environ.get('VERBOSE', 'true').lower() in ('true', '1', 'yes')
+    PORT = int(os.environ.get('PORT', 8080))
+    
+    # Thread-safe storage for received events
+    events_lock = threading.Lock()
+    events = []
+    total_received = 0  # Total events ever received (not reset on clear)
+    batch_count = 0     # Number of batch requests received
+    
+    def log(msg, level='INFO'):
+        """Structured logging to stdout for kubectl logs visibility."""
+        timestamp = datetime.now().isoformat()
+        print(f"[{timestamp}] [{level}] {msg}", flush=True)
+    
+    def log_event(event, index=None, batch_size=None):
+        """Log a single audit event with full details."""
+        prefix = f"Event #{index+1}/{batch_size}" if batch_size else "Single Event"
+        event_type = event.get('type', 'unknown')
+        event_id = event.get('id', 'no-id')
+        severity = event.get('severity', 'unknown')
+        actor = event.get('actor', {})
+        target = event.get('target', {})
+        
+        log(f"=== {prefix} RECEIVED ===")
+        log(f"  ID: {event_id}")
+        log(f"  Type: {event_type}")
+        log(f"  Severity: {severity}")
+        log(f"  Actor: user={actor.get('user', 'n/a')}, groups={actor.get('groups', [])}")
+        log(f"  Target: kind={target.get('kind', 'n/a')}, name={target.get('name', 'n/a')}, namespace={target.get('namespace', 'n/a')}")
+        
+        if VERBOSE:
+            # Log full JSON payload
+            log(f"  Full payload: {json.dumps(event, indent=2, default=str)}")
+    
+    class AuditWebhookHandler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            # Override default logging to use our log function
+            log(f"HTTP: {format % args}")
+    
+        def send_json_response(self, code, data):
+            self.send_response(code)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            response = json.dumps(data)
+            self.wfile.write(response.encode('utf-8'))
+            if VERBOSE:
+                log(f"Response [{code}]: {response}")
+    
+        def do_GET(self):
+            if self.path in ('/health', '/healthz'):
+                self.send_json_response(200, {"status": "healthy"})
+            elif self.path in ('/ready', '/readyz'):
+                self.send_json_response(200, {"status": "ready"})
+            elif self.path == '/events':
+                with events_lock:
+                    self.send_json_response(200, {
+                        "count": len(events),
+                        "total_received": total_received,
+                        "batch_count": batch_count,
+                        "events": events
+                    })
+            elif self.path == '/events/count':
+                with events_lock:
+                    self.send_json_response(200, {
+                        "count": len(events),
+                        "total_received": total_received,
+                        "batch_count": batch_count
+                    })
+            elif self.path == '/stats':
+                with events_lock:
+                    # Return event type breakdown
+                    type_counts = {}
+                    for e in events:
+                        t = e.get('type', 'unknown')
+                        type_counts[t] = type_counts.get(t, 0) + 1
+                    self.send_json_response(200, {
+                        "count": len(events),
+                        "total_received": total_received,
+                        "batch_count": batch_count,
+                        "types": type_counts
+                    })
+            else:
+                log(f"GET to unknown path: {self.path}", "WARN")
+                self.send_json_response(404, {"error": "not found", "path": self.path})
+    
+        def do_POST(self):
+            global total_received, batch_count
+            
+            # Accept both /events and /audit paths
+            if self.path in ('/events', '/audit', '/audit/events'):
+                content_length = int(self.headers.get('Content-Length', 0))
+                batch_header = self.headers.get('X-Batch-Size', '')
+                content_type = self.headers.get('Content-Type', '')
+                
+                log(f"POST {self.path}: Content-Length={content_length}, X-Batch-Size={batch_header}, Content-Type={content_type}")
+                
+                body = self.rfile.read(content_length)
+                
+                try:
+                    payload = json.loads(body) if body else {}
+                except json.JSONDecodeError as e:
+                    log(f"JSON decode error: {e}. Raw body: {body.decode('utf-8', errors='replace')[:500]}", "ERROR")
+                    payload = {"_raw": body.decode('utf-8', errors='replace'), "_parse_error": str(e)}
+                
+                received_events = []
+                is_batch = False
+                
+                # Handle different payload formats:
+                # 1. Single event: {type: ..., id: ...}
+                # 2. Batch array: [{type: ...}, {type: ...}]
+                # 3. Batch object: {events: [{type: ...}, ...], count: N}
+                if isinstance(payload, list):
+                    # Batch as array
+                    is_batch = True
+                    received_events = payload
+                    batch_count += 1
+                elif isinstance(payload, dict) and 'events' in payload:
+                    # Batch as object with events array
+                    is_batch = True
+                    received_events = payload.get('events', [])
+                    batch_count += 1
+                else:
+                    # Single event
+                    received_events = [payload]
+                
+                timestamp = datetime.now().isoformat()
+                headers_dict = dict(self.headers)
+                
+                log(f"Processing {'batch of ' + str(len(received_events)) if is_batch else 'single'} event(s)")
+                
+                with events_lock:
+                    for i, event in enumerate(received_events):
+                        # Add metadata
+                        event['_received_at'] = timestamp
+                        event['_headers'] = headers_dict
+                        event['_path'] = self.path
+                        if is_batch:
+                            event['_batch_index'] = i
+                            event['_batch_size'] = len(received_events)
+                        
+                        events.append(event)
+                        total_received += 1
+                        
+                        # Log each event
+                        log_event(event, index=i if is_batch else None, batch_size=len(received_events) if is_batch else None)
+                    
+                    current_count = len(events)
+                
+                log(f"Stored {len(received_events)} event(s). Total stored: {current_count}, Total ever received: {total_received}")
+                
+                self.send_json_response(200, {
+                    "status": "received",
+                    "count": len(received_events),
+                    "total_stored": current_count,
+                    "batch": is_batch
+                })
+            else:
+                log(f"POST to unknown path: {self.path}", "WARN")
+                self.send_json_response(404, {"error": "not found", "path": self.path, "hint": "Use /events or /audit"})
+    
+        def do_DELETE(self):
+            if self.path == '/events':
+                with events_lock:
+                    old_count = len(events)
+                    events.clear()
+                log(f"Cleared {old_count} events (total_received counter NOT reset: {total_received})")
+                self.send_json_response(200, {"status": "cleared", "cleared": old_count})
+            else:
+                log(f"DELETE to unknown path: {self.path}", "WARN")
+                self.send_json_response(404, {"error": "not found"})
+    
+    if __name__ == '__main__':
+        log(f"=== Audit Webhook Receiver Starting ===")
+        log(f"Port: {PORT}")
+        log(f"Verbose logging: {VERBOSE}")
+        log(f"Supported paths: POST /events, POST /audit, GET /events, DELETE /events, GET /stats")
+        
+        server = HTTPServer(('0.0.0.0', PORT), AuditWebhookHandler)
+        log(f"Listening on 0.0.0.0:{PORT}")
+        
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            log("Shutting down...")
+            server.shutdown()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audit-webhook-receiver
+  labels:
+    app: audit-webhook-receiver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: audit-webhook-receiver
+  template:
+    metadata:
+      labels:
+        app: audit-webhook-receiver
+    spec:
+      containers:
+        - name: receiver
+          image: python:3.11-slim
+          command: ["python3", "/app/server.py"]
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /app
+          env:
+            - name: PORT
+              value: "8080"
+          resources:
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: audit-webhook-receiver-config
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: audit-webhook-receiver
+  labels:
+    app: audit-webhook-receiver
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+  selector:
+    app: audit-webhook-receiver

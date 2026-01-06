@@ -24,7 +24,7 @@ spec:
   kubeconfigSecretRef:
     name: <secret-name>
     namespace: <secret-namespace>
-    key: kubeconfig  # Optional, defaults to "kubeconfig"
+    key: value  # Optional, defaults to "value" (compatible with cluster-api)
   
   # Optional: Cluster identification
   clusterID: <canonical-cluster-id>  # Defaults to metadata.name
@@ -48,7 +48,7 @@ References a Kubernetes Secret containing an admin-level kubeconfig for the targ
 kubeconfigSecretRef:
   name: tenant-cluster-admin      # Secret name
   namespace: default              # Secret namespace  
-  key: kubeconfig                # Secret key (optional, defaults to "kubeconfig")
+  key: value                     # Secret key (optional, defaults to "value")
 ```
 
 **Requirements:**

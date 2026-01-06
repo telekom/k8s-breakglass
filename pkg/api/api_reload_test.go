@@ -246,9 +246,47 @@ type mockIdentityProviderLoader struct {
 	err    string
 }
 
-func (m *mockIdentityProviderLoader) LoadIdentityProvider(ctx context.Context) (*config.IdentityProviderConfig, error) {
+func (m *mockIdentityProviderLoader) LoadIdentityProvider(_ context.Context) (*config.IdentityProviderConfig, error) {
 	if m.err != "" {
 		return nil, context.DeadlineExceeded
 	}
 	return m.config, nil
+}
+
+// TestServer_ReloadIdentityProvider_NilLoader tests reload with nil loader
+func TestServer_ReloadIdentityProvider_NilLoader(t *testing.T) {
+	log := zap.NewNop()
+
+	server := &Server{
+		log:       log,
+		idpConfig: nil,
+		idpMutex:  sync.RWMutex{},
+	}
+
+	// Test with nil loader - should return error
+	err := server.ReloadIdentityProvider(nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "loader is nil")
+}
+
+// TestServer_SetEscalationReconciler tests setting the escalation reconciler
+func TestServer_SetEscalationReconciler(t *testing.T) {
+	log := zap.NewNop()
+	server := &Server{
+		log:      log,
+		idpMutex: sync.RWMutex{},
+	}
+
+	// Initially nil
+	assert.Nil(t, server.escalationReconciler)
+
+	// Create a mock reconciler (we just need a non-nil value)
+	reconciler := &config.EscalationReconciler{}
+
+	// Set the reconciler
+	server.SetEscalationReconciler(reconciler)
+
+	// Verify it was set
+	assert.NotNil(t, server.escalationReconciler)
+	assert.Equal(t, reconciler, server.escalationReconciler)
 }

@@ -263,3 +263,135 @@ func TestIdentityProviderReconciler_NilLogger(t *testing.T) {
 	require.NotNil(t, reconciler)
 	assert.NotNil(t, reconciler.logger)
 }
+
+// TestIdentityProviderReconciler_WithEventRecorder tests event recorder configuration
+func TestIdentityProviderReconciler_WithEventRecorder(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	client := ctrltest.NewFakeClient()
+	reloadFn := func(ctx context.Context) error { return nil }
+
+	recorder := &fakeEventRecorder{}
+	reconciler := NewIdentityProviderReconciler(client, log, reloadFn).
+		WithEventRecorder(recorder)
+
+	require.NotNil(t, reconciler.recorder)
+	assert.Same(t, recorder, reconciler.recorder)
+}
+
+// TestIdentityProviderReconciler_GetCachedIdentityProviders tests cache retrieval
+func TestIdentityProviderReconciler_GetCachedIdentityProviders(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	scheme := newTestScheme(t)
+
+	idp := &v1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-idp",
+		},
+		Spec: v1alpha1.IdentityProviderSpec{
+			OIDC: v1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "test-client",
+			},
+		},
+	}
+
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp).WithStatusSubresource(idp).Build()
+	reloadFn := func(ctx context.Context) error { return nil }
+
+	reconciler := NewIdentityProviderReconciler(client, log, reloadFn)
+
+	// Initially cache is empty
+	cached := reconciler.GetCachedIdentityProviders()
+	assert.Empty(t, cached)
+
+	// Run reconcile to populate cache
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name: "test-idp",
+		},
+	}
+	_, err := reconciler.Reconcile(context.Background(), req)
+	require.NoError(t, err)
+
+	// Cache should now have the IDP
+	cached = reconciler.GetCachedIdentityProviders()
+	assert.Len(t, cached, 1)
+	assert.Equal(t, "test-idp", cached[0].Name)
+
+	// Verify it returns a copy (modifying returned slice doesn't affect cache)
+	cached[0] = nil
+	cachedAgain := reconciler.GetCachedIdentityProviders()
+	assert.Len(t, cachedAgain, 1)
+	assert.NotNil(t, cachedAgain[0])
+}
+
+// TestIdentityProviderReconciler_DisabledIDPsFilteredFromCache tests that disabled IDPs are filtered
+func TestIdentityProviderReconciler_DisabledIDPsFilteredFromCache(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	scheme := newTestScheme(t)
+
+	enabledIDP := &v1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "enabled-idp",
+		},
+		Spec: v1alpha1.IdentityProviderSpec{
+			Disabled: false,
+			OIDC: v1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "test-client",
+			},
+		},
+	}
+
+	disabledIDP := &v1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "disabled-idp",
+		},
+		Spec: v1alpha1.IdentityProviderSpec{
+			Disabled: true,
+			OIDC: v1alpha1.OIDCConfig{
+				Authority: "https://auth2.example.com",
+				ClientID:  "test-client-2",
+			},
+		},
+	}
+
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).
+		WithObjects(enabledIDP, disabledIDP).
+		WithStatusSubresource(enabledIDP, disabledIDP).
+		Build()
+	reloadFn := func(ctx context.Context) error { return nil }
+
+	reconciler := NewIdentityProviderReconciler(client, log, reloadFn)
+
+	// Reconcile any IDP to trigger cache update
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name: "enabled-idp",
+		},
+	}
+	_, err := reconciler.Reconcile(context.Background(), req)
+	require.NoError(t, err)
+
+	// Cache should only have enabled IDP
+	cached := reconciler.GetCachedIdentityProviders()
+	assert.Len(t, cached, 1)
+	assert.Equal(t, "enabled-idp", cached[0].Name)
+}
+
+// fakeEventRecorder is a simple fake implementation of record.EventRecorder for testing
+type fakeEventRecorder struct {
+	events []string
+}
+
+func (f *fakeEventRecorder) Event(object runtime.Object, eventtype, reason, message string) {
+	f.events = append(f.events, fmt.Sprintf("%s: %s - %s", eventtype, reason, message))
+}
+
+func (f *fakeEventRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+	f.events = append(f.events, fmt.Sprintf("%s: %s - %s", eventtype, reason, fmt.Sprintf(messageFmt, args...)))
+}
+
+func (f *fakeEventRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
+	f.Event(object, eventtype, reason, fmt.Sprintf(messageFmt, args...))
+}

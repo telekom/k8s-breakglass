@@ -1,0 +1,42 @@
+# Test Debug Session Template: Network Debug
+# Template for network debugging with advanced tools
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: test-network-debug
+  labels:
+    e2e-test: "true"
+spec:
+  displayName: "Network Debug Session"
+  description: "Debug session with network troubleshooting tools"
+  debugPodTemplateRef: test-network-debug-pod
+  allowedNamespaces:
+    - default
+    - kube-system
+  maxDuration: "1h"
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: test-network-debug-pod
+  labels:
+    e2e-test: "true"
+spec:
+  displayName: "Network Debug Pod"
+  description: "Debug pod with network tools (curl, dig, nslookup, tcpdump)"
+  template:
+    spec:
+      containers:
+        - name: netshoot
+          image: nicolaka/netshoot:latest
+          command: ["sleep", "infinity"]
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW"]
+          resources:
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"

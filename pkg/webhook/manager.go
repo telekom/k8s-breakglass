@@ -180,6 +180,21 @@ func Setup(
 		if err := registerWebhook(&v1alpha1.MailProvider{}, "MailProvider", mgr, log); err != nil {
 			return err
 		}
+		if err := registerWebhook(&v1alpha1.DenyPolicy{}, "DenyPolicy", mgr, log); err != nil {
+			return err
+		}
+		if err := registerWebhook(&v1alpha1.DebugSession{}, "DebugSession", mgr, log); err != nil {
+			return err
+		}
+		if err := registerWebhook(&v1alpha1.DebugSessionTemplate{}, "DebugSessionTemplate", mgr, log); err != nil {
+			return err
+		}
+		if err := registerWebhook(&v1alpha1.DebugPodTemplate{}, "DebugPodTemplate", mgr, log); err != nil {
+			return err
+		}
+		if err := registerWebhook(&v1alpha1.AuditConfig{}, "AuditConfig", mgr, log); err != nil {
+			return err
+		}
 	} else {
 		log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 	}

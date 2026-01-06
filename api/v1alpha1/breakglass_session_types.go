@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -73,10 +73,6 @@ type BreakglassSessionSpec struct {
 	// +required
 	GrantedGroup string `json:"grantedGroup,omitempty"`
 
-	// Max time a session can sit idle without being used by user after approved.
-	// +default="1h"
-	IdleTimeout string `json:"idleTimeout,omitempty"`
-
 	// maxValidFor is the maximum amount of time the session will be active for after it is approved.
 	// +default="1h"
 	MaxValidFor string `json:"maxValidFor,omitempty"`
@@ -136,7 +132,8 @@ type BreakglassSessionStatus struct {
 	// Tracks conditions like Idle, Approved, Rejected, Expired, Canceled, Active, and SessionExpired
 	// Active condition: Set to True when session is approved and within validity window, False otherwise
 	// SessionExpired condition: Set to True when session validity period has ended, False while active
-	Conditions []metav1.Condition `json:"conditions"`
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// approvedAt is the time when the session was approved.
 	// +omitempty
@@ -171,14 +168,6 @@ type BreakglassSessionStatus struct {
 	// This value is set based on spec.retainFor when the session is approved.
 	// +omitempty
 	RetainedUntil metav1.Time `json:"retainedUntil,omitempty"`
-
-	// NOT IMPLEMENTED https://github.com/telekom/k8s-breakglass/issues/8
-	// Time until session is revoked due to user not actively using it.
-	IdleUntil metav1.Time `json:"idleUntil,omitempty"`
-
-	// NOT IMPLEMENTED https://github.com/telekom/k8s-breakglass/issues/8
-	// Last time session was used for breakglass session based authorization.
-	LastUsed metav1.Time `json:"lastUsed,omitempty"`
 
 	// State represents the current state of the Breakglass session.
 	// +optional
@@ -240,19 +229,12 @@ func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj runtime.Obj
 		return nil, fmt.Errorf("expected a BreakglassSession object but got %T", obj)
 	}
 
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateBreakglassSession(session)
 	var allErrs field.ErrorList
-	// basic validations
-	if session.Spec.Cluster == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("cluster"), "cluster is required"))
-	}
-	if session.Spec.User == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("user"), "user is required"))
-	}
-	if session.Spec.GrantedGroup == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("grantedGroup"), "grantedGroup is required"))
-	}
+	allErrs = append(allErrs, result.Errors...)
 
-	// Validate scheduledStartTime if provided
+	// Validate scheduledStartTime if provided (webhook-specific as it's time-sensitive)
 	if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
 		now := metav1.Now()
 		if session.Spec.ScheduledStartTime.Time.Before(now.Time) {
@@ -264,12 +246,13 @@ func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj runtime.Obj
 		}
 	}
 
-	// Multi-IDP: Validate IDP tracking fields if set
+	// Multi-IDP: Validate IDP tracking fields if set (requires k8s client)
 	allErrs = append(allErrs, validateIdentityProviderFields(ctx, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, field.NewPath("spec").Child("identityProviderName"), field.NewPath("spec").Child("identityProviderIssuer"))...)
 
-	// Session Authorization - Validate IDP is allowed by matching escalation
+	// Session Authorization - Validate IDP is allowed by matching escalation (requires k8s client)
 	allErrs = append(allErrs, validateSessionIdentityProviderAuthorization(ctx, session.Spec.Cluster, session.Spec.GrantedGroup, session.Spec.IdentityProviderName, field.NewPath("spec").Child("identityProviderName"))...)
 
+	// Uniqueness check (requires k8s client)
 	nameErrs := ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, bs.Namespace, bs.Name, field.NewPath("metadata").Child("name"))
 	allErrs = append(allErrs, nameErrs...)
 	if len(allErrs) == 0 {

@@ -334,9 +334,25 @@ func validateIdentityProviderFields(
 			errs = append(errs, field.NotFound(namePath, idpName))
 		} else if idp.Spec.Disabled {
 			errs = append(errs, field.Invalid(namePath, idpName, "referenced IdentityProvider is disabled"))
-		} else if idpIssuer != "" && idp.Spec.Issuer != idpIssuer {
-			// If both name and issuer are set, they must match
-			errs = append(errs, field.Invalid(issuerPath, idpIssuer, fmt.Sprintf("issuer does not match IdentityProvider %s (expected %s)", idpName, idp.Spec.Issuer)))
+		} else if idpIssuer != "" {
+			// If both name and issuer are set, verify they match the IDP's issuer or authority
+			// Normalize for comparison (remove trailing slashes)
+			issuerNorm := strings.TrimRight(idpIssuer, "/")
+			idpIssuerNorm := strings.TrimRight(idp.Spec.Issuer, "/")
+			idpAuthorityNorm := strings.TrimRight(idp.Spec.OIDC.Authority, "/")
+
+			// Match if issuer matches Spec.Issuer (when set) OR OIDC.Authority (as fallback)
+			// This mirrors the runtime behavior in identity_provider_loader.go
+			issuerMatch := (idp.Spec.Issuer != "" && idpIssuerNorm == issuerNorm) ||
+				(idpAuthorityNorm == issuerNorm)
+
+			if !issuerMatch {
+				expectedIssuer := idp.Spec.Issuer
+				if expectedIssuer == "" {
+					expectedIssuer = idp.Spec.OIDC.Authority
+				}
+				errs = append(errs, field.Invalid(issuerPath, idpIssuer, fmt.Sprintf("issuer does not match IdentityProvider %s (expected %s)", idpName, expectedIssuer)))
+			}
 		}
 	}
 
@@ -344,8 +360,7 @@ func validateIdentityProviderFields(
 }
 
 // validateTimeoutRelationships ensures that timeout values have proper relationships:
-// - approvalTimeout must be less than maxValidFor (if both are set)
-// - idleTimeout must be less than maxValidFor (if both are set)
+// - approvalTimeout must be less than or equal to maxValidFor (if both are set)
 // - All timeout values must be positive durations
 func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {
 	var errs field.ErrorList
@@ -353,7 +368,6 @@ func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *fiel
 	// Get durations - these have defaults ("1h") in the spec comments
 	maxValidFor := spec.MaxValidFor
 	approvalTimeout := spec.ApprovalTimeout
-	idleTimeout := spec.IdleTimeout
 
 	// Helper to parse and validate duration string
 	parseDuration := func(durationStr string, fieldName string, path *field.Path) (time.Duration, *field.Error) {
@@ -384,23 +398,11 @@ func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *fiel
 	approvalTimeoutDuration, approvalTimeoutErr := parseDuration(approvalTimeout, "approvalTimeout", specPath.Child("approvalTimeout"))
 	if approvalTimeoutErr != nil {
 		errs = append(errs, approvalTimeoutErr)
-	} else if approvalTimeout != "" && approvalTimeoutDuration >= maxValidForDuration {
+	} else if approvalTimeout != "" && approvalTimeoutDuration > maxValidForDuration {
 		errs = append(errs, field.Invalid(
 			specPath.Child("approvalTimeout"),
 			approvalTimeout,
-			fmt.Sprintf("approvalTimeout (%v) must be less than maxValidFor (%v)", approvalTimeout, maxValidFor),
-		))
-	}
-
-	// Parse and validate idleTimeout
-	idleTimeoutDuration, idleTimeoutErr := parseDuration(idleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
-	if idleTimeoutErr != nil {
-		errs = append(errs, idleTimeoutErr)
-	} else if idleTimeout != "" && idleTimeoutDuration >= maxValidForDuration {
-		errs = append(errs, field.Invalid(
-			specPath.Child("idleTimeout"),
-			idleTimeout,
-			fmt.Sprintf("idleTimeout (%v) must be less than maxValidFor (%v)", idleTimeout, maxValidFor),
+			fmt.Sprintf("approvalTimeout (%v) must be less than or equal to maxValidFor (%v)", approvalTimeout, maxValidFor),
 		))
 	}
 

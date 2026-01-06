@@ -1,0 +1,39 @@
+# Test Debug Session Template
+# Template for creating debug pods with basic debugging tools
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: test-basic-debug
+  labels:
+    e2e-test: "true"
+spec:
+  displayName: "Basic Debug Session"
+  description: "A basic debug session with busybox container"
+  debugPodTemplateRef: test-basic-debug-pod
+  allowedNamespaces:
+    - default
+    - kube-system
+  maxDuration: "2h"
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: test-basic-debug-pod
+  labels:
+    e2e-test: "true"
+spec:
+  displayName: "Basic Debug Pod"
+  description: "Debug pod with busybox for basic troubleshooting"
+  template:
+    spec:
+      containers:
+        - name: debug
+          image: busybox:latest
+          command: ["sleep", "infinity"]
+          resources:
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+            requests:
+              cpu: "50m"
+              memory: "64Mi"

@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -245,6 +246,7 @@ type WebhookController struct {
 	ccProvider   *cluster.ClientProvider
 	denyEval     *policy.Evaluator
 	podFetchFn   PodFetchFunction // optional override for testing
+	auditService *audit.Service   // optional audit service for access decision events
 }
 
 // checkDebugSessionAccess checks if a pod exec request is allowed by an active debug session.
@@ -468,6 +470,28 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	}
 	reqLog.With("groups", groups, "sessions", len(sessions), "tenant", tenant, "idpMismatches", len(idpMismatches)).Debug("Retrieved user groups for cluster")
 
+	// EARLY DEBUG SESSION CHECK: For pods/exec requests, debug sessions take precedence over deny policies.
+	// This allows authorized debug sessions to execute commands even when deny policies would normally block.
+	// This must be checked BEFORE deny policy evaluation to ensure debug sessions work correctly.
+	if sar.Spec.ResourceAttributes != nil {
+		ra := sar.Spec.ResourceAttributes
+		if ra.Resource == "pods" && isExecSubresource(ra.Subresource) && ra.Name != "" {
+			if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(ctx, username, clusterName, ra, reqLog); debugAllowed {
+				reqLog.Infow("Debug session authorizing pod exec (bypassing deny policies)",
+					"session", debugSession, "pod", ra.Name, "namespace", ra.Namespace)
+				metrics.WebhookSARAllowed.WithLabelValues(clusterName).Inc()
+				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "allowed", "debug-session").Inc()
+				reason := wc.finalizeReason(debugReason, true, clusterName)
+				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
+					ApiVersion: sar.APIVersion,
+					Kind:       sar.Kind,
+					Status:     SubjectAccessReviewResponseStatus{Allowed: true, Reason: reason},
+				})
+				return
+			}
+		}
+	}
+
 	// DENY POLICY EVALUATION (phase 1 - cluster/tenant global)
 	if sar.Spec.ResourceAttributes != nil {
 		act := policy.Action{
@@ -498,11 +522,28 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		if denied, pol, derr := wc.denyEval.Match(ctx, act); derr != nil {
 			reqLog.With("error", derr.Error(), "action", act).Error("deny evaluation error")
 		} else if denied {
-			reqLog.With("policy", pol).Info("Request denied by global/cluster policy")
+			// Log detailed rejection info at INFO level for observability
+			reqLog.Infow("Request denied by global/cluster DenyPolicy",
+				"policy", pol,
+				"verb", act.Verb,
+				"apiGroup", act.APIGroup,
+				"resource", act.Resource,
+				"namespace", act.Namespace,
+				"resourceName", act.Name,
+				"subresource", act.Subresource,
+				"cluster", clusterName,
+				"tenant", tenant,
+				"username", username,
+				"activeSessions", len(sessions),
+			)
 			// Emit denied metric for global policy short-circuit
 			metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
 			metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "global").Inc()
 			reqLog.Debugw("Global denyEval matched", "policy", pol, "action", act)
+
+			// Emit audit event for policy denial
+			wc.emitPolicyDenialAudit(ctx, username, groups, clusterName, &sar, pol, "global")
+
 			// Determine if any escalation paths exist for this user (use groups from sessions plus system:authenticated)
 			uniqueGroups := append([]string{}, groups...)
 			uniqueGroups = append(uniqueGroups, "system:authenticated")
@@ -534,11 +575,28 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			if denied, pol, derr := wc.denyEval.Match(ctx, act); derr != nil {
 				reqLog.With("error", derr.Error(), "session", s.Name, "action", act).Error("deny evaluation error for session")
 			} else if denied {
-				reqLog.With("policy", pol, "session", s.Name).Info("Request denied by session policy")
+				// Log detailed rejection info at INFO level for observability
+				reqLog.Infow("Request denied by session-scoped DenyPolicy",
+					"policy", pol,
+					"session", s.Name,
+					"sessionGroup", s.Spec.GrantedGroup,
+					"verb", act.Verb,
+					"apiGroup", act.APIGroup,
+					"resource", act.Resource,
+					"namespace", act.Namespace,
+					"resourceName", act.Name,
+					"subresource", act.Subresource,
+					"cluster", clusterName,
+					"username", username,
+				)
 				// Emit denied metric for session-scoped policy short-circuit
 				metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
 				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "session").Inc()
 				reqLog.Debugw("Session denyEval matched", "policy", pol, "session", s.Name, "action", act)
+
+				// Emit audit event for session-scoped policy denial
+				wc.emitPolicyDenialAudit(ctx, username, groups, clusterName, &sar, pol, "session:"+s.Name)
+
 				// Determine escalation availability for this session/user combination
 				uniqueGroups := append([]string{}, groups...)
 				uniqueGroups = append(uniqueGroups, "system:authenticated")
@@ -609,6 +667,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	reason := ""
 	allowSource := "" // rbac|session
 	allowDetail := ""
+	var escals []v1alpha1.BreakglassEscalation // declare here so it's available for denial logging
 
 	if can {
 		reqLog.Info("User authorized through regular RBAC permissions")
@@ -624,7 +683,8 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		reqLog.Debug("User not authorized through regular RBAC, checking for breakglass escalations")
 
 		// Session SAR checks: attempt authorization impersonating each granted group via admin kubeconfig.
-		if wc.ccProvider != nil && sar.Spec.ResourceAttributes != nil {
+		// This handles both resource and non-resource attributes.
+		if wc.ccProvider != nil && (sar.Spec.ResourceAttributes != nil || sar.Spec.NonResourceAttributes != nil) {
 			if rc, err := wc.ccProvider.GetRESTConfig(ctx, clusterName); err != nil {
 				reqLog.With("error", err.Error()).Warn("Unable to load target cluster rest.Config for SAR; skipping session SAR checks")
 				// mark that we skipped session SAR checks for diagnostics
@@ -667,9 +727,10 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		reqLog.With("allUserGroups", uniqueGroups).Debug("Final user groups including basic authenticated groups")
 
 		// Check for group-based escalations
-		escals, err := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, uniqueGroups)
-		if err != nil {
-			reqLog.With("error", err.Error()).Error("Failed to retrieve group escalations")
+		var escalErr error
+		escals, escalErr = wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, uniqueGroups)
+		if escalErr != nil {
+			reqLog.With("error", escalErr.Error()).Error("Failed to retrieve group escalations")
 			c.Status(http.StatusInternalServerError)
 			return
 		}
@@ -679,13 +740,14 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		var groupescals []v1alpha1.BreakglassEscalation
 		// SECURITY FIX: Check if ResourceAttributes is not nil before accessing its fields
 		if sar.Spec.ResourceAttributes != nil && sar.Spec.ResourceAttributes.Group != "" {
-			groupescals, err = wc.escalManager.GetClusterGroupTargetBreakglassEscalation(ctx,
+			var groupErr error
+			groupescals, groupErr = wc.escalManager.GetClusterGroupTargetBreakglassEscalation(ctx,
 				clusterName,
 				uniqueGroups,
 				sar.Spec.ResourceAttributes.Group,
 			)
-			if err != nil {
-				reqLog.With("error", err.Error()).Error("Failed to retrieve target group escalations")
+			if groupErr != nil {
+				reqLog.With("error", groupErr.Error()).Error("Failed to retrieve target group escalations")
 				c.Status(http.StatusInternalServerError)
 				return
 			}
@@ -816,6 +878,45 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		},
 	}
 	reqLog.Debugw("Authorization decision", "allowed", allowed, "reason", reason, "sessionCount", len(sessions), "source", allowSource)
+
+	// Log detailed denial summary at INFO level for easier debugging
+	if !allowed {
+		denialDetails := map[string]interface{}{
+			"username":             username,
+			"cluster":              clusterName,
+			"activeSessions":       len(sessions),
+			"idpMismatches":        len(idpMismatches),
+			"escalationsAvailable": len(escals),
+		}
+		if sar.Spec.ResourceAttributes != nil {
+			ra := sar.Spec.ResourceAttributes
+			denialDetails["verb"] = ra.Verb
+			denialDetails["apiGroup"] = ra.Group
+			denialDetails["resource"] = ra.Resource
+			denialDetails["namespace"] = ra.Namespace
+			denialDetails["resourceName"] = ra.Name
+			denialDetails["subresource"] = ra.Subresource
+		}
+		if sar.Spec.NonResourceAttributes != nil {
+			nra := sar.Spec.NonResourceAttributes
+			denialDetails["nonResourcePath"] = nra.Path
+			denialDetails["nonResourceVerb"] = nra.Verb
+		}
+		if sessionSARSkippedErr != nil {
+			denialDetails["sessionSARSkipped"] = true
+			denialDetails["sessionSARSkipReason"] = sessionSARSkippedErr.Error()
+		}
+		// Collect session info for debugging
+		if len(sessions) > 0 {
+			sessNames := make([]string, len(sessions))
+			for i, s := range sessions {
+				sessNames[i] = s.Name + "(" + s.Spec.GrantedGroup + ")"
+			}
+			denialDetails["sessionDetails"] = sessNames
+		}
+		reqLog.Infow("SAR request DENIED - summary", "details", denialDetails, "finalReason", reason)
+	}
+
 	// Marshal response to log exact bytes sent to caller for debugging malformation issues
 	respBytes, merr := json.Marshal(response)
 	respLog := ""
@@ -843,6 +944,9 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	}
 	reqLog.Infow("SubjectAccessReview processed", "username", username, "cluster", clusterName, "allowed", allowed, "reason", reason, "response", respLogForInfo)
 
+	// Emit audit event for authorization decisions
+	wc.emitAccessDecisionAudit(ctx, username, sar.Spec.Groups, clusterName, &sar, allowed, allowSource, reason)
+
 	// Ensure correlation ID header is present for apiserver correlation
 	if cidv, ok := c.Get("cid"); ok {
 		if cidstr, ok2 := cidv.(string); ok2 && cidstr != "" {
@@ -852,6 +956,116 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 	c.JSON(http.StatusOK, &response)
 	reqLog.Debug("Authorization handler completed successfully")
+}
+
+// emitAccessDecisionAudit emits an audit event for SAR authorization decisions.
+// This captures both allowed and denied access attempts for audit trail purposes.
+func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, username string, groups []string, cluster string, sar *authorizationv1.SubjectAccessReview, allowed bool, source, reason string) {
+	if wc.auditService == nil {
+		return
+	}
+
+	eventType := audit.EventAccessGranted
+	severity := audit.SeverityInfo
+	if !allowed {
+		eventType = audit.EventAccessDenied
+		severity = audit.SeverityWarning
+	}
+
+	// Build target information from SAR
+	var resource, name, namespace, verb, subresource, apiGroup string
+	if sar.Spec.ResourceAttributes != nil {
+		ra := sar.Spec.ResourceAttributes
+		resource = ra.Resource
+		name = ra.Name
+		namespace = ra.Namespace
+		verb = ra.Verb
+		subresource = ra.Subresource
+		apiGroup = ra.Group
+	} else if sar.Spec.NonResourceAttributes != nil {
+		nra := sar.Spec.NonResourceAttributes
+		resource = "nonresource"
+		name = nra.Path
+		verb = nra.Verb
+	}
+
+	// Build details map
+	details := map[string]interface{}{
+		"allowed":     allowed,
+		"verb":        verb,
+		"source":      source,
+		"apiGroup":    apiGroup,
+		"subresource": subresource,
+	}
+	if reason != "" {
+		details["reason"] = reason
+	}
+
+	event := &audit.Event{
+		Type:     eventType,
+		Severity: severity,
+		Actor: audit.Actor{
+			User:   username,
+			Groups: groups,
+		},
+		Target: audit.Target{
+			Kind:      resource,
+			Name:      name,
+			Namespace: namespace,
+			Cluster:   cluster,
+		},
+		Details: details,
+	}
+
+	wc.auditService.Emit(ctx, event)
+}
+
+// emitPolicyDenialAudit emits an audit event when a DenyPolicy blocks access.
+func (wc *WebhookController) emitPolicyDenialAudit(ctx context.Context, username string, groups []string, cluster string, sar *authorizationv1.SubjectAccessReview, policyName, scope string) {
+	if wc.auditService == nil {
+		return
+	}
+
+	// Build target information from SAR
+	var resource, name, namespace, verb, subresource, apiGroup string
+	if sar.Spec.ResourceAttributes != nil {
+		ra := sar.Spec.ResourceAttributes
+		resource = ra.Resource
+		name = ra.Name
+		namespace = ra.Namespace
+		verb = ra.Verb
+		subresource = ra.Subresource
+		apiGroup = ra.Group
+	} else if sar.Spec.NonResourceAttributes != nil {
+		nra := sar.Spec.NonResourceAttributes
+		resource = "nonresource"
+		name = nra.Path
+		verb = nra.Verb
+	}
+
+	event := &audit.Event{
+		Type:     audit.EventAccessDeniedPolicy,
+		Severity: audit.SeverityWarning,
+		Actor: audit.Actor{
+			User:   username,
+			Groups: groups,
+		},
+		Target: audit.Target{
+			Kind:      resource,
+			Name:      name,
+			Namespace: namespace,
+			Cluster:   cluster,
+		},
+		Details: map[string]interface{}{
+			"policyName":  policyName,
+			"policyScope": scope,
+			"verb":        verb,
+			"apiGroup":    apiGroup,
+			"subresource": subresource,
+		},
+	}
+
+	wc.auditService.Emit(ctx, event)
 }
 
 // getUserGroupsForCluster removed (unused)
@@ -872,6 +1086,12 @@ func NewWebhookController(log *zap.SugaredLogger,
 		ccProvider:   ccProvider,
 		denyEval:     denyEval,
 	}
+}
+
+// WithAuditService sets the audit service for access decision audit events.
+func (wc *WebhookController) WithAuditService(svc *audit.Service) *WebhookController {
+	wc.auditService = svc
+	return wc
 }
 
 // getUserGroupsAndSessions returns groups from active sessions, list of sessions, and a tenant (best-effort from cluster config).

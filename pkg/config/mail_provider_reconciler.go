@@ -60,6 +60,35 @@ func (r *MailProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return reconcile.Result{}, err
 	}
 
+	// Perform structural validation using shared validation function.
+	// This catches malformed resources that somehow bypassed the admission webhook.
+	validationResult := breakglassv1alpha1.ValidateMailProvider(&mp)
+	if !validationResult.IsValid() {
+		log.Warnw("MailProvider failed structural validation, skipping reconciliation",
+			"errors", validationResult.ErrorMessage())
+
+		// Update status condition to reflect validation failure
+		mp.Status.Conditions = []metav1.Condition{
+			{
+				Type:               "Ready",
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: mp.Generation,
+				LastTransitionTime: metav1.Now(),
+				Reason:             "ValidationFailed",
+				Message:            fmt.Sprintf("Resource validation failed: %s", validationResult.ErrorMessage()),
+			},
+		}
+		if statusErr := r.Status().Update(ctx, &mp); statusErr != nil {
+			log.Errorw("Failed to update MailProvider status after validation failure", "error", statusErr)
+		}
+
+		// Update metrics
+		metrics.MailProviderHealthCheck.WithLabelValues(mp.Name, "validation_failed").Inc()
+
+		// Return nil error to skip requeue - malformed resource won't fix itself
+		return reconcile.Result{}, nil
+	}
+
 	// Update metrics
 	if mp.Spec.Disabled {
 		metrics.MailProviderConfigured.WithLabelValues(mp.Name, "disabled").Set(0)

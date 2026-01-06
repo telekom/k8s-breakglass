@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -376,15 +376,15 @@ type DebugSessionConstraints struct {
 	DefaultDuration string `json:"defaultDuration,omitempty"`
 
 	// allowRenewal controls whether session renewal is permitted.
+	// When nil, defaults to true. Set to false to disable renewals.
 	// +optional
-	// +kubebuilder:default=true
-	AllowRenewal bool `json:"allowRenewal,omitempty"`
+	AllowRenewal *bool `json:"allowRenewal,omitempty"`
 
 	// maxRenewals is the maximum number of times a session can be renewed.
+	// When nil, defaults to 3. Set to 0 to disallow renewals.
 	// Ignored if allowRenewal is false.
 	// +optional
-	// +kubebuilder:default=3
-	MaxRenewals int32 `json:"maxRenewals,omitempty"`
+	MaxRenewals *int32 `json:"maxRenewals,omitempty"`
 
 	// renewalLimit is deprecated, use maxRenewals instead.
 	// +optional
@@ -512,13 +512,12 @@ func (dst *DebugSessionTemplate) ValidateCreate(ctx context.Context, obj runtime
 		return nil, fmt.Errorf("expected a DebugSessionTemplate object but got %T", obj)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateDebugSessionTemplateSpec(template)...)
-
-	if len(allErrs) == 0 {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateDebugSessionTemplate(template)
+	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, template.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, template.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
@@ -528,13 +527,12 @@ func (dst *DebugSessionTemplate) ValidateUpdate(ctx context.Context, oldObj, new
 		return nil, fmt.Errorf("expected a DebugSessionTemplate object but got %T", newObj)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateDebugSessionTemplateSpec(template)...)
-
-	if len(allErrs) == 0 {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateDebugSessionTemplate(template)
+	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, template.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, template.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type

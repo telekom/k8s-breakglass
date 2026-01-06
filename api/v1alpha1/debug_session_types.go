@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -372,13 +372,12 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj runtime.Object) 
 		return nil, fmt.Errorf("expected a DebugSession object but got %T", obj)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateDebugSessionSpec(session)...)
-
-	if len(allErrs) == 0 {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateDebugSession(session)
+	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, session.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, session.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
@@ -388,13 +387,12 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj runti
 		return nil, fmt.Errorf("expected a DebugSession object but got %T", newObj)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateDebugSessionSpec(session)...)
-
-	if len(allErrs) == 0 {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateDebugSession(session)
+	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, session.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, session.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type

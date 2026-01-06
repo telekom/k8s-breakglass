@@ -98,11 +98,13 @@ maxValidFor: "4h"    # 4 hours
 
 ### idleTimeout
 
-Maximum idle time before a session is revoked:
+> **⚠️ NOT YET IMPLEMENTED**: This field is reserved for future use. Idle timeout detection is not currently functional.
+
+Maximum idle time before a session is revoked (planned feature):
 
 ```yaml
-idleTimeout: "1h"    # Revoke after 1 hour idle (default: 1h)
-idleTimeout: "30m"   # Revoke after 30 minutes idle
+idleTimeout: "1h"    # Revoke after 1 hour idle (planned)
+idleTimeout: "30m"   # Revoke after 30 minutes idle (planned)
 ```
 
 ### retainFor
@@ -665,8 +667,7 @@ spec:
 A user can request an escalation if:
 
 1. **Group Membership**: User belongs to one of the groups in `allowed.groups`
-2. **Direct Inclusion**: User is listed in `allowed.users`
-3. **Cluster Access**: Target cluster is in `allowed.clusters`
+2. **Cluster Access**: Target cluster is in `allowed.clusters`
 
 ### Cluster Matching
 
@@ -802,10 +803,9 @@ kubectl get breakglassescalation <name> -o jsonpath='{.spec.denyPolicyRefs}'
 **Check user group membership:**
 
 ```bash
-# User must belong to one of the groups in allowed.groups or users list
-# Verify in your identity provider that user belongs to:
-# - allowed.groups
-# - OR listed in allowed.users
+# User must belong to one of the groups in allowed.groups
+# Verify in your identity provider that user belongs to one of the allowed.groups
+kubectl get breakglassescalation <name> -o jsonpath='{.spec.allowed.groups}'
 ```
 
 **Check cluster configuration:**

@@ -8,6 +8,7 @@ import (
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -156,6 +157,47 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		return reconcile.Result{}, err
 	}
 
+	// Perform structural validation using shared validation function.
+	// This catches malformed resources that somehow bypassed the admission webhook.
+	validationResult := breakglassv1alpha1.ValidateIdentityProvider(idp)
+	if !validationResult.IsValid() {
+		r.logger.Warnw("IdentityProvider failed structural validation, skipping reconciliation",
+			"name", req.Name,
+			"errors", validationResult.ErrorMessage())
+
+		// Update status condition to reflect validation failure
+		condition := metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "ValidationFailed",
+			Message:            fmt.Sprintf("Resource validation failed: %s", validationResult.ErrorMessage()),
+		}
+		idp.SetCondition(condition)
+		idp.Status.ObservedGeneration = idp.Generation
+
+		if statusErr := r.client.Status().Update(ctx, idp); statusErr != nil {
+			r.logger.Errorw("failed to update identity provider status after validation failure", "error", statusErr, "name", req.Name)
+		}
+
+		// Emit event for validation failure
+		if r.recorder != nil {
+			eventIdp := idp.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, "Warning", "ValidationFailed",
+				fmt.Sprintf("Resource validation failed: %s", validationResult.ErrorMessage()))
+		}
+
+		if r.onError != nil {
+			r.onError(ctx, validationResult.AsError())
+		}
+
+		// Return nil error to skip requeue - malformed resource won't fix itself
+		// User must update the resource to fix validation errors
+		return reconcile.Result{}, nil
+	}
+
 	// Reload configuration when IdentityProvider changes
 	if err := r.onReload(ctx); err != nil {
 		r.logger.Errorw("failed to reload identity provider", "error", err, "name", req.Name)
@@ -211,6 +253,18 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 
 	r.logger.Infow("identity provider configuration reloaded successfully", "name", req.Name)
 
+	// Set Ready condition to True on successful reload
+	readyCondition := metav1.Condition{
+		Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: idp.Generation,
+		LastTransitionTime: metav1.Now(),
+		Reason:             "ConfigReloadSuccess",
+		Message:            "Identity provider configuration loaded successfully",
+	}
+	idp.SetCondition(readyCondition)
+	idp.Status.ObservedGeneration = idp.Generation
+
 	// Update cache with latest IDPs (for API to use)
 	if err := r.updateIDPCache(ctx); err != nil {
 		r.logger.Warnw("failed to update IDP cache after successful reload", "error", err, "name", req.Name)
@@ -257,6 +311,11 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 
 	// Persist status to API server
 	if err := r.client.Status().Update(ctx, idp); err != nil {
+		// If the IdentityProvider was deleted, skip status update and event emission
+		if apierrors.IsNotFound(err) {
+			r.logger.Debugw("IdentityProvider deleted before status update, skipping", "name", req.Name)
+			return reconcile.Result{}, nil
+		}
 		// Status update failed - mark as error via condition since status persistence is critical
 		r.logger.Errorw("failed to update IdentityProvider status after successful reload (will retry)", "error", err, "name", req.Name)
 		errorCondition := metav1.Condition{
@@ -270,6 +329,10 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		idp.SetCondition(errorCondition)
 
 		if statusErr := r.client.Status().Update(ctx, idp); statusErr != nil {
+			// If deleted during retry, skip silently
+			if apierrors.IsNotFound(statusErr) {
+				return reconcile.Result{}, nil
+			}
 			r.logger.Errorw("failed to update error status on IdentityProvider (will retry via exponential backoff)", "error", statusErr, "name", req.Name)
 		}
 		// Emit warning event about status update failure

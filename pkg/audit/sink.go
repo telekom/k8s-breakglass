@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -112,20 +112,26 @@ func (s *LogSink) Name() string {
 }
 
 // WebhookSink sends audit events to an external HTTP endpoint.
+// It supports both single-event and batch writes for efficiency.
 type WebhookSink struct {
-	name       string
-	url        string
-	httpClient *http.Client
-	headers    map[string]string
-	logger     *zap.Logger
+	name           string
+	url            string
+	batchURL       string // Optional: separate URL for batch requests
+	httpClient     *http.Client
+	headers        map[string]string
+	logger         *zap.Logger
+	eventsWritten  int64
+	eventsFailed   int64
+	batchesWritten int64
 }
 
 // WebhookSinkConfig configures a WebhookSink.
 type WebhookSinkConfig struct {
-	Name    string
-	URL     string
-	Headers map[string]string
-	Timeout time.Duration
+	Name     string
+	URL      string
+	BatchURL string // Optional: separate endpoint for batch writes (e.g., /events/batch)
+	Headers  map[string]string
+	Timeout  time.Duration
 }
 
 // NewWebhookSink creates a new WebhookSink.
@@ -135,26 +141,42 @@ func NewWebhookSink(cfg WebhookSinkConfig, logger *zap.Logger) *WebhookSink {
 		timeout = 5 * time.Second
 	}
 
-	return &WebhookSink{
-		name: cfg.Name,
-		url:  cfg.URL,
+	batchURL := cfg.BatchURL
+	if batchURL == "" {
+		batchURL = cfg.URL // Use same URL for batch if not specified
+	}
+
+	sink := &WebhookSink{
+		name:     cfg.Name,
+		url:      cfg.URL,
+		batchURL: batchURL,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
 		headers: cfg.Headers,
-		logger:  logger,
+		logger:  logger.Named("webhook-sink"),
 	}
+
+	sink.logger.Info("Webhook audit sink created",
+		zap.String("name", cfg.Name),
+		zap.String("url", cfg.URL),
+		zap.String("batchURL", batchURL),
+		zap.Duration("timeout", timeout))
+
+	return sink
 }
 
 // Write sends the audit event to the webhook.
 func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 	body, err := json.Marshal(event)
 	if err != nil {
+		s.eventsFailed++
 		return fmt.Errorf("failed to marshal audit event: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
 	if err != nil {
+		s.eventsFailed++
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -165,19 +187,109 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send audit event: %w", err)
+		s.eventsFailed++
+		s.logger.Debug("webhook request failed",
+			zap.String("url", s.url),
+			zap.String("event_id", event.ID),
+			zap.String("event_type", string(event.Type)),
+			zap.String("error", err.Error()))
+		return fmt.Errorf("failed to send audit event to %s: %w", s.url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("webhook returned error status: %d", resp.StatusCode)
+		s.eventsFailed++
+		s.logger.Debug("webhook returned error",
+			zap.String("url", s.url),
+			zap.String("event_id", event.ID),
+			zap.String("event_type", string(event.Type)),
+			zap.Int("status_code", resp.StatusCode))
+		return fmt.Errorf("webhook %s returned error status: %d", s.url, resp.StatusCode)
 	}
+
+	s.eventsWritten++
+	s.logger.Debug("webhook event sent successfully",
+		zap.String("event_id", event.ID),
+		zap.String("event_type", string(event.Type)))
 
 	return nil
 }
 
+// WriteBatch sends multiple audit events to the webhook in a single request.
+// This implements the BatchSink interface for efficient bulk operations.
+func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	// Wrap events in a batch payload
+	batchPayload := struct {
+		Events []*Event `json:"events"`
+		Count  int      `json:"count"`
+	}{
+		Events: events,
+		Count:  len(events),
+	}
+
+	body, err := json.Marshal(batchPayload)
+	if err != nil {
+		s.eventsFailed += int64(len(events))
+		return fmt.Errorf("failed to marshal batch payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.batchURL, bytes.NewReader(body))
+	if err != nil {
+		s.eventsFailed += int64(len(events))
+		return fmt.Errorf("failed to create batch request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Batch-Size", fmt.Sprintf("%d", len(events)))
+	for k, v := range s.headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		s.eventsFailed += int64(len(events))
+		s.logger.Debug("webhook batch request failed",
+			zap.String("url", s.batchURL),
+			zap.Int("batch_size", len(events)),
+			zap.String("error", err.Error()))
+		return fmt.Errorf("failed to send audit batch to %s: %w", s.batchURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		s.eventsFailed += int64(len(events))
+		s.logger.Debug("webhook batch returned error",
+			zap.String("url", s.batchURL),
+			zap.Int("batch_size", len(events)),
+			zap.Int("status_code", resp.StatusCode))
+		return fmt.Errorf("webhook %s returned error status: %d", s.batchURL, resp.StatusCode)
+	}
+
+	s.eventsWritten += int64(len(events))
+	s.batchesWritten++
+	s.logger.Debug("webhook batch sent successfully",
+		zap.Int("batch_size", len(events)),
+		zap.Int64("total_events", s.eventsWritten))
+
+	return nil
+}
+
+// Stats returns the webhook sink statistics.
+func (s *WebhookSink) Stats() (written, failed, batches int64) {
+	return s.eventsWritten, s.eventsFailed, s.batchesWritten
+}
+
 // Close is a no-op for WebhookSink.
 func (s *WebhookSink) Close() error {
+	s.logger.Info("closing webhook audit sink",
+		zap.String("name", s.name),
+		zap.Int64("events_written", s.eventsWritten),
+		zap.Int64("events_failed", s.eventsFailed),
+		zap.Int64("batches_written", s.batchesWritten))
 	return nil
 }
 
@@ -273,9 +385,10 @@ func (s *MultiSink) Write(ctx context.Context, event *Event) error {
 	var lastErr error
 	for _, sink := range s.sinks {
 		if err := sink.Write(ctx, event); err != nil {
+			// Use string representation to avoid noisy stacktraces for transient errors
 			s.logger.Warn("audit sink write failed",
 				zap.String("sink", sink.Name()),
-				zap.Error(err))
+				zap.String("error", err.Error()))
 			lastErr = err
 		}
 	}

@@ -160,11 +160,6 @@ spec:
                   Set during session creation based on the JWT issuer claim.
                   Used for auditing which IDP authenticated the user and for webhook authorization validation.
                 type: string
-              idleTimeout:
-                default: 1h
-                description: Max time a session can sit idle without being used by
-                  user after approved.
-                type: string
               maxValidFor:
                 default: 1h
                 description: maxValidFor is the maximum amount of time the session
@@ -292,18 +287,6 @@ spec:
                   This value is set based on spec.MaxValidFor when the session is approved.
                 format: date-time
                 type: string
-              idleUntil:
-                description: |-
-                  NOT IMPLEMENTED https://github.com/telekom/k8s-breakglass/issues/8
-                  Time until session is revoked due to user not actively using it.
-                format: date-time
-                type: string
-              lastUsed:
-                description: |-
-                  NOT IMPLEMENTED https://github.com/telekom/k8s-breakglass/issues/8
-                  Last time session was used for breakglass session based authorization.
-                format: date-time
-                type: string
               reasonEnded:
                 description: |-
                   reasonEnded stores a short reason for why the session ended or entered a terminal state.
@@ -337,8 +320,6 @@ spec:
                   Only set for SessionStateWithdrawn.
                 format: date-time
                 type: string
-            required:
-            - conditions
             type: object
         required:
         - spec

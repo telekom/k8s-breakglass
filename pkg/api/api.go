@@ -20,6 +20,7 @@ import (
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -112,7 +113,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		trustedProxies = []string{}
 	}
 	if err := engine.SetTrustedProxies(trustedProxies); err != nil {
-		log.Warn("Failed to set trusted proxies", zap.Error(err))
+		log.Warn("Failed to set trusted proxies", zap.String("error", err.Error()))
 	}
 
 	// Correlation ID middleware
@@ -155,10 +156,12 @@ func NewServer(log *zap.Logger, cfg config.Config,
 					if rl, ok2 := v.(*zap.SugaredLogger); ok2 {
 						rl.Errorw("handler_error", "error", first.Error(), "meta", metaStr)
 					} else {
-						log.Error("handler_error", zap.String("cid", fmt.Sprintf("%v", cid)), zap.Error(first), zap.String("meta", metaStr))
+						// Use zap.String to avoid stacktrace in error logs
+						log.Error("handler_error", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("error", first.Error()), zap.String("meta", metaStr))
 					}
 				} else {
-					log.Error("handler_error", zap.String("cid", fmt.Sprintf("%v", cid)), zap.Error(first), zap.String("meta", metaStr))
+					// Use zap.String to avoid stacktrace in error logs
+					log.Error("handler_error", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("error", first.Error()), zap.String("meta", metaStr))
 				}
 				if !c.IsAborted() {
 					c.JSON(c.Writer.Status(), gin.H{"error": first.Error(), "cid": cid, "meta": metaStr})
@@ -257,12 +260,13 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Also handle POST for token endpoint
 	engine.POST("/api/oidc/authority/*proxyPath", s.handleOIDCProxy)
 
-	// Prometheus metrics endpoint (under /api/metrics)
+	// Metrics endpoint info - actual metrics are served by controller-runtime on port 8081
 	engine.GET("/api/metrics", func(c *gin.Context) {
-		metricsHandler := func(w http.ResponseWriter, r *http.Request) {
-			metrics.MetricsHandler().ServeHTTP(w, r)
-		}
-		metricsHandler(c.Writer, c.Request)
+		c.JSON(http.StatusOK, gin.H{
+			"message":  "Metrics are served by controller-runtime on port 8081 at /metrics",
+			"endpoint": "http://localhost:8081/metrics",
+			"note":     "Use the controller-runtime metrics endpoint for all breakglass and controller metrics",
+		})
 	})
 
 	// Public configuration endpoint
@@ -320,6 +324,10 @@ func (s *Server) SetIdentityProvider(idpConfig *config.IdentityProviderConfig) {
 // Thread-safe: acquires write lock during reload.
 // Returns error if reload fails; existing config remains unchanged on error.
 func (s *Server) ReloadIdentityProvider(loader *config.IdentityProviderLoader) error {
+	if loader == nil {
+		return fmt.Errorf("identity provider loader is nil")
+	}
+
 	ctx := context.Background()
 	newConfig, err := loader.LoadIdentityProvider(ctx)
 	if err != nil {
@@ -937,7 +945,8 @@ func isAllowedOIDCProxyResponseHeader(name string) bool {
 func Setup(sessionController *breakglass.BreakglassSessionController, escalationManager *breakglass.EscalationManager,
 	sessionManager *breakglass.SessionManager, enableFrontend, enableAPI bool, configPath string,
 	auth *AuthHandler, ccProvider *cluster.ClientProvider, denyEval *policy.Evaluator,
-	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *breakglass.DebugSessionAPIController) []APIController {
+	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *breakglass.DebugSessionAPIController,
+	auditService *audit.Service) []APIController {
 	// Register API controllers based on component flags
 	apiControllers := []APIController{}
 
@@ -957,7 +966,8 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	}
 
 	// Webhook controller is always registered but may not be exposed via webhooks
-	webhookCtrl := webhook.NewWebhookController(log, *cfg, sessionManager, escalationManager, ccProvider, denyEval)
+	webhookCtrl := webhook.NewWebhookController(log, *cfg, sessionManager, escalationManager, ccProvider, denyEval).
+		WithAuditService(auditService)
 	apiControllers = append(apiControllers, webhookCtrl)
 	return apiControllers
 }

@@ -356,9 +356,18 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// validateEscalationConfig validates the escalation's configuration
+// validateEscalationConfig validates the escalation's configuration structure.
+// Uses the shared validation function from api/v1alpha1/validation.go to ensure
+// consistent validation between webhooks and reconcilers.
+// This catches malformed resources that somehow bypassed the admission webhook.
 func (r *EscalationReconciler) validateEscalationConfig(esc *breakglassv1alpha1.BreakglassEscalation) error {
-	// IdentityProviders are optional - escalation will use cluster defaults if not specified
+	result := breakglassv1alpha1.ValidateBreakglassEscalation(esc)
+	if !result.IsValid() {
+		r.logger.Warnw("BreakglassEscalation failed structural validation",
+			"name", esc.Name,
+			"errors", result.ErrorMessage())
+		return result.AsError()
+	}
 	return nil
 }
 

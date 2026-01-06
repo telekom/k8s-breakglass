@@ -17,6 +17,11 @@ coverage
 /cypress/videos/
 /cypress/screenshots/
 
+# Playwright
+/playwright-report/
+/test-results/
+/tests/screenshots/__screenshots__/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

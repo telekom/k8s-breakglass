@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/telekom/k8s-breakglass/pkg/api"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
@@ -93,14 +94,12 @@ func main() {
 	// Validating Webhooks:   controller-runtime webhook server (port 9443) - runs if enable-webhooks
 	// Cleanup Routine:       background goroutine - runs if enable-cleanup
 	//
-	// METRICS SEPARATION
-	// ==================
-	// The --webhooks-metrics-bind-address flag allows running a separate metrics server for webhooks.
-	// This is useful for multi-instance deployments where you want to scrape metrics separately:
+	// METRICS
+	// =======
+	// All breakglass metrics are registered with controller-runtime's registry and exposed on port 8081:
 	//
-	//   API/Reconciler metrics:  0.0.0.0:8080  (main controller metrics)
-	//   Webhook metrics:         0.0.0.0:8081  (webhook-specific metrics)
-	//   Health probe:            0.0.0.0:8082  (health checks)
+	//   Unified metrics:  0.0.0.0:8081/metrics  (all breakglass + controller-runtime metrics)
+	//   Health probe:     0.0.0.0:8082          (health checks)
 	//
 	// ENVIRONMENT VARIABLES
 	// =====================
@@ -110,7 +109,6 @@ func main() {
 	//   ENABLE_CLEANUP=true           # Background cleanup
 	//   ENABLE_WEBHOOKS=true          # Validating webhooks (CRD validation)
 	//   ENABLE_VALIDATING_WEBHOOKS=true  # Which validating webhooks to register
-	//   WEBHOOKS_METRICS_BIND_ADDRESS=0.0.0.0:8083  # Separate metrics for webhooks
 	//
 
 	cliConfig := cli.Parse()
@@ -198,10 +196,14 @@ func main() {
 	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
-	mailQueue, err := mail.Setup(ctx, uncachedClient, cfg.Frontend.BrandingName, log)
-	if err != nil {
-		log.Warn(err)
+	// Create mail service with hot-reload capability
+	mailService := mail.NewService(uncachedClient, cfg.Frontend.BrandingName, log)
+	if err := mailService.Start(ctx); err != nil {
+		log.Warnw("Mail service initialization failed - mail notifications disabled until MailProvider is created", "error", err)
 	}
+
+	// Create audit service for Kafka/webhook/log audit event emission
+	auditService := audit.NewService(uncachedClient, zapLogger, cliConfig.BreakglassNamespace)
 
 	// Enable multi-IDP support in auth handler for token verification
 	// This allows the backend to verify tokens from any configured IDP, not just the default one
@@ -211,14 +213,17 @@ func main() {
 
 	// Setup session controller with all dependencies
 	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager,
-		auth.Middleware(), cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).WithQueue(mailQueue)
+		auth.Middleware(), cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).WithMailService(mailService).WithAuditService(auditService)
 
-	// Setup debug session API controller
-	debugSessionAPICtrl := breakglass.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, auth.Middleware())
+	// Setup debug session API controller with mail and audit services
+	debugSessionAPICtrl := breakglass.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, auth.Middleware()).
+		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
+		WithAuditService(auditService).
+		WithDisableEmail(cliConfig.DisableEmail)
 
 	// Register API controllers based on component flags
 	apiControllers := api.Setup(sessionController, &escalationManager, &sessionManager, cliConfig.EnableFrontend,
-		cliConfig.EnableAPI, cliConfig.ConfigPath, auth, ccProvider, denyEval, &cfg, log, debugSessionAPICtrl)
+		cliConfig.EnableAPI, cliConfig.ConfigPath, auth, ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, auditService)
 
 	// Make IdentityProvider available to API server for frontend configuration
 	if idpConfig != nil {
@@ -253,7 +258,14 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			breakglass.CleanupRoutine{Log: log, Manager: &sessionManager, LeaderElected: leaderElectedCh}.CleanupRoutine(managerCtx)
+			breakglass.CleanupRoutine{
+				Log:           log,
+				Manager:       &sessionManager,
+				LeaderElected: leaderElectedCh,
+				MailService:   mailService,
+				BrandingName:  cfg.Frontend.BrandingName,
+				DisableEmail:  cliConfig.DisableEmail,
+			}.CleanupRoutine(managerCtx)
 		}()
 		log.Infow("Cleanup routine enabled")
 	} else {
@@ -383,7 +395,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, log); err != nil {
+		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, auditService, mailService, log); err != nil {
 			recMgrErr <- err
 		}
 	}()
@@ -432,14 +444,23 @@ func main() {
 		log.Errorf("reconciler manager failed, shutting down: %s", err.Error())
 	}
 
-	// Shutdown mail queue with timeout
+	// Shutdown mail service with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-	if mailQueue != nil {
-		if err := mailQueue.Stop(shutdownCtx); err != nil {
-			log.Warnw("Mail queue shutdown error", "error", err)
+	if mailService != nil {
+		if err := mailService.Stop(shutdownCtx); err != nil {
+			log.Warnw("Mail service shutdown error", "error", err)
 		} else {
-			log.Info("Mail queue shut down successfully")
+			log.Info("Mail service shut down successfully")
+		}
+	}
+
+	// Shutdown audit service (flushes pending events to Kafka)
+	if auditService != nil {
+		if err := auditService.Close(); err != nil {
+			log.Warnw("Audit service shutdown error", "error", err)
+		} else {
+			log.Info("Audit service shut down successfully")
 		}
 	}
 

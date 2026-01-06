@@ -9,6 +9,7 @@ import (
 	"text/template"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -64,14 +65,33 @@ func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error)
 		// Check resource/verb rules first
 		for _, r := range pol.Spec.Rules {
 			if ruleMatches(r, act) {
+				// Increment pod security denied metric for policy-based denial
+				metrics.PodSecurityDenied.WithLabelValues(act.ClusterID, pol.Name).Inc()
 				return true, pol.Name, nil
 			}
 		}
 		// Check pod security rules for exec/attach/portforward
 		if pol.Spec.PodSecurityRules != nil {
 			result := e.evaluatePodSecurity(act, pol.Spec.PodSecurityRules)
+			// Record metrics for pod security evaluation
+			metrics.PodSecurityEvaluations.WithLabelValues(act.ClusterID, pol.Name, result.Action).Inc()
+			if len(result.Factors) > 0 {
+				for _, factor := range result.Factors {
+					// Extract factor name before colon (e.g., "privilegedContainer:nginx" -> "privilegedContainer")
+					factorName := factor
+					if idx := strings.Index(factor, ":"); idx > 0 {
+						factorName = factor[:idx]
+					}
+					metrics.PodSecurityFactors.WithLabelValues(act.ClusterID, factorName).Inc()
+				}
+				metrics.PodSecurityRiskScore.WithLabelValues(act.ClusterID).Observe(float64(result.Score))
+			}
 			if result.Denied {
+				metrics.PodSecurityDenied.WithLabelValues(act.ClusterID, pol.Name).Inc()
 				return true, fmt.Sprintf("%s (pod-security: %s)", pol.Name, result.Reason), nil
+			}
+			if result.Action == "warn" {
+				metrics.PodSecurityWarnings.WithLabelValues(act.ClusterID, pol.Name).Inc()
 			}
 		}
 	}
@@ -91,16 +111,31 @@ func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bo
 		// Check resource/verb rules first
 		for _, r := range pol.Spec.Rules {
 			if ruleMatches(r, act) {
+				metrics.PodSecurityDenied.WithLabelValues(act.ClusterID, pol.Name).Inc()
 				return true, pol.Name, nil, nil
 			}
 		}
 		// Check pod security rules for exec/attach/portforward
 		if pol.Spec.PodSecurityRules != nil {
 			result := e.evaluatePodSecurity(act, pol.Spec.PodSecurityRules)
+			// Record metrics for pod security evaluation
+			metrics.PodSecurityEvaluations.WithLabelValues(act.ClusterID, pol.Name, result.Action).Inc()
+			if len(result.Factors) > 0 {
+				for _, factor := range result.Factors {
+					factorName := factor
+					if idx := strings.Index(factor, ":"); idx > 0 {
+						factorName = factor[:idx]
+					}
+					metrics.PodSecurityFactors.WithLabelValues(act.ClusterID, factorName).Inc()
+				}
+				metrics.PodSecurityRiskScore.WithLabelValues(act.ClusterID).Observe(float64(result.Score))
+			}
 			if result.Denied {
+				metrics.PodSecurityDenied.WithLabelValues(act.ClusterID, pol.Name).Inc()
 				return true, pol.Name, &result, nil
 			}
 			if result.Action == "warn" {
+				metrics.PodSecurityWarnings.WithLabelValues(act.ClusterID, pol.Name).Inc()
 				// Return result for metrics/logging even if not denied
 				return false, "", &result, nil
 			}

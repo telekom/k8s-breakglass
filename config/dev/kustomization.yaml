@@ -18,23 +18,27 @@ resources:
 - ../crd
 - ../rbac
 - ../deployment
-# [CERT-CONTROLLER] webhook should be enabled if automated webhook certificate generation is to be used
-# - ../webhook
+- ../webhook
 - ./resources/keycloak.yaml
 - ./resources/mailhog.yaml
-- ./resources/crs/audit-config-test.yaml
-- ./resources/crs/cluster-configs-test.yaml
-- ./resources/crs/debug-templates-test.yaml
-- ./resources/crs/deny-policies-test.yaml
-- ./resources/crs/escalations-test.yaml
+- ./resources/kafka.yaml
+- ./resources/audit-webhook-receiver.yaml
+# NOTE: CRs requiring webhook validation are applied separately by e2e/kind-setup-single.sh
+# AFTER the webhook CA bundle is patched and controller is ready.
+# See: kind-setup-single.sh apply_e2e_test_crs() function
+# - ./resources/crs/audit-config-test.yaml
+# - ./resources/crs/cluster-configs-test.yaml
+# - ./resources/crs/debug-templates-test.yaml
+# - ./resources/crs/deny-policies-test.yaml
+# - ./resources/crs/escalations-test.yaml
+# - ./resources/idp.yaml
 - ./resources/rbac/rbac-hub-test.yaml
 - ./resources/rbac/tenant-rbac-test.yaml
-- ./resources/idp.yaml
 
 images:
  - name: breakglass
    newName: breakglass
-   newTag: dev
+   newTag: e2e
 
 patches:
 - target:
@@ -51,36 +55,55 @@ patches:
     name: manager
   path: ./resources/cert_volumes_patch.yaml
 
-
-patchesJson6902:
-  - target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: manager
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/image
-        value: breakglass:dev
-      - op: replace
-        path: /spec/template/spec/containers/0/imagePullPolicy
-        value: IfNotPresent
-      - op: add
-        path: /spec/template/spec/containers/0/args/-
-        value: --debug
-  # [CERT-CONTROLLER] this target should be enabled if automated webhook certificate generation is to be used 
-  # - target:
-  #     group: apps
-  #     version: v1
-  #     kind: Deployment
-  #     name: manager
-  #   patch: |- 
-  #     - op: add
-  #       path: /spec/template/spec/containers/0/args/-
-  #       value: --webhook-cert-generation=true
-  #     - op: add
-  #       path: /spec/template/spec/containers/0/args/-
-  #       value: --webhook-service-name=breakglass-dev-breakglass-webhook-service
+# JSON patches for deployment modifications
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: manager
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/image
+      value: breakglass:e2e
+    - op: replace
+      path: /spec/template/spec/containers/0/imagePullPolicy
+      value: IfNotPresent
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --debug
+    # Mount webhook serving certs for the webhook server
+    - op: add
+      path: /spec/template/spec/containers/0/volumeMounts/-
+      value:
+        mountPath: /tmp/k8s-webhook-server/serving-certs
+        name: webhook-cert
+        readOnly: true
+    - op: add
+      path: /spec/template/spec/volumes/-
+      value:
+        name: webhook-cert
+        secret:
+          defaultMode: 420
+          secretName: breakglass-webhook-tls
+    # Set faster cleanup interval for E2E tests (10 seconds instead of 5 minutes)
+    - op: add
+      path: /spec/template/spec/containers/0/env/-
+      value:
+        name: CLEANUP_INTERVAL
+        value: "10s"
+# [CERT-CONTROLLER] this target should be enabled if automated webhook certificate generation is to be used 
+# - target:
+#     group: apps
+#     version: v1
+#     kind: Deployment
+#     name: manager
+#   patch: |- 
+#     - op: add
+#       path: /spec/template/spec/containers/0/args/-
+#       value: --webhook-cert-generation=true
+#     - op: add
+#       path: /spec/template/spec/containers/0/args/-
+#       value: --webhook-service-name=breakglass-dev-breakglass-webhook-service
   #     - op: add
   #       path: /spec/template/spec/containers/0/args/-
   #       value: --webhook-validating-config-name=breakglass-dev-breakglass-validating-webhook-configuration

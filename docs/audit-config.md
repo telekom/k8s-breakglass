@@ -17,7 +17,7 @@ The audit system is designed for:
 The `AuditConfig` is a **cluster-scoped** resource that configures auditing globally:
 
 ```yaml
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig
 metadata:
   name: audit-config

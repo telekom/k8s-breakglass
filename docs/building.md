@@ -120,7 +120,107 @@ This includes:
 
 - Keycloak for OIDC testing
 - Mailhog for email testing
+- Kafka for audit testing
 - NodePort services for local access
+
+## Testing
+
+### Unit Tests
+
+Run all unit tests with coverage:
+
+```bash
+make test
+```
+
+### Linting
+
+Run golangci-lint:
+
+```bash
+make lint
+```
+
+### End-to-End (E2E) Tests
+
+E2E tests run against a real Kind cluster with all dependencies (Keycloak, Kafka, MailHog).
+
+#### Quick Start
+
+```bash
+# Build the dev image
+make docker-build-dev
+
+# Set up E2E environment (creates Kind cluster with all deps)
+make e2e
+
+# Or manually:
+./e2e/kind-setup-single.sh
+```
+
+#### Running E2E Tests
+
+```bash
+# Run all E2E tests
+cd e2e && go test -v ./...
+
+# Run specific test file
+go test -v ./e2e/api/session_state_test.go
+
+# Run specific test
+go test -v ./e2e/api/... -run TestSessionApprovalWorkflow
+```
+
+#### E2E Environment
+
+The E2E environment includes:
+
+| Component | Purpose | Port |
+|-----------|---------|------|
+| Breakglass Controller | Main service | 30081 |
+| Keycloak | OIDC identity provider | 30083 |
+| MailHog | Email testing | 30084 |
+| Kafka | Audit event streaming | Internal |
+
+#### E2E Test Structure
+
+```text
+e2e/
+├── api/                    # API integration tests
+│   ├── session_state_test.go
+│   ├── approval_workflow_test.go
+│   ├── deny_policy_test.go
+│   └── ...
+├── helpers/                # Test utilities
+│   ├── api.go              # API client helpers
+│   ├── auth.go             # Token management
+│   ├── cleanup.go          # Resource cleanup
+│   ├── users.go            # Test user definitions
+│   └── wait.go             # Polling utilities
+├── fixtures/               # Test data
+├── kind-setup-single.sh    # Cluster setup script
+└── e2e-todo.md             # Test coverage checklist
+```
+
+#### Test Users
+
+E2E tests use pre-configured Keycloak users:
+
+| User | Role | Password |
+|------|------|----------|
+| `requester@example.com` | Session requester | `password` |
+| `approver@example.com` | Session approver | `password` |
+| `admin@example.com` | Admin user | `password` |
+
+#### Cleanup
+
+```bash
+# Teardown E2E environment
+./e2e/teardown.sh
+
+# Or delete Kind cluster directly
+kind delete cluster --name breakglass-e2e
+```
 
 ## Build Flags
 

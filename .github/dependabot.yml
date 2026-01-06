@@ -59,3 +59,21 @@ updates:
       day: "monday"
     commit-message:
       prefix: "deps(docker)"
+
+# Note: The following tool versions are NOT tracked by Dependabot and require manual updates:
+#
+# Makefile:
+#   - CONTROLLER_TOOLS_VERSION (controller-gen): https://github.com/kubernetes-sigs/controller-tools/releases
+#   - KUSTOMIZE_VERSION: https://github.com/kubernetes-sigs/kustomize/releases
+#   - GOLANGCI_LINT_VERSION: https://github.com/golangci/golangci-lint/releases
+#   - ENVTEST_VERSION: https://github.com/kubernetes-sigs/controller-runtime/releases
+#
+# .github/workflows/e2e.yml:
+#   - KIND_VERSION: https://github.com/kubernetes-sigs/kind/releases
+#   - KIND_NODE_IMAGE: https://github.com/kubernetes-sigs/kind/releases (see node image tags)
+#
+# e2e/kind-setup-single.sh:
+#   - KIND_NODE_IMAGE: kindest/node version
+#   - KEYCLOAK_IMAGE: https://quay.io/repository/keycloak/keycloak
+#
+# Consider using Renovate (https://docs.renovatebot.com/) for regex-based version tracking.

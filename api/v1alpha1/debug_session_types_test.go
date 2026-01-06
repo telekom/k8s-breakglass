@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -819,6 +819,8 @@ func TestDebugSession_RenewalTracking(t *testing.T) {
 }
 
 func TestDebugSession_WithResolvedTemplate(t *testing.T) {
+	allowRenewal := true
+	maxRenewals := int32(3)
 	session := DebugSession{
 		Status: DebugSessionStatus{
 			State: DebugSessionStateActive,
@@ -828,8 +830,8 @@ func TestDebugSession_WithResolvedTemplate(t *testing.T) {
 				Constraints: &DebugSessionConstraints{
 					MaxDuration:     "4h",
 					DefaultDuration: "1h",
-					AllowRenewal:    true,
-					MaxRenewals:     3,
+					AllowRenewal:    &allowRenewal,
+					MaxRenewals:     &maxRenewals,
 				},
 			},
 		},

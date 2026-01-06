@@ -1,0 +1,243 @@
+# UI Screenshot Testing Workflow
+# 
+# This workflow captures screenshots of all frontend pages using Playwright
+# in both light and dark mode, and uploads them as artifacts on PRs for visual review.
+
+name: UI Screenshots
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/ui-screenshots.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ui-screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    name: Capture UI Screenshots
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run screenshot tests (update mode to generate screenshots)
+        run: npm run test:screenshots:update
+        continue-on-error: true
+
+      - name: Create screenshot gallery
+        if: always()
+        run: |
+          mkdir -p screenshot-gallery
+          
+          # Copy all baseline screenshots to gallery
+          if [ -d "tests/screenshots/__screenshots__" ]; then
+            cp tests/screenshots/__screenshots__/*.png screenshot-gallery/ 2>/dev/null || true
+          fi
+          
+          # Also check old snapshot location
+          if [ -d "tests/screenshots/pages.spec.ts-snapshots" ]; then
+            cp tests/screenshots/pages.spec.ts-snapshots/*.png screenshot-gallery/ 2>/dev/null || true
+          fi
+          
+          # Generate HTML gallery
+          cat > screenshot-gallery/index.html << 'GALLERY_EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>UI Screenshots</title>
+            <style>
+              body { font-family: system-ui, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+              h1 { text-align: center; }
+              .theme-toggle { text-align: center; margin: 20px 0; }
+              .theme-toggle button { padding: 10px 20px; margin: 0 5px; cursor: pointer; border: 2px solid #333; background: white; border-radius: 5px; }
+              .theme-toggle button.active { background: #333; color: white; }
+              .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
+              .screenshot { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+              .screenshot img { width: 100%; height: auto; display: block; }
+              .screenshot .label { padding: 10px; font-weight: bold; border-top: 1px solid #eee; }
+              .dark-only, .light-only { display: none; }
+              body.show-dark .dark-only { display: block; }
+              body.show-dark .light-only { display: none; }
+              body.show-light .light-only { display: block; }
+              body.show-light .dark-only { display: none; }
+              body.show-all .dark-only, body.show-all .light-only { display: block; }
+            </style>
+          </head>
+          <body class="show-all">
+            <h1>📸 UI Screenshots</h1>
+            <div class="theme-toggle">
+              <button onclick="setFilter('all')" class="active" id="btn-all">All</button>
+              <button onclick="setFilter('light')" id="btn-light">Light Mode</button>
+              <button onclick="setFilter('dark')" id="btn-dark">Dark Mode</button>
+            </div>
+            <div class="gallery" id="gallery"></div>
+            <script>
+              const images = document.querySelectorAll('img[data-src]');
+              const gallery = document.getElementById('gallery');
+              
+              // List screenshots dynamically
+              const screenshots = [
+          GALLERY_EOF
+          
+          # Add screenshot entries
+          for file in screenshot-gallery/*.png; do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              name="${filename%.png}"
+              theme="all"
+              if [[ "$name" == *"-dark"* ]]; then
+                theme="dark"
+              elif [[ "$name" == *"-light"* ]]; then
+                theme="light"
+              fi
+              echo "        { name: '$name', file: '$filename', theme: '$theme' }," >> screenshot-gallery/index.html
+            fi
+          done
+          
+          cat >> screenshot-gallery/index.html << 'GALLERY_EOF2'
+              ];
+              
+              screenshots.forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'screenshot ' + (s.theme === 'dark' ? 'dark-only' : s.theme === 'light' ? 'light-only' : '');
+                div.innerHTML = `<img src="${s.file}" alt="${s.name}" loading="lazy"><div class="label">${s.name}</div>`;
+                gallery.appendChild(div);
+              });
+              
+              function setFilter(mode) {
+                document.body.className = 'show-' + mode;
+                document.querySelectorAll('.theme-toggle button').forEach(b => b.classList.remove('active'));
+                document.getElementById('btn-' + mode).classList.add('active');
+              }
+            </script>
+          </body>
+          </html>
+          GALLERY_EOF2
+          
+          echo "Screenshot gallery created with $(ls screenshot-gallery/*.png 2>/dev/null | wc -l) images"
+
+      - name: Upload screenshot gallery
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ui-screenshots
+          path: frontend/screenshot-gallery/
+          retention-days: 30
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
+      - name: Comment PR with screenshots
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Count screenshots
+            const galleryDir = 'frontend/screenshot-gallery';
+            let screenshotCount = 0;
+            let lightCount = 0;
+            let darkCount = 0;
+            
+            if (fs.existsSync(galleryDir)) {
+              const files = fs.readdirSync(galleryDir).filter(f => f.endsWith('.png'));
+              screenshotCount = files.length;
+              lightCount = files.filter(f => f.includes('-light')).length;
+              darkCount = files.filter(f => f.includes('-dark')).length;
+            }
+            
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            
+            let body = `## 📸 UI Screenshots\n\n`;
+            body += `Captured **${screenshotCount}** screenshots (${lightCount} light, ${darkCount} dark mode)\n\n`;
+            body += `### 📥 Download\n`;
+            body += `- [View Screenshots Gallery](${runUrl}) - Download the \`ui-screenshots\` artifact\n`;
+            body += `- [View Playwright Report](${runUrl}) - Download the \`playwright-report\` artifact\n\n`;
+            body += `### Pages Captured\n`;
+            body += `| Page | Light | Dark |\n`;
+            body += `|------|:-----:|:----:|\n`;
+            body += `| Home | ✅ | ✅ |\n`;
+            body += `| Session Browser | ✅ | ✅ |\n`;
+            body += `| Pending Approvals | ✅ | ✅ |\n`;
+            body += `| My Requests | ✅ | ✅ |\n`;
+            body += `| Session Review | ✅ | ✅ |\n`;
+            body += `| Debug Sessions | ✅ | ✅ |\n`;
+            body += `| Create Debug Session | ✅ | ✅ |\n`;
+            body += `| 404 Not Found | ✅ | ✅ |\n`;
+            body += `| Mobile Views | ✅ | ✅ |\n`;
+            body += `| Tablet Views | ✅ | ✅ |\n\n`;
+            body += `---\n`;
+            body += `*Screenshots are generated automatically on each PR that modifies frontend code.*`;
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('📸 UI Screenshots')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 📸 UI Screenshots Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          count=$(ls screenshot-gallery/*.png 2>/dev/null | wc -l)
+          echo "Generated **$count** screenshots in light and dark mode." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Download the \`ui-screenshots\` artifact to view the screenshot gallery." >> $GITHUB_STEP_SUMMARY

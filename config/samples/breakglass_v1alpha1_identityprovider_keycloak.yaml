@@ -60,7 +60,7 @@ spec:
     clientSecretRef:
       name: keycloak-secret
       key: clientSecret
-      # namespace: optional, defaults to the IdentityProvider's namespace
+      namespace: default
 
     # CacheTTL is the duration to cache user/group memberships
     # Recommended: 5m to 30m depending on how frequently group memberships change

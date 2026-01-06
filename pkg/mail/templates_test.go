@@ -46,6 +46,62 @@ func TestRenderApproved(t *testing.T) {
 	assert.Contains(t, result, params.ApproverEmail)
 }
 
+func TestRenderRejected(t *testing.T) {
+	params := RejectedMailParams{
+		SubjectFullName:  "John Doe",
+		SubjectEmail:     "john.doe@example.com",
+		RequestedRole:    "admin",
+		RejectorFullName: "Jane Smith",
+		RejectorEmail:    "jane.smith@example.com",
+		BrandingName:     "Das SCHIFF Breakglass",
+		RejectedAt:       "2025-11-18 10:30:00",
+		RejectionReason:  "Insufficient justification provided",
+		SessionID:        "rejected-session-123",
+		Cluster:          "prod-cluster-01",
+		Username:         "john.doe",
+	}
+
+	result, err := RenderRejected(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.SubjectFullName)
+	assert.Contains(t, result, params.SubjectEmail)
+	assert.Contains(t, result, params.RequestedRole)
+	assert.Contains(t, result, params.RejectorFullName)
+	assert.Contains(t, result, params.RejectorEmail)
+	assert.Contains(t, result, params.RejectedAt)
+	assert.Contains(t, result, params.RejectionReason)
+	assert.Contains(t, result, params.SessionID)
+	assert.Contains(t, result, params.Cluster)
+	assert.Contains(t, result, "REJECTED")
+	assert.Contains(t, result, "What Can You Do?")
+}
+
+// TestRenderRejectedWithoutReason tests the rejected email when no reason is provided
+func TestRenderRejectedWithoutReason(t *testing.T) {
+	params := RejectedMailParams{
+		SubjectFullName:  "John Doe",
+		SubjectEmail:     "john.doe@example.com",
+		RequestedRole:    "admin",
+		RejectorFullName: "Jane Smith",
+		RejectorEmail:    "jane.smith@example.com",
+		BrandingName:     "Das SCHIFF Breakglass",
+		RejectedAt:       "2025-11-18 10:30:00",
+		RejectionReason:  "", // No reason provided
+		SessionID:        "rejected-session-456",
+		Cluster:          "prod-cluster-01",
+	}
+
+	result, err := RenderRejected(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.SubjectFullName)
+	assert.Contains(t, result, "REJECTED")
+	// Should not crash or error with empty reason
+}
+
 // TestRenderApprovedWithCompleteInfo tests the approved email with all fields populated
 func TestRenderApprovedWithCompleteInfo(t *testing.T) {
 	params := ApprovedMailParams{
@@ -513,4 +569,278 @@ func TestApprovedEmailWithoutIDPInfo(t *testing.T) {
 	// Should not include IDP section when no IDP info is provided
 	// (conditional rendering in template)
 	assert.NotEmpty(t, result)
+}
+
+// TestRenderDebugSessionRequest tests the debug session request email template
+func TestRenderDebugSessionRequest(t *testing.T) {
+	params := DebugSessionRequestMailParams{
+		RequesterName:     "John Doe",
+		RequesterEmail:    "john.doe@example.com",
+		RequestedAt:       "2025-11-18 10:00:00",
+		SessionID:         "debug-session-123",
+		Cluster:           "prod-cluster-01",
+		TemplateName:      "emergency-debug",
+		Namespace:         "production",
+		RequestedDuration: "2 hours",
+		Reason:            "Investigate memory leak in production pods",
+		BrandingName:      "Das SCHIFF Breakglass",
+		URL:               "https://example.com/approve/debug-session-123",
+	}
+
+	result, err := RenderDebugSessionRequest(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.RequesterName)
+	assert.Contains(t, result, params.RequesterEmail)
+	assert.Contains(t, result, params.SessionID)
+	assert.Contains(t, result, params.Cluster)
+	assert.Contains(t, result, params.TemplateName)
+	assert.Contains(t, result, params.Namespace)
+	assert.Contains(t, result, params.Reason)
+	assert.Contains(t, result, params.URL)
+	assert.Contains(t, result, "Debug Session")
+	assert.Contains(t, result, "Action Required")
+}
+
+// TestRenderDebugSessionApproved tests the debug session approval email template
+func TestRenderDebugSessionApproved(t *testing.T) {
+	params := DebugSessionApprovedMailParams{
+		RequesterName:  "John Doe",
+		RequesterEmail: "john.doe@example.com",
+		SessionID:      "debug-session-123",
+		Cluster:        "prod-cluster-01",
+		TemplateName:   "emergency-debug",
+		Namespace:      "production",
+		ApproverName:   "Jane Smith",
+		ApproverEmail:  "jane.smith@example.com",
+		ApprovedAt:     "2025-11-18 10:30:00",
+		Duration:       "2 hours",
+		ExpiresAt:      "2025-11-18 12:30:00",
+		BrandingName:   "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderDebugSessionApproved(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.RequesterName)
+	assert.Contains(t, result, params.SessionID)
+	assert.Contains(t, result, params.Cluster)
+	assert.Contains(t, result, params.TemplateName)
+	assert.Contains(t, result, params.Namespace)
+	assert.Contains(t, result, params.ApproverName)
+	assert.Contains(t, result, params.ApproverEmail)
+	assert.Contains(t, result, params.ApprovedAt)
+	assert.Contains(t, result, params.ExpiresAt)
+	assert.Contains(t, result, "APPROVED")
+	assert.Contains(t, result, "audited")
+}
+
+// TestRenderDebugSessionRejected tests the debug session rejection email template
+func TestRenderDebugSessionRejected(t *testing.T) {
+	params := DebugSessionRejectedMailParams{
+		RequesterName:   "John Doe",
+		RequesterEmail:  "john.doe@example.com",
+		SessionID:       "debug-session-123",
+		Cluster:         "prod-cluster-01",
+		TemplateName:    "emergency-debug",
+		Namespace:       "production",
+		RejectorName:    "Jane Smith",
+		RejectorEmail:   "jane.smith@example.com",
+		RejectedAt:      "2025-11-18 10:30:00",
+		RejectionReason: "Insufficient justification for debug access",
+		BrandingName:    "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderDebugSessionRejected(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.RequesterName)
+	assert.Contains(t, result, params.SessionID)
+	assert.Contains(t, result, params.Cluster)
+	assert.Contains(t, result, params.TemplateName)
+	assert.Contains(t, result, params.Namespace)
+	assert.Contains(t, result, params.RejectorName)
+	assert.Contains(t, result, params.RejectorEmail)
+	assert.Contains(t, result, params.RejectedAt)
+	assert.Contains(t, result, params.RejectionReason)
+	assert.Contains(t, result, "REJECTED")
+	assert.Contains(t, result, "What Can You Do?")
+}
+
+// TestRenderDebugSessionRejectedWithoutReason tests rejection email without reason
+func TestRenderDebugSessionRejectedWithoutReason(t *testing.T) {
+	params := DebugSessionRejectedMailParams{
+		RequesterName:   "John Doe",
+		RequesterEmail:  "john.doe@example.com",
+		SessionID:       "debug-session-456",
+		Cluster:         "prod-cluster-01",
+		TemplateName:    "emergency-debug",
+		Namespace:       "production",
+		RejectorName:    "Jane Smith",
+		RejectorEmail:   "jane.smith@example.com",
+		RejectedAt:      "2025-11-18 10:30:00",
+		RejectionReason: "", // No reason provided
+		BrandingName:    "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderDebugSessionRejected(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.RequesterName)
+	assert.Contains(t, result, "REJECTED")
+	// Should not crash or error with empty reason
+}
+
+// TestRenderSessionExpired tests the session expiration email template
+func TestRenderSessionExpired(t *testing.T) {
+	params := SessionExpiredMailParams{
+		SubjectFullName:  "John Doe",
+		SubjectEmail:     "john.doe@example.com",
+		RequestedRole:    "admin",
+		Cluster:          "prod-cluster-01",
+		Username:         "john.doe",
+		SessionID:        "session-123",
+		StartedAt:        "2025-11-18 10:30:00 UTC",
+		ExpiredAt:        "2025-11-18 12:30:00 UTC",
+		ExpirationReason: "Session validity period has ended",
+		BrandingName:     "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderSessionExpired(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.SubjectFullName)
+	assert.Contains(t, result, params.RequestedRole)
+	assert.Contains(t, result, params.Cluster)
+	assert.Contains(t, result, params.SessionID)
+	assert.Contains(t, result, params.StartedAt)
+	assert.Contains(t, result, params.ExpiredAt)
+	assert.Contains(t, result, "EXPIRED")
+}
+
+// TestRenderSessionExpiredWithApprovalTimeout tests expiration email for approval timeout
+func TestRenderSessionExpiredWithApprovalTimeout(t *testing.T) {
+	params := SessionExpiredMailParams{
+		SubjectEmail:     "john.doe@example.com",
+		RequestedRole:    "admin",
+		Cluster:          "prod-cluster-01",
+		SessionID:        "session-timeout-123",
+		StartedAt:        "",
+		ExpiredAt:        "2025-11-18 10:30:00 UTC",
+		ExpirationReason: "Session approval timed out before being approved",
+		BrandingName:     "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderSessionExpired(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.ExpirationReason)
+}
+
+// TestRenderSessionActivated tests the session activated email template
+func TestRenderSessionActivated(t *testing.T) {
+	params := SessionActivatedMailParams{
+		SubjectFullName:  "John Doe",
+		SubjectEmail:     "john.doe@example.com",
+		RequestedRole:    "admin",
+		Cluster:          "prod-cluster-01",
+		Username:         "john.doe",
+		SessionID:        "session-123",
+		ActivatedAt:      "2025-11-18 10:30:00 UTC",
+		ExpirationTime:   "2025-11-18 12:30:00 UTC",
+		ApproverFullName: "Jane Smith",
+		ApproverEmail:    "jane.smith@example.com",
+		IDPName:          "corporate-idp",
+		IDPIssuer:        "https://idp.example.com",
+		BrandingName:     "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderSessionActivated(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.SubjectFullName)
+	assert.Contains(t, result, params.RequestedRole)
+	assert.Contains(t, result, params.Cluster)
+	assert.Contains(t, result, params.SessionID)
+	assert.Contains(t, result, params.ActivatedAt)
+	assert.Contains(t, result, params.ExpirationTime)
+	assert.Contains(t, result, "ACTIVE NOW") // The badge says "ACTIVE NOW" not "ACTIVATED"
+}
+
+// TestRenderSessionActivatedWithIDP tests activation email with IDP info
+func TestRenderSessionActivatedWithIDP(t *testing.T) {
+	params := SessionActivatedMailParams{
+		SubjectEmail:   "john.doe@example.com",
+		RequestedRole:  "admin",
+		Cluster:        "prod-cluster-01",
+		SessionID:      "session-idp-123",
+		ActivatedAt:    "2025-11-18 10:30:00 UTC",
+		ExpirationTime: "2025-11-18 12:30:00 UTC",
+		IDPName:        "enterprise-sso",
+		IDPIssuer:      "https://sso.enterprise.com",
+		BrandingName:   "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderSessionActivated(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.IDPName)
+}
+
+// TestRenderDebugSessionExpired tests the debug session expiration email template
+func TestRenderDebugSessionExpired(t *testing.T) {
+	params := DebugSessionExpiredMailParams{
+		RequesterName:  "John Doe",
+		RequesterEmail: "john.doe@example.com",
+		SessionID:      "debug-session-123",
+		Cluster:        "prod-cluster-01",
+		TemplateName:   "emergency-debug",
+		Namespace:      "production",
+		StartedAt:      "2025-11-18 10:00:00 UTC",
+		ExpiredAt:      "2025-11-18 12:00:00 UTC",
+		Duration:       "2h0m0s",
+		BrandingName:   "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderDebugSessionExpired(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, params.RequesterName)
+	assert.Contains(t, result, params.SessionID)
+	assert.Contains(t, result, params.Cluster)
+	assert.Contains(t, result, params.TemplateName)
+	assert.Contains(t, result, params.Namespace)
+	assert.Contains(t, result, params.StartedAt)
+	assert.Contains(t, result, params.ExpiredAt)
+	assert.Contains(t, result, "EXPIRED")
+	assert.Contains(t, result, "Debug")
+}
+
+// TestRenderDebugSessionExpiredWithoutDuration tests expiration email without duration
+func TestRenderDebugSessionExpiredWithoutDuration(t *testing.T) {
+	params := DebugSessionExpiredMailParams{
+		RequesterEmail: "john.doe@example.com",
+		SessionID:      "debug-session-456",
+		Cluster:        "prod-cluster-01",
+		TemplateName:   "emergency-debug",
+		Namespace:      "production",
+		ExpiredAt:      "2025-11-18 12:00:00 UTC",
+		Duration:       "", // Duration not available
+		BrandingName:   "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderDebugSessionExpired(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	// Should not crash or error with empty duration
 }

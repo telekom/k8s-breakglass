@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -63,8 +64,10 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 	cfg, ok := p.data[key]
 	p.mu.RUnlock()
 	if ok {
+		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
 		return cfg, nil
 	}
+	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
 	// Namespace not provided: preserve legacy behavior and list across namespaces
 	list := telekomv1alpha1.ClusterConfigList{}
@@ -93,8 +96,10 @@ func (p *ClientProvider) GetInNamespace(ctx context.Context, namespace, name str
 	cfg, ok := p.data[key]
 	p.mu.RUnlock()
 	if ok {
+		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
 		return cfg, nil
 	}
+	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
 	got := telekomv1alpha1.ClusterConfig{}
 	if err := p.k8s.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &got); err != nil {
@@ -113,11 +118,15 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	rc, ok := p.rest[name]
 	p.mu.RUnlock()
 	if ok {
+		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
 		return rc, nil
 	}
+	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
+
 	// Legacy Get behavior lists across namespaces when namespace is empty.
 	cc, err := p.GetAcrossAllNamespaces(ctx, name)
 	if err != nil {
+		metrics.ClusterRESTConfigErrors.WithLabelValues(name, "clusterconfig_not_found").Inc()
 		return nil, err
 	}
 	secretDataKey := cc.Spec.KubeconfigSecretRef.Key
@@ -127,14 +136,17 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 	secret := corev1.Secret{}
 	if err := p.k8s.Get(ctx, types.NamespacedName{Name: cc.Spec.KubeconfigSecretRef.Name, Namespace: cc.Spec.KubeconfigSecretRef.Namespace}, &secret); err != nil {
+		metrics.ClusterRESTConfigErrors.WithLabelValues(name, "secret_fetch_failed").Inc()
 		return nil, fmt.Errorf("fetch kubeconfig secret: %w", err)
 	}
 	raw, ok := secret.Data[secretDataKey]
 	if !ok {
+		metrics.ClusterRESTConfigErrors.WithLabelValues(name, "secret_key_missing").Inc()
 		return nil, fmt.Errorf("secret %s/%s missing key %s", cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name, secretDataKey)
 	}
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(raw)
 	if err != nil {
+		metrics.ClusterRESTConfigErrors.WithLabelValues(name, "kubeconfig_parse_failed").Inc()
 		return nil, fmt.Errorf("parse kubeconfig: %w", err)
 	}
 	// If the kubeconfig references a loopback endpoint (kind default), rewrite to in-cluster service DNS
@@ -161,11 +173,13 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 	p.secretToClusters[secretRefKey][name] = struct{}{}
 	p.mu.Unlock()
+	metrics.ClusterRESTConfigLoaded.WithLabelValues(name).Inc()
 	return cfg, nil
 }
 
 // Invalidate removes an entry (called by informer/controller update hooks later).
 func (p *ClientProvider) Invalidate(name string) {
+	metrics.ClusterCacheInvalidations.WithLabelValues("cluster_update").Inc()
 	p.mu.Lock()
 	p.evictClusterLocked(name)
 	p.mu.Unlock()
@@ -180,6 +194,7 @@ func (p *ClientProvider) InvalidateSecret(namespace, name string) {
 	if !ok {
 		return
 	}
+	metrics.ClusterCacheInvalidations.WithLabelValues("secret_update").Inc()
 	for cluster := range clusters {
 		p.evictClusterLocked(cluster)
 	}

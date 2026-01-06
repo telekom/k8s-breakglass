@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ type Manager struct {
 	logger     *zap.Logger
 	wg         sync.WaitGroup
 	closed     atomic.Bool
+	stopStats  chan struct{} // Signal to stop stats reporter
 
 	// Metrics for monitoring
 	queuedEvents    atomic.Int64
@@ -95,18 +96,24 @@ type ManagerConfig struct {
 	// WriteTimeout is the timeout for writing to sinks.
 	// Default: 5s
 	WriteTimeout time.Duration
+
+	// StatsInterval is how often to log queue/sink stats.
+	// Set to 0 to disable periodic stats logging.
+	// Default: 30s
+	StatsInterval time.Duration
 }
 
 // DefaultManagerConfig returns default configuration for high-throughput.
 func DefaultManagerConfig() ManagerConfig {
 	return ManagerConfig{
-		QueueSize:    100000, // 100k events buffered
-		WorkerCount:  5,
-		BatchSize:    100,
-		BatchTimeout: 100 * time.Millisecond,
-		DropOnFull:   true, // Non-blocking
-		SampleRate:   1.0,  // Capture all
-		WriteTimeout: 5 * time.Second,
+		QueueSize:     100000, // 100k events buffered
+		WorkerCount:   5,
+		BatchSize:     100,
+		BatchTimeout:  100 * time.Millisecond,
+		DropOnFull:    true, // Non-blocking
+		SampleRate:    1.0,  // Capture all
+		WriteTimeout:  5 * time.Second,
+		StatsInterval: 30 * time.Second, // Log stats every 30s
 	}
 }
 
@@ -130,12 +137,16 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	if cfg.WriteTimeout <= 0 {
 		cfg.WriteTimeout = 5 * time.Second
 	}
+	if cfg.StatsInterval < 0 {
+		cfg.StatsInterval = 0 // Disable stats
+	}
 
 	m := &Manager{
 		sink:       sink,
 		asyncQueue: make(chan *Event, cfg.QueueSize),
 		logger:     logger.Named("audit-manager"),
 		config:     cfg,
+		stopStats:  make(chan struct{}),
 	}
 
 	// Check if sink supports batch writes
@@ -153,11 +164,17 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 		}
 	}
 
+	// Start periodic stats reporter if enabled
+	if cfg.StatsInterval > 0 {
+		go m.statsReporter()
+	}
+
 	logger.Info("audit manager started",
 		zap.Int("queue_size", cfg.QueueSize),
 		zap.Int("workers", cfg.WorkerCount),
 		zap.Bool("batch_enabled", m.batchSink != nil),
-		zap.Float64("sample_rate", cfg.SampleRate))
+		zap.Float64("sample_rate", cfg.SampleRate),
+		zap.Duration("stats_interval", cfg.StatsInterval))
 
 	return m
 }
@@ -197,7 +214,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	default:
 		// Queue is full - drop event (non-blocking)
 		m.droppedEvents.Add(1)
-		metrics.AuditEventsDropped.Inc()
+		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
 		if !m.config.DropOnFull {
 			m.logger.Warn("audit queue full, dropping event",
 				zap.String("event_type", string(event.Type)),
@@ -257,15 +274,16 @@ func (m *Manager) processQueue(workerID int) {
 	for event := range m.asyncQueue {
 		ctx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
 		if err := m.sink.Write(ctx, event); err != nil {
+			// Use string representation to avoid noisy stacktraces for transient errors
 			m.logger.Error("failed to write audit event",
 				zap.Int("worker", workerID),
 				zap.String("event_id", event.ID),
 				zap.String("event_type", string(event.Type)),
-				zap.Error(err))
-			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name()).Inc()
+				zap.String("error", err.Error()))
+			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "write").Inc()
 		} else {
 			m.processedEvents.Add(1)
-			metrics.AuditEventsProcessed.Inc()
+			metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Inc()
 		}
 		cancel()
 	}
@@ -286,14 +304,15 @@ func (m *Manager) processBatchQueue(workerID int) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
 		if err := m.batchSink.WriteBatch(ctx, batch); err != nil {
+			// Use string representation to avoid noisy stacktraces for transient errors
 			m.logger.Error("failed to write audit batch",
 				zap.Int("worker", workerID),
 				zap.Int("batch_size", len(batch)),
-				zap.Error(err))
-			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name()).Add(float64(len(batch)))
+				zap.String("error", err.Error()))
+			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "batch_write").Add(float64(len(batch)))
 		} else {
 			m.processedEvents.Add(int64(len(batch)))
-			metrics.AuditEventsProcessed.Add(float64(len(batch)))
+			metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Add(float64(len(batch)))
 		}
 		cancel()
 
@@ -324,6 +343,9 @@ func (m *Manager) Close() error {
 		return nil // Already closed
 	}
 
+	// Stop stats reporter
+	close(m.stopStats)
+
 	close(m.asyncQueue)
 	m.wg.Wait()
 
@@ -352,6 +374,61 @@ type ManagerStats struct {
 	DroppedEvents   int64
 	QueueLength     int
 	QueueCapacity   int
+}
+
+// statsReporter periodically logs audit manager statistics.
+func (m *Manager) statsReporter() {
+	ticker := time.NewTicker(m.config.StatsInterval)
+	defer ticker.Stop()
+
+	lastProcessed := int64(0)
+	lastDropped := int64(0)
+
+	for {
+		select {
+		case <-m.stopStats:
+			return
+		case <-ticker.C:
+			stats := m.Stats()
+
+			// Calculate deltas since last report
+			processedDelta := stats.ProcessedEvents - lastProcessed
+			droppedDelta := stats.DroppedEvents - lastDropped
+
+			lastProcessed = stats.ProcessedEvents
+			lastDropped = stats.DroppedEvents
+
+			queueUtilization := float64(0)
+			if stats.QueueCapacity > 0 {
+				queueUtilization = float64(stats.QueueLength) / float64(stats.QueueCapacity) * 100
+			}
+
+			// Log at debug level if everything is healthy, info if queue is getting full
+			logLevel := m.logger.Debug
+			if queueUtilization > 50 {
+				logLevel = m.logger.Info
+			}
+			if queueUtilization > 80 {
+				logLevel = m.logger.Warn
+			}
+
+			logLevel("audit manager stats",
+				zap.Int("queue_length", stats.QueueLength),
+				zap.Int("queue_capacity", stats.QueueCapacity),
+				zap.Float64("queue_utilization_pct", queueUtilization),
+				zap.Int64("total_queued", stats.QueuedEvents),
+				zap.Int64("total_processed", stats.ProcessedEvents),
+				zap.Int64("total_dropped", stats.DroppedEvents),
+				zap.Int64("processed_since_last", processedDelta),
+				zap.Int64("dropped_since_last", droppedDelta),
+				zap.String("sink_name", m.sink.Name()),
+				zap.Bool("batch_enabled", m.batchSink != nil))
+
+			// Update Prometheus metrics for queue depth
+			metrics.AuditQueueLength.WithLabelValues(m.sink.Name()).Set(float64(stats.QueueLength))
+			metrics.AuditQueueCapacity.WithLabelValues(m.sink.Name()).Set(float64(stats.QueueCapacity))
+		}
+	}
 }
 
 // --- Helper methods for common events ---
@@ -504,6 +581,160 @@ func (m *Manager) DebugSessionTerminated(ctx context.Context, sessionName, user,
 		},
 		Details: map[string]interface{}{
 			"reason": reason,
+		},
+		RequestContext: &RequestContext{
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
+// DebugSessionFailed emits an audit event when a debug session fails.
+func (m *Manager) DebugSessionFailed(ctx context.Context, sessionName, namespace, cluster, reason string, details map[string]interface{}) {
+	if details == nil {
+		details = make(map[string]interface{})
+	}
+	details["reason"] = reason
+	details["cluster"] = cluster
+
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionFailed,
+		Severity: SeverityCritical,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details: details,
+		RequestContext: &RequestContext{
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
+// DebugSessionExpired emits an audit event when a debug session expires.
+func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespace, cluster string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionExpired,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details: map[string]interface{}{
+			"cluster": cluster,
+		},
+		RequestContext: &RequestContext{
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
+// DebugSessionApprovalTimeout emits an audit event when a debug session approval times out.
+func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, namespace, cluster string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionApprovalTimeout,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details: map[string]interface{}{
+			"cluster": cluster,
+		},
+		RequestContext: &RequestContext{
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
+// DebugSessionPodFailed emits an audit event when a debug session pod fails.
+func (m *Manager) DebugSessionPodFailed(ctx context.Context, sessionName, namespace, podName, podNamespace, reason, message string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionPodFailed,
+		Severity: SeverityCritical,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "Pod",
+			Name:      podName,
+			Namespace: podNamespace,
+		},
+		Details: map[string]interface{}{
+			"debug_session":  sessionName,
+			"session_ns":     namespace,
+			"failure_reason": reason,
+			"message":        message,
+		},
+		RequestContext: &RequestContext{
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
+// DebugSessionPodRestarted emits an audit event when a debug session pod restarts.
+func (m *Manager) DebugSessionPodRestarted(ctx context.Context, sessionName, namespace, podName, podNamespace string, restartCount int32, lastTerminationReason string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionPodRestarted,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "Pod",
+			Name:      podName,
+			Namespace: podNamespace,
+		},
+		Details: map[string]interface{}{
+			"debug_session":           sessionName,
+			"session_ns":              namespace,
+			"restart_count":           restartCount,
+			"last_termination_reason": lastTerminationReason,
+		},
+		RequestContext: &RequestContext{
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
+// DebugSessionResourceDeployed emits an audit event when debug session resources are deployed.
+func (m *Manager) DebugSessionResourceDeployed(ctx context.Context, sessionName, namespace, cluster, resourceKind, resourceName, resourceNamespace string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionResourceDeploy,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      resourceKind,
+			Name:      resourceName,
+			Namespace: resourceNamespace,
+		},
+		Details: map[string]interface{}{
+			"debug_session": sessionName,
+			"session_ns":    namespace,
+			"cluster":       cluster,
+		},
+		RequestContext: &RequestContext{
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
+// DebugSessionResourceCleanup emits an audit event when debug session resources are cleaned up.
+func (m *Manager) DebugSessionResourceCleanup(ctx context.Context, sessionName, namespace, cluster, resourceKind, resourceName, resourceNamespace string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionResourceCleanup,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      resourceKind,
+			Name:      resourceName,
+			Namespace: resourceNamespace,
+		},
+		Details: map[string]interface{}{
+			"debug_session": sessionName,
+			"session_ns":    namespace,
+			"cluster":       cluster,
 		},
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,

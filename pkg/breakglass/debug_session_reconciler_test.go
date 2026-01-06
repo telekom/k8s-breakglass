@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -101,8 +102,8 @@ var _ = func(name string, podTemplateRef string) *telekomv1alpha1.DebugSessionTe
 			Constraints: &telekomv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
-				AllowRenewal:    true,
-				MaxRenewals:     3,
+				AllowRenewal:    ptrBool(true),
+				MaxRenewals:     ptrInt32(3),
 			},
 		},
 	}
@@ -786,8 +787,8 @@ func TestDebugSessionReconciler_ResolvedTemplate(t *testing.T) {
 			Constraints: &telekomv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
-				AllowRenewal:    true,
-				MaxRenewals:     3,
+				AllowRenewal:    ptrBool(true),
+				MaxRenewals:     ptrInt32(3),
 			},
 		}
 
@@ -1431,4 +1432,115 @@ func TestDebugSessionReconciler_ConcurrentOperations(t *testing.T) {
 			assert.Equal(t, "production", s.Spec.Cluster)
 		}
 	})
+}
+
+// TestNewDebugSessionController tests the constructor
+func TestNewDebugSessionController(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	logger := zap.NewNop().Sugar()
+
+	t.Run("creates controller with all parameters", func(t *testing.T) {
+		ctrl := NewDebugSessionController(logger, fakeClient, nil)
+		require.NotNil(t, ctrl)
+		assert.Equal(t, logger, ctrl.log)
+		assert.Equal(t, fakeClient, ctrl.client)
+		assert.Nil(t, ctrl.ccProvider)
+	})
+}
+
+// TestDebugSessionController_Reconcile_NotFound tests reconcile when session doesn't exist
+func TestDebugSessionController_Reconcile_NotFound(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	logger := zap.NewNop().Sugar()
+
+	ctrl := NewDebugSessionController(logger, fakeClient, nil)
+
+	result, err := ctrl.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "nonexistent", Namespace: "default"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
+}
+
+// TestDebugSessionController_Reconcile_PendingWithMissingTemplate tests pending state with missing template
+func TestDebugSessionController_Reconcile_PendingWithMissingTemplate(t *testing.T) {
+	scheme := newTestScheme()
+
+	session := &telekomv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass",
+		},
+		Spec: telekomv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			TemplateRef: "missing-template",
+			RequestedBy: "user@example.com",
+		},
+		Status: telekomv1alpha1.DebugSessionStatus{
+			State: telekomv1alpha1.DebugSessionStatePending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(session).
+		Build()
+	logger := zap.NewNop().Sugar()
+
+	ctrl := NewDebugSessionController(logger, fakeClient, nil)
+
+	result, err := ctrl.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "test-session", Namespace: "breakglass"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
+
+	// Verify session was marked as failed
+	var updated telekomv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-session", Namespace: "breakglass"}, &updated)
+	require.NoError(t, err)
+	assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	assert.Contains(t, updated.Status.Message, "template not found")
+}
+
+// TestDebugSessionController_Reconcile_FailedState tests that failed state is a terminal state
+func TestDebugSessionController_Reconcile_FailedState(t *testing.T) {
+	scheme := newTestScheme()
+
+	session := &telekomv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "failed-session",
+			Namespace: "breakglass",
+		},
+		Spec: telekomv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			TemplateRef: "test-template",
+			RequestedBy: "user@example.com",
+		},
+		Status: telekomv1alpha1.DebugSessionStatus{
+			State:   telekomv1alpha1.DebugSessionStateFailed,
+			Message: "Previous failure",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(session).
+		Build()
+	logger := zap.NewNop().Sugar()
+
+	ctrl := NewDebugSessionController(logger, fakeClient, nil)
+
+	result, err := ctrl.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "failed-session", Namespace: "breakglass"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result) // No requeue for terminal state
 }

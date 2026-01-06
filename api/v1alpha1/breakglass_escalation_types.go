@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -69,10 +69,6 @@ type BreakglassEscalationSpec struct {
 	// +optional
 	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
 	RetainFor string `json:"retainFor,omitempty"`
-	// idleTimeout is the maximum amount of time a session for this escalation can sit idle without being used.
-	// +default="1h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
-	IdleTimeout string `json:"idleTimeout,omitempty"`
 
 	// approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
 	// If this duration elapses without approval, the session expires and transitions to ApprovalTimeout state.
@@ -325,8 +321,12 @@ func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.
 		return nil, fmt.Errorf("expected a BreakglassEscalation object but got %T", obj)
 	}
 
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateBreakglassEscalation(escalation)
 	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateBreakglassEscalationSpec(ctx, escalation)...)
+	allErrs = append(allErrs, result.Errors...)
+
+	// Additional webhook-only validations (require client access)
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
 
 	if len(allErrs) == 0 {
@@ -341,8 +341,12 @@ func (be *BreakglassEscalation) ValidateUpdate(ctx context.Context, oldObj, newO
 		return nil, fmt.Errorf("expected a BreakglassEscalation object but got %T", newObj)
 	}
 
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateBreakglassEscalation(escalation)
 	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateBreakglassEscalationSpec(ctx, escalation)...)
+	allErrs = append(allErrs, result.Errors...)
+
+	// Additional webhook-only validations (require client access)
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
 
 	if len(allErrs) == 0 {
@@ -355,85 +359,14 @@ func (be *BreakglassEscalation) ValidateDelete(ctx context.Context, obj runtime.
 	return nil, nil
 }
 
-func validateBreakglassEscalationSpec(ctx context.Context, escalation *BreakglassEscalation) field.ErrorList {
+// validateBreakglassEscalationSpec is deprecated - use ValidateBreakglassEscalation for shared validation.
+// This function is kept for backward compatibility but now delegates to the shared implementation.
+func validateBreakglassEscalationSpec(_ context.Context, escalation *BreakglassEscalation) field.ErrorList {
 	if escalation == nil {
 		return nil
 	}
-
-	specPath := field.NewPath("spec")
-	var allErrs field.ErrorList
-
-	// Validate escalatedGroup format and content
-	if escalation.Spec.EscalatedGroup == "" {
-		allErrs = append(allErrs, field.Required(specPath.Child("escalatedGroup"), "escalatedGroup is required"))
-	} else {
-		allErrs = append(allErrs, validateIdentifierFormat(escalation.Spec.EscalatedGroup, specPath.Child("escalatedGroup"))...)
-	}
-
-	allowedGroupsPath := specPath.Child("allowed").Child("groups")
-	allowedClustersPath := specPath.Child("allowed").Child("clusters")
-
-	clustersProvided := len(escalation.Spec.Allowed.Clusters) > 0 || len(escalation.Spec.ClusterConfigRefs) > 0
-	// Validate allowed groups and cluster targets are not both empty (cluster targets include allowed.clusters + clusterConfigRefs)
-	if len(escalation.Spec.Allowed.Groups) == 0 && !clustersProvided {
-		allErrs = append(allErrs, field.Required(specPath.Child("allowed"), "either groups or cluster targets (allowed.clusters or clusterConfigRefs) must be specified"))
-	}
-
-	// Validate allowed groups
-	allErrs = append(allErrs, validateStringListEntriesNotEmpty(escalation.Spec.Allowed.Groups, allowedGroupsPath)...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Groups, allowedGroupsPath)...)
-	for i, grp := range escalation.Spec.Allowed.Groups {
-		allErrs = append(allErrs, validateIdentifierFormat(grp, allowedGroupsPath.Index(i))...)
-	}
-
-	// Validate allowed clusters
-	allErrs = append(allErrs, validateStringListEntriesNotEmpty(escalation.Spec.Allowed.Clusters, allowedClustersPath)...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Allowed.Clusters, allowedClustersPath)...)
-	for i, cluster := range escalation.Spec.Allowed.Clusters {
-		allErrs = append(allErrs, validateIdentifierFormat(cluster, allowedClustersPath.Index(i))...)
-	}
-
-	approverGroupsPath := specPath.Child("approvers").Child("groups")
-	approverUsersPath := specPath.Child("approvers").Child("users")
-
-	// Validate approvers definition
-	if len(escalation.Spec.Approvers.Groups) == 0 && len(escalation.Spec.Approvers.Users) == 0 {
-		allErrs = append(allErrs, field.Required(specPath.Child("approvers"), "either users or groups must be specified as approvers"))
-	}
-
-	allErrs = append(allErrs, validateStringListEntriesNotEmpty(escalation.Spec.Approvers.Groups, approverGroupsPath)...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Groups, approverGroupsPath)...)
-	for i, grp := range escalation.Spec.Approvers.Groups {
-		allErrs = append(allErrs, validateIdentifierFormat(grp, approverGroupsPath.Index(i))...)
-	}
-
-	allErrs = append(allErrs, validateStringListEntriesNotEmpty(escalation.Spec.Approvers.Users, approverUsersPath)...)
-	allErrs = append(allErrs, validateStringListNoDuplicates(escalation.Spec.Approvers.Users, approverUsersPath)...)
-	for i, user := range escalation.Spec.Approvers.Users {
-		allErrs = append(allErrs, validateIdentifierFormat(user, approverUsersPath.Index(i))...)
-	}
-
-	// Validate additional list fields (approvers.hiddenFromUI, clusterConfigRefs, denyPolicyRefs, notificationExclusions)
-	allErrs = append(allErrs, validateBreakglassEscalationAdditionalLists(&escalation.Spec, specPath)...)
-
-	// Validate email domains
-	if len(escalation.Spec.AllowedApproverDomains) > 0 {
-		allErrs = append(allErrs, validateEmailDomainList(escalation.Spec.AllowedApproverDomains, specPath.Child("allowedApproverDomains"))...)
-	}
-
-	// Validate optional mail provider reference
-	allErrs = append(allErrs, validateIdentifierFormat(escalation.Spec.MailProvider, specPath.Child("mailProvider"))...)
-
-	// Validate timeout relationships
-	allErrs = append(allErrs, validateTimeoutRelationships(&escalation.Spec, specPath)...)
-
-	// Multi-IDP validations
-	allErrs = append(allErrs, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProviders, specPath.Child("allowedIdentityProviders"))...)
-	allErrs = append(allErrs, validateIDPFieldCombinations(&escalation.Spec, specPath)...)
-	allErrs = append(allErrs, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProvidersForRequests, specPath.Child("allowedIdentityProvidersForRequests"))...)
-	allErrs = append(allErrs, validateIdentityProviderRefsFormat(escalation.Spec.AllowedIdentityProvidersForApprovers, specPath.Child("allowedIdentityProvidersForApprovers"))...)
-
-	return allErrs
+	result := ValidateBreakglassEscalation(escalation)
+	return result.Errors
 }
 
 func validateBreakglassEscalationAdditionalLists(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {

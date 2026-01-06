@@ -43,7 +43,7 @@ Complete documentation is available in the [docs/](./docs/) directory:
 
 - **[Quick Start](./docs/quickstart.md)** - Get running in 5 minutes
 - **[Installation](./docs/installation.md)** - Complete step-by-step installation guide
-- **[Building](./docs/building.md)** - Build from source
+- **[Building](./docs/building.md)** - Build from source and run tests
 
 **Resources & Configuration:**
 

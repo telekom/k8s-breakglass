@@ -52,7 +52,7 @@ type ClusterConfigSpec struct {
 	Location string `json:"location,omitempty"`
 
 	// kubeconfigSecretRef references a secret containing an admin-level kubeconfig for the target cluster.
-	// The referenced Secret MUST exist in the specified namespace and contain the key (default: kubeconfig).
+	// The referenced Secret MUST exist in the specified namespace and contain the key (default: "value", compatible with cluster-api).
 	KubeconfigSecretRef SecretKeyReference `json:"kubeconfigSecretRef"`
 
 	// qps configures the client QPS against the target cluster.
@@ -144,22 +144,19 @@ func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object)
 		return nil, fmt.Errorf("expected a ClusterConfig object but got %T", obj)
 	}
 
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateClusterConfig(clusterConfig)
 	var allErrs field.ErrorList
-	specPath := field.NewPath("spec")
+	allErrs = append(allErrs, result.Errors...)
 
-	if clusterConfig.Spec.KubeconfigSecretRef.Name == "" || clusterConfig.Spec.KubeconfigSecretRef.Namespace == "" {
-		allErrs = append(allErrs, field.Required(specPath.Child("kubeconfigSecretRef"), "kubeconfigSecretRef name and namespace are required"))
-	}
+	// Additional webhook-only validations (require k8s client)
+	specPath := field.NewPath("spec")
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
 
-	// Multi-IDP: Validate IdentityProviderRefs (empty refs is valid - means accept all enabled IDPs)
+	// Multi-IDP: Validate IdentityProviderRefs existence (requires k8s client)
 	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
 
-	// Validate approver domains format and duplicates
-	allErrs = append(allErrs, validateEmailDomainList(clusterConfig.Spec.AllowedApproverDomains, specPath.Child("allowedApproverDomains"))...)
-
-	// Validate optional mail provider reference
-	allErrs = append(allErrs, validateIdentifierFormat(clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
+	// Validate mail provider reference exists (requires k8s client)
 	allErrs = append(allErrs, validateMailProviderReference(ctx, clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
 	if len(allErrs) == 0 {
@@ -175,16 +172,19 @@ func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runt
 		return nil, fmt.Errorf("expected a ClusterConfig object but got %T", newObj)
 	}
 
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateClusterConfig(clusterConfig)
 	var allErrs field.ErrorList
+	allErrs = append(allErrs, result.Errors...)
+
+	// Additional webhook-only validations (require k8s client)
 	specPath := field.NewPath("spec")
-	// no immutability enforcement for ClusterConfig
-	// still ensure the name is unique across the cluster
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
 
-	// Multi-IDP: Validate IdentityProviderRefs (empty refs is valid - means accept all enabled IDPs)
+	// Multi-IDP: Validate IdentityProviderRefs existence (requires k8s client)
 	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
-	allErrs = append(allErrs, validateEmailDomainList(clusterConfig.Spec.AllowedApproverDomains, specPath.Child("allowedApproverDomains"))...)
-	allErrs = append(allErrs, validateIdentifierFormat(clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
+
+	// Validate mail provider reference exists (requires k8s client)
 	allErrs = append(allErrs, validateMailProviderReference(ctx, clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
 	if len(allErrs) == 0 {

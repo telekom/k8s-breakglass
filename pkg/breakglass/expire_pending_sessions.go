@@ -44,6 +44,10 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 			if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
 				// count the session as expired when status update succeeds
 				metrics.SessionExpired.WithLabelValues(ses.Spec.Cluster).Inc()
+				// Emit audit event for approval timeout
+				wc.emitSessionExpiredAuditEvent(context.Background(), &ses, "approvalTimeout")
+				// Send expiration email for approval timeout
+				wc.sendSessionExpiredEmail(ses, "approvalTimeout")
 			} else {
 				wc.log.Errorw("failed to update session status while expiring pending session", "error", err)
 			}
