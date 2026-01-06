@@ -24,7 +24,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@774d14bf50b7a2e2460f9f49e25c52503ecab125 # v4
+        uses: actions/dependency-review-action@98884d411b0f1c583e5ee579e7e897d4623019c2 # v4
         with:
           # Allow permissive licenses (MIT, Apache, BSD, ISC, MPL-2.0)
           # NOTE: GitHub's dependency graph detects Go modules from go.mod automatically
