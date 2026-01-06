@@ -1,0 +1,192 @@
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Multi-Cluster E2E Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'e2e/kind-setup-multi.sh'
+      - 'e2e/fixtures/multi-cluster/**'
+      - 'e2e/helpers/multicluster.go'
+      - 'e2e/api/hub_spoke_test.go'
+      - '.github/workflows/e2e-multi.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'e2e/kind-setup-multi.sh'
+      - 'e2e/fixtures/multi-cluster/**'
+      - 'e2e/helpers/multicluster.go'
+      - 'e2e/api/hub_spoke_test.go'
+  schedule:
+    # Run weekly on Sundays at 3:00 UTC (less frequent than single-cluster)
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Enable debug logging'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.25.5'
+  KIND_VERSION: 'v0.26.0'
+  KIND_NODE_IMAGE: 'kindest/node:v1.34.0'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: e2e-multi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  multi-cluster-e2e:
+    name: Hub-Spoke Multi-Cluster E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4.1.1
+
+      - name: Set up Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v5.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Build breakglass image
+        run: |
+          make docker-build-dev
+          docker images | grep breakglass
+
+      - name: Run multi-cluster setup
+        run: |
+          chmod +x e2e/kind-setup-multi.sh
+          SKIP_PROXY=true ./e2e/kind-setup-multi.sh
+        env:
+          SKIP_PROXY: "true"
+
+      - name: Source environment and verify clusters
+        run: |
+          source e2e/kind-setup-multi-tdir/env.sh
+          
+          echo "=== Hub Cluster ==="
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl cluster-info
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get nodes
+          
+          echo "=== Spoke Cluster A ==="
+          KUBECONFIG=$E2E_SPOKE_A_KUBECONFIG kubectl cluster-info
+          KUBECONFIG=$E2E_SPOKE_A_KUBECONFIG kubectl get nodes
+          
+          echo "=== Spoke Cluster B ==="
+          KUBECONFIG=$E2E_SPOKE_B_KUBECONFIG kubectl cluster-info
+          KUBECONFIG=$E2E_SPOKE_B_KUBECONFIG kubectl get nodes
+          
+          # Export for subsequent steps
+          echo "E2E_HUB_KUBECONFIG=$E2E_HUB_KUBECONFIG" >> $GITHUB_ENV
+          echo "E2E_SPOKE_A_KUBECONFIG=$E2E_SPOKE_A_KUBECONFIG" >> $GITHUB_ENV
+          echo "E2E_SPOKE_B_KUBECONFIG=$E2E_SPOKE_B_KUBECONFIG" >> $GITHUB_ENV
+          echo "E2E_MULTI_CLUSTER=true" >> $GITHUB_ENV
+          echo "E2E_TEST=true" >> $GITHUB_ENV
+
+      - name: Verify multi-cluster resources
+        run: |
+          echo "=== ClusterConfigs ==="
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get clusterconfig -A
+          
+          echo "=== IdentityProviders ==="
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get identityprovider -A
+          
+          echo "=== Escalations ==="
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get breakglassescalation -A
+          
+          echo "=== DenyPolicies ==="
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get denypolicy -A
+
+      - name: Setup port-forward for hub API
+        id: portforward
+        run: |
+          BG_NS="breakglass-dev-system"
+          
+          # Find free port
+          API_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+          echo "Using dynamically allocated API port: $API_PORT"
+          echo "api_port=$API_PORT" >> $GITHUB_OUTPUT
+          
+          # Start port-forward for hub API
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-dev-breakglass "$API_PORT:8080" &
+          echo $! > /tmp/api-pf.pid
+          
+          # Wait for port-forward
+          for i in {1..30}; do
+            if curl -sf "http://localhost:$API_PORT/healthz" >/dev/null 2>&1; then
+              echo "✓ API port-forward ready"
+              break
+            fi
+            sleep 1
+          done
+          
+          echo "BREAKGLASS_API_URL=http://localhost:$API_PORT" >> $GITHUB_ENV
+
+      - name: Run multi-cluster E2E tests
+        run: |
+          go test -v -tags=multicluster ./e2e/api/... -timeout 30m \
+            -run "TestHubSpokeSuite" 2>&1 | tee e2e-multi-results.txt
+        env:
+          E2E_TEST: "true"
+          E2E_MULTI_CLUSTER: "true"
+          E2E_NAMESPACE: "breakglass-dev-system"
+          KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG }}
+
+      - name: Collect debug info on failure
+        if: failure()
+        run: |
+          echo "=== Hub Cluster Debug ==="
+          echo "--- Pods ---"
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get pods -A
+          
+          echo "--- Breakglass Controller Logs ---"
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl logs -n breakglass-dev-system -l app=breakglass --tail=200 || true
+          
+          echo "--- ClusterConfig Status ---"
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get clusterconfig -A -o yaml || true
+          
+          echo "--- Sessions ---"
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get breakglasssession -A -o yaml || true
+          
+          echo "--- Events ---"
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl get events -A --sort-by='.lastTimestamp' | tail -50 || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@e51d620e9f03b8a91ae72aed4cc7f8ad4aadbee4 # v4.1.0
+        with:
+          name: multi-cluster-e2e-results
+          path: |
+            e2e-multi-results.txt
+            e2e/kind-setup-multi-tdir/env.sh
+          retention-days: 7
+
+      - name: Cleanup clusters
+        if: always()
+        run: |
+          kind delete cluster --name breakglass-hub || true
+          kind delete cluster --name spoke-cluster-a || true
+          kind delete cluster --name spoke-cluster-b || true
+          
+          # Kill port-forwards
+          if [ -f /tmp/api-pf.pid ]; then
+            kill $(cat /tmp/api-pf.pid) 2>/dev/null || true
+          fi

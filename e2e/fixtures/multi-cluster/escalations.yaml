@@ -1,0 +1,108 @@
+# Global escalation - applies to all clusters
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-global-readonly
+  namespace: breakglass-dev-system
+spec:
+  escalatedGroup: "breakglass-read-only"
+  # Empty clusterConfigRefs = applies to all clusters
+  clusterConfigRefs: []
+  maxValidFor: 2h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
+---
+# Hub-only escalation
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-hub-admin
+  namespace: breakglass-dev-system
+spec:
+  escalatedGroup: "breakglass-emergency-admin"
+  clusterConfigRefs:
+  - breakglass-hub
+  maxValidFor: 1h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
+---
+# Spoke A only escalation
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-spoke-a-pods
+  namespace: breakglass-dev-system
+spec:
+  escalatedGroup: "breakglass-pods-admin"
+  clusterConfigRefs:
+  - spoke-cluster-a
+  maxValidFor: 4h
+  allowed:
+    groups:
+    - breakglass-users
+  # No approvers = auto-approved
+---
+# Spoke B only escalation - for contractors
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-spoke-b-debugger
+  namespace: breakglass-dev-system
+spec:
+  escalatedGroup: "contractor-debugger"
+  clusterConfigRefs:
+  - spoke-cluster-b
+  maxValidFor: 2h
+  allowed:
+    groups:
+    - contractors
+  approvers:
+    groups:
+    - vendor-supervisors
+---
+# Multi-cluster escalation (specific subset)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-spoke-clusters-admin
+  namespace: breakglass-dev-system
+spec:
+  escalatedGroup: "breakglass-pods-admin"
+  clusterConfigRefs:
+  - spoke-cluster-a
+  - spoke-cluster-b
+  maxValidFor: 4h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
+---
+# Team-specific namespace scoped escalation
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-team-alpha-ns
+  namespace: breakglass-dev-system
+spec:
+  escalatedGroup: "team-alpha-ns-admin"
+  clusterConfigRefs:
+  - spoke-cluster-a
+  maxValidFor: 8h
+  allowed:
+    groups:
+    - team-alpha
+    clusters:
+    - spoke-cluster-a
+  approvers:
+    groups:
+    - team-alpha-leads
