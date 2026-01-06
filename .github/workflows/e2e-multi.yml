@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@e51d620e9f03b8a91ae72aed4cc7f8ad4aadbee4 # v4.1.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: multi-cluster-e2e-results
           path: |

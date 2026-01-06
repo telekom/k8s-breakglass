@@ -234,6 +234,15 @@ setup_hub_cluster() {
   # Generate TLS certs with the hub IP included
   generate_tls_certificates "$HUB_EXTERNAL_IP"
   
+  # Copy certs so kustomize can find them (expected by config/dev/kustomization.yaml)
+  log "Copying certs for kustomize..."
+  KUSTOMIZE_CERTS_DIR="$(pwd)/config/dev/certs/kind-setup-single-tls"
+  rm -rf "$KUSTOMIZE_CERTS_DIR"
+  mkdir -p "$KUSTOMIZE_CERTS_DIR"
+  cp "$TLS_DIR/ca.crt" "$KUSTOMIZE_CERTS_DIR/"
+  cp "$TLS_DIR/tls.crt" "$KUSTOMIZE_CERTS_DIR/server.crt"
+  cp "$TLS_DIR/tls.key" "$KUSTOMIZE_CERTS_DIR/server.key"
+  
   # Load images
   load_image_into_cluster "$HUB_CLUSTER" "$IMAGE"
   load_image_into_cluster "$HUB_CLUSTER" "$KEYCLOAK_IMAGE"
