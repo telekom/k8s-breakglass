@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -70,7 +70,8 @@ func TestAuditConfigReconciler_Reconcile_NotFound(t *testing.T) {
 	})
 
 	assert.NoError(t, err)
-	assert.Equal(t, reconcile.Result{}, result)
+	// When listing all configs and none exist, we still requeue after resync period
+	assert.Equal(t, time.Minute, result.RequeueAfter)
 }
 
 func TestAuditConfigReconciler_Reconcile_ValidConfig(t *testing.T) {
@@ -95,9 +96,10 @@ func TestAuditConfigReconciler_Reconcile_ValidConfig(t *testing.T) {
 
 	reloadCalled := false
 	r, recorder := newTestAuditConfigReconciler(t, config)
-	r.onReload = func(ctx context.Context, cfg *breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
 		reloadCalled = true
-		assert.Equal(t, "test-config", cfg.Name)
+		require.Len(t, cfgs, 1)
+		assert.Equal(t, "test-config", cfgs[0].Name)
 		return nil
 	}
 
@@ -145,6 +147,7 @@ func TestAuditConfigReconciler_Reconcile_KafkaSink_MissingBrokers(t *testing.T) 
 	})
 
 	assert.NoError(t, err)
+	// With aggregation, we still requeue even if this specific config is invalid
 	assert.Equal(t, time.Minute, result.RequeueAfter)
 
 	// Check validation failed event
@@ -183,6 +186,7 @@ func TestAuditConfigReconciler_Reconcile_KafkaSink_MissingTopic(t *testing.T) {
 	})
 
 	assert.NoError(t, err)
+	// With aggregation, we still requeue even if this specific config is invalid
 	assert.Equal(t, time.Minute, result.RequeueAfter)
 }
 
@@ -210,6 +214,7 @@ func TestAuditConfigReconciler_Reconcile_KafkaSink_MissingKafkaConfig(t *testing
 	})
 
 	assert.NoError(t, err)
+	// With aggregation, we still requeue even if this specific config is invalid
 	assert.Equal(t, time.Minute, result.RequeueAfter)
 }
 
@@ -239,6 +244,7 @@ func TestAuditConfigReconciler_Reconcile_WebhookSink_MissingURL(t *testing.T) {
 	})
 
 	assert.NoError(t, err)
+	// With aggregation, we still requeue even if this specific config is invalid
 	assert.Equal(t, time.Minute, result.RequeueAfter)
 }
 
@@ -266,6 +272,7 @@ func TestAuditConfigReconciler_Reconcile_WebhookSink_MissingWebhookConfig(t *tes
 	})
 
 	assert.NoError(t, err)
+	// With aggregation, we still requeue even if this specific config is invalid
 	assert.Equal(t, time.Minute, result.RequeueAfter)
 }
 
@@ -498,7 +505,7 @@ func TestAuditConfigReconciler_Reconcile_DisabledConfig(t *testing.T) {
 
 	reloadCalled := false
 	r, _ := newTestAuditConfigReconciler(t, config)
-	r.onReload = func(ctx context.Context, cfg *breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
 		reloadCalled = true
 		return nil
 	}
@@ -530,7 +537,7 @@ func TestAuditConfigReconciler_Reconcile_ReloadError(t *testing.T) {
 
 	errorHandlerCalled := false
 	r, recorder := newTestAuditConfigReconciler(t, config)
-	r.onReload = func(ctx context.Context, cfg *breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
 		return assert.AnError
 	}
 	r.onError = func(ctx context.Context, err error) {
@@ -577,4 +584,154 @@ func TestNewAuditConfigReconciler_DefaultResyncPeriod(t *testing.T) {
 
 	// Default should be 10 minutes
 	assert.Equal(t, 10*time.Minute, r.resyncPeriod)
+}
+
+func TestAuditConfigReconciler_Reconcile_MultipleConfigs_Aggregation(t *testing.T) {
+	// Create two valid AuditConfigs with different sinks
+	config1 := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "config-kafka",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "kafka-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeKafka,
+					Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+						Brokers: []string{"localhost:9092"},
+						Topic:   "audit-events",
+					},
+				},
+			},
+		},
+	}
+
+	config2 := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "config-webhook",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+					Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+						URL: "https://audit.example.com/events",
+					},
+				},
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	// Create a disabled config that should be skipped
+	configDisabled := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "config-disabled",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: false,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "ignored-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	var receivedConfigs []*breakglassv1alpha1.AuditConfig
+	r, _ := newTestAuditConfigReconciler(t, config1, config2, configDisabled)
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+		receivedConfigs = cfgs
+		return nil
+	}
+
+	// Trigger reconcile (any trigger will list all configs)
+	result, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "config-kafka"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, result.RequeueAfter)
+
+	// Should have received exactly 2 enabled configs
+	require.Len(t, receivedConfigs, 2)
+
+	// Verify both enabled configs are included
+	configNames := make(map[string]bool)
+	totalSinks := 0
+	for _, cfg := range receivedConfigs {
+		configNames[cfg.Name] = true
+		totalSinks += len(cfg.Spec.Sinks)
+	}
+
+	assert.True(t, configNames["config-kafka"], "config-kafka should be included")
+	assert.True(t, configNames["config-webhook"], "config-webhook should be included")
+	assert.False(t, configNames["config-disabled"], "config-disabled should NOT be included")
+
+	// Total sinks: 1 from kafka + 2 from webhook = 3
+	assert.Equal(t, 3, totalSinks, "Should have 3 total sinks from all enabled configs")
+
+	// Verify GetActiveConfigs returns the same
+	activeConfigs := r.GetActiveConfigs()
+	assert.Len(t, activeConfigs, 2)
+}
+
+func TestAuditConfigReconciler_Reconcile_MixedValidInvalid(t *testing.T) {
+	// One valid config
+	validConfig := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "valid-config",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	// One invalid config (missing kafka config)
+	invalidConfig := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-config",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name:  "broken-kafka",
+					Type:  breakglassv1alpha1.AuditSinkTypeKafka,
+					Kafka: nil, // Missing kafka config
+				},
+			},
+		},
+	}
+
+	var receivedConfigs []*breakglassv1alpha1.AuditConfig
+	r, _ := newTestAuditConfigReconciler(t, validConfig, invalidConfig)
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+		receivedConfigs = cfgs
+		return nil
+	}
+
+	result, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "valid-config"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, result.RequeueAfter)
+
+	// Should only receive the valid config
+	require.Len(t, receivedConfigs, 1)
+	assert.Equal(t, "valid-config", receivedConfigs[0].Name)
 }

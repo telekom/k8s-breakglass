@@ -340,7 +340,7 @@ func TestIdentityProviderLoader_ValidateIdentityProviderExists(t *testing.T) {
 			name:      "error - no providers",
 			idps:      []breakglassv1alpha1.IdentityProvider{},
 			wantError: true,
-			errMsg:    "no IdentityProvider resources found; IdentityProvider is MANDATORY",
+			errMsg:    "no IdentityProvider resources found",
 		},
 		{
 			name: "error - all providers disabled",

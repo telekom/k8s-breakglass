@@ -5,6 +5,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 var (
@@ -16,6 +17,27 @@ var (
 		Name: "breakglass_clusterconfigs_failed_total",
 		Help: "Total number of ClusterConfig validations that failed",
 	}, []string{"cluster"})
+	// Cluster cache metrics
+	ClusterCacheHits = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_cache_hits_total",
+		Help: "Total number of cluster config cache hits",
+	}, []string{"cluster"})
+	ClusterCacheMisses = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_cache_misses_total",
+		Help: "Total number of cluster config cache misses",
+	}, []string{"cluster"})
+	ClusterRESTConfigLoaded = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_rest_config_loaded_total",
+		Help: "Total number of successful REST config loads",
+	}, []string{"cluster"})
+	ClusterRESTConfigErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_rest_config_errors_total",
+		Help: "Total number of REST config load errors",
+	}, []string{"cluster", "reason"})
+	ClusterCacheInvalidations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_cache_invalidations_total",
+		Help: "Total number of cluster cache invalidations",
+	}, []string{"reason"})
 	// Webhook SAR metrics
 	WebhookSARRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_sar_requests_total",
@@ -346,7 +368,7 @@ var (
 	DebugSessionsActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "breakglass_debug_sessions_active",
 		Help: "Number of currently active debug sessions",
-	}, []string{"cluster"})
+	}, []string{"cluster", "template"})
 	DebugSessionsTerminated = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_debug_sessions_terminated_total",
 		Help: "Total number of debug sessions terminated",
@@ -354,7 +376,19 @@ var (
 	DebugSessionsExpired = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_debug_sessions_expired_total",
 		Help: "Total number of debug sessions that expired",
-	}, []string{"cluster"})
+	}, []string{"cluster", "template"})
+	DebugSessionsFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_sessions_failed_total",
+		Help: "Total number of debug sessions that failed",
+	}, []string{"cluster", "template"})
+	DebugSessionPodRestarts = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_pod_restarts_total",
+		Help: "Total number of debug session pod restarts",
+	}, []string{"cluster", "session"})
+	DebugSessionPodFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_pod_failures_total",
+		Help: "Total number of debug session pod failures",
+	}, []string{"cluster", "session", "reason"})
 	DebugSessionDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "breakglass_debug_session_duration_seconds",
 		Help:    "Duration of debug sessions in seconds",
@@ -382,14 +416,14 @@ var (
 	}, []string{"cluster", "reason"})
 
 	// Audit metrics
-	AuditEventsProcessed = prometheus.NewCounter(prometheus.CounterOpts{
+	AuditEventsProcessed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_events_processed_total",
 		Help: "Total number of audit events processed",
-	})
-	AuditEventsDropped = prometheus.NewCounter(prometheus.CounterOpts{
+	}, []string{"sink"})
+	AuditEventsDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_events_dropped_total",
-		Help: "Total number of audit events dropped due to queue overflow",
-	})
+		Help: "Total number of audit events dropped due to queue overflow or circuit breaker",
+	}, []string{"sink", "reason"})
 	AuditSinkErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_sink_errors_total",
 		Help: "Total number of errors per audit sink",
@@ -427,125 +461,173 @@ var (
 		Name: "breakglass_audit_config_reloads_total",
 		Help: "Total number of audit config reloads",
 	}, []string{"status"})
+
+	// Circuit breaker metrics for audit sinks
+	AuditCircuitBreakerState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_circuit_breaker_state",
+		Help: "Current state of the circuit breaker (0=closed, 1=open, 2=half-open)",
+	}, []string{"sink"})
+	AuditCircuitBreakerRejections = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_audit_circuit_breaker_rejections_total",
+		Help: "Total number of requests rejected by the circuit breaker",
+	}, []string{"sink"})
+	AuditCircuitBreakerStateTransitions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_audit_circuit_breaker_state_transitions_total",
+		Help: "Total number of circuit breaker state transitions",
+	}, []string{"sink", "from", "to"})
+	AuditSinkHealthy = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_sink_healthy",
+		Help: "Whether the audit sink is healthy (1) or not (0), based on circuit breaker state",
+	}, []string{"sink"})
+	AuditSinkConsecutiveFailures = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_sink_consecutive_failures",
+		Help: "Number of consecutive failures for the audit sink",
+	}, []string{"sink"})
+	AuditSinkLastSuccessTime = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_sink_last_success_timestamp",
+		Help: "Unix timestamp of the last successful write to the sink",
+	}, []string{"sink"})
 )
 
 func init() {
-	prometheus.MustRegister(ClusterConfigsChecked)
-	prometheus.MustRegister(ClusterConfigsFailed)
-	prometheus.MustRegister(WebhookSARRequests)
-	prometheus.MustRegister(WebhookSARRequestsByAction)
-	prometheus.MustRegister(WebhookSARAllowed)
-	prometheus.MustRegister(WebhookSARDenied)
-	prometheus.MustRegister(WebhookSARDecisionsByAction)
-	prometheus.MustRegister(WebhookSessionSARsAllowed)
-	prometheus.MustRegister(WebhookSessionSARsDenied)
-	prometheus.MustRegister(WebhookSessionSARErrors)
-	prometheus.MustRegister(WebhookSessionSARSSkipped)
-	prometheus.MustRegister(SessionCreated)
-	prometheus.MustRegister(SessionUpdated)
-	prometheus.MustRegister(SessionDeleted)
-	prometheus.MustRegister(SessionExpired)
-	prometheus.MustRegister(SessionScheduled)
-	prometheus.MustRegister(SessionActivated)
-	prometheus.MustRegister(SessionApproved)
-	prometheus.MustRegister(SessionRejected)
-	prometheus.MustRegister(MailSendSuccess)
-	prometheus.MustRegister(MailSendFailure)
-	prometheus.MustRegister(MailQueued)
-	prometheus.MustRegister(MailQueueDropped)
-	prometheus.MustRegister(MailSent)
-	prometheus.MustRegister(MailRetryScheduled)
-	prometheus.MustRegister(MailFailed)
-	prometheus.MustRegister(MailProviderConfigured)
-	prometheus.MustRegister(MailProviderHealthCheck)
-	prometheus.MustRegister(MailProviderHealthCheckDuration)
-	prometheus.MustRegister(MailProviderStatus)
-	prometheus.MustRegister(MailProviderEmailsSent)
-	prometheus.MustRegister(MailProviderEmailsFailed)
-	prometheus.MustRegister(IdentityProviderLoaded)
-	prometheus.MustRegister(IdentityProviderLoadFailed)
-	prometheus.MustRegister(IdentityProviderValidationFailed)
-	prometheus.MustRegister(IdentityProviderConversionErrors)
-	prometheus.MustRegister(IdentityProviderReloadDuration)
-	prometheus.MustRegister(IdentityProviderReloadAttempts)
-	prometheus.MustRegister(IdentityProviderLastReloadTimestamp)
-	prometheus.MustRegister(IdentityProviderConfigVersion)
-	prometheus.MustRegister(IdentityProviderStatus)
+	// Register all custom metrics with the controller-runtime registry.
+	// This ensures they are exposed alongside controller-runtime metrics
+	// on the same metrics endpoint (port 8081 by default).
+	ctrlmetrics.Registry.MustRegister(ClusterConfigsChecked)
+	ctrlmetrics.Registry.MustRegister(ClusterConfigsFailed)
+	ctrlmetrics.Registry.MustRegister(ClusterCacheHits)
+	ctrlmetrics.Registry.MustRegister(ClusterCacheMisses)
+	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigLoaded)
+	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigErrors)
+	ctrlmetrics.Registry.MustRegister(ClusterCacheInvalidations)
+	ctrlmetrics.Registry.MustRegister(WebhookSARRequests)
+	ctrlmetrics.Registry.MustRegister(WebhookSARRequestsByAction)
+	ctrlmetrics.Registry.MustRegister(WebhookSARAllowed)
+	ctrlmetrics.Registry.MustRegister(WebhookSARDenied)
+	ctrlmetrics.Registry.MustRegister(WebhookSARDecisionsByAction)
+	ctrlmetrics.Registry.MustRegister(WebhookSessionSARsAllowed)
+	ctrlmetrics.Registry.MustRegister(WebhookSessionSARsDenied)
+	ctrlmetrics.Registry.MustRegister(WebhookSessionSARErrors)
+	ctrlmetrics.Registry.MustRegister(WebhookSessionSARSSkipped)
+	ctrlmetrics.Registry.MustRegister(SessionCreated)
+	ctrlmetrics.Registry.MustRegister(SessionUpdated)
+	ctrlmetrics.Registry.MustRegister(SessionDeleted)
+	ctrlmetrics.Registry.MustRegister(SessionExpired)
+	ctrlmetrics.Registry.MustRegister(SessionScheduled)
+	ctrlmetrics.Registry.MustRegister(SessionActivated)
+	ctrlmetrics.Registry.MustRegister(SessionApproved)
+	ctrlmetrics.Registry.MustRegister(SessionRejected)
+	ctrlmetrics.Registry.MustRegister(MailSendSuccess)
+	ctrlmetrics.Registry.MustRegister(MailSendFailure)
+	ctrlmetrics.Registry.MustRegister(MailQueued)
+	ctrlmetrics.Registry.MustRegister(MailQueueDropped)
+	ctrlmetrics.Registry.MustRegister(MailSent)
+	ctrlmetrics.Registry.MustRegister(MailRetryScheduled)
+	ctrlmetrics.Registry.MustRegister(MailFailed)
+	ctrlmetrics.Registry.MustRegister(MailProviderConfigured)
+	ctrlmetrics.Registry.MustRegister(MailProviderHealthCheck)
+	ctrlmetrics.Registry.MustRegister(MailProviderHealthCheckDuration)
+	ctrlmetrics.Registry.MustRegister(MailProviderStatus)
+	ctrlmetrics.Registry.MustRegister(MailProviderEmailsSent)
+	ctrlmetrics.Registry.MustRegister(MailProviderEmailsFailed)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderLoaded)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderLoadFailed)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderValidationFailed)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderConversionErrors)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderReloadDuration)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderReloadAttempts)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderLastReloadTimestamp)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderConfigVersion)
+	ctrlmetrics.Registry.MustRegister(IdentityProviderStatus)
 
 	// Register JWT and JWKS metrics
-	prometheus.MustRegister(JWTValidationRequests)
-	prometheus.MustRegister(JWTValidationSuccess)
-	prometheus.MustRegister(JWTValidationFailure)
-	prometheus.MustRegister(JWTValidationDuration)
-	prometheus.MustRegister(JWKSCacheHits)
-	prometheus.MustRegister(JWKSCacheMisses)
-	prometheus.MustRegister(JWKSFetchRequests)
-	prometheus.MustRegister(JWKSFetchDuration)
-	prometheus.MustRegister(JWKSCacheSize)
+	ctrlmetrics.Registry.MustRegister(JWTValidationRequests)
+	ctrlmetrics.Registry.MustRegister(JWTValidationSuccess)
+	ctrlmetrics.Registry.MustRegister(JWTValidationFailure)
+	ctrlmetrics.Registry.MustRegister(JWTValidationDuration)
+	ctrlmetrics.Registry.MustRegister(JWKSCacheHits)
+	ctrlmetrics.Registry.MustRegister(JWKSCacheMisses)
+	ctrlmetrics.Registry.MustRegister(JWKSFetchRequests)
+	ctrlmetrics.Registry.MustRegister(JWKSFetchDuration)
+	ctrlmetrics.Registry.MustRegister(JWKSCacheSize)
 
 	// Register multi-IDP UI flow metrics
-	prometheus.MustRegister(MultiIDPConfigRequests)
-	prometheus.MustRegister(MultiIDPConfigSuccess)
-	prometheus.MustRegister(MultiIDPConfigFailure)
-	prometheus.MustRegister(IDPSelectorUsed)
-	prometheus.MustRegister(IDPSelectionValidations)
+	ctrlmetrics.Registry.MustRegister(MultiIDPConfigRequests)
+	ctrlmetrics.Registry.MustRegister(MultiIDPConfigSuccess)
+	ctrlmetrics.Registry.MustRegister(MultiIDPConfigFailure)
+	ctrlmetrics.Registry.MustRegister(IDPSelectorUsed)
+	ctrlmetrics.Registry.MustRegister(IDPSelectionValidations)
 
 	// Register OIDC proxy metrics
-	prometheus.MustRegister(OIDCProxyRequests)
-	prometheus.MustRegister(OIDCProxySuccess)
-	prometheus.MustRegister(OIDCProxyFailure)
-	prometheus.MustRegister(OIDCProxyDuration)
-	prometheus.MustRegister(OIDCProxyPathValidationFailure)
-	prometheus.MustRegister(OIDCProxyTLSMode)
+	ctrlmetrics.Registry.MustRegister(OIDCProxyRequests)
+	ctrlmetrics.Registry.MustRegister(OIDCProxySuccess)
+	ctrlmetrics.Registry.MustRegister(OIDCProxyFailure)
+	ctrlmetrics.Registry.MustRegister(OIDCProxyDuration)
+	ctrlmetrics.Registry.MustRegister(OIDCProxyPathValidationFailure)
+	ctrlmetrics.Registry.MustRegister(OIDCProxyTLSMode)
 	for _, mode := range []string{"http", "system_ca", "custom_ca", "insecure_skip_verify"} {
 		OIDCProxyTLSMode.WithLabelValues(mode).Set(0)
 	}
 
 	// Register session-IDP association metrics
-	prometheus.MustRegister(SessionCreatedWithIDP)
-	prometheus.MustRegister(SessionApprovedWithIDP)
-	prometheus.MustRegister(EscalationIDPAuthorizationChecks)
-	prometheus.MustRegister(EscalationAllowedIDPsCount)
+	ctrlmetrics.Registry.MustRegister(SessionCreatedWithIDP)
+	ctrlmetrics.Registry.MustRegister(SessionApprovedWithIDP)
+	ctrlmetrics.Registry.MustRegister(EscalationIDPAuthorizationChecks)
+	ctrlmetrics.Registry.MustRegister(EscalationAllowedIDPsCount)
 
 	// Register frontend API metrics
-	prometheus.MustRegister(APIEndpointRequests)
-	prometheus.MustRegister(APIEndpointErrors)
-	prometheus.MustRegister(APIEndpointDuration)
+	ctrlmetrics.Registry.MustRegister(APIEndpointRequests)
+	ctrlmetrics.Registry.MustRegister(APIEndpointErrors)
+	ctrlmetrics.Registry.MustRegister(APIEndpointDuration)
 
 	// Register pod security metrics
-	prometheus.MustRegister(PodSecurityEvaluations)
-	prometheus.MustRegister(PodSecurityRiskScore)
-	prometheus.MustRegister(PodSecurityFactors)
-	prometheus.MustRegister(PodSecurityDenied)
-	prometheus.MustRegister(PodSecurityWarnings)
+	ctrlmetrics.Registry.MustRegister(PodSecurityEvaluations)
+	ctrlmetrics.Registry.MustRegister(PodSecurityRiskScore)
+	ctrlmetrics.Registry.MustRegister(PodSecurityFactors)
+	ctrlmetrics.Registry.MustRegister(PodSecurityDenied)
+	ctrlmetrics.Registry.MustRegister(PodSecurityWarnings)
 
 	// Register debug session metrics
-	prometheus.MustRegister(DebugSessionsCreated)
-	prometheus.MustRegister(DebugSessionsActive)
-	prometheus.MustRegister(DebugSessionsTerminated)
-	prometheus.MustRegister(DebugSessionsExpired)
-	prometheus.MustRegister(DebugSessionDuration)
-	prometheus.MustRegister(DebugSessionParticipants)
-	prometheus.MustRegister(DebugSessionPodsDeployed)
-	prometheus.MustRegister(DebugSessionApprovalRequired)
-	prometheus.MustRegister(DebugSessionApproved)
-	prometheus.MustRegister(DebugSessionRejected)
+	ctrlmetrics.Registry.MustRegister(DebugSessionsCreated)
+	ctrlmetrics.Registry.MustRegister(DebugSessionsActive)
+	ctrlmetrics.Registry.MustRegister(DebugSessionsTerminated)
+	ctrlmetrics.Registry.MustRegister(DebugSessionsExpired)
+	ctrlmetrics.Registry.MustRegister(DebugSessionsFailed)
+	ctrlmetrics.Registry.MustRegister(DebugSessionPodRestarts)
+	ctrlmetrics.Registry.MustRegister(DebugSessionPodFailures)
+	ctrlmetrics.Registry.MustRegister(DebugSessionDuration)
+	ctrlmetrics.Registry.MustRegister(DebugSessionParticipants)
+	ctrlmetrics.Registry.MustRegister(DebugSessionPodsDeployed)
+	ctrlmetrics.Registry.MustRegister(DebugSessionApprovalRequired)
+	ctrlmetrics.Registry.MustRegister(DebugSessionApproved)
+	ctrlmetrics.Registry.MustRegister(DebugSessionRejected)
 
 	// Register audit metrics
-	prometheus.MustRegister(AuditEventsProcessed)
-	prometheus.MustRegister(AuditEventsDropped)
-	prometheus.MustRegister(AuditSinkErrors)
-	prometheus.MustRegister(AuditSinkLatency)
-	prometheus.MustRegister(AuditQueueLength)
-	prometheus.MustRegister(AuditQueueCapacity)
-	prometheus.MustRegister(AuditSinkConnected)
-	prometheus.MustRegister(AuditKafkaBatchesSent)
-	prometheus.MustRegister(AuditKafkaMessagesInFlight)
-	prometheus.MustRegister(AuditKafkaRetries)
-	prometheus.MustRegister(AuditConfigReloads)
+	ctrlmetrics.Registry.MustRegister(AuditEventsProcessed)
+	ctrlmetrics.Registry.MustRegister(AuditEventsDropped)
+	ctrlmetrics.Registry.MustRegister(AuditSinkErrors)
+	ctrlmetrics.Registry.MustRegister(AuditSinkLatency)
+	ctrlmetrics.Registry.MustRegister(AuditQueueLength)
+	ctrlmetrics.Registry.MustRegister(AuditQueueCapacity)
+	ctrlmetrics.Registry.MustRegister(AuditSinkConnected)
+	ctrlmetrics.Registry.MustRegister(AuditKafkaBatchesSent)
+	ctrlmetrics.Registry.MustRegister(AuditKafkaMessagesInFlight)
+	ctrlmetrics.Registry.MustRegister(AuditKafkaRetries)
+	ctrlmetrics.Registry.MustRegister(AuditConfigReloads)
+
+	// Register circuit breaker metrics
+	ctrlmetrics.Registry.MustRegister(AuditCircuitBreakerState)
+	ctrlmetrics.Registry.MustRegister(AuditCircuitBreakerRejections)
+	ctrlmetrics.Registry.MustRegister(AuditCircuitBreakerStateTransitions)
+	ctrlmetrics.Registry.MustRegister(AuditSinkHealthy)
+	ctrlmetrics.Registry.MustRegister(AuditSinkConsecutiveFailures)
+	ctrlmetrics.Registry.MustRegister(AuditSinkLastSuccessTime)
 }
 
 // MetricsHandler returns an http.Handler exposing Prometheus metrics.
+// Deprecated: Use the controller-runtime metrics endpoint on port 8081 instead.
+// This handler uses the default Prometheus registry which no longer contains
+// breakglass metrics (they are now registered with controller-runtime's registry).
 func MetricsHandler() http.Handler {
 	return promhttp.Handler()
 }

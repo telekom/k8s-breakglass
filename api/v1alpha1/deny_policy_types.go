@@ -227,13 +227,12 @@ func (dp *DenyPolicy) ValidateCreate(ctx context.Context, obj runtime.Object) (a
 		return nil, fmt.Errorf("expected a DenyPolicy object but got %T", obj)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateDenyPolicySpec(policy)...)
-
-	if len(allErrs) == 0 {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateDenyPolicy(policy)
+	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, policy.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, policy.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
@@ -243,13 +242,12 @@ func (dp *DenyPolicy) ValidateUpdate(ctx context.Context, oldObj, newObj runtime
 		return nil, fmt.Errorf("expected a DenyPolicy object but got %T", newObj)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateDenyPolicySpec(policy)...)
-
-	if len(allErrs) == 0 {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateDenyPolicy(policy)
+	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, policy.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, policy.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type

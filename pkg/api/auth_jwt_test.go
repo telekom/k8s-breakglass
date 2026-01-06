@@ -464,18 +464,18 @@ func TestAuthMiddleware_MissingOrWrongHeader(t *testing.T) {
 	router.Use(auth.Middleware())
 	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	// Missing header
+	// Missing header - should return 401 Unauthorized (not authenticated)
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 
-	// Wrong header (not Bearer)
+	// Wrong header (not Bearer) - should return 401 Unauthorized
 	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req2.Header.Set("Authorization", "Basic abcdef")
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
-	require.Equal(t, http.StatusBadRequest, w2.Code)
+	require.Equal(t, http.StatusUnauthorized, w2.Code)
 }
 
 func TestAuthMiddleware_RefreshOnMissingKid(t *testing.T) {

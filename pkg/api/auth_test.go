@@ -35,7 +35,7 @@ func TestAuthHandler_Middleware(t *testing.T) {
 			name:           "Missing Authorization header",
 			method:         "GET",
 			authHeader:     "",
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusUnauthorized,
 			expectNext:     false,
 			description:    "Requests without Authorization header should be rejected",
 		},
@@ -43,7 +43,7 @@ func TestAuthHandler_Middleware(t *testing.T) {
 			name:           "Invalid Authorization header format",
 			method:         "GET",
 			authHeader:     "Basic dGVzdA==",
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusUnauthorized,
 			expectNext:     false,
 			description:    "Non-Bearer authorization headers should be rejected",
 		},
@@ -165,7 +165,7 @@ func TestAuthHandler_MiddlewareErrorResponses(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
-			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
 			assert.JSONEq(t, tt.expectedBody, w.Body.String())
 		})
 	}

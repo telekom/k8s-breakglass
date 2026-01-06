@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -75,27 +76,6 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		return nil, fmt.Errorf("invalid or unknown identity provider")
 	}
 
-	// Build JWKS endpoint URL from IDP's configuration
-	if idpCfg.Authority == "" {
-		return nil, fmt.Errorf("IDP %s has no authority configured", idpCfg.Name)
-	}
-
-	// For Keycloak IDPs, use the Keycloak-specific JWKS endpoint
-	// This avoids relying on .well-known discovery which may not be available at the realm URL
-	var jwksURL string
-	if idpCfg.Keycloak != nil && idpCfg.Keycloak.BaseURL != "" && idpCfg.Keycloak.Realm != "" {
-		// Keycloak: {baseURL}/realms/{realm}/protocol/openid-connect/certs
-		baseURL := strings.TrimRight(idpCfg.Keycloak.BaseURL, "/")
-		jwksURL = fmt.Sprintf("%s/realms/%s/protocol/openid-connect/certs", baseURL, idpCfg.Keycloak.Realm)
-	} else {
-		// Standard OIDC: use .well-known/openid-configuration discovery
-		// If the authority is the realm URL, we need to go up one level to the OIDC discovery endpoint
-		// For standard OIDC providers, this should work: {authority}/.well-known/openid-configuration
-		// But for some providers, we may need to extract just the base authority
-		// Try appending /.well-known/jwks.json directly to authority first (common for many OIDC providers)
-		jwksURL = fmt.Sprintf("%s/.well-known/jwks.json", strings.TrimRight(idpCfg.Authority, "/"))
-	}
-
 	// Create JWKS options
 	options := keyfunc.Options{
 		RefreshInterval: time.Hour,
@@ -124,6 +104,54 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 		options.Client = &http.Client{Transport: transport}
 		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
+	}
+
+	// Build JWKS endpoint URL from IDP's configuration
+	if idpCfg.Authority == "" {
+		return nil, fmt.Errorf("IDP %s has no authority configured", idpCfg.Name)
+	}
+
+	// For Keycloak IDPs, use the Keycloak-specific JWKS endpoint
+	// This avoids relying on .well-known discovery which may not be available at the realm URL
+	var jwksURL string
+	if idpCfg.Keycloak != nil && idpCfg.Keycloak.BaseURL != "" && idpCfg.Keycloak.Realm != "" {
+		// Keycloak: {baseURL}/realms/{realm}/protocol/openid-connect/certs
+		baseURL := strings.TrimRight(idpCfg.Keycloak.BaseURL, "/")
+		jwksURL = fmt.Sprintf("%s/realms/%s/protocol/openid-connect/certs", baseURL, idpCfg.Keycloak.Realm)
+	} else {
+		// Standard OIDC: use .well-known/openid-configuration discovery
+		discoveryURL := fmt.Sprintf("%s/.well-known/openid-configuration", strings.TrimRight(idpCfg.Authority, "/"))
+
+		// Use the configured client (or default) to fetch discovery
+		client := options.Client
+		if client == nil {
+			client = http.DefaultClient
+		}
+
+		// Try discovery
+		var discoverySuccess bool
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+		if err == nil {
+			resp, err := client.Do(req)
+			if err == nil {
+				defer func() { _ = resp.Body.Close() }()
+				if resp.StatusCode == http.StatusOK {
+					var discovery struct {
+						JWKSURI string `json:"jwks_uri"`
+					}
+					if err := json.NewDecoder(resp.Body).Decode(&discovery); err == nil && discovery.JWKSURI != "" {
+						jwksURL = discovery.JWKSURI
+						discoverySuccess = true
+					}
+				}
+			}
+		}
+
+		if !discoverySuccess {
+			// Fallback: Try appending /.well-known/jwks.json directly to authority
+			jwksURL = fmt.Sprintf("%s/.well-known/jwks.json", strings.TrimRight(idpCfg.Authority, "/"))
+			a.log.Debugw("OIDC discovery failed or returned no jwks_uri, falling back to default path", "url", jwksURL)
+		}
 	}
 
 	// Fetch JWKS
@@ -158,7 +186,7 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 		// delete the header to avoid logging it by accident
 		c.Request.Header.Del(AuthHeaderKey)
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.JSON(http.StatusBadRequest, gin.H{
+			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "No Bearer token provided in Authorization header",
 			})
 			c.Abort()

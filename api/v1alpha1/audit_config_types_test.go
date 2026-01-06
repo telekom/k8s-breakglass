@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -657,4 +657,397 @@ func TestAuditSamplingConfig_EdgeCases(t *testing.T) {
 		},
 	}
 	assert.Equal(t, "0", zeroSampling.Rate)
+}
+
+// ==================== AuditConfig Webhook Validation Tests ====================
+
+func TestAuditConfig_ValidateCreate_ValidConfig(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: AuditSinkTypeLog,
+					Log:  &LogSinkSpec{Level: "info"},
+				},
+			},
+		},
+	}
+
+	warnings, err := ac.ValidateCreate(nil, ac)
+	assert.NoError(t, err)
+	assert.Empty(t, warnings)
+}
+
+func TestAuditConfig_ValidateCreate_InvalidConfig(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks:   []AuditSinkConfig{}, // Empty sinks - should fail
+		},
+	}
+
+	_, err := ac.ValidateCreate(nil, ac)
+	assert.Error(t, err)
+}
+
+func TestAuditConfig_ValidateCreate_WrongType(t *testing.T) {
+	ac := &AuditConfig{}
+	wrongType := &BreakglassSession{} // Wrong type
+
+	_, err := ac.ValidateCreate(nil, wrongType)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "expected an AuditConfig")
+}
+
+func TestAuditConfig_ValidateUpdate_ValidConfig(t *testing.T) {
+	oldAC := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: AuditSinkTypeLog,
+					Log:  &LogSinkSpec{Level: "info"},
+				},
+			},
+		},
+	}
+
+	newAC := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "log-sink-updated",
+					Type: AuditSinkTypeLog,
+					Log:  &LogSinkSpec{Level: "debug"},
+				},
+			},
+		},
+	}
+
+	warnings, err := newAC.ValidateUpdate(nil, oldAC, newAC)
+	assert.NoError(t, err)
+	assert.Empty(t, warnings)
+}
+
+func TestAuditConfig_ValidateUpdate_WrongType(t *testing.T) {
+	ac := &AuditConfig{}
+	oldObj := &AuditConfig{}
+	wrongType := &BreakglassSession{} // Wrong type
+
+	_, err := ac.ValidateUpdate(nil, oldObj, wrongType)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "expected an AuditConfig")
+}
+
+func TestAuditConfig_ValidateUpdate_InvalidConfig(t *testing.T) {
+	oldAC := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: AuditSinkTypeLog,
+					Log:  &LogSinkSpec{Level: "info"},
+				},
+			},
+		},
+	}
+
+	newAC := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks:   []AuditSinkConfig{}, // Empty sinks - invalid
+		},
+	}
+
+	_, err := newAC.ValidateUpdate(nil, oldAC, newAC)
+	assert.Error(t, err)
+}
+
+func TestAuditConfig_ValidateDelete(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{Name: "log-sink", Type: AuditSinkTypeLog},
+			},
+		},
+	}
+
+	warnings, err := ac.ValidateDelete(nil, ac)
+	assert.NoError(t, err)
+	assert.Nil(t, warnings)
+}
+
+func TestAuditConfig_WebhookSink_WithAuthSecretRef(t *testing.T) {
+	// Test webhook sink with AuthSecretRef validation
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: AuditSinkTypeWebhook,
+					Webhook: &WebhookSinkSpec{
+						URL: "https://example.com/webhook",
+						AuthSecretRef: &SecretKeySelector{
+							Name:      "auth-secret",
+							Namespace: "default",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	assert.Empty(t, result.Errors)
+}
+
+func TestAuditConfig_WebhookSink_AuthSecretRefMissingName(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: AuditSinkTypeWebhook,
+					Webhook: &WebhookSinkSpec{
+						URL: "https://example.com/webhook",
+						AuthSecretRef: &SecretKeySelector{
+							Name:      "", // Missing name
+							Namespace: "default",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	require.NotEmpty(t, result.Errors)
+	assert.Contains(t, result.Errors.ToAggregate().Error(), "name")
+}
+
+func TestAuditConfig_WebhookSink_AuthSecretRefMissingNamespace(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: AuditSinkTypeWebhook,
+					Webhook: &WebhookSinkSpec{
+						URL: "https://example.com/webhook",
+						AuthSecretRef: &SecretKeySelector{
+							Name:      "auth-secret",
+							Namespace: "", // Missing namespace
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	require.NotEmpty(t, result.Errors)
+	assert.Contains(t, result.Errors.ToAggregate().Error(), "namespace")
+}
+
+func TestAuditConfig_WebhookSink_WithTLSConfig(t *testing.T) {
+	// Test webhook sink with TLS configuration
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: AuditSinkTypeWebhook,
+					Webhook: &WebhookSinkSpec{
+						URL: "https://example.com/webhook",
+						TLS: &WebhookTLSSpec{
+							CASecretRef: &SecretKeySelector{
+								Name:      "ca-cert",
+								Namespace: "default",
+							},
+							InsecureSkipVerify: false,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	assert.Empty(t, result.Errors)
+}
+
+func TestAuditConfig_WebhookSink_TLSMissingSecretName(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: AuditSinkTypeWebhook,
+					Webhook: &WebhookSinkSpec{
+						URL: "https://example.com/webhook",
+						TLS: &WebhookTLSSpec{
+							CASecretRef: &SecretKeySelector{
+								Name:      "", // Missing name
+								Namespace: "default",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	require.NotEmpty(t, result.Errors)
+	assert.Contains(t, result.Errors.ToAggregate().Error(), "name")
+}
+
+func TestAuditConfig_WebhookSink_TLSMissingSecretNamespace(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: AuditSinkTypeWebhook,
+					Webhook: &WebhookSinkSpec{
+						URL: "https://example.com/webhook",
+						TLS: &WebhookTLSSpec{
+							CASecretRef: &SecretKeySelector{
+								Name:      "ca-cert",
+								Namespace: "", // Missing namespace
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	require.NotEmpty(t, result.Errors)
+	assert.Contains(t, result.Errors.ToAggregate().Error(), "namespace")
+}
+
+func TestAuditConfig_WebhookSink_InsecureSkipVerify(t *testing.T) {
+	// Test webhook sink with InsecureSkipVerify (no CA cert needed)
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: AuditSinkTypeWebhook,
+					Webhook: &WebhookSinkSpec{
+						URL: "https://example.com/webhook",
+						TLS: &WebhookTLSSpec{
+							InsecureSkipVerify: true,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	assert.Empty(t, result.Errors)
+}
+
+func TestAuditConfig_WebhookSink_MissingURL(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "webhook-sink",
+					Type: AuditSinkTypeWebhook,
+					Webhook: &WebhookSinkSpec{
+						URL: "", // Missing URL
+					},
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	require.NotEmpty(t, result.Errors)
+	assert.Contains(t, result.Errors.ToAggregate().Error(), "url")
+}
+
+func TestAuditConfig_WebhookSink_MissingConfig(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-audit-config",
+		},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name:    "webhook-sink",
+					Type:    AuditSinkTypeWebhook,
+					Webhook: nil, // Missing webhook config
+				},
+			},
+		},
+	}
+
+	result := ValidateAuditConfig(ac)
+	require.NotEmpty(t, result.Errors)
+	assert.Contains(t, result.Errors.ToAggregate().Error(), "webhook")
 }

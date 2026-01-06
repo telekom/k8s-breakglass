@@ -83,6 +83,20 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		cc := item
 		// metric: one check attempted (label by cluster name)
 		metrics.ClusterConfigsChecked.WithLabelValues(cc.Name).Inc()
+
+		// Perform structural validation using shared validation function.
+		// This catches malformed resources that somehow bypassed the admission webhook.
+		validationResult := telekomv1alpha1.ValidateClusterConfig(&cc)
+		if !validationResult.IsValid() {
+			msg := "ClusterConfig failed structural validation: " + validationResult.ErrorMessage()
+			lg.Warnw(msg, "cluster", cc.Name)
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+			}
+			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
+			continue
+		}
+
 		// if no kubeconfigSecretRef is set, log a warning
 		ref := cc.Spec.KubeconfigSecretRef
 		if ref.Name == "" || ref.Namespace == "" {
@@ -209,18 +223,13 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 	apimeta.SetStatusCondition(&cc.Status.Conditions, condition)
 	cc.Status.ObservedGeneration = cc.Generation
 
-	// persist status: try full Update first (fake client often requires this), fallback to status update
-	if err := ccc.Client.Update(ctx, cc); err != nil {
-		lg.Warnw("ClusterConfig full Update failed; attempting Status().Update", "cluster", cc.Name, "error", err)
-		if err2 := ccc.Client.Status().Update(ctx, cc); err2 != nil {
-			lg.Warnw("failed to update ClusterConfig status via Status().Update", "cluster", cc.Name, "error", err2)
-			// return the underlying status update error to caller
-			return err2
-		}
-		lg.Debugw("ClusterConfig status updated via Status().Update", "cluster", cc.Name)
-	} else {
-		lg.Debugw("ClusterConfig full Update succeeded", "cluster", cc.Name)
+	// Persist status using Status().Update() since ClusterConfig has status subresource enabled.
+	// When the status subresource is enabled, the main Update() endpoint ignores status changes.
+	if err := ccc.Client.Status().Update(ctx, cc); err != nil {
+		lg.Warnw("failed to update ClusterConfig status", "cluster", cc.Name, "error", err)
+		return err
 	}
+	lg.Debugw("ClusterConfig status updated successfully", "cluster", cc.Name, "ready", isSuccess)
 	// emit event if recorder present
 	if ccc.Recorder != nil {
 		eventReason := "ClusterConfigValidationFailed"

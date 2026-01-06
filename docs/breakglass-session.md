@@ -249,18 +249,6 @@ status:
   retainedUntil: "2024-02-14T10:30:00Z"
 ```
 
-### Not Yet Implemented
-
-The following status fields are not yet implemented. See [issue #8](https://github.com/telekom/k8s-breakglass/issues/8):
-
-#### idleUntil
-
-When the session would be revoked due to inactivity.
-
-#### lastUsed
-
-Last time the session was used for authorization.
-
 ## Session Lifecycle
 
 Sessions are created via REST API and progress through states:
@@ -286,7 +274,6 @@ spec:
   user: sre@example.com
   grantedGroup: cluster-admin
   maxValidFor: "2h"
-  idleTimeout: "30m"
   retainFor: "168h"
   clusterConfigRef: prod-cluster-config
 status:
@@ -299,8 +286,6 @@ status:
   approvedAt: "2024-01-15T12:30:00Z"
   expiresAt: "2024-01-15T14:30:00Z"
   retainedUntil: "2024-01-22T12:30:00Z"
-  idleUntil: null
-  lastUsed: null
 ```
 
 ### Development Self-Service
@@ -315,7 +300,6 @@ spec:
   user: developer@example.com
   grantedGroup: namespace-admin
   maxValidFor: "4h"
-  idleTimeout: "1h"
 status:
   conditions:
     - type: "Approved"

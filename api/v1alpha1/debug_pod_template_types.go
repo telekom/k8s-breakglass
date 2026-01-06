@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -200,13 +200,12 @@ func (dpt *DebugPodTemplate) ValidateCreate(ctx context.Context, obj runtime.Obj
 		return nil, fmt.Errorf("expected a DebugPodTemplate object but got %T", obj)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateDebugPodTemplateSpec(template)...)
-
-	if len(allErrs) == 0 {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateDebugPodTemplate(template)
+	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugPodTemplate"}, template.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugPodTemplate"}, template.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
@@ -216,13 +215,12 @@ func (dpt *DebugPodTemplate) ValidateUpdate(ctx context.Context, oldObj, newObj 
 		return nil, fmt.Errorf("expected a DebugPodTemplate object but got %T", newObj)
 	}
 
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateDebugPodTemplateSpec(template)...)
-
-	if len(allErrs) == 0 {
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateDebugPodTemplate(template)
+	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugPodTemplate"}, template.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugPodTemplate"}, template.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type

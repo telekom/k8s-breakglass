@@ -11,6 +11,27 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-breakglass-t-caas-telekom-com-v1alpha1-auditconfig
+  failurePolicy: Fail
+  name: auditconfig.validation.breakglass.t-caas.telekom.com
+  rules:
+  - apiGroups:
+    - breakglass.t-caas.telekom.com
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - auditconfigs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-breakglass-t-caas-telekom-com-v1alpha1-breakglassescalation
   failurePolicy: Fail
   name: breakglassescalation.validation.breakglass.t-caas.telekom.com

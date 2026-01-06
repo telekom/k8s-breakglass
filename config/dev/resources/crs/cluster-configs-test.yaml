@@ -11,6 +11,7 @@ spec:
   kubeconfigSecretRef:
     name: tenant-a-admin
     namespace: default
+    key: kubeconfig
   blockSelfApproval: false # Set to true to block self-approval
   allowedApproverDomains:
     - telekom.de
@@ -30,6 +31,7 @@ spec:
   kubeconfigSecretRef:
     name: tenant-b-admin
     namespace: default
+    key: kubeconfig
   blockSelfApproval: false
   allowedApproverDomains:
     - telekom.de

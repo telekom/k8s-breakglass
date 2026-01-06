@@ -63,12 +63,12 @@ func TestDebugSessionMetrics(t *testing.T) {
 	})
 
 	t.Run("active gauge", func(t *testing.T) {
-		DebugSessionsActive.WithLabelValues(cluster).Set(5)
-		if v := testutil.ToFloat64(DebugSessionsActive.WithLabelValues(cluster)); v != 5 {
+		DebugSessionsActive.WithLabelValues(cluster, template).Set(5)
+		if v := testutil.ToFloat64(DebugSessionsActive.WithLabelValues(cluster, template)); v != 5 {
 			t.Fatalf("expected DebugSessionsActive = 5, got %v", v)
 		}
-		DebugSessionsActive.WithLabelValues(cluster).Dec()
-		if v := testutil.ToFloat64(DebugSessionsActive.WithLabelValues(cluster)); v != 4 {
+		DebugSessionsActive.WithLabelValues(cluster, template).Dec()
+		if v := testutil.ToFloat64(DebugSessionsActive.WithLabelValues(cluster, template)); v != 4 {
 			t.Fatalf("expected DebugSessionsActive = 4 after decrement, got %v", v)
 		}
 	})
@@ -83,9 +83,9 @@ func TestDebugSessionMetrics(t *testing.T) {
 	})
 
 	t.Run("expired counter", func(t *testing.T) {
-		before := testutil.ToFloat64(DebugSessionsExpired.WithLabelValues(cluster))
-		DebugSessionsExpired.WithLabelValues(cluster).Inc()
-		after := testutil.ToFloat64(DebugSessionsExpired.WithLabelValues(cluster))
+		before := testutil.ToFloat64(DebugSessionsExpired.WithLabelValues(cluster, template))
+		DebugSessionsExpired.WithLabelValues(cluster, template).Inc()
+		after := testutil.ToFloat64(DebugSessionsExpired.WithLabelValues(cluster, template))
 		if after != before+1 {
 			t.Fatalf("expected DebugSessionsExpired to increment by 1")
 		}

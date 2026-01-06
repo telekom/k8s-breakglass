@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+  <style>
+    body {
+      font-family: "TeleNeoWeb", "TeleNeo", sans-serif;
+      color: #333;
+      line-height: 1.6;
+      background-color: #f5f5f5;
+    }
+
+    .container {
+      max-width: 650px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: white;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%);
+      color: white;
+      padding: 30px 20px;
+      text-align: center;
+      border-radius: 12px 12px 0 0;
+      margin: -20px -20px 0 -20px;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: bold;
+    }
+
+    .header-subtitle {
+      margin: 10px 0 0 0;
+      font-size: 0.95rem;
+      opacity: 0.95;
+    }
+
+    .pending-badge {
+      display: inline-block;
+      background-color: rgba(255, 255, 255, 0.3);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      margin-top: 10px;
+    }
+
+    .section {
+      margin: 25px 0;
+      padding: 20px;
+      border-radius: 8px;
+      border-left: 4px solid #9c27b0;
+    }
+
+    .section.primary {
+      background-color: #f3e5f5;
+      border-left-color: #9c27b0;
+    }
+
+    .section.info {
+      background-color: #f8f9fa;
+      border-left-color: #2196F3;
+    }
+
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: bold;
+      margin: 0 0 15px 0;
+      color: #6a1b9a;
+    }
+
+    .section.info .section-title {
+      color: #1565c0;
+    }
+
+    .detail-row {
+      display: flex;
+      margin: 12px 0;
+      font-size: 0.95rem;
+    }
+
+    .detail-label {
+      font-weight: 600;
+      color: #555;
+      min-width: 140px;
+      flex-shrink: 0;
+    }
+
+    .detail-value {
+      color: #333;
+      word-break: break-word;
+      flex: 1;
+    }
+
+    .requester-card {
+      background-color: #e1bee7;
+      border: 1px solid #ce93d8;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 15px 0;
+    }
+
+    .requester-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #6a1b9a;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .requester-name {
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #4a148c;
+      margin: 4px 0;
+    }
+
+    .requester-email {
+      font-size: 0.9rem;
+      color: #666;
+      margin: 0;
+    }
+
+    .action-required {
+      background-color: #fff3e0;
+      border-left-color: #ff9800;
+      border-left: 4px solid #ff9800;
+      padding: 16px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+
+    .action-title {
+      font-weight: bold;
+      color: #e65100;
+      margin: 0 0 10px 0;
+      font-size: 1rem;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 12px 24px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: bold;
+      text-align: center;
+    }
+
+    .btn-approve {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .btn-reject {
+      background-color: #f44336;
+      color: white;
+    }
+
+    .highlight {
+      font-weight: bold;
+      color: #6a1b9a;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #e0e0e0;
+      margin: 20px 0;
+    }
+
+    .reason-section {
+      background-color: #e3f2fd;
+      border-left: 4px solid #2196F3;
+      padding: 16px;
+      border-radius: 8px;
+      margin: 20px 0;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    .reason-title {
+      font-weight: bold;
+      color: #1565c0;
+      margin: 0 0 10px 0;
+      font-size: 1rem;
+    }
+
+    .reason-text {
+      color: #0d47a1;
+      font-style: italic;
+    }
+
+    .debug-badge {
+      display: inline-block;
+      background-color: #9c27b0;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      margin-left: 8px;
+    }
+
+    .icon {
+      margin-right: 6px;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+    }
+
+    .footer-text {
+      font-size: 0.85rem;
+      color: #999;
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔧 Debug Session Request</h1>
+      <p class="header-subtitle">A new debug session requires your approval</p>
+      <div class="pending-badge">⏳ PENDING APPROVAL</div>
+    </div>
+
+    <!-- Requester Section -->
+    <div class="section primary">
+      <div class="requester-card">
+        <div class="requester-label">Requested By</div>
+        <div class="requester-name">{{ .RequesterName }}</div>
+        <div class="requester-email">{{ .RequesterEmail }}</div>
+      </div>
+      <div class="detail-row">
+        <div class="detail-label">Requested At:</div>
+        <div class="detail-value">{{ .RequestedAt }}</div>
+      </div>
+    </div>
+
+    <!-- Session Details Section -->
+    <div class="section info">
+      <div class="section-title"><span class="icon">🔧</span> Debug Session Details</div>
+      
+      <div class="detail-row">
+        <div class="detail-label">Session ID:</div>
+        <div class="detail-value" style="font-family: monospace; font-size: 0.9rem;">{{ .SessionID }}<span class="debug-badge">DEBUG</span></div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Cluster:</div>
+        <div class="detail-value"><span class="highlight">{{ .Cluster }}</span></div>
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-label">Template:</div>
+        <div class="detail-value">{{ .TemplateName }}</div>
+      </div>
+
+      {{ if .Namespace }}
+      <div class="detail-row">
+        <div class="detail-label">Namespace:</div>
+        <div class="detail-value">{{ .Namespace }}</div>
+      </div>
+      {{ end }}
+
+      <div class="detail-row">
+        <div class="detail-label">Requested Duration:</div>
+        <div class="detail-value">{{ .RequestedDuration }}</div>
+      </div>
+
+      {{ if .NodeSelector }}
+      <div class="detail-row">
+        <div class="detail-label">Node Selector:</div>
+        <div class="detail-value" style="font-family: monospace; font-size: 0.9rem;">{{ .NodeSelector }}</div>
+      </div>
+      {{ end }}
+    </div>
+
+    <!-- Reason Section (if provided) -->
+    {{ if .Reason }}
+    <div class="reason-section">
+      <div class="reason-title">📝 Reason for Request</div>
+      <div class="reason-text">"{{ .Reason }}"</div>
+    </div>
+    {{ end }}
+
+    <!-- Action Required -->
+    <div class="action-required">
+      <div class="action-title">⚠️ Action Required</div>
+      <p>Please review this debug session request and approve or reject it.</p>
+      <p>Debug sessions provide direct pod access for troubleshooting. All actions within the session will be audited.</p>
+      <p style="margin-top: 10px;">
+        <a href="{{ .URL }}" class="btn btn-approve">Review in Dashboard</a>
+      </p>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Support Section -->
+    <div style="text-align: center; font-size: 0.9rem; color: #666; margin-top: 20px;">
+      <p style="margin: 0;">
+        <strong>Questions?</strong> Contact your cluster administrator or escalation team.
+      </p>
+      <p style="margin: 5px 0 0 0; font-size: 0.85rem; color: #999;">
+        This is an automated notification from {{ .BrandingName }}. Do not reply to this email.
+      </p>
+    </div>
+
+    <div class="footer">
+      <p class="footer-text">
+        Debug sessions provide temporary access to deploy troubleshooting pods in the cluster. Please review carefully before approving.
+      </p>
+    </div>
+  </div>
+</body>
+
+</html>

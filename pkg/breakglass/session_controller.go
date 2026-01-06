@@ -13,12 +13,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
@@ -48,12 +50,26 @@ type BreakglassSessionController struct {
 	identityProvider  IdentityProvider
 	mail              mail.Sender
 	mailQueue         *mail.Queue
+	mailService       MailEnqueuer
+	auditService      AuditEmitter
 	getUserGroupsFn   GetUserGroupsFunction
 	disableEmail      bool
 	ccProvider        interface {
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 	}
 	clusterConfigManager *ClusterConfigManager
+}
+
+// MailEnqueuer is an interface for enqueueing emails
+type MailEnqueuer interface {
+	Enqueue(sessionID string, recipients []string, subject, body string) error
+	IsEnabled() bool
+}
+
+// AuditEmitter is an interface for emitting audit events
+type AuditEmitter interface {
+	Emit(ctx context.Context, event *audit.Event)
+	IsEnabled() bool
 }
 
 // IsSessionPendingApproval returns true if the session is in Pending state (state-first validation)
@@ -302,7 +318,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		userGroups, gerr = wc.getUserGroupsFn(ctx, cug)
 		if gerr != nil {
 			reqLog.With("error", gerr).Error("Failed to retrieve user groups for escalation determination")
-			c.JSON(http.StatusInternalServerError, "failed to extract user groups")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract user groups: %v", gerr)})
 			return
 		}
 	}
@@ -316,7 +332,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	escalations, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, cug.Clustername, userGroups)
 	if err != nil {
 		reqLog.Errorw("Error getting breakglass escalations", "error", err)
-		c.JSON(http.StatusInternalServerError, "failed to extract cluster breakglass escalation information")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract cluster breakglass escalation information: %v", err)})
 		return
 	}
 	// We already filtered by cluster & user groups; treat these as possible escalations.
@@ -467,7 +483,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
 			reqLog.Errorw("Error getting breakglass sessions", "error", err)
-			c.JSON(http.StatusInternalServerError, "failed to extract breakglass session information")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract breakglass session information: %v", err)})
 			return
 		}
 	} else {
@@ -496,7 +512,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	useremail, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		reqLog.Errorw("Error getting user identity email", "error", err)
-		c.JSON(http.StatusInternalServerError, "failed to extract email from token")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract email from token: %v", err)})
 		return
 	}
 	username := wc.identityProvider.GetUsername(c)
@@ -532,7 +548,6 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		// copy relevant duration-related fields from escalation spec to session spec
 		spec.MaxValidFor = matchedEsc.Spec.MaxValidFor
 		spec.RetainFor = matchedEsc.Spec.RetainFor
-		spec.IdleTimeout = matchedEsc.Spec.IdleTimeout
 
 		// Determine AllowIDPMismatch flag: set to true when neither escalation nor cluster have IDP restrictions
 		// This ensures backward compatibility for single-IDP deployments
@@ -569,7 +584,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			d, err := time.ParseDuration(matchedEsc.Spec.MaxValidFor)
 			if err != nil {
 				reqLog.Warnw("Failed to parse MaxValidFor duration", "error", err, "value", matchedEsc.Spec.MaxValidFor)
-				c.JSON(http.StatusInternalServerError, "invalid escalation duration configuration")
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("invalid escalation duration configuration: %v", err)})
 				return
 			}
 			maxAllowed := int64(d.Seconds())
@@ -661,7 +676,15 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	bs.GenerateName = fmt.Sprintf("%s-%s-", safeCluster, safeGroup)
 	if err := wc.sessionManager.AddBreakglassSession(ctx, &bs); err != nil {
 		reqLog.Errorw("error while adding breakglass session", "error", err)
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsInvalid(err) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		} else if apierrors.IsForbidden(err) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		} else if apierrors.IsBadRequest(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create session: %v", err)})
+		}
 		return
 	}
 	// Note: bs already has its Name populated by AddBreakglassSession (passed as pointer).
@@ -670,7 +693,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	// Get approval timeout from escalation spec, or use cluster default
 	approvalTimeout := time.Hour // Default: 1 hour
-	if matchedEsc != nil && matchedEsc.Spec.ApprovalTimeout != "" {
+	if matchedEsc.Spec.ApprovalTimeout != "" {
 		if d, err := time.ParseDuration(matchedEsc.Spec.ApprovalTimeout); err == nil && d > 0 {
 			approvalTimeout = d
 			reqLog.Debugw("Using approval timeout from escalation spec", "approvalTimeout", approvalTimeout)
@@ -704,18 +727,18 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(ctx, bs); err != nil {
 		reqLog.Errorw("error while updating breakglass session", "error", err)
-		c.Status(http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
 		return
 	}
 
 	if wc.disableEmail {
 		reqLog.Debug("Email sending disabled via --disable-email flag")
-	} else if matchedEsc != nil && matchedEsc.Spec.DisableNotifications != nil && *matchedEsc.Spec.DisableNotifications {
+	} else if matchedEsc.Spec.DisableNotifications != nil && *matchedEsc.Spec.DisableNotifications {
 		reqLog.Infow("Email sending disabled for this escalation via DisableNotifications",
 			"escalationName", matchedEsc.Name,
 			"cluster", bs.Spec.Cluster,
 			"grantedGroup", bs.Spec.GrantedGroup)
-	} else if matchedEsc != nil {
+	} else {
 		reqLog.Infow("Resolved approvers from escalation (explicit users + group members)",
 			"approverCount", len(allApprovers),
 			"approvers", allApprovers,
@@ -805,6 +828,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		}
 	}
 
+	// Emit audit event for session creation
+	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionRequested, &bs, request.Username, "Session requested")
+
 	reqLog.Debugw("Session created", "user", request.Username, "cluster", request.Clustername, "group", request.GroupName, "generatedName", bs.Name)
 	c.JSON(http.StatusCreated, bs)
 }
@@ -818,7 +844,11 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	bs, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
 		reqLog.Error("error while getting breakglass session", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get session: %v", err)})
+		}
 		return
 	}
 
@@ -976,11 +1006,11 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		}
 	case v1alpha1.SessionConditionTypeIdle:
 		reqLog.Error("error setting session status to idle which should be only initial state")
-		c.Status(http.StatusInternalServerError)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot set session status to idle (initial state only)"})
 		return
 	default:
 		reqLog.Error("unknown session condition type", zap.String("type", string(sesCondition)))
-		c.Status(http.StatusInternalServerError)
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown session condition type: %s", sesCondition)})
 		return
 	}
 
@@ -995,8 +1025,22 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		reqLog.Error("error while updating breakglass session", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsConflict(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "session update conflict, please retry"})
+		} else if apierrors.IsInvalid(err) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+		}
 		return
+	}
+
+	// Get approver identity for audit events
+	approver := wc.identityProvider.GetUsername(c)
+	if approver == "" {
+		if email, err := wc.identityProvider.GetEmail(c); err == nil {
+			approver = email
+		}
 	}
 
 	// Track metrics for session lifecycle events
@@ -1012,12 +1056,22 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 			metrics.SessionScheduled.WithLabelValues(bs.Spec.Cluster).Inc()
 		}
 
+		// Emit audit event for session approval
+		wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionApproved, &bs, approver, "Session approved")
+
 		// Send approval notification email to requester
-		if !wc.disableEmail && wc.mailQueue != nil && bs.Spec.User != "" {
+		if !wc.disableEmail && bs.Spec.User != "" && (wc.mailService != nil && wc.mailService.IsEnabled() || wc.mailQueue != nil) {
 			wc.sendSessionApprovalEmail(reqLog, bs)
 		}
 	case v1alpha1.SessionConditionTypeRejected:
 		metrics.SessionRejected.WithLabelValues(bs.Spec.Cluster).Inc()
+		// Emit audit event for session rejection
+		wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionRejected, &bs, approver, "Session rejected")
+
+		// Send rejection notification email to requester
+		if !wc.disableEmail && bs.Spec.User != "" && (wc.mailService != nil && wc.mailService.IsEnabled() || wc.mailQueue != nil) {
+			wc.sendSessionRejectionEmail(reqLog, bs)
+		}
 	}
 
 	c.JSON(http.StatusOK, bs)
@@ -1134,7 +1188,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	}
 	if err != nil {
 		reqLog.Error("Error getting breakglass sessions", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, "failed to extract breakglass session information")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to list sessions: %v", err)})
 		return
 	}
 
@@ -1150,7 +1204,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		userEmail, err = wc.identityProvider.GetEmail(c)
 		if err != nil {
 			reqLog.Error("Error getting user identity email", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, "failed to extract email from token")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract email from token: %v", err)})
 			return
 		}
 	}
@@ -1217,7 +1271,9 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.C
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}
-	c.JSON(http.StatusOK, dropK8sInternalFieldsSessionList([]v1alpha1.BreakglassSession{ses}))
+	// Return a single session object, not an array
+	dropK8sInternalFieldsSession(&ses)
+	c.JSON(http.StatusOK, ses)
 }
 
 // handleWithdrawMyRequest allows the session requester to withdraw their own pending request
@@ -1229,7 +1285,11 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	bs, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
 		reqLog.Error("error while getting breakglass session", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get session: %v", err)})
+		}
 		return
 	}
 
@@ -1237,7 +1297,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	requesterEmail, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		reqLog.Error("error getting user identity email", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract email from token: %v", err)})
 		return
 	}
 	if bs.Spec.User != requesterEmail {
@@ -1283,9 +1343,18 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		reqLog.Error("error while updating breakglass session", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsConflict(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "session update conflict, please retry"})
+		} else if apierrors.IsInvalid(err) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+		}
 		return
 	}
+
+	// Emit audit event for session withdrawal by requester
+	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionWithdrawn, &bs, requesterEmail, "Session withdrawn by requester")
 
 	c.JSON(http.StatusOK, bs)
 }
@@ -1300,7 +1369,11 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	bs, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
 		reqLog.Error("error while getting breakglass session", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get session: %v", err)})
+		}
 		return
 	}
 
@@ -1308,7 +1381,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	requesterEmail, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		reqLog.Error("error getting user identity email", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract email from token: %v", err)})
 		return
 	}
 	if bs.Spec.User != requesterEmail {
@@ -1372,9 +1445,18 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		reqLog.Error("error while updating breakglass session", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsConflict(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "session update conflict, please retry"})
+		} else if apierrors.IsInvalid(err) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+		}
 		return
 	}
+
+	// Emit audit event for session dropped by owner
+	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionDropped, &bs, requesterEmail, "Session dropped by owner")
 
 	c.JSON(http.StatusOK, bs)
 }
@@ -1389,7 +1471,11 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	bs, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
 		reqLog.Error("error while getting breakglass session", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get session: %v", err)})
+		}
 		return
 	}
 
@@ -1440,9 +1526,18 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		reqLog.Error("error while updating breakglass session", zap.Error(err))
-		c.Status(http.StatusInternalServerError)
+		if apierrors.IsConflict(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": "session update conflict, please retry"})
+		} else if apierrors.IsInvalid(err) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+		}
 		return
 	}
+
+	// Emit audit event for session revocation by approver
+	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionRevoked, &bs, approverEmail, "Session canceled by approver")
 
 	c.JSON(http.StatusOK, bs)
 }
@@ -1676,9 +1771,28 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		"recipients", approvers,
 		"subject", subject)
 
-	// Use mail queue for non-blocking async sending
+	// Use mail service (preferred) or mail queue for non-blocking async sending
+	sessionID := fmt.Sprintf("session-%s", bs.Name)
+	if wc.mailService != nil && wc.mailService.IsEnabled() {
+		if err := wc.mailService.Enqueue(sessionID, approvers, subject, body); err != nil {
+			wc.log.Warnw("Failed to enqueue session request email via mail service",
+				"session", bs.Name,
+				"recipientCount", len(approvers),
+				"recipients", approvers,
+				"subject", subject,
+				"error", err)
+			return err
+		}
+		wc.log.Infow("Breakglass session request email queued",
+			"session", bs.Name,
+			"recipientCount", len(approvers),
+			"recipients", approvers,
+			"subject", subject)
+		return nil
+	}
+
+	// Fallback to legacy mailQueue
 	if wc.mailQueue != nil {
-		sessionID := fmt.Sprintf("session-%s", bs.Name)
 		if err := wc.mailQueue.Enqueue(sessionID, approvers, subject, body); err != nil {
 			wc.log.Warnw("Failed to enqueue session request email (will not retry)",
 				"session", bs.Name,
@@ -2048,7 +2162,7 @@ func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 	sessions, err := wc.sessionManager.GetAllBreakglassSessions(ctx)
 	if err != nil {
 		reqLog.Error("Error getting access reviews", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, "Failed to extract cluster group access information")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract cluster group access information: %v", err)})
 		return
 	}
 
@@ -2382,8 +2496,10 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 
 // sendSessionApprovalEmail sends an approval notification to the requester
 func (wc BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
-	if wc.mailQueue == nil {
-		log.Warnw("mail queue is nil, cannot send approval email", "session", session.Name)
+	// Check if mail is available (either via service or legacy queue)
+	mailEnabled := (wc.mailService != nil && wc.mailService.IsEnabled()) || wc.mailQueue != nil
+	if !mailEnabled {
+		log.Warnw("mail not available, cannot send approval email", "session", session.Name)
 		return
 	}
 
@@ -2438,26 +2554,190 @@ func (wc BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredL
 		return
 	}
 
-	// Enqueue the email for sending
+	// Enqueue the email for sending via mail service (preferred) or legacy queue
 	subject := fmt.Sprintf("Breakglass Access Approved - %s on %s", session.Spec.GrantedGroup, session.Spec.Cluster)
-	err = wc.mailQueue.Enqueue(
-		"session-approval-"+session.Name,
-		[]string{session.Spec.User},
-		subject,
-		body,
-	)
-	if err != nil {
-		log.Errorw("failed to enqueue approval email", "error", err, "session", session.Name, "to", session.Spec.User)
+	sessionID := "session-approval-" + session.Name
+	recipients := []string{session.Spec.User}
+
+	// Prefer mail service if available
+	if wc.mailService != nil && wc.mailService.IsEnabled() {
+		if err := wc.mailService.Enqueue(sessionID, recipients, subject, body); err != nil {
+			log.Errorw("failed to enqueue approval email via mail service", "error", err, "session", session.Name, "to", session.Spec.User)
+			return
+		}
+		log.Infow("approval email enqueued for sending", "session", session.Name, "to", session.Spec.User)
 		return
 	}
 
-	log.Infow("approval email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+	// Fallback to legacy queue
+	if wc.mailQueue != nil {
+		if err := wc.mailQueue.Enqueue(sessionID, recipients, subject, body); err != nil {
+			log.Errorw("failed to enqueue approval email", "error", err, "session", session.Name, "to", session.Spec.User)
+			return
+		}
+		log.Infow("approval email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+	}
+}
+
+// sendSessionRejectionEmail sends a rejection notification to the requester
+func (wc BreakglassSessionController) sendSessionRejectionEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
+	// Check if mail is available (either via service or legacy queue)
+	mailEnabled := (wc.mailService != nil && wc.mailService.IsEnabled()) || wc.mailQueue != nil
+	if !mailEnabled {
+		log.Warnw("mail not available, cannot send rejection email", "session", session.Name)
+		return
+	}
+
+	brandingName := "Breakglass"
+	if wc.config.Frontend.BrandingName != "" {
+		brandingName = wc.config.Frontend.BrandingName
+	}
+
+	// Prepare email parameters with rejection info
+	params := mail.RejectedMailParams{
+		SubjectFullName: session.Spec.User,
+		SubjectEmail:    session.Spec.User,
+		RequestedRole:   session.Spec.GrantedGroup,
+		RejectorFullName: func() string {
+			if session.Status.Approver != "" {
+				return session.Status.Approver
+			}
+			return "Approver"
+		}(),
+		RejectorEmail:   session.Status.Approver,
+		BrandingName:    brandingName,
+		RejectedAt:      session.Status.RejectedAt.Format("2006-01-02 15:04:05"),
+		RejectionReason: session.Status.ApprovalReason, // ApprovalReason is used for both approve and reject reasons
+		SessionID:       session.Name,
+		Cluster:         session.Spec.Cluster,
+		Username:        session.Spec.User,
+	}
+
+	// Render the rejection email body using the template
+	body, err := mail.RenderRejected(params)
+	if err != nil {
+		log.Errorw("failed to render rejection email template", "error", err, "session", session.Name)
+		return
+	}
+
+	// Enqueue the email for sending via mail service (preferred) or legacy queue
+	subject := fmt.Sprintf("Breakglass Access Rejected - %s on %s", session.Spec.GrantedGroup, session.Spec.Cluster)
+	sessionID := "session-rejection-" + session.Name
+	recipients := []string{session.Spec.User}
+
+	// Prefer mail service if available
+	if wc.mailService != nil && wc.mailService.IsEnabled() {
+		if err := wc.mailService.Enqueue(sessionID, recipients, subject, body); err != nil {
+			log.Errorw("failed to enqueue rejection email via mail service", "error", err, "session", session.Name, "to", session.Spec.User)
+			return
+		}
+		log.Infow("rejection email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+		return
+	}
+
+	// Fallback to legacy queue
+	if wc.mailQueue != nil {
+		if err := wc.mailQueue.Enqueue(sessionID, recipients, subject, body); err != nil {
+			log.Errorw("failed to enqueue rejection email", "error", err, "session", session.Name, "to", session.Spec.User)
+			return
+		}
+		log.Infow("rejection email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+	}
 }
 
 // WithQueue sets the mail queue for asynchronous email sending
+// Deprecated: Use WithMailService instead for hot-reload support
 func (b *BreakglassSessionController) WithQueue(mailQueue *mail.Queue) *BreakglassSessionController {
 	b.mailQueue = mailQueue
 	return b
+}
+
+// WithMailService sets the mail service for asynchronous email sending with hot-reload support
+func (b *BreakglassSessionController) WithMailService(mailService MailEnqueuer) *BreakglassSessionController {
+	b.mailService = mailService
+	return b
+}
+
+// WithAuditService sets the audit service for emitting audit events
+func (b *BreakglassSessionController) WithAuditService(auditService AuditEmitter) *BreakglassSessionController {
+	b.auditService = auditService
+	return b
+}
+
+// emitSessionAuditEvent emits an audit event for session lifecycle changes
+func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *v1alpha1.BreakglassSession, user string, message string) {
+	if b.auditService == nil || !b.auditService.IsEnabled() {
+		return
+	}
+
+	event := &audit.Event{
+		Type:      eventType,
+		Timestamp: time.Now().UTC(),
+		Actor: audit.Actor{
+			User: user,
+		},
+		Target: audit.Target{
+			Kind:      "BreakglassSession",
+			Name:      session.Name,
+			Namespace: session.Namespace,
+			Cluster:   session.Spec.Cluster,
+		},
+		RequestContext: &audit.RequestContext{
+			SessionName:    session.Name,
+			EscalationName: session.Spec.GrantedGroup,
+		},
+		Details: map[string]interface{}{
+			"message":      message,
+			"cluster":      session.Spec.Cluster,
+			"grantedGroup": session.Spec.GrantedGroup,
+			"state":        string(session.Status.State),
+		},
+	}
+
+	b.auditService.Emit(ctx, event)
+}
+
+// emitSessionExpiredAuditEvent emits an audit event when a session expires
+func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.Context, session *v1alpha1.BreakglassSession, reason string) {
+	if b.auditService == nil || !b.auditService.IsEnabled() {
+		return
+	}
+
+	message := "Session expired"
+	switch reason {
+	case "timeExpired":
+		message = "Session validity period has ended"
+	case "approvalTimeout":
+		message = "Session approval timed out before being approved"
+	}
+
+	event := &audit.Event{
+		Type:      audit.EventSessionExpired,
+		Severity:  audit.SeverityInfo,
+		Timestamp: time.Now().UTC(),
+		Actor: audit.Actor{
+			User: "system", // System-initiated expiration
+		},
+		Target: audit.Target{
+			Kind:      "BreakglassSession",
+			Name:      session.Name,
+			Namespace: session.Namespace,
+			Cluster:   session.Spec.Cluster,
+		},
+		RequestContext: &audit.RequestContext{
+			SessionName:    session.Name,
+			EscalationName: session.Spec.GrantedGroup,
+		},
+		Details: map[string]interface{}{
+			"message":          message,
+			"expirationReason": reason,
+			"cluster":          session.Spec.Cluster,
+			"grantedGroup":     session.Spec.GrantedGroup,
+			"user":             session.Spec.User,
+		},
+	}
+
+	b.auditService.Emit(ctx, event)
 }
 
 // Handlers returns the middleware(s) for this controller (required by APIController interface)

@@ -45,6 +45,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
 - **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions
+- **[AuditConfig](./audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
 - **[IdentityProvider](./identity-provider.md)** - OIDC identity provider configuration
 - **[MailProvider](./mail-provider.md)** - SMTP mail provider configuration
 - **[Webhook Setup](./webhook-setup.md)** - Authorization webhook configuration

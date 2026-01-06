@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,13 +19,17 @@ package breakglass
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -1399,5 +1403,1544 @@ func TestDebugSessionAPIController_InvalidJSON(t *testing.T) {
 		var req RenewDebugSessionRequest
 		err := json.Unmarshal([]byte(invalidJSON), &req)
 		assert.Error(t, err, "Expected JSON unmarshal error")
+	})
+}
+
+// TestNewDebugSessionAPIController tests the constructor
+func TestNewDebugSessionAPIController(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	logger := zap.NewNop().Sugar()
+
+	t.Run("creates controller without middleware", func(t *testing.T) {
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		require.NotNil(t, ctrl)
+		assert.Equal(t, logger, ctrl.log)
+		assert.Equal(t, fakeClient, ctrl.client)
+		assert.Nil(t, ctrl.ccProvider)
+		assert.Nil(t, ctrl.middleware)
+	})
+
+	t.Run("creates controller with middleware", func(t *testing.T) {
+		middleware := func(c *gin.Context) { c.Next() }
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, middleware)
+		require.NotNil(t, ctrl)
+		assert.NotNil(t, ctrl.middleware)
+	})
+}
+
+// TestDebugSessionAPIController_BasePath tests the BasePath method
+func TestDebugSessionAPIController_BasePath(t *testing.T) {
+	ctrl := &DebugSessionAPIController{}
+	path := ctrl.BasePath()
+	assert.Equal(t, "debugSessions", path)
+}
+
+// TestDebugSessionAPIController_Handlers tests the Handlers method
+func TestDebugSessionAPIController_Handlers(t *testing.T) {
+	t.Run("returns nil when no middleware", func(t *testing.T) {
+		ctrl := &DebugSessionAPIController{}
+		handlers := ctrl.Handlers()
+		assert.Nil(t, handlers)
+	})
+
+	t.Run("returns middleware when set", func(t *testing.T) {
+		middleware := func(c *gin.Context) { c.Next() }
+		ctrl := &DebugSessionAPIController{middleware: middleware}
+		handlers := ctrl.Handlers()
+		require.NotNil(t, handlers)
+		assert.Len(t, handlers, 1)
+	})
+}
+
+// TestDebugSessionAPIController_Register tests the Register method
+func TestDebugSessionAPIController_Register(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	logger := zap.NewNop().Sugar()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	engine := gin.New()
+	rg := engine.Group("/api/v1/" + ctrl.BasePath())
+
+	err := ctrl.Register(rg)
+	require.NoError(t, err)
+
+	// Verify routes were registered by checking available routes
+	routes := engine.Routes()
+	expectedPaths := []string{
+		"/api/v1/debugSessions",
+		"/api/v1/debugSessions/:name",
+		"/api/v1/debugSessions/:name/join",
+		"/api/v1/debugSessions/:name/leave",
+		"/api/v1/debugSessions/:name/renew",
+		"/api/v1/debugSessions/:name/terminate",
+		"/api/v1/debugSessions/:name/approve",
+		"/api/v1/debugSessions/:name/reject",
+		"/api/v1/debugSessions/templates",
+		"/api/v1/debugSessions/templates/:name",
+		"/api/v1/debugSessions/podTemplates",
+		"/api/v1/debugSessions/podTemplates/:name",
+	}
+
+	registeredPaths := make(map[string]bool)
+	for _, route := range routes {
+		registeredPaths[route.Path] = true
+	}
+
+	for _, expected := range expectedPaths {
+		assert.True(t, registeredPaths[expected], "Expected path %s to be registered", expected)
+	}
+}
+
+// TestDebugSessionAPIController_HandleListDebugSessions tests the handleListDebugSessions handler
+func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+	expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
+
+	sessions := []telekomv1alpha1.DebugSession{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "session-1",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State:     telekomv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "session-2",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "staging",
+				TemplateRef: "standard-debug",
+				RequestedBy: "bob@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStatePending,
+			},
+		},
+	}
+
+	t.Run("list all sessions via HTTP", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 2, response.Total)
+	})
+
+	t.Run("filter by cluster", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?cluster=production", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+		assert.Equal(t, "session-1", response.Sessions[0].Name)
+	})
+
+	t.Run("filter by state", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Pending", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+		assert.Equal(t, "session-2", response.Sessions[0].Name)
+	})
+
+	t.Run("filter by user", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?user=alice@example.com", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+		assert.Equal(t, "session-1", response.Sessions[0].Name)
+	})
+
+	t.Run("filter mine=true with username context", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&sessions[0], &sessions[1]).
+			WithStatusSubresource(&sessions[0], &sessions[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		// Add middleware to set username
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?mine=true", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionListResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+		assert.Equal(t, "session-1", response.Sessions[0].Name)
+	})
+}
+
+// TestDebugSessionAPIController_HandleGetDebugSession tests the handleGetDebugSession handler
+func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+	expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
+
+	// DebugSession is namespaced; the API handler uses getDebugSessionByName which
+	// falls back to "default" namespace if no label match is found
+	session := telekomv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "test-session",
+			},
+		},
+		Spec: telekomv1alpha1.DebugSessionSpec{
+			Cluster:           "production",
+			TemplateRef:       "standard-debug",
+			RequestedBy:       "alice@example.com",
+			RequestedDuration: "2h",
+			Reason:            "Investigating issue #12345",
+		},
+		Status: telekomv1alpha1.DebugSessionStatus{
+			State:     telekomv1alpha1.DebugSessionStateActive,
+			StartsAt:  &now,
+			ExpiresAt: &expiresAt,
+			Participants: []telekomv1alpha1.DebugSessionParticipant{
+				{
+					User:     "alice@example.com",
+					Role:     telekomv1alpha1.ParticipantRoleOwner,
+					JoinedAt: now,
+				},
+			},
+		},
+	}
+
+	t.Run("get existing session", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "test-session", response.Name)
+		assert.Equal(t, "production", response.Spec.Cluster)
+		assert.Equal(t, 1, len(response.Status.Participants))
+	})
+
+	t.Run("get non-existent session", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/non-existent", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 404, w.Code)
+	})
+}
+
+// TestDebugSessionAPIController_HandleListTemplates tests the handleListTemplates handler
+func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	templates := []telekomv1alpha1.DebugSessionTemplate{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "standard-debug",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode:         telekomv1alpha1.DebugSessionModeWorkload,
+				WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
+				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+					MaxDuration:     "4h",
+					DefaultDuration: "1h",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "advanced-debug",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode:         telekomv1alpha1.DebugSessionModeKubectlDebug,
+				WorkloadType: telekomv1alpha1.DebugWorkloadDeployment,
+			},
+		},
+	}
+
+	t.Run("list all templates", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templates[0], &templates[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		// Use a generic response structure since TemplateListResponse is not exported
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 2, response.Total)
+	})
+
+	t.Run("list templates with allowed groups filter", func(t *testing.T) {
+		// Add a template with group restriction
+		templateWithGroups := templates[0].DeepCopy()
+		templateWithGroups.Name = "restricted-template"
+		templateWithGroups.Spec.Allowed = &telekomv1alpha1.DebugSessionAllowed{
+			Groups: []string{"admins"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templates[0], &templates[1], templateWithGroups).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		// Add middleware to set user groups
+		router.Use(func(c *gin.Context) {
+			c.Set("groups", []string{"admins"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		// Should include all 3 templates since user is in admins group
+		assert.Equal(t, 3, response.Total)
+	})
+}
+
+// TestDebugSessionAPIController_HandleGetTemplate tests the handleGetTemplate handler
+func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	template := telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "standard-debug",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+			},
+		},
+	}
+
+	t.Run("get existing template", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/standard-debug", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		// handleGetTemplate returns the full template CRD, not DebugSessionTemplateResponse
+		var response telekomv1alpha1.DebugSessionTemplate
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "standard-debug", response.Name)
+		assert.Equal(t, telekomv1alpha1.DebugSessionModeWorkload, response.Spec.Mode)
+	})
+
+	t.Run("get non-existent template", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/non-existent", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 404, w.Code)
+	})
+}
+
+// TestDebugSessionAPIController_HandleListPodTemplates tests the handleListPodTemplates handler
+func TestDebugSessionAPIController_HandleListPodTemplates(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	podTemplates := []telekomv1alpha1.DebugPodTemplate{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ubuntu-debug",
+			},
+			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+				DisplayName: "Ubuntu Debug",
+				Description: "Ubuntu-based debug pod",
+				Template: telekomv1alpha1.DebugPodSpec{
+					Spec: telekomv1alpha1.DebugPodSpecInner{
+						Containers: []corev1.Container{
+							{Name: "debug", Image: "ubuntu:22.04"},
+						},
+					},
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "alpine-debug",
+			},
+			Spec: telekomv1alpha1.DebugPodTemplateSpec{
+				DisplayName: "Alpine Debug",
+				Description: "Alpine-based debug pod",
+				Template: telekomv1alpha1.DebugPodSpec{
+					Spec: telekomv1alpha1.DebugPodSpecInner{
+						Containers: []corev1.Container{
+							{Name: "debug", Image: "alpine:latest"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("list all pod templates", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&podTemplates[0], &podTemplates[1]).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/podTemplates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		// Use a generic response structure
+		var response struct {
+			PodTemplates []DebugPodTemplateResponse `json:"podTemplates"`
+			Total        int                        `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 2, response.Total)
+	})
+}
+
+// TestDebugSessionAPIController_HandleGetPodTemplate tests the handleGetPodTemplate handler
+func TestDebugSessionAPIController_HandleGetPodTemplate(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	podTemplate := telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "ubuntu-debug",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "Ubuntu Debug",
+			Description: "Ubuntu-based debug pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "debug", Image: "ubuntu:22.04"},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("get existing pod template", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&podTemplate).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/podTemplates/ubuntu-debug", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		// handleGetPodTemplate returns the full template CRD, not DebugPodTemplateResponse
+		var response telekomv1alpha1.DebugPodTemplate
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "ubuntu-debug", response.Name)
+		assert.Equal(t, "Ubuntu Debug", response.Spec.DisplayName)
+	})
+
+	t.Run("get non-existent pod template", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/podTemplates/non-existent", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 404, w.Code)
+	})
+}
+
+// TestDebugSessionAPIController_HandleCreateDebugSession tests the handleCreateDebugSession handler
+func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	template := telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "standard-debug",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+			},
+		},
+	}
+
+	templateWithClusterRestriction := telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "restricted-debug",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Clusters: []string{"production", "staging"},
+			},
+		},
+	}
+
+	t.Run("create session successfully", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		// Add auth middleware
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 201, w.Code)
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Contains(t, response.Name, "debug-")
+		assert.Equal(t, "production", response.Spec.Cluster)
+		assert.Equal(t, "alice@example.com", response.Spec.RequestedBy)
+	})
+
+	t.Run("create session with invalid body", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		// Missing required fields
+		body := `{"reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+	})
+
+	t.Run("create session with non-existent template", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"non-existent","cluster":"production"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+	})
+
+	t.Run("create session with disallowed cluster", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithClusterRestriction).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"restricted-debug","cluster":"development"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 403, w.Code)
+	})
+
+	t.Run("create session without authentication", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&template).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		// No auth middleware
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"standard-debug","cluster":"production"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 401, w.Code)
+	})
+}
+
+// TestDebugSessionAPIController_HandleTerminateDebugSession tests the handleTerminateDebugSession handler
+func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+
+	t.Run("terminate session successfully", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State:    telekomv1alpha1.DebugSessionStateActive,
+				StartsAt: &now,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/terminate", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		// Verify the session was terminated
+		var updatedSession telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State)
+	})
+
+	t.Run("terminate session without authentication", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-session",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStateActive,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		// No auth middleware
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/terminate", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 401, w.Code)
+	})
+
+	t.Run("terminate session by non-owner", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStateActive,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com") // Different user
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/terminate", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 403, w.Code)
+	})
+
+	t.Run("terminate already terminated session", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStateTerminated,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/terminate", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+	})
+
+	t.Run("terminate non-existent session", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/non-existent/terminate", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 404, w.Code)
+	})
+}
+
+// TestDebugSessionAPIController_HandleJoinDebugSession tests the handleJoinDebugSession handler
+func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+
+	t.Run("join session successfully", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State:    telekomv1alpha1.DebugSessionStateActive,
+				StartsAt: &now,
+				Participants: []telekomv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: telekomv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"role":"viewer"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		// Verify participant was added
+		var updatedSession telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Len(t, updatedSession.Status.Participants, 2)
+	})
+
+	t.Run("join session without authentication", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-session",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStateActive,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		// No auth middleware
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 401, w.Code)
+	})
+
+	t.Run("join non-active session", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStatePending,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+	})
+
+	t.Run("join already joined session", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStateActive,
+				Participants: []telekomv1alpha1.DebugSessionParticipant{
+					{User: "bob@example.com", Role: telekomv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 409, w.Code)
+	})
+
+	t.Run("join non-existent session", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/non-existent/join", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 404, w.Code)
+	})
+}
+
+// TestDebugSessionAPIController_HandleLeaveDebugSession tests the handleLeaveDebugSession handler
+func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+
+	t.Run("leave session successfully", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State:    telekomv1alpha1.DebugSessionStateActive,
+				StartsAt: &now,
+				Participants: []telekomv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: telekomv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+					{User: "bob@example.com", Role: telekomv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+	})
+
+	t.Run("leave session without authentication", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-session",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStateActive,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		// No auth middleware
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 401, w.Code)
+	})
+
+	t.Run("leave when not participant", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-session",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStateActive,
+				Participants: []telekomv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: telekomv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "charlie@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		// API returns 404 "user is not a participant in this session"
+		assert.Equal(t, 404, w.Code)
+	})
+}
+
+// TestDebugSessionAPIController_HandleRenewDebugSession tests the handleRenewDebugSession handler
+func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+	expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
+
+	t.Run("renew session successfully", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State:     telekomv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"extendBy":"1h"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		// Verify renewal count was incremented
+		var updatedSession telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Equal(t, int32(1), updatedSession.Status.RenewalCount)
+	})
+
+	t.Run("renew with invalid duration", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-session",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State:     telekomv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"extendBy":"invalid"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+	})
+
+	t.Run("renew non-active session", func(t *testing.T) {
+		session := telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State:     telekomv1alpha1.DebugSessionStatePending,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"extendBy":"1h"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+	})
+
+	t.Run("renew non-existent session", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"extendBy":"1h"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/non-existent/renew", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 404, w.Code)
 	})
 }

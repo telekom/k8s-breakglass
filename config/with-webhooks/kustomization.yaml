@@ -10,7 +10,7 @@ resources:
   - ../webhook
 
 # Patch the Deployment to add webhook port and enable webhooks flag
-patchesJson6902:
+patches:
   - target:
       group: apps
       version: v1

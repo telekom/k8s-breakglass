@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -150,7 +150,7 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		if err != nil {
 			metrics.AuditConfigReloads.WithLabelValues("error").Inc()
 			logger.Error("failed to build Kafka TLS config",
-				zap.Error(err),
+				zap.String("error", err.Error()),
 				zap.Strings("brokers", cfg.Brokers))
 			return nil, fmt.Errorf("failed to build TLS config: %w", err)
 		}
@@ -162,7 +162,7 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		if err != nil {
 			metrics.AuditConfigReloads.WithLabelValues("error").Inc()
 			logger.Error("failed to build Kafka SASL mechanism",
-				zap.Error(err),
+				zap.String("error", err.Error()),
 				zap.String("mechanism", cfg.SASL.Mechanism))
 			return nil, fmt.Errorf("failed to build SASL mechanism: %w", err)
 		}
@@ -218,7 +218,7 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		Async:                  cfg.Async,
 		Compression:            compression,
 		Transport:              transport,
-		AllowAutoTopicCreation: false,
+		AllowAutoTopicCreation: true,
 	}
 
 	sinkName := cfg.Name
@@ -370,8 +370,8 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 		s.lastErrorTime.Store(time.Now())
 
 		// Log with appropriate severity based on error type
-		logFields := []zap.Field{
-			zap.Error(err),
+		// Use zap.String for error to avoid stacktraces on expected network errors
+		baseLogFields := []zap.Field{
 			zap.String("error_type", errorType),
 			zap.Duration("duration", duration),
 			zap.String("event_id", event.ID),
@@ -380,13 +380,21 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 
 		switch errorType {
 		case "network", "dns", "timeout":
-			s.logger.Warn("Kafka sink temporarily unavailable, event dropped", logFields...)
+			// Use string representation for transient errors to avoid noisy stacktraces
+			s.logger.Warn("Kafka sink temporarily unavailable, event dropped",
+				append(baseLogFields, zap.String("error", err.Error()))...)
 		case "auth", "authorization":
-			s.logger.Error("Kafka authentication/authorization failed", logFields...)
+			// Auth errors are config issues, not bugs - no stacktrace needed
+			s.logger.Error("Kafka authentication/authorization failed",
+				append(baseLogFields, zap.String("error", err.Error()))...)
 		case "tls":
-			s.logger.Error("Kafka TLS error", logFields...)
+			// TLS errors are config issues, not bugs - no stacktrace needed
+			s.logger.Error("Kafka TLS error",
+				append(baseLogFields, zap.String("error", err.Error()))...)
 		default:
-			s.logger.Error("failed to write audit event to Kafka", logFields...)
+			// Unknown errors - use string to avoid noisy stacktraces
+			s.logger.Error("failed to write audit event to Kafka",
+				append(baseLogFields, zap.String("error", err.Error()))...)
 		}
 
 		return fmt.Errorf("failed to write to Kafka (%s): %w", errorType, err)
@@ -516,7 +524,7 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 			metrics.AuditSinkErrors.WithLabelValues(s.name, "serialization").Inc()
 			s.logger.Warn("failed to marshal audit event, skipping",
 				zap.String("event_id", event.ID),
-				zap.Error(err))
+				zap.String("error", err.Error()))
 			continue
 		}
 
@@ -562,7 +570,7 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 		s.lastErrorTime.Store(time.Now())
 
 		s.logger.Warn("failed to write batch to Kafka",
-			zap.Error(err),
+			zap.String("error", err.Error()),
 			zap.String("error_type", errorType),
 			zap.Int("batch_size", len(messages)),
 			zap.Duration("duration", duration))

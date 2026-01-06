@@ -1128,9 +1128,9 @@ spec:
                 description: constraints defines session duration and usage limits.
                 properties:
                   allowRenewal:
-                    default: true
-                    description: allowRenewal controls whether session renewal is
-                      permitted.
+                    description: |-
+                      allowRenewal controls whether session renewal is permitted.
+                      When nil, defaults to true. Set to false to disable renewals.
                     type: boolean
                   defaultDuration:
                     default: 1h
@@ -1148,9 +1148,9 @@ spec:
                     description: maxDuration is the maximum allowed session duration.
                     type: string
                   maxRenewals:
-                    default: 3
                     description: |-
                       maxRenewals is the maximum number of times a session can be renewed.
+                      When nil, defaults to 3. Set to 0 to disallow renewals.
                       Ignored if allowRenewal is false.
                     format: int32
                     type: integer

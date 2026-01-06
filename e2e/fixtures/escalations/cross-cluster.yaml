@@ -1,0 +1,35 @@
+# Test Escalation: Cross-Cluster Access
+# Allows access across multiple clusters for SRE team
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: test-cross-cluster
+  labels:
+    e2e-test: "true"
+spec:
+  escalatedGroup: cross-cluster-sre
+  maxValidFor: "1h"
+  approvalTimeout: "30m"
+  allowed:
+    clusters:
+      - cluster-a
+      - cluster-b
+      - cluster-c
+    groups:
+      - sre-team@example.com
+  approvers:
+    users:
+      - approver@example.com
+    groups:
+      - platform-team@example.com
+  permissions:
+    - apiGroups: [""]
+      resources: ["pods", "pods/log"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: [""]
+      resources: ["pods/exec"]
+      verbs: ["create"]
+      namespaces: ["default", "kube-system"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "replicasets"]
+      verbs: ["get", "list"]

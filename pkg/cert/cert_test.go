@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -281,3 +282,98 @@ func (f *fakeWebhookServer) StartedChecker() healthz.Checker {
 	return func(*http.Request) error { return nil }
 }
 func (f *fakeWebhookServer) WebhookMux() *http.ServeMux { return http.NewServeMux() }
+
+// TestEnsure_CertsReady tests the Ensure function when certificates become ready
+func TestEnsure_CertsReady(t *testing.T) {
+	// Create a temporary directory with a valid certificate
+	tmpDir := t.TempDir()
+	certPath := tmpDir
+	certName := "tls.crt"
+
+	// Create a valid PEM certificate file
+	pemData := `-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbMzbz73u8r6B0NKzQ0rWz
+z0Q8i5w5A/2i7BnC/V6jYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCC2V4YW1wbGUuY29t
+gg93d3cuZXhhbXBsZS5jb20wCgYIKoZIzj0EAwIDSAAwRQIgQDvwmXjcMg0nLj4h
+n0n1Yp3o+VRE5Ug6S4mGFASwCf4CIQDnC3mFBJ+LXdIrJzWN+zDZN2nnDpJx8P91
+1VGMmM7GJg==
+-----END CERTIFICATE-----`
+	err := os.WriteFile(tmpDir+"/"+certName, []byte(pemData), 0600)
+	require.NoError(t, err)
+
+	certsReady := make(chan struct{})
+	certMgrErr := make(chan error)
+	logger := zap.NewNop().Sugar()
+
+	// Signal that certs are ready
+	close(certsReady)
+
+	err = Ensure(certPath, certName, certsReady, certMgrErr, logger)
+	require.NoError(t, err)
+}
+
+// TestEnsure_CertMgrError tests the Ensure function when certificate manager returns an error
+func TestEnsure_CertMgrError(t *testing.T) {
+	certsReady := make(chan struct{})
+	certMgrErr := make(chan error, 1)
+	logger := zap.NewNop().Sugar()
+
+	// Send an error from the cert manager
+	certMgrErr <- errors.New("cert generation failed")
+
+	err := Ensure("/tmp", "tls.crt", certsReady, certMgrErr, logger)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cert-controller error")
+}
+
+// TestWait_ValidCertificate tests the wait function with a valid certificate
+func TestWait_ValidCertificate(t *testing.T) {
+	tmpDir := t.TempDir()
+	certName := "tls.crt"
+
+	// Create a valid PEM certificate file
+	pemData := `-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbMzbz73u8r6B0NKzQ0rWz
+z0Q8i5w5A/2i7BnC/V6jYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCC2V4YW1wbGUuY29t
+gg93d3cuZXhhbXBsZS5jb20wCgYIKoZIzj0EAwIDSAAwRQIgQDvwmXjcMg0nLj4h
+n0n1Yp3o+VRE5Ug6S4mGFASwCf4CIQDnC3mFBJ+LXdIrJzWN+zDZN2nnDpJx8P91
+1VGMmM7GJg==
+-----END CERTIFICATE-----`
+	err := os.WriteFile(tmpDir+"/"+certName, []byte(pemData), 0600)
+	require.NoError(t, err)
+
+	err = wait(tmpDir, certName, 1*time.Second, 10*time.Millisecond)
+	require.NoError(t, err)
+}
+
+// TestWait_Timeout tests the wait function when certificate is not found
+func TestWait_Timeout(t *testing.T) {
+	tmpDir := t.TempDir()
+	certName := "nonexistent.crt"
+
+	err := wait(tmpDir, certName, 50*time.Millisecond, 10*time.Millisecond)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timed out")
+}
+
+// TestWait_InvalidPEM tests the wait function with invalid PEM data
+func TestWait_InvalidPEM(t *testing.T) {
+	tmpDir := t.TempDir()
+	certName := "invalid.crt"
+
+	// Create a file with invalid PEM data
+	err := os.WriteFile(tmpDir+"/"+certName, []byte("not valid pem data"), 0600)
+	require.NoError(t, err)
+
+	err = wait(tmpDir, certName, 50*time.Millisecond, 10*time.Millisecond)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timed out")
+}

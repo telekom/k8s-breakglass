@@ -197,6 +197,29 @@
         "configure": true,
         "manage": true
       }
+    },
+    {
+      "clientId": "breakglass-group-sync",
+      "name": "Breakglass Group Sync Service Account",
+      "description": "Service account for querying group memberships from Keycloak Admin API",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "breakglass-group-sync-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "access.token.lifespan": "300"
+      },
+      "fullScopeAllowed": false,
+      "defaultClientScopes": [
+        "email",
+        "profile"
+      ],
+      "optionalClientScopes": []
     }
   ],
   "users": [
@@ -219,7 +242,41 @@
       "groups": [
         "dev",
         "ops",
-        "requester"
+        "requester",
+        "complete-flow-test-admins",
+        "e2e-test-group",
+        "test-group",
+        "valid-group",
+        "notification-test-group",
+        "notification-group-test",
+        "hidden-approvers-group",
+        "approver-groups-test",
+        "mandatory-reason-group",
+        "cross-cluster-group",
+        "clusterconfig-ref-group",
+        "target-cluster-group",
+        "audit-functional-test-group",
+        "ghost-cluster-admins",
+        "concurrent-admins",
+        "state-transition-admins",
+        "recreate-admins",
+        "recreate-admins-v2",
+        "update-test-admins",
+        "breakglass-pods-admin",
+        "breakglass-read-only",
+        "breakglass-emergency-admin",
+        "breakglass-create-all",
+        "breakglass-multi-cluster-ops",
+        "webhook-test-group",
+        "domain-restricted-access",
+        "validation-admins",
+        "transition-test-group",
+        "auth-test-group",
+        "expired-auth-test-group",
+        "withdrawn-auth-test-group",
+        "cleanup-test-admins",
+        "state-test-admins",
+        "scheduled-admins"
       ],
       "attributes": {
         "preferred_username": [
@@ -545,6 +602,602 @@
           "security-audit"
         ]
       }
+    },
+    {
+      "username": "requester-pod-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "requester-pod-admin@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "requester-pod-admin-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dev",
+        "breakglass-pods-admin",
+        "state-transition-admins",
+        "update-test-admins",
+        "concurrent-admins"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "requester-pod-admin"
+        ]
+      }
+    },
+    {
+      "username": "requester-emergency",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "requester-emergency@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "requester-emergency-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "ops",
+        "breakglass-emergency-admin",
+        "concurrent-admins",
+        "recreate-admins",
+        "recreate-admins-v2"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "requester-emergency"
+        ]
+      }
+    },
+    {
+      "username": "requester-readonly",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "requester-readonly@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "requester-readonly-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dev",
+        "breakglass-read-only",
+        "ghost-cluster-admins",
+        "validation-admins"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "requester-readonly"
+        ]
+      }
+    },
+    {
+      "username": "approver-ops",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "approver-ops@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "approver-ops-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "ops",
+        "monitoring-team"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "approver-ops"
+        ]
+      }
+    },
+    {
+      "username": "approver-security",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "approver-security@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "approver-security-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "emergency-response",
+        "senior-ops"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "approver-security"
+        ]
+      }
+    },
+    {
+      "username": "security-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "security-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "security-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "security-test-requester",
+        "pending-auth-test-group",
+        "self-approve-test-group",
+        "unreachable-test-group"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "security-requester"
+        ]
+      }
+    },
+    {
+      "username": "security-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "security-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "security-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "security-test-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "security-approver"
+        ]
+      }
+    },
+    {
+      "username": "unauthorized-user",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "unauthorized@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "unauthorized-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "read-only"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "unauthorized-user"
+        ]
+      }
+    },
+    {
+      "username": "audit-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "audit-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "audit-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "audit-functional-test-group",
+        "dev"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "audit-requester"
+        ]
+      }
+    },
+    {
+      "username": "audit-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "audit-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "audit-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "audit-test-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "audit-approver"
+        ]
+      }
+    },
+    {
+      "username": "notification-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "notification-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "notification-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "notification-test-group",
+        "notification-group-test",
+        "dev"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "notification-requester"
+        ]
+      }
+    },
+    {
+      "username": "notification-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "notification-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "notification-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "notification-test-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "notification-approver"
+        ]
+      }
+    },
+    {
+      "username": "policy-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "policy-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "policy-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "policy-test-group"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "policy-requester"
+        ]
+      }
+    },
+    {
+      "username": "policy-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "policy-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "policy-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "policy-test-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "policy-approver"
+        ]
+      }
+    },
+    {
+      "username": "debug-session-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "debug-session-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "debug-session-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "debug-session-test-group",
+        "dev"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "debug-session-requester"
+        ]
+      }
+    },
+    {
+      "username": "debug-session-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "debug-session-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "debug-session-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "debug-session-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "debug-session-approver"
+        ]
+      }
+    },
+    {
+      "username": "scheduling-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "scheduling-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "scheduling-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "scheduled-admins",
+        "dev"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "scheduling-requester"
+        ]
+      }
+    },
+    {
+      "username": "scheduling-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "scheduling-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "scheduling-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "scheduling-test-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "scheduling-approver"
+        ]
+      }
+    },
+    {
+      "username": "webhook-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "webhook-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "webhook-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "webhook-test-group",
+        "dev"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "webhook-requester"
+        ]
+      }
+    },
+    {
+      "username": "webhook-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "webhook-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "webhook-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "webhook-test-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "webhook-approver"
+        ]
+      }
+    },
+    {
+      "username": "multi-cluster-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "multi-cluster-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "multi-cluster-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "breakglass-multi-cluster-ops",
+        "ops"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "multi-cluster-requester"
+        ]
+      }
+    },
+    {
+      "username": "multi-cluster-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "multi-cluster-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "multi-cluster-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "multi-cluster-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "multi-cluster-approver"
+        ]
+      }
+    },
+    {
+      "username": "service-account-breakglass-group-sync",
+      "enabled": true,
+      "serviceAccountClientId": "breakglass-group-sync",
+      "realmRoles": [],
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "query-users",
+          "query-groups"
+        ]
+      }
     }
   ],
   "groups": [
@@ -607,6 +1260,150 @@
     },
     {
       "name": "qa-b"
+    },
+    {
+      "name": "complete-flow-test-admins"
+    },
+    {
+      "name": "e2e-test-group"
+    },
+    {
+      "name": "test-group"
+    },
+    {
+      "name": "valid-group"
+    },
+    {
+      "name": "notification-test-group"
+    },
+    {
+      "name": "notification-group-test"
+    },
+    {
+      "name": "hidden-approvers-group"
+    },
+    {
+      "name": "approver-groups-test"
+    },
+    {
+      "name": "mandatory-reason-group"
+    },
+    {
+      "name": "cross-cluster-group"
+    },
+    {
+      "name": "clusterconfig-ref-group"
+    },
+    {
+      "name": "target-cluster-group"
+    },
+    {
+      "name": "audit-functional-test-group"
+    },
+    {
+      "name": "ghost-cluster-admins"
+    },
+    {
+      "name": "concurrent-admins"
+    },
+    {
+      "name": "state-transition-admins"
+    },
+    {
+      "name": "recreate-admins"
+    },
+    {
+      "name": "recreate-admins-v2"
+    },
+    {
+      "name": "update-test-admins"
+    },
+    {
+      "name": "breakglass-pods-admin"
+    },
+    {
+      "name": "breakglass-read-only"
+    },
+    {
+      "name": "breakglass-emergency-admin"
+    },
+    {
+      "name": "breakglass-create-all"
+    },
+    {
+      "name": "breakglass-multi-cluster-ops"
+    },
+    {
+      "name": "webhook-test-group"
+    },
+    {
+      "name": "domain-restricted-access"
+    },
+    {
+      "name": "validation-admins"
+    },
+    {
+      "name": "transition-test-group"
+    },
+    {
+      "name": "auth-test-group"
+    },
+    {
+      "name": "expired-auth-test-group"
+    },
+    {
+      "name": "withdrawn-auth-test-group"
+    },
+    {
+      "name": "cleanup-test-admins"
+    },
+    {
+      "name": "state-test-admins"
+    },
+    {
+      "name": "scheduled-admins"
+    },
+    {
+      "name": "unreachable-test-group"
+    },
+    {
+      "name": "pending-auth-test-group"
+    },
+    {
+      "name": "self-approve-test-group"
+    },
+    {
+      "name": "security-test-requester"
+    },
+    {
+      "name": "security-test-approver"
+    },
+    {
+      "name": "audit-test-approver"
+    },
+    {
+      "name": "notification-test-approver"
+    },
+    {
+      "name": "policy-test-group"
+    },
+    {
+      "name": "policy-test-approver"
+    },
+    {
+      "name": "debug-session-test-group"
+    },
+    {
+      "name": "debug-session-approver"
+    },
+    {
+      "name": "scheduling-test-approver"
+    },
+    {
+      "name": "webhook-test-approver"
+    },
+    {
+      "name": "multi-cluster-approver"
     }
   ]
 }

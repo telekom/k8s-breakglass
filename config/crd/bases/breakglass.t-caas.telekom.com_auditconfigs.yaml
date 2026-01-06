@@ -164,7 +164,7 @@ spec:
                       type: string
                     type: array
                   rate:
-                    default: 1
+                    default: "1.0"
                     description: |-
                       Rate is the sampling rate (0.0 to 1.0).
                       1.0 = capture all, 0.1 = capture 10%.
@@ -419,6 +419,13 @@ spec:
                           maximum: 1000
                           minimum: 1
                           type: integer
+                        batchUrl:
+                          description: |-
+                            BatchURL is an optional separate endpoint for batch requests.
+                            If not specified, the main URL is used for both single and batch writes.
+                            This allows using different endpoints for single vs batch operations.
+                          pattern: ^https?://.+
+                          type: string
                         headers:
                           additionalProperties:
                             type: string

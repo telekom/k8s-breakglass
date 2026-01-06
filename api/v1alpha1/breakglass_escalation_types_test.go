@@ -523,7 +523,6 @@ func TestBreakglassEscalationValidateCreate_ValidTimeouts(t *testing.T) {
 			Approvers:       BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
 			MaxValidFor:     "2h",
 			ApprovalTimeout: "30m",
-			IdleTimeout:     "1h",
 		},
 	}
 

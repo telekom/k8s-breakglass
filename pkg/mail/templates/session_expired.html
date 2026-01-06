@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Session Expired - {{.BrandingName}}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+        <tr>
+            <td style="padding: 40px 20px;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    
+                    <!-- Header with orange gradient (expired/warning state) -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); padding: 30px 40px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">
+                                ⏰ Session Expired
+                            </h1>
+                            <p style="margin: 10px 0 0 0; color: rgba(255, 255, 255, 0.9); font-size: 14px;">
+                                {{.BrandingName}}
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Status Badge -->
+                    <tr>
+                        <td style="padding: 30px 40px 20px 40px; text-align: center;">
+                            <span style="display: inline-block; background-color: #fff7ed; color: #c2410c; padding: 8px 24px; border-radius: 20px; font-size: 14px; font-weight: 600; border: 1px solid #fed7aa;">
+                                EXPIRED
+                            </span>
+                        </td>
+                    </tr>
+                    
+                    <!-- Main Content -->
+                    <tr>
+                        <td style="padding: 0 40px 30px 40px;">
+                            <p style="margin: 0 0 20px 0; color: #374151; font-size: 16px; line-height: 1.6;">
+                                Hello <strong>{{.SubjectFullName}}</strong>,
+                            </p>
+                            <p style="margin: 0 0 20px 0; color: #374151; font-size: 16px; line-height: 1.6;">
+                                Your breakglass session has <strong>expired</strong>. Your elevated access to <strong>{{.RequestedRole}}</strong> on cluster <strong>{{.Cluster}}</strong> has been automatically revoked.
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Session Details Card -->
+                    <tr>
+                        <td style="padding: 0 40px 30px 40px;">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
+                                <tr>
+                                    <td style="padding: 20px;">
+                                        <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                                            Session Details
+                                        </h3>
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td style="padding: 8px 0; color: #6b7280; font-size: 14px; width: 40%;">Session ID:</td>
+                                                <td style="padding: 8px 0; color: #111827; font-size: 14px; font-weight: 500;">{{.SessionID}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Cluster:</td>
+                                                <td style="padding: 8px 0; color: #111827; font-size: 14px; font-weight: 500;">{{.Cluster}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Role:</td>
+                                                <td style="padding: 8px 0; color: #111827; font-size: 14px; font-weight: 500;">{{.RequestedRole}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Username:</td>
+                                                <td style="padding: 8px 0; color: #111827; font-size: 14px; font-weight: 500;">{{.Username}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Started At:</td>
+                                                <td style="padding: 8px 0; color: #111827; font-size: 14px; font-weight: 500;">{{.StartedAt}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Expired At:</td>
+                                                <td style="padding: 8px 0; color: #c2410c; font-size: 14px; font-weight: 600;">{{.ExpiredAt}}</td>
+                                            </tr>
+                                            {{if .ExpirationReason}}
+                                            <tr>
+                                                <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Reason:</td>
+                                                <td style="padding: 8px 0; color: #111827; font-size: 14px; font-weight: 500;">{{.ExpirationReason}}</td>
+                                            </tr>
+                                            {{end}}
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Info Box -->
+                    <tr>
+                        <td style="padding: 0 40px 30px 40px;">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #eff6ff; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                                <tr>
+                                    <td style="padding: 16px 20px;">
+                                        <p style="margin: 0; color: #1e40af; font-size: 14px; line-height: 1.5;">
+                                            <strong>Need continued access?</strong><br>
+                                            If you still require elevated access, please submit a new breakglass request with an updated justification.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Audit Notice -->
+                    <tr>
+                        <td style="padding: 0 40px 30px 40px;">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                                <tr>
+                                    <td style="padding: 16px 20px;">
+                                        <p style="margin: 0; color: #92400e; font-size: 13px; line-height: 1.5;">
+                                            <strong>📋 Audit Record:</strong> All actions performed during this session have been logged and are retained as a permanent audit record for compliance purposes.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #f9fafb; padding: 20px 40px; border-top: 1px solid #e5e7eb;">
+                            <p style="margin: 0; color: #6b7280; font-size: 12px; text-align: center;">
+                                This is an automated message from {{.BrandingName}}. Your session has ended according to the configured duration policy.
+                            </p>
+                        </td>
+                    </tr>
+                    
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

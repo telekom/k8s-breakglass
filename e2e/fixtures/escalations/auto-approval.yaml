@@ -1,0 +1,25 @@
+# Test Escalation: Auto-Approval
+# Escalation with auto-approval enabled for low-risk access
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: test-auto-approval
+  labels:
+    e2e-test: "true"
+spec:
+  escalatedGroup: auto-approval-group
+  maxValidFor: "30m"
+  autoApprove: true
+  allowed:
+    clusters:
+      - tenant-a
+    groups:
+      - developers@example.com
+  permissions:
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: [""]
+      resources: ["pods/log"]
+      verbs: ["get"]
+      namespaces: ["default"]

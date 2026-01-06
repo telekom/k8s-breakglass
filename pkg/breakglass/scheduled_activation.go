@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,9 +18,11 @@ package breakglass
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	v1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,6 +34,9 @@ import (
 type ScheduledSessionActivator struct {
 	log            *zap.SugaredLogger
 	sessionManager *SessionManager
+	mailService    MailEnqueuer
+	brandingName   string
+	disableEmail   bool
 }
 
 // NewScheduledSessionActivator creates a new activator instance
@@ -42,13 +47,21 @@ func NewScheduledSessionActivator(log *zap.SugaredLogger, sessionManager *Sessio
 	}
 }
 
+// WithMailService sets the mail service for sending activation notifications
+func (ssa *ScheduledSessionActivator) WithMailService(mailService MailEnqueuer, brandingName string, disableEmail bool) *ScheduledSessionActivator {
+	ssa.mailService = mailService
+	ssa.brandingName = brandingName
+	ssa.disableEmail = disableEmail
+	return ssa
+}
+
 // ActivateScheduledSessions checks for sessions in WaitingForScheduledTime state
 // whose ScheduledStartTime has arrived, and transitions them to Approved state.
 // This allows the RBAC group to be applied and the session to become usable.
 func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 	sessions, err := ssa.sessionManager.GetAllBreakglassSessions(context.Background())
 	if err != nil {
-		ssa.log.Error("error listing sessions for scheduled activation", zap.Error(err))
+		ssa.log.Error("error listing sessions for scheduled activation", zap.String("error", err.Error()))
 		return
 	}
 
@@ -110,7 +123,48 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 		// Record metric for successful activation
 		metrics.SessionActivated.WithLabelValues(ses.Spec.Cluster).Inc()
 
+		// Send activation notification email
+		ssa.sendSessionActivatedEmail(ses)
+
 		// RBAC group will now be applied by the authorization controller
 		// (same mechanism as immediate sessions)
+	}
+}
+
+// sendSessionActivatedEmail sends a notification when a scheduled session becomes active
+func (ssa *ScheduledSessionActivator) sendSessionActivatedEmail(session v1.BreakglassSession) {
+	if ssa.disableEmail || ssa.mailService == nil || !ssa.mailService.IsEnabled() {
+		return
+	}
+
+	params := mail.SessionActivatedMailParams{
+		SubjectEmail:   session.Spec.User,
+		RequestedRole:  session.Spec.GrantedGroup,
+		Cluster:        session.Spec.Cluster,
+		Username:       session.Spec.User,
+		SessionID:      session.Name,
+		ActivatedAt:    session.Status.ActualStartTime.Time.Format("2006-01-02 15:04:05 UTC"),
+		ExpirationTime: session.Status.ExpiresAt.Time.Format("2006-01-02 15:04:05 UTC"),
+		ApproverEmail:  session.Status.Approver,
+		IDPName:        session.Spec.IdentityProviderName,
+		IDPIssuer:      session.Spec.IdentityProviderIssuer,
+		BrandingName:   ssa.brandingName,
+	}
+
+	body, err := mail.RenderSessionActivated(params)
+	if err != nil {
+		ssa.log.Errorw("failed to render session activated email",
+			"session", session.Name,
+			"namespace", session.Namespace,
+			"error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Session Activated: %s", ssa.brandingName, session.Name)
+	if err := ssa.mailService.Enqueue(session.Name, []string{session.Spec.User}, subject, body); err != nil {
+		ssa.log.Errorw("failed to enqueue session activated email",
+			"session", session.Name,
+			"namespace", session.Namespace,
+			"error", err)
 	}
 }

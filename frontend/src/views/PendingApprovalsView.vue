@@ -461,8 +461,7 @@ onMounted(fetchPendingApprovals);
 
 <style scoped>
 .approvals-page {
-  max-width: 950px;
-  margin: 0 auto;
+  /* No max-width constraint - allow masonry-layout to use available space like other pages */
   padding-bottom: var(--space-2xl);
 }
 

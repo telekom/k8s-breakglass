@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,9 +19,9 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -221,89 +221,12 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 		return nil, fmt.Errorf("expected an IdentityProvider object but got %T", obj)
 	}
 
+	// Use shared validation function for consistent validation between webhooks and reconcilers
+	result := ValidateIdentityProvider(identityProvider)
 	var allErrs field.ErrorList
+	allErrs = append(allErrs, result.Errors...)
 
-	// Validate mandatory OIDC configuration
-	if identityProvider.Spec.OIDC.Authority == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("authority"), "authority is required"))
-	} else {
-		// Validate OIDC authority URL format
-		authorityPath := field.NewPath("spec").Child("oidc").Child("authority")
-		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.Authority, authorityPath)...)
-		allErrs = append(allErrs, validateHTTPSURL(identityProvider.Spec.OIDC.Authority, authorityPath)...)
-	}
-
-	if identityProvider.Spec.OIDC.ClientID == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("oidc").Child("clientID"), "clientID is required"))
-	} else {
-		// Validate clientID format (should not contain spaces or special chars)
-		allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.OIDC.ClientID, field.NewPath("spec").Child("oidc").Child("clientID"))...)
-	}
-
-	// Validate JWKS endpoint if provided
-	if identityProvider.Spec.OIDC.JWKSEndpoint != "" {
-		jwksPath := field.NewPath("spec").Child("oidc").Child("jwksEndpoint")
-		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.OIDC.JWKSEndpoint, jwksPath)...)
-		allErrs = append(allErrs, validateHTTPSURL(identityProvider.Spec.OIDC.JWKSEndpoint, jwksPath)...)
-	}
-
-	// Validate Keycloak configuration if group sync is enabled
-	if identityProvider.Spec.GroupSyncProvider == GroupSyncProviderKeycloak {
-		if identityProvider.Spec.Keycloak == nil {
-			allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak"), "keycloak configuration is required when groupSyncProvider is Keycloak"))
-		} else {
-			if identityProvider.Spec.Keycloak.BaseURL == "" {
-				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("baseURL"), "baseURL is required"))
-			} else {
-				// Validate Keycloak URL format
-				keycloakBasePath := field.NewPath("spec").Child("keycloak").Child("baseURL")
-				allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.Keycloak.BaseURL, keycloakBasePath)...)
-				allErrs = append(allErrs, validateHTTPSURL(identityProvider.Spec.Keycloak.BaseURL, keycloakBasePath)...)
-			}
-
-			if identityProvider.Spec.Keycloak.Realm == "" {
-				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("realm"), "realm is required"))
-			} else {
-				// Validate realm format
-				allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.Keycloak.Realm, field.NewPath("spec").Child("keycloak").Child("realm"))...)
-			}
-
-			if identityProvider.Spec.Keycloak.ClientID == "" {
-				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientID"), "clientID is required"))
-			} else {
-				// Validate Keycloak client ID format
-				allErrs = append(allErrs, validateIdentifierFormat(identityProvider.Spec.Keycloak.ClientID, field.NewPath("spec").Child("keycloak").Child("clientID"))...)
-			}
-
-			if identityProvider.Spec.Keycloak.ClientSecretRef.Name == "" || identityProvider.Spec.Keycloak.ClientSecretRef.Namespace == "" {
-				allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("keycloak").Child("clientSecretRef"), "clientSecretRef name and namespace are required"))
-			}
-
-			// Validate cacheTTL duration if provided
-			if identityProvider.Spec.Keycloak.CacheTTL != "" {
-				if _, err := time.ParseDuration(identityProvider.Spec.Keycloak.CacheTTL); err != nil {
-					allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("keycloak").Child("cacheTTL"), identityProvider.Spec.Keycloak.CacheTTL, fmt.Sprintf("invalid duration: %v", err)))
-				}
-			}
-
-			// Validate requestTimeout duration if provided
-			if identityProvider.Spec.Keycloak.RequestTimeout != "" {
-				if _, err := time.ParseDuration(identityProvider.Spec.Keycloak.RequestTimeout); err != nil {
-					allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("keycloak").Child("requestTimeout"), identityProvider.Spec.Keycloak.RequestTimeout, fmt.Sprintf("invalid duration: %v", err)))
-				}
-			}
-		}
-	} else if identityProvider.Spec.Keycloak != nil {
-		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("keycloak"), identityProvider.Spec.Keycloak, "groupSyncProvider must be set to 'Keycloak' when keycloak configuration is provided"))
-	}
-
-	if identityProvider.Spec.Issuer != "" {
-		issuerPath := field.NewPath("spec").Child("issuer")
-		allErrs = append(allErrs, validateURLFormat(identityProvider.Spec.Issuer, issuerPath)...)
-		allErrs = append(allErrs, validateHTTPSURL(identityProvider.Spec.Issuer, issuerPath)...)
-	}
-
-	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique and valid URL)
+	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique - requires k8s client)
 	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, identityProvider.Spec.Issuer, identityProvider.Name, field.NewPath("spec").Child("issuer"))...)
 
 	if len(allErrs) == 0 {
@@ -340,33 +263,12 @@ func init() {
 
 // SetCondition adds or updates a condition on the IdentityProvider status
 func (idp *IdentityProvider) SetCondition(condition metav1.Condition) {
-	if idp.Status.Conditions == nil {
-		idp.Status.Conditions = []metav1.Condition{}
-	}
-
-	// Find and update existing condition, or append new one
-	found := false
-	for i, c := range idp.Status.Conditions {
-		if c.Type == condition.Type {
-			idp.Status.Conditions[i] = condition
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		idp.Status.Conditions = append(idp.Status.Conditions, condition)
-	}
+	apimeta.SetStatusCondition(&idp.Status.Conditions, condition)
 }
 
 // GetCondition retrieves a condition by type from the IdentityProvider status
 func (idp *IdentityProvider) GetCondition(condType string) *metav1.Condition {
-	for i := range idp.Status.Conditions {
-		if idp.Status.Conditions[i].Type == condType {
-			return &idp.Status.Conditions[i]
-		}
-	}
-	return nil
+	return apimeta.FindStatusCondition(idp.Status.Conditions, condType)
 }
 
 // SetupWebhookWithManager registers webhooks for IdentityProvider

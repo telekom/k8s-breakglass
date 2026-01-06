@@ -59,6 +59,12 @@ npm test           # Vitest
 
 6. **Tooling**: Local tools in `./bin/` via Makefile. Use `make kustomize`, `make controller-gen` for pinned versions.
 
+7. **Linting (MANDATORY)**: Before submitting any code changes:
+   - Run `make lint` and fix ALL errors before committing
+   - Use `http.MethodGet`, `http.MethodPost`, etc. instead of string literals like `"GET"`, `"POST"`
+   - Remove unnecessary type conversions (e.g., `string(x) == string(y)` when types are compatible)
+   - CI will reject PRs with lint failures
+
 ## Key File References
 
 | Area | Files |
@@ -81,9 +87,131 @@ npm test           # Vitest
 - Frontend: `frontend/tests/`, `npm test` (Vitest)
 - E2E: `make e2e` sets up kind + deps (manual test execution)
 
+### E2E Test Session Creation (CRITICAL)
+
+**ALWAYS use the API to create BreakglassSession and DebugSession resources in e2e tests.**
+
+DO NOT use direct Kubernetes client creation (`cli.Create(ctx, &session)`) except for:
+1. Webhook validation tests (testing that invalid data is rejected)
+2. Controller behavior tests that need specific internal states (e.g., already-expired timestamps)
+
+**Correct pattern for session creation:**
+```go
+tc := helpers.NewTestContext(t, ctx)
+requesterClient := tc.RequesterClient()
+approverClient := tc.ApproverClient()
+
+// Create via API
+session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
+    Cluster: clusterName,
+    User:    helpers.TestUsers.Requester.Email,
+    Group:   escalation.Spec.EscalatedGroup,
+    Reason:  "Test reason",
+})
+require.NoError(t, err)
+
+// Add to cleanup (need to create minimal object for cleanup helper)
+cleanup.Add(&telekomv1alpha1.BreakglassSession{
+    ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
+})
+
+// Wait for expected state
+helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, 
+    telekomv1alpha1.SessionStatePending, 30*time.Second)
+
+// Approve via API (if needed)
+err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
+require.NoError(t, err)
+```
+
+**For DebugSession:**
+```go
+session, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
+    Cluster:     clusterName,
+    TemplateRef: "template-name",
+    Reason:      "Debug test",
+})
+```
+
+**Key API helpers:** `e2e/helpers/api.go`
+- `CreateSession()`, `MustCreateSession()`
+- `CreateDebugSession()`, `MustCreateDebugSession()`
+- `ApproveSessionViaAPI()`, `RejectSessionViaAPI()`
+- `TerminateDebugSessionViaAPI()`
+
+### Status Subresource Testing (CRITICAL)
+
+All CRDs with `// +kubebuilder:subresource:status` marker (e.g., `ClusterConfig`, `DebugSession`, `IdentityProvider`) require special handling:
+
+**For production code:**
+- MUST use `Client.Status().Update(ctx, obj)` to update status fields
+- Using `Client.Update(ctx, obj)` will silently ignore status changes when status subresource is enabled
+- This is a common bug pattern that's hard to detect because `Update()` succeeds without error
+
+**For unit tests with fake client:**
+- MUST configure fake client with `WithStatusSubresource()` for any CRD that has status subresource enabled:
+  ```go
+  client := fake.NewClientBuilder().
+      WithScheme(Scheme).
+      WithObjects(myObj).
+      WithStatusSubresource(&v1alpha1.ClusterConfig{}).  // Required!
+      Build()
+  ```
+- Without this, `Status().Update()` will fail silently in tests
+- See `pkg/breakglass/cluster_config_checker_test.go` for example helper function `newTestFakeClient()`
+
+**Testing status updates:**
+- Always verify status was persisted by reading the object back after update
+- Test status transitions (e.g., from Failed to Ready)
+- Verify `ObservedGeneration` matches the current `Generation`
+
 ## Integration Points
 
 - **Frontend ↔ API**: Gin server in `pkg/api/`, frontend proxies `/api/*` to backend. Update `docs/api-reference.md` when changing endpoints.
 - **Cluster Cache**: `pkg/cluster/` watches `ClusterConfig` and kubeconfig Secrets for automatic refresh.
 - **Metrics**: Prometheus metrics in `pkg/metrics/`. API and webhook servers can have separate metrics ports.
+
+## Common Mistakes to Avoid (CRITICAL)
+
+### 1. Duplicate Import Headers in Go Files
+When creating or editing Go files:
+- **ALWAYS read the existing file first** before adding imports
+- Check if the `import` block already exists - do NOT create a second one
+- When adding imports, merge them into the existing import block
+- Go files can only have ONE import block - duplicate headers cause syntax errors
+
+### 2. API Types - Read First, Code Second
+Before modifying or using CRD types:
+- **ALWAYS read `api/v1alpha1/*_types.go` first** to understand the actual struct fields
+- Check the exact field names, types, and JSON tags before writing code that uses them
+- Do not assume field names - they may differ from what you expect (e.g., `ClusterConfigRefs` vs `ClusterRefs`)
+- Look at existing validation in `*_webhook.go` files before adding new validation logic
+- Check `validation_helpers.go` for reusable validation functions
+
+### 3. Go File Structure
+When creating new Go files, ensure correct structure:
+```go
+// Package comment (if needed)
+package pkgname
+
+import (
+    // standard library first
+    "context"
+    "fmt"
+    
+    // external packages second
+    "github.com/gin-gonic/gin"
+    
+    // internal packages last
+    "github.com/telekom/breakglass/api/v1alpha1"
+)
+
+// Code follows...
+```
+
+### 4. Before Writing Any Code
+1. Read the relevant `*_types.go` file to understand the API
+2. Read existing similar implementations in the codebase
+3. Check for helper functions that already exist
+4. Verify import paths by looking at similar files
 

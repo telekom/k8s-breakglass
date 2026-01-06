@@ -11,5 +11,5 @@ roleRef:
   name: debugsession-manager-role
 subjects:
 - kind: ServiceAccount
-  name: breakglass-controller-manager
-  namespace: breakglass-system
+  name: manager
+  namespace: system

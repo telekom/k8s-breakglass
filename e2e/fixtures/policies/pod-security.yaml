@@ -1,0 +1,29 @@
+# Test DenyPolicy: Pod Security Rules
+# Blocks exec to privileged pods based on risk scoring
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: test-pod-security-rules
+  labels:
+    e2e-test: "true"
+spec:
+  podSecurityRules:
+    riskFactors:
+      hostNetwork: 80
+      hostPID: 80
+      hostIPC: 60
+      privilegedContainer: 100
+      hostPathWritable: 50
+      hostPathReadOnly: 20
+      runAsRoot: 40
+    thresholds:
+      - maxScore: 50
+        action: allow
+      - maxScore: 100
+        action: warn
+      - maxScore: 200
+        action: deny
+    blockFactors:
+      - hostNetwork
+      - hostPID
+      - hostIPC

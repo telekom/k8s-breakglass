@@ -20,7 +20,6 @@ spec:
     description: "Please provide a short justification or ticket ID"
   maxValidFor: 1h
   retainFor: 24h
-  idleTimeout: 30m
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
@@ -43,7 +42,6 @@ spec:
       - monitoring-team
   maxValidFor: 2h
   retainFor: 48h
-  idleTimeout: 45m
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
@@ -66,7 +64,6 @@ spec:
       - senior-ops
   maxValidFor: 1h
   retainFor: 7d
-  idleTimeout: 30m
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
@@ -88,7 +85,6 @@ spec:
       - tenant-b-team
   maxValidFor: 4h
   retainFor: 24h
-  idleTimeout: 2h
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
@@ -111,7 +107,6 @@ spec:
       - read-only
   maxValidFor: 8h
   retainFor: 72h
-  idleTimeout: 4h
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
@@ -136,4 +131,3 @@ spec:
       - senior-ops
   maxValidFor: 3h
   retainFor: 48h
-  idleTimeout: 1h

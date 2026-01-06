@@ -1,0 +1,32 @@
+# Test Escalation: Pod Debug Access
+# Allows developers to debug pods in the default namespace
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: test-pod-debug
+  labels:
+    e2e-test: "true"
+spec:
+  escalatedGroup: pod-debug-group
+  maxValidFor: "1h"
+  approvalTimeout: "30m"
+  allowed:
+    clusters:
+      - tenant-a
+    groups:
+      - developers@example.com
+  approvers:
+    users:
+      - approver@example.com
+  permissions:
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: [""]
+      resources: ["pods/exec"]
+      verbs: ["create"]
+      namespaces: ["default"]
+    - apiGroups: [""]
+      resources: ["pods/log"]
+      verbs: ["get"]
+      namespaces: ["default"]

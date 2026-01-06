@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -381,8 +381,8 @@ func TestDebugSessionTemplate_Constraints(t *testing.T) {
 			constraints: DebugSessionConstraints{
 				MaxDuration:           "4h",
 				DefaultDuration:       "1h",
-				AllowRenewal:          true,
-				MaxRenewals:           3,
+				AllowRenewal:          ptr(true),
+				MaxRenewals:           ptr(int32(3)),
 				MaxConcurrentSessions: 2,
 			},
 		},
@@ -391,7 +391,7 @@ func TestDebugSessionTemplate_Constraints(t *testing.T) {
 			constraints: DebugSessionConstraints{
 				MaxDuration:           "30m",
 				DefaultDuration:       "15m",
-				AllowRenewal:          false,
+				AllowRenewal:          ptr(false),
 				MaxConcurrentSessions: 1,
 			},
 		},
@@ -400,8 +400,8 @@ func TestDebugSessionTemplate_Constraints(t *testing.T) {
 			constraints: DebugSessionConstraints{
 				MaxDuration:           "24h",
 				DefaultDuration:       "8h",
-				AllowRenewal:          true,
-				MaxRenewals:           10,
+				AllowRenewal:          ptr(true),
+				MaxRenewals:           ptr(int32(10)),
 				MaxConcurrentSessions: 5,
 			},
 		},
@@ -420,7 +420,7 @@ func TestDebugSessionTemplate_Constraints(t *testing.T) {
 			if template.Spec.Constraints.MaxDuration != tt.constraints.MaxDuration {
 				t.Error("MaxDuration mismatch")
 			}
-			if template.Spec.Constraints.AllowRenewal != tt.constraints.AllowRenewal {
+			if !ptrEqual(template.Spec.Constraints.AllowRenewal, tt.constraints.AllowRenewal) {
 				t.Error("AllowRenewal mismatch")
 			}
 		})
@@ -680,8 +680,8 @@ func TestDebugSessionTemplate_CompleteProductionConfig(t *testing.T) {
 			Constraints: &DebugSessionConstraints{
 				MaxDuration:           "2h",
 				DefaultDuration:       "30m",
-				AllowRenewal:          true,
-				MaxRenewals:           2,
+				AllowRenewal:          ptr(true),
+				MaxRenewals:           ptr(int32(2)),
 				MaxConcurrentSessions: 1,
 			},
 			TerminalSharing: &TerminalSharingConfig{
@@ -1374,4 +1374,20 @@ func TestDebugSessionTemplate_ValidateCreate_DefaultDurationInvalid(t *testing.T
 	if err == nil {
 		t.Error("expected error for invalid defaultDuration")
 	}
+}
+
+// ptr is a generic helper to create a pointer to a value
+func ptr[T any](v T) *T {
+	return &v
+}
+
+// ptrEqual compares two pointers for equality
+func ptrEqual[T comparable](a, b *T) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }

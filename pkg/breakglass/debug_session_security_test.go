@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -296,6 +296,8 @@ func TestDebugSessionSecurity_SessionOwnership(t *testing.T) {
 func TestDebugSessionSecurity_RenewalLimits(t *testing.T) {
 	scheme := newTestScheme()
 
+	allowRenewal := true
+	maxRenewals := int32(5)
 	session := &telekomv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "renewal-test",
@@ -310,8 +312,8 @@ func TestDebugSessionSecurity_RenewalLimits(t *testing.T) {
 			RenewalCount: 5,
 			ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
 				Constraints: &telekomv1alpha1.DebugSessionConstraints{
-					AllowRenewal: true,
-					MaxRenewals:  5, // Already at max
+					AllowRenewal: &allowRenewal,
+					MaxRenewals:  &maxRenewals, // Already at max
 				},
 			},
 		},
@@ -329,7 +331,7 @@ func TestDebugSessionSecurity_RenewalLimits(t *testing.T) {
 
 	t.Run("renewal blocked at max", func(t *testing.T) {
 		constraints := fetchedSession.Status.ResolvedTemplate.Constraints
-		atMax := fetchedSession.Status.RenewalCount >= constraints.MaxRenewals
+		atMax := constraints.MaxRenewals != nil && fetchedSession.Status.RenewalCount >= *constraints.MaxRenewals
 		assert.True(t, atMax, "Should detect when at max renewals")
 	})
 }

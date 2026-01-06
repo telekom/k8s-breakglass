@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -416,7 +416,6 @@ func TestValidateTimeoutRelationships_ValidTimeouts(t *testing.T) {
 	spec := &BreakglassEscalationSpec{
 		MaxValidFor:     "2h",
 		ApprovalTimeout: "30m",
-		IdleTimeout:     "1h",
 	}
 	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
 	assert.Nil(t, errs, "valid timeouts should pass")
@@ -428,16 +427,7 @@ func TestValidateTimeoutRelationships_ApprovalTimeoutTooLarge(t *testing.T) {
 		ApprovalTimeout: "2h", // larger than maxValidFor
 	}
 	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
-	assert.NotNil(t, errs, "approvalTimeout >= maxValidFor should fail")
-}
-
-func TestValidateTimeoutRelationships_IdleTimeoutTooLarge(t *testing.T) {
-	spec := &BreakglassEscalationSpec{
-		MaxValidFor: "1h",
-		IdleTimeout: "2h", // larger than maxValidFor
-	}
-	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
-	assert.NotNil(t, errs, "idleTimeout >= maxValidFor should fail")
+	assert.NotNil(t, errs, "approvalTimeout > maxValidFor should fail")
 }
 
 func TestValidateTimeoutRelationships_InvalidMaxValidFor(t *testing.T) {
@@ -457,15 +447,6 @@ func TestValidateTimeoutRelationships_InvalidApprovalTimeout(t *testing.T) {
 	assert.NotNil(t, errs, "invalid approvalTimeout format should fail")
 }
 
-func TestValidateTimeoutRelationships_InvalidIdleTimeout(t *testing.T) {
-	spec := &BreakglassEscalationSpec{
-		MaxValidFor: "2h",
-		IdleTimeout: "invalid",
-	}
-	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
-	assert.NotNil(t, errs, "invalid idleTimeout format should fail")
-}
-
 func TestValidateTimeoutRelationships_NegativeMaxValidFor(t *testing.T) {
 	spec := &BreakglassEscalationSpec{
 		MaxValidFor: "-1h",
@@ -477,10 +458,10 @@ func TestValidateTimeoutRelationships_NegativeMaxValidFor(t *testing.T) {
 func TestValidateTimeoutRelationships_ApprovalTimeoutEqualMaxValidFor(t *testing.T) {
 	spec := &BreakglassEscalationSpec{
 		MaxValidFor:     "1h",
-		ApprovalTimeout: "1h", // equal to maxValidFor
+		ApprovalTimeout: "1h", // equal to maxValidFor - now allowed
 	}
 	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
-	assert.NotNil(t, errs, "approvalTimeout == maxValidFor should fail")
+	assert.Nil(t, errs, "approvalTimeout == maxValidFor should pass")
 }
 
 // TestEnsureClusterWideUniqueName tests cluster-wide name uniqueness validation
@@ -1105,6 +1086,68 @@ func TestValidateIdentityProviderFields_ValidMatch(t *testing.T) {
 	assert.Nil(t, errs, "should pass when IDP and issuer match")
 }
 
+// TestValidateIdentityProviderFields_AuthorityFallback tests that when Spec.Issuer is empty,
+// validation falls back to matching against OIDC.Authority (mirrors runtime behavior)
+func TestValidateIdentityProviderFields_AuthorityFallback(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	// IDP without Spec.Issuer set - should fall back to Authority matching
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "client-id",
+			},
+			// Issuer intentionally NOT set
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build()
+
+	oldClient := webhookClient
+	defer func() { webhookClient = oldClient }()
+	webhookClient = fakeClient
+
+	errs := validateIdentityProviderFields(
+		context.Background(),
+		"my-idp", "https://auth.example.com", // matches Authority
+		field.NewPath("spec").Child("identityProviderName"),
+		field.NewPath("spec").Child("identityProviderIssuer"),
+	)
+	assert.Nil(t, errs, "should pass when issuer matches OIDC.Authority (fallback)")
+}
+
+// TestValidateIdentityProviderFields_AuthorityFallbackWithTrailingSlash tests normalization
+func TestValidateIdentityProviderFields_AuthorityFallbackWithTrailingSlash(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	// IDP with trailing slash in Authority
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
+		Spec: IdentityProviderSpec{
+			OIDC: OIDCConfig{
+				Authority: "https://auth.example.com/", // with trailing slash
+				ClientID:  "client-id",
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build()
+
+	oldClient := webhookClient
+	defer func() { webhookClient = oldClient }()
+	webhookClient = fakeClient
+
+	errs := validateIdentityProviderFields(
+		context.Background(),
+		"my-idp", "https://auth.example.com", // without trailing slash
+		field.NewPath("spec").Child("identityProviderName"),
+		field.NewPath("spec").Child("identityProviderIssuer"),
+	)
+	assert.Nil(t, errs, "should pass when issuer matches Authority after normalization")
+}
+
 // TestValidateMailProviderReference tests mail provider reference validation
 func TestValidateMailProviderReference_Empty(t *testing.T) {
 	errs := validateMailProviderReference(context.Background(), "", field.NewPath("test"))
@@ -1353,6 +1396,27 @@ func TestValidateHTTPSURL_HTTPScheme(t *testing.T) {
 func TestValidateHTTPSURL_Invalid(t *testing.T) {
 	errs := validateHTTPSURL("not-a-url", field.NewPath("url"))
 	assert.NotNil(t, errs, "invalid URL should fail")
+}
+
+// Test ensureClusterWideUniqueIssuer with nil context explicitly
+func TestEnsureClusterWideUniqueIssuer_NilContextExplicit(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	// Pass nil context explicitly to test the nil context branch
+	//nolint:staticcheck // SA1012: intentionally passing nil context to test fallback behavior
+	errs := ensureClusterWideUniqueIssuer(nil, "https://example.com", "new-idp", field.NewPath("issuer"))
+	assert.Nil(t, errs, "should handle nil context by using TODO context")
 }
 
 // Test validateBreakglassEscalationAdditionalLists

@@ -121,6 +121,9 @@ async function initializeApp() {
   const auth = new AuthService(config, { mock: USE_MOCK_AUTH });
   if (USE_MOCK_AUTH) {
     console.info("[AuthService] Mock authentication enabled (dev default)");
+    // Expose auth service and router for Playwright/E2E testing
+    (window as any).__BREAKGLASS_AUTH = auth;
+    (window as any).__VUE_ROUTER__ = router;
   }
   app.provide(AuthKey, auth);
   // Provide optional branding name for the UI. Fallbacks will be used by components

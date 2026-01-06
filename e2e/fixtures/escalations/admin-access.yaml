@@ -1,0 +1,33 @@
+# Test Escalation: Admin Access
+# Grants cluster-admin equivalent access for emergency situations
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: test-admin-access
+  labels:
+    e2e-test: "true"
+spec:
+  escalatedGroup: emergency-admin
+  maxValidFor: "2h"
+  approvalTimeout: "15m"
+  allowed:
+    clusters:
+      - tenant-a
+    groups:
+      - sre-team@example.com
+  approvers:
+    users:
+      - senior-sre@example.com
+      - platform-lead@example.com
+    groups:
+      - security-team@example.com
+  permissions:
+    - apiGroups: ["*"]
+      resources: ["*"]
+      verbs: ["*"]
+  requestReason:
+    mandatory: true
+    description: "Provide incident ticket number and description"
+  approvalReason:
+    mandatory: true
+    description: "Confirm incident is valid and access is necessary"

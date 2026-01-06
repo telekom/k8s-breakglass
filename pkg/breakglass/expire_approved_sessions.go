@@ -2,11 +2,12 @@ package breakglass
 
 import (
 	"context"
-
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -53,6 +54,8 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 					lastErr = nil
 					// count as expired when status update succeeds
 					metrics.SessionExpired.WithLabelValues(ses.Spec.Cluster).Inc()
+					// Emit audit event for session expiration
+					wc.emitSessionExpiredAuditEvent(context.Background(), &ses, "timeExpired")
 					break
 				} else {
 					lastErr = errors.Wrapf(err, "status update attempt %d failed", attempt+1)
@@ -79,10 +82,59 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 				// Fallback: try a full object update if Status().Update did not succeed.
 				if ferr := wc.sessionManager.UpdateBreakglassSession(context.Background(), ses); ferr == nil {
 					wc.log.Infow("fallback full update succeeded after status update failures", "session", ses.Name)
+					// Send expiration email on successful fallback update
+					wc.sendSessionExpiredEmail(ses, "timeExpired")
 				} else {
 					wc.log.Errorw("fallback full update failed", "session", ses.Name, "error", ferr)
 				}
+			} else {
+				// Send expiration email on successful status update
+				wc.sendSessionExpiredEmail(ses, "timeExpired")
 			}
 		}
+	}
+}
+
+// sendSessionExpiredEmail sends a notification when a session expires
+func (wc *BreakglassSessionController) sendSessionExpiredEmail(session telekomv1alpha1.BreakglassSession, expirationReason string) {
+	if wc.disableEmail || wc.mailService == nil || !wc.mailService.IsEnabled() {
+		return
+	}
+
+	reasonText := "Session expired"
+	switch expirationReason {
+	case "timeExpired":
+		reasonText = "Session validity period has ended"
+	case "approvalTimeout":
+		reasonText = "Session approval timed out before being approved"
+	}
+
+	params := mail.SessionExpiredMailParams{
+		SubjectEmail:     session.Spec.User,
+		RequestedRole:    session.Spec.GrantedGroup,
+		Cluster:          session.Spec.Cluster,
+		Username:         session.Spec.User,
+		SessionID:        session.Name,
+		StartedAt:        session.Status.ActualStartTime.Time.Format("2006-01-02 15:04:05 UTC"),
+		ExpiredAt:        time.Now().Format("2006-01-02 15:04:05 UTC"),
+		ExpirationReason: reasonText,
+		BrandingName:     wc.config.Frontend.BrandingName,
+	}
+
+	body, err := mail.RenderSessionExpired(params)
+	if err != nil {
+		wc.log.Errorw("failed to render session expired email",
+			"session", session.Name,
+			"namespace", session.Namespace,
+			"error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Session Expired: %s", wc.config.Frontend.BrandingName, session.Name)
+	if err := wc.mailService.Enqueue(session.Name, []string{session.Spec.User}, subject, body); err != nil {
+		wc.log.Errorw("failed to enqueue session expired email",
+			"session", session.Name,
+			"namespace", session.Namespace,
+			"error", err)
 	}
 }

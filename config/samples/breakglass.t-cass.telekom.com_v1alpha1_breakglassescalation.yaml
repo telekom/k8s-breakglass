@@ -5,6 +5,8 @@ metadata:
   name: kind-sample
 spec:
   escalatedGroup: "cluster-admin"
+  maxValidFor: "2h"
+  approvalTimeout: "30m"
   allowed:
     clusters: ["t-caas-1.tst.dtmd11"]
     groups: 
@@ -29,6 +31,8 @@ metadata:
   name: kind-sample-2
 spec:
   escalatedGroup: "dttcaas-platform-protected"
+  maxValidFor: "2h"
+  approvalTimeout: "30m"
   allowed:
     clusters: ["t-caas-1.tst.dtmd11"]
     groups: ["oidc:dttcaas-platform-protected"]

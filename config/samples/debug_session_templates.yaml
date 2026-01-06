@@ -232,4 +232,4 @@ spec:
       - type: breakglass
       - type: kubernetes
       - type: webhook
-        endpoint: https://audit.example.com/debug-sessions
+        url: https://audit.example.com/debug-sessions

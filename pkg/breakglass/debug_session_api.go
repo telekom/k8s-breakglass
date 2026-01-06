@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,21 +25,29 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
+	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
-	log        *zap.SugaredLogger
-	client     ctrlclient.Client
-	ccProvider *cluster.ClientProvider
-	middleware gin.HandlerFunc
+	log          *zap.SugaredLogger
+	client       ctrlclient.Client
+	ccProvider   *cluster.ClientProvider
+	middleware   gin.HandlerFunc
+	mailService  MailEnqueuer
+	auditService AuditEmitter
+	disableEmail bool
+	brandingName string
+	baseURL      string
 }
 
 // NewDebugSessionAPIController creates a new debug session API controller
@@ -50,6 +58,26 @@ func NewDebugSessionAPIController(log *zap.SugaredLogger, client ctrlclient.Clie
 		ccProvider: ccProvider,
 		middleware: middleware,
 	}
+}
+
+// WithMailService sets the mail service for sending email notifications
+func (c *DebugSessionAPIController) WithMailService(mailService MailEnqueuer, brandingName, baseURL string) *DebugSessionAPIController {
+	c.mailService = mailService
+	c.brandingName = brandingName
+	c.baseURL = baseURL
+	return c
+}
+
+// WithAuditService sets the audit service for emitting audit events
+func (c *DebugSessionAPIController) WithAuditService(auditService AuditEmitter) *DebugSessionAPIController {
+	c.auditService = auditService
+	return c
+}
+
+// WithDisableEmail disables email notifications
+func (c *DebugSessionAPIController) WithDisableEmail(disable bool) *DebugSessionAPIController {
+	c.disableEmail = disable
+	return c
 }
 
 // BasePath returns the base path for debug session routes
@@ -86,14 +114,44 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	return nil
 }
 
+// getDebugSessionByName finds a debug session by name across all namespaces
+// or optionally in a specific namespace if provided via query param
+func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, name, namespaceHint string) (*v1alpha1.DebugSession, error) {
+	// If namespace hint provided, try that first
+	if namespaceHint != "" {
+		session := &v1alpha1.DebugSession{}
+		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespaceHint}, session); err == nil {
+			return session, nil
+		}
+	}
+
+	// Search across all namespaces using label selector
+	sessionList := &v1alpha1.DebugSessionList{}
+	if err := c.client.List(ctx, sessionList, ctrlclient.MatchingLabels{DebugSessionLabelKey: name}); err != nil {
+		return nil, err
+	}
+
+	if len(sessionList.Items) == 0 {
+		// Fallback: try default namespace
+		session := &v1alpha1.DebugSession{}
+		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: "default"}, session); err != nil {
+			return nil, apierrors.NewNotFound(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, name)
+		}
+		return session, nil
+	}
+
+	return &sessionList.Items[0], nil
+}
+
 // CreateDebugSessionRequest represents the request body for creating a debug session
 type CreateDebugSessionRequest struct {
-	TemplateRef       string            `json:"templateRef" binding:"required"`
-	Cluster           string            `json:"cluster" binding:"required"`
-	RequestedDuration string            `json:"requestedDuration,omitempty"`
-	NodeSelector      map[string]string `json:"nodeSelector,omitempty"`
-	Namespace         string            `json:"namespace,omitempty"`
-	Reason            string            `json:"reason,omitempty"`
+	TemplateRef         string            `json:"templateRef" binding:"required"`
+	Cluster             string            `json:"cluster" binding:"required"`
+	RequestedDuration   string            `json:"requestedDuration,omitempty"`
+	NodeSelector        map[string]string `json:"nodeSelector,omitempty"`
+	Namespace           string            `json:"namespace,omitempty"`
+	Reason              string            `json:"reason,omitempty"`
+	InvitedParticipants []string          `json:"invitedParticipants,omitempty"`
 }
 
 // JoinDebugSessionRequest represents the request to join an existing debug session
@@ -214,17 +272,18 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
 
 	if name == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session name is required"})
 		return
 	}
 
-	session := &v1alpha1.DebugSession{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, session); err != nil {
+	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
 			return
@@ -287,10 +346,30 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Generate session name
 	sessionName := fmt.Sprintf("debug-%s-%s-%d", toRFC1123Subdomain(currentUser.(string)), toRFC1123Subdomain(req.Cluster), time.Now().Unix())
 
+	// Determine namespace from ClusterConfig for the requested cluster
+	// DebugSessions should be in the same namespace as the ClusterConfig
+	namespace := req.Namespace
+	if namespace == "" {
+		// Find ClusterConfig by cluster name to get its namespace
+		clusterConfigs := &v1alpha1.ClusterConfigList{}
+		if err := c.client.List(apiCtx, clusterConfigs); err == nil {
+			for _, cc := range clusterConfigs.Items {
+				if cc.Name == req.Cluster || cc.Spec.Tenant == req.Cluster {
+					namespace = cc.Namespace
+					break
+				}
+			}
+		}
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
 	// Create the debug session
 	session := &v1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: sessionName,
+			Name:      sessionName,
+			Namespace: namespace,
 			Labels: map[string]string{
 				DebugSessionLabelKey:  sessionName,
 				DebugTemplateLabelKey: req.TemplateRef,
@@ -298,12 +377,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			},
 		},
 		Spec: v1alpha1.DebugSessionSpec{
-			TemplateRef:       req.TemplateRef,
-			Cluster:           req.Cluster,
-			RequestedBy:       currentUser.(string),
-			RequestedDuration: req.RequestedDuration,
-			NodeSelector:      req.NodeSelector,
-			Reason:            req.Reason,
+			TemplateRef:         req.TemplateRef,
+			Cluster:             req.Cluster,
+			RequestedBy:         currentUser.(string),
+			RequestedDuration:   req.RequestedDuration,
+			NodeSelector:        req.NodeSelector,
+			Reason:              req.Reason,
+			InvitedParticipants: req.InvitedParticipants,
 		},
 	}
 
@@ -316,6 +396,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create debug session"})
 		return
 	}
+
+	// Send request email to approvers
+	c.sendDebugSessionRequestEmail(apiCtx, session, template)
+
+	// Emit audit event for session creation
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionCreated, session, currentUser.(string), "Debug session created")
 
 	reqLog.Infow("Debug session created",
 		"name", sessionName,
@@ -332,6 +418,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
 
 	var req JoinDebugSessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -349,11 +436,11 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	session := &v1alpha1.DebugSession{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, session); err != nil {
+	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
 			return
@@ -418,6 +505,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
 
 	var req RenewDebugSessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -432,11 +520,11 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	session := &v1alpha1.DebugSession{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, session); err != nil {
+	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
 			return
@@ -456,16 +544,25 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	if session.Status.ResolvedTemplate != nil && session.Status.ResolvedTemplate.Constraints != nil {
 		constraints := session.Status.ResolvedTemplate.Constraints
 
-		// Check if renewals are allowed
-		if !constraints.AllowRenewal {
+		// Check if renewals are allowed (defaults to true if not set)
+		if constraints.AllowRenewal != nil && !*constraints.AllowRenewal {
 			ctx.JSON(http.StatusForbidden, gin.H{"error": "session renewals are not allowed by template"})
 			return
 		}
 
-		// Check max renewals
-		if constraints.MaxRenewals > 0 && session.Status.RenewalCount >= constraints.MaxRenewals {
-			ctx.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("maximum renewals (%d) reached", constraints.MaxRenewals)})
-			return
+		// Check max renewals (nil means use default of 3, 0 means no renewals allowed)
+		if constraints.MaxRenewals != nil {
+			maxRenewals := *constraints.MaxRenewals
+			if maxRenewals == 0 || session.Status.RenewalCount >= maxRenewals {
+				ctx.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("maximum renewals (%d) reached", maxRenewals)})
+				return
+			}
+		} else {
+			// Default max renewals is 3
+			if session.Status.RenewalCount >= 3 {
+				ctx.JSON(http.StatusForbidden, gin.H{"error": "maximum renewals (3) reached"})
+				return
+			}
 		}
 
 		// Check total duration would not exceed max
@@ -516,6 +613,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
 
 	// Get current user
 	currentUser, exists := ctx.Get("username")
@@ -524,11 +622,11 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		return
 	}
 
-	session := &v1alpha1.DebugSession{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, session); err != nil {
+	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
 			return
@@ -563,6 +661,9 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		return
 	}
 
+	// Emit audit event for session termination
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser.(string), "Debug session terminated by user")
+
 	reqLog.Infow("Debug session terminated", "session", name, "user", currentUser)
 	metrics.DebugSessionsTerminated.WithLabelValues(session.Spec.Cluster, "user_terminated").Inc()
 
@@ -573,6 +674,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
 
 	var req ApprovalRequest
 	_ = ctx.ShouldBindJSON(&req) // Optional body
@@ -584,11 +686,11 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		return
 	}
 
-	session := &v1alpha1.DebugSession{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, session); err != nil {
+	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
 			return
@@ -626,6 +728,12 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		return
 	}
 
+	// Send approval email to requester
+	c.sendDebugSessionApprovalEmail(session)
+
+	// Emit audit event for session approval
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, currentUser.(string), "Debug session approved")
+
 	reqLog.Infow("Debug session approved", "session", name, "approver", currentUser)
 	metrics.DebugSessionApproved.WithLabelValues(session.Spec.Cluster, "user").Inc()
 
@@ -636,6 +744,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
 
 	var req ApprovalRequest
 	_ = ctx.ShouldBindJSON(&req) // Optional body with reason
@@ -647,11 +756,11 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	session := &v1alpha1.DebugSession{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, session); err != nil {
+	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
 			return
@@ -693,6 +802,12 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	// Send rejection email to requester
+	c.sendDebugSessionRejectionEmail(session)
+
+	// Emit audit event for session rejection
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser.(string), fmt.Sprintf("Debug session rejected: %s", req.Reason))
+
 	reqLog.Infow("Debug session rejected", "session", name, "rejector", currentUser, "reason", req.Reason)
 	metrics.DebugSessionRejected.WithLabelValues(session.Spec.Cluster, "user_rejected").Inc()
 
@@ -703,6 +818,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
 
 	// Get current user
 	currentUser, exists := ctx.Get("username")
@@ -711,11 +827,11 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	session := &v1alpha1.DebugSession{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, session); err != nil {
+	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
 			return
@@ -1031,4 +1147,185 @@ func matchPattern(pattern, value string) bool {
 		return strings.HasSuffix(value, suffix)
 	}
 	return pattern == value
+}
+
+// sendDebugSessionRequestEmail sends email notification to approvers when a debug session is created
+func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Context, session *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) {
+	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	// Collect approver emails
+	var approverEmails []string
+	if template.Spec.Approvers != nil {
+		approverEmails = append(approverEmails, template.Spec.Approvers.Users...)
+	}
+
+	if len(approverEmails) == 0 {
+		c.log.Debugw("No approvers configured for debug session template, skipping request email", "session", session.Name, "template", template.Name)
+		return
+	}
+
+	params := mail.DebugSessionRequestMailParams{
+		RequesterName:     session.Spec.RequestedBy,
+		RequesterEmail:    session.Spec.RequestedBy, // Use username as email if not available
+		RequestedAt:       session.CreationTimestamp.Format(time.RFC3339),
+		SessionID:         session.Name,
+		Cluster:           session.Spec.Cluster,
+		TemplateName:      session.Spec.TemplateRef,
+		Namespace:         session.Namespace,
+		RequestedDuration: session.Spec.RequestedDuration,
+		Reason:            session.Spec.Reason,
+		URL:               fmt.Sprintf("%s/debug-sessions", c.baseURL),
+		BrandingName:      c.brandingName,
+	}
+
+	body, err := mail.RenderDebugSessionRequest(params)
+	if err != nil {
+		c.log.Errorw("Failed to render debug session request email", "session", session.Name, "error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Debug Session Request: %s on %s", c.brandingName, session.Spec.RequestedBy, session.Spec.Cluster)
+	if err := c.mailService.Enqueue(session.Name, approverEmails, subject, body); err != nil {
+		c.log.Errorw("Failed to enqueue debug session request email", "session", session.Name, "error", err)
+	} else {
+		c.log.Infow("Debug session request email queued", "session", session.Name, "approvers", len(approverEmails))
+	}
+}
+
+// sendDebugSessionApprovalEmail sends email notification to requester when a debug session is approved
+func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(session *v1alpha1.DebugSession) {
+	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	// Send to the requester
+	recipients := []string{session.Spec.RequestedBy}
+
+	approvedAt := ""
+	expiresAt := ""
+	approverName := ""
+	approvalReason := ""
+	if session.Status.Approval != nil {
+		if session.Status.Approval.ApprovedAt != nil {
+			approvedAt = session.Status.Approval.ApprovedAt.Format(time.RFC3339)
+		}
+		approverName = session.Status.Approval.ApprovedBy
+		approvalReason = session.Status.Approval.Reason
+	}
+	if session.Status.ExpiresAt != nil {
+		expiresAt = session.Status.ExpiresAt.Format(time.RFC3339)
+	}
+
+	params := mail.DebugSessionApprovedMailParams{
+		RequesterName:  session.Spec.RequestedBy,
+		RequesterEmail: session.Spec.RequestedBy,
+		SessionID:      session.Name,
+		Cluster:        session.Spec.Cluster,
+		TemplateName:   session.Spec.TemplateRef,
+		Namespace:      session.Namespace,
+		ApproverName:   approverName,
+		ApproverEmail:  approverName,
+		ApprovedAt:     approvedAt,
+		ApprovalReason: approvalReason,
+		Duration:       session.Spec.RequestedDuration,
+		ExpiresAt:      expiresAt,
+		BrandingName:   c.brandingName,
+	}
+
+	body, err := mail.RenderDebugSessionApproved(params)
+	if err != nil {
+		c.log.Errorw("Failed to render debug session approval email", "session", session.Name, "error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Debug Session Approved: %s", c.brandingName, session.Name)
+	if err := c.mailService.Enqueue(session.Name, recipients, subject, body); err != nil {
+		c.log.Errorw("Failed to enqueue debug session approval email", "session", session.Name, "error", err)
+	} else {
+		c.log.Infow("Debug session approval email queued", "session", session.Name)
+	}
+}
+
+// sendDebugSessionRejectionEmail sends email notification to requester when a debug session is rejected
+func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(session *v1alpha1.DebugSession) {
+	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	// Send to the requester
+	recipients := []string{session.Spec.RequestedBy}
+
+	rejectedAt := ""
+	rejectorName := ""
+	rejectionReason := ""
+	if session.Status.Approval != nil {
+		if session.Status.Approval.RejectedAt != nil {
+			rejectedAt = session.Status.Approval.RejectedAt.Format(time.RFC3339)
+		}
+		rejectorName = session.Status.Approval.RejectedBy
+		rejectionReason = session.Status.Approval.Reason
+	}
+
+	params := mail.DebugSessionRejectedMailParams{
+		RequesterName:   session.Spec.RequestedBy,
+		RequesterEmail:  session.Spec.RequestedBy,
+		SessionID:       session.Name,
+		Cluster:         session.Spec.Cluster,
+		TemplateName:    session.Spec.TemplateRef,
+		Namespace:       session.Namespace,
+		RejectorName:    rejectorName,
+		RejectorEmail:   rejectorName,
+		RejectedAt:      rejectedAt,
+		RejectionReason: rejectionReason,
+		BrandingName:    c.brandingName,
+	}
+
+	body, err := mail.RenderDebugSessionRejected(params)
+	if err != nil {
+		c.log.Errorw("Failed to render debug session rejection email", "session", session.Name, "error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Debug Session Rejected: %s", c.brandingName, session.Name)
+	if err := c.mailService.Enqueue(session.Name, recipients, subject, body); err != nil {
+		c.log.Errorw("Failed to enqueue debug session rejection email", "session", session.Name, "error", err)
+	} else {
+		c.log.Infow("Debug session rejection email queued", "session", session.Name)
+	}
+}
+
+// emitDebugSessionAuditEvent emits an audit event for debug session lifecycle changes
+func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *v1alpha1.DebugSession, user string, message string) {
+	if c.auditService == nil || !c.auditService.IsEnabled() {
+		return
+	}
+
+	event := &audit.Event{
+		Type:      eventType,
+		Timestamp: time.Now(),
+		Actor: audit.Actor{
+			User:   user,
+			Groups: nil, // Groups not available in this context
+		},
+		Target: audit.Target{
+			Kind:      "DebugSession",
+			Name:      session.Name,
+			Namespace: session.Namespace,
+			Cluster:   session.Spec.Cluster,
+		},
+		RequestContext: &audit.RequestContext{
+			SessionName: session.Name,
+		},
+		Details: map[string]interface{}{
+			"message":     message,
+			"cluster":     session.Spec.Cluster,
+			"templateRef": session.Spec.TemplateRef,
+			"requestedBy": session.Spec.RequestedBy,
+			"state":       string(session.Status.State),
+		},
+	}
+
+	c.auditService.Emit(ctx, event)
 }

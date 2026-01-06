@@ -17,12 +17,12 @@ namePrefix: breakglass-
 # Patch the ValidatingWebhookConfiguration to:
 # 1. Add cert-manager annotation for automatic CA injection
 # 2. Fix the webhook service references to use the correct prefixed service name and namespace
-patchesJson6902:
+patches:
   - target:
       group: admissionregistration.k8s.io
       version: v1
       kind: ValidatingWebhookConfiguration
-      name: breakglass-validating-webhook-configuration
+      name: validating-webhook-configuration
     patch: |-
       - op: add
         path: /metadata/annotations
@@ -57,4 +57,34 @@ patchesJson6902:
         value: breakglass-webhook-service
       - op: replace
         path: /webhooks/4/clientConfig/service/namespace
+        value: breakglass-system
+      - op: replace
+        path: /webhooks/5/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/5/clientConfig/service/namespace
+        value: breakglass-system
+      - op: replace
+        path: /webhooks/6/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/6/clientConfig/service/namespace
+        value: breakglass-system
+      - op: replace
+        path: /webhooks/7/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/7/clientConfig/service/namespace
+        value: breakglass-system
+      - op: replace
+        path: /webhooks/8/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/8/clientConfig/service/namespace
+        value: breakglass-system
+      - op: replace
+        path: /webhooks/9/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/9/clientConfig/service/namespace
         value: breakglass-system

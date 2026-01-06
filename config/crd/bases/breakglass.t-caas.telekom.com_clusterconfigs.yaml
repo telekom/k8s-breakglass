@@ -90,7 +90,7 @@ spec:
               kubeconfigSecretRef:
                 description: |-
                   kubeconfigSecretRef references a secret containing an admin-level kubeconfig for the target cluster.
-                  The referenced Secret MUST exist in the specified namespace and contain the key (default: kubeconfig).
+                  The referenced Secret MUST exist in the specified namespace and contain the key (default: "value", compatible with cluster-api).
                 properties:
                   key:
                     description: Key is the data key in the secret (defaults to "value"
