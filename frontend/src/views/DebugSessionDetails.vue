@@ -24,6 +24,26 @@ const session = ref<DebugSession | null>(null);
 const loading = ref(true);
 const error = ref("");
 
+// Kubectl-debug form state
+const showKubectlDebugForm = ref(false);
+const kubectlDebugType = ref<"ephemeral" | "podCopy" | "nodeDebug">("ephemeral");
+const ephemeralForm = ref({
+  namespace: "",
+  podName: "",
+  containerName: "debug",
+  image: "busybox:latest",
+  command: "" as string,
+});
+const podCopyForm = ref({
+  namespace: "",
+  podName: "",
+  debugImage: "",
+});
+const nodeDebugForm = ref({
+  nodeName: "",
+});
+const kubectlDebugLoading = ref(false);
+
 async function fetchSession() {
   loading.value = true;
   error.value = "";
@@ -72,6 +92,15 @@ const canTerminate = computed(() => session.value?.status?.state === "Active");
 const canRenew = computed(() => session.value?.status?.state === "Active");
 const canApprove = computed(() => session.value?.status?.state === "PendingApproval");
 const canReject = computed(() => session.value?.status?.state === "PendingApproval");
+
+// Check if kubectl-debug operations are available (kubectl-debug or hybrid mode, active session)
+const canUseKubectlDebug = computed(() => {
+  if (session.value?.status?.state !== "Active") return false;
+  // Check labels/annotations for mode info if available
+  const labels = session.value?.metadata?.labels || {};
+  const mode = labels["breakglass.telekom.de/mode"] || "workload";
+  return mode === "kubectl-debug" || mode === "hybrid";
+});
 
 async function handleJoin() {
   try {
@@ -131,6 +160,81 @@ async function handleReject() {
     await fetchSession();
   } catch (e: any) {
     pushError(e?.message || "Failed to reject session");
+  }
+}
+
+// Kubectl-debug handlers
+async function handleInjectEphemeralContainer() {
+  if (!ephemeralForm.value.namespace || !ephemeralForm.value.podName) {
+    pushError("Namespace and pod name are required");
+    return;
+  }
+
+  kubectlDebugLoading.value = true;
+  try {
+    const command = ephemeralForm.value.command ? ephemeralForm.value.command.split(" ").filter(Boolean) : undefined;
+
+    await debugSessionService.injectEphemeralContainer(sessionName.value, {
+      namespace: ephemeralForm.value.namespace,
+      podName: ephemeralForm.value.podName,
+      containerName: ephemeralForm.value.containerName || "debug",
+      image: ephemeralForm.value.image || "busybox:latest",
+      command,
+    });
+    pushSuccess(`Ephemeral container injected into ${ephemeralForm.value.podName}`);
+    showKubectlDebugForm.value = false;
+    // Reset form
+    ephemeralForm.value = { namespace: "", podName: "", containerName: "debug", image: "busybox:latest", command: "" };
+  } catch (e: any) {
+    pushError(e?.message || "Failed to inject ephemeral container");
+  } finally {
+    kubectlDebugLoading.value = false;
+  }
+}
+
+async function handleCreatePodCopy() {
+  if (!podCopyForm.value.namespace || !podCopyForm.value.podName) {
+    pushError("Namespace and pod name are required");
+    return;
+  }
+
+  kubectlDebugLoading.value = true;
+  try {
+    const response = await debugSessionService.createPodCopy(sessionName.value, {
+      namespace: podCopyForm.value.namespace,
+      podName: podCopyForm.value.podName,
+      debugImage: podCopyForm.value.debugImage || undefined,
+    });
+    pushSuccess(`Pod copy created: ${response.copyName}`);
+    showKubectlDebugForm.value = false;
+    podCopyForm.value = { namespace: "", podName: "", debugImage: "" };
+    await fetchSession();
+  } catch (e: any) {
+    pushError(e?.message || "Failed to create pod copy");
+  } finally {
+    kubectlDebugLoading.value = false;
+  }
+}
+
+async function handleCreateNodeDebugPod() {
+  if (!nodeDebugForm.value.nodeName) {
+    pushError("Node name is required");
+    return;
+  }
+
+  kubectlDebugLoading.value = true;
+  try {
+    const response = await debugSessionService.createNodeDebugPod(sessionName.value, {
+      nodeName: nodeDebugForm.value.nodeName,
+    });
+    pushSuccess(`Node debug pod created: ${response.podName}`);
+    showKubectlDebugForm.value = false;
+    nodeDebugForm.value = { nodeName: "" };
+    await fetchSession();
+  } catch (e: any) {
+    pushError(e?.message || "Failed to create node debug pod");
+  } finally {
+    kubectlDebugLoading.value = false;
   }
 }
 
@@ -301,6 +405,155 @@ function podStatusVariant(pod: DebugPodInfo): string {
               </div>
             </li>
           </ul>
+        </div>
+
+        <!-- Kubectl Debug Operations -->
+        <div v-if="canUseKubectlDebug" class="detail-card kubectl-debug-card">
+          <h3>Kubectl Debug Operations</h3>
+          <p class="card-description">
+            Use kubectl-debug style operations to debug pods and nodes in the target cluster.
+          </p>
+
+          <div v-if="!showKubectlDebugForm" class="kubectl-debug-buttons">
+            <scale-button
+              variant="secondary"
+              size="small"
+              @click="
+                kubectlDebugType = 'ephemeral';
+                showKubectlDebugForm = true;
+              "
+            >
+              Inject Ephemeral Container
+            </scale-button>
+            <scale-button
+              variant="secondary"
+              size="small"
+              @click="
+                kubectlDebugType = 'podCopy';
+                showKubectlDebugForm = true;
+              "
+            >
+              Create Pod Copy
+            </scale-button>
+            <scale-button
+              variant="secondary"
+              size="small"
+              @click="
+                kubectlDebugType = 'nodeDebug';
+                showKubectlDebugForm = true;
+              "
+            >
+              Debug Node
+            </scale-button>
+          </div>
+
+          <!-- Ephemeral Container Form -->
+          <div v-if="showKubectlDebugForm && kubectlDebugType === 'ephemeral'" class="kubectl-debug-form">
+            <h4>Inject Ephemeral Container</h4>
+            <p class="form-description">Inject a debug container into a running pod without restarting it.</p>
+            <scale-text-field
+              v-model="ephemeralForm.namespace"
+              label="Namespace"
+              placeholder="default"
+              helper-text="The namespace of the target pod"
+            />
+            <scale-text-field
+              v-model="ephemeralForm.podName"
+              label="Pod Name"
+              placeholder="my-app-pod-xyz"
+              helper-text="The name of the pod to debug"
+            />
+            <scale-text-field
+              v-model="ephemeralForm.containerName"
+              label="Container Name"
+              placeholder="debug"
+              helper-text="Name for the ephemeral container (default: debug)"
+            />
+            <scale-text-field
+              v-model="ephemeralForm.image"
+              label="Debug Image"
+              placeholder="busybox:latest"
+              helper-text="Container image to use for debugging"
+            />
+            <scale-text-field
+              v-model="ephemeralForm.command"
+              label="Command (optional)"
+              placeholder="sh"
+              helper-text="Command to run in the container (space-separated)"
+            />
+            <div class="form-actions">
+              <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
+                Cancel
+              </scale-button>
+              <scale-button
+                variant="primary"
+                size="small"
+                :disabled="kubectlDebugLoading"
+                @click="handleInjectEphemeralContainer"
+              >
+                {{ kubectlDebugLoading ? "Injecting..." : "Inject Container" }}
+              </scale-button>
+            </div>
+          </div>
+
+          <!-- Pod Copy Form -->
+          <div v-if="showKubectlDebugForm && kubectlDebugType === 'podCopy'" class="kubectl-debug-form">
+            <h4>Create Pod Copy</h4>
+            <p class="form-description">
+              Create a copy of a pod for debugging. The copy can be modified without affecting the original.
+            </p>
+            <scale-text-field
+              v-model="podCopyForm.namespace"
+              label="Namespace"
+              placeholder="default"
+              helper-text="The namespace of the target pod"
+            />
+            <scale-text-field
+              v-model="podCopyForm.podName"
+              label="Pod Name"
+              placeholder="my-app-pod-xyz"
+              helper-text="The name of the pod to copy"
+            />
+            <scale-text-field
+              v-model="podCopyForm.debugImage"
+              label="Debug Image (optional)"
+              placeholder="Leave empty to use original image"
+              helper-text="Replace container image with a debug image"
+            />
+            <div class="form-actions">
+              <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
+                Cancel
+              </scale-button>
+              <scale-button variant="primary" size="small" :disabled="kubectlDebugLoading" @click="handleCreatePodCopy">
+                {{ kubectlDebugLoading ? "Creating..." : "Create Copy" }}
+              </scale-button>
+            </div>
+          </div>
+
+          <!-- Node Debug Form -->
+          <div v-if="showKubectlDebugForm && kubectlDebugType === 'nodeDebug'" class="kubectl-debug-form">
+            <h4>Create Node Debug Pod</h4>
+            <p class="form-description">Create a privileged debug pod on a specific node for node-level debugging.</p>
+            <scale-text-field
+              v-model="nodeDebugForm.nodeName"
+              label="Node Name"
+              placeholder="worker-node-1"
+              helper-text="The name of the node to debug"
+            />
+            <div class="form-actions">
+              <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
+                Cancel
+              </scale-button>
+              <scale-button
+                variant="primary"
+                size="small"
+                :disabled="kubectlDebugLoading"
+                @click="handleCreateNodeDebugPod"
+              >
+                {{ kubectlDebugLoading ? "Creating..." : "Create Debug Pod" }}
+              </scale-button>
+            </div>
+          </div>
         </div>
       </div>
     </template>
@@ -484,5 +737,54 @@ function podStatusVariant(pod: DebugPodInfo): string {
   border-radius: var(--radius-sm);
   font-size: 0.75rem;
   overflow-x: auto;
+}
+
+/* Kubectl Debug Section */
+.kubectl-debug-card {
+  grid-column: 1 / -1;
+}
+
+.card-description {
+  font-size: 0.875rem;
+  color: var(--telekom-color-text-and-icon-additional);
+  margin: 0 0 var(--space-md);
+}
+
+.kubectl-debug-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.kubectl-debug-form {
+  background: var(--telekom-color-background-surface-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  margin-top: var(--space-md);
+}
+
+.kubectl-debug-form h4 {
+  margin: 0 0 var(--space-xs);
+  font-size: 1rem;
+}
+
+.form-description {
+  font-size: 0.875rem;
+  color: var(--telekom-color-text-and-icon-additional);
+  margin: 0 0 var(--space-md);
+}
+
+.kubectl-debug-form scale-text-field {
+  display: block;
+  margin-bottom: var(--space-sm);
+}
+
+.form-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--telekom-color-ui-border-subtle);
 }
 </style>

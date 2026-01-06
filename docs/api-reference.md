@@ -887,6 +887,127 @@ Returns full `DebugPodTemplate` CRD object.
 
 ---
 
+## Kubectl Debug API
+
+These endpoints provide kubectl-debug style operations for sessions in `kubectl-debug` or `hybrid` mode.
+
+### Inject Ephemeral Container
+
+```http
+POST /api/debugSessions/:name/injectEphemeralContainer
+```
+
+Injects an ephemeral container into a running pod for live debugging without restarting the pod.
+
+**Request Body:**
+
+```json
+{
+  "namespace": "default",
+  "podName": "my-app-pod-xyz",
+  "containerName": "debug",
+  "image": "busybox:latest",
+  "command": ["sh"]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `namespace` | string | Yes | Target pod's namespace |
+| `podName` | string | Yes | Target pod's name |
+| `containerName` | string | No | Name for the ephemeral container (default: "debug") |
+| `image` | string | Yes | Container image to use |
+| `command` | string[] | No | Command to run in the container |
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "message": "Ephemeral container 'debug' injected into pod 'my-app-pod-xyz'",
+  "containerName": "debug"
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` - Invalid request or ephemeral containers not enabled
+- `403 Forbidden` - Session not active or namespace not allowed
+- `404 Not Found` - Session or target pod not found
+
+### Create Pod Copy
+
+```http
+POST /api/debugSessions/:name/createPodCopy
+```
+
+Creates a copy of an existing pod for debugging. The original pod is not modified.
+
+**Request Body:**
+
+```json
+{
+  "namespace": "default",
+  "podName": "my-app-pod-xyz",
+  "debugImage": "busybox:latest"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `namespace` | string | Yes | Target pod's namespace |
+| `podName` | string | Yes | Target pod's name |
+| `debugImage` | string | No | Optional image to replace container image |
+
+**Response (200 OK):**
+
+```json
+{
+  "copyName": "my-app-pod-xyz-debug-abc123",
+  "copyNamespace": "default"
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` - Invalid request or pod copy not enabled
+- `403 Forbidden` - Session not active or namespace not allowed
+- `404 Not Found` - Session or target pod not found
+
+### Create Node Debug Pod
+
+```http
+POST /api/debugSessions/:name/createNodeDebugPod
+```
+
+Creates a privileged debug pod on a specific node for node-level debugging.
+
+**Request Body:**
+
+```json
+{
+  "nodeName": "worker-node-1"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `nodeName` | string | Yes | Target node's name |
+
+**Response (200 OK):**
+
+```json
+{
+  "podName": "node-debug-worker-node-1-abc123",
+  "namespace": "breakglass-debug"
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` - Invalid request or node debug not enabled
+- `403 Forbidden` - Session not active or node not allowed
+- `404 Not Found` - Session or target node not found
+
+---
+
 ## Related Resources
 
 - [ClusterConfig](./cluster-config.md) - Cluster configuration

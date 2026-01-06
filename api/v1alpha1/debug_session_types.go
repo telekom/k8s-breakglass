@@ -88,6 +88,12 @@ type DebugSessionSpec struct {
 	// +required
 	RequestedBy string `json:"requestedBy"`
 
+	// userGroups contains the groups the requesting user belongs to.
+	// This is populated at session creation time from the authentication token
+	// and used for auto-approval group matching.
+	// +optional
+	UserGroups []string `json:"userGroups,omitempty"`
+
 	// requestedDuration is the desired session duration (e.g., "2h").
 	// Must not exceed the template's maxDuration constraint.
 	// +optional

@@ -98,6 +98,14 @@ spec:
                 description: templateRef is the name of the DebugSessionTemplate to
                   use.
                 type: string
+              userGroups:
+                description: |-
+                  userGroups contains the groups the requesting user belongs to.
+                  This is populated at session creation time from the authentication token
+                  and used for auto-approval group matching.
+                items:
+                  type: string
+                type: array
             required:
             - cluster
             - requestedBy

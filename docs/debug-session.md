@@ -416,12 +416,90 @@ Debug sessions can be managed via the REST API:
 | `GET` | `/api/v1/debug-sessions/{name}` | Get a specific session |
 | `POST` | `/api/v1/debug-sessions` | Create a new session |
 | `POST` | `/api/v1/debug-sessions/{name}/join` | Join an existing session |
+| `POST` | `/api/v1/debug-sessions/{name}/leave` | Leave an existing session |
 | `POST` | `/api/v1/debug-sessions/{name}/renew` | Renew session duration |
 | `POST` | `/api/v1/debug-sessions/{name}/terminate` | Terminate session |
 | `POST` | `/api/v1/debug-sessions/{name}/approve` | Approve session |
 | `POST` | `/api/v1/debug-sessions/{name}/reject` | Reject session |
 | `GET` | `/api/v1/debug-session-templates` | List available templates |
 | `GET` | `/api/v1/debug-pod-templates` | List pod templates |
+| `POST` | `/api/v1/debug-sessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
+| `POST` | `/api/v1/debug-sessions/{name}/createPodCopy` | Create a debug copy of a pod |
+| `POST` | `/api/v1/debug-sessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
+
+### Kubectl Debug API Endpoints
+
+These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode:
+
+#### Inject Ephemeral Container
+
+**POST** `/api/v1/debug-sessions/{name}/injectEphemeralContainer`
+
+Inject a debug container into a running pod without restarting it.
+
+**Request Body:**
+```json
+{
+  "namespace": "default",
+  "podName": "my-app-pod-xyz",
+  "containerName": "debug",
+  "image": "busybox:latest",
+  "command": ["sh"]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Ephemeral container 'debug' injected into pod 'my-app-pod-xyz'",
+  "containerName": "debug"
+}
+```
+
+#### Create Pod Copy
+
+**POST** `/api/v1/debug-sessions/{name}/createPodCopy`
+
+Create a copy of an existing pod for debugging without affecting the original.
+
+**Request Body:**
+```json
+{
+  "namespace": "default",
+  "podName": "my-app-pod-xyz",
+  "debugImage": "busybox:latest"  // optional - replaces container image
+}
+```
+
+**Response:**
+```json
+{
+  "copyName": "my-app-pod-xyz-debug-abc123",
+  "copyNamespace": "default"
+}
+```
+
+#### Create Node Debug Pod
+
+**POST** `/api/v1/debug-sessions/{name}/createNodeDebugPod`
+
+Create a privileged debug pod on a specific node for node-level debugging.
+
+**Request Body:**
+```json
+{
+  "nodeName": "worker-node-1"
+}
+```
+
+**Response:**
+```json
+{
+  "podName": "node-debug-worker-node-1-abc123",
+  "namespace": "breakglass-debug"
+}
+```
 
 ## Sample Configurations
 
@@ -690,12 +768,34 @@ The debug session feature is fully implemented and ready for use. Below is the c
 | Debug session controller | ✅ Complete | `pkg/breakglass/debug_session_reconciler.go` |
 | Webhook pod whitelisting | ✅ Complete | `pkg/webhook/controller.go` (checkDebugSessionAccess) |
 | REST API endpoints | ✅ Complete | `pkg/breakglass/debug_session_api.go` |
+| Kubectl-debug API endpoints | ✅ Complete | `pkg/breakglass/debug_session_kubectl.go` |
+| Terminal sharing configuration | ✅ Complete | `pkg/breakglass/debug_session_reconciler.go` |
+| Auto-approve by group | ✅ Complete | `pkg/breakglass/debug_session_reconciler.go` |
 | Prometheus metrics | ✅ Complete | `pkg/metrics/metrics.go` |
 | Cleanup routine | ✅ Complete | `pkg/breakglass/cleanup_task.go` |
 | Unit tests | ✅ Complete | `*_test.go` files with bad case coverage |
+| E2E tests | ✅ Complete | `e2e/debug_session_e2e_test.go` |
 | Documentation | ✅ Complete | `docs/debug-session.md`, `docs/api-reference.md` |
 | Frontend UI | ✅ Complete | `frontend/src/views/DebugSession*.vue` |
+| Frontend kubectl-debug UI | ✅ Complete | `frontend/src/views/DebugSessionDetails.vue` |
 | Mock API data | ✅ Complete | `frontend/mock-api/data.mjs` |
+
+### Kubectl-Debug Features
+
+The following kubectl-debug style operations are fully implemented:
+
+| Operation | Description | API Endpoint |
+|-----------|-------------|--------------|
+| Ephemeral Container Injection | Inject debug containers into running pods | `POST /injectEphemeralContainer` |
+| Pod Copy | Create debug copies of pods | `POST /createPodCopy` |
+| Node Debug Pod | Create privileged pods on nodes | `POST /createNodeDebugPod` |
+
+**Security Controls:**
+- Operations are only available for sessions in `kubectl-debug` or `hybrid` mode
+- Each operation type can be individually enabled/disabled in the template
+- Namespace allow/deny lists control where operations can target
+- Image allow lists restrict which debug images can be used
+- Security context restrictions (privileged, capabilities, runAsNonRoot)
 
 ### Frontend Components
 
@@ -705,7 +805,7 @@ The following Vue components are available for debug session management:
 |-----------|------|-------------|
 | `DebugSessionBrowser` | `views/DebugSessionBrowser.vue` | List and filter debug sessions |
 | `DebugSessionCreate` | `views/DebugSessionCreate.vue` | Create new debug sessions from templates |
-| `DebugSessionDetails` | `views/DebugSessionDetails.vue` | View session details, participants, pods |
+| `DebugSessionDetails` | `views/DebugSessionDetails.vue` | View session details, participants, pods, kubectl-debug operations |
 | `DebugSessionCard` | `components/DebugSessionCard.vue` | Summary card for session list |
 
 **Routes:**
@@ -716,7 +816,7 @@ The following Vue components are available for debug session management:
 
 **Services:**
 
-- `DebugSessionService` (`services/debugSession.ts`) - API client for all debug session operations
+- `DebugSessionService` (`services/debugSession.ts`) - API client for all debug session operations including kubectl-debug
 - Model types in `model/debugSession.ts`
 
 ### 🔄 Future Enhancements
@@ -735,8 +835,9 @@ The following test categories are implemented:
 - **Type tests**: All CRD types, field validation, edge cases
 - **Reconciler tests**: State transitions, participant management, approvals, renewals
 - **API tests**: All endpoints, request/response serialization, permission checks
+- **Kubectl-debug tests**: Ephemeral containers, pod copy, node debug operations
 - **Bad case tests**: Invalid inputs, unauthorized access, invalid state transitions
-- **E2E tests**: Template creation, session lifecycle, multi-participant sessions
+- **E2E tests**: Template creation, session lifecycle, multi-participant sessions, kubectl-debug operations
 - **Frontend tests**: 478 tests passing (Vitest)
 
 ```

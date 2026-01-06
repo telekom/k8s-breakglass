@@ -31,6 +31,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -106,6 +107,11 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	rg.POST(":name/approve", instrumentedHandler("handleApproveDebugSession", c.handleApproveDebugSession))
 	rg.POST(":name/reject", instrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
 
+	// Kubectl-debug mode endpoints
+	rg.POST(":name/injectEphemeralContainer", instrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
+	rg.POST(":name/createPodCopy", instrumentedHandler("handleCreatePodCopy", c.handleCreatePodCopy))
+	rg.POST(":name/createNodeDebugPod", instrumentedHandler("handleCreateNodeDebugPod", c.handleCreateNodeDebugPod))
+
 	// Template endpoints
 	rg.GET("templates", instrumentedHandler("handleListTemplates", c.handleListTemplates))
 	rg.GET("templates/:name", instrumentedHandler("handleGetTemplate", c.handleGetTemplate))
@@ -167,6 +173,28 @@ type RenewDebugSessionRequest struct {
 // ApprovalRequest represents the request body for approve/reject actions
 type ApprovalRequest struct {
 	Reason string `json:"reason,omitempty"`
+}
+
+// InjectEphemeralContainerRequest represents the request to inject an ephemeral container
+type InjectEphemeralContainerRequest struct {
+	Namespace       string                  `json:"namespace" binding:"required"`
+	PodName         string                  `json:"podName" binding:"required"`
+	ContainerName   string                  `json:"containerName" binding:"required"`
+	Image           string                  `json:"image" binding:"required"`
+	Command         []string                `json:"command,omitempty"`
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
+}
+
+// CreatePodCopyRequest represents the request to create a debug copy of a pod
+type CreatePodCopyRequest struct {
+	Namespace  string `json:"namespace" binding:"required"`
+	PodName    string `json:"podName" binding:"required"`
+	DebugImage string `json:"debugImage,omitempty"` // Optional debug container image
+}
+
+// CreateNodeDebugPodRequest represents the request to create a node debug pod
+type CreateNodeDebugPodRequest struct {
+	NodeName string `json:"nodeName" binding:"required"`
 }
 
 // DebugSessionListResponse represents the response for listing debug sessions
@@ -343,6 +371,14 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	// Get user groups from context for auto-approval logic
+	var userGroups []string
+	if groups, exists := ctx.Get("groups"); exists && groups != nil {
+		if g, ok := groups.([]string); ok {
+			userGroups = g
+		}
+	}
+
 	// Generate session name
 	sessionName := fmt.Sprintf("debug-%s-%s-%d", toRFC1123Subdomain(currentUser.(string)), toRFC1123Subdomain(req.Cluster), time.Now().Unix())
 
@@ -380,6 +416,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			TemplateRef:         req.TemplateRef,
 			Cluster:             req.Cluster,
 			RequestedBy:         currentUser.(string),
+			UserGroups:          userGroups,
 			RequestedDuration:   req.RequestedDuration,
 			NodeSelector:        req.NodeSelector,
 			Reason:              req.Reason,
@@ -1328,4 +1365,306 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 	}
 
 	c.auditService.Emit(ctx, event)
+}
+
+// handleInjectEphemeralContainer injects a debug container into an existing pod
+func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Context) {
+	reqLog := system.GetReqLogger(ctx, c.log)
+
+	sessionName := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
+
+	var req InjectEphemeralContainerRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get current user
+	currentUser, exists := ctx.Get("username")
+	if !exists || currentUser == nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
+	defer cancel()
+
+	// Get the debug session
+	session, err := c.getDebugSessionByName(apiCtx, sessionName, namespaceHint)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			return
+		}
+		reqLog.Errorw("Failed to get debug session", "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		return
+	}
+
+	// Verify session is active
+	if session.Status.State != v1alpha1.DebugSessionStateActive {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is not active, current state: %s", session.Status.State)})
+		return
+	}
+
+	// Verify user is a participant
+	if !c.isUserParticipant(session, currentUser.(string)) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "user is not a participant of this session"})
+		return
+	}
+
+	// Verify template supports kubectl-debug mode
+	if session.Status.ResolvedTemplate == nil ||
+		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
+			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session template does not support kubectl-debug mode"})
+		return
+	}
+
+	// Create kubectl debug handler
+	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+
+	// Validate the request
+	capabilities := extractCapabilities(req.SecurityContext)
+	runAsNonRoot := extractRunAsNonRoot(req.SecurityContext)
+	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot); err != nil {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Inject the ephemeral container
+	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, currentUser.(string)); err != nil {
+		reqLog.Errorw("Failed to inject ephemeral container", "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to inject ephemeral container: %v", err)})
+		return
+	}
+
+	reqLog.Infow("Ephemeral container injected",
+		"session", sessionName,
+		"pod", req.PodName,
+		"namespace", req.Namespace,
+		"container", req.ContainerName,
+		"user", currentUser)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":   "ephemeral container injected successfully",
+		"pod":       req.PodName,
+		"namespace": req.Namespace,
+		"container": req.ContainerName,
+	})
+}
+
+// handleCreatePodCopy creates a debug copy of an existing pod
+func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
+	reqLog := system.GetReqLogger(ctx, c.log)
+
+	sessionName := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
+
+	var req CreatePodCopyRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get current user
+	currentUser, exists := ctx.Get("username")
+	if !exists || currentUser == nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
+	defer cancel()
+
+	// Get the debug session
+	session, err := c.getDebugSessionByName(apiCtx, sessionName, namespaceHint)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			return
+		}
+		reqLog.Errorw("Failed to get debug session", "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		return
+	}
+
+	// Verify session is active
+	if session.Status.State != v1alpha1.DebugSessionStateActive {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is not active, current state: %s", session.Status.State)})
+		return
+	}
+
+	// Verify user is a participant
+	if !c.isUserParticipant(session, currentUser.(string)) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "user is not a participant of this session"})
+		return
+	}
+
+	// Verify template supports kubectl-debug mode
+	if session.Status.ResolvedTemplate == nil ||
+		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
+			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session template does not support kubectl-debug mode"})
+		return
+	}
+
+	// Create kubectl debug handler
+	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+
+	// Create the pod copy
+	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, currentUser.(string))
+	if err != nil {
+		reqLog.Errorw("Failed to create pod copy", "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create pod copy: %v", err)})
+		return
+	}
+
+	reqLog.Infow("Pod copy created",
+		"session", sessionName,
+		"originalPod", req.PodName,
+		"originalNamespace", req.Namespace,
+		"copyName", pod.Name,
+		"copyNamespace", pod.Namespace,
+		"user", currentUser)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":           "pod copy created successfully",
+		"copyName":          pod.Name,
+		"copyNamespace":     pod.Namespace,
+		"originalPod":       req.PodName,
+		"originalNamespace": req.Namespace,
+	})
+}
+
+// handleCreateNodeDebugPod creates a debug pod on a specific node
+func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
+	reqLog := system.GetReqLogger(ctx, c.log)
+
+	sessionName := ctx.Param("name")
+	namespaceHint := ctx.Query("namespace")
+
+	var req CreateNodeDebugPodRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get current user
+	currentUser, exists := ctx.Get("username")
+	if !exists || currentUser == nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
+	defer cancel()
+
+	// Get the debug session
+	session, err := c.getDebugSessionByName(apiCtx, sessionName, namespaceHint)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			return
+		}
+		reqLog.Errorw("Failed to get debug session", "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		return
+	}
+
+	// Verify session is active
+	if session.Status.State != v1alpha1.DebugSessionStateActive {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is not active, current state: %s", session.Status.State)})
+		return
+	}
+
+	// Verify user is a participant
+	if !c.isUserParticipant(session, currentUser.(string)) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "user is not a participant of this session"})
+		return
+	}
+
+	// Verify template supports kubectl-debug mode
+	if session.Status.ResolvedTemplate == nil ||
+		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
+			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session template does not support kubectl-debug mode"})
+		return
+	}
+
+	// Create kubectl debug handler
+	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+
+	// Create the node debug pod
+	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, currentUser.(string))
+	if err != nil {
+		reqLog.Errorw("Failed to create node debug pod", "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create node debug pod: %v", err)})
+		return
+	}
+
+	reqLog.Infow("Node debug pod created",
+		"session", sessionName,
+		"node", req.NodeName,
+		"podName", pod.Name,
+		"namespace", pod.Namespace,
+		"user", currentUser)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":   "node debug pod created successfully",
+		"podName":   pod.Name,
+		"namespace": pod.Namespace,
+		"node":      req.NodeName,
+	})
+}
+
+// clusterClientAdapter adapts cluster.ClientProvider to ClientProviderInterface
+type clusterClientAdapter struct {
+	ccProvider *cluster.ClientProvider
+}
+
+func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error) {
+	restCfg, err := a.ccProvider.GetRESTConfig(ctx, clusterName)
+	if err != nil {
+		return nil, err
+	}
+	return ctrlclient.New(restCfg, ctrlclient.Options{})
+}
+
+// isUserParticipant checks if the user is a participant of the session
+func (c *DebugSessionAPIController) isUserParticipant(session *v1alpha1.DebugSession, user string) bool {
+	// Owner is always a participant
+	if session.Spec.RequestedBy == user {
+		return true
+	}
+
+	// Check participants list
+	for _, p := range session.Status.Participants {
+		if p.User == user && p.LeftAt == nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// extractCapabilities extracts capability names from a security context
+func extractCapabilities(sc *corev1.SecurityContext) []string {
+	if sc == nil || sc.Capabilities == nil {
+		return nil
+	}
+	var caps []string
+	for _, c := range sc.Capabilities.Add {
+		caps = append(caps, string(c))
+	}
+	return caps
+}
+
+// extractRunAsNonRoot extracts the runAsNonRoot value from a security context
+func extractRunAsNonRoot(sc *corev1.SecurityContext) bool {
+	if sc == nil || sc.RunAsNonRoot == nil {
+		return false
+	}
+	return *sc.RunAsNonRoot
 }
