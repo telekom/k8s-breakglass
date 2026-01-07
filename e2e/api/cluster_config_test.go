@@ -70,7 +70,7 @@ func TestClusterConfigWithKubeconfigSecret(t *testing.T) {
 			ClusterID:   "e2e-test-cluster",
 			Tenant:      "e2e-tenant",
 			Environment: "test",
-			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 				Name:      secret.Name,
 				Namespace: namespace,
 				Key:       "kubeconfig",

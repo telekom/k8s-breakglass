@@ -14,7 +14,7 @@
 set -euo pipefail
 
 # Configuration
-NAMESPACE="${E2E_NAMESPACE:-breakglass-dev-system}"
+NAMESPACE="${E2E_NAMESPACE:-breakglass-system}"
 API_PORT="${BREAKGLASS_API_PORT:-8080}"
 WEBHOOK_PORT="${BREAKGLASS_WEBHOOK_PORT:-8080}"  # Same as API since SAR is served via API
 METRICS_PORT="${BREAKGLASS_METRICS_PORT:-8081}"  # Controller metrics endpoint
@@ -34,9 +34,9 @@ error() { echo -e "${RED}[e2e-env]${NC} $*" >&2; }
 
 # Discover service names (kustomize may add prefixes)
 discover_services() {
-    API_SVC=$(kubectl get svc -n "$NAMESPACE" -l app.kubernetes.io/name=breakglass -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "breakglass-dev-breakglass")
-    KEYCLOAK_SVC=$(kubectl get svc -n "$NAMESPACE" -l app=keycloak -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "breakglass-dev-keycloak")
-    MAILHOG_SVC=$(kubectl get svc -n "$NAMESPACE" -l app=mailhog -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "breakglass-dev-mailhog")
+    API_SVC=$(kubectl get svc -n "$NAMESPACE" -l app.kubernetes.io/name=breakglass -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "breakglass-breakglass")
+    KEYCLOAK_SVC=$(kubectl get svc -n "$NAMESPACE" -l app=keycloak -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "breakglass-keycloak")
+    MAILHOG_SVC=$(kubectl get svc -n "$NAMESPACE" -l app=mailhog -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "breakglass-mailhog")
     
     log "Discovered services:"
     log "  API: $API_SVC"
@@ -183,7 +183,7 @@ export_env_vars() {
     export KEYCLOAK_REALM="${KEYCLOAK_REALM:-breakglass-e2e}"
     # KEYCLOAK_ISSUER_HOST is the host that will be used in the token's issuer claim.
     # This must match the authority in the IdentityProvider CR for token verification to work.
-    export KEYCLOAK_ISSUER_HOST="${KEYCLOAK_ISSUER_HOST:-breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443}"
+    export KEYCLOAK_ISSUER_HOST="${KEYCLOAK_ISSUER_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local:8443}"
     
     log "Environment variables exported:"
     log "  E2E_TEST=$E2E_TEST"
@@ -208,8 +208,8 @@ Usage:
   ./e2e/setup-e2e-env.sh --all            # Start port-forwards and export vars
 
 Environment Variables (configurable):
-  E2E_NAMESPACE           Kubernetes namespace (default: breakglass-dev-system)
-  BREAKGLASS_API_PORT     Local port for API (default: 8080)
+  E2E_NAMESPACE           Kubernetes namespace (default: breakglass-system)
+  BREAKGLASS_API_PORT     Local port for Breakglass API (default: 8080)
   KEYCLOAK_PORT           Local port for Keycloak (default: 8443)
   MAILHOG_PORT            Local port for MailHog (default: 8025)
 

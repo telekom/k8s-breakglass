@@ -133,7 +133,7 @@ func TestSlightlyBrokenConfigs(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "invalid-config-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig",

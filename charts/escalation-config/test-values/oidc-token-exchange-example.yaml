@@ -1,0 +1,72 @@
+# Example values for token exchange configuration
+# This file demonstrates configuring a ClusterConfig with OIDC token exchange (RFC 8693)
+
+cluster:
+  clusterID: secure-cluster-token-exchange
+  tenant: secure-team
+  environment: production
+  
+  # Set auth type to OIDC
+  authType: OIDC
+  
+  # OIDC configuration with token exchange
+  oidcAuth:
+    issuerURL: https://keycloak.example.com/realms/kubernetes
+    clientID: breakglass-controller
+    server: https://api.secure-cluster.example.com:6443
+    
+    clientSecretRef:
+      name: secure-cluster-oidc-secret
+      namespace: breakglass-system
+      key: client-secret
+    
+    caSecretRef:
+      name: secure-cluster-ca
+      namespace: breakglass-system
+      key: ca.crt
+    
+    # Token exchange configuration (RFC 8693)
+    # Exchanges a subject token for a cluster-scoped token
+    tokenExchange:
+      enabled: true
+      
+      # Subject token to exchange (read from Kubernetes secret)
+      subjectTokenSecretRef:
+        name: service-account-token
+        namespace: breakglass-system
+        key: token
+      
+      # Token type URIs (defaults shown)
+      subjectTokenType: "urn:ietf:params:oauth:token-type:access_token"
+      requestedTokenType: "urn:ietf:params:oauth:token-type:access_token"
+      
+      # Target resource for the exchanged token
+      resource: https://api.secure-cluster.example.com:6443
+      
+      # Optional: Actor token for delegation scenarios
+      # actorTokenSecretRef:
+      #   name: controller-actor-token
+      #   namespace: breakglass-system
+      #   key: token
+      # actorTokenType: "urn:ietf:params:oauth:token-type:access_token"
+  
+  blockSelfApproval: true
+  allowedApproverDomains:
+    - secure-example.com
+
+escalations:
+  - name: secure-access
+    allowed:
+      clusters:
+        - secure-cluster-token-exchange
+      groups:
+        - security-team
+    escalatedGroup: breakglass-secure-admin
+    approvers:
+      groups:
+        - security-leads
+    maxValidFor: 1h
+    retainFor: 720h  # 30 days for compliance
+    requestReason:
+      mandatory: true
+      description: "Security incident ticket required"

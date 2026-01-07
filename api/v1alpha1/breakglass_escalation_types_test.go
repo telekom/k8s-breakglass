@@ -101,7 +101,7 @@ func TestBreakglassEscalationClusterConfigRefsSatisfyClusterRequirement(t *testi
 	clusterConfig := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "team-a"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "kc", Namespace: "system"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "kc", Namespace: "system"},
 		},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig).Build()

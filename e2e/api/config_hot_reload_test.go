@@ -189,7 +189,7 @@ users:
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID:   "original-cluster-id",
 				Environment: "dev",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secretName,
 					Namespace: namespace,
 				},
@@ -262,7 +262,7 @@ users:
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "secret-reload-test",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secretName,
 					Namespace: namespace,
 				},

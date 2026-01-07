@@ -182,9 +182,9 @@ func IsKafkaEnabled() bool {
 }
 
 // GetKafkaBrokers returns the Kafka broker addresses for e2e tests
-// Note: Uses breakglass-dev-kafka (kustomize adds breakglass-dev- prefix to kafka service)
+// Note: Uses breakglass-kafka (kustomize adds breakglass- prefix to kafka service)
 func GetKafkaBrokers() string {
-	return getEnvOrDefault("KAFKA_BROKERS", "breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092")
+	return getEnvOrDefault("KAFKA_BROKERS", "breakglass-kafka.breakglass-system.svc.cluster.local:9092")
 }
 
 // GetKafkaAuditTopic returns the Kafka topic for audit events
@@ -194,10 +194,10 @@ func GetKafkaAuditTopic() string {
 
 // GetAuditWebhookReceiverURL returns the URL for the audit webhook receiver service
 // This is used to test webhook audit sink functionality in e2e tests.
-// Note: Uses breakglass-dev-audit-webhook-receiver (kustomize adds breakglass-dev- prefix)
+// Note: Uses breakglass-audit-webhook-receiver (kustomize adds breakglass- prefix)
 func GetAuditWebhookReceiverURL() string {
 	return getEnvOrDefault("AUDIT_WEBHOOK_RECEIVER_URL",
-		"http://breakglass-dev-audit-webhook-receiver.breakglass-dev-system.svc.cluster.local")
+		"http://breakglass-audit-webhook-receiver.breakglass-system.svc.cluster.local")
 }
 
 // GetAuditWebhookReceiverExternalURL returns the externally accessible URL for the webhook receiver.

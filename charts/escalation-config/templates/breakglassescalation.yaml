@@ -44,9 +44,11 @@ spec:
 {{ toYaml $esc.notificationExclusions.groups | indent 6 }}
     {{- end }}
   {{- end }}
+  {{- if $esc.requestReason }}
   requestReason:
     mandatory: {{ default false $esc.requestReason.mandatory }}
-    description: {{ quote $esc.requestReason.description }}
+    description: {{ quote (default "" $esc.requestReason.description) }}
+  {{- end }}
   maxValidFor: {{ $esc.maxValidFor | default "1h" }}
   retainFor: {{ $esc.retainFor | default "24h" }}
   idleTimeout: {{ $esc.idleTimeout | default "1h" }}

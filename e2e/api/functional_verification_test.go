@@ -75,7 +75,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 						Name: "kafka-functional-test",
 						Type: telekomv1alpha1.AuditSinkTypeKafka,
 						Kafka: &telekomv1alpha1.KafkaSinkSpec{
-							Brokers:     []string{"breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092"},
+							Brokers:     []string{"breakglass-kafka.breakglass-system.svc.cluster.local:9092"},
 							Topic:       "breakglass-audit-functional-test",
 							Compression: "snappy",
 						},

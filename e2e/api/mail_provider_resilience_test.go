@@ -50,7 +50,7 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
-					Host: "mailhog.breakglass-dev-system.svc.cluster.local",
+					Host: "breakglass-mailhog.breakglass-system.svc.cluster.local",
 					Port: 1025,
 				},
 				Sender: telekomv1alpha1.SenderConfig{
@@ -65,7 +65,7 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 		var fetched telekomv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)
 		require.NoError(t, err)
-		assert.Equal(t, "mailhog.breakglass-dev-system.svc.cluster.local", fetched.Spec.SMTP.Host)
+		assert.Equal(t, "breakglass-mailhog.breakglass-system.svc.cluster.local", fetched.Spec.SMTP.Host)
 		assert.Equal(t, 1025, fetched.Spec.SMTP.Port)
 		t.Logf("MAIL-001: Valid MailProvider created: host=%s, port=%d", fetched.Spec.SMTP.Host, fetched.Spec.SMTP.Port)
 	})
@@ -147,9 +147,9 @@ func TestMailProviderStatusHealth(t *testing.T) {
 
 	t.Run("HealthyMailProviderHasReadyCondition", func(t *testing.T) {
 		var provider telekomv1alpha1.MailProvider
-		err := cli.Get(ctx, types.NamespacedName{Name: "breakglass-dev-e2e-mail", Namespace: namespace}, &provider)
+		err := cli.Get(ctx, types.NamespacedName{Name: "breakglass-mailhog", Namespace: namespace}, &provider)
 		if err != nil {
-			err = cli.Get(ctx, types.NamespacedName{Name: "breakglass-dev-e2e-mail"}, &provider)
+			err = cli.Get(ctx, types.NamespacedName{Name: "breakglass-mailhog"}, &provider)
 		}
 		if err != nil {
 			t.Skip("No e2e MailProvider found, skipping health check test")

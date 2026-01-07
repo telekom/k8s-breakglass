@@ -1,12 +1,12 @@
 # Adds namespace to all resources.
-namespace: breakglass-dev-system
+namespace: breakglass-system
 
 # Value of this field is prepended to the
 # names of all resources, e.g. a deployment named
 # "wordpress" becomes "alices-wordpress".
 # Note that it should also match with the prefix (text before '-') of the namespace
 # field above.
-namePrefix: breakglass-dev-
+namePrefix: breakglass-
 
 # Labels to add to all resources and selectors.
 #labels:
@@ -68,23 +68,43 @@ patches:
     - op: replace
       path: /spec/template/spec/containers/0/imagePullPolicy
       value: IfNotPresent
+    # Override check interval for faster e2e testing (default is 10m)
+    - op: replace
+      path: /spec/template/spec/containers/0/args/6
+      value: --cluster-config-check-interval=10s
     - op: add
       path: /spec/template/spec/containers/0/args/-
       value: --debug
-    # Mount webhook serving certs for the webhook server
+    # Webhook configuration
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --enable-validating-webhooks=true
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --webhook-bind-address=0.0.0.0:9443
+    - op: add
+      path: /spec/template/spec/containers/0/ports/-
+      value:
+        name: webhook
+        containerPort: 9443
+        protocol: TCP
+    # Mount webhook serving certs
     - op: add
       path: /spec/template/spec/containers/0/volumeMounts/-
       value:
         mountPath: /tmp/k8s-webhook-server/serving-certs
-        name: webhook-cert
+        name: webhook-certs
         readOnly: true
     - op: add
       path: /spec/template/spec/volumes/-
       value:
-        name: webhook-cert
+        name: webhook-certs
         secret:
           defaultMode: 420
-          secretName: breakglass-webhook-tls
+          secretName: webhook-server-cert
     # Set faster cleanup interval for E2E tests (10 seconds instead of 5 minutes)
     - op: add
       path: /spec/template/spec/containers/0/env/-
@@ -103,10 +123,13 @@ patches:
 #       value: --webhook-cert-generation=true
 #     - op: add
 #       path: /spec/template/spec/containers/0/args/-
-#       value: --webhook-service-name=breakglass-dev-breakglass-webhook-service
+#       value: --webhook-service-name=breakglass-breakglass-webhook-service
+
+
+
   #     - op: add
   #       path: /spec/template/spec/containers/0/args/-
-  #       value: --webhook-validating-config-name=breakglass-dev-breakglass-validating-webhook-configuration
+  #       value: --webhook-validating-config-name=breakglass-breakglass-validating-webhook-configuration
   #     - op: add
   #       path: /spec/template/spec/containers/0/args/-
   #       value: --breakglass-namespace=$(POD_NAMESPACE)
@@ -125,7 +148,7 @@ patches:
   #         name: webhook-cert
   #         secret:
   #           defaultMode: 420
-  #           secretName: breakglass-dev-breakglass-webhook-service
+  #           secretName: breakglass-breakglass-webhook-service
 
 configMapGenerator:
 - name: config
@@ -134,7 +157,7 @@ configMapGenerator:
 - name: keycloak-realm
   files:
   - breakglass-e2e.json=./resources/keycloak-realm.json
-- name: breakglass-dev-certs
+- name: breakglass-certs
   files:
   - certs/kind-setup-single-tls/ca.crt
 

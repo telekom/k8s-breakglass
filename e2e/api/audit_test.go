@@ -159,7 +159,7 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 						Name: "kafka-sink",
 						Type: telekomv1alpha1.AuditSinkTypeKafka,
 						Kafka: &telekomv1alpha1.KafkaSinkSpec{
-							Brokers:     []string{"breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092"},
+							Brokers:     []string{"breakglass-kafka.breakglass-system.svc.cluster.local:9092"},
 							Topic:       "breakglass-audit-events",
 							Compression: "snappy",
 						},
