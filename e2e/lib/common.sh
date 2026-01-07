@@ -141,7 +141,7 @@ wait_for_http() {
   local curl_opts="-sf --connect-timeout 5 --max-time 10"
   [ "$insecure" = "true" ] && curl_opts="$curl_opts -k"
   
-  log "Waiting for HTTP endpoint $description (URL: $url)..."
+  log "Waiting for HTTP endpoint $description (URL: $url, max ${max_attempts}s)..."
   for i in $(seq 1 "$max_attempts"); do
     # Try to reach the endpoint
     local response
@@ -149,15 +149,26 @@ wait_for_http() {
     response=$(curl $curl_opts -w "\nHTTP_CODE:%{http_code}" "$url" 2>&1) && exit_code=0 || exit_code=$?
     
     if [ $exit_code -eq 0 ]; then
-      log "$description is available"
+      log "$description is available (after ${i}s)"
       return 0
     fi
     
-    # Log progress and debug info periodically
-    if [ $((i % 20)) -eq 0 ]; then
-      log "Still waiting for $description... (attempt $i/$max_attempts)"
-      # Show what curl is returning for debugging
-      log_debug "curl exit code: $exit_code, response: ${response:0:200}"
+    # Early diagnostic after 10 seconds if not responding
+    if [ "$i" -eq 10 ]; then
+      log_warn "$description not responding after 10 seconds. Running diagnostics..."
+      log_debug "curl exit code: $exit_code, response: ${response:0:500}"
+      # Show what we're trying to connect to
+      local parsed_host
+      parsed_host=$(echo "$url" | sed -E 's#https?://([^:/]+).*#\1#')
+      log_debug "Checking connectivity to $parsed_host..."
+      ping -c 2 "$parsed_host" 2>&1 || echo "Ping failed"
+      nc -zv "$parsed_host" 8080 2>&1 || true
+      nc -zv "$parsed_host" 8443 2>&1 || true
+    fi
+    
+    # Log progress periodically (every 10 attempts)
+    if [ $((i % 10)) -eq 0 ]; then
+      log "Still waiting for $description... (${i}/${max_attempts}s, exit code: $exit_code)"
     fi
     sleep 1
   done
@@ -165,7 +176,7 @@ wait_for_http() {
   log_error "$description not available after $max_attempts attempts"
   # Final debug output
   log "Final curl attempt output:"
-  curl -v --connect-timeout 5 --max-time 10 "$url" 2>&1 | tail -20 || true
+  curl -v --connect-timeout 5 --max-time 10 "$url" 2>&1 | tail -30 || true
   return 1
 }
 
@@ -865,7 +876,9 @@ start_keycloak_container() {
   local tls_dir="${1:-}"
   local network="${2:-kind}"
   
-  log "Starting Keycloak container..."
+  log "Starting Keycloak container (function called)..."
+  log "Parameters: tls_dir=$tls_dir, network=$network"
+  log "Image: $KEYCLOAK_IMAGE, Container name: $KEYCLOAK_CONTAINER_NAME"
   
   # Ensure the network exists (Kind creates it when first cluster starts,
   # but we may need it before that)
@@ -883,6 +896,7 @@ start_keycloak_container() {
     $DOCKER rm -f "$KEYCLOAK_CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
   
+  log "Building docker run command..."
   # Build the docker run command
   local docker_args=(
     run -d
@@ -894,23 +908,56 @@ start_keycloak_container() {
     -e "KC_HOSTNAME_STRICT_HTTPS=false"
     -e "KC_HTTP_ENABLED=true"
   )
+  log "Base docker args configured"
   
-  # Add TLS if provided
-  if [ -n "$tls_dir" ] && [ -f "$tls_dir/tls.crt" ] && [ -f "$tls_dir/tls.key" ]; then
+  # Add TLS configuration (REQUIRED for proper HTTPS support)
+  if [ -n "$tls_dir" ]; then
+    if [ ! -f "$tls_dir/tls.crt" ] || [ ! -f "$tls_dir/tls.key" ]; then
+      log_error "TLS directory specified but certificate files are missing"
+      log_error "  Directory: $tls_dir"
+      log_error "  Cert exists: $([ -f "$tls_dir/tls.crt" ] && echo yes || echo no)"
+      log_error "  Key exists: $([ -f "$tls_dir/tls.key" ] && echo yes || echo no)"
+      log "Directory contents:"
+      ls -la "$tls_dir" 2>&1 || true
+      return 1
+    fi
+    
+    # Verify files are readable and not empty
+    if [ ! -s "$tls_dir/tls.crt" ] || [ ! -s "$tls_dir/tls.key" ]; then
+      log_error "TLS certificate files exist but are empty"
+      log_error "  Cert size: $(wc -c < "$tls_dir/tls.crt" 2>/dev/null || echo 0) bytes"
+      log_error "  Key size: $(wc -c < "$tls_dir/tls.key" 2>/dev/null || echo 0) bytes"
+      return 1
+    fi
+    
     log "Configuring Keycloak with TLS from $tls_dir"
+    log "  TLS cert: $(wc -c < "$tls_dir/tls.crt") bytes"
+    log "  TLS key: $(wc -c < "$tls_dir/tls.key") bytes"
+    
+    # Use absolute paths for volume mounts
+    # Mount at /etc/x509/https/ to match Kubernetes deployment configuration
+    local abs_tls_dir
+    abs_tls_dir=$(cd "$tls_dir" && pwd)
+    
     docker_args+=(
-      -v "$tls_dir/tls.crt:/opt/keycloak/conf/server.crt.pem:ro"
-      -v "$tls_dir/tls.key:/opt/keycloak/conf/server.key.pem:ro"
-      -e "KC_HTTPS_CERTIFICATE_FILE=/opt/keycloak/conf/server.crt.pem"
-      -e "KC_HTTPS_CERTIFICATE_KEY_FILE=/opt/keycloak/conf/server.key.pem"
+      -v "$abs_tls_dir/tls.crt:/etc/x509/https/tls.crt:ro"
+      -v "$abs_tls_dir/tls.key:/etc/x509/https/tls.key:ro"
+      -e "KC_HTTPS_CERTIFICATE_FILE=/etc/x509/https/tls.crt"
+      -e "KC_HTTPS_CERTIFICATE_KEY_FILE=/etc/x509/https/tls.key"
     )
+    log "TLS configuration added with absolute paths (matching K8s deployment)"
+  else
+    log_warn "No TLS directory specified - Keycloak will use HTTP only"
+    log_warn "This is NOT recommended for production or proper OIDC testing"
   fi
   
   # Expose ports on host (for local testing)
+  log "Adding port mappings: ${KEYCLOAK_HTTP_PORT}:8080, ${KEYCLOAK_HTTPS_PORT}:8443"
   docker_args+=(
     -p "${KEYCLOAK_HTTP_PORT}:8080"
     -p "${KEYCLOAK_HTTPS_PORT}:8443"
   )
+  log "Port mappings added"
   
   # Add image and command
   docker_args+=(
@@ -919,24 +966,79 @@ start_keycloak_container() {
   )
   
   log "Running: docker ${docker_args[*]}"
-  $DOCKER "${docker_args[@]}"
+  log "Docker command about to execute..."
+  local container_id
+  local docker_exit_code
+  local docker_output
+  docker_output=$($DOCKER "${docker_args[@]}" 2>&1) && docker_exit_code=0 || docker_exit_code=$?
+  container_id="$docker_output"
+  
+  log "Docker command completed with exit code: $docker_exit_code"
+  
+  if [ $docker_exit_code -ne 0 ]; then
+    log_error "Failed to start Keycloak container (exit code: $docker_exit_code)"
+    log "Docker error output: $docker_output"
+    log "Docker version: $($DOCKER --version)"
+    log "Docker info (brief): $($DOCKER info 2>&1 | head -20)"
+    log "=== Checking if container was created but failed to start ==="
+    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    if $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" -q 2>/dev/null | grep -q .; then
+      log "Container exists but in failed state. Logs:"
+      $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    fi
+    return 1
+  fi
+  
+  log "Keycloak container started with ID: $container_id"
+  log "=== Initial container status (immediate) ==="
+  $DOCKER ps --filter "name=$KEYCLOAK_CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>&1 || true
   
   # Wait for Keycloak to be ready
   log "Waiting for Keycloak to start..."
   
-  # Give container a moment to start
-  sleep 5
+  # Give container initial startup time and verify it stays running
+  log "Waiting 3 seconds for container initialization..."
+  sleep 3
   
   # Verify container is running
   if ! is_keycloak_running; then
-    log_error "Keycloak container is not running"
+    log_error "Keycloak container is not running after 3 seconds"
     log "=== Container status ==="
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
-    log "=== Container logs ==="
-    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 | tail -100 || true
+    log "=== Container logs (all) ==="
+    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    log "=== Docker inspect ==="
+    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
     log "=== Port check ==="
     netstat -tlnp 2>/dev/null | grep -E "${KEYCLOAK_HTTP_PORT}|${KEYCLOAK_HTTPS_PORT}" || ss -tlnp 2>/dev/null | grep -E "${KEYCLOAK_HTTP_PORT}|${KEYCLOAK_HTTPS_PORT}" || echo "No listeners on configured ports"
     return 1
+  fi
+  
+  # Check again after another 2 seconds to ensure it stays running
+  log "Container is running, waiting another 2 seconds to ensure stability..."
+  sleep 2
+  
+  if ! is_keycloak_running; then
+    log_error "Keycloak container started but then died within 5 seconds"
+    log "This typically indicates a configuration error (e.g., missing TLS files inside container)"
+    log "=== Container exit status ==="
+    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" --format "{{.Status}}" 2>&1 || true
+    log "=== Container logs (all) ==="
+    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    log "=== Docker inspect (mounts and env) ==="
+    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 || true
+    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 || true
+    return 1
+  fi
+  
+  # Verify TLS files are accessible inside the container
+  if [ -n "$tls_dir" ]; then
+    log "Verifying TLS files inside container..."
+    if ! $DOCKER exec "$KEYCLOAK_CONTAINER_NAME" ls -l /etc/x509/https/tls.crt /etc/x509/https/tls.key 2>&1; then
+      log_error "TLS files not accessible inside container"
+      return 1
+    fi
+    log "TLS files are accessible inside container"
   fi
   
   # Get container IP for later use (e.g., by Kind clusters)
@@ -956,32 +1058,67 @@ start_keycloak_container() {
   
   # Wait for HTTP endpoint - use localhost with mapped port as the container IP
   # may not be routable from the host in CI environments (GitHub Actions)
-  log "Checking Keycloak health via localhost:${KEYCLOAK_HTTP_PORT} (mapped port)"
+  log "Checking Keycloak readiness via localhost:${KEYCLOAK_HTTP_PORT} (mapped port)"
   # Increase timeout to 180 seconds for slow CI environments
-  if ! wait_for_http "http://localhost:${KEYCLOAK_HTTP_PORT}/health/ready" 180 "Keycloak health endpoint"; then
+  # Note: Keycloak 23.0.0 in dev mode doesn't expose /health/ready endpoint by default
+  # We check the realms endpoint instead as it indicates Keycloak is fully initialized
+  
+  # Check container logs before waiting to see if there are early errors
+  log "=== Keycloak container logs (first 20 lines after start) ==="
+  $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 | head -20 || log_warn "Could not get initial container logs"
+  
+  if ! wait_for_http "http://localhost:${KEYCLOAK_HTTP_PORT}/realms/master" 180 "Keycloak master realm"; then
     log_error "Keycloak failed to become ready on localhost:${KEYCLOAK_HTTP_PORT}"
     log "=== Keycloak container status ==="
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
-    log "=== Keycloak container logs ==="
-    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 | tail -200
-    log "=== Docker inspect ==="
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" 2>&1 | head -80
+    log "=== Keycloak container full logs ==="
+    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    log "=== Docker inspect (mounts and config) ==="
+    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | head -50 || true
+    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config}}' 2>&1 | head -50 || true
     log "=== Port bindings on host ==="
-    netstat -tlnp 2>/dev/null | head -20 || ss -tlnp 2>/dev/null | head -20 || echo "Could not check ports"
-    log "Trying container IP as fallback: http://${keycloak_ip}:8080/health/ready"
-    if ! wait_for_http "http://${keycloak_ip}:8080/health/ready" 60 "Keycloak health (container IP)"; then
+    netstat -tlnp 2>/dev/null | grep -E "8080|8443" || ss -tlnp 2>/dev/null | grep -E "8080|8443" || echo "Could not check ports"
+    log "=== Testing localhost connectivity ==="
+    curl -v "http://localhost:${KEYCLOAK_HTTP_PORT}/" 2>&1 | head -30 || true
+    
+    log "Trying container IP as fallback: http://${keycloak_ip}:8080/realms/master"
+    if ! wait_for_http "http://${keycloak_ip}:8080/realms/master" 60 "Keycloak master realm (container IP)"; then
       log_error "Keycloak failed to become ready via container IP as well"
+      log "=== Final diagnostics before failure ==="
+      log "Container still running: $(is_keycloak_running && echo 'YES' || echo 'NO')"
+      $DOCKER stats --no-stream "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
       return 1
     fi
     log "Keycloak is ready via container IP (not localhost) - this may cause issues with host-based tests"
   fi
   
   log "Keycloak is ready (container IP: ${keycloak_ip}, host port: ${KEYCLOAK_HTTP_PORT})"
+  
+  # Final verification: Test HTTPS endpoint if TLS is configured
+  if [ -n "$tls_dir" ]; then
+    log "Testing HTTPS endpoint..."
+    if curl -sk --connect-timeout 5 "https://localhost:${KEYCLOAK_HTTPS_PORT}/realms/master" >/dev/null 2>&1; then
+      log "HTTPS endpoint is accessible on port ${KEYCLOAK_HTTPS_PORT}"
+    else
+      log_warn "HTTPS endpoint not accessible on port ${KEYCLOAK_HTTPS_PORT}, but container is running"
+      log "Checking if port is mapped..."
+      $DOCKER port "$KEYCLOAK_CONTAINER_NAME" 2>&1 | grep 8443 || log_warn "Port 8443 not mapped"
+    fi
+  fi
+  
   echo "$keycloak_ip"
 }
 
 # Stop and remove Keycloak container
+# Respects PRESERVE_ON_FAILURE and SCRIPT_FAILED environment variables for diagnostics
 stop_keycloak_container() {
+  # Skip cleanup if PRESERVE_ON_FAILURE is set and script failed
+  if [ "${PRESERVE_ON_FAILURE:-false}" = "true" ] && [ "${SCRIPT_FAILED:-false}" = "true" ]; then
+    log "PRESERVE_ON_FAILURE=true and script failed - preserving Keycloak container for diagnostics"
+    log "Container name: $KEYCLOAK_CONTAINER_NAME"
+    return 0
+  fi
+  
   log "Stopping Keycloak container..."
   $DOCKER rm -f "$KEYCLOAK_CONTAINER_NAME" >/dev/null 2>&1 || true
 }
@@ -993,8 +1130,36 @@ configure_keycloak_realm() {
   
   log "Configuring Keycloak realm: $realm"
   
+  # Verify Keycloak container is running
+  if ! is_keycloak_running; then
+    log_error "Keycloak container is not running, cannot configure realm"
+    return 1
+  fi
+  
   # Wait for admin API to be available
-  sleep 5
+  log "Waiting for Keycloak admin API to be ready..."
+  local max_wait=30
+  local count=0
+  while [ $count -lt $max_wait ]; do
+    if $DOCKER exec "$KEYCLOAK_CONTAINER_NAME" /opt/keycloak/bin/kcadm.sh config credentials \
+      --server http://localhost:8080 --realm master \
+      --user "$KEYCLOAK_ADMIN_USER" --password "$KEYCLOAK_ADMIN_PASS" 2>/dev/null; then
+      log "Admin API is ready"
+      break
+    fi
+    count=$((count + 1))
+    if [ $((count % 5)) -eq 0 ]; then
+      log "Still waiting for admin API... ($count/$max_wait)"
+    fi
+    sleep 1
+  done
+  
+  if [ $count -eq $max_wait ]; then
+    log_error "Admin API did not become ready within ${max_wait}s"
+    log "Keycloak container logs:"
+    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 | tail -100
+    return 1
+  fi
   
   # Use docker exec to run kcadm commands
   local kcadm="$DOCKER exec $KEYCLOAK_CONTAINER_NAME /opt/keycloak/bin/kcadm.sh"
@@ -1129,7 +1294,15 @@ generate_keycloak_container_tls() {
   
   # Generate CA if not exists
   if [ ! -f "$output_dir/ca.crt" ]; then
+    log "Generating CA certificate..."
     generate_ca_cert "$output_dir" "keycloak-ca"
+    if [ ! -f "$output_dir/ca.crt" ]; then
+      log_error "Failed to generate CA certificate at $output_dir/ca.crt"
+      return 1
+    fi
+    log "CA certificate generated successfully"
+  else
+    log "Using existing CA certificate at $output_dir/ca.crt"
   fi
   
   # SANs for Keycloak container
@@ -1137,11 +1310,67 @@ generate_keycloak_container_tls() {
     "$keycloak_container_name"
     "keycloak"
     "localhost"
+    "127.0.0.1"
   )
   
+  log "Generating server certificate for $keycloak_container_name with SANs: ${sans[*]}"
   generate_server_cert "$output_dir" "$keycloak_container_name" "${sans[@]}"
   
-  log "Keycloak TLS certificates generated at $output_dir"
+  # Verify all required files exist
+  local required_files=("$output_dir/ca.crt" "$output_dir/tls.crt" "$output_dir/tls.key")
+  for file in "${required_files[@]}"; do
+    if [ ! -f "$file" ]; then
+      log_error "Required TLS file missing: $file"
+      log "Directory contents:"
+      ls -la "$output_dir" || true
+      return 1
+    fi
+    if [ ! -s "$file" ]; then
+      log_error "Required TLS file is empty: $file"
+      return 1
+    fi
+    log "Verified TLS file: $file ($(wc -c < "$file") bytes)"
+  done
+  
+  # Set proper permissions
+  chmod 644 "$output_dir/tls.crt" "$output_dir/ca.crt" 2>/dev/null || true
+  chmod 600 "$output_dir/tls.key" 2>/dev/null || true
+  
+  log "Keycloak TLS certificates generated successfully at $output_dir"
+  log "Contents:"
+  ls -lh "$output_dir" || true
+  
+  # Validate certificates with openssl if available
+  if command -v openssl >/dev/null 2>&1; then
+    log "Validating certificate with openssl..."
+    if openssl x509 -in "$output_dir/tls.crt" -noout -text 2>&1 | head -15; then
+      log "Certificate is valid"
+      # Show expiration
+      local expiry
+      expiry=$(openssl x509 -in "$output_dir/tls.crt" -noout -enddate 2>&1)
+      log "Certificate expiry: $expiry"
+    else
+      log_error "Certificate validation failed"
+      return 1
+    fi
+    
+    # Verify key matches cert
+    local cert_modulus key_modulus
+    cert_modulus=$(openssl x509 -noout -modulus -in "$output_dir/tls.crt" 2>&1 | openssl md5)
+    key_modulus=$(openssl rsa -noout -modulus -in "$output_dir/tls.key" 2>&1 | openssl md5)
+    if [ "$cert_modulus" = "$key_modulus" ]; then
+      log "Certificate and key match (verified via modulus)"
+    else
+      log_error "Certificate and key do NOT match!"
+      log "Cert modulus: $cert_modulus"
+      log "Key modulus: $key_modulus"
+      return 1
+    fi
+  else
+    log_warn "openssl not available, skipping certificate validation"
+  fi
+  
+  return 0
 }
 
 # Inject Keycloak CA into a Kind cluster

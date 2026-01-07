@@ -785,8 +785,19 @@ EOF
   log "  source $TDIR/env.sh"
 }
 
+# Track script failure state
+SCRIPT_FAILED=false
+
 # Cleanup function
 cleanup() {
+  # Skip cleanup if PRESERVE_ON_FAILURE is set and script failed
+  if [ "${PRESERVE_ON_FAILURE:-false}" = "true" ] && [ "${SCRIPT_FAILED}" = "true" ]; then
+    log "PRESERVE_ON_FAILURE=true and script failed - skipping cleanup for diagnostics"
+    log "WARNING: Resources (Keycloak container, clusters) are still running!"
+    log "To clean up manually, run: docker rm -f e2e-keycloak; kind delete cluster --name breakglass-hub; kind delete cluster --name spoke-cluster-a; kind delete cluster --name spoke-cluster-b"
+    return 0
+  fi
+  
   log "Cleaning up..."
   kill_port_forwards "$PF_FILE"
   # Stop Keycloak container
@@ -799,7 +810,22 @@ setup_keycloak() {
   
   # Generate TLS for Keycloak
   local keycloak_tls_dir="$TLS_DIR/keycloak"
-  generate_keycloak_container_tls "$keycloak_tls_dir"
+  if ! generate_keycloak_container_tls "$keycloak_tls_dir"; then
+    log_error "Failed to generate Keycloak TLS certificates"
+    return 1
+  fi
+  
+  # Verify TLS files exist before attempting to start container
+  if [ ! -f "$keycloak_tls_dir/tls.crt" ] || [ ! -f "$keycloak_tls_dir/tls.key" ]; then
+    log_error "TLS files missing after generation:"
+    log "  Expected cert: $keycloak_tls_dir/tls.crt (exists: $([ -f "$keycloak_tls_dir/tls.crt" ] && echo yes || echo no))"
+    log "  Expected key: $keycloak_tls_dir/tls.key (exists: $([ -f "$keycloak_tls_dir/tls.key" ] && echo yes || echo no))"
+    log "Directory listing:"
+    ls -la "$keycloak_tls_dir" || true
+    return 1
+  fi
+  
+  log "TLS certificates verified, starting Keycloak container..."
   
   # Start Keycloak container on the kind network
   KEYCLOAK_IP=$(start_keycloak_container "$keycloak_tls_dir" "kind")
@@ -850,7 +876,10 @@ inject_keycloak_into_clusters() {
 
 # Main function
 main() {
+  # Set up traps for cleanup and error tracking
   trap cleanup EXIT
+  trap 'SCRIPT_FAILED=true' ERR
+  set -E  # Ensure ERR trap is inherited by functions
   
   log "Starting multi-cluster E2E setup..."
   

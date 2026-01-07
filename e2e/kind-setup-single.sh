@@ -1266,6 +1266,10 @@ KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret generic breakglass-group-syn
 export KEYCLOAK_GROUP_SYNC_CLIENT_ID="breakglass-group-sync"
 export KEYCLOAK_GROUP_SYNC_CLIENT_SECRET="breakglass-group-sync-secret"
 
+# For E2E tests: Use in-cluster service name so controller can access Keycloak
+# Frontend will need DNS resolution to make this hostname work via port-forward
+KEYCLOAK_SERVICE_HOSTNAME="breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local"
+
 cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
@@ -1274,11 +1278,12 @@ metadata:
 spec:
   # Mark as primary so controller uses this as default provider
   primary: true
-  # Issuer URL must match the 'iss' claim in JWT tokens from Keycloak
-  issuer: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/${KEYCLOAK_REALM}"
+  # Issuer URL - use in-cluster service name so controller can validate tokens
+  issuer: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443/realms/${KEYCLOAK_REALM}"
   oidc:
-    # Authority URL pointing to test Keycloak instance (in-cluster DNS)
-    authority: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/${KEYCLOAK_REALM}"
+    # Authority URL - use in-cluster service name for consistency
+    # Frontend will access this via port-forward with /etc/hosts mapping
+    authority: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443/realms/${KEYCLOAK_REALM}"
     # OIDC client ID (must match realm configuration)
     clientID: "breakglass-ui"
     # Skip TLS verification for self-signed test certificates (NOT for production!)
@@ -1286,7 +1291,8 @@ spec:
   # Enable Keycloak group sync for resolving group memberships
   groupSyncProvider: Keycloak
   keycloak:
-    baseURL: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443"
+    # Group sync uses in-cluster service name (controller runs in cluster)
+    baseURL: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443"
     realm: "${KEYCLOAK_REALM}"
     clientID: "breakglass-group-sync"
     clientSecretRef:
@@ -1345,6 +1351,17 @@ if curl -s "http://localhost:${METRICS_FORWARD_PORT}/metrics" | grep -q "breakgl
   log "Controller metrics endpoint ready at http://localhost:${METRICS_FORWARD_PORT}/metrics"
 else
   log "Warning: Controller metrics not yet accessible on port ${METRICS_FORWARD_PORT}; may take a moment"
+fi
+
+# Start audit webhook receiver port-forward (for audit webhook tests)
+AUDIT_WEBHOOK_RECEIVER_PORT=8090
+log "Starting audit webhook receiver port-forward on port: $AUDIT_WEBHOOK_RECEIVER_PORT"
+start_port_forward "$DEV_NS" "audit-webhook-receiver" ${AUDIT_WEBHOOK_RECEIVER_PORT} 80 >/dev/null 2>&1 || true
+sleep 2
+if curl -s "http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT}/health" >/dev/null 2>&1; then
+  log "Audit webhook receiver ready at http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT}"
+else
+  log "Warning: Audit webhook receiver not accessible on port ${AUDIT_WEBHOOK_RECEIVER_PORT} (tests may fail)"
 fi
 
 # Wait for IdentityProvider to be reconciled by the controller
@@ -1627,9 +1644,11 @@ export KEYCLOAK_CLIENT_ID=breakglass-ui
 # Keycloak Group Sync client credentials (for admin API access)
 export KEYCLOAK_GROUP_SYNC_CLIENT_ID=breakglass-group-sync
 export KEYCLOAK_GROUP_SYNC_CLIENT_SECRET=breakglass-group-sync-secret
-# KEYCLOAK_ISSUER_HOST is the host that will be used in the token's issuer claim.
-# This must match the authority in the IdentityProvider CR for token verification to work.
-export KEYCLOAK_ISSUER_HOST=${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}
+# KEYCLOAK_ISSUER_HOST is the in-cluster service hostname (matches IdentityProvider issuer)
+# Frontend will access this via /etc/hosts mapping to localhost
+export KEYCLOAK_ISSUER_HOST=breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
+export KEYCLOAK_SERVICE_HOSTNAME=breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local
+export AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL=http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT}
 export KUBECONFIG=$HUB_KUBECONFIG
 EOF
 
@@ -1641,11 +1660,12 @@ log "  go test -v ./e2e/api/..."
 log "Single-cluster e2e setup complete!"
 log ""
 log "Services available:"
-log "  - API:       http://localhost:$API_PORT"
-log "  - Webhook:   http://localhost:$API_PORT/api/breakglass/webhook/authorize/{cluster}"
-log "  - Metrics:   http://localhost:${METRICS_FORWARD_PORT}/metrics"
-log "  - Keycloak:  https://localhost:${KEYCLOAK_FORWARD_PORT}"
-log "  - MailHog:   http://localhost:${MAILHOG_UI_PORT}"
+log "  - API:                 http://localhost:$API_PORT"
+log "  - Webhook:             http://localhost:$API_PORT/api/breakglass/webhook/authorize/{cluster}"
+log "  - Metrics:             http://localhost:${METRICS_FORWARD_PORT}/metrics"
+log "  - Keycloak:            https://localhost:${KEYCLOAK_FORWARD_PORT}"
+log "  - MailHog:             http://localhost:${MAILHOG_UI_PORT}"
+log "  - Audit Webhook Recv:  http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT}"
 log ""
 log "To stop port-forwards: kill \$(cat $PF_FILE)"
 

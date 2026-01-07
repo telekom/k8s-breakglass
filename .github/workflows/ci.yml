@@ -14,8 +14,8 @@ env:
   GO_VERSION: '1.25.5'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  KIND_VERSION: 'v0.26.0'
-  KIND_NODE_IMAGE: 'kindest/node:v1.34.0'
+  KIND_VERSION: 'v0.31.0'
+  KIND_NODE_IMAGE: 'kindest/node:v1.34.3@sha256:08497ee19eace7b4b5348db5c6a1591d7752b164530a36f855cb0f2bdcbadd48'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -333,7 +333,7 @@ jobs:
       - name: Setup E2E environment
         run: |
           chmod +x e2e/kind-setup-single.sh
-          SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
+          SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e UI_FLAVOUR=telekom KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
         env:
           SKIP_BUILD: "true"
           SKIP_PROXY: "true"
@@ -349,33 +349,37 @@ jobs:
             exit 1
           }
 
-      - name: Setup port-forward for API
-        id: portforward
+      - name: Source E2E environment
         run: |
-          BG_NS="breakglass-dev-system"
-          API_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
-          echo "Using dynamically allocated API port: $API_PORT"
-          echo "api_port=$API_PORT" >> $GITHUB_OUTPUT
-          
-          kubectl -n "$BG_NS" port-forward svc/breakglass-dev-breakglass "$API_PORT:8080" &
-          echo $! > /tmp/api-pf.pid
-          
-          for i in {1..30}; do
-            if curl -sf "http://localhost:$API_PORT/healthz" >/dev/null 2>&1; then
-              echo "✓ API port-forward ready"
-              break
-            fi
-            sleep 1
-          done
-          
-          echo "BREAKGLASS_API_URL=http://localhost:$API_PORT" >> $GITHUB_ENV
+          # Source the environment variables from setup script
+          if [ -f e2e/kind-setup-single-tdir/e2e-env.sh ]; then
+            echo "Sourcing E2E environment from setup script..."
+            cat e2e/kind-setup-single-tdir/e2e-env.sh
+            source e2e/kind-setup-single-tdir/e2e-env.sh
+            
+            # Export to GITHUB_ENV for subsequent steps
+            echo "E2E_TEST=true" >> $GITHUB_ENV
+            echo "E2E_NAMESPACE=${E2E_NAMESPACE}" >> $GITHUB_ENV
+            echo "E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME}" >> $GITHUB_ENV
+            echo "BREAKGLASS_API_URL=${BREAKGLASS_API_URL}" >> $GITHUB_ENV
+            echo "BREAKGLASS_WEBHOOK_URL=${BREAKGLASS_WEBHOOK_URL}" >> $GITHUB_ENV
+            echo "BREAKGLASS_METRICS_URL=${BREAKGLASS_METRICS_URL}" >> $GITHUB_ENV
+            echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> $GITHUB_ENV
+            echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> $GITHUB_ENV
+            echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> $GITHUB_ENV
+            echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> $GITHUB_ENV
+            echo "KUBECONFIG=${KUBECONFIG}" >> $GITHUB_ENV
+            
+            echo "Environment variables set:"
+            env | grep -E "E2E_|BREAKGLASS_|KEYCLOAK_" || true
+          else
+            echo "ERROR: E2E environment file not found!"
+            exit 1
+          fi
 
       - name: Run API E2E tests
         run: |
-          E2E_TEST=true go test -v ./e2e/api/... -timeout 30m 2>&1 | tee e2e-results.txt
-        env:
-          E2E_TEST: "true"
-          E2E_NAMESPACE: "breakglass-dev-system"
+          go test -v ./e2e/api/... -timeout 30m 2>&1 | tee e2e-results.txt
 
       - name: Collect comprehensive diagnostics
         if: always()
@@ -550,29 +554,179 @@ jobs:
       - name: Setup E2E environment
         run: |
           chmod +x e2e/kind-setup-single.sh
-          SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
+          SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e UI_FLAVOUR=telekom KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
         env:
           SKIP_BUILD: "true"
           SKIP_PROXY: "true"
           IMAGE: breakglass:e2e
 
+      - name: Source E2E environment and start frontend
+        run: |
+          # Source the environment from setup script
+          if [ -f e2e/kind-setup-single-tdir/e2e-env.sh ]; then
+            source e2e/kind-setup-single-tdir/e2e-env.sh
+            echo "Sourced E2E environment"
+            echo "Environment variables:"
+            env | grep -E "KEYCLOAK|BREAKGLASS|MAILHOG" || true
+            
+            # Extract API port from BREAKGLASS_API_URL for Vite proxy configuration
+            # BREAKGLASS_API_URL format: http://localhost:PORT
+            API_PORT=$(echo "$BREAKGLASS_API_URL" | sed -E 's#http://localhost:([0-9]+)#\1#')
+            if [ -z "$API_PORT" ]; then
+              echo "ERROR: Could not extract API port from BREAKGLASS_API_URL: $BREAKGLASS_API_URL"
+              exit 1
+            fi
+            echo "Extracted API port: $API_PORT"
+            export MOCK_API_PORT=$API_PORT
+            echo "Set MOCK_API_PORT=$MOCK_API_PORT for Vite proxy"
+            
+            # Add /etc/hosts entry for Keycloak in-cluster service name
+            # This allows frontend to access Keycloak via the same hostname as the controller uses
+            # Port-forward on 8443 makes the in-cluster service accessible on localhost
+            if [ -n "$KEYCLOAK_SERVICE_HOSTNAME" ]; then
+              echo "Adding /etc/hosts entry: 127.0.0.1 $KEYCLOAK_SERVICE_HOSTNAME"
+              echo "127.0.0.1 $KEYCLOAK_SERVICE_HOSTNAME" | sudo tee -a /etc/hosts
+              # Verify it worked
+              grep "$KEYCLOAK_SERVICE_HOSTNAME" /etc/hosts || echo "WARNING: Failed to add hosts entry"
+            fi
+          else
+            echo "ERROR: E2E environment file not found"
+            exit 1
+          fi
+          
+          # Start frontend dev server in background with the correct API port
+          cd frontend
+          echo "Starting frontend dev server with API proxy to localhost:$MOCK_API_PORT..."
+          npm run dev > ../frontend-dev.log 2>&1 &
+          FRONTEND_PID=$!
+          echo $FRONTEND_PID > /tmp/frontend-pid.txt
+          cd ..
+          
+          echo "Frontend dev server started with PID: $FRONTEND_PID"
+          echo "Waiting for frontend to initialize..."
+          
+          # Wait actively for frontend (max 15 seconds)
+          FRONTEND_READY=false
+          for i in {1..15}; do
+            if curl -sf http://localhost:5173 > /dev/null 2>&1; then
+              FRONTEND_READY=true
+              echo "Frontend ready after ${i} seconds"
+              break
+            fi
+            sleep 1
+          done
+          
+          if [ "$FRONTEND_READY" = "false" ]; then
+            echo "ERROR: Frontend failed to start within 15 seconds"
+            if ps -p $FRONTEND_PID > /dev/null; then
+              echo "Process is running but not responding"
+            else
+              echo "Process died"
+            fi
+            tail -50 frontend-dev.log || cat frontend-dev.log || echo "No log file"
+            exit 1
+          fi
+
       - name: Wait for services
         run: |
-          echo "Waiting for frontend..."
-          timeout 120 bash -c 'until curl -s http://localhost:5173 > /dev/null 2>&1; do sleep 2; done' || true
-          echo "Waiting for MailHog..."
-          timeout 60 bash -c 'until curl -s http://localhost:8025 > /dev/null 2>&1; do sleep 2; done' || true
-          echo "Waiting for Keycloak..."
-          timeout 120 bash -c 'until curl -sk https://localhost:8443/realms/master > /dev/null 2>&1; do sleep 2; done' || true
-          echo "Services ready!"
+          echo "=== Waiting for services to be ready ==="
+          
+          # Function to test service with detailed output
+          test_service() {
+            local name="$1"
+            local url="$2"
+            local timeout="$3"
+            local curl_opts="${4:--s}"
+            
+            echo "Testing $name at $url..."
+            if timeout "$timeout" bash -c "until curl $curl_opts '$url' > /dev/null 2>&1; do sleep 1; done"; then
+              echo "✓ $name is ready"
+              curl -v $curl_opts "$url" 2>&1 | head -20 || true
+              return 0
+            else
+              echo "✗ $name failed to become ready within ${timeout}s"
+              echo "Last curl attempt:"
+              curl -v $curl_opts "$url" 2>&1 | head -30 || true
+              return 1
+            fi
+          }
+          
+          # Test frontend (already verified in previous step, just double-check)
+          test_service "Frontend" "http://localhost:5173" 15 "-s" || {
+            echo "Frontend failed health check - checking logs"
+            tail -30 frontend-dev.log 2>/dev/null || echo "No frontend log found"
+            ps aux | grep vite || true
+            netstat -tlnp 2>/dev/null | grep 5173 || ss -tlnp 2>/dev/null | grep 5173 || true
+          }
+          
+          # Test MailHog
+          test_service "MailHog" "http://localhost:8025" 30 "-s" || {
+            echo "MailHog not ready - checking status"
+            kubectl get pods -n breakglass-dev-system | grep mailhog || true
+            kubectl logs -n breakglass-dev-system -l app=mailhog --tail=50 2>&1 || true
+          }
+          
+          # Test Keycloak (critical for tests)
+          test_service "Keycloak" "https://localhost:8443/realms/master" 60 "-sk" || {
+            echo "CRITICAL: Keycloak not ready - gathering diagnostics"
+            
+            # Check if port-forward is running
+            ps aux | grep "port-forward.*keycloak" | grep -v grep || echo "No keycloak port-forward found"
+            
+            # Check if service exists
+            kubectl get svc -n breakglass-dev-system | grep keycloak || true
+            
+            # Check pods
+            kubectl get pods -n breakglass-dev-system | grep keycloak || true
+            kubectl logs -n breakglass-dev-system -l app=keycloak --tail=100 2>&1 || true
+            
+            # Check if port is listening
+            netstat -tlnp 2>/dev/null | grep 8443 || ss -tlnp 2>/dev/null | grep 8443 || echo "Port 8443 not listening"
+            
+            # Try alternative endpoints
+            echo "Trying http://localhost:8080/realms/master..."
+            curl -v "http://localhost:8080/realms/master" 2>&1 | head -30 || true
+            
+            exit 1
+          }
+          
+          echo "=== All services are ready ==="
 
       - name: Run UI E2E Tests
         working-directory: frontend
-        env:
-          BREAKGLASS_UI_URL: http://localhost:5173
-          MAILHOG_URL: http://localhost:8025
-          KEYCLOAK_URL: https://localhost:8443
-        run: npx playwright test --config=playwright.e2e.config.ts
+        run: |
+          # Source environment to get correct Keycloak and API configuration
+          source ../e2e/kind-setup-single-tdir/e2e-env.sh
+          
+          # Use in-cluster service hostname (accessible via /etc/hosts + port-forward)
+          KEYCLOAK_E2E_URL="https://${KEYCLOAK_SERVICE_HOSTNAME}:8443"
+          
+          echo "=== Pre-test health checks ==="
+          echo "Testing frontend at http://localhost:5173"
+          curl -sf "http://localhost:5173" > /dev/null || { echo "ERROR: Frontend not reachable"; exit 1; }
+          
+          echo "Testing Keycloak at $KEYCLOAK_E2E_URL/realms/master"
+          curl -skf "$KEYCLOAK_E2E_URL/realms/master" > /dev/null || { 
+            echo "ERROR: Keycloak not reachable at $KEYCLOAK_E2E_URL"
+            echo "Checking /etc/hosts entry:"
+            grep "$KEYCLOAK_SERVICE_HOSTNAME" /etc/hosts || echo "No hosts entry found"
+            echo "Trying localhost fallback..."
+            curl -skv "https://localhost:8443/realms/$KEYCLOAK_REALM" 2>&1 | head -50
+            exit 1
+          }
+          
+          echo "Testing MailHog at http://localhost:8025"
+          curl -sf "http://localhost:8025" > /dev/null || echo "WARNING: MailHog not reachable (tests may fail)"
+          
+          echo "=== All pre-test checks passed ==="
+          echo "=== Configuration ==="
+          echo "Keycloak: $KEYCLOAK_E2E_URL (via $KEYCLOAK_SERVICE_HOSTNAME)"
+          echo "Frontend: http://localhost:5173"
+          echo "API Port: $MOCK_API_PORT"
+          echo "Realm: $KEYCLOAK_REALM"
+          echo ""
+          echo "=== Running Playwright E2E tests ==="
+          npx playwright test --config=playwright.e2e.config.ts
 
       - name: Upload Playwright report
         if: always()
@@ -586,9 +740,70 @@ jobs:
         if: always()
         run: |
           DIAG_DIR="e2e-diagnostics"
-          mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs,resources,mailhog,frontend}
+          mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs,resources,mailhog,frontend,network,keycloak}
           
           echo "Collecting comprehensive UI E2E diagnostics to $DIAG_DIR..."
+          
+          # ===========================================
+          # SERVICE CONNECTIVITY CHECKS
+          # ===========================================
+          echo "--- Testing service connectivity ---"
+          {
+            echo "=== Frontend (localhost:5173) ==="
+            curl -v http://localhost:5173 2>&1 | head -30 || echo "Frontend not accessible"
+            
+            echo -e "\n=== Keycloak HTTPS (localhost:8443) ==="
+            curl -skv https://localhost:8443/realms/master 2>&1 | head -30 || echo "Keycloak HTTPS not accessible"
+            
+            echo -e "\n=== Keycloak HTTP (localhost:8080) ==="
+            curl -v http://localhost:8080/realms/master 2>&1 | head -30 || echo "Keycloak HTTP not accessible"
+            
+            echo -e "\n=== MailHog (localhost:8025) ==="
+            curl -v http://localhost:8025 2>&1 | head -30 || echo "MailHog not accessible"
+            
+            echo -e "\n=== API (localhost:8080) ==="
+            curl -v http://localhost:8080/api/health 2>&1 | head -30 || echo "API not accessible"
+          } > "$DIAG_DIR/network/connectivity-tests.log" 2>&1
+          
+          # Port listeners
+          echo "--- Checking listening ports ---"
+          netstat -tlnp 2>/dev/null > "$DIAG_DIR/network/listening-ports.txt" || \
+            ss -tlnp 2>/dev/null > "$DIAG_DIR/network/listening-ports.txt" || \
+            echo "Could not get port info" > "$DIAG_DIR/network/listening-ports.txt"
+          
+          # Active port forwards
+          echo "--- Active port-forwards ---"
+          ps aux | grep "port-forward" | grep -v grep > "$DIAG_DIR/network/port-forwards.txt" 2>&1 || echo "No port-forwards found" > "$DIAG_DIR/network/port-forwards.txt"
+          
+          # ===========================================
+          # KEYCLOAK SPECIFIC DIAGNOSTICS
+          # ===========================================
+          echo "--- Keycloak diagnostics ---"
+          
+          # Check if external Keycloak container exists
+          if docker ps -a --format '{{.Names}}' | grep -q e2e-keycloak; then
+            echo "External Keycloak container found"
+            docker logs e2e-keycloak > "$DIAG_DIR/keycloak/container.log" 2>&1
+            docker inspect e2e-keycloak > "$DIAG_DIR/keycloak/inspect.json" 2>&1
+            docker stats --no-stream e2e-keycloak > "$DIAG_DIR/keycloak/stats.txt" 2>&1 || true
+          else
+            echo "No external Keycloak container" > "$DIAG_DIR/keycloak/container-status.txt"
+          fi
+          
+          # Check in-cluster Keycloak
+          kubectl get pods -n breakglass-dev-system -l app=keycloak -o yaml > "$DIAG_DIR/keycloak/pods.yaml" 2>&1 || true
+          kubectl get svc -n breakglass-dev-system -l app=keycloak -o yaml > "$DIAG_DIR/keycloak/services.yaml" 2>&1 || true
+          kubectl logs -n breakglass-dev-system -l app=keycloak --all-containers=true --tail=500 > "$DIAG_DIR/keycloak/pod-logs.log" 2>&1 || echo "No in-cluster keycloak pods" > "$DIAG_DIR/keycloak/pod-logs.log"
+          
+          # Test Keycloak endpoints directly
+          {
+            echo "=== Keycloak Realms Endpoint ==="
+            curl -skv https://localhost:8443/realms/master 2>&1 || true
+            echo -e "\n=== Keycloak Admin Console ==="
+            curl -skv https://localhost:8443/admin 2>&1 || true
+            echo -e "\n=== Keycloak Breakglass Realm ==="
+            curl -skv https://localhost:8443/realms/breakglass-e2e 2>&1 || true
+          } > "$DIAG_DIR/keycloak/endpoint-tests.log" 2>&1
           
           # ===========================================
           # DOCKER / CONTAINER DIAGNOSTICS
@@ -684,7 +899,25 @@ jobs:
           # FRONTEND STATUS
           # ===========================================
           echo "--- Frontend status ---"
-          curl -s http://localhost:5173 > "$DIAG_DIR/frontend/homepage.html" 2>&1 || echo "Frontend not responding"
+          
+          # Frontend dev server logs
+          if [ -f frontend-dev.log ]; then
+            cp frontend-dev.log "$DIAG_DIR/frontend/dev-server.log"
+          else
+            echo "No frontend-dev.log found" > "$DIAG_DIR/frontend/dev-server.log"
+          fi
+          
+          # Frontend process status  
+          if [ -f /tmp/frontend-pid.txt ]; then
+            FRONTEND_PID=$(cat /tmp/frontend-pid.txt)
+            ps aux | grep "$FRONTEND_PID" | grep -v grep > "$DIAG_DIR/frontend/process-status.txt" 2>&1 || echo "Process not running" > "$DIAG_DIR/frontend/process-status.txt"
+          fi
+          
+          # Test environment variables
+          env | grep -E "KEYCLOAK|BREAKGLASS|MAILHOG|PLAYWRIGHT|VITE" > "$DIAG_DIR/frontend/test-environment.txt" 2>&1 || true
+          
+          # Homepage check
+          curl -s http://localhost:5173 > "$DIAG_DIR/frontend/homepage.html" 2>&1 || echo "Frontend not responding" > "$DIAG_DIR/frontend/homepage.html"
           
           # ===========================================
           # PLAYWRIGHT TEST RESULTS
@@ -755,12 +988,93 @@ jobs:
           kind version
 
       - name: Run multi-cluster setup
+        id: setup
         run: |
           chmod +x e2e/kind-setup-multi.sh
-          SKIP_PROXY=true IMAGE=breakglass:dev ./e2e/kind-setup-multi.sh
+          # Use pipefail to catch script failures even with tee
+          set -o pipefail
+          PRESERVE_ON_FAILURE=true SKIP_PROXY=true IMAGE=breakglass:dev UI_FLAVOUR=telekom ./e2e/kind-setup-multi.sh 2>&1 | tee e2e-setup-output.log
+          
+          # Verify env.sh was created as a sanity check
+          if [ ! -f e2e/kind-setup-multi-tdir/env.sh ]; then
+            echo "ERROR: Setup script completed but env.sh was not created!"
+            echo "This indicates the script failed before reaching print_summary()"
+            exit 1
+          fi
+          
+          echo "Setup completed successfully. Environment file created at e2e/kind-setup-multi-tdir/env.sh"
         env:
+          PRESERVE_ON_FAILURE: "true"
           SKIP_PROXY: "true"
           IMAGE: breakglass:dev
+
+      - name: Capture setup failure diagnostics
+        if: steps.setup.outcome == 'failure'
+        run: |
+          echo "=== Setup failed, capturing immediate diagnostics ==="
+          mkdir -p e2e-setup-failure-logs
+          
+          # Save the setup script output
+          if [ -f e2e-setup-output.log ]; then
+            cp e2e-setup-output.log e2e-setup-failure-logs/setup-output.log
+          fi
+          
+          # Capture Keycloak container logs (should still be running with PRESERVE_ON_FAILURE=true)
+          echo "--- Keycloak container logs ---"
+          if docker ps -a --filter "name=e2e-keycloak" --format "{{.Names}}" | grep -q e2e-keycloak; then
+            docker logs e2e-keycloak > e2e-setup-failure-logs/keycloak-container.log 2>&1
+            docker inspect e2e-keycloak > e2e-setup-failure-logs/keycloak-inspect.json 2>&1
+            echo "Keycloak container found and logs captured"
+          else
+            echo "No keycloak container found - it was never created or already cleaned up" > e2e-setup-failure-logs/keycloak-container.log
+          fi
+          
+          # Docker state
+          docker ps -a > e2e-setup-failure-logs/docker-ps.txt 2>&1 || true
+          
+          # Network state
+          docker network inspect kind > e2e-setup-failure-logs/docker-network-kind.json 2>&1 || true
+          
+          # Check if port is listening
+          nc -zv localhost 8080 > e2e-setup-failure-logs/keycloak-port-check.txt 2>&1 || echo "Port 8080 not listening"
+          curl -v http://localhost:8080/health/ready > e2e-setup-failure-logs/keycloak-health-check.txt 2>&1 || echo "Health check failed"
+          
+          # Try HTTPS port as well
+          nc -zv localhost 8443 > e2e-setup-failure-logs/keycloak-https-port-check.txt 2>&1 || echo "Port 8443 not listening"
+          curl -skv https://localhost:8443/realms/master > e2e-setup-failure-logs/keycloak-https-check.txt 2>&1 || echo "HTTPS check failed"
+          
+          # Check if TLS files exist on host
+          if [ -d e2e/kind-setup-multi-tls/keycloak ]; then
+            ls -lah e2e/kind-setup-multi-tls/keycloak/ > e2e-setup-failure-logs/tls-files.txt 2>&1
+            # Show certificate details if openssl available
+            if command -v openssl >/dev/null 2>&1; then
+              openssl x509 -in e2e/kind-setup-multi-tls/keycloak/tls.crt -noout -text > e2e-setup-failure-logs/tls-cert-details.txt 2>&1 || true
+            fi
+          fi
+          
+          # Get container IP and try direct access
+          KC_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' e2e-keycloak 2>/dev/null || echo "")
+          if [ -n "$KC_IP" ]; then
+            echo "Keycloak container IP: $KC_IP" > e2e-setup-failure-logs/keycloak-ip.txt
+            curl -v "http://${KC_IP}:8080/health/ready" >> e2e-setup-failure-logs/keycloak-ip.txt 2>&1 || true
+          fi
+          
+          echo "Setup failure diagnostics saved to e2e-setup-failure-logs/"
+          ls -la e2e-setup-failure-logs/
+
+      - name: Upload setup failure logs
+        if: steps.setup.outcome == 'failure'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: multi-cluster-setup-failure-logs
+          path: e2e-setup-failure-logs/
+          retention-days: 14
+
+      - name: Exit if setup failed
+        if: steps.setup.outcome == 'failure'
+        run: |
+          echo "Multi-cluster setup failed. Check the setup-failure-logs artifact for details."
+          exit 1
 
       - name: Source environment and verify clusters
         run: |

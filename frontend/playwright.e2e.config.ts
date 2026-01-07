@@ -14,22 +14,22 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
 
-  // Sequential execution for stateful tests
-  fullyParallel: false,
+  // Enable parallel execution - E2E tests should be independent
+  fullyParallel: true,
 
-  // More retries for E2E due to timing sensitivity
-  retries: process.env.CI ? 3 : 1,
+  // Reduce retries - if tests are flaky, fix them instead
+  retries: process.env.CI ? 1 : 0,
 
-  // Single worker to ensure test isolation
-  workers: 1,
+  // Use 2 workers for faster execution while maintaining stability
+  workers: process.env.CI ? 2 : 1,
 
   // Fail the build on CI if you accidentally left test.only in the source code
   forbidOnly: !!process.env.CI,
 
-  // Longer timeouts for E2E
-  timeout: 60000,
+  // Reasonable timeouts - not overly generous
+  timeout: 30000,
   expect: {
-    timeout: 10000,
+    timeout: 5000,
   },
 
   reporter: [["html", { outputFolder: "playwright-report-e2e" }], ["list"]],
@@ -46,8 +46,8 @@ export default defineConfig({
     // Standard viewport
     viewport: { width: 1280, height: 720 },
 
-    // Slower actions for reliability
-    actionTimeout: 15000,
+    // Reasonable action timeout
+    actionTimeout: 10000,
 
     // Accept self-signed certificates for Keycloak
     ignoreHTTPSErrors: true,
