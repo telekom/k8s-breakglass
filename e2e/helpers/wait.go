@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -129,7 +130,20 @@ func WaitForDeploymentReady(ctx context.Context, cli client.Client, namespace, n
 // WaitForPodReady waits for a pod to be in Running phase with all containers ready
 func WaitForPodReady(ctx context.Context, cli client.Client, namespace, name string, timeout time.Duration) error {
 	return WaitForCondition(ctx, func() (bool, error) {
-		// Simplified - would check pod phase and container statuses
+		var pod corev1.Pod
+		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &pod); err != nil {
+			return false, nil // Not found yet, keep waiting
+		}
+		// Check if pod is running
+		if pod.Status.Phase != corev1.PodRunning {
+			return false, nil
+		}
+		// Check all containers are ready
+		for _, cs := range pod.Status.ContainerStatuses {
+			if !cs.Ready {
+				return false, nil
+			}
+		}
 		return true, nil
 	}, timeout, DefaultInterval)
 }

@@ -406,7 +406,56 @@ spec:
     defaultDuration: "1h"
 ```
 
-### Option 2: Permanent Debug Pods with Breakglass Exec
+### Option 2: Using kubectl-debug Mode
+
+For ephemeral debugging directly into running pods without deploying new workloads:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: ephemeral-pod-debug
+spec:
+  mode: kubectl-debug
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: true
+      allowedNamespaces: ["app-*", "services-*"]
+      deniedNamespaces: ["kube-system"]
+      allowedImages: ["busybox:*", "nicolaka/netshoot:*"]
+    podCopy:
+      enabled: true
+      ttl: "1h"
+  allowed:
+    clusters: ["prod-cluster-1"]
+    groups: ["developers", "sre"]
+  approvers:
+    groups: ["sre-leads"]
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+```
+
+**Usage via API:**
+
+```bash
+# Create a kubectl-debug session
+curl -X POST https://breakglass.example.com/api/debugSessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"templateRef": "ephemeral-pod-debug", "cluster": "prod-cluster-1", "reason": "Debugging pod connectivity"}'
+
+# Inject ephemeral container into a running pod
+curl -X POST https://breakglass.example.com/api/debugSessions/{sessionName}/injectEphemeralContainer \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"namespace": "app-frontend", "podName": "web-abc123", "image": "nicolaka/netshoot:latest"}'
+
+# Create a debug copy of a pod
+curl -X POST https://breakglass.example.com/api/debugSessions/{sessionName}/createPodCopy \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"namespace": "app-frontend", "podName": "web-abc123", "debugImage": "busybox:latest"}'
+```
+
+### Option 3: Permanent Debug Pods with Breakglass Exec
 
 If you have a permanent "operator-tool" pod, use Breakglass to control exec access:
 
@@ -535,6 +584,46 @@ spec:
       - hostNetwork
       - capabilities
     namespaceScope: ["debug-tools", "kube-system"]
+```
+
+### Node-Level Debugging with kubectl-debug Mode
+
+For direct node access using kubectl-debug style operations:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: node-debug-access
+spec:
+  mode: kubectl-debug
+  kubectlDebug:
+    nodeDebug:
+      enabled: true
+      allowedImages: ["nicolaka/netshoot:*", "alpine:*"]
+      hostNamespaces:
+        hostNetwork: true
+        hostPID: true
+  allowed:
+    clusters: ["prod-cluster-1"]
+    groups: ["network-team", "sre"]
+  approvers:
+    groups: ["sre-leads"]
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+```
+
+**Usage via API:**
+
+```bash
+# Create a node debug pod
+curl -X POST https://breakglass.example.com/api/debugSessions/{sessionName}/createNodeDebugPod \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"nodeName": "node-to-debug"}'
+
+# Then exec into the created pod
+kubectl exec -it node-debug-node-to-debug-abc123 -n breakglass-debug -- tcpdump -i any -n port 443
 ```
 
 ---

@@ -16,6 +16,12 @@ import type {
   ApproveDebugSessionRequest,
   RejectDebugSessionRequest,
   DebugSessionSearchParams,
+  InjectEphemeralContainerRequest,
+  InjectEphemeralContainerResponse,
+  CreatePodCopyRequest,
+  CreatePodCopyResponse,
+  CreateNodeDebugPodRequest,
+  CreateNodeDebugPodResponse,
 } from "@/model/debugSession";
 
 export default class DebugSessionService {
@@ -220,6 +226,67 @@ export default class DebugSessionService {
       return response.data;
     } catch (e) {
       handleAxiosError("DebugSessionService.getPodTemplate", e, "Failed to get debug pod template");
+      throw e;
+    }
+  }
+
+  // ==========================================================================
+  // Kubectl-Debug Operations
+  // ==========================================================================
+
+  /**
+   * Inject an ephemeral container into a target pod for debugging
+   * Requires kubectl-debug or hybrid mode session
+   */
+  public async injectEphemeralContainer(
+    sessionName: string,
+    request: InjectEphemeralContainerRequest,
+  ): Promise<InjectEphemeralContainerResponse> {
+    try {
+      const response = await this.client.post<InjectEphemeralContainerResponse>(
+        `/debugSessions/${encodeURIComponent(sessionName)}/injectEphemeralContainer`,
+        request,
+      );
+      return response.data;
+    } catch (e) {
+      handleAxiosError("DebugSessionService.injectEphemeralContainer", e, "Failed to inject ephemeral container");
+      throw e;
+    }
+  }
+
+  /**
+   * Create a copy of a pod for debugging (modifies the copy, not original)
+   * Requires kubectl-debug or hybrid mode session
+   */
+  public async createPodCopy(sessionName: string, request: CreatePodCopyRequest): Promise<CreatePodCopyResponse> {
+    try {
+      const response = await this.client.post<CreatePodCopyResponse>(
+        `/debugSessions/${encodeURIComponent(sessionName)}/createPodCopy`,
+        request,
+      );
+      return response.data;
+    } catch (e) {
+      handleAxiosError("DebugSessionService.createPodCopy", e, "Failed to create pod copy");
+      throw e;
+    }
+  }
+
+  /**
+   * Create a privileged debug pod on a specific node
+   * Requires kubectl-debug or hybrid mode session with nodeDebug enabled
+   */
+  public async createNodeDebugPod(
+    sessionName: string,
+    request: CreateNodeDebugPodRequest,
+  ): Promise<CreateNodeDebugPodResponse> {
+    try {
+      const response = await this.client.post<CreateNodeDebugPodResponse>(
+        `/debugSessions/${encodeURIComponent(sessionName)}/createNodeDebugPod`,
+        request,
+      );
+      return response.data;
+    } catch (e) {
+      handleAxiosError("DebugSessionService.createNodeDebugPod", e, "Failed to create node debug pod");
       throw e;
     }
   }

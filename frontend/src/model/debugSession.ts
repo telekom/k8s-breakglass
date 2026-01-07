@@ -182,3 +182,47 @@ export interface DebugSessionSearchParams {
   user?: string;
   mine?: boolean;
 }
+
+// ============================================================================
+// Kubectl-Debug API Request/Response Types
+// ============================================================================
+
+// Request to inject an ephemeral container into a target pod
+export interface InjectEphemeralContainerRequest {
+  namespace: string;
+  podName: string;
+  containerName: string;
+  image: string;
+  command?: string[];
+}
+
+// Response from injecting an ephemeral container
+export interface InjectEphemeralContainerResponse {
+  success: boolean;
+  message: string;
+  containerName: string;
+}
+
+// Request to create a copy of a pod for debugging
+export interface CreatePodCopyRequest {
+  namespace: string;
+  podName: string;
+  debugImage?: string;
+}
+
+// Response from creating a pod copy
+export interface CreatePodCopyResponse {
+  copyName: string;
+  copyNamespace: string;
+}
+
+// Request to create a debug pod on a node
+export interface CreateNodeDebugPodRequest {
+  nodeName: string;
+}
+
+// Response from creating a node debug pod
+export interface CreateNodeDebugPodResponse {
+  podName: string;
+  namespace: string;
+}

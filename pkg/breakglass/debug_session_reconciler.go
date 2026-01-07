@@ -287,6 +287,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 		JoinedAt: now,
 	}}
 
+	// Setup terminal sharing if enabled
+	if template.Spec.TerminalSharing != nil && template.Spec.TerminalSharing.Enabled {
+		ds.Status.TerminalSharing = c.setupTerminalSharing(ds, template)
+	}
+
 	if err := c.client.Status().Update(ctx, ds); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -297,7 +302,8 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 	log.Infow("Debug session activated",
 		"expiresAt", expiresAt.Time,
 		"duration", duration.String(),
-		"mode", mode)
+		"mode", mode,
+		"terminalSharing", ds.Status.TerminalSharing != nil)
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
 }
@@ -363,12 +369,28 @@ func (c *DebugSessionController) requiresApproval(template *v1alpha1.DebugSessio
 		// Auto-approve for specific clusters
 		for _, pattern := range autoApprove.Clusters {
 			if matched, _ := filepath.Match(pattern, ds.Spec.Cluster); matched {
+				c.log.Infow("Auto-approving debug session based on cluster match",
+					"session", ds.Name,
+					"cluster", ds.Spec.Cluster,
+					"pattern", pattern)
 				return false
 			}
 		}
 
-		// Note: Auto-approve for groups would require user group lookup
-		// which is not implemented here yet
+		// Auto-approve for specific groups
+		if len(autoApprove.Groups) > 0 && len(ds.Spec.UserGroups) > 0 {
+			for _, autoApproveGroup := range autoApprove.Groups {
+				for _, userGroup := range ds.Spec.UserGroups {
+					if userGroup == autoApproveGroup {
+						c.log.Infow("Auto-approving debug session based on group match",
+							"session", ds.Name,
+							"user", ds.Spec.RequestedBy,
+							"matchedGroup", userGroup)
+						return false
+					}
+				}
+			}
+		}
 	}
 
 	return true
@@ -841,6 +863,46 @@ func (c *DebugSessionController) parseDuration(requested string, constraints *v1
 		return maxDur
 	}
 	return dur
+}
+
+// setupTerminalSharing configures terminal sharing status for the session
+func (c *DebugSessionController) setupTerminalSharing(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) *v1alpha1.TerminalSharingStatus {
+	if template.Spec.TerminalSharing == nil || !template.Spec.TerminalSharing.Enabled {
+		return nil
+	}
+
+	provider := template.Spec.TerminalSharing.Provider
+	if provider == "" {
+		provider = "tmux"
+	}
+
+	// Generate a unique session name
+	sessionName := fmt.Sprintf("debug-%s", ds.Name)
+	if len(sessionName) > 32 {
+		sessionName = sessionName[:32]
+	}
+
+	// Build attach command based on provider
+	var attachCommand string
+	switch provider {
+	case "tmux":
+		attachCommand = fmt.Sprintf("tmux attach-session -t %s", sessionName)
+	case "screen":
+		attachCommand = fmt.Sprintf("screen -x %s", sessionName)
+	default:
+		attachCommand = fmt.Sprintf("tmux attach-session -t %s", sessionName)
+	}
+
+	c.log.Infow("Terminal sharing configured",
+		"debugSession", ds.Name,
+		"provider", provider,
+		"sessionName", sessionName)
+
+	return &v1alpha1.TerminalSharingStatus{
+		Enabled:       true,
+		SessionName:   sessionName,
+		AttachCommand: attachCommand,
+	}
 }
 
 // IsPodInDebugSession checks if a pod belongs to an active debug session

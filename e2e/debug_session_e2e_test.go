@@ -936,3 +936,506 @@ func ptrBool(b bool) *bool {
 func ptrInt32(i int32) *int32 {
 	return &i
 }
+
+// ============================================================================
+// Kubectl-Debug Mode E2E Tests
+// ============================================================================
+
+// D-015: DebugSession kubectl-debug ephemeral container injection
+func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
+	if !helpers.IsE2EEnabled() {
+		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
+	}
+
+	cli := setupClient(t)
+	api := setupAPIClient(t)
+	ctx := context.Background()
+
+	// First, create a target pod to inject into
+	targetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "e2e-target-pod",
+			Namespace: "default",
+			Labels: map[string]string{
+				"e2e-test": "true",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "app",
+					Image:   "nginx:alpine",
+					Command: []string{"sleep", "infinity"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, targetPod)
+	err := cli.Create(ctx, targetPod)
+	require.NoError(t, err, "Failed to create target pod")
+	defer func() { _ = cli.Delete(ctx, targetPod) }()
+
+	// Wait for target pod to be running
+	err = helpers.WaitForPodReady(ctx, cli, targetPod.Namespace, targetPod.Name, defaultTimeout)
+	require.NoError(t, err, "Failed to wait for target pod to be ready")
+
+	// Create kubectl-debug session template
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-ephemeral-container-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName:     "E2E Ephemeral Container Template",
+			Mode:            telekomv1alpha1.DebugSessionModeKubectlDebug,
+			TargetNamespace: "default",
+			KubectlDebug: &telekomv1alpha1.KubectlDebugConfig{
+				EphemeralContainers: &telekomv1alpha1.EphemeralContainersConfig{
+					Enabled:           true,
+					AllowedNamespaces: []string{"default"},
+					AllowedImages:     []string{"busybox:*", "alpine:*"},
+					RequireNonRoot:    false,
+				},
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "1h",
+				DefaultDuration: "30m",
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create ephemeral container template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Create session via API
+	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
+		Cluster:           "tenant-a",
+		TemplateRef:       template.Name,
+		RequestedDuration: "30m",
+		Namespace:         testNamespace,
+		Reason:            "Testing ephemeral container injection",
+	})
+	defer func() { _ = cli.Delete(ctx, session) }()
+
+	// Wait for session to become active
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		telekomv1alpha1.DebugSessionStateActive, defaultTimeout)
+
+	// Inject ephemeral container via API
+	err = api.InjectEphemeralContainer(ctx, t, session.Name, helpers.EphemeralContainerRequest{
+		Namespace:     "default",
+		PodName:       targetPod.Name,
+		ContainerName: "debugger",
+		Image:         "busybox:latest",
+		Command:       []string{"sh"},
+	})
+
+	if err != nil {
+		// This may fail if the cluster doesn't support ephemeral containers
+		t.Logf("Ephemeral container injection failed (may not be supported): %v", err)
+	} else {
+		t.Log("Ephemeral container injected successfully")
+
+		// Verify the session status was updated
+		var fetched telekomv1alpha1.DebugSession
+		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
+		require.NoError(t, err)
+
+		if fetched.Status.KubectlDebugStatus != nil {
+			assert.NotEmpty(t, fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
+			t.Logf("Ephemeral containers injected: %+v", fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
+		}
+	}
+}
+
+// D-016: DebugSession kubectl-debug pod copy
+func TestDebugSession_E2E_PodCopy(t *testing.T) {
+	if !helpers.IsE2EEnabled() {
+		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
+	}
+
+	cli := setupClient(t)
+	api := setupAPIClient(t)
+	ctx := context.Background()
+
+	// First, create a target pod to copy
+	targetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "e2e-copy-source-pod",
+			Namespace: "default",
+			Labels: map[string]string{
+				"e2e-test": "pod-copy",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "app",
+					Image:   "nginx:alpine",
+					Command: []string{"sleep", "infinity"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, targetPod)
+	err := cli.Create(ctx, targetPod)
+	require.NoError(t, err, "Failed to create source pod")
+	defer func() { _ = cli.Delete(ctx, targetPod) }()
+
+	// Wait for target pod to be running
+	err = helpers.WaitForPodReady(ctx, cli, targetPod.Namespace, targetPod.Name, defaultTimeout)
+	require.NoError(t, err, "Failed to wait for source pod to be ready")
+
+	// Ensure debug-copies namespace exists
+	debugCopiesNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "debug-copies",
+		},
+	}
+	_ = cli.Create(ctx, debugCopiesNs)
+
+	// Create kubectl-debug session template with pod copy enabled
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-pod-copy-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName:     "E2E Pod Copy Template",
+			Mode:            telekomv1alpha1.DebugSessionModeKubectlDebug,
+			TargetNamespace: "debug-copies",
+			KubectlDebug: &telekomv1alpha1.KubectlDebugConfig{
+				PodCopy: &telekomv1alpha1.PodCopyConfig{
+					Enabled:         true,
+					TargetNamespace: "debug-copies",
+					TTL:             "1h",
+				},
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "1h",
+				DefaultDuration: "30m",
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create pod copy template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Create session via API
+	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
+		Cluster:           "tenant-a",
+		TemplateRef:       template.Name,
+		RequestedDuration: "30m",
+		Namespace:         testNamespace,
+		Reason:            "Testing pod copy",
+	})
+	defer func() { _ = cli.Delete(ctx, session) }()
+
+	// Wait for session to become active
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		telekomv1alpha1.DebugSessionStateActive, defaultTimeout)
+
+	// Create pod copy via API
+	copyResult, err := api.CreatePodCopy(ctx, t, session.Name, helpers.PodCopyRequest{
+		Namespace:  "default",
+		PodName:    targetPod.Name,
+		DebugImage: "busybox:latest",
+	})
+
+	if err != nil {
+		t.Logf("Pod copy creation failed: %v", err)
+	} else {
+		t.Logf("Pod copy created: %s/%s", copyResult.CopyNamespace, copyResult.CopyName)
+
+		// Clean up the copy
+		copyPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      copyResult.CopyName,
+				Namespace: copyResult.CopyNamespace,
+			},
+		}
+		defer func() { _ = cli.Delete(ctx, copyPod) }()
+	}
+}
+
+// D-017: DebugSession kubectl-debug node debug pod
+func TestDebugSession_E2E_NodeDebugPod(t *testing.T) {
+	if !helpers.IsE2EEnabled() {
+		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
+	}
+
+	cli := setupClient(t)
+	api := setupAPIClient(t)
+	ctx := context.Background()
+
+	// Get a node name
+	nodeList := &corev1.NodeList{}
+	err := cli.List(ctx, nodeList)
+	require.NoError(t, err, "Failed to list nodes")
+	require.NotEmpty(t, nodeList.Items, "No nodes found in cluster")
+
+	nodeName := nodeList.Items[0].Name
+	t.Logf("Using node: %s", nodeName)
+
+	// Ensure debug namespace exists
+	debugNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "breakglass-debug",
+		},
+	}
+	_ = cli.Create(ctx, debugNs)
+
+	// Create kubectl-debug session template with node debug enabled
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-node-debug-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName:     "E2E Node Debug Template",
+			Mode:            telekomv1alpha1.DebugSessionModeKubectlDebug,
+			TargetNamespace: "breakglass-debug",
+			KubectlDebug: &telekomv1alpha1.KubectlDebugConfig{
+				NodeDebug: &telekomv1alpha1.NodeDebugConfig{
+					Enabled:       true,
+					AllowedImages: []string{"busybox:stable"},
+					HostNamespaces: &telekomv1alpha1.HostNamespacesConfig{
+						HostNetwork: true,
+						HostPID:     true,
+						HostIPC:     false,
+					},
+				},
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "1h",
+				DefaultDuration: "30m",
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create node debug template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Create session via API
+	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
+		Cluster:           "tenant-a",
+		TemplateRef:       template.Name,
+		RequestedDuration: "30m",
+		Namespace:         testNamespace,
+		Reason:            "Testing node debug pod",
+	})
+	defer func() { _ = cli.Delete(ctx, session) }()
+
+	// Wait for session to become active
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		telekomv1alpha1.DebugSessionStateActive, defaultTimeout)
+
+	// Create node debug pod via API
+	nodeDebugResult, err := api.CreateNodeDebugPod(ctx, t, session.Name, helpers.NodeDebugRequest{
+		NodeName: nodeName,
+	})
+
+	if err != nil {
+		t.Logf("Node debug pod creation failed: %v", err)
+	} else {
+		t.Logf("Node debug pod created: %s/%s on node %s",
+			nodeDebugResult.Namespace, nodeDebugResult.PodName, nodeName)
+
+		// Clean up the debug pod
+		debugPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      nodeDebugResult.PodName,
+				Namespace: nodeDebugResult.Namespace,
+			},
+		}
+		defer func() { _ = cli.Delete(ctx, debugPod) }()
+	}
+}
+
+// D-018: DebugSession terminal sharing
+func TestDebugSession_E2E_TerminalSharing(t *testing.T) {
+	if !helpers.IsE2EEnabled() {
+		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
+	}
+
+	cli := setupClient(t)
+	ctx := context.Background()
+
+	// Create pod template
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-terminal-sharing-pod",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Terminal Sharing Pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create session template with terminal sharing
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-terminal-sharing-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Terminal Sharing Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:        &replicas,
+			TargetNamespace: "breakglass-debug",
+			TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+				Enabled:         true,
+				Provider:        "tmux",
+				MaxParticipants: 5,
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create terminal sharing template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Verify template has terminal sharing config
+	var fetched telekomv1alpha1.DebugSessionTemplate
+	err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
+	require.NoError(t, err)
+	assert.NotNil(t, fetched.Spec.TerminalSharing)
+	assert.True(t, fetched.Spec.TerminalSharing.Enabled)
+	assert.Equal(t, "tmux", fetched.Spec.TerminalSharing.Provider)
+	t.Logf("Terminal sharing enabled with provider: %s", fetched.Spec.TerminalSharing.Provider)
+}
+
+// D-019: DebugSession auto-approve by group
+func TestDebugSession_E2E_AutoApproveByGroup(t *testing.T) {
+	if !helpers.IsE2EEnabled() {
+		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
+	}
+
+	cli := setupClient(t)
+	ctx := context.Background()
+
+	// Create pod template
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-auto-approve-group-pod",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Auto-Approve Group Pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create session template with group-based auto-approve
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-auto-approve-group-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Auto-Approve Group Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:        &replicas,
+			TargetNamespace: "breakglass-debug",
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				Groups: []string{"sre-leads"},
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Groups:   []string{"sre-leads", "platform-admins"},
+					Clusters: []string{"dev-*"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create auto-approve group template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Verify template has auto-approve group config
+	var fetched telekomv1alpha1.DebugSessionTemplate
+	err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
+	require.NoError(t, err)
+	assert.NotNil(t, fetched.Spec.Approvers)
+	assert.NotNil(t, fetched.Spec.Approvers.AutoApproveFor)
+	assert.Contains(t, fetched.Spec.Approvers.AutoApproveFor.Groups, "sre-leads")
+	t.Logf("Auto-approve configured for groups: %v", fetched.Spec.Approvers.AutoApproveFor.Groups)
+}

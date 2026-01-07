@@ -919,3 +919,139 @@ func CreateKeycloakClientSecret(t *testing.T, ctx context.Context, cli client.Cl
 
 	return secret
 }
+
+// ============================================================================
+// Kubectl-Debug API Helpers
+// ============================================================================
+
+// EphemeralContainerRequest is the request body for injecting an ephemeral container
+type EphemeralContainerRequest struct {
+	Namespace     string   `json:"namespace"`
+	PodName       string   `json:"podName"`
+	ContainerName string   `json:"containerName"`
+	Image         string   `json:"image"`
+	Command       []string `json:"command,omitempty"`
+}
+
+// PodCopyRequest is the request body for creating a pod copy
+type PodCopyRequest struct {
+	Namespace  string `json:"namespace"`
+	PodName    string `json:"podName"`
+	DebugImage string `json:"debugImage,omitempty"`
+}
+
+// PodCopyResponse is the response from creating a pod copy
+type PodCopyResponse struct {
+	CopyName      string `json:"copyName"`
+	CopyNamespace string `json:"copyNamespace"`
+}
+
+// NodeDebugRequest is the request body for creating a node debug pod
+type NodeDebugRequest struct {
+	NodeName string `json:"nodeName"`
+}
+
+// NodeDebugResponse is the response from creating a node debug pod
+type NodeDebugResponse struct {
+	PodName   string `json:"podName"`
+	Namespace string `json:"namespace"`
+}
+
+// InjectEphemeralContainer injects an ephemeral container via the REST API
+func (c *APIClient) InjectEphemeralContainer(ctx context.Context, t *testing.T, sessionName string, req EphemeralContainerRequest) error {
+	cid := uuid.New().String()
+	path := fmt.Sprintf("%s/%s/injectEphemeralContainer", debugSessionsBasePath, sessionName)
+
+	if t != nil {
+		t.Logf("InjectEphemeralContainer: sending request with correlationID=%s, session=%s, pod=%s/%s",
+			cid, sessionName, req.Namespace, req.PodName)
+	}
+
+	resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, req, cid)
+	if err != nil {
+		return fmt.Errorf("failed to inject ephemeral container (cid=%s): %w", cid, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to inject ephemeral container (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
+	}
+
+	if t != nil {
+		t.Logf("InjectEphemeralContainer: injected container=%s into pod=%s/%s, correlationID=%s",
+			req.ContainerName, req.Namespace, req.PodName, cid)
+	}
+
+	return nil
+}
+
+// CreatePodCopy creates a debug copy of a pod via the REST API
+func (c *APIClient) CreatePodCopy(ctx context.Context, t *testing.T, sessionName string, req PodCopyRequest) (*PodCopyResponse, error) {
+	cid := uuid.New().String()
+	path := fmt.Sprintf("%s/%s/createPodCopy", debugSessionsBasePath, sessionName)
+
+	if t != nil {
+		t.Logf("CreatePodCopy: sending request with correlationID=%s, session=%s, pod=%s/%s",
+			cid, sessionName, req.Namespace, req.PodName)
+	}
+
+	resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, req, cid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create pod copy (cid=%s): %w", cid, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to create pod copy (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
+	}
+
+	var result PodCopyResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse pod copy response (cid=%s): %w (body: %s)", cid, err, string(body))
+	}
+
+	if t != nil {
+		t.Logf("CreatePodCopy: created copy=%s/%s, correlationID=%s", result.CopyNamespace, result.CopyName, cid)
+	}
+
+	return &result, nil
+}
+
+// CreateNodeDebugPod creates a debug pod on a node via the REST API
+func (c *APIClient) CreateNodeDebugPod(ctx context.Context, t *testing.T, sessionName string, req NodeDebugRequest) (*NodeDebugResponse, error) {
+	cid := uuid.New().String()
+	path := fmt.Sprintf("%s/%s/createNodeDebugPod", debugSessionsBasePath, sessionName)
+
+	if t != nil {
+		t.Logf("CreateNodeDebugPod: sending request with correlationID=%s, session=%s, node=%s",
+			cid, sessionName, req.NodeName)
+	}
+
+	resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, req, cid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create node debug pod (cid=%s): %w", cid, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to create node debug pod (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
+	}
+
+	var result NodeDebugResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse node debug response (cid=%s): %w (body: %s)", cid, err, string(body))
+	}
+
+	if t != nil {
+		t.Logf("CreateNodeDebugPod: created pod=%s/%s on node=%s, correlationID=%s",
+			result.Namespace, result.PodName, req.NodeName, cid)
+	}
+
+	return &result, nil
+}
