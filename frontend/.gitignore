@@ -19,6 +19,7 @@ coverage
 
 # Playwright
 /playwright-report/
+/playwright-report-e2e/
 /test-results/
 /tests/screenshots/__screenshots__/
 
