@@ -40,5 +40,12 @@ export default defineConfigWithVueTs(
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
+  {
+    // Disable one-component-per-file rule for test files
+    files: ["**/*.spec.ts", "**/*.test.ts", "**/__tests__/**/*.ts"],
+    rules: {
+      "vue/one-component-per-file": "off",
+    },
+  },
   eslintPluginPrettierRecommended,
 );

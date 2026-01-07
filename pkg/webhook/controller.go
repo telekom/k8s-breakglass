@@ -237,16 +237,20 @@ type SubjectAccessReviewResponse struct {
 // PodFetchFunction is the signature for functions that fetch pods from a cluster.
 type PodFetchFunction func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error)
 
+// NamespaceLabelsFetchFunction is the signature for functions that fetch namespace labels from a cluster.
+type NamespaceLabelsFetchFunction func(ctx context.Context, clusterName, namespace string) (map[string]string, error)
+
 type WebhookController struct {
-	log          *zap.SugaredLogger
-	config       config.Config
-	sesManager   *breakglass.SessionManager
-	escalManager *breakglass.EscalationManager
-	canDoFn      breakglass.CanGroupsDoFunction
-	ccProvider   *cluster.ClientProvider
-	denyEval     *policy.Evaluator
-	podFetchFn   PodFetchFunction // optional override for testing
-	auditService *audit.Service   // optional audit service for access decision events
+	log                    *zap.SugaredLogger
+	config                 config.Config
+	sesManager             *breakglass.SessionManager
+	escalManager           *breakglass.EscalationManager
+	canDoFn                breakglass.CanGroupsDoFunction
+	ccProvider             *cluster.ClientProvider
+	denyEval               *policy.Evaluator
+	podFetchFn             PodFetchFunction             // optional override for testing
+	namespaceLabelsFetchFn NamespaceLabelsFetchFunction // optional override for testing
+	auditService           *audit.Service               // optional audit service for access decision events
 }
 
 // checkDebugSessionAccess checks if a pod exec request is allowed by an active debug session.
@@ -308,6 +312,49 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 	}
 
 	return false, "", ""
+}
+
+// getPodSecurityOverridesFromSessions retrieves the PodSecurityOverrides from the escalation
+// associated with the user's active sessions. If multiple sessions exist with different escalations,
+// the first non-nil PodSecurityOverrides is returned (escalations are processed in session order).
+func (wc *WebhookController) getPodSecurityOverridesFromSessions(ctx context.Context, sessions []v1alpha1.BreakglassSession, reqLog *zap.SugaredLogger) *v1alpha1.PodSecurityOverrides {
+	if wc.escalManager == nil {
+		return nil
+	}
+
+	for _, s := range sessions {
+		if s.Status.State != v1alpha1.SessionStateApproved {
+			continue
+		}
+
+		// Look up escalation via owner references
+		for _, or := range s.OwnerReferences {
+			if or.Kind != "BreakglassEscalation" {
+				continue
+			}
+
+			esc, err := wc.escalManager.GetBreakglassEscalation(ctx, s.Namespace, or.Name)
+			if err != nil {
+				if reqLog != nil {
+					reqLog.Debugw("Failed to lookup escalation for PodSecurityOverrides",
+						"error", err.Error(), "escalation", or.Name, "session", s.Name)
+				}
+				continue
+			}
+
+			if esc.Spec.PodSecurityOverrides != nil && esc.Spec.PodSecurityOverrides.Enabled {
+				if reqLog != nil {
+					reqLog.Debugw("Found PodSecurityOverrides from escalation",
+						"escalation", esc.Name, "session", s.Name,
+						"maxAllowedScore", esc.Spec.PodSecurityOverrides.MaxAllowedScore,
+						"exemptFactors", esc.Spec.PodSecurityOverrides.ExemptFactors)
+				}
+				return esc.Spec.PodSecurityOverrides
+			}
+		}
+	}
+
+	return nil
 }
 
 // getClusterConfigAcrossNamespaces performs a ClusterConfig lookup across all namespaces
@@ -494,15 +541,31 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 	// DENY POLICY EVALUATION (phase 1 - cluster/tenant global)
 	if sar.Spec.ResourceAttributes != nil {
+		// Get PodSecurityOverrides from user's active session escalation (if any)
+		podSecurityOverrides := wc.getPodSecurityOverridesFromSessions(ctx, sessions, reqLog)
+
 		act := policy.Action{
-			Verb:        sar.Spec.ResourceAttributes.Verb,
-			APIGroup:    sar.Spec.ResourceAttributes.Group,
-			Resource:    sar.Spec.ResourceAttributes.Resource,
-			Namespace:   sar.Spec.ResourceAttributes.Namespace,
-			Name:        sar.Spec.ResourceAttributes.Name,
-			Subresource: sar.Spec.ResourceAttributes.Subresource,
-			ClusterID:   clusterName,
-			Tenant:      tenant,
+			Verb:                 sar.Spec.ResourceAttributes.Verb,
+			APIGroup:             sar.Spec.ResourceAttributes.Group,
+			Resource:             sar.Spec.ResourceAttributes.Resource,
+			Namespace:            sar.Spec.ResourceAttributes.Namespace,
+			Name:                 sar.Spec.ResourceAttributes.Name,
+			Subresource:          sar.Spec.ResourceAttributes.Subresource,
+			ClusterID:            clusterName,
+			Tenant:               tenant,
+			PodSecurityOverrides: podSecurityOverrides,
+		}
+
+		// Fetch namespace labels for DenyPolicy SelectorTerms evaluation
+		if act.Namespace != "" {
+			nsLabels, err := wc.fetchNamespaceLabels(ctx, clusterName, act.Namespace)
+			if err != nil {
+				reqLog.Debugw("Failed to fetch namespace labels for DenyPolicy evaluation",
+					"error", err.Error(), "namespace", act.Namespace)
+				// NamespaceLabels will be nil; SelectorTerms cannot be evaluated
+			} else {
+				act.NamespaceLabels = nsLabels
+			}
 		}
 
 		// Fetch pod spec for exec/attach/portforward requests to enable security evaluation
@@ -519,67 +582,17 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			}
 		}
 
-		if denied, pol, derr := wc.denyEval.Match(ctx, act); derr != nil {
+		if denied, pol, podSecResult, derr := wc.denyEval.MatchWithDetails(ctx, act); derr != nil {
 			reqLog.With("error", derr.Error(), "action", act).Error("deny evaluation error")
-		} else if denied {
-			// Log detailed rejection info at INFO level for observability
-			reqLog.Infow("Request denied by global/cluster DenyPolicy",
-				"policy", pol,
-				"verb", act.Verb,
-				"apiGroup", act.APIGroup,
-				"resource", act.Resource,
-				"namespace", act.Namespace,
-				"resourceName", act.Name,
-				"subresource", act.Subresource,
-				"cluster", clusterName,
-				"tenant", tenant,
-				"username", username,
-				"activeSessions", len(sessions),
-			)
-			// Emit denied metric for global policy short-circuit
-			metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
-			metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "global").Inc()
-			reqLog.Debugw("Global denyEval matched", "policy", pol, "action", act)
-
-			// Emit audit event for policy denial
-			wc.emitPolicyDenialAudit(ctx, username, groups, clusterName, &sar, pol, "global")
-
-			// Determine if any escalation paths exist for this user (use groups from sessions plus system:authenticated)
-			uniqueGroups := append([]string{}, groups...)
-			uniqueGroups = append(uniqueGroups, "system:authenticated")
-			ug := dedupeStrings(uniqueGroups)
-			escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, ug)
-			count := 0
-			if eerr != nil {
-				reqLog.With("error", eerr.Error()).Error("Failed to count escalations for deny response")
-			} else {
-				count = len(escals)
+		} else {
+			// Emit pod security audit event if we have a result
+			if podSecResult != nil {
+				wc.emitPodSecurityAudit(ctx, username, groups, clusterName, &sar, pol, podSecResult)
 			}
-			var reason string
-			if count > 0 {
-				reason = fmt.Sprintf("Denied by policy %s; %d breakglass escalation(s) available", pol, count)
-			} else {
-				reason = fmt.Sprintf("Denied by policy %s; No breakglass flow available for your user", pol)
-			}
-			// Add IDP hint if available
-			if hint := wc.getIDPHintFromIssuer(ctx, &sar, reqLog); hint != "" {
-				reason = fmt.Sprintf("%s %s", reason, hint)
-			}
-			reason = wc.finalizeReason(reason, false, clusterName)
-			c.JSON(http.StatusOK, &SubjectAccessReviewResponse{ApiVersion: sar.APIVersion, Kind: sar.Kind, Status: SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason}})
-			return
-		}
-		// session-scoped policies
-		for _, s := range sessions {
-			act.Session = s.Name
-			if denied, pol, derr := wc.denyEval.Match(ctx, act); derr != nil {
-				reqLog.With("error", derr.Error(), "session", s.Name, "action", act).Error("deny evaluation error for session")
-			} else if denied {
+			if denied {
 				// Log detailed rejection info at INFO level for observability
-				reqLog.Infow("Request denied by session-scoped DenyPolicy",
+				reqLog.Infow("Request denied by global/cluster DenyPolicy",
 					"policy", pol,
-					"session", s.Name,
-					"sessionGroup", s.Spec.GrantedGroup,
 					"verb", act.Verb,
 					"apiGroup", act.APIGroup,
 					"resource", act.Resource,
@@ -587,24 +600,26 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 					"resourceName", act.Name,
 					"subresource", act.Subresource,
 					"cluster", clusterName,
+					"tenant", tenant,
 					"username", username,
+					"activeSessions", len(sessions),
 				)
-				// Emit denied metric for session-scoped policy short-circuit
+				// Emit denied metric for global policy short-circuit
 				metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
-				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "session").Inc()
-				reqLog.Debugw("Session denyEval matched", "policy", pol, "session", s.Name, "action", act)
+				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "global").Inc()
+				reqLog.Debugw("Global denyEval matched", "policy", pol, "action", act)
 
-				// Emit audit event for session-scoped policy denial
-				wc.emitPolicyDenialAudit(ctx, username, groups, clusterName, &sar, pol, "session:"+s.Name)
+				// Emit audit event for policy denial
+				wc.emitPolicyDenialAudit(ctx, username, groups, clusterName, &sar, pol, "global")
 
-				// Determine escalation availability for this session/user combination
+				// Determine if any escalation paths exist for this user (use groups from sessions plus system:authenticated)
 				uniqueGroups := append([]string{}, groups...)
 				uniqueGroups = append(uniqueGroups, "system:authenticated")
 				ug := dedupeStrings(uniqueGroups)
 				escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, ug)
 				count := 0
 				if eerr != nil {
-					reqLog.With("error", eerr.Error()).Error("Failed to count escalations for session deny response")
+					reqLog.With("error", eerr.Error()).Error("Failed to count escalations for deny response")
 				} else {
 					count = len(escals)
 				}
@@ -621,6 +636,66 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				reason = wc.finalizeReason(reason, false, clusterName)
 				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{ApiVersion: sar.APIVersion, Kind: sar.Kind, Status: SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason}})
 				return
+			}
+		}
+		// session-scoped policies
+		for _, s := range sessions {
+			act.Session = s.Name
+			if denied, pol, podSecResult, derr := wc.denyEval.MatchWithDetails(ctx, act); derr != nil {
+				reqLog.With("error", derr.Error(), "session", s.Name, "action", act).Error("deny evaluation error for session")
+			} else {
+				// Emit pod security audit event if we have a result
+				if podSecResult != nil {
+					wc.emitPodSecurityAudit(ctx, username, groups, clusterName, &sar, pol, podSecResult)
+				}
+				if denied {
+					// Log detailed rejection info at INFO level for observability
+					reqLog.Infow("Request denied by session-scoped DenyPolicy",
+						"policy", pol,
+						"session", s.Name,
+						"sessionGroup", s.Spec.GrantedGroup,
+						"verb", act.Verb,
+						"apiGroup", act.APIGroup,
+						"resource", act.Resource,
+						"namespace", act.Namespace,
+						"resourceName", act.Name,
+						"subresource", act.Subresource,
+						"cluster", clusterName,
+						"username", username,
+					)
+					// Emit denied metric for session-scoped policy short-circuit
+					metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
+					metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "session").Inc()
+					reqLog.Debugw("Session denyEval matched", "policy", pol, "session", s.Name, "action", act)
+
+					// Emit audit event for session-scoped policy denial
+					wc.emitPolicyDenialAudit(ctx, username, groups, clusterName, &sar, pol, "session:"+s.Name)
+
+					// Determine escalation availability for this session/user combination
+					uniqueGroups := append([]string{}, groups...)
+					uniqueGroups = append(uniqueGroups, "system:authenticated")
+					ug := dedupeStrings(uniqueGroups)
+					escals, eerr := wc.escalManager.GetClusterGroupBreakglassEscalations(ctx, clusterName, ug)
+					count := 0
+					if eerr != nil {
+						reqLog.With("error", eerr.Error()).Error("Failed to count escalations for session deny response")
+					} else {
+						count = len(escals)
+					}
+					var reason string
+					if count > 0 {
+						reason = fmt.Sprintf("Denied by policy %s; %d breakglass escalation(s) available", pol, count)
+					} else {
+						reason = fmt.Sprintf("Denied by policy %s; No breakglass flow available for your user", pol)
+					}
+					// Add IDP hint if available
+					if hint := wc.getIDPHintFromIssuer(ctx, &sar, reqLog); hint != "" {
+						reason = fmt.Sprintf("%s %s", reason, hint)
+					}
+					reason = wc.finalizeReason(reason, false, clusterName)
+					c.JSON(http.StatusOK, &SubjectAccessReviewResponse{ApiVersion: sar.APIVersion, Kind: sar.Kind, Status: SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason}})
+					return
+				}
 			}
 		}
 	}
@@ -1068,6 +1143,72 @@ func (wc *WebhookController) emitPolicyDenialAudit(ctx context.Context, username
 	wc.auditService.Emit(ctx, event)
 }
 
+// emitPodSecurityAudit emits an audit event for pod security evaluation results.
+func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username string, groups []string, cluster string, sar *authorizationv1.SubjectAccessReview, policyName string, result *policy.PodSecurityResult) {
+	if wc.auditService == nil || result == nil {
+		return
+	}
+
+	// Determine event type based on result
+	var eventType audit.EventType
+	var severity audit.Severity
+	switch {
+	case result.Denied:
+		eventType = audit.EventPodSecurityDenied
+		severity = audit.SeverityCritical
+	case result.Action == "warn":
+		eventType = audit.EventPodSecurityWarning
+		severity = audit.SeverityWarning
+	case result.OverrideApplied:
+		eventType = audit.EventPodSecurityOverride
+		severity = audit.SeverityWarning
+	default:
+		// For allowed results without override, emit evaluated event at info level
+		eventType = audit.EventPodSecurityEvaluated
+		severity = audit.SeverityInfo
+	}
+
+	// Build target information from SAR
+	var resource, name, namespace, verb, subresource, apiGroup string
+	if sar.Spec.ResourceAttributes != nil {
+		ra := sar.Spec.ResourceAttributes
+		resource = ra.Resource
+		name = ra.Name
+		namespace = ra.Namespace
+		verb = ra.Verb
+		subresource = ra.Subresource
+		apiGroup = ra.Group
+	}
+
+	event := &audit.Event{
+		Type:     eventType,
+		Severity: severity,
+		Actor: audit.Actor{
+			User:   username,
+			Groups: groups,
+		},
+		Target: audit.Target{
+			Kind:      resource,
+			Name:      name,
+			Namespace: namespace,
+			Cluster:   cluster,
+		},
+		Details: map[string]interface{}{
+			"policyName":      policyName,
+			"action":          result.Action,
+			"riskScore":       result.Score,
+			"riskFactors":     result.Factors,
+			"reason":          result.Reason,
+			"verb":            verb,
+			"apiGroup":        apiGroup,
+			"subresource":     subresource,
+			"overrideApplied": result.OverrideApplied,
+		},
+	}
+
+	wc.auditService.Emit(ctx, event)
+}
+
 // getUserGroupsForCluster removed (unused)
 
 func NewWebhookController(log *zap.SugaredLogger,
@@ -1328,6 +1469,12 @@ func (wc *WebhookController) SetPodFetchFn(f PodFetchFunction) {
 	wc.podFetchFn = f
 }
 
+// SetNamespaceLabelsFetchFn sets a custom function for fetching namespace labels from clusters.
+// This is primarily used for testing to inject mock namespace labels.
+func (wc *WebhookController) SetNamespaceLabelsFetchFn(f NamespaceLabelsFetchFunction) {
+	wc.namespaceLabelsFetchFn = f
+}
+
 // isExecSubresource returns true if the subresource is exec, attach, or portforward.
 // These subresources allow interactive access to pods and require security evaluation.
 func isExecSubresource(subresource string) bool {
@@ -1357,4 +1504,30 @@ func (wc *WebhookController) fetchPodFromCluster(ctx context.Context, clusterNam
 		return nil, fmt.Errorf("failed to get pod %s/%s from cluster %s: %w", namespace, name, clusterName, err)
 	}
 	return pod, nil
+}
+
+// fetchNamespaceLabels retrieves namespace labels from the target cluster for DenyPolicy evaluation.
+// Returns nil if namespace cannot be fetched (DenyPolicy SelectorTerms will be skipped).
+func (wc *WebhookController) fetchNamespaceLabels(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+	// Use injected function if available (for testing)
+	if wc.namespaceLabelsFetchFn != nil {
+		return wc.namespaceLabelsFetchFn(ctx, clusterName, namespace)
+	}
+
+	if wc.ccProvider == nil {
+		return nil, fmt.Errorf("cluster client provider not configured")
+	}
+	rc, err := wc.ccProvider.GetRESTConfig(ctx, clusterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
+	}
+	clientset, err := kubernetes.NewForConfig(rc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clientset for cluster %s: %w", clusterName, err)
+	}
+	ns, err := clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespace %s from cluster %s: %w", namespace, clusterName, err)
+	}
+	return ns.Labels, nil
 }

@@ -807,7 +807,7 @@ func TestSecurityMultipleDenyPoliciesEnforced(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"secrets"},
 						Verbs:      []string{"*"},
-						Namespaces: []string{"*"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},
@@ -832,7 +832,7 @@ func TestSecurityMultipleDenyPoliciesEnforced(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"configmaps"},
 						Verbs:      []string{"delete"},
-						Namespaces: []string{"kube-system"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 					},
 				},
 			},
@@ -902,7 +902,7 @@ func TestSecurityMultipleDenyPoliciesEnforced(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"pods"},
 						Verbs:      []string{"delete"},
-						Namespaces: []string{"*"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},
@@ -1149,13 +1149,13 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 						{MaxScore: 999, Action: "deny", Reason: "Pod security violation"},
 					},
 					Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-						Namespaces: []string{
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{
 							"kube-system",
 							"monitoring",
 							"logging",
 							"istio-system",
 							"cert-manager",
-						},
+						}},
 						PodLabels: map[string]string{
 							"breakglass.telekom.com/security-exempt": "true",
 						},
@@ -1172,7 +1172,7 @@ func TestSecurityRiskBasedRejection(t *testing.T) {
 		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name}, &fetched)
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules.Exemptions)
-		require.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, 5)
+		require.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, 5)
 
 		t.Logf("SEC-018: Exemptions policy created - system namespaces and labeled pods exempt")
 	})
@@ -1241,7 +1241,7 @@ func TestSecurityTenantIsolation(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"secrets"},
 						Verbs:      []string{"*"},
-						Namespaces: []string{"*"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},

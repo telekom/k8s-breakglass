@@ -1187,6 +1187,57 @@
       }
     },
     {
+      "username": "complete-flow-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "complete-flow-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "complete-flow-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "complete-flow-requester-base"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "complete-flow-requester"
+        ]
+      }
+    },
+    {
+      "username": "complete-flow-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "complete-flow-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "complete-flow-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "complete-flow-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "complete-flow-approver"
+        ]
+      }
+    },
+    {
       "username": "service-account-breakglass-group-sync",
       "enabled": true,
       "serviceAccountClientId": "breakglass-group-sync",
@@ -1404,6 +1455,12 @@
     },
     {
       "name": "multi-cluster-approver"
+    },
+    {
+      "name": "complete-flow-requester-base"
+    },
+    {
+      "name": "complete-flow-approver"
     }
   ]
 }

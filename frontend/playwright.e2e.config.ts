@@ -32,10 +32,7 @@ export default defineConfig({
     timeout: 10000,
   },
 
-  reporter: [
-    ["html", { outputFolder: "playwright-report-e2e" }],
-    ["list"],
-  ],
+  reporter: [["html", { outputFolder: "playwright-report-e2e" }], ["list"]],
 
   use: {
     // Real backend URL (not mock)

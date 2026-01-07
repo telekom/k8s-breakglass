@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
@@ -17,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // Setup starts the webhook server with TLS configuration and optional separate metrics server.
@@ -195,6 +197,17 @@ func Setup(
 		if err := registerWebhook(&v1alpha1.AuditConfig{}, "AuditConfig", mgr, log); err != nil {
 			return err
 		}
+
+		// Register ephemeral container webhook
+		log.Infof("Registering ephemeral container webhook at /validate-ephemeral-containers")
+		mgr.GetWebhookServer().Register("/validate-ephemeral-containers", &webhookserver.Admission{
+			Handler: &EphemeralContainerWebhook{
+				Client:       mgr.GetClient(),
+				Log:          log,
+				Decoder:      admission.NewDecoder(mgr.GetScheme()),
+				DebugHandler: breakglass.NewKubectlDebugHandler(mgr.GetClient(), nil),
+			},
+		})
 	} else {
 		log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 	}

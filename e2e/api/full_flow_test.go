@@ -342,7 +342,7 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 						Verbs:      []string{"create", "delete"},
 						Resources:  []string{"pods"},
 						APIGroups:  []string{""},
-						Namespaces: []string{"kube-system"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 					},
 				},
 			},

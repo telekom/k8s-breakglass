@@ -95,6 +95,13 @@ const (
 	EventPolicyEvaluated EventType = "policy.evaluated"
 	EventPolicyBypassed  EventType = "policy.bypassed"
 
+	// === Pod security events ===
+	EventPodSecurityEvaluated EventType = "pod_security.evaluated"
+	EventPodSecurityAllowed   EventType = "pod_security.allowed"
+	EventPodSecurityDenied    EventType = "pod_security.denied"
+	EventPodSecurityWarning   EventType = "pod_security.warning"
+	EventPodSecurityOverride  EventType = "pod_security.override"
+
 	// === Debug session events ===
 	EventDebugSessionCreated         EventType = "debug_session.created"
 	EventDebugSessionStarted         EventType = "debug_session.started"
@@ -310,7 +317,7 @@ func SeverityForEventType(eventType EventType) Severity {
 	case EventSessionRevoked, EventDebugSessionTerminated, EventSecretDeleted,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventNodeDrain, EventPolicyBypassed, EventAuthFailure,
-		EventWebhookError, EventAuditDropped:
+		EventWebhookError, EventAuditDropped, EventPodSecurityDenied:
 		return SeverityCritical
 
 	// Warning events - should be reviewed
@@ -318,7 +325,7 @@ func SeverityForEventType(eventType EventType) Severity {
 		EventEscalationRejected, EventPolicyViolation, EventAdmissionDenied,
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
-		EventDebugSessionCommand, EventAuditBackpressure:
+		EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning:
 		return SeverityWarning
 
 	// Info events - normal operation
@@ -455,7 +462,8 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
 		EventDebugSessionCreated, EventDebugSessionTerminated,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
-		EventResourceImpersonate, EventPolicyBypassed:
+		EventResourceImpersonate, EventPolicyBypassed,
+		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride:
 		return true
 	default:
 		return false

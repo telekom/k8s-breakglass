@@ -4,6 +4,19 @@ set -euo pipefail
 # Replaces previous hub+tenant topology by creating only one cluster and using a ClusterConfig
 # that points back to the same cluster (simulated tenant "tenant-a").
 
+# --- Script directory and common library ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+E2E_LOG_PREFIX="[single-e2e]"
+
+# Source common library (provides shared functions for logging, TLS, network, etc.)
+if [ -f "${SCRIPT_DIR}/lib/common.sh" ]; then
+  source "${SCRIPT_DIR}/lib/common.sh"
+else
+  # Fallback if common library not found - define minimal log function
+  log(){ printf '[single-e2e] %s\n' "$*"; }
+  log "Warning: Common library not found at ${SCRIPT_DIR}/lib/common.sh, using minimal functions"
+fi
+
 # --- Tools (can be overridden by env) ---
 KIND=${KIND:-kind}
 KUBECTL=${KUBECTL:-kubectl}
@@ -89,223 +102,70 @@ else
   printf '[single-e2e] Using proxy: HTTP_PROXY=%s, NO_PROXY=%s\n' "$HTTP_PROXY" "$NO_PROXY"
 fi
 
-log(){ printf '[single-e2e] %s\n' "$*"; }
+# --- Helper functions ---
+# Note: log(), find_free_port() are now provided by lib/common.sh
+# The functions below use script-specific global variables ($CLUSTER_NAME, $HUB_KUBECONFIG)
+# so they are kept here rather than in the common library.
 
-# Find a free port on the local machine
-find_free_port() {
-  # Use Python to find a free port if available (most reliable)
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()'
-    return
-  fi
-  # Fall back to random port in ephemeral range
-  local port
-  for _ in {1..100}; do
-    port=$((RANDOM % 10000 + 30000))
-    if ! lsof -i ":$port" >/dev/null 2>&1 && ! ss -ln 2>/dev/null | grep -q ":$port "; then
-      echo "$port"
-      return
-    fi
-  done
-  # Last resort: return a random port and hope for the best
-  echo "$((RANDOM % 10000 + 30000))"
-}
-
-# Fail fast if a manifest contains unreplaced placeholder-like tokens (e.g. NAME_PLACEHOLDER, TENANT_B_TEAM)
-ensure_no_placeholders() {
-  local file="$1"
-  if [ ! -f "$file" ]; then
-    # nothing to check
-    return 0
-  fi
-  if grep -Eq '\$\{[A-Z0-9_]+\}|REPLACE_' "$file"; then
-    printf '[single-e2e] ERROR: manifest %s contains unreplaced placeholder-like tokens.\n' "$file" >&2
-    printf '[single-e2e] Matching lines:\n' >&2
-    grep -En '\$\{[A-Z0-9_]+\}|REPLACE_' "$file" >&2 || true
-    printf '[single-e2e] Please render the manifest (use RenderAndApplyManifest in tests or replace placeholders) before applying.\n' >&2
-    exit 1
-  fi
-}
-
-# --- Helper functions to reduce duplication ---
 load_image_into_kind() {
   # Usage: load_image_into_kind imageName
+  # Uses global $CLUSTER_NAME
   local img="$1"
-  if ! docker image inspect "$img" >/dev/null 2>&1; then
-    log "Docker image $img not found locally; pulling"
-    docker pull "$img" || true
-  fi
+  ensure_image_exists "$img" || true
   log "Loading image $img into kind cluster $CLUSTER_NAME"
-  $KIND load docker-image "$img" --name "$CLUSTER_NAME" || true
+  
+  # Try direct load first, fall back to archive method if containerd snapshotter detection fails
+  if $KIND load docker-image "$img" --name "$CLUSTER_NAME" 2>&1 | tee /dev/stderr | grep -q "failed to detect containerd snapshotter"; then
+    log "Direct load failed due to containerd snapshotter issue, using archive method..."
+    local tmp_archive
+    tmp_archive=$(mktemp --suffix=.tar)
+    if docker save "$img" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$CLUSTER_NAME"; then
+      log "Successfully loaded $img via archive method"
+    else
+      log "WARN: Failed to load image $img via archive method"
+    fi
+    rm -f "$tmp_archive"
+  fi
 }
 
 debug_deployment_failure() {
   # Usage: debug_deployment_failure label
-  # Prints debug information when a deployment fails to become ready
+  # Uses global $HUB_KUBECONFIG
   local label="$1"
-  log "=== DEBUG: Deployment failure for label=$label ==="
-  
-  # Get all pods with this label
-  log "--- Pods with app=$label ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods --all-namespaces -l app=${label} -o wide 2>&1 || true
-  
-  # Get services with this label
-  log "--- Services with app=$label ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get svc --all-namespaces -l app=${label} -o wide 2>&1 || true
-  
-  # Get configmaps in breakglass namespace
-  log "--- ConfigMaps in breakglass-dev-system ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get configmaps -n breakglass-dev-system 2>&1 || true
-  
-  # Get pod details (describe)
-  log "--- Pod describe ---"
-  for pod_info in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods --all-namespaces -l app=${label} -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} {end}' 2>/dev/null); do
-    ns=$(echo "$pod_info" | cut -d'/' -f1)
-    pod=$(echo "$pod_info" | cut -d'/' -f2)
-    if [ -n "$ns" ] && [ -n "$pod" ]; then
-      log "Describing pod $pod in namespace $ns:"
-      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL describe pod "$pod" -n "$ns" 2>&1 | tail -50 || true
-    fi
-  done
-  
-  # Get pod logs
-  log "--- Pod logs (last 100 lines) ---"
-  for pod_info in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods --all-namespaces -l app=${label} -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} {end}' 2>/dev/null); do
-    ns=$(echo "$pod_info" | cut -d'/' -f1)
-    pod=$(echo "$pod_info" | cut -d'/' -f2)
-    if [ -n "$ns" ] && [ -n "$pod" ]; then
-      log "Logs for pod $pod in namespace $ns:"
-      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs "$pod" -n "$ns" --tail=100 2>&1 || true
-    fi
-  done
-  
-  # Get events
-  log "--- Recent events ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get events --all-namespaces --sort-by='.lastTimestamp' 2>&1 | tail -30 || true
-  
-  # Get ValidatingWebhookConfiguration
-  log "--- ValidatingWebhookConfiguration ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get validatingwebhookconfiguration 2>&1 || true
-  for vwc in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get validatingwebhookconfiguration -o name 2>/dev/null | grep breakglass); do
-    log "Describing $vwc:"
-    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get "$vwc" -o yaml 2>&1 | grep -A5 -E '(caBundle|clientConfig|name:)' | head -50 || true
-  done
-  
-  # Keycloak logs (often helpful for auth-related failures)
-  log "--- Keycloak logs (last 50 lines) ---"
-  for pod in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods -n breakglass-dev-system -l app=keycloak -o name 2>/dev/null); do
-    log "Logs for $pod:"
-    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs "$pod" -n breakglass-dev-system --tail=50 2>&1 || true
-  done
-  
-  # MailHog logs
-  log "--- MailHog logs (last 30 lines) ---"
-  for pod in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods -n breakglass-dev-system -l app=mailhog -o name 2>/dev/null); do
-    log "Logs for $pod:"
-    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs "$pod" -n breakglass-dev-system --tail=30 2>&1 || true
-  done
-  
-  # CRD statuses
-  log "--- IdentityProvider status ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get identityprovider -A -o wide 2>&1 || true
-  
-  log "--- ClusterConfig status ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get clusterconfig -A -o wide 2>&1 || true
-  
-  log "=== END DEBUG ==="
+  # Delegate to common library
+  e2e_debug_deployment_failure "$HUB_KUBECONFIG" "$label"
 }
 
 debug_cluster_state() {
   # Usage: debug_cluster_state [context_message]
-  # Prints general cluster state for debugging failures
+  # Uses global $HUB_KUBECONFIG, $CLUSTER_NAME
   local context="${1:-General failure}"
-  log "=== DEBUG: Cluster state ($context) ==="
-  
-  log "--- All pods ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods --all-namespaces -o wide 2>&1 || true
-  
-  log "--- All deployments ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get deployments --all-namespaces 2>&1 || true
-  
-  log "--- All services ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get svc --all-namespaces 2>&1 || true
-  
-  log "--- All ConfigMaps (breakglass namespace) ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get configmaps -n breakglass-dev-system 2>&1 || true
-  
-  log "--- Pods not Running/Completed ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods --all-namespaces --field-selector='status.phase!=Running,status.phase!=Succeeded' 2>&1 || true
-  
-  log "--- Recent events (last 50) ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get events --all-namespaces --sort-by='.lastTimestamp' 2>&1 | tail -50 || true
-  
-  # Get ValidatingWebhookConfiguration
-  log "--- ValidatingWebhookConfiguration ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get validatingwebhookconfiguration 2>&1 || true
-  for vwc in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get validatingwebhookconfiguration -o name 2>/dev/null | grep breakglass); do
-    log "Describing $vwc:"
-    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get "$vwc" -o yaml 2>&1 | grep -A5 -E '(caBundle|clientConfig|name:)' | head -50 || true
-  done
-  
-  # Keycloak logs
-  log "--- Keycloak logs (last 100 lines) ---"
-  for pod in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods -n breakglass-dev-system -l app=keycloak -o name 2>/dev/null); do
-    log "Logs for $pod:"
-    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs "$pod" -n breakglass-dev-system --tail=100 2>&1 || true
-  done
-  
-  # Breakglass controller logs
-  log "--- Breakglass controller logs (last 100 lines) ---"
-  for pod in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods -n breakglass-dev-system -l app=breakglass -o name 2>/dev/null); do
-    log "Logs for $pod:"
-    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs "$pod" -n breakglass-dev-system --tail=100 2>&1 || true
-  done
-  
-  # MailHog logs
-  log "--- MailHog logs (last 50 lines) ---"
-  for pod in $(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods -n breakglass-dev-system -l app=mailhog -o name 2>/dev/null); do
-    log "Logs for $pod:"
-    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs "$pod" -n breakglass-dev-system --tail=50 2>&1 || true
-  done
-  
-  # Breakglass CRDs status
-  log "--- IdentityProvider status ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get identityprovider -A -o wide 2>&1 || true
-  
-  log "--- ClusterConfig status ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get clusterconfig -A -o wide 2>&1 || true
-  
-  log "--- MailProvider status ---"
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get mailprovider -A -o wide 2>&1 || true
-  
-  log "=== END DEBUG ==="
+  e2e_print_cluster_debug "$HUB_KUBECONFIG" "$CLUSTER_NAME" "breakglass-dev-system"
 }
 
 wait_for_deploy_by_label() {
   # Usage: wait_for_deploy_by_label label max_attempts
-  local label="$1"; local max_attempts=${2:-120}
-  for i in $(seq 1 $max_attempts); do
-    DEP_NS=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get deploy --all-namespaces -l app=${label} -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || true)
-    DEP_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get deploy --all-namespaces -l app=${label} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-    if [ -n "$DEP_NAME" ] && [ -n "$DEP_NS" ]; then
-      log "Waiting rollout for $label: $DEP_NAME ns $DEP_NS"
-      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL rollout status deployment/"$DEP_NAME" -n "$DEP_NS" --timeout=240s && return 0
-    fi
-    sleep 2
-  done
-  # On failure, print debug info before returning
-  debug_deployment_failure "$label"
-  return 1
+  # Uses global $HUB_KUBECONFIG
+  local label="$1"
+  local max_attempts=${2:-120}
+  if ! e2e_wait_for_deployment_by_label "$HUB_KUBECONFIG" "$label" "$max_attempts"; then
+    e2e_debug_deployment_failure "$HUB_KUBECONFIG" "$label"
+    return 1
+  fi
 }
 
 start_port_forward() {
   # Usage: start_port_forward namespace svc localPort remotePort
-  local ns="$1"; local svc="$2"; local local_port="$3"; local remote_port="$4"
+  # Uses global $HUB_KUBECONFIG, $PF_FILE
+  local ns="$1"
+  local svc="$2"
+  local local_port="$3"
+  local remote_port="$4"
   log "Starting port-forward for svc/$svc in ns $ns -> localhost:$local_port:$remote_port"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$ns" port-forward svc/"$svc" ${local_port}:${remote_port} >/dev/null 2>&1 &
   local pid=$!
-  [ -n "$PF_FILE" ] && mkdir -p "$(dirname "$PF_FILE")" || true
-  echo $pid >> "$PF_FILE" || true
+  [ -n "$PF_FILE" ] && mkdir -p "$(dirname "$PF_FILE")" 2>/dev/null || true
+  echo $pid >> "$PF_FILE" 2>/dev/null || true
   echo $pid
 }
 
@@ -750,9 +610,17 @@ log "Creating single cluster ${CLUSTER_NAME} (image $KIND_NODE_IMAGE)"
 $KIND create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --config "$KIND_CFG" --wait 120s
 $KIND get kubeconfig --name "$CLUSTER_NAME" > "$HUB_KUBECONFIG"
 
-log 'Build & load controller image (respect UI_FLAVOUR build arg)'
-# Use --load to ensure the image is available in local Docker (required for Orbstack/buildx)
-docker build --load --build-arg UI_FLAVOUR="$UI_FLAVOUR" -t "$IMAGE" . >/dev/null
+# Build controller image unless SKIP_BUILD is set or image already exists
+if [ "${SKIP_BUILD:-false}" = "true" ]; then
+  log "SKIP_BUILD=true, skipping image build (expecting image $IMAGE to exist)"
+elif docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  log "Image $IMAGE already exists locally, skipping build"
+else
+  log 'Build & load controller image (respect UI_FLAVOUR build arg)'
+  # Use --load to ensure the image is available in local Docker (required for Orbstack/buildx)
+  docker build --load --build-arg UI_FLAVOUR="$UI_FLAVOUR" -t "$IMAGE" . >/dev/null
+fi
+
 # load built images into kind node using helper
 load_image_into_kind "$IMAGE"
 load_image_into_kind "$KEYCLOAK_IMAGE"

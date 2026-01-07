@@ -392,8 +392,8 @@ func TestDebugSession_E2E_KubectlDebugMode(t *testing.T) {
 			KubectlDebug: &telekomv1alpha1.KubectlDebugConfig{
 				EphemeralContainers: &telekomv1alpha1.EphemeralContainersConfig{
 					Enabled:           true,
-					AllowedNamespaces: []string{"default", "app-*"},
-					DeniedNamespaces:  []string{"kube-system"},
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
+					DeniedNamespaces:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 					AllowedImages:     []string{"busybox:*", "alpine:*"},
 					RequireNonRoot:    true,
 				},
@@ -992,7 +992,7 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 			KubectlDebug: &telekomv1alpha1.KubectlDebugConfig{
 				EphemeralContainers: &telekomv1alpha1.EphemeralContainersConfig{
 					Enabled:           true,
-					AllowedNamespaces: []string{"default"},
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"default"}},
 					AllowedImages:     []string{"busybox:*", "alpine:*"},
 					RequireNonRoot:    false,
 				},

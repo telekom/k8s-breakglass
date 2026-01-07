@@ -614,6 +614,41 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 		}
 	}
 
+	// Verify if terminal sharing is enabled and inject multiplexer command
+	if template.Spec.TerminalSharing != nil && template.Spec.TerminalSharing.Enabled && len(spec.Containers) > 0 {
+		container := &spec.Containers[0]
+
+		provider := template.Spec.TerminalSharing.Provider
+		if provider == "" {
+			provider = "tmux"
+		}
+
+		sessionName := fmt.Sprintf("debug-%s", ds.Name)
+		if len(sessionName) > 32 {
+			sessionName = sessionName[:32]
+		}
+
+		// Only wrap if explicit command is set, otherwise we risk masking entrypoint
+		if len(container.Command) > 0 {
+			// Construct child command
+			childCmd := make([]string, 0, len(container.Command)+len(container.Args))
+			childCmd = append(childCmd, container.Command...)
+			childCmd = append(childCmd, container.Args...)
+
+			if provider == "tmux" {
+				// tmux new-session -A -s <name> <cmd...>
+				// -A: attach to existing session if it exists
+				container.Command = []string{"tmux", "new-session", "-A", "-s", sessionName}
+				container.Args = childCmd
+			} else if provider == "screen" {
+				// screen -xRR -S <name> <cmd...>
+				// -xRR: Attach to existing, or create new (multi-display mode)
+				container.Command = []string{"screen", "-xRR", "-S", sessionName}
+				container.Args = childCmd
+			}
+		}
+	}
+
 	return spec
 }
 
@@ -785,11 +820,22 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *v1alp
 
 // cleanupResources removes deployed resources from the target cluster
 func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alpha1.DebugSession) error {
-	if c.ccProvider == nil || len(ds.Status.DeployedResources) == 0 {
+	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+
+	if c.ccProvider == nil {
 		return nil
 	}
 
-	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+	// Clean up kubectl-debug resources (if any)
+	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
+		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
+		// Continue to clean up deployed resources even if this fails
+	}
+
+	if len(ds.Status.DeployedResources) == 0 {
+		return nil
+	}
 
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {

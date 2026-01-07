@@ -1,0 +1,133 @@
+# Example: AuditConfig with Namespace Label Selectors
+#
+# This example demonstrates using Kubernetes label selectors to dynamically
+# filter audit events based on namespace labels. This is useful when:
+# - Namespace naming conventions are inconsistent
+# - Namespaces are created dynamically
+# - You want to audit based on team/environment/compliance labels
+#
+# NOTE: AuditConfig is cluster-scoped (no namespace in metadata)
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-namespace-selector-example
+spec:
+  enabled: true
+  
+  filtering:
+    # Include namespaces matching specific labels
+    includeNamespaces:
+      # Match by name patterns
+      patterns:
+        - "prod-*"
+      # OR match by labels (OR logic between selectorTerms)
+      selectorTerms:
+        # Capture events in compliance-required namespaces
+        - matchLabels:
+            compliance: required
+        # OR capture events in production environments
+        - matchLabels:
+            env: production
+            tier: critical
+    
+    # Exclude namespaces matching specific labels
+    excludeNamespaces:
+      # Exclude by name patterns
+      patterns:
+        - "kube-*"
+        - "openshift-*"
+      # OR exclude by labels
+      selectorTerms:
+        # Exclude development/testing namespaces
+        - matchLabels:
+            env: development
+        # Exclude sandbox namespaces
+        - matchExpressions:
+            - key: purpose
+              operator: In
+              values: ["sandbox", "experiment", "temp"]
+
+  sinks:
+    - name: log-all
+      type: log
+      log:
+        level: info
+        format: json
+
+---
+# Example: Compliance-focused auditing using labels
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-compliance
+spec:
+  enabled: true
+  
+  filtering:
+    # Only audit namespaces with compliance labels
+    includeNamespaces:
+      selectorTerms:
+        # PCI-DSS compliance
+        - matchLabels:
+            compliance/pci-dss: "true"
+        # SOC2 compliance
+        - matchLabels:
+            compliance/soc2: "true"
+        # HIPAA compliance
+        - matchExpressions:
+            - key: compliance/hipaa
+              operator: Exists
+    
+    # Exclude system noise
+    excludeUsers:
+      - "system:serviceaccount:*:default"
+  
+  # No sampling for compliance audits
+  sampling:
+    rate: "1.0"
+
+  sinks:
+    - name: compliance-log
+      type: log
+      log:
+        level: info
+        format: json
+
+---
+# Example: Team-based selective auditing
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-by-team
+spec:
+  enabled: true
+  
+  filtering:
+    # Audit specific team namespaces using labels
+    includeNamespaces:
+      selectorTerms:
+        # Match namespaces owned by specific teams
+        - matchExpressions:
+            - key: team
+              operator: In
+              values: ["platform", "security", "sre"]
+        # Also match high-criticality namespaces
+        - matchExpressions:
+            - key: criticality
+              operator: In
+              values: ["high", "critical"]
+            - key: team
+              operator: NotIn
+              values: ["dev-sandbox"]
+  
+  # Sample non-critical events (50%)
+  sampling:
+    rate: "0.5"
+
+  sinks:
+    - name: team-audit-log
+      type: log
+      log:
+        level: info
+        format: json

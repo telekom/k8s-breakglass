@@ -91,6 +91,26 @@ patches:
       value:
         name: CLEANUP_INTERVAL
         value: "10s"
+    # Increase memory limits for E2E tests (controller handles many CRs)
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/limits/memory
+      value: "1Gi"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/memory
+      value: "512Mi"
+# Increase Kafka resources to prevent OOM/crashes in CI
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: kafka
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/limits/memory
+      value: "2Gi"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/memory
+      value: "1Gi"
 # [CERT-CONTROLLER] this target should be enabled if automated webhook certificate generation is to be used 
 # - target:
 #     group: apps

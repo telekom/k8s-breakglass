@@ -36,6 +36,12 @@ func TestEventTypes(t *testing.T) {
 		// Secret events
 		{EventSecretAccessed, SeverityWarning},
 		{EventSecretDeleted, SeverityCritical},
+		// Pod security events
+		{EventPodSecurityEvaluated, SeverityInfo},
+		{EventPodSecurityAllowed, SeverityInfo},
+		{EventPodSecurityDenied, SeverityCritical},
+		{EventPodSecurityWarning, SeverityWarning},
+		{EventPodSecurityOverride, SeverityInfo},
 	}
 
 	for _, tc := range tests {
@@ -187,6 +193,7 @@ func TestIsSensitiveEvent(t *testing.T) {
 		EventDebugSessionCreated, EventDebugSessionTerminated,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
+		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride,
 	}
 
 	for _, evt := range sensitiveEvents {
@@ -195,6 +202,7 @@ func TestIsSensitiveEvent(t *testing.T) {
 
 	nonSensitiveEvents := []EventType{
 		EventResourceGet, EventResourceList, EventHealthCheck, EventNonResourceMetrics,
+		EventPodSecurityEvaluated, EventPodSecurityAllowed,
 	}
 	for _, evt := range nonSensitiveEvents {
 		assert.False(t, IsSensitiveEvent(evt), "expected %s to NOT be sensitive event", evt)

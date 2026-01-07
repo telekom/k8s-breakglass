@@ -469,7 +469,7 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 						Verbs:      []string{"delete"},
 						APIGroups:  []string{""},
 						Resources:  []string{"pods"},
-						Namespaces: []string{"kube-system"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 					},
 				},
 			},

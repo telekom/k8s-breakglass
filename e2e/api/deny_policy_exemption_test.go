@@ -66,7 +66,7 @@ func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
 					},
 					Exemptions: &telekomv1alpha1.PodSecurityExemptions{
 						// Exempt kube-system and monitoring namespaces from security evaluation
-						Namespaces: []string{"kube-system", "monitoring", "logging"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring", "logging"}},
 					},
 				},
 				Rules: []telekomv1alpha1.DenyRule{
@@ -75,7 +75,7 @@ func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
 						Resources:    []string{"pods"},
 						Subresources: []string{"exec"},
 						Verbs:        []string{"create"},
-						Namespaces:   []string{"*"},
+						Namespaces:   &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},
@@ -90,9 +90,9 @@ func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)
 		require.NotNil(t, fetched.Spec.PodSecurityRules.Exemptions)
-		assert.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, "kube-system")
-		assert.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, "monitoring")
-		assert.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, 3)
+		assert.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, "kube-system")
+		assert.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, "monitoring")
+		assert.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, 3)
 		t.Logf("EXEMPT-001: DenyPolicy with namespace exemptions created: %v",
 			fetched.Spec.PodSecurityRules.Exemptions.Namespaces)
 	})
@@ -139,7 +139,7 @@ func TestDenyPolicyExemptionByPodLabels(t *testing.T) {
 						Resources:    []string{"pods"},
 						Subresources: []string{"exec"},
 						Verbs:        []string{"create"},
-						Namespaces:   []string{"*"},
+						Namespaces:   &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},
@@ -187,7 +187,7 @@ func TestDenyPolicyScopeByCluster(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"secrets"},
 						Verbs:      []string{"*"},
-						Namespaces: []string{"*"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},
@@ -218,7 +218,7 @@ func TestDenyPolicyScopeByCluster(t *testing.T) {
 						APIGroups:     []string{""},
 						Resources:     []string{"nodes"},
 						Verbs:         []string{"delete"},
-						Namespaces:    []string{},
+						Namespaces:    nil,
 						ResourceNames: []string{"*"},
 					},
 				},
@@ -262,7 +262,7 @@ func TestDenyPolicyPrecedenceConfiguration(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"secrets"},
 						Verbs:      []string{"delete"},
-						Namespaces: []string{"*"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},
@@ -292,7 +292,7 @@ func TestDenyPolicyPrecedenceConfiguration(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"pods"},
 						Verbs:      []string{"delete"},
-						Namespaces: []string{"*"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},
@@ -444,7 +444,7 @@ func TestDenyPolicyScopeBySession(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"secrets"},
 						Verbs:      []string{"*"},
-						Namespaces: []string{"*"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},
@@ -476,7 +476,7 @@ func TestDenyPolicyScopeBySession(t *testing.T) {
 						APIGroups:  []string{""},
 						Resources:  []string{"configmaps"},
 						Verbs:      []string{"delete"},
-						Namespaces: []string{"*"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 					},
 				},
 			},

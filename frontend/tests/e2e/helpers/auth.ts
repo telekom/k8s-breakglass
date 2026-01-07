@@ -19,7 +19,13 @@ export interface TestUser {
 /**
  * Pre-configured test users matching the Keycloak E2E realm setup.
  */
-export const TEST_USERS: Record<string, TestUser> = {
+export interface TestUsers {
+  requester: TestUser;
+  approver: TestUser;
+  admin: TestUser;
+}
+
+export const TEST_USERS: TestUsers = {
   requester: {
     username: "bob@example.com",
     password: "bob123",
@@ -89,9 +95,7 @@ export class AuthHelper {
    */
   async isLoggedIn(): Promise<boolean> {
     try {
-      await this.page
-        .locator('[data-testid="user-menu"]')
-        .waitFor({ timeout: 3000 });
+      await this.page.locator('[data-testid="user-menu"]').waitFor({ timeout: 3000 });
       return true;
     } catch {
       return false;

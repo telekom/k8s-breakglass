@@ -17,9 +17,7 @@ test.describe("Request Session via UI", () => {
     await mailhog.clearMessages();
   });
 
-  test("developer can request escalation and approver receives email", async ({
-    page,
-  }) => {
+  test("developer can request escalation and approver receives email", async ({ page }) => {
     const auth = new AuthHelper(page);
 
     // Login as Bob (developer)
@@ -30,9 +28,7 @@ test.describe("Request Session via UI", () => {
     await expect(escalationCard).toBeVisible();
 
     // Get escalation name for later verification
-    const escalationName = await escalationCard
-      .locator('[data-testid="escalation-name"]')
-      .textContent();
+    const escalationName = await escalationCard.locator('[data-testid="escalation-name"]').textContent();
     expect(escalationName).toBeTruthy();
 
     // Click request button
@@ -142,8 +138,6 @@ test.describe("Request Session via UI", () => {
     await expect(firstCard.locator('[data-testid="escalation-name"]')).toBeVisible();
 
     // Should have a request button
-    await expect(
-      firstCard.locator('[data-testid="request-access-button"]')
-    ).toBeVisible();
+    await expect(firstCard.locator('[data-testid="request-access-button"]')).toBeVisible();
   });
 });

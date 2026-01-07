@@ -53,8 +53,7 @@ export class MailHogClient {
   private baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl =
-      baseUrl || process.env.MAILHOG_URL || "http://localhost:8025";
+    this.baseUrl = baseUrl || process.env.MAILHOG_URL || "http://localhost:8025";
   }
 
   /**
@@ -90,10 +89,7 @@ export class MailHogClient {
    * @returns The matching message
    * @throws Error if no matching message is found within timeout
    */
-  async waitForMessage(
-    predicate: (msg: MailHogMessage) => boolean,
-    timeout = 30000
-  ): Promise<MailHogMessage> {
+  async waitForMessage(predicate: (msg: MailHogMessage) => boolean, timeout = 30000): Promise<MailHogMessage> {
     const deadline = Date.now() + timeout;
     const pollInterval = 1000;
 
@@ -112,32 +108,20 @@ export class MailHogClient {
   /**
    * Wait for an email with a subject containing the given text.
    */
-  async waitForSubject(
-    subjectContains: string,
-    timeout = 30000
-  ): Promise<MailHogMessage> {
+  async waitForSubject(subjectContains: string, timeout = 30000): Promise<MailHogMessage> {
     return this.waitForMessage(
       (msg) =>
-        msg.Content.Headers.Subject?.some((s) =>
-          s.toLowerCase().includes(subjectContains.toLowerCase())
-        ) ?? false,
-      timeout
+        msg.Content.Headers.Subject?.some((s) => s.toLowerCase().includes(subjectContains.toLowerCase())) ?? false,
+      timeout,
     );
   }
 
   /**
    * Wait for an email sent to a specific recipient.
    */
-  async waitForRecipient(
-    recipientEmail: string,
-    timeout = 30000
-  ): Promise<MailHogMessage> {
-    const localPart = recipientEmail.split("@")[0].toLowerCase();
-    return this.waitForMessage(
-      (msg) =>
-        msg.To?.some((to) => to.Mailbox.toLowerCase() === localPart) ?? false,
-      timeout
-    );
+  async waitForRecipient(recipientEmail: string, timeout = 30000): Promise<MailHogMessage> {
+    const localPart = (recipientEmail.split("@")[0] ?? "").toLowerCase();
+    return this.waitForMessage((msg) => msg.To?.some((to) => to.Mailbox.toLowerCase() === localPart) ?? false, timeout);
   }
 
   /**
@@ -160,12 +144,7 @@ export class MailHogClient {
     const links = this.extractLinks(body);
     // Find link containing session review or approve paths
     return (
-      links.find(
-        (l) =>
-          l.includes("/sessions/review") ||
-          l.includes("/approve") ||
-          l.includes("/session/")
-      ) || null
+      links.find((l) => l.includes("/sessions/review") || l.includes("/approve") || l.includes("/session/")) || null
     );
   }
 
@@ -176,7 +155,7 @@ export class MailHogClient {
     // Check for MIME parts
     if (message.Content.MIME?.Parts) {
       const textPart = message.Content.MIME.Parts.find((part) =>
-        part.Headers["Content-Type"]?.some((ct) => ct.includes("text/plain"))
+        part.Headers["Content-Type"]?.some((ct) => ct.includes("text/plain")),
       );
       if (textPart) {
         return this.decodeQuotedPrintable(textPart.Body);
@@ -192,18 +171,14 @@ export class MailHogClient {
   getHtmlBody(message: MailHogMessage): string | null {
     if (message.Content.MIME?.Parts) {
       const htmlPart = message.Content.MIME.Parts.find((part) =>
-        part.Headers["Content-Type"]?.some((ct) => ct.includes("text/html"))
+        part.Headers["Content-Type"]?.some((ct) => ct.includes("text/html")),
       );
       if (htmlPart) {
         return this.decodeQuotedPrintable(htmlPart.Body);
       }
     }
     // Check if main body is HTML
-    if (
-      message.Content.Headers["Content-Type"]?.some((ct) =>
-        ct.includes("text/html")
-      )
-    ) {
+    if (message.Content.Headers["Content-Type"]?.some((ct) => ct.includes("text/html"))) {
       return this.decodeQuotedPrintable(message.Content.Body);
     }
     return null;
@@ -215,8 +190,6 @@ export class MailHogClient {
   private decodeQuotedPrintable(text: string): string {
     return text
       .replace(/=\r?\n/g, "") // Remove soft line breaks
-      .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) =>
-        String.fromCharCode(parseInt(hex, 16))
-      );
+      .replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
   }
 }

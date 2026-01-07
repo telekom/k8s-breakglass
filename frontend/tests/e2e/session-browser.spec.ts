@@ -83,10 +83,7 @@ test.describe("Session Browser", () => {
       const count = await sessionRows.count();
 
       for (let i = 0; i < count; i++) {
-        const statusText = await sessionRows
-          .nth(i)
-          .locator('[data-testid="status"]')
-          .textContent();
+        const statusText = await sessionRows.nth(i).locator('[data-testid="status"]').textContent();
         expect(statusText?.toLowerCase()).toContain("active");
       }
     }

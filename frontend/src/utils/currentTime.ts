@@ -2,10 +2,10 @@ import { onMounted, onUnmounted, shallowReadonly, shallowRef } from "vue";
 
 export default function useCurrentTime(refreshInterval = 1000) {
   const time = shallowRef(Date.now());
-  let interval = 0;
+  let interval: ReturnType<typeof setInterval> | null = null;
 
   onMounted(() => {
-    if (interval != 0) {
+    if (interval != null) {
       clearInterval(interval);
     }
     interval = setInterval(() => {
@@ -14,8 +14,10 @@ export default function useCurrentTime(refreshInterval = 1000) {
   });
 
   onUnmounted(() => {
-    clearInterval(interval);
-    interval = 0;
+    if (interval != null) {
+      clearInterval(interval);
+      interval = null;
+    }
   });
 
   return shallowReadonly(time);

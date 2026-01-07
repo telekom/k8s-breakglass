@@ -164,6 +164,15 @@ var TestUsers = struct {
 	// MultiClusterApprover is an approver for multi-cluster tests
 	// Groups: approver, multi-cluster-approver
 	MultiClusterApprover TestUser
+
+	// CompleteFlowRequester is specifically for TestCompleteBreakglassFlow
+	// This user does NOT have complete-flow-test-admins group by default - they get it via session
+	// Groups: complete-flow-requester-base (minimal group with no special permissions)
+	CompleteFlowRequester TestUser
+
+	// CompleteFlowApprover is an approver for complete flow tests
+	// Groups: approver, complete-flow-approver
+	CompleteFlowApprover TestUser
 }{
 	Requester: TestUser{
 		Username: "test-user",
@@ -427,6 +436,18 @@ var TestUsers = struct {
 		Password: "multi-cluster-approver-password",
 		Email:    "multi-cluster-approver@example.com",
 		Groups:   []string{"approver", "multi-cluster-approver"},
+	},
+	CompleteFlowRequester: TestUser{
+		Username: "complete-flow-requester",
+		Password: "complete-flow-requester-password",
+		Email:    "complete-flow-requester@example.com",
+		Groups:   []string{"complete-flow-requester-base"}, // Minimal - NO complete-flow-test-admins!
+	},
+	CompleteFlowApprover: TestUser{
+		Username: "complete-flow-approver",
+		Password: "complete-flow-approver-password",
+		Email:    "complete-flow-approver@example.com",
+		Groups:   []string{"approver", "complete-flow-approver"},
 	},
 }
 

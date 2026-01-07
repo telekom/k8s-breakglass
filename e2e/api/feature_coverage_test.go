@@ -976,7 +976,7 @@ func TestPodSecurityRulesAdvancedFeature(t *testing.T) {
 					BlockFactors: []string{"privilegedContainer", "hostNetwork"},
 					// Exemptions for specific namespaces
 					Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-						Namespaces: []string{"kube-system", "monitoring"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}},
 					},
 				},
 			},
@@ -997,7 +997,7 @@ func TestPodSecurityRulesAdvancedFeature(t *testing.T) {
 		assert.Len(t, fetched.Spec.PodSecurityRules.Thresholds, 3)
 		assert.Len(t, fetched.Spec.PodSecurityRules.BlockFactors, 2)
 		require.NotNil(t, fetched.Spec.PodSecurityRules.Exemptions)
-		assert.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, 2)
+		assert.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, 2)
 		t.Logf("Verified: Complete PodSecurityRules with risk factors, thresholds, block factors, and exemptions")
 	})
 }

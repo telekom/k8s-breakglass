@@ -33,21 +33,12 @@ test.describe("Reject Session", () => {
 
       // === Step 1: Requester creates session ===
       await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
-      const escalationCard = requesterPage
-        .locator('[data-testid="escalation-card"]')
-        .first();
-      await escalationCard
-        .locator('[data-testid="request-access-button"]')
-        .click();
-      await requesterPage.fill(
-        '[data-testid="reason-input"]',
-        "Rejection test - this should be rejected"
-      );
+      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      await escalationCard.locator('[data-testid="request-access-button"]').click();
+      await requesterPage.fill('[data-testid="reason-input"]', "Rejection test - this should be rejected");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
-      await expect(
-        requesterPage.locator('[data-testid="success-toast"]')
-      ).toBeVisible();
+      await expect(requesterPage.locator('[data-testid="success-toast"]')).toBeVisible();
 
       // === Step 2: Wait for email ===
       const email = await mailhog.waitForSubject("breakglass", 30000);
@@ -58,14 +49,10 @@ test.describe("Reject Session", () => {
       await approverAuth.loginViaKeycloak(TEST_USERS.approver);
       await approverPage.goto(approvalLink!);
 
-      await expect(
-        approverPage.locator('[data-testid="session-review"]')
-      ).toBeVisible({ timeout: 15000 });
+      await expect(approverPage.locator('[data-testid="session-review"]')).toBeVisible({ timeout: 15000 });
 
       // === Step 4: Fill rejection reason ===
-      const rejectionReasonInput = approverPage.locator(
-        '[data-testid="rejection-reason-input"]'
-      );
+      const rejectionReasonInput = approverPage.locator('[data-testid="rejection-reason-input"]');
       await expect(rejectionReasonInput).toBeVisible();
       await rejectionReasonInput.fill("Rejected: Invalid justification provided");
 
@@ -73,26 +60,20 @@ test.describe("Reject Session", () => {
       await approverPage.click('[data-testid="reject-button"]');
 
       // Handle confirmation dialog if present
-      const confirmDialog = approverPage.locator(
-        '[data-testid="confirm-reject-dialog"]'
-      );
+      const confirmDialog = approverPage.locator('[data-testid="confirm-reject-dialog"]');
       if (await confirmDialog.isVisible({ timeout: 2000 }).catch(() => false)) {
         await approverPage.click('[data-testid="confirm-reject-button"]');
       }
 
       // Verify rejection success
-      await expect(
-        approverPage.locator('[data-testid="success-toast"]')
-      ).toBeVisible();
+      await expect(approverPage.locator('[data-testid="success-toast"]')).toBeVisible();
 
       // === Step 6: Verify requester sees rejected session ===
       await requesterPage.goto("/requests/mine");
       await requesterPage.reload();
       await requesterPage.waitForLoadState("networkidle");
 
-      const sessionRow = requesterPage
-        .locator('[data-testid="session-row"]')
-        .first();
+      const sessionRow = requesterPage.locator('[data-testid="session-row"]').first();
       await expect(sessionRow).toContainText(/rejected/i);
 
       // === Step 7: Verify rejection email ===
@@ -125,16 +106,9 @@ test.describe("Reject Session", () => {
 
       // Create session
       await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
-      const escalationCard = requesterPage
-        .locator('[data-testid="escalation-card"]')
-        .first();
-      await escalationCard
-        .locator('[data-testid="request-access-button"]')
-        .click();
-      await requesterPage.fill(
-        '[data-testid="reason-input"]',
-        "Test for reject button validation"
-      );
+      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      await escalationCard.locator('[data-testid="request-access-button"]').click();
+      await requesterPage.fill('[data-testid="reason-input"]', "Test for reject button validation");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
       // Get approval link
@@ -145,19 +119,14 @@ test.describe("Reject Session", () => {
       await approverAuth.loginViaKeycloak(TEST_USERS.approver);
       await approverPage.goto(approvalLink!);
 
-      await expect(
-        approverPage.locator('[data-testid="session-review"]')
-      ).toBeVisible({ timeout: 15000 });
+      await expect(approverPage.locator('[data-testid="session-review"]')).toBeVisible({ timeout: 15000 });
 
       // Reject button should be disabled without reason
       const rejectButton = approverPage.locator('[data-testid="reject-button"]');
       await expect(rejectButton).toBeDisabled();
 
       // Enter reason
-      await approverPage.fill(
-        '[data-testid="rejection-reason-input"]',
-        "Test reason"
-      );
+      await approverPage.fill('[data-testid="rejection-reason-input"]', "Test reason");
 
       // Now should be enabled
       await expect(rejectButton).toBeEnabled();
@@ -167,9 +136,7 @@ test.describe("Reject Session", () => {
     }
   });
 
-  test("approver can approve and reject different sessions", async ({
-    browser,
-  }) => {
+  test("approver can approve and reject different sessions", async ({ browser }) => {
     const requesterContext = await browser.newContext({
       ignoreHTTPSErrors: true,
     });
@@ -186,21 +153,12 @@ test.describe("Reject Session", () => {
 
       // Login requester and create a session
       await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
-      const escalationCard = requesterPage
-        .locator('[data-testid="escalation-card"]')
-        .first();
-      await escalationCard
-        .locator('[data-testid="request-access-button"]')
-        .click();
-      await requesterPage.fill(
-        '[data-testid="reason-input"]',
-        "Session for approve/reject flow test"
-      );
+      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      await escalationCard.locator('[data-testid="request-access-button"]').click();
+      await requesterPage.fill('[data-testid="reason-input"]', "Session for approve/reject flow test");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
-      await expect(
-        requesterPage.locator('[data-testid="success-toast"]')
-      ).toBeVisible();
+      await expect(requesterPage.locator('[data-testid="success-toast"]')).toBeVisible();
 
       // Login approver
       await approverAuth.loginViaKeycloak(TEST_USERS.approver);
@@ -218,18 +176,16 @@ test.describe("Reject Session", () => {
         await sessionRows.first().click();
 
         // Should see session review with both approve and reject options
-        const approveButton = approverPage.locator(
-          '[data-testid="approve-button"]'
-        );
-        const rejectButton = approverPage.locator(
-          '[data-testid="reject-button"]'
-        );
+        const approveButton = approverPage.locator('[data-testid="approve-button"]');
+        const rejectButton = approverPage.locator('[data-testid="reject-button"]');
 
         // Both buttons should be visible
         await expect(approveButton).toBeVisible();
-        await expect(rejectButton).toBeVisible({ timeout: 5000 }).catch(() => {
-          // Reject might require reason first
-        });
+        await expect(rejectButton)
+          .toBeVisible({ timeout: 5000 })
+          .catch(() => {
+            // Reject might require reason first
+          });
       }
     } finally {
       await requesterContext.close();

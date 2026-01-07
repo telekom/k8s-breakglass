@@ -16,9 +16,7 @@ test.describe("Approve Session via Email Link", () => {
     await mailhog.clearMessages();
   });
 
-  test("approver can approve session by clicking email link", async ({
-    browser,
-  }) => {
+  test("approver can approve session by clicking email link", async ({ browser }) => {
     // Create two browser contexts: requester and approver
     const requesterContext = await browser.newContext({
       ignoreHTTPSErrors: true,
@@ -37,22 +35,13 @@ test.describe("Approve Session via Email Link", () => {
       // === Step 1: Requester creates session ===
       await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
 
-      const escalationCard = requesterPage
-        .locator('[data-testid="escalation-card"]')
-        .first();
-      await escalationCard
-        .locator('[data-testid="request-access-button"]')
-        .click();
+      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      await escalationCard.locator('[data-testid="request-access-button"]').click();
 
-      await requesterPage.fill(
-        '[data-testid="reason-input"]',
-        "Email approval test - please approve via link"
-      );
+      await requesterPage.fill('[data-testid="reason-input"]', "Email approval test - please approve via link");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
-      await expect(
-        requesterPage.locator('[data-testid="success-toast"]')
-      ).toBeVisible();
+      await expect(requesterPage.locator('[data-testid="success-toast"]')).toBeVisible();
 
       // === Step 2: Wait for email ===
       const email = await mailhog.waitForSubject("breakglass", 30000);
@@ -69,40 +58,28 @@ test.describe("Approve Session via Email Link", () => {
       await approverPage.goto(approvalLink!);
 
       // Should see session review page
-      await expect(
-        approverPage.locator('[data-testid="session-review"]')
-      ).toBeVisible({ timeout: 15000 });
+      await expect(approverPage.locator('[data-testid="session-review"]')).toBeVisible({ timeout: 15000 });
 
       // Verify session details
-      await expect(
-        approverPage.locator('[data-testid="requester"]')
-      ).toContainText("bob");
-      await expect(
-        approverPage.locator('[data-testid="request-reason"]')
-      ).toContainText("Email approval test");
+      await expect(approverPage.locator('[data-testid="requester"]')).toContainText("bob");
+      await expect(approverPage.locator('[data-testid="request-reason"]')).toContainText("Email approval test");
 
       // Approve the session
-      const approvalReasonInput = approverPage.locator(
-        '[data-testid="approval-reason-input"]'
-      );
+      const approvalReasonInput = approverPage.locator('[data-testid="approval-reason-input"]');
       if (await approvalReasonInput.isVisible()) {
         await approvalReasonInput.fill("Approved via email link - E2E test");
       }
       await approverPage.click('[data-testid="approve-button"]');
 
       // Verify approval success
-      await expect(
-        approverPage.locator('[data-testid="success-toast"]')
-      ).toBeVisible();
+      await expect(approverPage.locator('[data-testid="success-toast"]')).toBeVisible();
 
       // === Step 4: Verify requester sees approved session ===
       await requesterPage.goto("/requests/mine");
       await requesterPage.reload();
       await requesterPage.waitForLoadState("networkidle");
 
-      const sessionRow = requesterPage
-        .locator('[data-testid="session-row"]')
-        .first();
+      const sessionRow = requesterPage.locator('[data-testid="session-row"]').first();
       await expect(sessionRow).toContainText(/active|approved/i);
 
       // === Step 5: Verify approval email sent to requester ===
@@ -117,9 +94,7 @@ test.describe("Approve Session via Email Link", () => {
     }
   });
 
-  test("approval link without login redirects to Keycloak then back", async ({
-    browser,
-  }) => {
+  test("approval link without login redirects to Keycloak then back", async ({ browser }) => {
     // First create a session with logged in user
     const requesterContext = await browser.newContext({
       ignoreHTTPSErrors: true,
@@ -130,12 +105,8 @@ test.describe("Approve Session via Email Link", () => {
     try {
       await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
 
-      const escalationCard = requesterPage
-        .locator('[data-testid="escalation-card"]')
-        .first();
-      await escalationCard
-        .locator('[data-testid="request-access-button"]')
-        .click();
+      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      await escalationCard.locator('[data-testid="request-access-button"]').click();
       await requesterPage.fill('[data-testid="reason-input"]', "Deep link test");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
@@ -162,9 +133,7 @@ test.describe("Approve Session via Email Link", () => {
 
         // Should redirect back to session review (deep link preserved)
         await newPage.waitForURL(/session|review/, { timeout: 30000 });
-        await expect(
-          newPage.locator('[data-testid="session-review"]')
-        ).toBeVisible({ timeout: 15000 });
+        await expect(newPage.locator('[data-testid="session-review"]')).toBeVisible({ timeout: 15000 });
       } finally {
         await newContext.close();
       }
@@ -184,16 +153,9 @@ test.describe("Approve Session via Email Link", () => {
     try {
       await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
 
-      const escalationCard = requesterPage
-        .locator('[data-testid="escalation-card"]')
-        .first();
-      await escalationCard
-        .locator('[data-testid="request-access-button"]')
-        .click();
-      await requesterPage.fill(
-        '[data-testid="reason-input"]',
-        "Non-approver test"
-      );
+      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      await escalationCard.locator('[data-testid="request-access-button"]').click();
+      await requesterPage.fill('[data-testid="reason-input"]', "Non-approver test");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
       const email = await mailhog.waitForSubject("breakglass", 30000);

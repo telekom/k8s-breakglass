@@ -248,14 +248,14 @@ func TestAuditConfig_FilterConfig(t *testing.T) {
 		IncludeEventTypes: []string{"session.*", "access.denied*"},
 		ExcludeEventTypes: []string{"resource.list", "resource.watch"},
 		ExcludeUsers:      []string{"system:serviceaccount:kube-system:*"},
-		ExcludeNamespaces: []string{"kube-system", "kube-public"},
+		ExcludeNamespaces: &NamespaceFilter{Patterns: []string{"kube-system", "kube-public"}},
 		IncludeResources:  []string{"secrets", "configmaps"},
 	}
 
 	assert.Len(t, filter.IncludeEventTypes, 2)
 	assert.Len(t, filter.ExcludeEventTypes, 2)
 	assert.Len(t, filter.ExcludeUsers, 1)
-	assert.Len(t, filter.ExcludeNamespaces, 2)
+	assert.Len(t, filter.ExcludeNamespaces.Patterns, 2)
 	assert.Len(t, filter.IncludeResources, 2)
 }
 
@@ -619,7 +619,7 @@ func TestAuditFilterConfig_EdgeCases(t *testing.T) {
 	// Filter with wildcard patterns
 	wildcardFilter := AuditFilterConfig{
 		IncludeEventTypes: []string{"session.*", "access.*"},
-		ExcludeNamespaces: []string{"kube-*"},
+		ExcludeNamespaces: &NamespaceFilter{Patterns: []string{"kube-*"}},
 	}
 	assert.Len(t, wildcardFilter.IncludeEventTypes, 2)
 }

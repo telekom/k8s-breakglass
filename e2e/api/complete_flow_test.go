@@ -52,17 +52,20 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 
 	cli := helpers.GetClient(t)
 	tc := helpers.NewTestContext(t, ctx)
-	apiClient := tc.RequesterClient()
-	approverClient := tc.ApproverClient()
+	// Use dedicated CompleteFlow users to ensure isolation from other tests
+	// CompleteFlowRequester does NOT have complete-flow-test-admins by default
+	requester := helpers.TestUsers.CompleteFlowRequester
+	approver := helpers.TestUsers.CompleteFlowApprover
+	apiClient := tc.ClientForUser(requester)
+	approverClient := tc.ClientForUser(approver)
 	cleanup := helpers.NewCleanup(t, cli)
 	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
-	// Use the actual authenticated user's email and one of their groups
-	// RequesterClient authenticates as TestUsers.Requester
-	testUser := helpers.TestUsers.Requester.Email
+	// Use the dedicated test user - they do NOT have complete-flow-test-admins by default
+	testUser := requester.Email
 	testGroup := "complete-flow-test-admins"
-	// The requester has groups: ["dev", "ops", "requester"] - use "dev" for Allowed.Groups
-	requesterGroups := helpers.TestUsers.Requester.Groups
+	// The requester's base groups (minimal - just complete-flow-requester-base)
+	requesterGroups := requester.Groups
 
 	// Create a BreakglassEscalation first
 	escalation := &telekomv1alpha1.BreakglassEscalation{
@@ -80,7 +83,7 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 				Groups:   requesterGroups, // Use the authenticated user's actual groups
 			},
 			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
+				Users: []string{approver.Email},
 			},
 		},
 	}
