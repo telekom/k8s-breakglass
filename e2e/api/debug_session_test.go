@@ -38,9 +38,7 @@ import (
 // - Create DebugSession from template
 // - Verify session progresses through states
 func TestDebugSessionLifecycle(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -145,9 +143,7 @@ func TestDebugSessionLifecycle(t *testing.T) {
 
 // TestDebugPodTemplateVariants tests different configurations of DebugPodTemplate.
 func TestDebugPodTemplateVariants(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

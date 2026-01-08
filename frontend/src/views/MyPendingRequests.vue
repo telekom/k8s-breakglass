@@ -1,27 +1,31 @@
 <template>
-  <main class="ui-page pending-page">
+  <main class="ui-page pending-page" data-testid="my-requests-view">
     <PageHeader
       title="My Pending Requests"
       subtitle="Track your pending access requests and cancel anything you no longer need."
       :badge="`${requests.length} pending`"
       badge-variant="secondary"
+      data-testid="my-requests-header"
     />
 
-    <LoadingState v-if="loading" message="Loading your requests..." />
-    <ErrorBanner v-else-if="error" :message="error" show-retry @retry="loadRequests" />
+    <LoadingState v-if="loading" message="Loading your requests..." data-testid="my-requests-loading" />
+    <ErrorBanner v-else-if="error" :message="error" show-retry data-testid="my-requests-error" @retry="loadRequests" />
 
-    <section v-else class="requests-section">
+    <section v-else class="requests-section" data-testid="requests-section">
       <EmptyState
         v-if="requests.length === 0"
+        data-testid="empty-state"
         title="No pending requests"
         description="You don't have any access requests waiting for approval."
         icon="📭"
       />
 
-      <div v-else class="requests-list">
+      <div v-else class="requests-list" data-testid="requests-list">
         <SessionSummaryCard
           v-for="req in requests"
           :key="getSessionKey(req)"
+          :data-testid="`pending-request-card-${req.metadata?.name || getSessionKey(req)}`"
+          data-testid-generic="pending-request-card"
           :eyebrow="getSessionCluster(req)"
           :title="getSessionGroup(req)"
           :subtitle="getSessionUser(req)"
@@ -43,14 +47,14 @@
           <template #meta>
             <SessionMetaGrid :items="getMetaItems(req)">
               <template #item="{ item }">
-                <div v-if="item.id === 'timeout'" class="countdown-value">
+                <div v-if="item.id === 'timeout'" class="countdown-value" data-testid="timeout-countdown">
                   <template v-if="req.status?.timeoutAt && isFuture(req.status.timeoutAt)">
                     <CountdownTimer :expires-at="req.status.timeoutAt" />
                     <small>({{ formatDateTime(req.status.timeoutAt) }})</small>
                   </template>
                   <template v-else>—</template>
                 </div>
-                <div v-else-if="item.id === 'expires'" class="countdown-value">
+                <div v-else-if="item.id === 'expires'" class="countdown-value" data-testid="expiry-countdown">
                   <template v-if="req.status?.expiresAt && isFuture(req.status.expiresAt)">
                     <CountdownTimer :expires-at="req.status.expiresAt" />
                     <small>({{ formatDateTime(req.status.expiresAt) }})</small>
@@ -77,6 +81,7 @@
                 </span>
               </div>
               <ActionButton
+                data-testid="withdraw-button"
                 label="Withdraw"
                 loading-label="Withdrawing..."
                 variant="secondary"

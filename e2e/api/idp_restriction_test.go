@@ -32,9 +32,7 @@ import (
 
 // TestIdentityProviderCRUD tests basic IdentityProvider create/read/update/delete operations.
 func TestIdentityProviderCRUD(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -48,7 +46,7 @@ func TestIdentityProviderCRUD(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   uniqueName,
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				DisplayName: "E2E Test IDP",
@@ -78,7 +76,7 @@ func TestIdentityProviderCRUD(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   uniqueName,
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				DisplayName: "Original Name",
@@ -117,7 +115,7 @@ func TestIdentityProviderCRUD(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   uniqueName,
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				DisplayName: "To Be Deleted",
@@ -141,9 +139,7 @@ func TestIdentityProviderCRUD(t *testing.T) {
 
 // TestIdentityProviderRestrictions tests AllowedIdentityProviders enforcement in escalations.
 func TestIdentityProviderRestrictions(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -158,7 +154,7 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-allowed"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				DisplayName: "Allowed IDP",
@@ -174,25 +170,12 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create escalation that allows this IDP for requests
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-esc-idp-allowed"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:                       "idp-test-group",
-				AllowedIdentityProvidersForRequests:  []string{idp.Name},
-				AllowedIdentityProvidersForApprovers: []string{idp.Name}, // Required when AllowedIdentityProvidersForRequests is set
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-esc-idp-allowed"), namespace).
+			WithEscalatedGroup("idp-test-group").
+			WithAllowedIDPsForRequests(idp.Name).
+			WithAllowedIDPsForApprovers(idp.Name).
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -209,7 +192,7 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-approver"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				DisplayName: "Approver IDP",
@@ -224,25 +207,12 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 		err := cli.Create(ctx, idp)
 		require.NoError(t, err)
 
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-esc-approver-idp"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:                       "approver-idp-group",
-				AllowedIdentityProvidersForRequests:  []string{idp.Name}, // Required when AllowedIdentityProvidersForApprovers is set
-				AllowedIdentityProvidersForApprovers: []string{idp.Name},
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-esc-approver-idp"), namespace).
+			WithEscalatedGroup("approver-idp-group").
+			WithAllowedIDPsForRequests(idp.Name).
+			WithAllowedIDPsForApprovers(idp.Name).
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -258,9 +228,7 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 
 // TestIdentityProviderStatus tests IdentityProvider status updates.
 func TestIdentityProviderStatus(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -272,7 +240,7 @@ func TestIdentityProviderStatus(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-status"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				DisplayName: "Status Test IDP",
@@ -300,9 +268,7 @@ func TestIdentityProviderStatus(t *testing.T) {
 
 // TestMultipleIDPSelection tests scenarios with multiple IdentityProviders.
 func TestMultipleIDPSelection(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -317,7 +283,7 @@ func TestMultipleIDPSelection(t *testing.T) {
 		idp1 := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-multi1"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				DisplayName: "Corporate SSO",
@@ -335,7 +301,7 @@ func TestMultipleIDPSelection(t *testing.T) {
 		idp2 := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-idp-multi2"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				DisplayName: "Partner SSO",
@@ -351,25 +317,12 @@ func TestMultipleIDPSelection(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create escalation allowing both IDPs
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-esc-multi-idp"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:                       "multi-idp-group",
-				AllowedIdentityProvidersForRequests:  []string{idp1.Name, idp2.Name},
-				AllowedIdentityProvidersForApprovers: []string{idp1.Name, idp2.Name}, // Required when AllowedIdentityProvidersForRequests is set
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-esc-multi-idp"), namespace).
+			WithEscalatedGroup("multi-idp-group").
+			WithAllowedIDPsForRequests(idp1.Name, idp2.Name).
+			WithAllowedIDPsForApprovers(idp1.Name, idp2.Name).
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err)

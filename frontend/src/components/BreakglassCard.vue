@@ -497,6 +497,7 @@ function drop() {
 <template>
   <SessionSummaryCard
     class="breakglass-card"
+    data-testid="escalation-card"
     eyebrow="Escalation target"
     :title="breakglass.to"
     :subtitle="sessionSubtitle"
@@ -581,9 +582,13 @@ function drop() {
         <p>{{ ctaCopy }}</p>
       </div>
       <div class="actions-row">
-        <scale-button v-if="sessionPending" variant="primary" @click="withdraw">Withdraw</scale-button>
-        <scale-button v-else-if="sessionActive" variant="secondary" @click="drop">Drop session</scale-button>
-        <scale-button v-else @click="openRequest">Request access</scale-button>
+        <scale-button v-if="sessionPending" variant="primary" data-testid="withdraw-button" @click="withdraw"
+          >Withdraw</scale-button
+        >
+        <scale-button v-else-if="sessionActive" variant="secondary" data-testid="drop-button" @click="drop"
+          >Drop session</scale-button
+        >
+        <scale-button v-else data-testid="request-access-button" @click="openRequest">Request access</scale-button>
       </div>
     </template>
   </SessionSummaryCard>
@@ -592,12 +597,14 @@ function drop() {
     v-if="showRequestModal"
     heading="Request breakglass"
     size="default"
+    data-testid="request-modal"
     :opened="showRequestModal"
     @scale-close="closeRequestModal"
   >
     <div class="duration-selector">
       <scale-text-field
         id="duration-input"
+        data-testid="duration-select"
         label="Duration"
         type="text"
         :value="durationInput"
@@ -627,17 +634,24 @@ function drop() {
       </div>
     </div>
 
-    <div class="schedule-section">
-      <scale-button size="small" variant="secondary" class="inline-action" @click="toggleScheduleOptions">
+    <div class="schedule-section" data-testid="schedule-section">
+      <scale-button
+        size="small"
+        variant="secondary"
+        class="inline-action"
+        data-testid="schedule-toggle"
+        @click="toggleScheduleOptions"
+      >
         <span v-if="!showScheduleOptions">Schedule for future date (optional)</span>
         <span v-else>Hide schedule options</span>
       </scale-button>
 
-      <div v-if="showScheduleOptions" class="schedule-details">
+      <div v-if="showScheduleOptions" class="schedule-details" data-testid="schedule-details">
         <p class="schedule-intro">Use the 24-hour date & time picker below. Leave it empty to start immediately.</p>
-        <div class="schedule-picker">
+        <div class="schedule-picker" data-testid="schedule-picker">
           <scale-text-field
             :id="'scheduled-date-' + breakglass.to"
+            data-testid="schedule-date"
             label="Date"
             type="date"
             :min="minScheduleDate"
@@ -647,6 +661,7 @@ function drop() {
           ></scale-text-field>
           <scale-dropdown-select
             :id="'scheduled-hour-' + breakglass.to"
+            data-testid="schedule-hour"
             label="Hour (24h)"
             :value="scheduleHourPart"
             style="flex: 1"
@@ -658,6 +673,7 @@ function drop() {
           </scale-dropdown-select>
           <scale-dropdown-select
             :id="'scheduled-minute-' + breakglass.to"
+            data-testid="schedule-minute"
             label="Minute"
             :value="scheduleMinutePart"
             style="flex: 1"
@@ -669,7 +685,13 @@ function drop() {
           </scale-dropdown-select>
         </div>
         <div v-if="scheduleDatePart" class="schedule-picker-actions">
-          <scale-button size="small" variant="secondary" class="inline-action" @click="clearScheduledSelection">
+          <scale-button
+            size="small"
+            variant="secondary"
+            class="inline-action"
+            data-testid="clear-schedule"
+            @click="clearScheduledSelection"
+          >
             Clear selection
           </scale-button>
         </div>
@@ -687,6 +709,7 @@ function drop() {
     <div class="reason-field">
       <scale-textarea
         id="reason-field-input"
+        data-testid="reason-input"
         label="Reason"
         :value="requestReason"
         :max-length="reasonCharLimit"
@@ -698,14 +721,22 @@ function drop() {
       <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning">
         ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
       </p>
-      <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error">This field is required.</p>
+      <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error" data-testid="reason-error">
+        This field is required.
+      </p>
     </div>
 
     <div class="modal-actions">
-      <scale-button :disabled="requiresReason && !(requestReason || '').trim()" @click="request">
+      <scale-button
+        :disabled="requiresReason && !(requestReason || '').trim()"
+        data-testid="submit-request-button"
+        @click="request"
+      >
         Confirm Request
       </scale-button>
-      <scale-button variant="secondary" @click="closeRequestModal">Cancel</scale-button>
+      <scale-button variant="secondary" data-testid="cancel-request-button" @click="closeRequestModal"
+        >Cancel</scale-button
+      >
     </div>
   </scale-modal>
 </template>

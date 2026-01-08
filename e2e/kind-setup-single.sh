@@ -40,7 +40,7 @@ WEBHOOK_SERVICE_PORT=${WEBHOOK_SERVICE_PORT:-8081} # in-cluster port webhook/con
 # Forward Keycloak HTTPS (container uses 8443) by default so local https access matches container port
 KEYCLOAK_SVC_PORT=${KEYCLOAK_SVC_PORT:-8443}     # keycloak service internal port (prefer HTTPS)
 KEYCLOAK_FORWARD_PORT=${KEYCLOAK_FORWARD_PORT:-8443} # local port forwarded to Keycloak svc:8443
-# CONTROLLER_FORWARD_PORT will be set later to a dynamic port if not explicitly provided
+# CONTROLLER_FORWARD_PORT defaults to 8080 for UI E2E consistency (can be overridden)
 MAILHOG_UI_PORT=${MAILHOG_UI_PORT:-8025}
 # METRICS_FORWARD_PORT will be set later to a dynamic port if not explicitly provided
 # The breakglass controller exposes Prometheus metrics on port 8081
@@ -57,9 +57,9 @@ PF_FILE=${PF_FILE:-e2e/port-forward-pids}
 
 # --- Keycloak realm / issuer ---
 # Default to the in-cluster service name that the `config/dev` overlay creates
-# (the dev overlay uses a namePrefix breakglass-dev- and namespace breakglass-dev-system).
+# (the dev overlay uses a namePrefix breakglass- and namespace breakglass-system).
 # This ensures the apiserver OIDC issuer points at a DNS name resolvable inside the cluster.
-KEYCLOAK_HOST=${KEYCLOAK_HOST:-breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local}
+KEYCLOAK_HOST=${KEYCLOAK_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local}
 KEYCLOAK_HTTPS_PORT=${KEYCLOAK_HTTPS_PORT:-8443}
 KEYCLOAK_REALM=${KEYCLOAK_REALM:-breakglass-e2e}
 
@@ -140,7 +140,7 @@ debug_cluster_state() {
   # Usage: debug_cluster_state [context_message]
   # Uses global $HUB_KUBECONFIG, $CLUSTER_NAME
   local context="${1:-General failure}"
-  e2e_print_cluster_debug "$HUB_KUBECONFIG" "$CLUSTER_NAME" "breakglass-dev-system"
+  e2e_print_cluster_debug "$HUB_KUBECONFIG" "$CLUSTER_NAME" "breakglass-system"
 }
 
 wait_for_deploy_by_label() {
@@ -196,6 +196,7 @@ apply_e2e_test_crs() {
     "config/dev/resources/crs/debug-templates-test.yaml"
     "config/dev/resources/crs/deny-policies-test.yaml"
     "config/dev/resources/crs/escalations-test.yaml"
+    "config/dev/resources/crs/ui-e2e-escalations.yaml"
   )
   
   for cr_file in "${cr_files[@]}"; do
@@ -203,11 +204,11 @@ apply_e2e_test_crs() {
       log "Applying $cr_file"
       # Apply directly with kubectl, transforming namespace and name prefix using sed
       # This avoids kustomize's restriction on absolute paths
-      sed -e 's/namespace: default/namespace: breakglass-dev-system/g' \
-          -e 's/namespace: breakglass$/namespace: breakglass-dev-system/g' \
-          -e '/^  name:/s/name: /name: breakglass-dev-/g' \
+      sed -e 's/namespace: default/namespace: breakglass-system/g' \
+          -e 's/namespace: breakglass$/namespace: breakglass-system/g' \
+          -e '/^  name:/s/name: /name: breakglass-/g' \
           "$cr_file" | \
-      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -n breakglass-dev-system -f - || log "Warning: failed to apply $cr_file (continuing)"
+      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -n breakglass-system -f - || log "Warning: failed to apply $cr_file (continuing)"
     else
       log "Warning: CR file not found: $cr_file"
     fi
@@ -332,7 +333,7 @@ DNS.3 = keycloak.keycloak.svc
 DNS.4 = keycloak.keycloak.svc.cluster.local
 DNS.5 = localhost
 DNS.6 = ${KEYCLOAK_HOST}
-DNS.7 = breakglass-dev-keycloak
+DNS.7 = breakglass-keycloak
 DNS.8 = breakglass.system.svc.cluster.local
 EOF
 openssl genrsa -out "$TLS_DIR/ca.key" 2048
@@ -355,18 +356,18 @@ distinguished_name = dn
 req_extensions = req_ext
 prompt = no
 [ dn ]
-CN = breakglass-dev-breakglass.breakglass-dev-system.svc
+CN = breakglass-webhook-service.breakglass-system.svc
 [ req_ext ]
 subjectAltName = @alt_names
 [ alt_names ]
-DNS.1 = breakglass-dev-breakglass
-DNS.2 = breakglass-dev-breakglass.breakglass-dev-system
-DNS.3 = breakglass-dev-breakglass.breakglass-dev-system.svc
-DNS.4 = breakglass-dev-breakglass.breakglass-dev-system.svc.cluster.local
-DNS.5 = breakglass-dev-breakglass-webhook-service
-DNS.6 = breakglass-dev-breakglass-webhook-service.breakglass-dev-system
-DNS.7 = breakglass-dev-breakglass-webhook-service.breakglass-dev-system.svc
-DNS.8 = breakglass-dev-breakglass-webhook-service.breakglass-dev-system.svc.cluster.local
+DNS.1 = breakglass-manager
+DNS.2 = breakglass-manager.breakglass-system
+DNS.3 = breakglass-manager.breakglass-system.svc
+DNS.4 = breakglass-manager.breakglass-system.svc.cluster.local
+DNS.5 = breakglass-webhook-service
+DNS.6 = breakglass-webhook-service.breakglass-system
+DNS.7 = breakglass-webhook-service.breakglass-system.svc
+DNS.8 = breakglass-webhook-service.breakglass-system.svc.cluster.local
 DNS.9 = localhost
 EOF
 
@@ -607,7 +608,40 @@ EOF
 
 if $KIND get clusters | grep -q "^${CLUSTER_NAME}$"; then log "Deleting existing ${CLUSTER_NAME}"; $KIND delete cluster --name "$CLUSTER_NAME" || true; fi
 log "Creating single cluster ${CLUSTER_NAME} (image $KIND_NODE_IMAGE)"
-$KIND create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --config "$KIND_CFG" --wait 120s
+
+# Build kind create command with optional --retain flag for debugging failures
+# Set KIND_RETAIN_ON_FAILURE=true to keep cluster nodes on failure
+kind_create_args=(create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --config "$KIND_CFG" --wait 120s)
+if [ "${KIND_RETAIN_ON_FAILURE:-false}" = "true" ]; then
+  log "KIND_RETAIN_ON_FAILURE=true: Nodes will be preserved on failure for debugging"
+  kind_create_args+=(--retain)
+fi
+
+if ! $KIND "${kind_create_args[@]}"; then
+  exit_code=$?
+  log "Kind cluster creation failed (exit code: $exit_code)"
+  
+  # Capture logs before potential cleanup
+  log "Capturing docker logs for ${CLUSTER_NAME}-control-plane..."
+  docker logs "${CLUSTER_NAME}-control-plane" 2>&1 | tail -200 || true
+  
+  # Try to capture kubelet logs
+  log "Attempting to capture kubelet logs..."
+  docker exec "${CLUSTER_NAME}-control-plane" journalctl -u kubelet --no-pager -n 100 2>&1 || true
+  
+  # Capture crictl status
+  log "Capturing crictl container status..."
+  docker exec "${CLUSTER_NAME}-control-plane" crictl ps -a 2>&1 || true
+  
+  if [ "${KIND_RETAIN_ON_FAILURE:-false}" = "true" ]; then
+    log "Cluster nodes retained for debugging. To clean up manually run:"
+    log "  kind delete cluster --name $CLUSTER_NAME"
+    log "  docker rm -f ${CLUSTER_NAME}-control-plane"
+  fi
+  
+  exit $exit_code
+fi
+
 $KIND get kubeconfig --name "$CLUSTER_NAME" > "$HUB_KUBECONFIG"
 
 # Build controller image unless SKIP_BUILD is set or image already exists
@@ -629,19 +663,23 @@ load_image_into_kind "mailhog/mailhog:v1.0.1"
 load_image_into_kind "curlimages/curl:8.4.0"
 # Preload netshoot so we can create a persistent debug pod without image pull delays
 load_image_into_kind "nicolaka/netshoot"
+# Preload busybox for debug session tests (used by test-basic-debug template)
+load_image_into_kind "busybox:latest"
 # Load Kafka image for audit sink testing
 load_image_into_kind "apache/kafka:3.7.0"
 
 log 'Deploy development stack via kustomize (config/dev)'
 # Create TLS secret data for kustomize resources (if keycloak expects a secret, we create it first)
-# Use the dev namespace kustomize writes to (namePrefix on config/dev is breakglass-dev- and namespace is breakglass-dev-system)
-DEV_NS=breakglass-dev-system
+# Use the dev namespace kustomize writes to (namePrefix on config/dev is breakglass- and namespace is breakglass-system)
+DEV_NS=breakglass-system
 
 # Allocate CONTROLLER_FORWARD_PORT early so it can be used in ConfigMap templates
 # This port will be used for the API port-forward and in the baseURL configuration
 if [ -z "${CONTROLLER_FORWARD_PORT:-}" ]; then
-  CONTROLLER_FORWARD_PORT=$(find_free_port)
-  log "Allocated controller forward port: $CONTROLLER_FORWARD_PORT"
+  # Use fixed port 8080 for UI E2E tests (frontend expects this)
+  # Can be overridden with CONTROLLER_FORWARD_PORT env var for other use cases
+  CONTROLLER_FORWARD_PORT=8080
+  log "Using default API port: $CONTROLLER_FORWARD_PORT (set CONTROLLER_FORWARD_PORT to override)"
 fi
 
 KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create namespace "$DEV_NS" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
@@ -650,8 +688,8 @@ KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret tls keycloak-tls -n "$DEV_NS
 WEBHOOK_TLS_DIR="$TLS_DIR/webhook"
 KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret tls breakglass-webhook-tls -n "$DEV_NS" --cert="$WEBHOOK_TLS_DIR/tls.crt" --key="$WEBHOOK_TLS_DIR/tls.key" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
 log "Created webhook TLS secret breakglass-webhook-tls in $DEV_NS"
-# Create breakglass-dev-certs ConfigMap from generated CA so deployments mounting it succeed
-KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create configmap breakglass-dev-certs -n "$DEV_NS" --from-file=ca.crt="$TLS_DIR/ca.crt" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
+# Create breakglass-certs ConfigMap from generated CA so deployments mounting it succeed
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create configmap breakglass-certs -n "$DEV_NS" --from-file=ca.crt="$TLS_DIR/ca.crt" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
 # Apply the whole development overlay via kustomize so all resources come from config/dev
 ensure_no_placeholders "config/dev/resources/keycloak.yaml"
 # explicitly apply CRDs first
@@ -666,6 +704,16 @@ cp "$TLS_DIR/ca.crt" "$KUSTOMIZE_CERTS_DIR/"
 cp "$TLS_DIR/server.crt" "$KUSTOMIZE_CERTS_DIR/"
 cp "$TLS_DIR/server.key" "$KUSTOMIZE_CERTS_DIR/"
 
+# Install cert-manager to provide Certificate and Issuer CRDs
+# This is needed for the dev overlay which references these types
+log 'Installing cert-manager...'
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.yaml
+log 'Waiting for cert-manager to be ready...'
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL wait --for=condition=available --timeout=120s -n cert-manager deployment/cert-manager
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL wait --for=condition=available --timeout=120s -n cert-manager deployment/cert-manager-webhook
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL wait --for=condition=available --timeout=120s -n cert-manager deployment/cert-manager-cainjector
+log 'cert-manager is ready'
+
 # Apply the dev overlay (creates config ConfigMap among other resources)
 apply_kustomize config/dev
 
@@ -674,7 +722,7 @@ patch_webhook_ca_bundle
 
 # Patch the generated config ConfigMap in-cluster to embed the generated CA so the
 # running controller can validate Keycloak TLS. The configMap created by the kustomize
-# overlay is namePrefix'd to 'breakglass-dev-config' in namespace $DEV_NS.
+# overlay is namePrefix'd to 'breakglass-config' in namespace $DEV_NS.
 TMP_CFG="$TDIR/tmp-config-with-ca.yaml"
 if [ -f "$TLS_DIR/ca.crt" ]; then
   # indent CA so it nests properly under data.config.yaml -> authorizationServer -> certificateAuthority
@@ -686,14 +734,14 @@ cat > "$TMP_CFG" <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: breakglass-dev-config
+  name: breakglass-config
   namespace: $DEV_NS
 data:
   config.yaml: |
     server:
       listenAddress: 0.0.0.0:8080
     authorizationServer:
-      url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
+      url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443
       jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
       certificateAuthority: |
 $CA_INLINE
@@ -701,8 +749,9 @@ $CA_INLINE
       oidcAuthority: https://localhost:8443/realms/breakglass-e2e
       oidcClientID: breakglass-ui
       baseURL: http://localhost:${CONTROLLER_FORWARD_PORT}
+      uiFlavour: "$UI_FLAVOUR"
     mail:
-      host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
+      host: breakglass-mailhog.breakglass-system.svc.cluster.local
       port: 1025
       insecureSkipVerify: true
     kubernetes:
@@ -717,7 +766,7 @@ EOF
 # Wait for the kustomize-generated ConfigMap to appear; it has a hash suffix and may not be immediately present
 TARGET_NAME=""
 for i in {1..60}; do
-  CFG_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" get cm -o name 2>/dev/null | sed 's#configmap/##' | grep '^breakglass-dev-config' | head -n1 || true)
+  CFG_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" get cm -o name 2>/dev/null | sed 's#configmap/##' | grep '^breakglass-config' | head -n1 || true)
   if [ -n "$CFG_NAME" ]; then
     TARGET_NAME="$CFG_NAME"
     log "Detected rendered configmap name: $TARGET_NAME"
@@ -726,8 +775,8 @@ for i in {1..60}; do
   sleep 1
 done
 if [ -z "$TARGET_NAME" ]; then
-  log "Could not detect rendered breakglass-dev-config name after wait; using base name breakglass-dev-config"
-  TARGET_NAME=breakglass-dev-config
+  log "Could not detect rendered breakglass-config name after wait; using base name breakglass-config"
+  TARGET_NAME=breakglass-config
 fi
 
 # Rewrite TMP_CFG with the actual target name so apply updates the live ConfigMap
@@ -742,7 +791,7 @@ data:
     server:
       listenAddress: 0.0.0.0:8080
     authorizationServer:
-      url: https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
+      url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443
       jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
       certificateAuthority: |
 $CA_INLINE
@@ -750,8 +799,9 @@ $CA_INLINE
       oidcAuthority: https://localhost:8443/realms/breakglass-e2e
       oidcClientID: breakglass-ui
       baseURL: http://localhost:${CONTROLLER_FORWARD_PORT}
+      uiFlavour: "$UI_FLAVOUR"
     mail:
-      host: breakglass-dev-mailhog.breakglass-dev-system.svc.cluster.local
+      host: breakglass-mailhog.breakglass-system.svc.cluster.local
       port: 1025
       insecureSkipVerify: true
     kubernetes:
@@ -770,16 +820,16 @@ if ! wait_for_deploy_by_label kafka 120; then log 'Kafka deployment not ready (c
 
 # Pre-create Kafka topics to avoid "Unknown Topic Or Partition" errors on first message
 log 'Pre-creating Kafka audit topic...'
-KAFKA_POD=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods -n breakglass-dev-system -l app=kafka -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+KAFKA_POD=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get pods -n breakglass-system -l app=kafka -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 if [ -n "$KAFKA_POD" ]; then
   # Create the audit topic with appropriate settings (3 partitions, replication factor 1 for single-node)
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL exec -n breakglass-dev-system "$KAFKA_POD" -- \
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL exec -n breakglass-system "$KAFKA_POD" -- \
     kafka-topics.sh --bootstrap-server localhost:9092 --create --topic breakglass-audit-events \
     --partitions 3 --replication-factor 1 --if-not-exists 2>/dev/null && \
     log 'Kafka topic breakglass-audit-events created' || \
     log 'Kafka topic creation skipped (may already exist or Kafka not ready)'
   # Also create the functional test topic used by e2e tests
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL exec -n breakglass-dev-system "$KAFKA_POD" -- \
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL exec -n breakglass-system "$KAFKA_POD" -- \
     kafka-topics.sh --bootstrap-server localhost:9092 --create --topic breakglass-audit-functional-test \
     --partitions 1 --replication-factor 1 --if-not-exists 2>/dev/null && \
     log 'Kafka topic breakglass-audit-functional-test created' || \
@@ -788,17 +838,17 @@ else
   log 'Warning: Kafka pod not found, skipping topic pre-creation'
 fi
 
-# Wait for breakglass controller to be ready before applying samples (webhooks need to be ready)
+# Wait for breakglass controller to be ready (webhooks need to be ready for E2E tests)
 log 'Waiting for breakglass controller deployment to be ready...'
 if ! wait_for_deploy_by_label breakglass 120; then log 'Breakglass controller deployment not ready'; debug_cluster_state; exit 1; fi
 
 # Wait for webhook endpoints to be ready (deployment ready doesn't mean endpoints are ready)
 log 'Waiting for webhook endpoints to be ready...'
-WEBHOOK_SVC_NAME="breakglass-dev-breakglass-webhook-service"
-WEBHOOK_NS="breakglass-dev-system"
+WEBHOOK_SVC_NAME="breakglass-webhook-service"
+WEBHOOK_NS="breakglass-system"
 for i in {1..60}; do
   # Check if the endpoints have at least one address
-  ENDPOINT_COUNT=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get endpoints "$WEBHOOK_SVC_NAME" -n "$WEBHOOK_NS" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | wc -w || echo 0)
+  ENDPOINT_COUNT=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL get endpoints "$WEBHOOK_SVC_NAME" -n "$WEBHOOK_NS" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | wc -w | tr -d '[:space:]' || echo 0)
   if [ "$ENDPOINT_COUNT" -gt 0 ]; then
     log "Webhook endpoints ready ($ENDPOINT_COUNT addresses, attempt $i)"
     break
@@ -813,7 +863,7 @@ done
 # Give webhook server a moment to start accepting connections after endpoints are registered
 sleep 3
 
-# Actively test webhook connectivity before applying samples using port-forward
+# Actively test webhook connectivity via port-forward before running E2E tests
 log 'Testing webhook connectivity via port-forward...'
 WEBHOOK_TEST_PORT=$(find_free_port)
 WEBHOOK_TEST_SUCCESS=false
@@ -848,24 +898,11 @@ if [ "$WEBHOOK_TEST_SUCCESS" != "true" ]; then
   sleep 5
 fi
 
-# Apply example sample manifests so sample escalations/sessions are present in the cluster
-# Note: Some samples may fail validation (missing required fields, etc.) - this is expected for example files
-# Exclude debug_sessions.yaml as it references namespace "breakglass" which doesn't exist in E2E env
-# Exclude mailprovider as E2E uses dev-mailhog (MailHog) from config/dev/resources/mailprovider.yaml
-log 'Applying sample manifests from config/samples'
-for sample in config/samples/*.yaml; do
-  case "$(basename "$sample")" in
-    debug_sessions.yaml)
-      log "Skipping $sample (documentation sample, not for E2E)"
-      ;;
-    breakglass_v1alpha1_mailprovider.yaml)
-      log "Skipping $sample (E2E uses dev-mailhog from config/dev/resources/mailprovider.yaml)"
-      ;;
-    *)
-      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f "$sample" || log "Warning: applying $sample failed (continuing)"
-      ;;
-  esac
-done
+# Note: E2E tests do NOT apply sample manifests from config/samples/.
+# Samples are documentation/examples showing all possible use-cases and may reference
+# non-existent resources (clusters, secrets, etc.). They are validated separately.
+# E2E tests use only crafted test resources from config/dev/resources/crs/ and
+# dynamically created resources via the API.
 
 log 'Wait Keycloak JWKS (HTTP)'
 KC_SVC_NAME=""
@@ -882,7 +919,7 @@ done
 [ -n "$KC_SVC_NAME" ] || { log "Keycloak service not found after wait"; debug_cluster_state "Keycloak service lookup"; exit 1; }
 
 PF=$(start_port_forward "$KC_SVC_NS" "$KC_SVC_NAME" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT})
-JWKS_URL="https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
+JWKS_URL="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
 # Prefer using the generated CA for TLS validation when available; fall back to insecure if not present
 if [ -n "${KEYCLOAK_CA_FILE:-}" ] && [ -f "${KEYCLOAK_CA_FILE}" ]; then
   KC_CURL_CA=(--cacert "$KEYCLOAK_CA_FILE")
@@ -1150,7 +1187,7 @@ apply_e2e_test_crs
 # Apply cluster-config and deny-policy overrides AFTER controller is ready (webhooks need to be serving)
 # NOTE: Cluster configs and deny policies are now applied by apply_e2e_test_crs function above
 # with proper namespace and name-prefix transformation. The old sed-based placeholder substitution
-# has been removed to avoid duplicate resource creation (with/without breakglass-dev- prefix).
+# has been removed to avoid duplicate resource creation (with/without breakglass- prefix).
 
 # Create RBAC manifest to allow all users (including unauthenticated) to create SelfSubjectReview
 RBAC_SELF_SUBJECT_REVIEW_MANIFEST="$TDIR/selfsubjectreview-allow-all.yaml"
@@ -1225,11 +1262,11 @@ fi
 create_tenant() {
   local tenant="$1"
   local secret_name="${tenant}-admin"
-  log "Creating kubeconfig secret for tenant: $tenant -> $secret_name (in both default and breakglass-dev-system namespaces)"
+  log "Creating kubeconfig secret for tenant: $tenant -> $secret_name (in both default and breakglass-system namespaces)"
   # Create secret in default namespace (for basic ClusterConfig)
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret generic "$secret_name" -n default --from-file=kubeconfig="$MOD_KUBECONFIG" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
-  # Also create secret in breakglass-dev-system namespace (for cluster-configs-test.yaml after sed transformation)
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret generic "$secret_name" -n breakglass-dev-system --from-file=kubeconfig="$MOD_KUBECONFIG" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
+  # Also create secret in breakglass-system namespace (for cluster-configs-test.yaml after sed transformation)
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret generic "$secret_name" -n breakglass-system --from-file=kubeconfig="$MOD_KUBECONFIG" --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
 
   log "Applying ClusterConfig for tenant: $tenant"
   cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
@@ -1268,7 +1305,7 @@ export KEYCLOAK_GROUP_SYNC_CLIENT_SECRET="breakglass-group-sync-secret"
 
 # For E2E tests: Use in-cluster service name so controller can access Keycloak
 # Frontend will need DNS resolution to make this hostname work via port-forward
-KEYCLOAK_SERVICE_HOSTNAME="breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local"
+KEYCLOAK_SERVICE_HOSTNAME="breakglass-keycloak.breakglass-system.svc.cluster.local"
 
 cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -1401,7 +1438,7 @@ for i in {1..40}; do
     # Use a temporary netshoot pod to test connectivity (controller image is distroless)
     KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL run keycloak-test-$i --rm -i --restart=Never --image=nicolaka/netshoot:latest \
       --namespace="$DEV_NS" -- curl -sk --max-time 5 \
-      "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e/.well-known/openid-configuration" 2>&1 | head -10 || \
+      "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e/.well-known/openid-configuration" 2>&1 | head -10 || \
       log "Keycloak connectivity test via netshoot failed"
     log "--- End debug info ---"
   fi
@@ -1416,6 +1453,85 @@ if [ "${PROXY_OK}" != "200" ]; then
   log "--- Final debug: Keycloak logs (last 20 lines) ---"
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL logs -l app=keycloak -n "$DEV_NS" --tail=20 2>&1 || true
 fi
+
+# Create BreakglassEscalation resources for UI E2E tests
+# These escalations match the test users defined in config/dev/resources/keycloak-realm.json:
+# - Bob (bob@example.com): groups = ["developers", "team-alpha"]
+# - Carol (carol@example.com): groups = ["approvers", "security-team"]
+log 'Creating BreakglassEscalation resources for UI E2E tests...'
+
+cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-cluster-admin
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - ${TENANT_A}
+    groups:
+      - developers
+      - team-alpha
+  escalatedGroup: cluster-admin-access
+  approvers:
+    groups:
+      - approvers
+      - security-team
+  requestReason:
+    mandatory: true
+    description: "Please provide a justification for cluster admin access"
+  maxValidFor: 1h
+  retainFor: 24h
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-pod-debug
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - ${TENANT_A}
+      - ${TENANT_B}
+    groups:
+      - developers
+  escalatedGroup: pod-debug-access
+  approvers:
+    groups:
+      - approvers
+  requestReason:
+    mandatory: true
+    description: "Describe the pod or issue you need to debug"
+  maxValidFor: 30m
+  approvalTimeout: 15m
+  retainFor: 12h
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-namespace-admin
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  allowed:
+    clusters:
+      - ${TENANT_A}
+    groups:
+      - team-alpha
+  escalatedGroup: namespace-admin-access
+  approvers:
+    groups:
+      - security-team
+  requestReason:
+    mandatory: false
+  maxValidFor: 2h
+  retainFor: 48h
+YAML
+
+log "Created BreakglassEscalation resources for UI E2E tests"
 
 log 'Deploy/verify MailHog for testing emails'
 ensure_no_placeholders config/dev/resources/mailhog.yaml
@@ -1472,7 +1588,7 @@ log 'Single-cluster setup complete'
 OIDC_TEST_USERNAME=${OIDC_TEST_USERNAME:-test-user}
 OIDC_TEST_PASSWORD=${OIDC_TEST_PASSWORD:-test-password}
 OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-kubernetes}
-OIDC_ISSUER="https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}"
+OIDC_ISSUER="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}"
 OIDC_KUBECONFIG="$TDIR/oidc-test-user.kubeconfig"
 
 log "Generating kubeconfig for OIDC test user (kubelogin exec) : $OIDC_TEST_USERNAME -> $OIDC_KUBECONFIG"
@@ -1638,7 +1754,9 @@ export E2E_TEST_APPROVER=approver@example.com
 export BREAKGLASS_API_URL=http://localhost:$API_PORT
 export BREAKGLASS_WEBHOOK_URL=http://localhost:$API_PORT
 export BREAKGLASS_METRICS_URL=http://localhost:${METRICS_FORWARD_PORT}/metrics
+export KEYCLOAK_URL=https://localhost:${KEYCLOAK_FORWARD_PORT}
 export KEYCLOAK_HOST=https://localhost:${KEYCLOAK_FORWARD_PORT}
+export KEYCLOAK_PORT=${KEYCLOAK_FORWARD_PORT}
 export KEYCLOAK_REALM=${KEYCLOAK_REALM}
 export KEYCLOAK_CLIENT_ID=breakglass-ui
 # Keycloak Group Sync client credentials (for admin API access)
@@ -1646,8 +1764,8 @@ export KEYCLOAK_GROUP_SYNC_CLIENT_ID=breakglass-group-sync
 export KEYCLOAK_GROUP_SYNC_CLIENT_SECRET=breakglass-group-sync-secret
 # KEYCLOAK_ISSUER_HOST is the in-cluster service hostname (matches IdentityProvider issuer)
 # Frontend will access this via /etc/hosts mapping to localhost
-export KEYCLOAK_ISSUER_HOST=breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443
-export KEYCLOAK_SERVICE_HOSTNAME=breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local
+export KEYCLOAK_ISSUER_HOST=breakglass-keycloak.breakglass-system.svc.cluster.local:8443
+export KEYCLOAK_SERVICE_HOSTNAME=breakglass-keycloak.breakglass-system.svc.cluster.local
 export AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL=http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT}
 export KUBECONFIG=$HUB_KUBECONFIG
 EOF

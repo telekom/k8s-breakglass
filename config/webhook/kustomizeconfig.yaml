@@ -1,0 +1,9 @@
+# Kustomize configuration for cert-manager resources
+# This tells kustomize to apply namePrefix to issuerRef.name in Certificate resources
+nameReference:
+- kind: Issuer
+  group: cert-manager.io
+  fieldSpecs:
+  - kind: Certificate
+    group: cert-manager.io
+    path: spec/issuerRef/name

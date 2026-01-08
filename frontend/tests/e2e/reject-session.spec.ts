@@ -3,9 +3,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test, expect } from "@playwright/test";
-import { AuthHelper, TEST_USERS, MailHogClient } from "./helpers";
+import {
+  AuthHelper,
+  TEST_USERS,
+  MailHogClient,
+  fillScaleTextarea,
+  waitForScaleToast,
+  findEscalationCardByName,
+} from "./helpers";
 
-test.describe("Reject Session", () => {
+// This test file uses dev-user-beta (TEST_USERS.devBeta) who has group "database-team"
+// It targets the "ui-e2e-reject-session-test" escalation which only allows "database-team" group
+// The UI displays the escalatedGroup field, not the metadata.name
+const ESCALATION_NAME = "ui-e2e-reject-session-group";
+
+// Tests that create sessions must run serially to avoid race conditions
+// when multiple tests try to use the same escalation concurrently
+test.describe.serial("Reject Session", () => {
   let mailhog: MailHogClient;
 
   test.beforeAll(() => {
@@ -32,13 +46,22 @@ test.describe("Reject Session", () => {
       const approverAuth = new AuthHelper(approverPage);
 
       // === Step 1: Requester creates session ===
-      await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
-      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      // Use dev-user-beta who has database-team group (isolated from other tests)
+      await requesterAuth.loginViaKeycloak(TEST_USERS.devBeta);
+      // Find the specific escalation card for this test file
+      const escalationCard = await findEscalationCardByName(requesterPage, ESCALATION_NAME, { requireAvailable: true });
+      expect(escalationCard).not.toBeNull();
+      if (!escalationCard) return;
       await escalationCard.locator('[data-testid="request-access-button"]').click();
-      await requesterPage.fill('[data-testid="reason-input"]', "Rejection test - this should be rejected");
+      await fillScaleTextarea(
+        requesterPage,
+        '[data-testid="reason-input"]',
+        "Rejection test - this should be rejected",
+      );
       await requesterPage.click('[data-testid="submit-request-button"]');
 
-      await expect(requesterPage.locator('[data-testid="success-toast"]')).toBeVisible();
+      // Verify success message (use waitForScaleToast for Scale's notification toast component)
+      await waitForScaleToast(requesterPage, "success-toast");
 
       // === Step 2: Wait for email ===
       const email = await mailhog.waitForSubject("breakglass", 30000);
@@ -52,9 +75,12 @@ test.describe("Reject Session", () => {
       await expect(approverPage.locator('[data-testid="session-review"]')).toBeVisible({ timeout: 15000 });
 
       // === Step 4: Fill rejection reason ===
-      const rejectionReasonInput = approverPage.locator('[data-testid="rejection-reason-input"]');
-      await expect(rejectionReasonInput).toBeVisible();
-      await rejectionReasonInput.fill("Rejected: Invalid justification provided");
+      // The approval-reason-input is used for both approval and rejection notes
+      await fillScaleTextarea(
+        approverPage,
+        '[data-testid="approval-reason-input"]',
+        "Rejected: Invalid justification provided",
+      );
 
       // === Step 5: Click reject button ===
       await approverPage.click('[data-testid="reject-button"]');
@@ -65,8 +91,8 @@ test.describe("Reject Session", () => {
         await approverPage.click('[data-testid="confirm-reject-button"]');
       }
 
-      // Verify rejection success
-      await expect(approverPage.locator('[data-testid="success-toast"]')).toBeVisible();
+      // Verify rejection success (use waitForScaleToast for Scale's notification toast component)
+      await waitForScaleToast(approverPage, "success-toast");
 
       // === Step 6: Verify requester sees rejected session ===
       await requesterPage.goto("/requests/mine");
@@ -104,11 +130,14 @@ test.describe("Reject Session", () => {
       const requesterAuth = new AuthHelper(requesterPage);
       const approverAuth = new AuthHelper(approverPage);
 
-      // Create session
-      await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
-      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      // Create session using dev-user-beta who has database-team group
+      await requesterAuth.loginViaKeycloak(TEST_USERS.devBeta);
+      // Find the specific escalation card for this test file
+      const escalationCard = await findEscalationCardByName(requesterPage, ESCALATION_NAME, { requireAvailable: true });
+      expect(escalationCard).not.toBeNull();
+      if (!escalationCard) return;
       await escalationCard.locator('[data-testid="request-access-button"]').click();
-      await requesterPage.fill('[data-testid="reason-input"]', "Test for reject button validation");
+      await fillScaleTextarea(requesterPage, '[data-testid="reason-input"]', "Test for reject button validation");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
       // Get approval link
@@ -125,8 +154,8 @@ test.describe("Reject Session", () => {
       const rejectButton = approverPage.locator('[data-testid="reject-button"]');
       await expect(rejectButton).toBeDisabled();
 
-      // Enter reason
-      await approverPage.fill('[data-testid="rejection-reason-input"]', "Test reason");
+      // Enter reason (approval-reason-input is used for both approval and rejection notes)
+      await fillScaleTextarea(approverPage, '[data-testid="approval-reason-input"]', "Test reason");
 
       // Now should be enabled
       await expect(rejectButton).toBeEnabled();
@@ -151,14 +180,18 @@ test.describe("Reject Session", () => {
       const requesterAuth = new AuthHelper(requesterPage);
       const approverAuth = new AuthHelper(approverPage);
 
-      // Login requester and create a session
-      await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
-      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      // Login requester using dev-user-beta who has database-team group
+      await requesterAuth.loginViaKeycloak(TEST_USERS.devBeta);
+      // Find the specific escalation card for this test file
+      const escalationCard = await findEscalationCardByName(requesterPage, ESCALATION_NAME, { requireAvailable: true });
+      expect(escalationCard).not.toBeNull();
+      if (!escalationCard) return;
       await escalationCard.locator('[data-testid="request-access-button"]').click();
-      await requesterPage.fill('[data-testid="reason-input"]', "Session for approve/reject flow test");
+      await fillScaleTextarea(requesterPage, '[data-testid="reason-input"]', "Session for approve/reject flow test");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
-      await expect(requesterPage.locator('[data-testid="success-toast"]')).toBeVisible();
+      // Verify success message (use waitForScaleToast for Scale's notification toast component)
+      await waitForScaleToast(requesterPage, "success-toast");
 
       // Login approver
       await approverAuth.loginViaKeycloak(TEST_USERS.approver);

@@ -17,7 +17,9 @@ limitations under the License.
 package helpers
 
 import (
+	"context"
 	"os"
+	"testing"
 )
 
 // IsMultiClusterEnabled returns true if multi-cluster E2E tests should run
@@ -152,18 +154,20 @@ var MultiClusterTestUsers = struct {
 		Password string
 		Groups   []string
 	}{
-		Email:    "test-user@example.com",
-		Password: "testpassword",
-		Groups:   []string{"developers", "breakglass-users"},
+		// Must match users created by configure_keycloak_realm() in e2e/lib/common.sh
+		Email:    "requester@example.com",
+		Password: "password",
+		Groups:   []string{"breakglass-users"},
 	},
 	Approver: struct {
 		Email    string
 		Password string
 		Groups   []string
 	}{
-		Email:    "approver@example.org",
-		Password: "testpassword",
-		Groups:   []string{"breakglass-approvers", "team-leads"},
+		// Must match users created by configure_keycloak_realm() in e2e/lib/common.sh
+		Email:    "approver@example.com",
+		Password: "password",
+		Groups:   []string{"breakglass-approvers"},
 	},
 	Contractor1: struct {
 		Email    string
@@ -183,4 +187,95 @@ var MultiClusterTestUsers = struct {
 		Password: "password",
 		Groups:   []string{"contractors", "vendor-team"},
 	},
+}
+
+// MultiClusterTestContext provides helpers for multi-cluster authorization testing.
+// This context manages clients and tokens for testing spoke→hub authorization flows.
+type MultiClusterTestContext struct {
+	Config     MultiClusterConfig
+	HubOIDC    *OIDCTokenProvider
+	ContOIDC   *OIDCTokenProvider // Contractors realm OIDC provider
+	tokenCache map[string]string
+}
+
+// NewMultiClusterTestContext creates a test context for multi-cluster testing
+func NewMultiClusterTestContext() *MultiClusterTestContext {
+	config := GetMultiClusterConfig()
+	return &MultiClusterTestContext{
+		Config: config,
+		HubOIDC: &OIDCTokenProvider{
+			KeycloakHost: GetKeycloakHost(),
+			Realm:        config.MainRealm,
+			ClientID:     config.MainClientID,
+			IssuerHost:   GetKeycloakIssuerHost(),
+		},
+		ContOIDC: &OIDCTokenProvider{
+			KeycloakHost: GetKeycloakHost(),
+			Realm:        config.ContractorsRealm,
+			ClientID:     config.ContractorsClientID,
+			IssuerHost:   GetKeycloakIssuerHost(),
+		},
+		tokenCache: make(map[string]string),
+	}
+}
+
+// GetOIDCTokenForRealm retrieves an OIDC token for a user in a specific realm.
+// realm should be "main" for employees or "contractors" for contractors.
+func (mc *MultiClusterTestContext) GetOIDCTokenForRealm(t testing.TB, ctx context.Context, username, password, realm string) string {
+	cacheKey := realm + ":" + username
+	if token, ok := mc.tokenCache[cacheKey]; ok {
+		return token
+	}
+
+	var provider *OIDCTokenProvider
+	if realm == "contractors" {
+		provider = mc.ContOIDC
+	} else {
+		provider = mc.HubOIDC
+	}
+
+	token, err := provider.getTokenViaHTTP(ctx, username, password)
+	if err != nil {
+		t.Fatalf("Failed to get OIDC token for %s in realm %s: %v", username, realm, err)
+	}
+	mc.tokenCache[cacheKey] = token
+	return token
+}
+
+// GetEmployeeToken returns a token for the test employee user
+func (mc *MultiClusterTestContext) GetEmployeeToken(t testing.TB, ctx context.Context) string {
+	return mc.GetOIDCTokenForRealm(t, ctx,
+		MultiClusterTestUsers.Employee.Email,
+		MultiClusterTestUsers.Employee.Password,
+		"main")
+}
+
+// GetApproverToken returns a token for the test approver user
+func (mc *MultiClusterTestContext) GetApproverToken(t testing.TB, ctx context.Context) string {
+	return mc.GetOIDCTokenForRealm(t, ctx,
+		MultiClusterTestUsers.Approver.Email,
+		MultiClusterTestUsers.Approver.Password,
+		"main")
+}
+
+// GetContractorToken returns a token for the test contractor user
+func (mc *MultiClusterTestContext) GetContractorToken(t testing.TB, ctx context.Context) string {
+	return mc.GetOIDCTokenForRealm(t, ctx,
+		MultiClusterTestUsers.Contractor1.Email,
+		MultiClusterTestUsers.Contractor1.Password,
+		"contractors")
+}
+
+// GetSpokeKubeconfig returns the kubeconfig path for a spoke cluster
+func (mc *MultiClusterTestContext) GetSpokeKubeconfig(clusterName string) string {
+	switch clusterName {
+	case mc.Config.SpokeAClusterName:
+		return mc.Config.SpokeAKubeconfig
+	case mc.Config.SpokeBClusterName:
+		return mc.Config.SpokeBKubeconfig
+	case mc.Config.HubClusterName:
+		return mc.Config.HubKubeconfig
+	default:
+		return ""
+	}
 }

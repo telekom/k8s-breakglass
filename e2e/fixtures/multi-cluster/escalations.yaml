@@ -3,7 +3,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-global-readonly
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "breakglass-read-only"
   # Empty clusterConfigRefs = applies to all clusters
@@ -21,7 +21,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-hub-admin
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "breakglass-emergency-admin"
   clusterConfigRefs:
@@ -39,7 +39,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-spoke-a-pods
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "breakglass-pods-admin"
   clusterConfigRefs:
@@ -48,14 +48,16 @@ spec:
   allowed:
     groups:
     - breakglass-users
-  # No approvers = auto-approved
+  approvers:
+    groups:
+    - breakglass-approvers
 ---
 # Spoke B only escalation - for contractors
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-spoke-b-debugger
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "contractor-debugger"
   clusterConfigRefs:
@@ -73,7 +75,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-spoke-clusters-admin
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "breakglass-pods-admin"
   clusterConfigRefs:
@@ -92,7 +94,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-team-alpha-ns
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "team-alpha-ns-admin"
   clusterConfigRefs:

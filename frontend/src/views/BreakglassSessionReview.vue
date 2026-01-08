@@ -139,8 +139,44 @@ async function getActiveBreakglasses() {
   }
   state.loading = false;
 }
+
+// Auto-open modal when a specific session is requested via query params (for email approval links)
+async function autoOpenSessionModal() {
+  // Only auto-open if we have a specific session name in the query
+  if (!resourceName.value) return;
+
+  // Wait for sessions to load
+  if (state.loading) {
+    // Watch for loading to complete
+    const checkLoading = setInterval(() => {
+      if (!state.loading) {
+        clearInterval(checkLoading);
+        openFirstMatchingSession();
+      }
+    }, 100);
+    // Timeout after 10 seconds
+    setTimeout(() => clearInterval(checkLoading), 10000);
+  } else {
+    openFirstMatchingSession();
+  }
+}
+
+function openFirstMatchingSession() {
+  // Find the session matching the requested name
+  const session = state.breakglasses.find(
+    (bg) => bg.metadata?.name === resourceName.value || bg.name === resourceName.value,
+  );
+  if (session) {
+    openReviewModal(session);
+  }
+}
+
 onMounted(async () => {
   await getActiveBreakglasses();
+  // Auto-open modal if a specific session is requested (approver=true indicates email approval flow)
+  if (resourceName.value && routeApprover.value) {
+    autoOpenSessionModal();
+  }
 });
 
 function matchesSearch(bg: SessionCR, term: string) {
@@ -219,7 +255,7 @@ async function onCancel(bg: SessionCR) {
 </script>
 
 <template>
-  <main v-if="authenticated" class="ui-page review-session-page">
+  <main v-if="authenticated" class="ui-page review-session-page" data-testid="session-review-page">
     <div class="page-heading">
       <h2 class="ui-page-title">Review Session</h2>
       <p class="ui-page-subtitle">Inspect outstanding sessions and take action when needed.</p>

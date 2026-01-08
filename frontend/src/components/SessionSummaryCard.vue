@@ -31,7 +31,7 @@ const cardClasses = computed(() => ({
     <div class="session-summary-card__header">
       <div>
         <p v-if="eyebrow" class="session-summary-card__eyebrow">{{ eyebrow }}</p>
-        <h3 class="session-summary-card__title">{{ title }}</h3>
+        <h3 class="session-summary-card__title" data-testid="escalation-name">{{ title }}</h3>
         <p v-if="subtitle" class="session-summary-card__subtitle">{{ subtitle }}</p>
       </div>
       <div class="session-summary-card__status" :data-tone="statusTone">

@@ -17,7 +17,8 @@ set -euo pipefail
 E2E_LOG_PREFIX=${E2E_LOG_PREFIX:-[e2e]}
 
 log() {
-  printf '%s %s\n' "$E2E_LOG_PREFIX" "$*"
+  # Output to stderr so logs don't pollute stdout when capturing function return values
+  printf '%s %s\n' "$E2E_LOG_PREFIX" "$*" >&2
 }
 
 log_error() {
@@ -30,7 +31,8 @@ log_warn() {
 
 log_debug() {
   if [ "${E2E_DEBUG:-false}" = "true" ]; then
-    printf '%s DEBUG: %s\n' "$E2E_LOG_PREFIX" "$*"
+    # Output to stderr so debug logs don't pollute stdout
+    printf '%s DEBUG: %s\n' "$E2E_LOG_PREFIX" "$*" >&2
   fi
 }
 
@@ -161,9 +163,10 @@ wait_for_http() {
       local parsed_host
       parsed_host=$(echo "$url" | sed -E 's#https?://([^:/]+).*#\1#')
       log_debug "Checking connectivity to $parsed_host..."
-      ping -c 2 "$parsed_host" 2>&1 || echo "Ping failed"
-      nc -zv "$parsed_host" 8080 2>&1 || true
-      nc -zv "$parsed_host" 8443 2>&1 || true
+      # All diagnostic output MUST go to stderr to avoid polluting function return values
+      { ping -c 2 "$parsed_host" 2>&1 || echo "Ping failed"; } >&2
+      { nc -zv "$parsed_host" 8080 2>&1 || true; } >&2
+      { nc -zv "$parsed_host" 8443 2>&1 || true; } >&2
     fi
     
     # Log progress periodically (every 10 attempts)
@@ -174,9 +177,9 @@ wait_for_http() {
   done
   
   log_error "$description not available after $max_attempts attempts"
-  # Final debug output
+  # Final debug output (MUST go to stderr to avoid polluting function return values)
   log "Final curl attempt output:"
-  curl -v --connect-timeout 5 --max-time 10 "$url" 2>&1 | tail -30 || true
+  { curl -v --connect-timeout 5 --max-time 10 "$url" 2>&1 | tail -30 || true; } >&2
   return 1
 }
 
@@ -317,7 +320,7 @@ EOF
 generate_breakglass_tls() {
   local output_dir="$1"
   local hub_ip="${2:-127.0.0.1}"
-  local namespace="${3:-breakglass-dev-system}"
+  local namespace="${3:-breakglass-system}"
   
   log "Generating TLS certificates for breakglass services..."
   mkdir -p "$output_dir"
@@ -332,10 +335,11 @@ generate_breakglass_tls() {
     "breakglass.$namespace"
     "breakglass.$namespace.svc"
     "breakglass.$namespace.svc.cluster.local"
-    "breakglass-dev-breakglass-webhook-service.$namespace.svc"
-    "breakglass-dev-breakglass-webhook-service.$namespace.svc.cluster.local"
-    "breakglass-dev-webhook-service.$namespace.svc"
-    "breakglass-dev-webhook-service.$namespace.svc.cluster.local"
+    "breakglass-webhook-service.$namespace.svc"
+    "breakglass-webhook-service.$namespace.svc.cluster.local"
+    # Manager service
+    "breakglass-manager.$namespace.svc"
+    "breakglass-manager.$namespace.svc.cluster.local"
     # External access
     "breakglass-external.$namespace.svc"
     "breakglass-external.$namespace.svc.cluster.local"
@@ -352,7 +356,7 @@ generate_breakglass_tls() {
 generate_keycloak_tls() {
   local output_dir="$1"
   local hub_ip="${2:-127.0.0.1}"
-  local namespace="${3:-breakglass-dev-system}"
+  local namespace="${3:-breakglass-system}"
   
   log "Generating TLS certificates for Keycloak..."
   mkdir -p "$output_dir"
@@ -368,10 +372,10 @@ generate_keycloak_tls() {
     "keycloak.$namespace"
     "keycloak.$namespace.svc"
     "keycloak.$namespace.svc.cluster.local"
-    "breakglass-dev-keycloak"
-    "breakglass-dev-keycloak.$namespace"
-    "breakglass-dev-keycloak.$namespace.svc"
-    "breakglass-dev-keycloak.$namespace.svc.cluster.local"
+    "breakglass-keycloak"
+    "breakglass-keycloak.$namespace"
+    "breakglass-keycloak.$namespace.svc"
+    "breakglass-keycloak.$namespace.svc.cluster.local"
     "keycloak-external.$namespace.svc"
     "keycloak-external.$namespace.svc.cluster.local"
     "$hub_ip"
@@ -419,7 +423,44 @@ EOF
   log "Kind config written to $config_file"
 }
 
+# Capture Kind cluster logs before deletion (for debugging failures)
+capture_kind_logs_on_failure() {
+  local cluster_name="$1"
+  local output_dir="${2:-/tmp/kind-failure-logs}"
+  
+  log_error "Capturing logs for failed cluster $cluster_name to $output_dir"
+  mkdir -p "$output_dir"
+  
+  # Capture container logs via docker
+  local container_name="${cluster_name}-control-plane"
+  if docker ps -a --format '{{.Names}}' | grep -q "^${container_name}$"; then
+    log "Capturing docker logs for $container_name..."
+    docker logs "$container_name" > "$output_dir/${container_name}-docker.log" 2>&1 || true
+    
+    # Try to get kubelet/apiserver logs from container
+    log "Capturing kubelet journal from $container_name..."
+    docker exec "$container_name" journalctl -u kubelet --no-pager > "$output_dir/${container_name}-kubelet.log" 2>&1 || true
+    
+    # Capture container filesystem state
+    log "Capturing kubernetes manifests from $container_name..."
+    docker exec "$container_name" ls -la /etc/kubernetes/manifests/ > "$output_dir/${container_name}-manifests-list.txt" 2>&1 || true
+    docker exec "$container_name" cat /etc/kubernetes/manifests/kube-apiserver.yaml > "$output_dir/${container_name}-apiserver-manifest.yaml" 2>&1 || true
+    
+    # Capture crictl container status
+    log "Capturing crictl container status..."
+    docker exec "$container_name" crictl ps -a > "$output_dir/${container_name}-crictl-ps.txt" 2>&1 || true
+    docker exec "$container_name" crictl logs "$(docker exec "$container_name" crictl ps -a --name kube-apiserver -q 2>/dev/null | head -1)" > "$output_dir/${container_name}-apiserver.log" 2>&1 || true
+  fi
+  
+  log_error "Failure logs captured to $output_dir"
+  log_error "Contents:"
+  ls -la "$output_dir" >&2 || true
+}
+
 # Create a Kind cluster
+# Environment variables:
+#   KIND_RETAIN_ON_FAILURE=true  - Keep cluster nodes on failure for debugging
+#   KIND_FAILURE_LOG_DIR=<path>  - Directory to capture failure logs (default: /tmp/kind-failure-logs)
 create_kind_cluster() {
   local cluster_name="$1"
   local config_file="$2"
@@ -432,8 +473,33 @@ create_kind_cluster() {
     $KIND delete cluster --name "$cluster_name" || true
   fi
   
+  # Build kind create command with optional --retain flag
+  local kind_create_args=(create cluster --name "$cluster_name" --config "$config_file" --wait "$wait_time")
+  
+  # Add --retain flag to keep nodes on failure for debugging
+  if [ "${KIND_RETAIN_ON_FAILURE:-false}" = "true" ]; then
+    log "KIND_RETAIN_ON_FAILURE=true: Nodes will be preserved on failure for debugging"
+    kind_create_args+=(--retain)
+  fi
+  
   log "Creating Kind cluster $cluster_name..."
-  $KIND create cluster --name "$cluster_name" --config "$config_file" --wait "$wait_time"
+  if ! $KIND "${kind_create_args[@]}"; then
+    local exit_code=$?
+    log_error "Kind cluster creation failed for $cluster_name (exit code: $exit_code)"
+    
+    # Capture logs before potential cleanup
+    local log_dir="${KIND_FAILURE_LOG_DIR:-/tmp/kind-failure-logs}/${cluster_name}"
+    capture_kind_logs_on_failure "$cluster_name" "$log_dir"
+    
+    if [ "${KIND_RETAIN_ON_FAILURE:-false}" = "true" ]; then
+      log_error "Cluster nodes retained for debugging. To clean up manually run:"
+      log_error "  kind delete cluster --name $cluster_name"
+      log_error "  docker rm -f ${cluster_name}-control-plane"
+    fi
+    
+    return $exit_code
+  fi
+  
   $KIND get kubeconfig --name "$cluster_name" > "$kubeconfig_file"
   
   log "Cluster $cluster_name created, kubeconfig at $kubeconfig_file"
@@ -572,17 +638,17 @@ inject_hostname_into_node() {
 inject_hub_hostnames_into_spoke() {
   local spoke_node="$1"
   local hub_ip="$2"
-  local namespace="${3:-breakglass-dev-system}"
+  local namespace="${3:-breakglass-system}"
   
   log "Injecting hub service hostnames into $spoke_node..."
   
   local hostnames=(
     # Breakglass service hostnames
-    "breakglass-dev-breakglass.$namespace.svc.cluster.local"
-    "breakglass-dev-breakglass-webhook-service.$namespace.svc.cluster.local"
+    "breakglass-manager.$namespace.svc.cluster.local"
+    "breakglass-webhook-service.$namespace.svc.cluster.local"
     "breakglass-external.$namespace.svc.cluster.local"
     # Keycloak service hostnames
-    "breakglass-dev-keycloak.$namespace.svc.cluster.local"
+    "breakglass-keycloak.$namespace.svc.cluster.local"
     "keycloak-external.$namespace.svc.cluster.local"
   )
   
@@ -721,7 +787,7 @@ check_cross_cluster_connectivity() {
 e2e_print_cluster_debug() {
   local kubeconfig="$1"
   local cluster_name="$2"
-  local namespace="${3:-breakglass-dev-system}"
+  local namespace="${3:-breakglass-system}"
   
   log "=== DEBUG: Cluster $cluster_name ==="
   
@@ -749,6 +815,10 @@ e2e_debug_deployment_failure() {
   log "=== DEBUG: Deployment failure for app=$label ==="
   
   KUBECONFIG="$kubeconfig" $KUBECTL get pods -A -l "app=$label" -o wide 2>&1 || true
+  
+  # Collect namespace-level events for deployments
+  log "--- Events in breakglass-system ---"
+  KUBECONFIG="$kubeconfig" $KUBECTL get events -n breakglass-system --sort-by='.lastTimestamp' 2>&1 | tail -50 || true
   
   local pods
   pods=$(KUBECONFIG="$kubeconfig" $KUBECTL get pods -A -l "app=$label" \
@@ -884,7 +954,8 @@ start_keycloak_container() {
   # but we may need it before that)
   if ! $DOCKER network inspect "$network" >/dev/null 2>&1; then
     log "Creating Docker network '$network'..."
-    $DOCKER network create "$network" || {
+    # Redirect stdout to /dev/null - network create outputs network ID which pollutes function return
+    $DOCKER network create "$network" >/dev/null || {
       log_error "Failed to create Docker network '$network'"
       return 1
     }
@@ -936,16 +1007,17 @@ start_keycloak_container() {
     
     # Use absolute paths for volume mounts
     # Mount at /etc/x509/https/ to match Kubernetes deployment configuration
+    # Note: Adding :z suffix for SELinux contexts to allow container access
     local abs_tls_dir
     abs_tls_dir=$(cd "$tls_dir" && pwd)
     
     docker_args+=(
-      -v "$abs_tls_dir/tls.crt:/etc/x509/https/tls.crt:ro"
-      -v "$abs_tls_dir/tls.key:/etc/x509/https/tls.key:ro"
+      -v "$abs_tls_dir/tls.crt:/etc/x509/https/tls.crt:ro,z"
+      -v "$abs_tls_dir/tls.key:/etc/x509/https/tls.key:ro,z"
       -e "KC_HTTPS_CERTIFICATE_FILE=/etc/x509/https/tls.crt"
       -e "KC_HTTPS_CERTIFICATE_KEY_FILE=/etc/x509/https/tls.key"
     )
-    log "TLS configuration added with absolute paths (matching K8s deployment)"
+    log "TLS configuration added with absolute paths and SELinux context (matching K8s deployment)"
   else
     log_warn "No TLS directory specified - Keycloak will use HTTP only"
     log_warn "This is NOT recommended for production or proper OIDC testing"
@@ -970,8 +1042,22 @@ start_keycloak_container() {
   local container_id
   local docker_exit_code
   local docker_output
+  
+  # Pull image first to avoid stdout pollution from pull messages
+  # Docker pull output goes to stderr, so we redirect to show progress but not capture
+  log "Ensuring Keycloak image is available (pulling if needed)..."
+  $DOCKER pull "$KEYCLOAK_IMAGE" >&2 2>&1 || true
+  
+  # Now run container - stdout will only contain the container ID
   docker_output=$($DOCKER "${docker_args[@]}" 2>&1) && docker_exit_code=0 || docker_exit_code=$?
-  container_id="$docker_output"
+  
+  # Extract container ID (should be the last line, a 64-char hex string)
+  # This handles cases where there might be extra output
+  container_id=$(echo "$docker_output" | grep -oE '^[a-f0-9]{64}$' | tail -1)
+  if [ -z "$container_id" ]; then
+    # Fallback: just use the last line
+    container_id=$(echo "$docker_output" | tail -1)
+  fi
   
   log "Docker command completed with exit code: $docker_exit_code"
   
@@ -981,17 +1067,17 @@ start_keycloak_container() {
     log "Docker version: $($DOCKER --version)"
     log "Docker info (brief): $($DOCKER info 2>&1 | head -20)"
     log "=== Checking if container was created but failed to start ==="
-    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     if $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" -q 2>/dev/null | grep -q .; then
       log "Container exists but in failed state. Logs:"
-      $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+      $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     fi
     return 1
   fi
   
   log "Keycloak container started with ID: $container_id"
   log "=== Initial container status (immediate) ==="
-  $DOCKER ps --filter "name=$KEYCLOAK_CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>&1 || true
+  $DOCKER ps --filter "name=$KEYCLOAK_CONTAINER_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" >&2 2>&1 || true
   
   # Wait for Keycloak to be ready
   log "Waiting for Keycloak to start..."
@@ -1004,13 +1090,19 @@ start_keycloak_container() {
   if ! is_keycloak_running; then
     log_error "Keycloak container is not running after 3 seconds"
     log "=== Container status ==="
-    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     log "=== Container logs (all) ==="
-    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
-    log "=== Docker inspect ==="
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
+    log "=== Docker inspect (full) ==="
+    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
+    log "=== Docker inspect (mounts) ==="
+    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 || true; } >&2
+    log "=== Docker inspect (config/env) ==="
+    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 || true; } >&2
+    log "=== Docker inspect (state) ==="
+    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 || true; } >&2
     log "=== Port check ==="
-    netstat -tlnp 2>/dev/null | grep -E "${KEYCLOAK_HTTP_PORT}|${KEYCLOAK_HTTPS_PORT}" || ss -tlnp 2>/dev/null | grep -E "${KEYCLOAK_HTTP_PORT}|${KEYCLOAK_HTTPS_PORT}" || echo "No listeners on configured ports"
+    { netstat -tlnp 2>/dev/null | grep -E "${KEYCLOAK_HTTP_PORT}|${KEYCLOAK_HTTPS_PORT}" || ss -tlnp 2>/dev/null | grep -E "${KEYCLOAK_HTTP_PORT}|${KEYCLOAK_HTTPS_PORT}" || echo "No listeners on configured ports"; } >&2
     return 1
   fi
   
@@ -1022,19 +1114,23 @@ start_keycloak_container() {
     log_error "Keycloak container started but then died within 5 seconds"
     log "This typically indicates a configuration error (e.g., missing TLS files inside container)"
     log "=== Container exit status ==="
-    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" --format "{{.Status}}" 2>&1 || true
+    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" --format "{{.Status}}" >&2 2>&1 || true
     log "=== Container logs (all) ==="
-    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     log "=== Docker inspect (mounts and env) ==="
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 || true
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 || true
+    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 || true; } >&2
+    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 || true; } >&2
+    log "=== Docker inspect (state details) ==="
+    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 || true; } >&2
+    log "=== Docker inspect (full for debugging) ==="
+    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     return 1
   fi
   
   # Verify TLS files are accessible inside the container
   if [ -n "$tls_dir" ]; then
     log "Verifying TLS files inside container..."
-    if ! $DOCKER exec "$KEYCLOAK_CONTAINER_NAME" ls -l /etc/x509/https/tls.crt /etc/x509/https/tls.key 2>&1; then
+    if ! $DOCKER exec "$KEYCLOAK_CONTAINER_NAME" ls -l /etc/x509/https/tls.crt /etc/x509/https/tls.key >&2 2>&1; then
       log_error "TLS files not accessible inside container"
       return 1
     fi
@@ -1054,39 +1150,39 @@ start_keycloak_container() {
   
   # Log port mappings for debugging
   log "=== Docker port mappings ==="
-  $DOCKER port "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+  $DOCKER port "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
   
   # Wait for HTTP endpoint - use localhost with mapped port as the container IP
   # may not be routable from the host in CI environments (GitHub Actions)
   log "Checking Keycloak readiness via localhost:${KEYCLOAK_HTTP_PORT} (mapped port)"
-  # Increase timeout to 180 seconds for slow CI environments
+  # Increase timeout to 300 seconds (5 minutes) for slow CI environments and GitHub Actions runners
   # Note: Keycloak 23.0.0 in dev mode doesn't expose /health/ready endpoint by default
   # We check the realms endpoint instead as it indicates Keycloak is fully initialized
   
   # Check container logs before waiting to see if there are early errors
   log "=== Keycloak container logs (first 20 lines after start) ==="
-  $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 | head -20 || log_warn "Could not get initial container logs"
+  { $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 | head -20 || log_warn "Could not get initial container logs"; } >&2
   
-  if ! wait_for_http "http://localhost:${KEYCLOAK_HTTP_PORT}/realms/master" 180 "Keycloak master realm"; then
+  if ! wait_for_http "http://localhost:${KEYCLOAK_HTTP_PORT}/realms/master" 300 "Keycloak master realm"; then
     log_error "Keycloak failed to become ready on localhost:${KEYCLOAK_HTTP_PORT}"
     log "=== Keycloak container status ==="
-    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     log "=== Keycloak container full logs ==="
-    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+    $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     log "=== Docker inspect (mounts and config) ==="
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | head -50 || true
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config}}' 2>&1 | head -50 || true
+    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | head -50 || true; } >&2
+    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config}}' 2>&1 | head -50 || true; } >&2
     log "=== Port bindings on host ==="
-    netstat -tlnp 2>/dev/null | grep -E "8080|8443" || ss -tlnp 2>/dev/null | grep -E "8080|8443" || echo "Could not check ports"
+    { netstat -tlnp 2>/dev/null | grep -E "8080|8443" || ss -tlnp 2>/dev/null | grep -E "8080|8443" || echo "Could not check ports"; } >&2
     log "=== Testing localhost connectivity ==="
-    curl -v "http://localhost:${KEYCLOAK_HTTP_PORT}/" 2>&1 | head -30 || true
+    { curl -v "http://localhost:${KEYCLOAK_HTTP_PORT}/" 2>&1 | head -30 || true; } >&2
     
     log "Trying container IP as fallback: http://${keycloak_ip}:8080/realms/master"
-    if ! wait_for_http "http://${keycloak_ip}:8080/realms/master" 60 "Keycloak master realm (container IP)"; then
+    if ! wait_for_http "http://${keycloak_ip}:8080/realms/master" 120 "Keycloak master realm (container IP)"; then
       log_error "Keycloak failed to become ready via container IP as well"
       log "=== Final diagnostics before failure ==="
       log "Container still running: $(is_keycloak_running && echo 'YES' || echo 'NO')"
-      $DOCKER stats --no-stream "$KEYCLOAK_CONTAINER_NAME" 2>&1 || true
+      $DOCKER stats --no-stream "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
       return 1
     fi
     log "Keycloak is ready via container IP (not localhost) - this may cause issues with host-based tests"
@@ -1102,10 +1198,11 @@ start_keycloak_container() {
     else
       log_warn "HTTPS endpoint not accessible on port ${KEYCLOAK_HTTPS_PORT}, but container is running"
       log "Checking if port is mapped..."
-      $DOCKER port "$KEYCLOAK_CONTAINER_NAME" 2>&1 | grep 8443 || log_warn "Port 8443 not mapped"
+      { $DOCKER port "$KEYCLOAK_CONTAINER_NAME" 2>&1 | grep 8443 || log_warn "Port 8443 not mapped"; } >&2
     fi
   fi
   
+  # Return ONLY the keycloak IP - all diagnostic output goes to stderr
   echo "$keycloak_ip"
 }
 
@@ -1196,16 +1293,96 @@ configure_keycloak_realm() {
     -s directAccessGrantsEnabled=true \
     -s 'webOrigins=["*"]' 2>/dev/null || true
   
-  # Create groups
-  local groups=("breakglass-users" "breakglass-approvers" "breakglass-admins" "team-alpha" "team-beta" "contractors" "vendor-supervisors")
+  # Create breakglass-group-sync client (for OIDC E2E tests using client credentials flow)
+  log "Creating breakglass-group-sync client..."
+  $kcadm create clients -r "$realm" \
+    -s clientId=breakglass-group-sync \
+    -s enabled=true \
+    -s publicClient=false \
+    -s serviceAccountsEnabled=true \
+    -s secret=breakglass-group-sync-secret \
+    -s 'redirectUris=["*"]' \
+    -s directAccessGrantsEnabled=true 2>/dev/null || true
+  
+  # Create groups - match single-cluster Keycloak realm groups for test compatibility
+  local groups=(
+    # Core role groups
+    "dev" "ops" "approver" "requester"
+    # Approval and admin groups
+    "approval-notes" "breakglass" "senior-ops"
+    # Team groups
+    "frontend-team" "backend-team" "database-team" "monitoring-team"
+    "emergency-response" "tenant-b-team" "read-only"
+    # E2E test groups
+    "devs-a" "devs-b" "ops-a" "ops-b" "cross-team" "qa-b"
+    "complete-flow-test-admins" "e2e-test-group" "test-group" "valid-group"
+    "notification-test-group" "notification-group-test"
+    "hidden-approvers-group" "approver-groups-test" "mandatory-reason-group"
+    "cross-cluster-group" "clusterconfig-ref-group" "target-cluster-group"
+    "audit-functional-test-group" "ghost-cluster-admins" "concurrent-admins"
+    "state-transition-admins" "recreate-admins" "recreate-admins-v2" "update-test-admins"
+    "breakglass-pods-admin" "breakglass-read-only" "breakglass-emergency-admin"
+    "breakglass-create-all" "breakglass-multi-cluster-ops" "webhook-test-group"
+    "domain-restricted-access" "validation-admins"
+    "transition-test-group" "auth-test-group" "expired-auth-test-group"
+    "withdrawn-auth-test-group" "cleanup-test-admins" "state-test-admins" "scheduled-admins"
+    # Legacy groups
+    "breakglass-users" "breakglass-approvers" "breakglass-admins"
+    "team-alpha" "team-beta" "contractors" "vendor-supervisors" "vendor-team"
+  )
   for group in "${groups[@]}"; do
     log "Creating group: $group"
     $kcadm create groups -r "$realm" -s name="$group" 2>/dev/null || true
   done
   
-  # Create test users
-  # User 1: requester (member of breakglass-users)
-  log "Creating user: requester@example.com"
+  # Create test users - MUST match TestUsers in e2e/helpers/users.go
+  
+  # User 1: test-user (default requester) - matches TestUsers.Requester
+  log "Creating user: test-user"
+  $kcadm create users -r "$realm" \
+    -s username="test-user" \
+    -s email="test-user@example.com" \
+    -s emailVerified=true \
+    -s enabled=true \
+    -s firstName="Test" \
+    -s lastName="User" 2>/dev/null || true
+  $kcadm set-password -r "$realm" --username "test-user" --new-password "test-password" 2>/dev/null || true
+  
+  # User 2: approver-user (default approver) - matches TestUsers.Approver
+  log "Creating user: approver-user"
+  $kcadm create users -r "$realm" \
+    -s username="approver-user" \
+    -s email="approver@example.org" \
+    -s emailVerified=true \
+    -s enabled=true \
+    -s firstName="Approver" \
+    -s lastName="User" 2>/dev/null || true
+  $kcadm set-password -r "$realm" --username "approver-user" --new-password "approver-password" 2>/dev/null || true
+  
+  # User 3: approver-internal - matches TestUsers.ApproverInternal
+  log "Creating user: approver-internal"
+  $kcadm create users -r "$realm" \
+    -s username="approver-internal" \
+    -s email="approver@example.com" \
+    -s emailVerified=true \
+    -s enabled=true \
+    -s firstName="Approver" \
+    -s lastName="Internal" 2>/dev/null || true
+  $kcadm set-password -r "$realm" --username "approver-internal" --new-password "approver-internal-password" 2>/dev/null || true
+  
+  # User 4: senior-approver - matches TestUsers.SeniorApprover
+  log "Creating user: senior-approver"
+  $kcadm create users -r "$realm" \
+    -s username="senior-approver" \
+    -s email="senior-approver@example.com" \
+    -s emailVerified=true \
+    -s enabled=true \
+    -s firstName="Senior" \
+    -s lastName="Approver" 2>/dev/null || true
+  $kcadm set-password -r "$realm" --username "senior-approver" --new-password "senior-approver-password" 2>/dev/null || true
+  
+  # Legacy users for backward compatibility (can be removed once all tests use TestUsers)
+  log "Creating legacy user: requester@example.com"
   $kcadm create users -r "$realm" \
     -s username="requester@example.com" \
     -s email="requester@example.com" \
@@ -1215,8 +1392,7 @@ configure_keycloak_realm() {
     -s lastName="Requester" 2>/dev/null || true
   $kcadm set-password -r "$realm" --username "requester@example.com" --new-password "password" 2>/dev/null || true
   
-  # User 2: approver (member of breakglass-approvers)
-  log "Creating user: approver@example.com"
+  log "Creating legacy user: approver@example.com"
   $kcadm create users -r "$realm" \
     -s username="approver@example.com" \
     -s email="approver@example.com" \
@@ -1226,8 +1402,7 @@ configure_keycloak_realm() {
     -s lastName="Approver" 2>/dev/null || true
   $kcadm set-password -r "$realm" --username "approver@example.com" --new-password "password" 2>/dev/null || true
   
-  # User 3: admin (member of breakglass-admins)
-  log "Creating user: admin@example.com"
+  log "Creating legacy user: admin@example.com"
   $kcadm create users -r "$realm" \
     -s username="admin@example.com" \
     -s email="admin@example.com" \
@@ -1240,28 +1415,76 @@ configure_keycloak_realm() {
   # Assign users to groups
   log "Assigning users to groups..."
   
-  # Get group IDs
-  local users_group_id approvers_group_id admins_group_id
-  users_group_id=$($kcadm get groups -r "$realm" --fields id,name 2>/dev/null | grep -A1 '"name" : "breakglass-users"' | grep '"id"' | cut -d'"' -f4 || true)
-  approvers_group_id=$($kcadm get groups -r "$realm" --fields id,name 2>/dev/null | grep -A1 '"name" : "breakglass-approvers"' | grep '"id"' | cut -d'"' -f4 || true)
-  admins_group_id=$($kcadm get groups -r "$realm" --fields id,name 2>/dev/null | grep -A1 '"name" : "breakglass-admins"' | grep '"id"' | cut -d'"' -f4 || true)
+  # Helper function to add user to group
+  add_user_to_group() {
+    local username="$1"
+    local groupname="$2"
+    local user_id group_id
+    user_id=$($kcadm get users -r "$realm" -q username="$username" --fields id 2>/dev/null | grep '"id"' | cut -d'"' -f4 || true)
+    group_id=$($kcadm get groups -r "$realm" --fields id,name 2>/dev/null | grep -A1 "\"name\" : \"$groupname\"" | grep '"id"' | cut -d'"' -f4 || true)
+    if [ -n "$user_id" ] && [ -n "$group_id" ]; then
+      $kcadm update users/$user_id/groups/$group_id -r "$realm" -s realm="$realm" -s userId="$user_id" -s groupId="$group_id" -n 2>/dev/null || true
+    fi
+  }
   
-  # Get user IDs
-  local requester_id approver_id admin_id
-  requester_id=$($kcadm get users -r "$realm" -q username="requester@example.com" --fields id 2>/dev/null | grep '"id"' | cut -d'"' -f4 || true)
-  approver_id=$($kcadm get users -r "$realm" -q username="approver@example.com" --fields id 2>/dev/null | grep '"id"' | cut -d'"' -f4 || true)
-  admin_id=$($kcadm get users -r "$realm" -q username="admin@example.com" --fields id 2>/dev/null | grep '"id"' | cut -d'"' -f4 || true)
+  # Assign test-user to requester groups (matches TestUsers.Requester.Groups)
+  for group in dev ops requester complete-flow-test-admins e2e-test-group test-group valid-group \
+               notification-test-group notification-group-test hidden-approvers-group approver-groups-test \
+               mandatory-reason-group cross-cluster-group clusterconfig-ref-group target-cluster-group \
+               audit-functional-test-group ghost-cluster-admins concurrent-admins state-transition-admins \
+               recreate-admins recreate-admins-v2 update-test-admins breakglass-pods-admin breakglass-read-only \
+               breakglass-emergency-admin breakglass-create-all breakglass-multi-cluster-ops webhook-test-group \
+               domain-restricted-access validation-admins transition-test-group auth-test-group \
+               expired-auth-test-group withdrawn-auth-test-group cleanup-test-admins state-test-admins scheduled-admins; do
+    add_user_to_group "test-user" "$group"
+  done
   
-  # Add users to groups
-  if [ -n "$requester_id" ] && [ -n "$users_group_id" ]; then
-    $kcadm update users/$requester_id/groups/$users_group_id -r "$realm" -s realm="$realm" -s userId="$requester_id" -s groupId="$users_group_id" -n 2>/dev/null || true
-  fi
-  if [ -n "$approver_id" ] && [ -n "$approvers_group_id" ]; then
-    $kcadm update users/$approver_id/groups/$approvers_group_id -r "$realm" -s realm="$realm" -s userId="$approver_id" -s groupId="$approvers_group_id" -n 2>/dev/null || true
-  fi
-  if [ -n "$admin_id" ] && [ -n "$admins_group_id" ]; then
-    $kcadm update users/$admin_id/groups/$admins_group_id -r "$realm" -s realm="$realm" -s userId="$admin_id" -s groupId="$admins_group_id" -n 2>/dev/null || true
-  fi
+  # Assign approver-user to approver groups (matches TestUsers.Approver.Groups)
+  for group in approver senior-ops approval-notes; do
+    add_user_to_group "approver-user" "$group"
+  done
+  
+  # Assign approver-internal to groups (matches TestUsers.ApproverInternal.Groups)
+  for group in approver senior-ops breakglass; do
+    add_user_to_group "approver-internal" "$group"
+  done
+  
+  # Assign senior-approver to groups (matches TestUsers.SeniorApprover.Groups)
+  for group in approver senior-ops emergency-response; do
+    add_user_to_group "senior-approver" "$group"
+  done
+  
+  # Legacy user group assignments
+  add_user_to_group "requester@example.com" "breakglass-users"
+  add_user_to_group "requester@example.com" "dev"
+  add_user_to_group "requester@example.com" "ops"
+  add_user_to_group "approver@example.com" "breakglass-approvers"
+  add_user_to_group "approver@example.com" "approver"
+  add_user_to_group "admin@example.com" "breakglass-admins"
+  
+  # Contractor users - for multi-IDP testing (matches MultiClusterTestUsers in multicluster.go)
+  log "Creating contractor user: contractor1@vendor.com"
+  $kcadm create users -r "$realm" \
+    -s username="contractor1@vendor.com" \
+    -s email="contractor1@vendor.com" \
+    -s emailVerified=true \
+    -s enabled=true \
+    -s firstName="Contractor" \
+    -s lastName="One" 2>/dev/null || true
+  $kcadm set-password -r "$realm" --username "contractor1@vendor.com" --new-password "password" 2>/dev/null || true
+  add_user_to_group "contractor1@vendor.com" "contractors"
+  
+  log "Creating contractor user: contractor2@vendor.com"
+  $kcadm create users -r "$realm" \
+    -s username="contractor2@vendor.com" \
+    -s email="contractor2@vendor.com" \
+    -s emailVerified=true \
+    -s enabled=true \
+    -s firstName="Contractor" \
+    -s lastName="Two" 2>/dev/null || true
+  $kcadm set-password -r "$realm" --username "contractor2@vendor.com" --new-password "password" 2>/dev/null || true
+  add_user_to_group "contractor2@vendor.com" "contractors"
+  add_user_to_group "contractor2@vendor.com" "vendor-team"
   
   # Configure groups claim in client scope
   log "Configuring groups claim..."
@@ -1333,8 +1556,9 @@ generate_keycloak_container_tls() {
   done
   
   # Set proper permissions
-  chmod 644 "$output_dir/tls.crt" "$output_dir/ca.crt" 2>/dev/null || true
-  chmod 600 "$output_dir/tls.key" 2>/dev/null || true
+  # Note: Using 644 for tls.key (instead of 600) to ensure it's readable when mounted
+  # into containers where the process runs as a different user (e.g., keycloak user)
+  chmod 644 "$output_dir/tls.crt" "$output_dir/ca.crt" "$output_dir/tls.key" 2>/dev/null || true
   
   log "Keycloak TLS certificates generated successfully at $output_dir"
   log "Contents:"
@@ -1427,7 +1651,8 @@ create_keycloak_identity_provider() {
   local primary="${6:-false}"
   
   local issuer_url
-  issuer_url=$(get_keycloak_issuer_url "$realm" "$keycloak_host" "8080" "http")
+  # Use HTTPS with port 8443 - CRD validation requires HTTPS for issuer/authority URLs
+  issuer_url=$(get_keycloak_issuer_url "$realm" "$keycloak_host" "8443" "https")
   
   log "Creating IdentityProvider $name pointing to $issuer_url"
   

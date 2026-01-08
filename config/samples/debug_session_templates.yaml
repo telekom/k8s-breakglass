@@ -115,11 +115,13 @@ spec:
     ephemeralContainers:
       enabled: true
       allowedNamespaces:
-        - "default"
-        - "app-*"
+        patterns:
+          - "default"
+          - "app-*"
       deniedNamespaces:
-        - "kube-system"
-        - "kube-public"
+        patterns:
+          - "kube-system"
+          - "kube-public"
       allowedImages:
         - "nicolaka/netshoot:*"
         - "busybox:*"

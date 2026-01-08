@@ -7,9 +7,153 @@ spec:
   clusterID: {{ .Values.cluster.clusterID }}
   tenant: {{ .Values.cluster.tenant }}
   environment: {{ .Values.cluster.environment }}
+  {{- if .Values.cluster.site }}
+  site: {{ .Values.cluster.site }}
+  {{- end }}
+  {{- if .Values.cluster.location }}
+  location: {{ .Values.cluster.location }}
+  {{- end }}
+  
+  {{- /* Authentication Type Selection */}}
+  {{- if eq (default "Kubeconfig" .Values.cluster.authType) "OIDC" }}
+  authType: OIDC
+  
+  {{- /* OIDC From IdentityProvider Reference */}}
+  {{- if .Values.cluster.oidcFromIdentityProvider }}
+  oidcFromIdentityProvider:
+    name: {{ .Values.cluster.oidcFromIdentityProvider.name }}
+    server: {{ .Values.cluster.oidcFromIdentityProvider.server }}
+    {{- if .Values.cluster.oidcFromIdentityProvider.clientID }}
+    clientID: {{ .Values.cluster.oidcFromIdentityProvider.clientID }}
+    {{- end }}
+    {{- if .Values.cluster.oidcFromIdentityProvider.clientSecretRef }}
+    clientSecretRef:
+      name: {{ .Values.cluster.oidcFromIdentityProvider.clientSecretRef.name }}
+      {{- if .Values.cluster.oidcFromIdentityProvider.clientSecretRef.namespace }}
+      namespace: {{ .Values.cluster.oidcFromIdentityProvider.clientSecretRef.namespace }}
+      {{- end }}
+      {{- if .Values.cluster.oidcFromIdentityProvider.clientSecretRef.key }}
+      key: {{ .Values.cluster.oidcFromIdentityProvider.clientSecretRef.key }}
+      {{- end }}
+    {{- end }}
+    {{- if .Values.cluster.oidcFromIdentityProvider.caSecretRef }}
+    caSecretRef:
+      name: {{ .Values.cluster.oidcFromIdentityProvider.caSecretRef.name }}
+      {{- if .Values.cluster.oidcFromIdentityProvider.caSecretRef.namespace }}
+      namespace: {{ .Values.cluster.oidcFromIdentityProvider.caSecretRef.namespace }}
+      {{- end }}
+      {{- if .Values.cluster.oidcFromIdentityProvider.caSecretRef.key }}
+      key: {{ .Values.cluster.oidcFromIdentityProvider.caSecretRef.key }}
+      {{- end }}
+    {{- end }}
+    {{- if .Values.cluster.oidcFromIdentityProvider.insecureSkipTLSVerify }}
+    insecureSkipTLSVerify: {{ .Values.cluster.oidcFromIdentityProvider.insecureSkipTLSVerify }}
+    {{- end }}
+  
+  {{- /* Direct OIDC Configuration */}}
+  {{- else if .Values.cluster.oidcAuth }}
+  oidcAuth:
+    issuerURL: {{ .Values.cluster.oidcAuth.issuerURL }}
+    clientID: {{ .Values.cluster.oidcAuth.clientID }}
+    server: {{ .Values.cluster.oidcAuth.server }}
+    {{- if .Values.cluster.oidcAuth.clientSecretRef }}
+    clientSecretRef:
+      name: {{ .Values.cluster.oidcAuth.clientSecretRef.name }}
+      {{- if .Values.cluster.oidcAuth.clientSecretRef.namespace }}
+      namespace: {{ .Values.cluster.oidcAuth.clientSecretRef.namespace }}
+      {{- end }}
+      {{- if .Values.cluster.oidcAuth.clientSecretRef.key }}
+      key: {{ .Values.cluster.oidcAuth.clientSecretRef.key }}
+      {{- end }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.caSecretRef }}
+    caSecretRef:
+      name: {{ .Values.cluster.oidcAuth.caSecretRef.name }}
+      {{- if .Values.cluster.oidcAuth.caSecretRef.namespace }}
+      namespace: {{ .Values.cluster.oidcAuth.caSecretRef.namespace }}
+      {{- end }}
+      {{- if .Values.cluster.oidcAuth.caSecretRef.key }}
+      key: {{ .Values.cluster.oidcAuth.caSecretRef.key }}
+      {{- end }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.audience }}
+    audience: {{ .Values.cluster.oidcAuth.audience }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.scopes }}
+    scopes:
+{{ toYaml .Values.cluster.oidcAuth.scopes | indent 6 }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.certificateAuthority }}
+    certificateAuthority: {{ .Values.cluster.oidcAuth.certificateAuthority | quote }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.insecureSkipTLSVerify }}
+    insecureSkipTLSVerify: {{ .Values.cluster.oidcAuth.insecureSkipTLSVerify }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.tokenExchange }}
+    tokenExchange:
+      enabled: {{ .Values.cluster.oidcAuth.tokenExchange.enabled }}
+      {{- if .Values.cluster.oidcAuth.tokenExchange.subjectTokenSecretRef }}
+      subjectTokenSecretRef:
+        name: {{ .Values.cluster.oidcAuth.tokenExchange.subjectTokenSecretRef.name }}
+        {{- if .Values.cluster.oidcAuth.tokenExchange.subjectTokenSecretRef.namespace }}
+        namespace: {{ .Values.cluster.oidcAuth.tokenExchange.subjectTokenSecretRef.namespace }}
+        {{- end }}
+        {{- if .Values.cluster.oidcAuth.tokenExchange.subjectTokenSecretRef.key }}
+        key: {{ .Values.cluster.oidcAuth.tokenExchange.subjectTokenSecretRef.key }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.cluster.oidcAuth.tokenExchange.subjectTokenType }}
+      subjectTokenType: {{ .Values.cluster.oidcAuth.tokenExchange.subjectTokenType }}
+      {{- end }}
+      {{- if .Values.cluster.oidcAuth.tokenExchange.requestedTokenType }}
+      requestedTokenType: {{ .Values.cluster.oidcAuth.tokenExchange.requestedTokenType }}
+      {{- end }}
+      {{- if .Values.cluster.oidcAuth.tokenExchange.resource }}
+      resource: {{ .Values.cluster.oidcAuth.tokenExchange.resource }}
+      {{- end }}
+      {{- if .Values.cluster.oidcAuth.tokenExchange.actorTokenSecretRef }}
+      actorTokenSecretRef:
+        name: {{ .Values.cluster.oidcAuth.tokenExchange.actorTokenSecretRef.name }}
+        {{- if .Values.cluster.oidcAuth.tokenExchange.actorTokenSecretRef.namespace }}
+        namespace: {{ .Values.cluster.oidcAuth.tokenExchange.actorTokenSecretRef.namespace }}
+        {{- end }}
+        {{- if .Values.cluster.oidcAuth.tokenExchange.actorTokenSecretRef.key }}
+        key: {{ .Values.cluster.oidcAuth.tokenExchange.actorTokenSecretRef.key }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.cluster.oidcAuth.tokenExchange.actorTokenType }}
+      actorTokenType: {{ .Values.cluster.oidcAuth.tokenExchange.actorTokenType }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  
+  {{- /* Default: Kubeconfig Authentication */}}
+  {{- else }}
+  authType: Kubeconfig
   kubeconfigSecretRef:
     name: {{ .Values.cluster.kubeconfigSecretRef.name }}
     namespace: {{ .Values.cluster.kubeconfigSecretRef.namespace }}
+    {{- if .Values.cluster.kubeconfigSecretRef.key }}
+    key: {{ .Values.cluster.kubeconfigSecretRef.key }}
+    {{- end }}
+  {{- end }}
+  
+  {{- /* Optional: Identity Provider Restrictions */}}
+  {{- if .Values.cluster.identityProviderRefs }}
+  identityProviderRefs:
+{{ toYaml .Values.cluster.identityProviderRefs | indent 4 }}
+  {{- end }}
+  
+  {{- /* Optional: QPS and Burst */}}
+  {{- if .Values.cluster.qps }}
+  qps: {{ .Values.cluster.qps }}
+  {{- end }}
+  {{- if .Values.cluster.burst }}
+  burst: {{ .Values.cluster.burst }}
+  {{- end }}
+  
   blockSelfApproval: {{ default false .Values.cluster.blockSelfApproval }}
+  {{- if .Values.cluster.allowedApproverDomains }}
   allowedApproverDomains:
 {{ toYaml .Values.cluster.allowedApproverDomains | indent 4 }}
+  {{- end }}

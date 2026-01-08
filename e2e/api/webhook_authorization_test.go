@@ -43,9 +43,7 @@ import (
 // - Resource attribute validation
 // - Non-resource URL authorization
 func TestWebhookAuthorization(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -61,27 +59,14 @@ func TestWebhookAuthorization(t *testing.T) {
 	}
 
 	// Create test escalation and session for authorization tests
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-test-webhook-escalation",
-			Namespace: namespace,
-			Labels: map[string]string{
-				"e2e-test": "true",
-			},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "webhook-test-group",
-			MaxValidFor:     "2h",
-			ApprovalTimeout: "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{helpers.GetTestClusterName()},
-				Groups:   helpers.TestUsers.WebhookTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.GetTestApproverEmail()},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-test-webhook-escalation", namespace).
+		WithEscalatedGroup("webhook-test-group").
+		WithMaxValidFor("2h").
+		WithApprovalTimeout("1h").
+		WithAllowedClusters(helpers.GetTestClusterName()).
+		WithAllowedGroups(helpers.TestUsers.WebhookTestRequester.Groups...).
+		WithApproverUsers(helpers.GetTestApproverEmail()).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create test escalation")
@@ -181,9 +166,7 @@ func TestWebhookAuthorization(t *testing.T) {
 
 // TestWebhookEndpoint tests actual webhook endpoint connectivity if available.
 func TestWebhookEndpoint(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}
@@ -196,7 +179,7 @@ func TestWebhookEndpoint(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 	webhookPath := helpers.GetWebhookAuthorizePath(clusterName)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), helpers.WaitForStateTimeout)
 	defer cancel()
 
 	t.Run("WebhookHealthCheck", func(t *testing.T) {
@@ -287,9 +270,7 @@ func TestWebhookEndpoint(t *testing.T) {
 
 // TestSessionBasedAuthorization tests that authorization is tied to session state.
 func TestSessionBasedAuthorization(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -300,25 +281,14 @@ func TestSessionBasedAuthorization(t *testing.T) {
 
 	t.Run("PendingSessionShouldNotAuthorize", func(t *testing.T) {
 		// Create escalation for this subtest with unique group
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-auth-pending",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "auth-test-pending-group",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-					Groups:   helpers.TestUsers.WebhookTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.WebhookTestApprover.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-test-auth-pending", namespace).
+			WithEscalatedGroup("auth-test-pending-group").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("1h").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithAllowedGroups(helpers.TestUsers.WebhookTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.WebhookTestApprover.Email).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -332,7 +302,7 @@ func TestSessionBasedAuthorization(t *testing.T) {
 			User:    helpers.TestUsers.WebhookTestRequester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "E2E test - pending session authorization",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 
@@ -355,25 +325,14 @@ func TestSessionBasedAuthorization(t *testing.T) {
 
 	t.Run("ExpiredSessionShouldNotAuthorize", func(t *testing.T) {
 		// Create escalation for this subtest with unique group
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-auth-expired",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "auth-test-expired-group",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-					Groups:   helpers.TestUsers.WebhookTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.WebhookTestApprover.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-test-auth-expired", namespace).
+			WithEscalatedGroup("auth-test-expired-group").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("1h").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithAllowedGroups(helpers.TestUsers.WebhookTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.WebhookTestApprover.Email).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -388,14 +347,14 @@ func TestSessionBasedAuthorization(t *testing.T) {
 			User:    helpers.TestUsers.WebhookTestRequester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "E2E test - expired session authorization",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 
 		// Approve first
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err, "Failed to approve session via API")
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Set to expired state (simulating time passage)
 		var toExpire telekomv1alpha1.BreakglassSession
@@ -413,25 +372,14 @@ func TestSessionBasedAuthorization(t *testing.T) {
 
 	t.Run("WithdrawnSessionShouldNotAuthorize", func(t *testing.T) {
 		// Create escalation for this subtest with unique group
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-auth-withdrawn",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "auth-test-withdrawn-group",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-					Groups:   helpers.TestUsers.WebhookTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.WebhookTestApprover.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-test-auth-withdrawn", namespace).
+			WithEscalatedGroup("auth-test-withdrawn-group").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("1h").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithAllowedGroups(helpers.TestUsers.WebhookTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.WebhookTestApprover.Email).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -445,7 +393,7 @@ func TestSessionBasedAuthorization(t *testing.T) {
 			User:    helpers.TestUsers.WebhookTestRequester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "E2E test - withdrawn session authorization",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 
@@ -464,9 +412,7 @@ func TestSessionBasedAuthorization(t *testing.T) {
 
 // TestApprovedSessionAuthorization verifies that approved sessions grant access.
 func TestApprovedSessionAuthorization(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -477,27 +423,14 @@ func TestApprovedSessionAuthorization(t *testing.T) {
 
 	t.Run("ApprovedSessionTracksApprover", func(t *testing.T) {
 		// Create escalation with specific group
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-approved-auth-escalation",
-				Namespace: namespace,
-				Labels: map[string]string{
-					"e2e-test": "true",
-				},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "approved-auth-group",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-					Groups:   helpers.TestUsers.WebhookTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.WebhookTestApprover.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-test-approved-auth-escalation", namespace).
+			WithEscalatedGroup("approved-auth-group").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("1h").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithAllowedGroups(helpers.TestUsers.WebhookTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.WebhookTestApprover.Email).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -512,14 +445,14 @@ func TestApprovedSessionAuthorization(t *testing.T) {
 			User:    helpers.GetTestUserEmail(),
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "E2E test - approved session authorization",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err, "Failed to approve session via API")
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify approval details
 		var fetched telekomv1alpha1.BreakglassSession
@@ -534,9 +467,7 @@ func TestApprovedSessionAuthorization(t *testing.T) {
 // TestDebugSessionWebhookAuthorization tests that debug sessions enable pods/exec authorization.
 // This tests the checkDebugSessionAccess path in the webhook controller.
 func TestDebugSessionWebhookAuthorization(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}
@@ -561,7 +492,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Webhook Test Pod",
@@ -580,7 +511,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Webhook Test Session",
@@ -610,7 +541,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	// Wait for session to become Active (reconciler handles state transitions)
 	t.Log("Waiting for debug session to become Active...")
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, 60*time.Second)
+		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 	t.Logf("Debug session is now Active, AllowedPods count: %d", len(session.Status.AllowedPods))
 
 	// Wait for AllowedPods to be populated by the reconciler
@@ -626,7 +557,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 			return true
 		}
 		return false
-	}, 30*time.Second, 2*time.Second)
+	}, helpers.WaitForStateTimeout, 2*time.Second)
 	require.NoError(t, err, "Timeout waiting for AllowedPods to be populated")
 	require.NotEmpty(t, allowedPodName, "Expected at least one allowed pod")
 
@@ -727,7 +658,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 
 		// Wait for the session to be terminated
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.DebugSessionStateTerminated, 30*time.Second)
+			telekomv1alpha1.DebugSessionStateTerminated, helpers.WaitForStateTimeout)
 
 		// Create SAR for pods/exec to an allowed pod
 		sar := &authorizationv1.SubjectAccessReview{

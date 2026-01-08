@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
   labels:
     app: keycloak
   name: keycloak
@@ -78,7 +78,7 @@ metadata:
   labels:
     app: keycloak
   name: keycloak
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   ports:
   - name: 8443-8443

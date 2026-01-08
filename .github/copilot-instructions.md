@@ -64,6 +64,32 @@ npm test           # Vitest
    - Use `http.MethodGet`, `http.MethodPost`, etc. instead of string literals like `"GET"`, `"POST"`
    - Remove unnecessary type conversions (e.g., `string(x) == string(y)` when types are compatible)
    - CI will reject PRs with lint failures
+   - For frontend changes: Run `cd frontend && npm run lint` and fix errors
+
+8. **Documentation (MANDATORY)**: Documentation MUST be updated with every code change:
+   - API changes → Update `docs/api-reference.md` with endpoint signatures, request/response formats
+   - CRD changes → Update relevant docs in `docs/` (e.g., `breakglass-session.md`, `cluster-config.md`)
+   - New features → Add to `docs/advanced-features.md` or create new doc, update `docs/README.md` index
+   - Configuration changes → Update `docs/configuration-reference.md` and `docs/cli-flags-reference.md`
+   - Helm chart changes → Update `charts/escalation-config/README.md` and inline `values.yaml` comments
+   - Breaking changes → Add migration notes to `CHANGELOG.md` (create if needed)
+
+9. **Unit Tests (MANDATORY)**: Every code change MUST include unit tests:
+   - Go code → Add/update `*_test.go` files colocated with source (min 70% coverage for new code)
+   - API endpoints → Test success cases, error cases, validation, authorization
+   - Controllers/reconcilers → Test reconciliation logic, status updates, error handling
+   - Webhooks → Test validation, mutation, rejection scenarios
+   - Frontend → Add/update tests in `frontend/tests/` (Vitest), test components, composables, stores
+   - Run `make test` for Go, `cd frontend && npm test` for frontend before committing
+   - Critical paths require table-driven tests with multiple scenarios
+
+10. **Helm Chart Updates (MANDATORY)**: When adding/modifying CRD fields or configuration:
+    - Update `charts/escalation-config/templates/*.yaml` to expose new fields
+    - Add examples to `charts/escalation-config/values.yaml` with inline comments
+    - Use conditional rendering (`{{- if .Values.field }}`) for optional fields
+    - Test with `helm lint charts/escalation-config` and `helm template test charts/escalation-config`
+    - For breaking changes, increment chart `version` and add upgrade notes to chart README
+    - Ensure all new CRD fields are accessible via helm values
 
 ## Key File References
 
@@ -209,9 +235,24 @@ import (
 // Code follows...
 ```
 
-### 4. Before Writing Any Code
+### 4. Before Writing Any Code (CHECKLIST)
 1. Read the relevant `*_types.go` file to understand the API
 2. Read existing similar implementations in the codebase
 3. Check for helper functions that already exist
 4. Verify import paths by looking at similar files
+5. Plan unit tests - what scenarios need coverage?
+6. Identify documentation that needs updating
+7. Check if helm chart needs updates for new fields
+
+### 5. After Writing Code (CHECKLIST)
+1. Run `make generate && make manifests` if API types changed
+2. Run `make lint` and fix all errors
+3. Run `make test` and ensure all tests pass
+4. Add/update unit tests for new/modified code (aim for >70% coverage)
+5. Update relevant documentation in `docs/`
+6. Update helm chart if CRD fields or config changed
+7. Test helm chart: `helm lint` and `helm template`
+8. Run E2E tests locally if making significant changes: `make e2e`
+9. For frontend changes: `cd frontend && npm run lint && npm test`
+10. Review the diff - does every change have tests and docs?
 

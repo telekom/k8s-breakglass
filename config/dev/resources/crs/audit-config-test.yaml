@@ -15,7 +15,7 @@ spec:
     type: kafka
     kafka:
       brokers:
-      - "breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092"
+      - "breakglass-kafka.breakglass-system.svc.cluster.local:9092"
       topic: "breakglass-audit-events"
       batchSize: 10
       batchTimeoutSeconds: 1
@@ -30,7 +30,7 @@ spec:
   - name: webhook-audit
     type: webhook
     webhook:
-      url: "http://breakglass-dev-audit-webhook-receiver.breakglass-dev-system.svc.cluster.local:80/audit"
+      url: "http://breakglass-audit-webhook-receiver.breakglass-system.svc.cluster.local:80/audit"
       headers:
         Content-Type: application/json
       timeoutSeconds: 10

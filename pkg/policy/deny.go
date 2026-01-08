@@ -269,8 +269,13 @@ func (e *Evaluator) evaluatePodSecurity(act Action, rules *telekomv1alpha1.PodSe
 				}
 			case "warn":
 				result.Denied = false
+				// Render reason for audit events and structured logging
+				result.Reason = e.renderReason(t.Reason, score, factors, act.Pod)
+				if result.Reason == "" {
+					result.Reason = fmt.Sprintf("pod security risk score %d triggered warning threshold", score)
+				}
 				e.log.Warnw("High-risk pod access allowed (warn threshold)",
-					"score", score, "factors", factors,
+					"score", score, "factors", factors, "reason", result.Reason,
 					"pod", act.Pod.Name, "namespace", act.Pod.Namespace, "cluster", act.ClusterID)
 			default: // allow
 				result.Denied = false

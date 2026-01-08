@@ -420,7 +420,7 @@ func TestValidateClusterConfig(t *testing.T) {
 				Namespace: "test-ns",
 			},
 			Spec: ClusterConfigSpec{
-				KubeconfigSecretRef: SecretKeyReference{
+				KubeconfigSecretRef: &SecretKeyReference{
 					Name:      "test-secret",
 					Namespace: "test-ns",
 				},
@@ -441,7 +441,7 @@ func TestValidateClusterConfig(t *testing.T) {
 
 	t.Run("kubeconfigSecretRef without name", func(t *testing.T) {
 		cc := validCC()
-		cc.Spec.KubeconfigSecretRef = SecretKeyReference{
+		cc.Spec.KubeconfigSecretRef = &SecretKeyReference{
 			Namespace: "default",
 		}
 		result := ValidateClusterConfig(cc)
@@ -451,7 +451,7 @@ func TestValidateClusterConfig(t *testing.T) {
 
 	t.Run("kubeconfigSecretRef without namespace", func(t *testing.T) {
 		cc := validCC()
-		cc.Spec.KubeconfigSecretRef = SecretKeyReference{
+		cc.Spec.KubeconfigSecretRef = &SecretKeyReference{
 			Name: "my-secret",
 		}
 		result := ValidateClusterConfig(cc)
@@ -1282,7 +1282,7 @@ func TestValidateClusterConfig_MalformedResources(t *testing.T) {
 				Namespace: "test",
 			},
 			Spec: ClusterConfigSpec{
-				KubeconfigSecretRef: SecretKeyReference{}, // Empty - missing Name and Namespace
+				KubeconfigSecretRef: &SecretKeyReference{}, // Empty - missing Name and Namespace
 			},
 		}
 		result := ValidateClusterConfig(cc)

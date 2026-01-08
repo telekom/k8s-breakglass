@@ -38,14 +38,12 @@ import (
 
 // TestMetricsEndpointAccessible verifies the metrics endpoint is accessible and returns valid Prometheus format.
 func TestMetricsEndpointAccessible(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMetricsTestEnabled() {
 		t.Skip("Skipping metrics test. Set E2E_SKIP_METRICS_TESTS=false to enable (requires metrics port-forward on 8081).")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), helpers.WaitForStateTimeout)
 	defer cancel()
 
 	t.Run("MetricsEndpointReturnsData", func(t *testing.T) {
@@ -71,9 +69,7 @@ func TestMetricsEndpointAccessible(t *testing.T) {
 
 // TestMetricsSessionLifecycleCounters verifies session-related metrics increment correctly.
 func TestMetricsSessionLifecycleCounters(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMetricsTestEnabled() {
 		t.Skip("Skipping metrics test. Set E2E_SKIP_METRICS_TESTS=false to enable (requires metrics port-forward on 8081).")
 	}
@@ -87,24 +83,12 @@ func TestMetricsSessionLifecycleCounters(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Set up escalation for testing
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-metrics-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true", "feature": "metrics"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup: "metrics-test-group",
-			MaxValidFor:    "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-metrics-esc"), namespace).
+		WithEscalatedGroup("metrics-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithLabels(map[string]string{"feature": "metrics"}).
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -131,7 +115,7 @@ func TestMetricsSessionLifecycleCounters(t *testing.T) {
 
 		// Wait for session to be pending
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, 30*time.Second)
+			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Verify metric incremented
 		afterMetrics, err := helpers.FetchMetrics(ctx)
@@ -151,9 +135,7 @@ func TestMetricsSessionLifecycleCounters(t *testing.T) {
 
 // TestMetricsWebhookSARCounters verifies webhook SAR metrics.
 func TestMetricsWebhookSARCounters(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMetricsTestEnabled() {
 		t.Skip("Skipping metrics test. Set E2E_SKIP_METRICS_TESTS=false to enable (requires metrics port-forward on 8081).")
 	}
@@ -189,14 +171,12 @@ func TestMetricsWebhookSARCounters(t *testing.T) {
 
 // TestMetricsPrometheusScrapable verifies metrics are in proper Prometheus text format.
 func TestMetricsPrometheusScrapable(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMetricsTestEnabled() {
 		t.Skip("Skipping metrics test. Set E2E_SKIP_METRICS_TESTS=false to enable (requires metrics port-forward on 8081).")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), helpers.WaitForStateTimeout)
 	defer cancel()
 
 	t.Run("MetricsArePrometheusFormat", func(t *testing.T) {

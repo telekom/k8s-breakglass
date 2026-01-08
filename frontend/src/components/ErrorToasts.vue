@@ -52,6 +52,7 @@ function verticalOffset(index: number) {
         alignment="top-right"
         :opened="e.opened !== false"
         :variant="variantFor(e)"
+        :data-testid="e.type === 'success' ? 'success-toast' : 'error-toast'"
         :position-vertical="verticalOffset(index)"
         :auto-hide="true"
         :auto-hide-duration="autoHideDurationFor(e)"

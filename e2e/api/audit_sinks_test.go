@@ -31,9 +31,7 @@ import (
 
 // TestAuditSinkConfigurations tests all audit sink types.
 func TestAuditSinkConfigurations(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -47,7 +45,7 @@ func TestAuditSinkConfigurations(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-log-sink"),
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -78,7 +76,7 @@ func TestAuditSinkConfigurations(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-webhook-sink"),
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -112,7 +110,7 @@ func TestAuditSinkConfigurations(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-kafka-sink"),
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -145,7 +143,7 @@ func TestAuditSinkConfigurations(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-k8s-sink"),
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -171,9 +169,7 @@ func TestAuditSinkConfigurations(t *testing.T) {
 
 // TestAuditConfigMultipleSinks tests AuditConfig with multiple sinks enabled.
 func TestAuditConfigMultipleSinks(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -187,7 +183,7 @@ func TestAuditConfigMultipleSinks(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-all-sinks"),
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -233,9 +229,7 @@ func TestAuditConfigMultipleSinks(t *testing.T) {
 
 // TestAuditSinkEventTypeFiltering tests sink-level event type filtering.
 func TestAuditSinkEventTypeFiltering(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -249,7 +243,7 @@ func TestAuditSinkEventTypeFiltering(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-event-filter"),
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -278,7 +272,7 @@ func TestAuditSinkEventTypeFiltering(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      helpers.GenerateUniqueName("e2e-audit-severity"),
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -305,9 +299,7 @@ func TestAuditSinkEventTypeFiltering(t *testing.T) {
 
 // TestAuditSinkTypes tests the AuditSinkType enum values.
 func TestAuditSinkTypes(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("AllSinkTypesDocumented", func(t *testing.T) {
 		sinkTypes := []telekomv1alpha1.AuditSinkType{
@@ -326,9 +318,7 @@ func TestAuditSinkTypes(t *testing.T) {
 
 // TestKafkaSinkAdvancedConfig tests advanced Kafka sink configuration.
 func TestKafkaSinkAdvancedConfig(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("KafkaSinkWithBatching", func(t *testing.T) {
 		kafkaSink := telekomv1alpha1.KafkaSinkSpec{
@@ -378,9 +368,7 @@ func TestKafkaSinkAdvancedConfig(t *testing.T) {
 
 // TestWebhookSinkAdvancedConfig tests webhook sink authentication options.
 func TestWebhookSinkAdvancedConfig(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("WebhookWithAuthSecret", func(t *testing.T) {
 		webhookSink := telekomv1alpha1.WebhookSinkSpec{
@@ -419,9 +407,7 @@ func TestWebhookSinkAdvancedConfig(t *testing.T) {
 
 // TestAuditEventTypes tests the types of events that are audited.
 func TestAuditEventTypes(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("AuditedEvents", func(t *testing.T) {
 		t.Log("AUDIT-014: Session creation is audited")

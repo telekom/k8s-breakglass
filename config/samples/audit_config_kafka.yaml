@@ -19,7 +19,8 @@ spec:
   filtering:
     # Exclude noisy system namespaces if needed
     excludeNamespaces:
-      - kube-system
+      patterns:
+        - kube-system
     # Exclude service account noise
     excludeUsers:
       - "system:serviceaccount:kube-system:*"
@@ -178,6 +179,9 @@ spec:
   
   sinks:
     # Kafka for all events
+    # NOTE: Before applying this config, create the required secrets:
+    # kubectl create secret generic kafka-ca --from-file=ca.crt=path/to/kafka-ca.crt -n breakglass-system
+    # kubectl create secret generic kafka-creds --from-literal=username=admin --from-literal=password=secret -n breakglass-system
     - name: kafka-all
       type: kafka
       kafka:
@@ -187,12 +191,12 @@ spec:
         tls:
           enabled: true
           caSecretRef:
-            name: kafka-ca
+            name: kafka-ca  # Create this secret before applying
             namespace: breakglass-system
         sasl:
           mechanism: PLAIN
           credentialsSecretRef:
-            name: kafka-creds
+            name: kafka-creds  # Create this secret before applying
             namespace: breakglass-system
         compression: zstd
     

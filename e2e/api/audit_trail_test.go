@@ -38,9 +38,7 @@ import (
 // TestCompleteAuditTrailSessionLifecycle verifies that complete audit trail is maintained
 // throughout the session lifecycle (create → approve → SAR access → reject/withdraw).
 func TestCompleteAuditTrailSessionLifecycle(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -53,24 +51,12 @@ func TestCompleteAuditTrailSessionLifecycle(t *testing.T) {
 	// Helper to create unique escalation for each sub-test to avoid 409 conflicts
 	createEscalation := func(t *testing.T, suffix string) (*telekomv1alpha1.BreakglassEscalation, string) {
 		testGroup := helpers.GenerateUniqueName("audit-" + suffix)
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-audit-esc-" + suffix),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "audit-trail"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup: testGroup,
-				MaxValidFor:    "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-audit-esc-"+suffix), namespace).
+			WithEscalatedGroup(testGroup).
+			WithAllowedClusters(clusterName).
+			WithMaxValidFor("1h").
+			WithLabels(map[string]string{"feature": "audit-trail"}).
+			Build()
 		cleanup.Add(escalation)
 		require.NoError(t, cli.Create(ctx, escalation))
 		return escalation, testGroup
@@ -94,7 +80,7 @@ func TestCompleteAuditTrailSessionLifecycle(t *testing.T) {
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, 30*time.Second)
+			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Verify session has creation metadata
 		var fetchedSession telekomv1alpha1.BreakglassSession
@@ -131,14 +117,14 @@ func TestCompleteAuditTrailSessionLifecycle(t *testing.T) {
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, 30*time.Second)
+			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Approve session
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err)
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateApproved, 30*time.Second)
+			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify approval is recorded
 		var fetchedSession telekomv1alpha1.BreakglassSession
@@ -158,9 +144,7 @@ func TestCompleteAuditTrailSessionLifecycle(t *testing.T) {
 // TestAuditEventActorIdentity verifies that actor identities (requester, approver)
 // are properly captured in audit events.
 func TestAuditEventActorIdentity(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -173,24 +157,12 @@ func TestAuditEventActorIdentity(t *testing.T) {
 	// Helper to create unique escalation for each sub-test to avoid 409 conflicts
 	createEscalation := func(t *testing.T, suffix string) (*telekomv1alpha1.BreakglassEscalation, string) {
 		testGroup := helpers.GenerateUniqueName("actor-" + suffix)
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-actor-esc-" + suffix),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "audit-trail"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup: testGroup,
-				MaxValidFor:    "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-actor-esc-"+suffix), namespace).
+			WithEscalatedGroup(testGroup).
+			WithAllowedClusters(clusterName).
+			WithMaxValidFor("1h").
+			WithLabels(map[string]string{"feature": "audit-trail"}).
+			Build()
 		cleanup.Add(escalation)
 		require.NoError(t, cli.Create(ctx, escalation))
 		return escalation, testGroup
@@ -215,7 +187,7 @@ func TestAuditEventActorIdentity(t *testing.T) {
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, 30*time.Second)
+			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		var fetchedSession telekomv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
@@ -246,13 +218,13 @@ func TestAuditEventActorIdentity(t *testing.T) {
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, 30*time.Second)
+			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err)
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateApproved, 30*time.Second)
+			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		var fetchedSession telekomv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)
@@ -266,9 +238,7 @@ func TestAuditEventActorIdentity(t *testing.T) {
 
 // TestAuditTimestampAccuracy verifies that audit timestamps are accurate.
 func TestAuditTimestampAccuracy(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -279,24 +249,12 @@ func TestAuditTimestampAccuracy(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	testGroup := helpers.GenerateUniqueName("timestamp-grp")
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-timestamp-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true", "feature": "audit-trail"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup: testGroup,
-			MaxValidFor:    "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-timestamp-esc"), namespace).
+		WithEscalatedGroup(testGroup).
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithLabels(map[string]string{"feature": "audit-trail"}).
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -320,7 +278,7 @@ func TestAuditTimestampAccuracy(t *testing.T) {
 		afterCreate := time.Now()
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, 30*time.Second)
+			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		var fetchedSession telekomv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetchedSession)

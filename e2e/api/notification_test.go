@@ -28,7 +28,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
@@ -135,9 +134,7 @@ func waitForMailHogMessage(t *testing.T, subjectContains string, timeout time.Du
 // TestNotificationOnSessionCreation [M-001] tests that the controller sends notification
 // emails when sessions are created and MailHog receives them.
 func TestNotificationOnSessionCreation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("E2E tests are not enabled. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMailHogTestEnabled() {
 		t.Skip("MailHog tests are disabled. Unset E2E_SKIP_MAILHOG_TESTS to run.")
 	}
@@ -159,25 +156,12 @@ func TestNotificationOnSessionCreation(t *testing.T) {
 
 	// Create escalation using Kubernetes client (direct CR creation)
 	escalationName := fmt.Sprintf("e2e-notif-esc-%s", uniqueID)
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      escalationName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"e2e-test": "true",
-			},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup: fmt.Sprintf("escalated-notif-group-%s", uniqueID),
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   []string{helpers.TestUsers.NotificationTestRequester.Groups[0]},
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.NotificationTestApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(escalationName, namespace).
+		WithEscalatedGroup(fmt.Sprintf("escalated-notif-group-%s", uniqueID)).
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(helpers.TestUsers.NotificationTestRequester.Groups[0]).
+		WithApproverUsers(helpers.TestUsers.NotificationTestApprover.Email).
+		Build()
 
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -199,7 +183,7 @@ func TestNotificationOnSessionCreation(t *testing.T) {
 	// Wait for notification email
 	t.Run("SessionCreationEmailSent", func(t *testing.T) {
 		// Wait for email with the session name or group name
-		msg := waitForMailHogMessage(t, escalation.Spec.EscalatedGroup, 30*time.Second)
+		msg := waitForMailHogMessage(t, escalation.Spec.EscalatedGroup, helpers.WaitForStateTimeout)
 		if msg == nil {
 			// Try waiting for "pending" which is common in notification subjects
 			msg = waitForMailHogMessage(t, "pending", 15*time.Second)
@@ -216,9 +200,7 @@ func TestNotificationOnSessionCreation(t *testing.T) {
 
 // TestNotificationOnSessionApproval tests that notification is sent when a session is approved
 func TestNotificationOnSessionApproval(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("E2E tests are not enabled. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMailHogTestEnabled() {
 		t.Skip("MailHog tests are disabled. Unset E2E_SKIP_MAILHOG_TESTS to run.")
 	}
@@ -238,25 +220,12 @@ func TestNotificationOnSessionApproval(t *testing.T) {
 
 	// Create escalation using Kubernetes client
 	escalationName := fmt.Sprintf("e2e-notif-appr-esc-%s", uniqueID)
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      escalationName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"e2e-test": "true",
-			},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup: fmt.Sprintf("escalated-notif-approval-group-%s", uniqueID),
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   []string{helpers.TestUsers.NotificationTestRequester.Groups[0]},
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.NotificationTestApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(escalationName, namespace).
+		WithEscalatedGroup(fmt.Sprintf("escalated-notif-approval-group-%s", uniqueID)).
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(helpers.TestUsers.NotificationTestRequester.Groups[0]).
+		WithApproverUsers(helpers.TestUsers.NotificationTestApprover.Email).
+		Build()
 
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -276,7 +245,7 @@ func TestNotificationOnSessionApproval(t *testing.T) {
 	t.Logf("Created session: %s/%s", session.Namespace, session.Name)
 
 	// Wait for session to be pending
-	_, err = requesterClient.WaitForSessionViaAPI(ctx, t, session.Name, namespace, telekomv1alpha1.SessionStatePending, 30*time.Second)
+	_, err = requesterClient.WaitForSessionViaAPI(ctx, t, session.Name, namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Session did not reach Pending state")
 
 	// Clear messages before approval
@@ -288,7 +257,7 @@ func TestNotificationOnSessionApproval(t *testing.T) {
 
 	// Wait for approval notification email
 	t.Run("ApprovalEmailSent", func(t *testing.T) {
-		msg := waitForMailHogMessage(t, "approved", 30*time.Second)
+		msg := waitForMailHogMessage(t, "approved", helpers.WaitForStateTimeout)
 		if msg == nil {
 			// Also try looking for "active" since approved sessions become active
 			msg = waitForMailHogMessage(t, "active", 15*time.Second)
@@ -302,9 +271,7 @@ func TestNotificationOnSessionApproval(t *testing.T) {
 
 // TestNotificationOnSessionRejection tests that notification is sent when a session is rejected
 func TestNotificationOnSessionRejection(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("E2E tests are not enabled. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMailHogTestEnabled() {
 		t.Skip("MailHog tests are disabled. Unset E2E_SKIP_MAILHOG_TESTS to run.")
 	}
@@ -324,25 +291,12 @@ func TestNotificationOnSessionRejection(t *testing.T) {
 
 	// Create escalation using Kubernetes client
 	escalationName := fmt.Sprintf("e2e-notif-rej-esc-%s", uniqueID)
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      escalationName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"e2e-test": "true",
-			},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup: fmt.Sprintf("escalated-notif-rejection-group-%s", uniqueID),
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   []string{helpers.TestUsers.NotificationTestRequester.Groups[0]},
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.NotificationTestApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(escalationName, namespace).
+		WithEscalatedGroup(fmt.Sprintf("escalated-notif-rejection-group-%s", uniqueID)).
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(helpers.TestUsers.NotificationTestRequester.Groups[0]).
+		WithApproverUsers(helpers.TestUsers.NotificationTestApprover.Email).
+		Build()
 
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -362,7 +316,7 @@ func TestNotificationOnSessionRejection(t *testing.T) {
 	t.Logf("Created session: %s/%s", session.Namespace, session.Name)
 
 	// Wait for session to be pending
-	_, err = requesterClient.WaitForSessionViaAPI(ctx, t, session.Name, namespace, telekomv1alpha1.SessionStatePending, 30*time.Second)
+	_, err = requesterClient.WaitForSessionViaAPI(ctx, t, session.Name, namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Session did not reach Pending state")
 
 	// Clear messages before rejection
@@ -374,7 +328,7 @@ func TestNotificationOnSessionRejection(t *testing.T) {
 
 	// Wait for rejection notification email
 	t.Run("RejectionEmailSent", func(t *testing.T) {
-		msg := waitForMailHogMessage(t, "rejected", 30*time.Second)
+		msg := waitForMailHogMessage(t, "rejected", helpers.WaitForStateTimeout)
 		require.NotNil(t, msg, "Session rejection should trigger a notification email - check MailProvider and controller configuration")
 
 		t.Logf("Received rejection notification email")
@@ -384,11 +338,9 @@ func TestNotificationOnSessionRejection(t *testing.T) {
 
 // TestMailProviderConfiguration tests that the MailProvider CR is correctly configured
 func TestMailProviderConfiguration(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("E2E tests are not enabled. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), helpers.WaitForStateTimeout)
 	defer cancel()
 
 	cli := helpers.GetClient(t)

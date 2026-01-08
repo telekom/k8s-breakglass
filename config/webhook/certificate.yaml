@@ -12,13 +12,18 @@ metadata:
 spec:
   issuerRef:
     kind: Issuer
-    name: breakglass-webhook-selfsigned-issuer
+    name: webhook-selfsigned-issuer
   secretName: webhook-server-cert
   duration: 2160h # 90d
   renewBefore: 360h # 15d
   # DNS names for the webhook certificate
   # These should match the service DNS name pattern used for webhook connections
+  # Include both prefixed and non-prefixed variants to support different kustomize configurations
   dnsNames:
+  - webhook-service
+  - webhook-service.breakglass-system
+  - webhook-service.breakglass-system.svc
+  - webhook-service.breakglass-system.svc.cluster.local
   - breakglass-webhook-service
   - breakglass-webhook-service.breakglass-system
   - breakglass-webhook-service.breakglass-system.svc

@@ -34,9 +34,7 @@ import (
 
 // TestClusterConfigConnectivity tests ClusterConfig status updates based on connectivity.
 func TestClusterConfigConnectivity(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -52,7 +50,7 @@ func TestClusterConfigConnectivity(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      secretName,
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{
@@ -81,19 +79,9 @@ users:
 		require.NoError(t, err, "Failed to create kubeconfig secret")
 
 		// Create ClusterConfig referencing the secret
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-cluster"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      secretName,
-					Namespace: namespace,
-				},
-			},
-		}
+		clusterConfig := helpers.NewClusterConfigBuilder(helpers.GenerateUniqueName("e2e-cluster"), namespace).
+			WithKubeconfigSecret(secretName, "").
+			Build()
 		cleanup.Add(clusterConfig)
 		err = cli.Create(ctx, clusterConfig)
 		require.NoError(t, err, "Failed to create ClusterConfig")
@@ -102,19 +90,9 @@ users:
 	})
 
 	t.Run("ClusterConfigWithMissingSecret", func(t *testing.T) {
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-cluster-missing"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      "nonexistent-secret",
-					Namespace: namespace,
-				},
-			},
-		}
+		clusterConfig := helpers.NewClusterConfigBuilder(helpers.GenerateUniqueName("e2e-cluster-missing"), namespace).
+			WithKubeconfigSecret("nonexistent-secret", "").
+			Build()
 		cleanup.Add(clusterConfig)
 		err := cli.Create(ctx, clusterConfig)
 		require.NoError(t, err, "Should allow ClusterConfig with missing secret")
@@ -125,9 +103,7 @@ users:
 
 // TestCrossClusterSARAuthorization tests SAR webhook across different cluster configurations.
 func TestCrossClusterSARAuthorization(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled. Set WEBHOOK_TEST=true and ensure API is accessible.")
 	}
@@ -146,25 +122,14 @@ func TestCrossClusterSARAuthorization(t *testing.T) {
 	approverClient := tc.ClientForUser(helpers.TestUsers.MultiClusterApprover)
 
 	// Create the escalation that the test needs - this is required for sessions to be created
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-multi-cluster-sar-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "multi-cluster-ops-group",
-			MaxValidFor:     "2h",
-			ApprovalTimeout: "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.MultiClusterRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.MultiClusterApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-multi-cluster-sar-escalation", namespace).
+		WithEscalatedGroup("multi-cluster-ops-group").
+		WithMaxValidFor("2h").
+		WithApprovalTimeout("1h").
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(helpers.TestUsers.MultiClusterRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.MultiClusterApprover.Email).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation for multi-cluster SAR test")
@@ -189,14 +154,14 @@ func TestCrossClusterSARAuthorization(t *testing.T) {
 		cleanup.Add(&sessionToCleanup)
 
 		// Wait for session to get pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Approve via API
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Wait for approved state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Send SAR request to webhook
 		sar := &authorizationv1.SubjectAccessReview{
@@ -239,9 +204,7 @@ func TestCrossClusterSARAuthorization(t *testing.T) {
 
 // TestEscalationClusterConfigRefs tests ClusterConfigRefs resolution in escalations.
 func TestEscalationClusterConfigRefs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -252,60 +215,31 @@ func TestEscalationClusterConfigRefs(t *testing.T) {
 
 	t.Run("EscalationWithMultipleClusterRefs", func(t *testing.T) {
 		// Create multiple cluster configs
-		cluster1 := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-cluster1"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "env": "dev"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				ClusterID: "dev-cluster-1",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      "dummy-kubeconfig",
-					Namespace: namespace,
-				},
-			},
-		}
+		cluster1 := helpers.NewClusterConfigBuilder(helpers.GenerateUniqueName("e2e-cluster1"), namespace).
+			WithClusterID("dev-cluster-1").
+			WithKubeconfigSecret("dummy-kubeconfig", "").
+			WithLabels(helpers.E2ELabelsWithExtra(map[string]string{"env": "dev"})).
+			Build()
 		cleanup.Add(cluster1)
 		err := cli.Create(ctx, cluster1)
 		require.NoError(t, err)
 
-		cluster2 := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-cluster2"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "env": "dev"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				ClusterID: "dev-cluster-2",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      "dummy-kubeconfig",
-					Namespace: namespace,
-				},
-			},
-		}
+		cluster2 := helpers.NewClusterConfigBuilder(helpers.GenerateUniqueName("e2e-cluster2"), namespace).
+			WithClusterID("dev-cluster-2").
+			WithKubeconfigSecret("dummy-kubeconfig", "").
+			WithLabels(helpers.E2ELabelsWithExtra(map[string]string{"env": "dev"})).
+			Build()
 		cleanup.Add(cluster2)
 		err = cli.Create(ctx, cluster2)
 		require.NoError(t, err)
 
 		// Create escalation referencing both clusters via ClusterConfigRefs (which is []string)
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-escalation-multi"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:    "multi-cluster-group",
-				ClusterConfigRefs: []string{cluster1.Name, cluster2.Name},
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Groups: helpers.TestUsers.MultiClusterRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.MultiClusterApprover.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-escalation-multi"), namespace).
+			WithEscalatedGroup("multi-cluster-group").
+			WithClusterConfigRefs(cluster1.Name, cluster2.Name).
+			WithAllowedGroups(helpers.TestUsers.MultiClusterRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.MultiClusterApprover.Email).
+			Build()
 		cleanup.Add(escalation)
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create multi-cluster escalation")
@@ -322,9 +256,7 @@ func TestEscalationClusterConfigRefs(t *testing.T) {
 
 // TestWebhookEndpointAvailability tests webhook endpoint health and availability.
 func TestWebhookEndpointAvailability(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled. Set WEBHOOK_TEST=true and ensure API is accessible.")
 	}

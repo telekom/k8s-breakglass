@@ -329,6 +329,16 @@ func NewEscalationManagerWithClient(c client.Client, resolver GroupMemberResolve
 	return EscalationManager{Client: c, Resolver: resolver}
 }
 
+// SetResolver updates the GroupMemberResolver used for resolving group members.
+// This should be called when the IdentityProvider configuration changes to ensure
+// the EscalationManager uses the latest Keycloak group sync configuration.
+// Thread-safe: Updates the Resolver field; callers using the EscalationManager
+// will automatically use the new resolver on their next call.
+func (em *EscalationManager) SetResolver(resolver GroupMemberResolver) {
+	em.Resolver = resolver
+	zap.S().Infow("EscalationManager resolver updated")
+}
+
 // UpdateBreakglassEscalationStatus updates the given escalation resource status
 func (em EscalationManager) UpdateBreakglassEscalationStatus(ctx context.Context, esc telekomv1alpha1.BreakglassEscalation) error {
 	zap.S().Infow("Updating BreakglassEscalation status", "name", esc.Name)

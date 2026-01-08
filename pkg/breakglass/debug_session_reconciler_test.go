@@ -1544,3 +1544,68 @@ func TestDebugSessionController_Reconcile_FailedState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, reconcile.Result{}, result) // No requeue for terminal state
 }
+
+func TestDebugSessionController_ShouldEmitAudit(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := NewDebugSessionController(logger, nil, nil)
+
+	tests := []struct {
+		name              string
+		session           *telekomv1alpha1.DebugSession
+		expectedEmitAudit bool
+	}{
+		{
+			name: "no resolved template - should emit",
+			session: &telekomv1alpha1.DebugSession{
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: nil,
+				},
+			},
+			expectedEmitAudit: true,
+		},
+		{
+			name: "resolved template with nil audit config - should emit",
+			session: &telekomv1alpha1.DebugSession{
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
+						Audit: nil,
+					},
+				},
+			},
+			expectedEmitAudit: true,
+		},
+		{
+			name: "audit enabled - should emit",
+			session: &telekomv1alpha1.DebugSession{
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
+						Audit: &telekomv1alpha1.DebugSessionAuditConfig{
+							Enabled: true,
+						},
+					},
+				},
+			},
+			expectedEmitAudit: true,
+		},
+		{
+			name: "audit disabled - should not emit",
+			session: &telekomv1alpha1.DebugSession{
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
+						Audit: &telekomv1alpha1.DebugSessionAuditConfig{
+							Enabled: false,
+						},
+					},
+				},
+			},
+			expectedEmitAudit: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ctrl.shouldEmitAudit(tt.session)
+			assert.Equal(t, tt.expectedEmitAudit, result)
+		})
+	}
+}

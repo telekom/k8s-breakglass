@@ -65,6 +65,31 @@ func (c *Cleanup) Add(obj client.Object) {
 	c.resources = append(c.resources, obj)
 }
 
+// CreateAndRegister creates a resource and registers it for cleanup only on success.
+// This is the recommended pattern - it avoids registering cleanup for resources
+// that failed to create (which would cause noisy "not found" errors during cleanup).
+//
+// Usage:
+//
+//	err := cleanup.CreateAndRegister(ctx, cli, escalation)
+//	require.NoError(t, err)
+func (c *Cleanup) CreateAndRegister(ctx context.Context, cli client.Client, obj client.Object) error {
+	if err := cli.Create(ctx, obj); err != nil {
+		return err
+	}
+	c.Add(obj)
+	return nil
+}
+
+// MustCreateAndRegister creates a resource and registers it for cleanup.
+// Fails the test immediately if creation fails.
+func (c *Cleanup) MustCreateAndRegister(ctx context.Context, cli client.Client, obj client.Object) {
+	c.t.Helper()
+	if err := c.CreateAndRegister(ctx, cli, obj); err != nil {
+		c.t.Fatalf("Failed to create resource %T %s: %v", obj, obj.GetName(), err)
+	}
+}
+
 // Run executes cleanup of all registered resources.
 // If E2E_SKIP_CLEANUP=true (set in CI), cleanup is skipped to allow
 // post-test debugging via resource dumps (kubectl get ... -o yaml).

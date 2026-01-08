@@ -3,9 +3,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test, expect } from "@playwright/test";
-import { AuthHelper, TEST_USERS, MailHogClient } from "./helpers";
+import {
+  AuthHelper,
+  TEST_USERS,
+  MailHogClient,
+  fillScaleTextarea,
+  waitForScaleToast,
+  findEscalationCardByName,
+} from "./helpers";
 
-test.describe("Approve Session via Email Link", () => {
+// This test file uses dev-user-alpha (TEST_USERS.devAlpha) who has group "frontend-team"
+// It targets the "ui-e2e-approve-email-test" escalation which only allows "frontend-team" group
+// The UI displays the escalatedGroup field, not the metadata.name
+const ESCALATION_NAME = "ui-e2e-approve-email-group";
+
+// Tests that create sessions must run serially to avoid race conditions
+// when multiple tests try to use the same escalation concurrently
+test.describe.serial("Approve Session via Email Link", () => {
   let mailhog: MailHogClient;
 
   test.beforeAll(() => {
@@ -33,15 +47,24 @@ test.describe("Approve Session via Email Link", () => {
       const approverAuth = new AuthHelper(approverPage);
 
       // === Step 1: Requester creates session ===
-      await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
+      // Use dev-user-alpha who has frontend-team group (isolated from other tests)
+      await requesterAuth.loginViaKeycloak(TEST_USERS.devAlpha);
 
-      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      // Find the specific escalation card for this test file
+      const escalationCard = await findEscalationCardByName(requesterPage, ESCALATION_NAME, { requireAvailable: true });
+      expect(escalationCard).not.toBeNull();
+      if (!escalationCard) return;
       await escalationCard.locator('[data-testid="request-access-button"]').click();
 
-      await requesterPage.fill('[data-testid="reason-input"]', "Email approval test - please approve via link");
+      await fillScaleTextarea(
+        requesterPage,
+        '[data-testid="reason-input"]',
+        "Email approval test - please approve via link",
+      );
       await requesterPage.click('[data-testid="submit-request-button"]');
 
-      await expect(requesterPage.locator('[data-testid="success-toast"]')).toBeVisible();
+      // Verify success message (use waitForScaleToast for Scale's notification toast component)
+      await waitForScaleToast(requesterPage, "success-toast");
 
       // === Step 2: Wait for email ===
       const email = await mailhog.waitForSubject("breakglass", 30000);
@@ -60,8 +83,8 @@ test.describe("Approve Session via Email Link", () => {
       // Should see session review page
       await expect(approverPage.locator('[data-testid="session-review"]')).toBeVisible({ timeout: 15000 });
 
-      // Verify session details
-      await expect(approverPage.locator('[data-testid="requester"]')).toContainText("bob");
+      // Verify session details - requester is dev-user-alpha
+      await expect(approverPage.locator('[data-testid="requester"]')).toContainText("dev-user-alpha");
       await expect(approverPage.locator('[data-testid="request-reason"]')).toContainText("Email approval test");
 
       // Approve the session
@@ -71,8 +94,8 @@ test.describe("Approve Session via Email Link", () => {
       }
       await approverPage.click('[data-testid="approve-button"]');
 
-      // Verify approval success
-      await expect(approverPage.locator('[data-testid="success-toast"]')).toBeVisible();
+      // Verify approval success (use waitForScaleToast for Scale's notification toast component)
+      await waitForScaleToast(approverPage, "success-toast");
 
       // === Step 4: Verify requester sees approved session ===
       await requesterPage.goto("/requests/mine");
@@ -103,11 +126,15 @@ test.describe("Approve Session via Email Link", () => {
     const requesterAuth = new AuthHelper(requesterPage);
 
     try {
-      await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
+      // Use dev-user-alpha who has frontend-team group (isolated from other tests)
+      await requesterAuth.loginViaKeycloak(TEST_USERS.devAlpha);
 
-      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      // Find the specific escalation card for this test file
+      const escalationCard = await findEscalationCardByName(requesterPage, ESCALATION_NAME, { requireAvailable: true });
+      expect(escalationCard).not.toBeNull();
+      if (!escalationCard) return;
       await escalationCard.locator('[data-testid="request-access-button"]').click();
-      await requesterPage.fill('[data-testid="reason-input"]', "Deep link test");
+      await fillScaleTextarea(requesterPage, '[data-testid="reason-input"]', "Deep link test");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
       // Wait for email
@@ -151,11 +178,15 @@ test.describe("Approve Session via Email Link", () => {
     const requesterAuth = new AuthHelper(requesterPage);
 
     try {
-      await requesterAuth.loginViaKeycloak(TEST_USERS.requester);
+      // Use dev-user-alpha who has frontend-team group (isolated from other tests)
+      await requesterAuth.loginViaKeycloak(TEST_USERS.devAlpha);
 
-      const escalationCard = requesterPage.locator('[data-testid="escalation-card"]').first();
+      // Find the specific escalation card for this test file
+      const escalationCard = await findEscalationCardByName(requesterPage, ESCALATION_NAME, { requireAvailable: true });
+      expect(escalationCard).not.toBeNull();
+      if (!escalationCard) return;
       await escalationCard.locator('[data-testid="request-access-button"]').click();
-      await requesterPage.fill('[data-testid="reason-input"]', "Non-approver test");
+      await fillScaleTextarea(requesterPage, '[data-testid="reason-input"]', "Non-approver test");
       await requesterPage.click('[data-testid="submit-request-button"]');
 
       const email = await mailhog.waitForSubject("breakglass", 30000);

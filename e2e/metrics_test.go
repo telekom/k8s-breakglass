@@ -30,9 +30,7 @@ import (
 //
 // Run with: E2E_TEST=true BREAKGLASS_METRICS_URL=http://localhost:8081/metrics go test -v ./e2e/... -run TestZZZ_MetricsSummary
 func TestZZZ_MetricsSummary(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	// Log all breakglass metrics using the test logger
 	helpers.LogBreakglassMetrics(t)

@@ -26,6 +26,7 @@ spec:
       - "test-*"
       - "local-*"
       - "kind-*"
+      - "breakglass-*"
   
   approvers:
     autoApproveFor:
@@ -34,6 +35,7 @@ spec:
         - "test-*"
         - "local-*"
         - "kind-*"
+        - "breakglass-*"
   
   constraints:
     maxDuration: "8h"

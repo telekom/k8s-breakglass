@@ -33,9 +33,7 @@ import (
 // TestScheduledSessionActivation tests that sessions with ScheduledStartTime
 // are properly handled through the WaitingForScheduledTime → Approved transition.
 func TestScheduledSessionActivation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -46,25 +44,15 @@ func TestScheduledSessionActivation(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create escalation for scheduled sessions
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-scheduled-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true", "feature": "scheduled"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "scheduled-admins",
-			MaxValidFor:     "2h",
-			ApprovalTimeout: "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.SchedulingTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.SchedulingTestApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-scheduled-escalation", namespace).
+		WithEscalatedGroup("scheduled-admins").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("2h").
+		WithApprovalTimeout("1h").
+		WithAllowedGroups(helpers.TestUsers.SchedulingTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.SchedulingTestApprover.Email).
+		WithLabels(map[string]string{"feature": "scheduled"}).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation for scheduled session test")
@@ -93,7 +81,7 @@ func TestScheduledSessionActivation(t *testing.T) {
 				return false
 			}
 			return s.Status.State != ""
-		}, 30*time.Second, 2*time.Second)
+		}, helpers.WaitForStateTimeout, 2*time.Second)
 		require.NoError(t, err)
 
 		t.Logf("Immediate scheduled session created via API")
@@ -103,9 +91,7 @@ func TestScheduledSessionActivation(t *testing.T) {
 // TestSessionRetentionCleanup tests that expired sessions are cleaned up
 // after their RetainedUntil timestamp passes.
 func TestSessionRetentionCleanup(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -116,25 +102,15 @@ func TestSessionRetentionCleanup(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create escalation with very short retention for testing
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-cleanup-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true", "feature": "cleanup"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "cleanup-test-admins",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.SchedulingTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.SchedulingTestApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-cleanup-esc"), namespace).
+		WithEscalatedGroup("cleanup-test-admins").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		WithAllowedGroups(helpers.TestUsers.SchedulingTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.SchedulingTestApprover.Email).
+		WithLabels(map[string]string{"feature": "cleanup"}).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation for cleanup test")
@@ -160,7 +136,7 @@ func TestSessionRetentionCleanup(t *testing.T) {
 				return false
 			}
 			return s.Status.State != ""
-		}, 30*time.Second, 2*time.Second)
+		}, helpers.WaitForStateTimeout, 2*time.Second)
 		require.NoError(t, err)
 
 		t.Logf("Short-lived session created for expiration test")
@@ -169,9 +145,7 @@ func TestSessionRetentionCleanup(t *testing.T) {
 
 // TestSessionStateTransitionsComplete tests all session state transitions.
 func TestSessionStateTransitionsComplete(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -187,49 +161,27 @@ func TestSessionStateTransitionsComplete(t *testing.T) {
 	approvalGroup := helpers.GenerateUniqueName("state-approval")
 
 	// Create escalation for pending test
-	pendingEscalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-states-pending"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  pendingGroup,
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.SchedulingTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.SchedulingTestApprover.Email},
-			},
-		},
-	}
+	pendingEscalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-states-pending"), namespace).
+		WithEscalatedGroup(pendingGroup).
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		WithAllowedGroups(helpers.TestUsers.SchedulingTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.SchedulingTestApprover.Email).
+		Build()
 	cleanup.Add(pendingEscalation)
 	err := cli.Create(ctx, pendingEscalation)
 	require.NoError(t, err)
 
 	// Create escalation for approval test
-	approvalEscalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-states-approval"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  approvalGroup,
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.SchedulingTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.SchedulingTestApprover.Email},
-			},
-		},
-	}
+	approvalEscalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-states-approval"), namespace).
+		WithEscalatedGroup(approvalGroup).
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		WithAllowedGroups(helpers.TestUsers.SchedulingTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.SchedulingTestApprover.Email).
+		Build()
 	cleanup.Add(approvalEscalation)
 	err = cli.Create(ctx, approvalEscalation)
 	require.NoError(t, err)
@@ -244,7 +196,7 @@ func TestSessionStateTransitionsComplete(t *testing.T) {
 			User:    helpers.TestUsers.SchedulingTestRequester.Email,
 			Group:   pendingGroup,
 			Reason:  "State transition test - pending",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 
@@ -267,7 +219,7 @@ func TestSessionStateTransitionsComplete(t *testing.T) {
 			User:    helpers.TestUsers.SchedulingTestRequester.Email,
 			Group:   approvalGroup,
 			Reason:  "State transition test - approve",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 
@@ -276,7 +228,7 @@ func TestSessionStateTransitionsComplete(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Wait for approved state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify
 		var fetched telekomv1alpha1.BreakglassSession
@@ -290,9 +242,7 @@ func TestSessionStateTransitionsComplete(t *testing.T) {
 
 // TestDebugSessionCleanupFlow tests that debug sessions go through proper cleanup lifecycle.
 func TestDebugSessionCleanupFlow(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -313,7 +263,7 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      sessionName,
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "cleanup"},
+				Labels:    helpers.E2ELabelsWithFeature("cleanup"),
 			},
 			Spec: telekomv1alpha1.DebugSessionSpec{
 				RequestedBy: helpers.TestUsers.SchedulingTestRequester.Email,
@@ -374,7 +324,7 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      sessionName,
 					Namespace: namespace,
-					Labels:    map[string]string{"e2e-test": "true", "feature": "terminal-states"},
+					Labels:    helpers.E2ELabelsWithFeature("terminal-states"),
 				},
 				Spec: telekomv1alpha1.DebugSessionSpec{
 					RequestedBy: helpers.TestUsers.SchedulingTestRequester.Email,
@@ -413,9 +363,7 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 
 // TestSessionRetainedUntilHandling tests the RetainedUntil timestamp is respected.
 func TestSessionRetainedUntilHandling(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -427,25 +375,15 @@ func TestSessionRetainedUntilHandling(t *testing.T) {
 
 	t.Run("SessionWithRetainedUntil", func(t *testing.T) {
 		// Create escalation for this test
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-retained-esc"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "retained"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "retained-test-admins",
-				MaxValidFor:     "1h",
-				ApprovalTimeout: "30m",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.SchedulingTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.SchedulingTestApprover.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-retained-esc"), namespace).
+			WithEscalatedGroup("retained-test-admins").
+			WithAllowedClusters(clusterName).
+			WithMaxValidFor("1h").
+			WithApprovalTimeout("30m").
+			WithAllowedGroups(helpers.TestUsers.SchedulingTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.SchedulingTestApprover.Email).
+			WithLabels(map[string]string{"feature": "retained"}).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -472,7 +410,7 @@ func TestSessionRetainedUntilHandling(t *testing.T) {
 				return false
 			}
 			return s.Status.State != ""
-		}, 30*time.Second, 2*time.Second)
+		}, helpers.WaitForStateTimeout, 2*time.Second)
 		require.NoError(t, err)
 
 		// Check that session exists

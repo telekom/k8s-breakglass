@@ -379,8 +379,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="session-browser">
-    <section class="filters-card">
+  <main class="session-browser" data-testid="session-browser">
+    <section class="filters-card" data-testid="filters-section">
       <header>
         <h2>Session Browser</h2>
         <p>
@@ -389,14 +389,21 @@ onMounted(() => {
         </p>
       </header>
 
-      <div class="filters-grid">
-        <scale-checkbox :checked="filters.mine" @scaleChange="filters.mine = $event.target.checked"
+      <div class="filters-grid" data-testid="filter-checkboxes">
+        <scale-checkbox
+          data-testid="filter-mine"
+          :checked="filters.mine"
+          @scaleChange="filters.mine = $event.target.checked"
           >Mine</scale-checkbox
         >
-        <scale-checkbox :checked="filters.approver" @scaleChange="filters.approver = $event.target.checked"
+        <scale-checkbox
+          data-testid="filter-approver"
+          :checked="filters.approver"
+          @scaleChange="filters.approver = $event.target.checked"
           >Approver</scale-checkbox
         >
         <scale-checkbox
+          data-testid="filter-approved-by-me"
           :checked="filters.onlyApprovedByMe"
           :disabled="!currentUserEmail"
           title="Requires email in profile"
@@ -406,12 +413,13 @@ onMounted(() => {
         </scale-checkbox>
       </div>
 
-      <div class="state-chooser">
+      <div class="state-chooser" data-testid="state-filters">
         <span class="section-label">States</span>
         <div class="state-options">
           <scale-checkbox
             v-for="option in stateOptions"
             :key="option.value"
+            :data-testid="`state-filter-${option.value}`"
             :checked="filters.states.includes(option.value)"
             :title="option.value === 'active' ? 'Shows only currently active sessions' : undefined"
             @scaleChange="(event: any) => onStateToggle(option.value, event)"
@@ -421,26 +429,30 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="text-filters">
+      <div class="text-filters" data-testid="text-filters">
         <scale-text-field
+          data-testid="cluster-filter"
           label="Cluster"
           :value="filters.cluster"
           placeholder="cluster name"
           @scaleChange="filters.cluster = $event.target.value"
         ></scale-text-field>
         <scale-text-field
+          data-testid="group-filter"
           label="Group"
           :value="filters.group"
           placeholder="group"
           @scaleChange="filters.group = $event.target.value"
         ></scale-text-field>
         <scale-text-field
+          data-testid="user-filter"
           label="User"
           :value="filters.user"
           placeholder="user email"
           @scaleChange="filters.user = $event.target.value"
         ></scale-text-field>
         <scale-text-field
+          data-testid="name-filter"
           label="Session Name"
           :value="filters.name"
           placeholder="metadata.name"
@@ -448,9 +460,11 @@ onMounted(() => {
         ></scale-text-field>
       </div>
 
-      <div class="filters-actions">
-        <scale-button :disabled="loading" variant="primary" @click="fetchSessions">Apply filters</scale-button>
-        <scale-button variant="secondary" @click="resetFilters">Reset</scale-button>
+      <div class="filters-actions" data-testid="filter-actions">
+        <scale-button data-testid="apply-filters-button" :disabled="loading" variant="primary" @click="fetchSessions"
+          >Apply filters</scale-button
+        >
+        <scale-button data-testid="reset-filters-button" variant="secondary" @click="resetFilters">Reset</scale-button>
       </div>
 
       <p class="filters-meta">
@@ -462,25 +476,27 @@ onMounted(() => {
       </p>
     </section>
 
-    <section class="results-card">
+    <section class="results-card" data-testid="results-section">
       <header>
         <h3>Results ({{ visibleSessions.length }})</h3>
-        <p v-if="loading">Loading sessions…</p>
-        <p v-else-if="error" class="error">{{ error }}</p>
+        <p v-if="loading" data-testid="loading-indicator">Loading sessions…</p>
+        <p v-else-if="error" class="error" data-testid="error-message">{{ error }}</p>
       </header>
 
       <EmptyState
         v-if="!loading && !error && !visibleSessions.length"
+        data-testid="empty-state"
         icon="🔍"
         message="No sessions matched the current filters."
         :action-label="undefined"
       />
 
-      <div v-if="visibleSessions.length" class="sessions-list">
+      <div v-if="visibleSessions.length" class="sessions-list" data-testid="session-list">
         <scale-card
           v-for="session in visibleSessions"
           :key="session.metadata?.name || session.name || session.spec?.grantedGroup"
           class="session-card"
+          data-testid="session-row"
         >
           <div class="card-header">
             <div>
@@ -506,7 +522,7 @@ onMounted(() => {
                 </scale-button>
               </div>
             </div>
-            <scale-tag size="small" :variant="sessionStatusVariant(session)">
+            <scale-tag size="small" :variant="sessionStatusVariant(session)" data-testid="status">
               {{ sessionState(session) }}
             </scale-tag>
           </div>
@@ -519,10 +535,11 @@ onMounted(() => {
             <span><strong>Approved by:</strong> {{ describeApprover(session) }}</span>
           </div>
 
-          <div v-if="getSessionActions(session).length" class="session-actions">
+          <div v-if="getSessionActions(session).length" class="session-actions" data-testid="session-actions">
             <scale-button
               v-for="action in getSessionActions(session)"
               :key="`${sessionKey(session)}-${action.key}`"
+              :data-testid="`action-${action.key}`"
               :variant="action.variant || 'secondary'"
               :disabled="isSessionBusy(session)"
               @click="() => runSessionAction(session, action.key)"

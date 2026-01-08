@@ -33,9 +33,7 @@ import (
 )
 
 func TestKubectlDebuggingMode(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -102,7 +100,7 @@ func TestKubectlDebuggingMode(t *testing.T) {
 		p := &corev1.Pod{}
 		err := cli.Get(ctx, client.ObjectKey{Name: targetPodName, Namespace: targetNs}, p)
 		return err == nil && p.Status.Phase == corev1.PodRunning
-	}, 60*time.Second, 2*time.Second)
+	}, helpers.WaitForConditionTimeout, 2*time.Second)
 
 	// 3. Request a Debug Session (should auto-approve)
 	requesterClient := tc.RequesterClient()
@@ -117,7 +115,7 @@ func TestKubectlDebuggingMode(t *testing.T) {
 	})
 
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		v1alpha1.DebugSessionStateActive, 30*time.Second)
+		v1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
 
 	t.Log("Debug session activated for kubectl-debug mode")
 
@@ -131,9 +129,7 @@ func TestKubectlDebuggingMode(t *testing.T) {
 }
 
 func TestTerminalSharingMode(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -210,7 +206,7 @@ func TestTerminalSharingMode(t *testing.T) {
 	})
 
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		v1alpha1.DebugSessionStateActive, 60*time.Second)
+		v1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
 	// Verify terminal sharing is configured in status
 	var activeSession v1alpha1.DebugSession

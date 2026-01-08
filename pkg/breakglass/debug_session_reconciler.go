@@ -17,8 +17,11 @@ limitations under the License.
 package breakglass
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"time"
 
@@ -320,12 +323,19 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.D
 		"previousState", ds.Status.State,
 	)
 
-	// Emit audit event if audit manager is configured
-	if c.auditManager != nil {
+	// Emit audit event if audit is enabled for this session
+	if c.shouldEmitAudit(ds) && c.auditManager != nil {
 		c.auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, map[string]interface{}{
 			"template":       ds.Spec.TemplateRef,
 			"requested_by":   ds.Spec.RequestedBy,
 			"previous_state": string(ds.Status.State),
+		})
+		// Send to webhook destinations if configured
+		c.sendToWebhookDestinations(ctx, ds, "DebugSessionFailed", map[string]interface{}{
+			"session":   ds.Name,
+			"namespace": ds.Namespace,
+			"cluster":   ds.Spec.Cluster,
+			"reason":    reason,
 		})
 	}
 
@@ -336,6 +346,88 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.D
 	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 
 	return ctrl.Result{}, c.client.Status().Update(ctx, ds)
+}
+
+// shouldEmitAudit checks if audit events should be emitted for this session
+// based on the template's audit configuration.
+func (c *DebugSessionController) shouldEmitAudit(ds *v1alpha1.DebugSession) bool {
+	if ds.Status.ResolvedTemplate == nil {
+		return true // Default to emit audit if no template resolved yet
+	}
+	if ds.Status.ResolvedTemplate.Audit == nil {
+		return true // Default to enabled if not configured
+	}
+	return ds.Status.ResolvedTemplate.Audit.Enabled
+}
+
+// sendToWebhookDestinations sends audit events to configured webhook destinations
+// from the debug session template's audit config.
+func (c *DebugSessionController) sendToWebhookDestinations(ctx context.Context, ds *v1alpha1.DebugSession, eventType string, payload map[string]interface{}) {
+	if ds.Status.ResolvedTemplate == nil || ds.Status.ResolvedTemplate.Audit == nil {
+		return
+	}
+
+	for _, dest := range ds.Status.ResolvedTemplate.Audit.Destinations {
+		if dest.Type != "webhook" || dest.URL == "" {
+			continue
+		}
+
+		go func(destination v1alpha1.AuditDestination) {
+			if err := c.sendWebhookEvent(ctx, destination, eventType, ds, payload); err != nil {
+				c.log.Warnw("Failed to send audit event to webhook destination",
+					"url", destination.URL,
+					"eventType", eventType,
+					"session", ds.Name,
+					"error", err)
+			}
+		}(dest)
+	}
+}
+
+// sendWebhookEvent sends an audit event to a webhook destination.
+func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest v1alpha1.AuditDestination, eventType string, ds *v1alpha1.DebugSession, payload map[string]interface{}) error {
+	// Build the full payload
+	fullPayload := map[string]interface{}{
+		"eventType": eventType,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"session": map[string]interface{}{
+			"name":        ds.Name,
+			"namespace":   ds.Namespace,
+			"cluster":     ds.Spec.Cluster,
+			"templateRef": ds.Spec.TemplateRef,
+			"requestedBy": ds.Spec.RequestedBy,
+			"state":       string(ds.Status.State),
+		},
+		"details": payload,
+	}
+
+	jsonData, err := json.Marshal(fullPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, dest.URL, bytes.NewReader(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range dest.Headers {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // getTemplate retrieves a DebugSessionTemplate by name
@@ -758,8 +850,14 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *v1alp
 			"node", pod.Spec.NodeName,
 		)
 
-		if c.auditManager != nil {
+		if c.shouldEmitAudit(ds) && c.auditManager != nil {
 			c.auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, reason, message)
+			c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
+				"pod":       pod.Name,
+				"namespace": pod.Namespace,
+				"reason":    reason,
+				"message":   message,
+			})
 		}
 		metrics.DebugSessionPodFailures.WithLabelValues(ds.Spec.Cluster, ds.Name, reason).Inc()
 	}
@@ -784,8 +882,15 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *v1alp
 				"lastTerminationReason", lastTerminationReason,
 			)
 
-			if c.auditManager != nil {
+			if c.shouldEmitAudit(ds) && c.auditManager != nil {
 				c.auditManager.DebugSessionPodRestarted(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, cs.RestartCount, lastTerminationReason)
+				c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodRestarted", map[string]interface{}{
+					"pod":                   pod.Name,
+					"namespace":             pod.Namespace,
+					"container":             cs.Name,
+					"restartCount":          cs.RestartCount,
+					"lastTerminationReason": lastTerminationReason,
+				})
 			}
 			metrics.DebugSessionPodRestarts.WithLabelValues(ds.Spec.Cluster, ds.Name).Inc()
 		}
@@ -809,8 +914,15 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *v1alp
 					"waitingMessage", waitingMessage,
 				)
 
-				if c.auditManager != nil {
+				if c.shouldEmitAudit(ds) && c.auditManager != nil {
 					c.auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, waitingReason, waitingMessage)
+					c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
+						"pod":       pod.Name,
+						"namespace": pod.Namespace,
+						"container": cs.Name,
+						"reason":    waitingReason,
+						"message":   waitingMessage,
+					})
 				}
 				metrics.DebugSessionPodFailures.WithLabelValues(ds.Spec.Cluster, ds.Name, waitingReason).Inc()
 			}

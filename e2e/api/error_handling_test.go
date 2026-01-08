@@ -35,9 +35,7 @@ import (
 
 // TestErrorHandlingInvalidResourceCreation tests error handling when creating invalid resources
 func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -50,7 +48,7 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-error-empty-group",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup:  "",
@@ -77,7 +75,7 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-error-invalid-duration",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.BreakglassEscalationSpec{
 				EscalatedGroup:  "test-group",
@@ -100,20 +98,13 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 	})
 
 	t.Run("CreateSessionWithMissingCluster", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-error-missing-cluster",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster:       "",
-				User:          "test@example.com",
-				GrantedGroup:  "test-group",
-				MaxValidFor:   "1h",
-				RequestReason: "Testing",
-			},
-		}
+		session := helpers.NewSessionBuilder("e2e-error-missing-cluster", namespace).
+			WithCluster(""). // Empty cluster - should fail validation
+			WithUser("test@example.com").
+			WithGrantedGroup("test-group").
+			WithMaxValidFor("1h").
+			WithRequestReason("Testing").
+			Build()
 		err := cli.Create(ctx, session)
 		if err == nil {
 			_ = cli.Delete(ctx, session)
@@ -123,20 +114,13 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 	})
 
 	t.Run("CreateSessionWithMissingUser", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-error-missing-user",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster:       "test-cluster",
-				User:          "",
-				GrantedGroup:  "test-group",
-				MaxValidFor:   "1h",
-				RequestReason: "Testing",
-			},
-		}
+		session := helpers.NewSessionBuilder("e2e-error-missing-user", namespace).
+			WithCluster("test-cluster").
+			WithUser(""). // Empty user - should fail validation
+			WithGrantedGroup("test-group").
+			WithMaxValidFor("1h").
+			WithRequestReason("Testing").
+			Build()
 		err := cli.Create(ctx, session)
 		if err == nil {
 			_ = cli.Delete(ctx, session)
@@ -148,9 +132,7 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 
 // TestErrorHandlingResourceNotFound tests error handling for non-existent resources
 func TestErrorHandlingResourceNotFound(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -193,9 +175,7 @@ func TestErrorHandlingResourceNotFound(t *testing.T) {
 
 // TestErrorHandlingAPIEndpoints tests error handling for API endpoints
 func TestErrorHandlingAPIEndpoints(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}
@@ -268,9 +248,7 @@ func TestErrorHandlingAPIEndpoints(t *testing.T) {
 
 // TestErrorHandlingStatusTransitions tests error handling for invalid state transitions
 func TestErrorHandlingStatusTransitions(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -285,25 +263,10 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 	requesterClient := tc.RequesterClient()
 
 	t.Run("ApproveExpiredSession", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-error-approve-expired-esc"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "error-test-expired-group",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-error-approve-expired-esc"), namespace).
+			WithEscalatedGroup("error-test-expired-group").
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		require.NoError(t, cli.Create(ctx, escalation))
 
@@ -320,7 +283,7 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 		})
 
 		// Wait for pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Set to expired state (simulating expiration)
 		var toExpire telekomv1alpha1.BreakglassSession
@@ -344,25 +307,10 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 	})
 
 	t.Run("RejectApprovedSession", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-error-reject-approved-esc"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "error-test-reject-group",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-error-reject-approved-esc"), namespace).
+			WithEscalatedGroup("error-test-reject-group").
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		require.NoError(t, cli.Create(ctx, escalation))
 
@@ -379,11 +327,11 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 		})
 
 		// Wait for pending state and then approve via API
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 		approverClient := tc.ApproverClient()
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err, "Failed to approve session via API")
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Try to reject an already approved session (invalid transition)
 		var toReject telekomv1alpha1.BreakglassSession
@@ -401,9 +349,7 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 
 // TestErrorHandlingConcurrentModification tests handling of concurrent resource modifications
 func TestErrorHandlingConcurrentModification(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -418,25 +364,10 @@ func TestErrorHandlingConcurrentModification(t *testing.T) {
 	requesterClient := tc.RequesterClient()
 
 	t.Run("ConcurrentStatusUpdate", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-error-concurrent-esc"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "error-test-concurrent-group",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-error-concurrent-esc"), namespace).
+			WithEscalatedGroup("error-test-concurrent-group").
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		require.NoError(t, cli.Create(ctx, escalation))
 
@@ -453,7 +384,7 @@ func TestErrorHandlingConcurrentModification(t *testing.T) {
 		})
 
 		// Wait for pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Get two copies of the session
 		var session1, session2 telekomv1alpha1.BreakglassSession
@@ -479,9 +410,7 @@ func TestErrorHandlingConcurrentModification(t *testing.T) {
 
 // TestErrorHandlingWebhookErrors tests specific webhook error scenarios
 func TestErrorHandlingWebhookErrors(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}

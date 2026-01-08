@@ -285,18 +285,12 @@ func (s *HubSpokeTestSuite) TestSessionCreationForDifferentClusters() {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			session := &telekomv1alpha1.BreakglassSession{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("mc-test-%s-%d", tc.cluster, time.Now().UnixNano()),
-					Namespace: namespace,
-				},
-				Spec: telekomv1alpha1.BreakglassSessionSpec{
-					Cluster:       tc.cluster,
-					User:          helpers.MultiClusterTestUsers.Employee.Email,
-					GrantedGroup:  tc.group,
-					RequestReason: fmt.Sprintf("Multi-cluster test for %s", tc.cluster),
-				},
-			}
+			session := helpers.NewSessionBuilder(fmt.Sprintf("mc-test-%s-%d", tc.cluster, time.Now().UnixNano()), namespace).
+				WithCluster(tc.cluster).
+				WithUser(helpers.MultiClusterTestUsers.Employee.Email).
+				WithGrantedGroup(tc.group).
+				WithRequestReason(fmt.Sprintf("Multi-cluster test for %s", tc.cluster)).
+				Build()
 
 			if tc.shouldFail {
 				err := s.hubClient.Create(s.ctx, session)
@@ -327,21 +321,15 @@ func (s *HubSpokeTestSuite) TestCrossClusterSessionVisibility() {
 
 	// Create sessions for each cluster
 	for _, cluster := range []string{s.config.HubClusterName, s.config.SpokeAClusterName, s.config.SpokeBClusterName} {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("%s-%s", testLabel, cluster),
-				Namespace: namespace,
-				Labels: map[string]string{
-					"test": testLabel,
-				},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster:       cluster,
-				User:          helpers.MultiClusterTestUsers.Employee.Email,
-				GrantedGroup:  "breakglass-read-only",
-				RequestReason: "Testing cross-cluster visibility",
-			},
-		}
+		session := helpers.NewSessionBuilder(fmt.Sprintf("%s-%s", testLabel, cluster), namespace).
+			WithCluster(cluster).
+			WithUser(helpers.MultiClusterTestUsers.Employee.Email).
+			WithGrantedGroup("breakglass-read-only").
+			WithRequestReason("Testing cross-cluster visibility").
+			WithLabels(map[string]string{
+				"test": testLabel,
+			}).
+			Build()
 		s.cleanup.Add(session)
 		err := s.hubClient.Create(s.ctx, session)
 		require.NoError(t, err, "Should create session for %s", cluster)

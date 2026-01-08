@@ -331,21 +331,75 @@ jobs:
           kind version
 
       - name: Setup E2E environment
+        id: setup
+        continue-on-error: true
         run: |
           chmod +x e2e/kind-setup-single.sh
-          SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e UI_FLAVOUR=telekom KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
+          KIND_RETAIN_ON_FAILURE=true SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e UI_FLAVOUR=telekom KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
         env:
           SKIP_BUILD: "true"
           SKIP_PROXY: "true"
           IMAGE: breakglass:e2e
+          PRESERVE_ON_FAILURE: "true"
+          KIND_RETAIN_ON_FAILURE: "true"
+
+      - name: Collect setup failure diagnostics
+        if: steps.setup.outcome == 'failure'
+        run: |
+          DIAG_DIR="setup-failure-diagnostics"
+          mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs}
+          
+          echo "=== Setup failed, collecting diagnostics ==="
+          
+          # Docker state
+          docker ps -a > "$DIAG_DIR/docker/containers.txt" 2>&1 || true
+          docker images > "$DIAG_DIR/docker/images.txt" 2>&1 || true
+          docker logs e2e-keycloak > "$DIAG_DIR/docker/keycloak-container.log" 2>&1 || true
+          
+          # Kind clusters
+          kind get clusters > "$DIAG_DIR/docker/kind-clusters.txt" 2>&1 || true
+          
+          # If cluster exists, get diagnostics
+          if kind get clusters 2>&1 | grep -q breakglass-hub; then
+            export KUBECONFIG="$(kind get kubeconfig-path --name breakglass-hub 2>/dev/null || echo ~/.kube/config)"
+            kubectl get pods -A > "$DIAG_DIR/kubernetes/all-pods.txt" 2>&1 || true
+            kubectl get events -A --sort-by='.lastTimestamp' > "$DIAG_DIR/kubernetes/events.txt" 2>&1 || true
+            kubectl describe pods -A > "$DIAG_DIR/kubernetes/pods-describe.txt" 2>&1 || true
+            
+            # Get logs from any existing pods
+            for ns in breakglass-system kube-system cert-manager; do
+              for pod in $(kubectl get pods -n "$ns" -o name 2>/dev/null); do
+                podname=$(echo "$pod" | sed 's#pod/##')
+                kubectl logs -n "$ns" "$podname" --all-containers > "$DIAG_DIR/logs/${ns}-${podname}.log" 2>&1 || true
+              done
+            done
+          fi
+          
+          # Setup script logs
+          cp e2e/kind-setup-single-tls/*.log "$DIAG_DIR/logs/" 2>/dev/null || true
+          cp e2e/kind-setup-single-tdir/*.log "$DIAG_DIR/logs/" 2>/dev/null || true
+
+      - name: Upload setup failure diagnostics
+        if: steps.setup.outcome == 'failure'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: single-cluster-setup-failure-logs
+          path: setup-failure-diagnostics/
+          retention-days: 14
+
+      - name: Fail if setup failed
+        if: steps.setup.outcome == 'failure'
+        run: |
+          echo "Setup failed. Check the setup-failure-logs artifact for details."
+          exit 1
 
       - name: Wait for services to be ready
         run: |
           echo "Waiting for pods to be ready..."
-          kubectl wait --for=condition=Ready pods --all -n breakglass-dev-system --timeout=300s || {
+          kubectl wait --for=condition=Ready pods --all -n breakglass-system --timeout=300s || {
             echo "Pods not ready, collecting diagnostics..."
             kubectl get pods -A
-            kubectl describe pods -n breakglass-dev-system
+            kubectl describe pods -n breakglass-system
             exit 1
           }
 
@@ -365,6 +419,8 @@ jobs:
             echo "BREAKGLASS_WEBHOOK_URL=${BREAKGLASS_WEBHOOK_URL}" >> $GITHUB_ENV
             echo "BREAKGLASS_METRICS_URL=${BREAKGLASS_METRICS_URL}" >> $GITHUB_ENV
             echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> $GITHUB_ENV
+            echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> $GITHUB_ENV
+            echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> $GITHUB_ENV
             echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> $GITHUB_ENV
             echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> $GITHUB_ENV
             echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> $GITHUB_ENV
@@ -379,7 +435,24 @@ jobs:
 
       - name: Run API E2E tests
         run: |
+          set -o pipefail
           go test -v ./e2e/api/... -timeout 30m 2>&1 | tee e2e-results.txt
+
+      - name: Run OIDC E2E tests
+        run: |
+          set -o pipefail
+          chmod +x e2e/tests/oidc_tests.sh
+          ./e2e/tests/oidc_tests.sh 2>&1 | tee oidc-e2e-results.txt
+        env:
+          NAMESPACE: breakglass-system
+          TIMEOUT: 60
+          PROCESS_WAIT: 20
+          # Use in-cluster service hostname for OIDC tests (controller runs inside pod)
+          KEYCLOAK_HOST: breakglass-keycloak.breakglass-system.svc.cluster.local
+          KEYCLOAK_PORT: "8443"
+          # Use the group-sync client for OIDC tests (has client credentials flow enabled)
+          KEYCLOAK_CLIENT_ID: breakglass-group-sync
+          KEYCLOAK_CLIENT_SECRET_NAME: breakglass-group-sync-secret
 
       - name: Collect comprehensive diagnostics
         if: always()
@@ -423,7 +496,7 @@ jobs:
           kubectl get events -A --sort-by='.lastTimestamp' > "$DIAG_DIR/kubernetes/all-events.txt" 2>&1 || true
           
           # Breakglass namespace detailed
-          NS="breakglass-dev-system"
+          NS="breakglass-system"
           kubectl get all -n "$NS" -o yaml > "$DIAG_DIR/kubernetes/ns-all.yaml" 2>&1 || true
           kubectl get events -n "$NS" --sort-by='.lastTimestamp' > "$DIAG_DIR/kubernetes/ns-events.txt" 2>&1 || true
           kubectl describe pods -n "$NS" > "$DIAG_DIR/kubernetes/ns-pods-describe.txt" 2>&1 || true
@@ -484,6 +557,47 @@ jobs:
           # ===========================================
           echo "--- Test results ---"
           cp e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
+          cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
+          
+          # ===========================================
+          # CROSS-REFERENCE SUMMARY
+          # ===========================================
+          echo "--- Creating debug summary ---"
+          {
+            echo "=== SINGLE-CLUSTER E2E DIAGNOSTICS SUMMARY ==="
+            echo "Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            echo ""
+            
+            echo "=== POD RESTART COUNTS ==="
+            kubectl get pods -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,RESTARTS:.status.containerStatuses[*].restartCount,STATUS:.status.phase' 2>/dev/null || echo "Could not get pod restarts"
+            echo ""
+            
+            echo "=== PODS NOT READY ==="
+            kubectl get pods -A | grep -v "Running\|Completed" 2>/dev/null || echo "All pods running"
+            echo ""
+            
+            echo "=== RECENT ERROR EVENTS (last 5 min) ==="
+            kubectl get events -A --sort-by='.lastTimestamp' 2>/dev/null | grep -iE "error|fail|back-off|crash|unhealthy|killed" | tail -30 || echo "No error events found"
+            echo ""
+            
+            echo "=== CONTROLLER POD LOGS SUMMARY (last 50 lines of errors/warnings) ==="
+            kubectl logs -n breakglass-system -l app=breakglass --tail=200 2>/dev/null | grep -iE "error|warn|fail|panic|fatal" | tail -50 || echo "No errors in controller logs"
+            echo ""
+            
+            echo "=== KEYCLOAK ERRORS ==="
+            kubectl logs -n breakglass-system -l app=keycloak --tail=100 2>/dev/null | grep -iE "error|warn|fail" | tail -20 || echo "No Keycloak errors"
+            echo ""
+            
+            echo "=== AUTHENTICATION FLOW TRACES ==="
+            echo "Checking for OIDC/auth related issues in controller logs..."
+            kubectl logs -n breakglass-system -l app=breakglass --tail=500 2>/dev/null | grep -iE "oidc|token|auth|login|redirect|callback|keycloak" | tail -30 || echo "No auth traces found"
+            echo ""
+            
+            echo "=== TIMELINE: KEY EVENTS ==="
+            echo "Last 20 events sorted by time:"
+            kubectl get events -A --sort-by='.lastTimestamp' -o custom-columns='TIME:.lastTimestamp,NAMESPACE:.involvedObject.namespace,KIND:.involvedObject.kind,NAME:.involvedObject.name,REASON:.reason,MESSAGE:.message' 2>/dev/null | tail -20 || echo "Could not get events timeline"
+            
+          } > "$DIAG_DIR/DEBUG_SUMMARY.txt" 2>&1
           
           # Summary
           echo "Diagnostics collection complete. Contents:"
@@ -552,13 +666,67 @@ jobs:
           kind version
 
       - name: Setup E2E environment
+        id: setup
+        continue-on-error: true
         run: |
           chmod +x e2e/kind-setup-single.sh
-          SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e UI_FLAVOUR=telekom KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
+          KIND_RETAIN_ON_FAILURE=true SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e UI_FLAVOUR=telekom KIND_NODE_IMAGE=${{ env.KIND_NODE_IMAGE }} ./e2e/kind-setup-single.sh
         env:
           SKIP_BUILD: "true"
           SKIP_PROXY: "true"
           IMAGE: breakglass:e2e
+          PRESERVE_ON_FAILURE: "true"
+          KIND_RETAIN_ON_FAILURE: "true"
+
+      - name: Collect setup failure diagnostics
+        if: steps.setup.outcome == 'failure'
+        run: |
+          DIAG_DIR="ui-setup-failure-diagnostics"
+          mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs}
+          
+          echo "=== UI E2E Setup failed, collecting diagnostics ==="
+          
+          # Docker state
+          docker ps -a > "$DIAG_DIR/docker/containers.txt" 2>&1 || true
+          docker images > "$DIAG_DIR/docker/images.txt" 2>&1 || true
+          docker logs e2e-keycloak > "$DIAG_DIR/docker/keycloak-container.log" 2>&1 || true
+          
+          # Kind clusters
+          kind get clusters > "$DIAG_DIR/docker/kind-clusters.txt" 2>&1 || true
+          
+          # If cluster exists, get diagnostics
+          if kind get clusters 2>&1 | grep -q breakglass-hub; then
+            export KUBECONFIG="$(kind get kubeconfig-path --name breakglass-hub 2>/dev/null || echo ~/.kube/config)"
+            kubectl get pods -A > "$DIAG_DIR/kubernetes/all-pods.txt" 2>&1 || true
+            kubectl get events -A --sort-by='.lastTimestamp' > "$DIAG_DIR/kubernetes/events.txt" 2>&1 || true
+            kubectl describe pods -A > "$DIAG_DIR/kubernetes/pods-describe.txt" 2>&1 || true
+            
+            # Get logs from any existing pods
+            for ns in breakglass-system kube-system cert-manager; do
+              for pod in $(kubectl get pods -n "$ns" -o name 2>/dev/null); do
+                podname=$(echo "$pod" | sed 's#pod/##')
+                kubectl logs -n "$ns" "$podname" --all-containers > "$DIAG_DIR/logs/${ns}-${podname}.log" 2>&1 || true
+              done
+            done
+          fi
+          
+          # Setup script logs
+          cp e2e/kind-setup-single-tls/*.log "$DIAG_DIR/logs/" 2>/dev/null || true
+          cp e2e/kind-setup-single-tdir/*.log "$DIAG_DIR/logs/" 2>/dev/null || true
+
+      - name: Upload setup failure diagnostics
+        if: steps.setup.outcome == 'failure'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ui-e2e-setup-failure-logs
+          path: ui-setup-failure-diagnostics/
+          retention-days: 14
+
+      - name: Fail if setup failed
+        if: steps.setup.outcome == 'failure'
+        run: |
+          echo "UI E2E setup failed. Check the ui-e2e-setup-failure-logs artifact for details."
+          exit 1
 
       - name: Source E2E environment and start frontend
         run: |
@@ -595,9 +763,13 @@ jobs:
           fi
           
           # Start frontend dev server in background with the correct API port
+          # VITE_USE_MOCK_AUTH=false disables mock authentication so real Keycloak OIDC is used
+          # VITE_UI_FLAVOUR=telekom enables Telekom-branded UI components
           cd frontend
           echo "Starting frontend dev server with API proxy to localhost:$MOCK_API_PORT..."
-          npm run dev > ../frontend-dev.log 2>&1 &
+          echo "Mock auth disabled (VITE_USE_MOCK_AUTH=false) - using real Keycloak OIDC"
+          echo "UI flavour: telekom"
+          VITE_USE_MOCK_AUTH=false VITE_UI_FLAVOUR=telekom npm run dev > ../frontend-dev.log 2>&1 &
           FRONTEND_PID=$!
           echo $FRONTEND_PID > /tmp/frontend-pid.txt
           cd ..
@@ -662,8 +834,8 @@ jobs:
           # Test MailHog
           test_service "MailHog" "http://localhost:8025" 30 "-s" || {
             echo "MailHog not ready - checking status"
-            kubectl get pods -n breakglass-dev-system | grep mailhog || true
-            kubectl logs -n breakglass-dev-system -l app=mailhog --tail=50 2>&1 || true
+            kubectl get pods -n breakglass-system | grep mailhog || true
+            kubectl logs -n breakglass-system -l app=mailhog --tail=50 2>&1 || true
           }
           
           # Test Keycloak (critical for tests)
@@ -674,11 +846,11 @@ jobs:
             ps aux | grep "port-forward.*keycloak" | grep -v grep || echo "No keycloak port-forward found"
             
             # Check if service exists
-            kubectl get svc -n breakglass-dev-system | grep keycloak || true
+            kubectl get svc -n breakglass-system | grep keycloak || true
             
             # Check pods
-            kubectl get pods -n breakglass-dev-system | grep keycloak || true
-            kubectl logs -n breakglass-dev-system -l app=keycloak --tail=100 2>&1 || true
+            kubectl get pods -n breakglass-system | grep keycloak || true
+            kubectl logs -n breakglass-system -l app=keycloak --tail=100 2>&1 || true
             
             # Check if port is listening
             netstat -tlnp 2>/dev/null | grep 8443 || ss -tlnp 2>/dev/null | grep 8443 || echo "Port 8443 not listening"
@@ -791,9 +963,9 @@ jobs:
           fi
           
           # Check in-cluster Keycloak
-          kubectl get pods -n breakglass-dev-system -l app=keycloak -o yaml > "$DIAG_DIR/keycloak/pods.yaml" 2>&1 || true
-          kubectl get svc -n breakglass-dev-system -l app=keycloak -o yaml > "$DIAG_DIR/keycloak/services.yaml" 2>&1 || true
-          kubectl logs -n breakglass-dev-system -l app=keycloak --all-containers=true --tail=500 > "$DIAG_DIR/keycloak/pod-logs.log" 2>&1 || echo "No in-cluster keycloak pods" > "$DIAG_DIR/keycloak/pod-logs.log"
+          kubectl get pods -n breakglass-system -l app=keycloak -o yaml > "$DIAG_DIR/keycloak/pods.yaml" 2>&1 || true
+          kubectl get svc -n breakglass-system -l app=keycloak -o yaml > "$DIAG_DIR/keycloak/services.yaml" 2>&1 || true
+          kubectl logs -n breakglass-system -l app=keycloak --all-containers=true --tail=500 > "$DIAG_DIR/keycloak/pod-logs.log" 2>&1 || echo "No in-cluster keycloak pods" > "$DIAG_DIR/keycloak/pod-logs.log"
           
           # Test Keycloak endpoints directly
           {
@@ -839,7 +1011,7 @@ jobs:
           kubectl get events -A --sort-by='.lastTimestamp' > "$DIAG_DIR/kubernetes/all-events.txt" 2>&1 || true
           
           # Breakglass namespace detailed
-          NS="breakglass-dev-system"
+          NS="breakglass-system"
           kubectl get all -n "$NS" -o yaml > "$DIAG_DIR/kubernetes/ns-all.yaml" 2>&1 || true
           kubectl get events -n "$NS" --sort-by='.lastTimestamp' > "$DIAG_DIR/kubernetes/ns-events.txt" 2>&1 || true
           kubectl describe pods -n "$NS" > "$DIAG_DIR/kubernetes/ns-pods-describe.txt" 2>&1 || true
@@ -926,6 +1098,46 @@ jobs:
           cp -r frontend/test-results "$DIAG_DIR/frontend/" 2>/dev/null || true
           cp -r frontend/playwright-report-e2e "$DIAG_DIR/frontend/" 2>/dev/null || true
           
+          # ===========================================
+          # CROSS-REFERENCE SUMMARY
+          # ===========================================
+          echo "--- Creating debug summary ---"
+          {
+            echo "=== UI E2E DIAGNOSTICS SUMMARY ==="
+            echo "Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            echo ""
+            
+            echo "=== POD RESTART COUNTS ==="
+            kubectl get pods -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,RESTARTS:.status.containerStatuses[*].restartCount,STATUS:.status.phase' 2>/dev/null || echo "Could not get pod restarts"
+            echo ""
+            
+            echo "=== PODS NOT READY ==="
+            kubectl get pods -A | grep -v "Running\|Completed" 2>/dev/null || echo "All pods running"
+            echo ""
+            
+            echo "=== RECENT ERROR EVENTS (last 5 min) ==="
+            kubectl get events -A --sort-by='.lastTimestamp' 2>/dev/null | grep -iE "error|fail|back-off|crash|unhealthy|killed" | tail -30 || echo "No error events found"
+            echo ""
+            
+            echo "=== CONTROLLER POD LOGS SUMMARY (last 50 lines of errors/warnings) ==="
+            kubectl logs -n breakglass-system -l app=breakglass --tail=200 2>/dev/null | grep -iE "error|warn|fail|panic|fatal" | tail -50 || echo "No errors in controller logs"
+            echo ""
+            
+            echo "=== KEYCLOAK ERRORS ==="
+            kubectl logs -n breakglass-system -l app=keycloak --tail=100 2>/dev/null | grep -iE "error|warn|fail" | tail -20 || echo "No Keycloak errors"
+            echo ""
+            
+            echo "=== AUTHENTICATION FLOW TRACES ==="
+            echo "Checking for OIDC/auth related issues in controller logs..."
+            kubectl logs -n breakglass-system -l app=breakglass --tail=500 2>/dev/null | grep -iE "oidc|token|auth|login|redirect|callback|keycloak" | tail -30 || echo "No auth traces found"
+            echo ""
+            
+            echo "=== TIMELINE: KEY EVENTS ==="
+            echo "Last 20 events sorted by time:"
+            kubectl get events -A --sort-by='.lastTimestamp' -o custom-columns='TIME:.lastTimestamp,NAMESPACE:.involvedObject.namespace,KIND:.involvedObject.kind,NAME:.involvedObject.name,REASON:.reason,MESSAGE:.message' 2>/dev/null | tail -20 || echo "Could not get events timeline"
+            
+          } > "$DIAG_DIR/DEBUG_SUMMARY.txt" 2>&1
+          
           # Summary
           echo "Diagnostics collection complete. Contents:"
           find "$DIAG_DIR" -type f | head -50
@@ -993,7 +1205,7 @@ jobs:
           chmod +x e2e/kind-setup-multi.sh
           # Use pipefail to catch script failures even with tee
           set -o pipefail
-          PRESERVE_ON_FAILURE=true SKIP_PROXY=true IMAGE=breakglass:dev UI_FLAVOUR=telekom ./e2e/kind-setup-multi.sh 2>&1 | tee e2e-setup-output.log
+          KIND_RETAIN_ON_FAILURE=true SKIP_PROXY=true IMAGE=breakglass:dev UI_FLAVOUR=telekom ./e2e/kind-setup-multi.sh 2>&1 | tee e2e-setup-output.log
           
           # Verify env.sh was created as a sanity check
           if [ ! -f e2e/kind-setup-multi-tdir/env.sh ]; then
@@ -1005,6 +1217,10 @@ jobs:
           echo "Setup completed successfully. Environment file created at e2e/kind-setup-multi-tdir/env.sh"
         env:
           PRESERVE_ON_FAILURE: "true"
+          KIND_RETAIN_ON_FAILURE: "true"
+          # Use port 8180 for Keycloak HTTP to avoid conflict with breakglass API port 8080
+          # Tests use HTTPS (8443) so HTTP port is only for diagnostics
+          KEYCLOAK_HTTP_PORT: "8180"
           SKIP_PROXY: "true"
           IMAGE: breakglass:dev
 
@@ -1035,9 +1251,9 @@ jobs:
           # Network state
           docker network inspect kind > e2e-setup-failure-logs/docker-network-kind.json 2>&1 || true
           
-          # Check if port is listening
-          nc -zv localhost 8080 > e2e-setup-failure-logs/keycloak-port-check.txt 2>&1 || echo "Port 8080 not listening"
-          curl -v http://localhost:8080/health/ready > e2e-setup-failure-logs/keycloak-health-check.txt 2>&1 || echo "Health check failed"
+          # Check if port is listening (Keycloak HTTP on 8180, HTTPS on 8443)
+          nc -zv localhost 8180 > e2e-setup-failure-logs/keycloak-port-check.txt 2>&1 || echo "Port 8180 not listening"
+          curl -v http://localhost:8180/health/ready > e2e-setup-failure-logs/keycloak-health-check.txt 2>&1 || echo "Health check failed"
           
           # Try HTTPS port as well
           nc -zv localhost 8443 > e2e-setup-failure-logs/keycloak-https-port-check.txt 2>&1 || echo "Port 8443 not listening"
@@ -1059,8 +1275,78 @@ jobs:
             curl -v "http://${KC_IP}:8080/health/ready" >> e2e-setup-failure-logs/keycloak-ip.txt 2>&1 || true
           fi
           
+          # ===========================================
+          # DEEP CONTAINER DIAGNOSTICS VIA DOCKER EXEC
+          # This captures logs from INSIDE the Kind node containers
+          # Critical for debugging kube-apiserver startup failures
+          # ===========================================
+          echo "--- Deep container diagnostics via docker exec ---"
+          
+          for container in $(docker ps -a --format '{{.Names}}' | grep -E 'control-plane'); do
+            echo "Collecting deep diagnostics from container: $container"
+            mkdir -p "e2e-setup-failure-logs/node-$container"
+            
+            # Container inspect for full details
+            docker inspect "$container" > "e2e-setup-failure-logs/node-$container/docker-inspect.json" 2>&1 || true
+            
+            # Get all Kubernetes static pod manifests
+            docker exec "$container" ls -la /etc/kubernetes/manifests/ > "e2e-setup-failure-logs/node-$container/manifests-list.txt" 2>&1 || true
+            docker exec "$container" cat /etc/kubernetes/manifests/kube-apiserver.yaml > "e2e-setup-failure-logs/node-$container/kube-apiserver-manifest.yaml" 2>&1 || true
+            docker exec "$container" cat /etc/kubernetes/manifests/kube-controller-manager.yaml > "e2e-setup-failure-logs/node-$container/kube-controller-manager-manifest.yaml" 2>&1 || true
+            docker exec "$container" cat /etc/kubernetes/manifests/kube-scheduler.yaml > "e2e-setup-failure-logs/node-$container/kube-scheduler-manifest.yaml" 2>&1 || true
+            docker exec "$container" cat /etc/kubernetes/manifests/etcd.yaml > "e2e-setup-failure-logs/node-$container/etcd-manifest.yaml" 2>&1 || true
+            
+            # Get authorization and authentication config files (critical for debugging)
+            docker exec "$container" cat /etc/kubernetes/authorization-config.yaml > "e2e-setup-failure-logs/node-$container/authorization-config.yaml" 2>&1 || echo "No authorization config" > "e2e-setup-failure-logs/node-$container/authorization-config.yaml"
+            docker exec "$container" cat /etc/kubernetes/authentication-config.yaml > "e2e-setup-failure-logs/node-$container/authentication-config.yaml" 2>&1 || echo "No authentication config" > "e2e-setup-failure-logs/node-$container/authentication-config.yaml"
+            docker exec "$container" cat /etc/kubernetes/breakglass-webhook.kubeconfig > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig.yaml" 2>&1 || echo "No webhook kubeconfig" > "e2e-setup-failure-logs/node-$container/webhook-kubeconfig.yaml"
+            
+            # List all files in /etc/kubernetes for visibility
+            docker exec "$container" find /etc/kubernetes -type f -ls > "e2e-setup-failure-logs/node-$container/etc-kubernetes-files.txt" 2>&1 || true
+            
+            # Get crictl container status (shows all Kubernetes containers including crashed ones)
+            docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock ps -a > "e2e-setup-failure-logs/node-$container/crictl-ps.txt" 2>&1 || true
+            docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock pods > "e2e-setup-failure-logs/node-$container/crictl-pods.txt" 2>&1 || true
+            
+            # Get logs from all Kubernetes containers (especially crashed kube-apiserver)
+            for cid in $(docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock ps -a -q 2>/dev/null); do
+              cname=$(docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock inspect "$cid" 2>/dev/null | grep -o '"name": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+              docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock logs "$cid" > "e2e-setup-failure-logs/node-$container/crictl-logs-${cname}-${cid}.log" 2>&1 || true
+            done
+            
+            # Get systemd journal logs for kubelet
+            docker exec "$container" journalctl -u kubelet --no-pager -n 500 > "e2e-setup-failure-logs/node-$container/kubelet-journal.log" 2>&1 || true
+            
+            # Get containerd logs
+            docker exec "$container" journalctl -u containerd --no-pager -n 200 > "e2e-setup-failure-logs/node-$container/containerd-journal.log" 2>&1 || true
+            
+            # Check if config files are readable/valid
+            docker exec "$container" ls -la /etc/kubernetes/ > "e2e-setup-failure-logs/node-$container/etc-kubernetes-ls.txt" 2>&1 || true
+            
+            # Get any core dumps or crash info
+            docker exec "$container" ls -la /var/log/ > "e2e-setup-failure-logs/node-$container/var-log-ls.txt" 2>&1 || true
+            docker exec "$container" cat /var/log/pods/kube-system_kube-apiserver*/kube-apiserver/*.log > "e2e-setup-failure-logs/node-$container/kube-apiserver-pod-log.txt" 2>&1 || true
+            
+            # Test connectivity to webhook endpoint from inside the node
+            if echo "$container" | grep -q "spoke"; then
+              HUB_IP=$(docker inspect breakglass-hub-control-plane --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null || echo "")
+              if [ -n "$HUB_IP" ]; then
+                docker exec "$container" curl -v "http://${HUB_IP}:30080/api/breakglass/webhook/authorize/test" > "e2e-setup-failure-logs/node-$container/webhook-connectivity-test.txt" 2>&1 || true
+              fi
+            fi
+            
+            echo "Completed diagnostics for $container"
+          done
+          
+          # Copy generated config files from the temp directory
+          if [ -d e2e/kind-setup-multi-tdir ]; then
+            mkdir -p e2e-setup-failure-logs/generated-configs
+            cp -r e2e/kind-setup-multi-tdir/*.yaml e2e-setup-failure-logs/generated-configs/ 2>/dev/null || true
+            cp -r e2e/kind-setup-multi-tdir/*.kubeconfig e2e-setup-failure-logs/generated-configs/ 2>/dev/null || true
+          fi
+          
           echo "Setup failure diagnostics saved to e2e-setup-failure-logs/"
-          ls -la e2e-setup-failure-logs/
+          ls -laR e2e-setup-failure-logs/
 
       - name: Upload setup failure logs
         if: steps.setup.outcome == 'failure'
@@ -1124,15 +1410,15 @@ jobs:
       - name: Setup port-forward for hub API
         id: portforward
         run: |
-          BG_NS="breakglass-dev-system"
+          BG_NS="breakglass-system"
           
-          # Find free port
-          API_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
-          echo "Using dynamically allocated API port: $API_PORT"
+          # Use fixed port 8080 for API (UI tests expect this)
+          API_PORT=8080
+          echo "Using API port: $API_PORT"
           echo "api_port=$API_PORT" >> $GITHUB_OUTPUT
           
           # Start port-forward for hub API
-          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-dev-breakglass "$API_PORT:8080" &
+          KUBECONFIG=$E2E_HUB_KUBECONFIG kubectl -n "$BG_NS" port-forward svc/breakglass-breakglass "$API_PORT:8080" &
           echo $! > /tmp/api-pf.pid
           
           # Wait for port-forward
@@ -1148,13 +1434,62 @@ jobs:
 
       - name: Run multi-cluster E2E tests
         run: |
+          set -o pipefail
+          # Run all multi-cluster test suites:
+          # - TestHubSpokeSuite (hub_spoke_test.go)
+          # - TestSpokeHubAuthorizationSuite (spoke_hub_authorization_test.go)
+          # - TestMultiIDPAuthorizationSuite (multi_idp_authorization_test.go)
           go test -v -tags=multicluster ./e2e/api/... -timeout 30m \
-            -run "TestHubSpokeSuite" 2>&1 | tee e2e-multi-results.txt
+            2>&1 | tee e2e-multi-results.txt
         env:
           E2E_TEST: "true"
           E2E_MULTI_CLUSTER: "true"
-          E2E_NAMESPACE: "breakglass-dev-system"
+          E2E_NAMESPACE: "breakglass-system"
           KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG }}
+          # Keycloak runs as Docker container with port 8443 mapped to host
+          # Go tests run on host so use localhost (e2e-keycloak is only in Kind /etc/hosts)
+          KEYCLOAK_HOST: https://localhost:8443
+          KEYCLOAK_REALM: breakglass-e2e
+          # Multi-cluster Keycloak creates 'breakglass' client, not 'breakglass-ui'
+          KEYCLOAK_CLIENT_ID: breakglass
+          # KEYCLOAK_ISSUER_HOST is passed as Host header to Keycloak so token issuer matches IdentityProvider
+          # IdentityProvider expects issuer https://e2e-keycloak:8443/realms/breakglass-e2e
+          KEYCLOAK_ISSUER_HOST: e2e-keycloak:8443
+
+      - name: Run OIDC E2E tests (hub cluster)
+        run: |
+          set -o pipefail
+          chmod +x e2e/tests/oidc_tests.sh
+          KUBECONFIG=$E2E_HUB_KUBECONFIG ./e2e/tests/oidc_tests.sh 2>&1 | tee oidc-e2e-results.txt
+        env:
+          NAMESPACE: breakglass-system
+          TIMEOUT: 60
+          PROCESS_WAIT: 20
+          # Keycloak runs as Docker container in multi-cluster setup
+          # Use e2e-keycloak hostname (injected into Kind nodes /etc/hosts)
+          KEYCLOAK_CONTAINER_NAME: e2e-keycloak
+          KEYCLOAK_HOST: e2e-keycloak
+          KEYCLOAK_PORT: "8443"
+          # Use the group-sync client for OIDC tests (has client credentials flow enabled)
+          KEYCLOAK_CLIENT_ID: breakglass-group-sync
+          KEYCLOAK_CLIENT_SECRET_NAME: breakglass-group-sync-secret
+
+      - name: Run Multi-Cluster OIDC E2E tests
+        run: |
+          set -o pipefail
+          chmod +x e2e/tests/multi_oidc_tests.sh
+          ./e2e/tests/multi_oidc_tests.sh 2>&1 | tee multi-oidc-e2e-results.txt
+        env:
+          NAMESPACE: breakglass-system
+          TIMEOUT: 60
+          PROCESS_WAIT: 20
+          HUB_KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG }}
+          SPOKE_A_KUBECONFIG: ${{ env.E2E_SPOKE_A_KUBECONFIG }}
+          SPOKE_B_KUBECONFIG: ${{ env.E2E_SPOKE_B_KUBECONFIG }}
+          KEYCLOAK_CONTAINER_NAME: e2e-keycloak
+          KEYCLOAK_PORT: "8443"
+          KEYCLOAK_MAIN_REALM: breakglass-e2e
+          KEYCLOAK_CONTRACTORS_REALM: breakglass-e2e-contractors
 
       - name: Collect comprehensive diagnostics
         if: always()
@@ -1163,6 +1498,27 @@ jobs:
           mkdir -p "$DIAG_DIR"/{docker,hub,spoke-a,spoke-b,mailhog}
           
           echo "Collecting comprehensive multi-cluster E2E diagnostics to $DIAG_DIR..."
+          
+          # Try to source environment file if it exists
+          if [ -f e2e/kind-setup-multi-tdir/env.sh ]; then
+            echo "Sourcing environment from e2e/kind-setup-multi-tdir/env.sh"
+            source e2e/kind-setup-multi-tdir/env.sh
+          else
+            echo "WARNING: env.sh not found, attempting to detect kubeconfig paths from kind"
+            # Fallback: try to find kubeconfig files created by kind
+            TDIR="e2e/kind-setup-multi-tdir"
+            if [ -d "$TDIR" ]; then
+              export E2E_HUB_KUBECONFIG="$TDIR/breakglass-hub.kubeconfig"
+              export E2E_SPOKE_A_KUBECONFIG="$TDIR/spoke-cluster-a.kubeconfig"
+              export E2E_SPOKE_B_KUBECONFIG="$TDIR/spoke-cluster-b.kubeconfig"
+              echo "Using fallback kubeconfig paths:"
+              echo "  Hub: $E2E_HUB_KUBECONFIG"
+              echo "  Spoke A: $E2E_SPOKE_A_KUBECONFIG"
+              echo "  Spoke B: $E2E_SPOKE_B_KUBECONFIG"
+            else
+              echo "ERROR: Cannot find kubeconfig files, diagnostics will be limited"
+            fi
+          fi
           
           # ===========================================
           # DOCKER / CONTAINER DIAGNOSTICS
@@ -1183,13 +1539,88 @@ jobs:
           done
           
           # ===========================================
+          # DEEP CONTAINER DIAGNOSTICS VIA DOCKER EXEC
+          # This captures logs from INSIDE the Kind node containers
+          # Critical for debugging kube-apiserver startup failures
+          # ===========================================
+          echo "--- Deep container diagnostics via docker exec ---"
+          
+          for container in $(docker ps -a --format '{{.Names}}' | grep -E 'control-plane'); do
+            echo "Collecting deep diagnostics from container: $container"
+            mkdir -p "$DIAG_DIR/docker/node-$container"
+            
+            # Container inspect for full details
+            docker inspect "$container" > "$DIAG_DIR/docker/node-$container/docker-inspect.json" 2>&1 || true
+            
+            # Get all Kubernetes static pod manifests
+            docker exec "$container" ls -la /etc/kubernetes/manifests/ > "$DIAG_DIR/docker/node-$container/manifests-list.txt" 2>&1 || true
+            docker exec "$container" cat /etc/kubernetes/manifests/kube-apiserver.yaml > "$DIAG_DIR/docker/node-$container/kube-apiserver-manifest.yaml" 2>&1 || true
+            docker exec "$container" cat /etc/kubernetes/manifests/kube-controller-manager.yaml > "$DIAG_DIR/docker/node-$container/kube-controller-manager-manifest.yaml" 2>&1 || true
+            docker exec "$container" cat /etc/kubernetes/manifests/kube-scheduler.yaml > "$DIAG_DIR/docker/node-$container/kube-scheduler-manifest.yaml" 2>&1 || true
+            docker exec "$container" cat /etc/kubernetes/manifests/etcd.yaml > "$DIAG_DIR/docker/node-$container/etcd-manifest.yaml" 2>&1 || true
+            
+            # Get authorization and authentication config files (critical for debugging)
+            docker exec "$container" cat /etc/kubernetes/authorization-config.yaml > "$DIAG_DIR/docker/node-$container/authorization-config.yaml" 2>&1 || echo "No authorization config"
+            docker exec "$container" cat /etc/kubernetes/authentication-config.yaml > "$DIAG_DIR/docker/node-$container/authentication-config.yaml" 2>&1 || echo "No authentication config"
+            docker exec "$container" cat /etc/kubernetes/breakglass-webhook.kubeconfig > "$DIAG_DIR/docker/node-$container/webhook-kubeconfig.yaml" 2>&1 || echo "No webhook kubeconfig"
+            
+            # List all files in /etc/kubernetes for visibility
+            docker exec "$container" find /etc/kubernetes -type f -ls > "$DIAG_DIR/docker/node-$container/etc-kubernetes-files.txt" 2>&1 || true
+            
+            # Get crictl container status (shows all Kubernetes containers including crashed ones)
+            docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock ps -a > "$DIAG_DIR/docker/node-$container/crictl-ps.txt" 2>&1 || true
+            docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock pods > "$DIAG_DIR/docker/node-$container/crictl-pods.txt" 2>&1 || true
+            
+            # Get logs from all Kubernetes containers (especially crashed kube-apiserver)
+            for cid in $(docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock ps -a -q 2>/dev/null); do
+              cname=$(docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock inspect "$cid" 2>/dev/null | grep -o '"name": "[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+              docker exec "$container" crictl --runtime-endpoint unix:///run/containerd/containerd.sock logs "$cid" > "$DIAG_DIR/docker/node-$container/crictl-logs-${cname}-${cid}.log" 2>&1 || true
+            done
+            
+            # Get systemd journal logs for kubelet
+            docker exec "$container" journalctl -u kubelet --no-pager -n 500 > "$DIAG_DIR/docker/node-$container/kubelet-journal.log" 2>&1 || true
+            
+            # Get containerd logs
+            docker exec "$container" journalctl -u containerd --no-pager -n 200 > "$DIAG_DIR/docker/node-$container/containerd-journal.log" 2>&1 || true
+            
+            # Check if config files are readable/valid
+            docker exec "$container" ls -la /etc/kubernetes/ > "$DIAG_DIR/docker/node-$container/etc-kubernetes-ls.txt" 2>&1 || true
+            
+            # Get any pod logs from /var/log/pods
+            docker exec "$container" ls -la /var/log/ > "$DIAG_DIR/docker/node-$container/var-log-ls.txt" 2>&1 || true
+            docker exec "$container" find /var/log/pods -name "*.log" -exec ls -la {} \; > "$DIAG_DIR/docker/node-$container/pod-log-files.txt" 2>&1 || true
+            docker exec "$container" bash -c 'for f in /var/log/pods/kube-system_kube-apiserver*/*/*.log; do echo "=== $f ==="; tail -200 "$f"; done' > "$DIAG_DIR/docker/node-$container/kube-apiserver-pod-logs.txt" 2>&1 || true
+            docker exec "$container" bash -c 'for f in /var/log/pods/kube-system_etcd*/*/*.log; do echo "=== $f ==="; tail -100 "$f"; done' > "$DIAG_DIR/docker/node-$container/etcd-pod-logs.txt" 2>&1 || true
+            
+            # Test connectivity to webhook endpoint from inside the node (for spoke clusters)
+            if echo "$container" | grep -q "spoke"; then
+              HUB_IP=$(docker inspect breakglass-hub-control-plane --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null || echo "")
+              if [ -n "$HUB_IP" ]; then
+                echo "Testing webhook connectivity from $container to hub at $HUB_IP"
+                docker exec "$container" curl -v "http://${HUB_IP}:30080/api/breakglass/webhook/authorize/test" > "$DIAG_DIR/docker/node-$container/webhook-connectivity-test.txt" 2>&1 || true
+                docker exec "$container" curl -v "http://${HUB_IP}:30080/healthz" > "$DIAG_DIR/docker/node-$container/hub-health-check.txt" 2>&1 || true
+              fi
+            fi
+            
+            echo "Completed deep diagnostics for $container"
+          done
+          
+          # Copy generated config files from the temp directory
+          if [ -d e2e/kind-setup-multi-tdir ]; then
+            echo "--- Copying generated config files ---"
+            mkdir -p "$DIAG_DIR/generated-configs"
+            cp -r e2e/kind-setup-multi-tdir/*.yaml "$DIAG_DIR/generated-configs/" 2>/dev/null || true
+            cp -r e2e/kind-setup-multi-tdir/*.kubeconfig "$DIAG_DIR/generated-configs/" 2>/dev/null || true
+          fi
+          
+          # ===========================================
           # HELPER FUNCTION FOR CLUSTER DIAGNOSTICS
           # ===========================================
           collect_cluster_diags() {
             local CLUSTER_NAME="$1"
             local KUBECONFIG_PATH="$2"
             local OUT_DIR="$DIAG_DIR/$CLUSTER_NAME"
-            local NS="breakglass-dev-system"
+            local NS="breakglass-system"
             
             mkdir -p "$OUT_DIR"/{kubernetes,logs,resources}
             
@@ -1273,11 +1704,64 @@ jobs:
           # ===========================================
           echo "--- Test results ---"
           cp e2e-multi-results.txt "$DIAG_DIR/" 2>/dev/null || true
+          cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
+          cp multi-oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           
           # Copy kubeconfigs (for local debugging)
           cp "$E2E_HUB_KUBECONFIG" "$DIAG_DIR/hub-kubeconfig.yaml" 2>/dev/null || true
           cp "$E2E_SPOKE_A_KUBECONFIG" "$DIAG_DIR/spoke-a-kubeconfig.yaml" 2>/dev/null || true
           cp "$E2E_SPOKE_B_KUBECONFIG" "$DIAG_DIR/spoke-b-kubeconfig.yaml" 2>/dev/null || true
+          
+          # ===========================================
+          # CROSS-REFERENCE SUMMARY
+          # ===========================================
+          echo "--- Creating debug summary ---"
+          {
+            echo "=== MULTI-CLUSTER E2E DIAGNOSTICS SUMMARY ==="
+            echo "Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            echo ""
+            
+            for cluster_info in "hub:$E2E_HUB_KUBECONFIG" "spoke-a:$E2E_SPOKE_A_KUBECONFIG" "spoke-b:$E2E_SPOKE_B_KUBECONFIG"; do
+              cluster_name="${cluster_info%%:*}"
+              kubeconfig_path="${cluster_info#*:}"
+              
+              if [ -f "$kubeconfig_path" ]; then
+                export KUBECONFIG="$kubeconfig_path"
+                echo "=== CLUSTER: $cluster_name ==="
+                
+                echo "--- Pod Restart Counts ---"
+                kubectl get pods -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,RESTARTS:.status.containerStatuses[*].restartCount,STATUS:.status.phase' 2>/dev/null | head -20 || echo "Could not get pod info"
+                echo ""
+                
+                echo "--- Pods Not Ready ---"
+                kubectl get pods -A 2>/dev/null | grep -v "Running\|Completed" || echo "All pods running"
+                echo ""
+                
+                echo "--- Recent Error Events ---"
+                kubectl get events -A --sort-by='.lastTimestamp' 2>/dev/null | grep -iE "error|fail|back-off|crash|unhealthy|killed" | tail -15 || echo "No error events"
+                echo ""
+                
+                echo "--- Controller Errors (last 30 lines) ---"
+                kubectl logs -n breakglass-system -l app=breakglass --tail=200 2>/dev/null | grep -iE "error|warn|fail|panic|fatal" | tail -30 || echo "No errors"
+                echo ""
+              else
+                echo "=== CLUSTER: $cluster_name (kubeconfig not found) ==="
+              fi
+            done
+            
+            echo "=== CROSS-CLUSTER CONNECTIVITY ==="
+            echo "Checking if hub can reach spoke clusters..."
+            if [ -f "$E2E_HUB_KUBECONFIG" ]; then
+              export KUBECONFIG="$E2E_HUB_KUBECONFIG"
+              kubectl get clusterconfig -A -o custom-columns='NAME:.metadata.name,STATUS:.status.connectionStatus,LAST_CHECK:.status.lastConnectionCheck' 2>/dev/null || echo "Could not get ClusterConfig status"
+            fi
+            echo ""
+            
+            echo "=== KEYCLOAK CONNECTIVITY ==="
+            echo "Testing Keycloak from test runner..."
+            curl -sk https://localhost:8443/realms/master 2>&1 | head -5 || echo "Keycloak not reachable"
+            
+          } > "$DIAG_DIR/DEBUG_SUMMARY.txt" 2>&1
           
           # Summary
           echo "Diagnostics collection complete. Contents:"

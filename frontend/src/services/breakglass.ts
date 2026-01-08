@@ -32,7 +32,7 @@ export default class BreakglassService {
     } catch (e) {
       handleAxiosError("BreakglassService.fetchMyOutstandingRequests", e, "Failed to fetch outstanding requests");
       debug("BreakglassService.fetchMyOutstandingRequests", "Request failed", { errorMessage: (e as Error)?.message });
-      return [];
+      throw e; // Re-throw so UI can show error state
     }
   }
   private client: AxiosInstance;

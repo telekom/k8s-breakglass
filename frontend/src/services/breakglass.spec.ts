@@ -310,7 +310,7 @@ describe("BreakglassService", () => {
     expect(result.status).toBe(200);
   });
 
-  it("fetches outstanding requests and falls back to empty arrays on errors", async () => {
+  it("fetches outstanding requests and rethrows errors", async () => {
     mockClient.get.mockResolvedValueOnce({ data: [{ metadata: { name: "req" } }] });
     const outstanding = await service.fetchMyOutstandingRequests();
     expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", {
@@ -319,8 +319,7 @@ describe("BreakglassService", () => {
     expect(outstanding).toHaveLength(1);
 
     mockClient.get.mockRejectedValueOnce(new Error("down"));
-    const fallback = await service.fetchMyOutstandingRequests();
-    expect(fallback).toEqual([]);
+    await expect(service.fetchMyOutstandingRequests()).rejects.toThrow("down");
   });
 
   it("normalizes approved sessions when fetching active sessions", async () => {

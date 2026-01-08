@@ -3,7 +3,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DenyPolicy
 metadata:
   name: mc-deny-contractors-hub
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   appliesTo:
     clusters:
@@ -20,7 +20,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DenyPolicy
 metadata:
   name: mc-deny-contractors-spoke-a
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   appliesTo:
     clusters:
@@ -36,7 +36,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DenyPolicy
 metadata:
   name: mc-deny-secrets-readonly
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   rules:
   - verbs: ["get", "list", "watch"]

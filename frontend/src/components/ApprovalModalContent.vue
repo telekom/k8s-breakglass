@@ -1,6 +1,6 @@
 <template>
-  <div class="approve-modal-content">
-    <p><b>User:</b> {{ session.spec?.user }}</p>
+  <div class="approve-modal-content" data-testid="session-review">
+    <p data-testid="requester"><b>User:</b> {{ session.spec?.user }}</p>
     <p><b>Group:</b> {{ session.spec?.grantedGroup }} @ {{ session.spec?.cluster }}</p>
     <p v-if="session.spec?.identityProviderName"><b>IDP:</b> {{ session.spec.identityProviderName }}</p>
 
@@ -34,24 +34,31 @@
     </div>
 
     <!-- Request reason -->
-    <div v-if="requestReason" class="modal-reason">
+    <div v-if="requestReason" class="modal-reason" data-testid="request-reason">
       <strong>Request reason:</strong>
       <div class="reason-text">{{ requestReason }}</div>
     </div>
 
-    <!-- Approver note input -->
-    <scale-textarea
-      label="Approver Note"
-      :value="approverNote"
-      :placeholder="approvalReasonPlaceholder"
-      @scaleChange="handleNoteChange"
-    />
+    <!-- Approver note input (used for both approval and rejection reasons) -->
+    <div data-testid="rejection-reason-input">
+      <scale-textarea
+        label="Approver Note"
+        data-testid="approval-reason-input"
+        :value="approverNote"
+        :placeholder="approvalReasonPlaceholder"
+        @scaleChange="handleNoteChange"
+      />
+    </div>
 
     <p v-if="isNoteRequired && !approverNote.trim()" class="approval-note-required">This field is required.</p>
 
     <div class="modal-actions">
-      <scale-button :disabled="isApproving" @click="$emit('approve')"> Confirm Approve </scale-button>
-      <scale-button variant="danger" :disabled="isApproving" @click="$emit('reject')"> Reject </scale-button>
+      <scale-button data-testid="approve-button" :disabled="isApproving" @click="$emit('approve')">
+        Confirm Approve
+      </scale-button>
+      <scale-button data-testid="reject-button" variant="danger" :disabled="isApproving" @click="$emit('reject')">
+        Reject
+      </scale-button>
       <scale-button variant="secondary" @click="$emit('cancel')"> Cancel </scale-button>
     </div>
   </div>

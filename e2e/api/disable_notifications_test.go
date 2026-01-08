@@ -17,13 +17,9 @@ limitations under the License.
 */
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
@@ -31,42 +27,16 @@ import (
 
 // TestDisableNotificationsFeature tests the DisableNotifications escalation feature.
 func TestDisableNotificationsFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
-	cli := helpers.GetClient(t)
-	cleanup := helpers.NewCleanup(t, cli)
-	namespace := helpers.GetTestNamespace()
-	clusterName := helpers.GetTestClusterName()
+	s := helpers.SetupTest(t)
 
 	t.Run("EscalationWithDisableNotificationsTrue", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-disable-notify-true"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  helpers.GenerateUniqueName("disable-notify-group"),
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-				DisableNotifications: boolPtr(true),
-			},
-		}
-		cleanup.Add(escalation)
-		err := cli.Create(ctx, escalation)
-		require.NoError(t, err)
+		escalation := helpers.NewEscalationBuilder(s.GenerateName("e2e-disable-notify-true"), s.Namespace).
+			WithEscalatedGroup(s.GenerateName("disable-notify-group")).
+			WithAllowedClusters(s.Cluster).
+			Build()
+		escalation.Spec.DisableNotifications = helpers.BoolPtr(true)
+
+		s.MustCreateResource(escalation)
 
 		assert.NotNil(t, escalation.Spec.DisableNotifications,
 			"NOTIFY-001: DisableNotifications should be set")
@@ -76,29 +46,13 @@ func TestDisableNotificationsFeature(t *testing.T) {
 	})
 
 	t.Run("EscalationWithDisableNotificationsFalse", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-disable-notify-false"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  helpers.GenerateUniqueName("notify-enabled-group"),
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-				DisableNotifications: boolPtr(false),
-			},
-		}
-		cleanup.Add(escalation)
-		err := cli.Create(ctx, escalation)
-		require.NoError(t, err)
+		escalation := helpers.NewEscalationBuilder(s.GenerateName("e2e-disable-notify-false"), s.Namespace).
+			WithEscalatedGroup(s.GenerateName("notify-enabled-group")).
+			WithAllowedClusters(s.Cluster).
+			Build()
+		escalation.Spec.DisableNotifications = helpers.BoolPtr(false)
+
+		s.MustCreateResource(escalation)
 
 		assert.NotNil(t, escalation.Spec.DisableNotifications,
 			"NOTIFY-002: DisableNotifications should be set")
@@ -108,28 +62,12 @@ func TestDisableNotificationsFeature(t *testing.T) {
 	})
 
 	t.Run("DisableNotificationsDefaultsToFalse", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-disable-notify-default"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  helpers.GenerateUniqueName("notify-default-group"),
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-			},
-		}
-		cleanup.Add(escalation)
-		err := cli.Create(ctx, escalation)
-		require.NoError(t, err)
+		escalation := helpers.NewEscalationBuilder(s.GenerateName("e2e-disable-notify-default"), s.Namespace).
+			WithEscalatedGroup(s.GenerateName("notify-default-group")).
+			WithAllowedClusters(s.Cluster).
+			Build()
+
+		s.MustCreateResource(escalation)
 
 		assert.Nil(t, escalation.Spec.DisableNotifications,
 			"NOTIFY-003: DisableNotifications should be nil when omitted")
@@ -139,9 +77,7 @@ func TestDisableNotificationsFeature(t *testing.T) {
 
 // TestNotificationIntegration tests notification behavior for sessions.
 func TestNotificationIntegration(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t)
 
 	t.Run("NotificationScenarios", func(t *testing.T) {
 		t.Log("NOTIFY-004: Notifications sent when DisableNotifications=false")
@@ -160,9 +96,7 @@ func TestNotificationIntegration(t *testing.T) {
 
 // TestEscalationNotificationConfig tests notification configuration on escalations.
 func TestEscalationNotificationConfig(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t)
 
 	t.Run("EscalationMailProviderField", func(t *testing.T) {
 		spec := telekomv1alpha1.BreakglassEscalationSpec{
@@ -170,7 +104,7 @@ func TestEscalationNotificationConfig(t *testing.T) {
 			MaxValidFor:          "1h",
 			ApprovalTimeout:      "30m",
 			MailProvider:         "custom-mail-provider",
-			DisableNotifications: boolPtr(false),
+			DisableNotifications: helpers.BoolPtr(false),
 		}
 		assert.Equal(t, "custom-mail-provider", spec.MailProvider)
 		assert.False(t, *spec.DisableNotifications)
@@ -182,7 +116,7 @@ func TestEscalationNotificationConfig(t *testing.T) {
 			EscalatedGroup:       "test-group",
 			MaxValidFor:          "1h",
 			ApprovalTimeout:      "30m",
-			DisableNotifications: boolPtr(true),
+			DisableNotifications: helpers.BoolPtr(true),
 		}
 		assert.Empty(t, spec.MailProvider)
 		assert.True(t, *spec.DisableNotifications)

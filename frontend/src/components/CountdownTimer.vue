@@ -1,6 +1,6 @@
 <template>
   <span>
-    <span :class="['countdown', { expired: remaining <= 0 }]" :title="fullTime">
+    <span :class="['countdown', { expired: remaining <= 0 }]" :title="fullTime" data-testid="countdown-timer">
       <template v-if="remaining > 0">
         {{ formatted }}
       </template>

@@ -1,6 +1,12 @@
 <template>
   <transition name="fade-slide">
-    <div v-if="show" class="auto-logout-warning-container" role="status" aria-live="polite">
+    <div
+      v-if="show"
+      class="auto-logout-warning-container"
+      role="status"
+      aria-live="polite"
+      data-testid="auto-logout-warning"
+    >
       <scale-notification
         heading="Session expiring soon"
         variant="warning"
@@ -12,11 +18,19 @@
           Your session will expire shortly. Click stay logged in to silently renew, or log out if you are finished.
         </p>
         <div class="warning-actions">
-          <scale-button variant="primary" size="small" :loading="renewing" @click="stayLoggedIn">
+          <scale-button
+            variant="primary"
+            size="small"
+            :loading="renewing"
+            data-testid="stay-logged-in-button"
+            @click="stayLoggedIn"
+          >
             Stay logged in
           </scale-button>
-          <scale-button variant="secondary" size="small" @click="dismiss">Dismiss</scale-button>
-          <scale-button variant="ghost" size="small" @click="logout">Log out</scale-button>
+          <scale-button variant="secondary" size="small" data-testid="dismiss-button" @click="dismiss"
+            >Dismiss</scale-button
+          >
+          <scale-button variant="ghost" size="small" data-testid="logout-button" @click="logout">Log out</scale-button>
         </div>
       </scale-notification>
     </div>

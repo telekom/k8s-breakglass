@@ -1,0 +1,141 @@
+# Comprehensive BreakglassSession Examples
+# This file shows various session configurations including scheduled sessions
+#
+# NOTE: BreakglassSession resources are typically created via the API, not directly.
+# These samples are for documentation and testing purposes.
+
+---
+# Example 1: Basic session with minimal configuration
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassSession
+metadata:
+  name: basic-session-example
+  namespace: breakglass
+spec:
+  # Required: Target cluster
+  cluster: dev-cluster
+  
+  # Required: User requesting access
+  user: developer@example.com
+  
+  # Required: Group being granted
+  grantedGroup: namespace-admin
+
+---
+# Example 2: Session with reason and extended validity
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassSession
+metadata:
+  name: session-with-reason
+  namespace: breakglass
+spec:
+  cluster: staging-cluster
+  user: sre@example.com
+  grantedGroup: cluster-admin
+  
+  # Maximum validity duration after approval
+  maxValidFor: "4h"
+  
+  # How long to keep the session object after expiration (for audit)
+  retainFor: "720h"
+  
+  # Free-text reason for the session request
+  requestReason: |
+    Incident INC-12345: Database connection pool exhaustion.
+    Need cluster-admin to restart the database operator deployment.
+
+---
+# Example 3: Scheduled session (starts at a future time)
+# This session will be created in "WaitingForScheduledTime" state
+# and become active only when scheduledStartTime is reached
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassSession
+metadata:
+  name: scheduled-maintenance-session
+  namespace: breakglass
+spec:
+  cluster: prod-cluster
+  user: platform-engineer@example.com
+  grantedGroup: cluster-admin
+  
+  maxValidFor: "2h"
+  retainFor: "720h"
+  
+  # Schedule session to start at a future time (e.g., maintenance window)
+  # Sessions with scheduledStartTime go to "WaitingForScheduledTime" state after approval
+  # and automatically transition to "Approved" when the time arrives
+  scheduledStartTime: "2026-01-15T02:00:00Z"
+  
+  requestReason: |
+    Scheduled maintenance window: Kubernetes control plane upgrade
+    Change Request: CHG-67890
+    Start: 2026-01-15 02:00 UTC
+    Duration: 2 hours
+
+---
+# Example 4: Session with explicit IDP tracking
+# Used in multi-IDP environments to ensure the approving user's IDP matches
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassSession
+metadata:
+  name: session-with-idp-tracking
+  namespace: breakglass
+spec:
+  cluster: prod-cluster
+  user: contractor@external.com
+  grantedGroup: namespace-admin
+  
+  maxValidFor: "1h"
+  retainFor: "720h"
+  
+  # IDP that authenticated the user (set automatically by API)
+  identityProviderName: external-keycloak
+  identityProviderIssuer: https://auth.external.com/realms/contractors
+  
+  # Reference to the ClusterConfig for this cluster
+  clusterConfigRef: prod-cluster
+  
+  requestReason: "External contractor access for deployment support"
+
+---
+# Example 5: Session with deny policies attached
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassSession
+metadata:
+  name: session-with-deny-policies
+  namespace: breakglass
+spec:
+  cluster: prod-cluster
+  user: junior-dev@example.com
+  grantedGroup: namespace-admin
+  
+  maxValidFor: "2h"
+  
+  # Deny policies that restrict what this session can do
+  # These are attached from the escalation or manually specified
+  denyPolicyRefs:
+    - deny-sensitive-namespaces
+    - deny-privileged-pods
+  
+  requestReason: "Need namespace-admin for deploying new application version"
+
+---
+# Example 6: Session allowing IDP mismatch (legacy mode)
+# Used when clusters/escalations don't enforce specific IDP requirements
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassSession
+metadata:
+  name: session-legacy-mode
+  namespace: breakglass
+spec:
+  cluster: dev-cluster
+  user: anyone@example.com
+  grantedGroup: view-only
+  
+  maxValidFor: "8h"
+  
+  # Allow authorization requests from any IDP
+  # Set to true when neither cluster nor escalation specify IDP restrictions
+  allowIDPMismatch: true
+  
+  requestReason: "General cluster access for development"

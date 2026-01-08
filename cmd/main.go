@@ -395,7 +395,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, auditService, mailService, log); err != nil {
+		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, auditService, mailService, &escalationManager, log); err != nil {
 			recMgrErr <- err
 		}
 	}()

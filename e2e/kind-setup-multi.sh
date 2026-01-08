@@ -64,13 +64,13 @@ SPOKE_A_KUBECONFIG=""
 SPOKE_B_KUBECONFIG=""
 
 # --- Keycloak settings ---
-KEYCLOAK_HOST=${KEYCLOAK_HOST:-breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local}
+KEYCLOAK_HOST=${KEYCLOAK_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local}
 KEYCLOAK_HTTPS_PORT=${KEYCLOAK_HTTPS_PORT:-8443}
 KEYCLOAK_MAIN_REALM=${KEYCLOAK_MAIN_REALM:-breakglass-e2e}
 KEYCLOAK_CONTRACTORS_REALM=${KEYCLOAK_CONTRACTORS_REALM:-breakglass-e2e-contractors}
 
 # --- Breakglass namespace ---
-NAMESPACE=${NAMESPACE:-breakglass-dev-system}
+NAMESPACE=${NAMESPACE:-breakglass-system}
 
 # --- Proxy configuration ---
 if [ "${SKIP_PROXY:-false}" = "true" ]; then
@@ -97,8 +97,8 @@ generate_tls_certificates() {
   generate_keycloak_tls "${TLS_DIR}/keycloak" "$hub_ip" "$NAMESPACE"
 }
 
-# Create Kind cluster configuration
-create_kind_config() {
+# Create Kind cluster configuration for HUB cluster (no OIDC/webhook needed - it IS the hub)
+create_hub_kind_config() {
   local cluster_name="$1"
   local config_file="$TDIR/${cluster_name}-kind.yaml"
   
@@ -123,27 +123,303 @@ EOF
   echo "$config_file"
 }
 
-# Create all three clusters
-create_clusters() {
+# Create Kind cluster configuration for SPOKE clusters with OIDC + Authorization Webhook
+# These clusters will authenticate users via OIDC (Keycloak) and authorize via hub webhook
+create_spoke_kind_config() {
+  local cluster_name="$1"
+  local hub_ip="$2"
+  local keycloak_ip="$3"
+  local keycloak_ca_file="$4"
+  local config_file="$TDIR/${cluster_name}-kind.yaml"
+  local authz_config_file="$TDIR/${cluster_name}-authorization-config.yaml"
+  local authn_config_file="$TDIR/${cluster_name}-authentication-config.yaml"
+  local webhook_kubeconfig_file="$TDIR/${cluster_name}-webhook.kubeconfig"
+  
+  # Read the Keycloak CA certificate content for embedding in authentication config
+  local keycloak_ca_content
+  keycloak_ca_content=$(cat "$keycloak_ca_file")
+  
+  # Create authorization configuration for this spoke (Kubernetes 1.32+ stable feature)
+  # This tells the apiserver to use Node, RBAC, then Webhook for authorization
+  # See: https://kubernetes.io/docs/reference/access-authn-authz/authorization/#using-configuration-file-for-authorization
+  #
+  # CEL matchConditions filter out system accounts so they don't hit the webhook:
+  # - system:apiserver, system:kube-controller-manager, system:kube-scheduler
+  # - system:node:* (kubelet)
+  # - system:serviceaccount:* (all service accounts)
+  # This improves performance and prevents webhook dependency for internal operations.
+  #
+  # CRITICAL: failurePolicy must be NoOpinion (not Deny) to allow cluster bootstrap!
+  # If set to Deny and webhook is slow/unreachable, the API server cannot start.
+  cat > "$authz_config_file" <<'AUTHZEOF'
+apiVersion: apiserver.config.k8s.io/v1
+kind: AuthorizationConfiguration
+authorizers:
+  - type: Node
+    name: node
+  - type: RBAC
+    name: rbac
+  - type: Webhook
+    name: breakglass
+    webhook:
+      timeout: 3s
+      authorizedTTL: 30s
+      unauthorizedTTL: 30s
+      failurePolicy: NoOpinion
+      subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
+      connectionInfo:
+        type: KubeConfigFile
+        kubeConfigFile: /etc/kubernetes/breakglass-webhook.kubeconfig
+      matchConditions:
+        # Skip webhook for system users (returns false = skip, true = call webhook)
+        - expression: "!request.user.startsWith('system:')"
+        # Skip webhook for system service accounts group
+        - expression: "!request.groups.exists(g, g == 'system:serviceaccounts')"
+        # Only call webhook for authenticated users
+        - expression: "request.groups.exists(g, g == 'system:authenticated')"
+        # Only call webhook for OIDC users (have oidc: group prefix or email-like username)
+        - expression: "request.groups.exists(g, g.startsWith('oidc:')) || request.user.contains('@')"
+AUTHZEOF
+
+  # Create authentication configuration for this spoke (Kubernetes 1.34+ structured auth)
+  # This uses the AuthenticationConfiguration API instead of --oidc-* flags
+  # See: https://kubernetes.io/docs/reference/access-authn-authz/authentication/#using-authentication-configuration
+  cat > "$authn_config_file" <<EOF
+apiVersion: apiserver.config.k8s.io/v1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: https://${keycloak_ip}:8443/realms/${KEYCLOAK_MAIN_REALM}
+    audiences:
+    - breakglass
+    certificateAuthority: |
+$(echo "$keycloak_ca_content" | sed 's/^/      /')
+  claimMappings:
+    username:
+      claim: preferred_username
+      prefix: ""
+    groups:
+      claim: groups
+      prefix: ""
+EOF
+
+  # Create webhook kubeconfig that points to hub breakglass webhook
+  # The spoke apiserver will use this to call the hub for authorization decisions
+  # NOTE: The webhook is served on the same port as the API (8080), not a separate port
+  # NOTE: Breakglass runs in HTTP mode in e2e (no TLS on the API server)
+  cat > "$webhook_kubeconfig_file" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+  - name: breakglass-hub
+    cluster:
+      server: http://${hub_ip}:${API_NODEPORT}/api/breakglass/webhook/authorize/${cluster_name}
+users:
+  - name: spoke-webhook-client
+    user:
+contexts:
+  - name: default
+    context:
+      cluster: breakglass-hub
+      user: spoke-webhook-client
+current-context: default
+EOF
+
+  # Create Kind cluster config with structured authentication and authorization
+  # IMPORTANT: extraMounts are Docker host → container mappings
+  # The kubeadmConfigPatches then reference paths INSIDE the container
+  # Uses --authentication-config instead of --oidc-* flags (Kubernetes 1.34+ approach)
+  cat > "$config_file" <<EOF
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ${cluster_name}
+nodes:
+- role: control-plane
+  image: ${KIND_NODE_IMAGE}
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        authentication-config: /etc/kubernetes/authentication-config.yaml
+        authorization-config: /etc/kubernetes/authorization-config.yaml
+      extraVolumes:
+        - name: authentication-config
+          hostPath: /etc/kubernetes/authentication-config.yaml
+          mountPath: /etc/kubernetes/authentication-config.yaml
+          readOnly: true
+        - name: authorization-config
+          hostPath: /etc/kubernetes/authorization-config.yaml
+          mountPath: /etc/kubernetes/authorization-config.yaml
+          readOnly: true
+        - name: webhook-kubeconfig
+          hostPath: /etc/kubernetes/breakglass-webhook.kubeconfig
+          mountPath: /etc/kubernetes/breakglass-webhook.kubeconfig
+          readOnly: true
+  extraMounts:
+    - hostPath: ${authn_config_file}
+      containerPath: /etc/kubernetes/authentication-config.yaml
+      readOnly: true
+    - hostPath: ${authz_config_file}
+      containerPath: /etc/kubernetes/authorization-config.yaml
+      readOnly: true
+    - hostPath: ${webhook_kubeconfig_file}
+      containerPath: /etc/kubernetes/breakglass-webhook.kubeconfig
+      readOnly: true
+  extraPortMappings:
+  - containerPort: 30080
+    hostPort: 0
+    protocol: TCP
+EOF
+  echo "$config_file"
+}
+
+# Internal helper to run kind create with retain-on-failure support
+# Uses the same env vars as create_kind_cluster from common.sh
+_kind_create_with_retain() {
+  local cluster_name="$1"
+  local config_file="$2"
+  local wait_time="${3:-120s}"
+  
+  # Build kind create command with optional --retain flag
+  local kind_create_args=(create cluster --name "$cluster_name" --config "$config_file" --wait "$wait_time")
+  
+  # Add --retain flag to keep nodes on failure for debugging
+  if [ "${KIND_RETAIN_ON_FAILURE:-false}" = "true" ]; then
+    log "KIND_RETAIN_ON_FAILURE=true: Nodes will be preserved on failure for debugging"
+    kind_create_args+=(--retain)
+  fi
+  
+  if ! $KIND "${kind_create_args[@]}"; then
+    local exit_code=$?
+    log_error "Kind cluster creation failed for $cluster_name (exit code: $exit_code)"
+    
+    # Capture logs before potential cleanup (use function from common.sh if available)
+    if declare -f capture_kind_logs_on_failure > /dev/null 2>&1; then
+      local log_dir="${KIND_FAILURE_LOG_DIR:-/tmp/kind-failure-logs}/${cluster_name}"
+      capture_kind_logs_on_failure "$cluster_name" "$log_dir"
+    else
+      # Inline fallback: capture basic docker logs
+      log_error "Capturing docker logs for ${cluster_name}-control-plane..."
+      docker logs "${cluster_name}-control-plane" 2>&1 | tail -100 || true
+    fi
+    
+    if [ "${KIND_RETAIN_ON_FAILURE:-false}" = "true" ]; then
+      log_error "Cluster nodes retained for debugging. To clean up manually run:"
+      log_error "  kind delete cluster --name $cluster_name"
+    fi
+    
+    return $exit_code
+  fi
+}
+
+# Create hub cluster FIRST (so we can get its IP for spoke configuration)
+create_hub_cluster() {
   log "Creating hub cluster: $HUB_CLUSTER"
-  local hub_config=$(create_kind_config "$HUB_CLUSTER")
-  $KIND create cluster --name "$HUB_CLUSTER" --config "$hub_config" --wait 120s
+  local hub_config=$(create_hub_kind_config "$HUB_CLUSTER")
+  _kind_create_with_retain "$HUB_CLUSTER" "$hub_config" "120s"
   HUB_KUBECONFIG="$TDIR/${HUB_CLUSTER}.kubeconfig"
   $KIND get kubeconfig --name "$HUB_CLUSTER" > "$HUB_KUBECONFIG"
   
-  log "Creating spoke cluster A: $SPOKE_A_CLUSTER"
-  local spoke_a_config=$(create_kind_config "$SPOKE_A_CLUSTER")
-  $KIND create cluster --name "$SPOKE_A_CLUSTER" --config "$spoke_a_config" --wait 120s
+  # Get hub's Docker IP immediately - needed for spoke configuration
+  HUB_EXTERNAL_IP=$(docker inspect "${HUB_CLUSTER}-control-plane" \
+    --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+  log "Hub cluster created with IP: $HUB_EXTERNAL_IP"
+  
+  # Save hub IP for later use
+  echo "$HUB_EXTERNAL_IP" > "$TDIR/hub-external-ip"
+}
+
+# Create spoke clusters WITH OIDC and webhook configuration
+create_spoke_clusters() {
+  local hub_ip="$1"
+  
+  # Get Keycloak container IP (must be running already)
+  local keycloak_ip
+  keycloak_ip=$(cat "$TDIR/keycloak-ip" 2>/dev/null || get_keycloak_ip)
+  if [ -z "$keycloak_ip" ]; then
+    log_error "Keycloak IP not available - make sure setup_keycloak is called first"
+    return 1
+  fi
+  
+  # Get Keycloak CA file path
+  local keycloak_ca_file="${TLS_DIR}/keycloak/ca.crt"
+  if [ ! -f "$keycloak_ca_file" ]; then
+    log_error "Keycloak CA file not found at $keycloak_ca_file"
+    return 1
+  fi
+  
+  log "Creating spoke cluster A: $SPOKE_A_CLUSTER (with OIDC to Keycloak at $keycloak_ip + webhook to hub at $hub_ip)"
+  
+  local spoke_a_config=$(create_spoke_kind_config "$SPOKE_A_CLUSTER" "$hub_ip" "$keycloak_ip" "$keycloak_ca_file")
+  _kind_create_with_retain "$SPOKE_A_CLUSTER" "$spoke_a_config" "120s"
   SPOKE_A_KUBECONFIG="$TDIR/${SPOKE_A_CLUSTER}.kubeconfig"
   $KIND get kubeconfig --name "$SPOKE_A_CLUSTER" > "$SPOKE_A_KUBECONFIG"
   
-  log "Creating spoke cluster B: $SPOKE_B_CLUSTER"
-  local spoke_b_config=$(create_kind_config "$SPOKE_B_CLUSTER")
-  $KIND create cluster --name "$SPOKE_B_CLUSTER" --config "$spoke_b_config" --wait 120s
+  log "Creating spoke cluster B: $SPOKE_B_CLUSTER (with OIDC to Keycloak at $keycloak_ip + webhook to hub at $hub_ip)"
+  
+  local spoke_b_config=$(create_spoke_kind_config "$SPOKE_B_CLUSTER" "$hub_ip" "$keycloak_ip" "$keycloak_ca_file")
+  _kind_create_with_retain "$SPOKE_B_CLUSTER" "$spoke_b_config" "120s"
   SPOKE_B_KUBECONFIG="$TDIR/${SPOKE_B_CLUSTER}.kubeconfig"
   $KIND get kubeconfig --name "$SPOKE_B_CLUSTER" > "$SPOKE_B_KUBECONFIG"
   
+  log "All spoke clusters created with OIDC + webhook configuration"
+}
+
+# Create all clusters - hub first (with breakglass deployed), then spokes
+# IMPORTANT: Hub must have breakglass controller running BEFORE spoke clusters are created,
+# because spoke clusters use authorization webhook that calls hub's breakglass webhook.
+# If breakglass isn't running, spoke cluster's API server will never become healthy.
+create_clusters() {
+  # Create hub cluster first
+  create_hub_cluster
+  
+  # Load breakglass image into hub cluster BEFORE setup_hub_cluster needs it
+  log "Loading breakglass image into hub cluster..."
+  load_image_into_cluster "$HUB_CLUSTER" "$IMAGE"
+  
+  # Setup hub cluster with Breakglass controller BEFORE creating spoke clusters.
+  # This is critical because spoke clusters have authorization webhook pointing to hub.
+  # The webhook has failurePolicy: Deny, so if hub isn't ready, spoke API server won't start.
+  setup_hub_cluster
+  
+  # CRITICAL: Verify hub services are ready BEFORE creating spoke clusters.
+  # Spoke clusters have authorization webhooks pointing to hub, so if hub isn't
+  # reachable, the spoke API servers will never become healthy.
+  if ! verify_hub_services_ready; then
+    log_error "Hub services verification failed - aborting spoke cluster creation"
+    log_error "This would cause spoke cluster API servers to fail with webhook errors"
+    return 1
+  fi
+  
+  # Now create spoke clusters with hub IP for webhook configuration
+  # Hub's breakglass controller is now running and can handle webhook requests
+  create_spoke_clusters "$HUB_EXTERNAL_IP"
+  
   log "All clusters created successfully"
+}
+
+# Preload images to all clusters (hub + spokes)
+# This ensures debug session tests and other pods don't have image pull delays
+preload_images_all_clusters() {
+  log "Preloading images to all clusters..."
+  
+  local clusters=("$HUB_CLUSTER" "$SPOKE_A_CLUSTER" "$SPOKE_B_CLUSTER")
+  local images=(
+    "$IMAGE"
+    "nicolaka/netshoot"
+    "busybox:latest"
+  )
+  
+  for cluster in "${clusters[@]}"; do
+    log "Loading images into cluster: $cluster"
+    for img in "${images[@]}"; do
+      load_image_into_cluster "$cluster" "$img"
+    done
+  done
+  
+  log "All images preloaded to all clusters"
 }
 
 # Load Docker image into cluster (use common library function)
@@ -154,11 +430,15 @@ load_image_into_cluster() {
 }
 
 # Wait for deployment to be ready (use common library function)
+# On failure, calls e2e_debug_deployment_failure to provide diagnostic output
 wait_for_deploy_by_label() {
   local kubeconfig="$1"
   local label="$2"
   local max_attempts=${3:-120}
-  e2e_wait_for_deployment_by_label "$kubeconfig" "$label" "$max_attempts"
+  if ! e2e_wait_for_deployment_by_label "$kubeconfig" "$label" "$max_attempts"; then
+    e2e_debug_deployment_failure "$kubeconfig" "$label"
+    return 1
+  fi
 }
 
 # Start port forward (use common library function)
@@ -192,38 +472,90 @@ setup_hub_cluster() {
   cp "$TLS_DIR/tls.crt" "$KUSTOMIZE_CERTS_DIR/server.crt"
   cp "$TLS_DIR/tls.key" "$KUSTOMIZE_CERTS_DIR/server.key"
   
-  # Load required images to hub cluster (no Keycloak - it's standalone)
-  log "Loading images into hub cluster..."
-  load_image_into_cluster "$HUB_CLUSTER" "$IMAGE"
+  # Load hub-specific images (not needed on spoke clusters)
+  log "Loading hub-specific images..."
   load_image_into_cluster "$HUB_CLUSTER" "mailhog/mailhog:v1.0.1"
   load_image_into_cluster "$HUB_CLUSTER" "curlimages/curl:8.4.0"
-  load_image_into_cluster "$HUB_CLUSTER" "nicolaka/netshoot"
   load_image_into_cluster "$HUB_CLUSTER" "apache/kafka:3.7.0"
   
   # Apply CRDs
   log "Applying CRDs..."
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f config/crd/bases/
   
+  # Install cert-manager to provide Certificate and Issuer CRDs
+  log "Installing cert-manager..."
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.yaml
+  log "Waiting for cert-manager to be ready..."
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL wait --for=condition=available --timeout=120s -n cert-manager deployment/cert-manager
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL wait --for=condition=available --timeout=120s -n cert-manager deployment/cert-manager-webhook
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL wait --for=condition=available --timeout=120s -n cert-manager deployment/cert-manager-cainjector
+  log "cert-manager is ready"
+  
   # Create namespace
   log "Creating namespace..."
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create namespace breakglass-dev-system --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create namespace breakglass-system --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
   
   # Create TLS secret for webhook
   log "Creating TLS secret..."
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret tls breakglass-dev-webhook-server-cert \
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret tls breakglass-webhook-server-cert \
     --cert="$TLS_DIR/tls.crt" \
     --key="$TLS_DIR/tls.key" \
-    -n breakglass-dev-system \
+    -n breakglass-system \
     --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
   
   # Deploy using kustomize (this will deploy Keycloak in-cluster, we'll delete it)
   log "Deploying Breakglass controller..."
-  KUBECONFIG="$HUB_KUBECONFIG" $KUSTOMIZE build config/dev | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply --server-side --force-conflicts -f -
   
-  # Remove in-cluster Keycloak since we're using standalone container
-  log "Removing in-cluster Keycloak (using standalone container instead)..."
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL delete deployment -n breakglass-dev-system -l app=keycloak --ignore-not-found=true || true
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL delete service -n breakglass-dev-system -l app=keycloak --ignore-not-found=true || true
+  # Set the image to match what was loaded into kind
+  # The IMAGE variable is set by the CI (e.g., IMAGE=breakglass:dev)
+  # Kustomization uses image substitution, so we need to update it
+  local image_name image_tag
+  image_name="${IMAGE%%:*}"  # Extract image name (before colon)
+  image_tag="${IMAGE##*:}"   # Extract tag (after colon)
+  
+  # Use kustomize to set the image tag, but we need to build from a temp dir
+  # to avoid modifying the source tree
+  local kustomize_tmp="$TDIR/kustomize-tmp"
+  rm -rf "$kustomize_tmp"
+  cp -r config "$kustomize_tmp/"
+  
+  # Multi-cluster uses standalone Keycloak container, NOT in-cluster Keycloak.
+  # Remove the init container that waits for in-cluster Keycloak (it would never succeed).
+  # Also remove the in-cluster Keycloak deployment from the kustomization.
+  log "Patching kustomization for standalone Keycloak..."
+  
+  # Remove keycloak.yaml from resources section  
+  sed -i.bak '/\.\/resources\/keycloak\.yaml/d' "$kustomize_tmp/dev/kustomization.yaml"
+  
+  # Remove the keycloak_wait_initcontainer patch block entirely using Python for reliable
+  # multi-line regex. The block looks like:
+  #   - target:
+  #       group: apps
+  #       version: v1
+  #       kind: Deployment
+  #       name: manager
+  #     path: ./resources/keycloak_wait_initcontainer.yaml
+  python3 -c "
+import re
+with open('$kustomize_tmp/dev/kustomization.yaml', 'r') as f:
+    content = f.read()
+# Remove the patch block for keycloak_wait_initcontainer
+pattern = r'- target:\n    group: apps\n    version: v1\n    kind: Deployment\n    name: manager\n  path: \./resources/keycloak_wait_initcontainer\.yaml\n'
+content = re.sub(pattern, '', content)
+with open('$kustomize_tmp/dev/kustomization.yaml', 'w') as f:
+    f.write(content)
+"
+  rm -f "$kustomize_tmp/dev/kustomization.yaml.bak"
+  
+  # Update image in kustomization
+  cd "$kustomize_tmp/dev"
+  $KUSTOMIZE edit set image "breakglass=${image_name}:${image_tag}"
+  cd - > /dev/null
+  
+  KUBECONFIG="$HUB_KUBECONFIG" $KUSTOMIZE build "$kustomize_tmp/dev" | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply --server-side --force-conflicts -f -
+  
+  # NOTE: In-cluster Keycloak is no longer deployed (removed from kustomization above)
+  # The standalone Keycloak container was started earlier in start_standalone_keycloak()
   
   # Wait for remaining deployments
   wait_for_deploy_by_label "$HUB_KUBECONFIG" "mailhog" 60
@@ -244,13 +576,14 @@ expose_hub_services() {
     --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
   log "Hub cluster IP: $HUB_EXTERNAL_IP"
   
-  # Create NodePort service for breakglass API and webhook
+  # Create NodePort service for breakglass API (which also serves the webhook on the same port)
+  # and metrics (port 8081 - metrics only, NOT the webhook)
   cat <<EOF | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
 apiVersion: v1
 kind: Service
 metadata:
   name: breakglass-external
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
   labels:
     app: breakglass
 spec:
@@ -262,38 +595,27 @@ spec:
     port: 8080
     targetPort: 8080
     nodePort: ${API_NODEPORT}
-  - name: webhook
+  - name: metrics
     port: 8081
     targetPort: 8081
     nodePort: ${WEBHOOK_NODEPORT}
----
-# Expose Keycloak for spoke cluster OIDC validation
-apiVersion: v1
-kind: Service
-metadata:
-  name: keycloak-external
-  namespace: breakglass-dev-system
-  labels:
-    app: keycloak
-spec:
-  type: NodePort
-  selector:
-    app: keycloak
-  ports:
-  - name: https
-    port: 8443
-    targetPort: 8443
-    nodePort: 31443
-  - name: http
-    port: 8080
-    targetPort: 8080
-    nodePort: 31880
 EOF
+  # NOTE: Keycloak runs as a standalone Docker container (not in-cluster),
+  # so we don't need a keycloak-external service here.
+  # Spoke clusters reach Keycloak directly via Docker network IP.
 
   # Set the external URLs that spoke clusters will use
-  HUB_WEBHOOK_URL="https://${HUB_EXTERNAL_IP}:${WEBHOOK_NODEPORT}"
+  # The webhook is served on the same port as the API (8080), not a separate port
+  HUB_WEBHOOK_URL="http://${HUB_EXTERNAL_IP}:${API_NODEPORT}"
   HUB_API_URL="http://${HUB_EXTERNAL_IP}:${API_NODEPORT}"
-  HUB_KEYCLOAK_URL="http://${HUB_EXTERNAL_IP}:31880"
+  # Keycloak is running as standalone Docker container - read its IP from saved file
+  local keycloak_ip
+  if [ -f "$TDIR/keycloak-ip" ]; then
+    keycloak_ip=$(cat "$TDIR/keycloak-ip")
+  else
+    keycloak_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$KEYCLOAK_CONTAINER_NAME" 2>/dev/null || echo "")
+  fi
+  HUB_KEYCLOAK_URL="http://${keycloak_ip}:8080"
   
   log "Hub webhook URL for spoke clusters: $HUB_WEBHOOK_URL"
   log "Hub API URL for spoke clusters: $HUB_API_URL"
@@ -304,6 +626,92 @@ EOF
   echo "$HUB_API_URL" > "$TDIR/hub-api-url"
   echo "$HUB_KEYCLOAK_URL" > "$TDIR/hub-keycloak-url"
   echo "$HUB_EXTERNAL_IP" > "$TDIR/hub-external-ip"
+}
+
+# Verify hub services are ready and reachable BEFORE creating spoke clusters.
+# This is a critical pre-flight check because spoke clusters have authorization
+# webhooks configured to point to the hub. If hub services are not reachable,
+# the spoke API servers will never become healthy.
+verify_hub_services_ready() {
+  log "=============================================="
+  log "PRE-FLIGHT: Verifying hub services are ready"
+  log "=============================================="
+  
+  local hub_ip
+  if [ -f "$TDIR/hub-external-ip" ]; then
+    hub_ip=$(cat "$TDIR/hub-external-ip")
+  else
+    log_error "Hub external IP not found - cannot verify connectivity"
+    return 1
+  fi
+  
+  local keycloak_ip
+  if [ -f "$TDIR/keycloak-ip" ]; then
+    keycloak_ip=$(cat "$TDIR/keycloak-ip")
+  else
+    log_error "Keycloak IP not found - cannot verify connectivity"
+    return 1
+  fi
+  
+  local failed=0
+  
+  # 1. Check hub API/webhook port (they share the same port)
+  log "Checking hub API at $hub_ip:$API_NODEPORT..."
+  if ! wait_for_port "$hub_ip" "$API_NODEPORT" 30 "hub API"; then
+    log_error "Hub API not reachable at $hub_ip:$API_NODEPORT"
+    failed=1
+  else
+    log "✓ Hub API is reachable at $hub_ip:$API_NODEPORT"
+  fi
+  
+  # 2. Check hub metrics/webhook port
+  log "Checking hub metrics at $hub_ip:$WEBHOOK_NODEPORT..."
+  if ! wait_for_port "$hub_ip" "$WEBHOOK_NODEPORT" 30 "hub metrics"; then
+    log_error "Hub metrics not reachable at $hub_ip:$WEBHOOK_NODEPORT"
+    failed=1
+  else
+    log "✓ Hub metrics is reachable at $hub_ip:$WEBHOOK_NODEPORT"
+  fi
+  
+  # 3. Check Keycloak HTTP (used for OIDC by spoke clusters)
+  log "Checking Keycloak at $keycloak_ip:8080..."
+  if ! wait_for_port "$keycloak_ip" 8080 30 "Keycloak HTTP"; then
+    log_error "Keycloak not reachable at $keycloak_ip:8080"
+    failed=1
+  else
+    log "✓ Keycloak is reachable at $keycloak_ip:8080"
+  fi
+  
+  # 4. Verify breakglass API actually responds (not just port open)
+  log "Checking breakglass API health at http://$hub_ip:$API_NODEPORT/healthz..."
+  if ! curl -sf --connect-timeout 5 "http://$hub_ip:$API_NODEPORT/healthz" >/dev/null 2>&1; then
+    log_error "Breakglass API health check failed"
+    failed=1
+  else
+    log "✓ Breakglass API health check passed"
+  fi
+  
+  # 5. Verify Keycloak realm is accessible (OIDC discovery endpoint)
+  log "Checking Keycloak OIDC discovery at http://$keycloak_ip:8080/realms/${KEYCLOAK_MAIN_REALM}/.well-known/openid-configuration..."
+  if ! curl -sf --connect-timeout 5 "http://$keycloak_ip:8080/realms/${KEYCLOAK_MAIN_REALM}/.well-known/openid-configuration" >/dev/null 2>&1; then
+    log_error "Keycloak OIDC discovery check failed for realm ${KEYCLOAK_MAIN_REALM}"
+    failed=1
+  else
+    log "✓ Keycloak OIDC discovery accessible for realm ${KEYCLOAK_MAIN_REALM}"
+  fi
+  
+  if [ "$failed" -ne 0 ]; then
+    log_error "=============================================="
+    log_error "PRE-FLIGHT FAILED: Hub services not ready"
+    log_error "Spoke clusters WILL FAIL to start with current config"
+    log_error "=============================================="
+    return 1
+  fi
+  
+  log "=============================================="
+  log "PRE-FLIGHT PASSED: All hub services ready"
+  log "=============================================="
+  return 0
 }
 
 # Setup spoke cluster for hub connectivity
@@ -403,7 +811,7 @@ setup_kubeconfig_secrets() {
     local secret_name="${cluster}-kubeconfig"
     
     KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret generic "$secret_name" \
-      --namespace=breakglass-dev-system \
+      --namespace=breakglass-system \
       --from-file=value="$kubeconfig_file" \
       --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
     
@@ -413,7 +821,7 @@ setup_kubeconfig_secrets() {
   # Also create self-referencing hub kubeconfig secret
   local hub_kubeconfig_file=$(get_spoke_kubeconfig_for_hub "$HUB_CLUSTER")
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL create secret generic "${HUB_CLUSTER}-kubeconfig" \
-    --namespace=breakglass-dev-system \
+    --namespace=breakglass-system \
     --from-file=value="$hub_kubeconfig_file" \
     --dry-run=client -o yaml | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
 }
@@ -424,7 +832,7 @@ apply_multi_cluster_resources() {
   
   # Create ClusterConfigs with the correct webhook URLs
   # Hub can use internal service URL, spokes need external URL
-  local hub_internal_webhook="https://breakglass-dev-webhook-service.breakglass-dev-system.svc.cluster.local:8081"
+  local hub_internal_webhook="https://breakglass-webhook-service.breakglass-system.svc.cluster.local:8081"
   
   log "Creating ClusterConfig resources..."
   cat <<EOF | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
@@ -433,14 +841,14 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
   name: ${HUB_CLUSTER}
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   clusterID: ${HUB_CLUSTER}
   tenant: "e2e-test"
   environment: "multi-cluster-e2e"
   kubeconfigSecretRef:
     name: ${HUB_CLUSTER}-kubeconfig
-    namespace: breakglass-dev-system
+    namespace: breakglass-system
     key: value
 ---
 # Spoke cluster A - uses external webhook URL to reach hub
@@ -448,14 +856,14 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
   name: ${SPOKE_A_CLUSTER}
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   clusterID: ${SPOKE_A_CLUSTER}
   tenant: "e2e-test"
   environment: "multi-cluster-e2e"
   kubeconfigSecretRef:
     name: ${SPOKE_A_CLUSTER}-kubeconfig
-    namespace: breakglass-dev-system
+    namespace: breakglass-system
     key: value
 ---
 # Spoke cluster B - uses external webhook URL to reach hub
@@ -463,22 +871,36 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
   name: ${SPOKE_B_CLUSTER}
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   clusterID: ${SPOKE_B_CLUSTER}
   tenant: "e2e-test"
   environment: "multi-cluster-e2e"
   kubeconfigSecretRef:
     name: ${SPOKE_B_CLUSTER}-kubeconfig
-    namespace: breakglass-dev-system
+    namespace: breakglass-system
     key: value
+EOF
+
+  # Create the group-sync client secret for OIDC tests
+  log "Creating group-sync client secret for OIDC tests..."
+  cat <<EOF | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: breakglass-group-sync-secret
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  client-secret: breakglass-group-sync-secret
 EOF
 
   # Apply IdentityProviders (cluster-scoped) - pointing to real Keycloak
   log "Creating IdentityProvider resources..."
   local main_issuer_url contractors_issuer_url
-  main_issuer_url=$(get_keycloak_issuer_url "$KEYCLOAK_MAIN_REALM" "$KEYCLOAK_CONTAINER_NAME" "8080" "http")
-  contractors_issuer_url=$(get_keycloak_issuer_url "$KEYCLOAK_CONTRACTORS_REALM" "$KEYCLOAK_CONTAINER_NAME" "8080" "http")
+  # Use HTTPS with port 8443 - CRD validation requires HTTPS for issuer/authority URLs
+  main_issuer_url=$(get_keycloak_issuer_url "$KEYCLOAK_MAIN_REALM" "$KEYCLOAK_CONTAINER_NAME" "8443" "https")
+  contractors_issuer_url=$(get_keycloak_issuer_url "$KEYCLOAK_CONTRACTORS_REALM" "$KEYCLOAK_CONTAINER_NAME" "8443" "https")
   
   cat <<EOF | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -515,7 +937,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-global-readonly
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "breakglass-read-only"
   clusterConfigRefs: []
@@ -532,7 +954,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-hub-admin
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "breakglass-emergency-admin"
   clusterConfigRefs:
@@ -550,7 +972,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-spoke-a-pods
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "breakglass-pods-admin"
   clusterConfigRefs:
@@ -559,13 +981,16 @@ spec:
   allowed:
     groups:
     - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
 ---
 # Spoke B only escalation - for contractors
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-spoke-b-debugger
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "contractor-debugger"
   clusterConfigRefs:
@@ -583,7 +1008,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: mc-spoke-clusters-admin
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   escalatedGroup: "breakglass-pods-admin"
   clusterConfigRefs:
@@ -606,7 +1031,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DenyPolicy
 metadata:
   name: mc-deny-secrets-readonly
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   appliesTo:
     clusters:
@@ -631,7 +1056,7 @@ setup_spoke_rbac() {
   log "Setting up RBAC on $cluster_name..."
   
   # Create namespace for breakglass
-  KUBECONFIG="$kubeconfig" $KUBECTL create namespace breakglass-dev-system --dry-run=client -o yaml | \
+  KUBECONFIG="$kubeconfig" $KUBECTL create namespace breakglass-system --dry-run=client -o yaml | \
     KUBECONFIG="$kubeconfig" $KUBECTL apply -f -
   
   # Create ClusterRole for breakglass groups
@@ -719,8 +1144,9 @@ print_summary() {
   
   # Get Keycloak container IP
   keycloak_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$KEYCLOAK_CONTAINER_NAME" 2>/dev/null || echo "(unknown)")
-  keycloak_main_url=$(get_keycloak_issuer_url "$KEYCLOAK_MAIN_REALM" "$KEYCLOAK_CONTAINER_NAME" "8080" "http")
-  keycloak_contractors_url=$(get_keycloak_issuer_url "$KEYCLOAK_CONTRACTORS_REALM" "$KEYCLOAK_CONTAINER_NAME" "8080" "http")
+  # Use HTTPS with port 8443 - CRD validation requires HTTPS for issuer/authority URLs
+  keycloak_main_url=$(get_keycloak_issuer_url "$KEYCLOAK_MAIN_REALM" "$KEYCLOAK_CONTAINER_NAME" "8443" "https")
+  keycloak_contractors_url=$(get_keycloak_issuer_url "$KEYCLOAK_CONTRACTORS_REALM" "$KEYCLOAK_CONTAINER_NAME" "8443" "https")
   
   log "=================================================="
   log "Multi-cluster E2E environment ready!"
@@ -755,7 +1181,9 @@ print_summary() {
   log "  export E2E_HUB_EXTERNAL_IP=$hub_ip"
   log "  export E2E_HUB_WEBHOOK_URL=$hub_webhook_url"
   log "  export E2E_HUB_API_URL=$hub_api_url"
-  log "  export KEYCLOAK_HOST=http://${KEYCLOAK_CONTAINER_NAME}:8080"
+  log "  export KEYCLOAK_URL=https://localhost:8443"
+  log "  export KEYCLOAK_HOST=https://localhost:8443"
+  log "  export KEYCLOAK_PORT=8443"
   log ""
   log "To run multi-cluster tests:"
   log "  go test ./e2e/api/... -v -tags=multicluster -timeout=30m"
@@ -768,15 +1196,21 @@ print_summary() {
   log "=================================================="
   
   # Export environment variables
+  # Note: KEYCLOAK_HOST uses localhost:8443 because Go tests run on the host
+  # The container name (e2e-keycloak) is only resolvable inside Kind nodes via /etc/hosts
+  # KEYCLOAK_ISSUER_HOST is passed as Host header to Keycloak so token issuer matches IdentityProvider
   cat > "$TDIR/env.sh" <<EOF
 export E2E_HUB_KUBECONFIG=$HUB_KUBECONFIG
 export E2E_SPOKE_A_KUBECONFIG=$SPOKE_A_KUBECONFIG
 export E2E_SPOKE_B_KUBECONFIG=$SPOKE_B_KUBECONFIG
 export E2E_MULTI_CLUSTER=true
 export KEYCLOAK_CONTAINER_NAME=$KEYCLOAK_CONTAINER_NAME
-export KEYCLOAK_HOST=http://${KEYCLOAK_CONTAINER_NAME}:8080
+export KEYCLOAK_URL=https://localhost:8443
+export KEYCLOAK_HOST=https://localhost:8443
+export KEYCLOAK_PORT=8443
 export KEYCLOAK_MAIN_REALM=$KEYCLOAK_MAIN_REALM
 export KEYCLOAK_CONTRACTORS_REALM=$KEYCLOAK_CONTRACTORS_REALM
+export KEYCLOAK_ISSUER_HOST=${KEYCLOAK_CONTAINER_NAME}:8443
 export E2E_HUB_EXTERNAL_IP=$hub_ip
 export E2E_HUB_WEBHOOK_URL=$hub_webhook_url
 export E2E_HUB_API_URL=$hub_api_url
@@ -790,9 +1224,10 @@ SCRIPT_FAILED=false
 
 # Cleanup function
 cleanup() {
-  # Skip cleanup if PRESERVE_ON_FAILURE is set and script failed
-  if [ "${PRESERVE_ON_FAILURE:-false}" = "true" ] && [ "${SCRIPT_FAILED}" = "true" ]; then
-    log "PRESERVE_ON_FAILURE=true and script failed - skipping cleanup for diagnostics"
+  # Skip cleanup if PRESERVE_ON_FAILURE is set - we want to preserve resources for tests
+  # that run after this script completes (not just on failure)
+  if [ "${PRESERVE_ON_FAILURE:-false}" = "true" ]; then
+    log "PRESERVE_ON_FAILURE=true - skipping cleanup to preserve environment for tests"
     log "WARNING: Resources (Keycloak container, clusters) are still running!"
     log "To clean up manually, run: docker rm -f e2e-keycloak; kind delete cluster --name breakglass-hub; kind delete cluster --name spoke-cluster-a; kind delete cluster --name spoke-cluster-b"
     return 0
@@ -828,11 +1263,21 @@ setup_keycloak() {
   log "TLS certificates verified, starting Keycloak container..."
   
   # Start Keycloak container on the kind network
-  KEYCLOAK_IP=$(start_keycloak_container "$keycloak_tls_dir" "kind")
-  if [ -z "$KEYCLOAK_IP" ]; then
+  # Note: We ignore stdout from start_keycloak_container because various commands
+  # may pollute it (docker network create, diagnostic output, etc.)
+  # Instead, we use get_keycloak_ip which uses docker inspect for reliable IP extraction
+  if ! start_keycloak_container "$keycloak_tls_dir" "kind" >/dev/null; then
     log_error "Failed to start Keycloak container"
     return 1
   fi
+  
+  # Get Keycloak IP reliably via docker inspect (immune to stdout pollution)
+  KEYCLOAK_IP=$(get_keycloak_ip)
+  if [ -z "$KEYCLOAK_IP" ]; then
+    log_error "Failed to get Keycloak container IP via docker inspect"
+    return 1
+  fi
+  log "Keycloak container IP (via docker inspect): $KEYCLOAK_IP"
   
   # Save Keycloak IP for later use
   echo "$KEYCLOAK_IP" > "$TDIR/keycloak-ip"
@@ -892,22 +1337,33 @@ main() {
   # Start standalone Keycloak container FIRST (before clusters)
   setup_keycloak
   
-  # Create all clusters
+  # Create all clusters (hub with breakglass, then spokes)
+  # NOTE: setup_hub_cluster is now called inside create_clusters to ensure
+  # breakglass is running before spoke clusters are created.
   create_clusters
+  
+  # Preload images to all clusters (hub + spokes) - avoids image pull delays
+  # NOTE: Breakglass image is already loaded on hub during create_clusters
+  preload_images_all_clusters
   
   # Inject Keycloak hostname into all clusters
   inject_keycloak_into_clusters
-  
-  # Setup hub cluster with Breakglass
-  setup_hub_cluster
-  
+
   # Setup spoke clusters for hub connectivity (hostnames, CA bundles)
   setup_spoke_for_hub "$SPOKE_A_CLUSTER" "$SPOKE_A_KUBECONFIG"
   setup_spoke_for_hub "$SPOKE_B_CLUSTER" "$SPOKE_B_KUBECONFIG"
   
-  # Verify spoke-to-hub connectivity
-  verify_spoke_connectivity "$SPOKE_A_CLUSTER" "$SPOKE_A_KUBECONFIG" || log_warn "Spoke A connectivity check failed"
-  verify_spoke_connectivity "$SPOKE_B_CLUSTER" "$SPOKE_B_KUBECONFIG" || log_warn "Spoke B connectivity check failed"
+  # Verify spoke-to-hub connectivity (MUST pass - fail fast if connectivity is broken)
+  log "Verifying spoke-to-hub connectivity..."
+  if ! verify_spoke_connectivity "$SPOKE_A_CLUSTER" "$SPOKE_A_KUBECONFIG"; then
+    log_error "Spoke A connectivity check FAILED - cannot proceed"
+    exit 1
+  fi
+  if ! verify_spoke_connectivity "$SPOKE_B_CLUSTER" "$SPOKE_B_KUBECONFIG"; then
+    log_error "Spoke B connectivity check FAILED - cannot proceed"
+    exit 1
+  fi
+  log "All spoke-to-hub connectivity checks passed"
   
   # Setup kubeconfig secrets
   setup_kubeconfig_secrets

@@ -3344,3 +3344,77 @@ func TestEvaluatorNamespaceSelectorMultipleTerms(t *testing.T) {
 		})
 	}
 }
+
+// TestEvaluatorPodSecurityWarnActionReason tests that warn action populates the Reason field.
+func TestEvaluatorPodSecurityWarnActionReason(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	policy := &telekomv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "warn-test-policy"},
+		Spec: telekomv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					HostNetwork: 50,
+				},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 30, Action: "allow"},
+					{MaxScore: 70, Action: "warn", Reason: "Warning: Pod has risk score {{.Score}} due to {{.Factors}}"},
+					{MaxScore: 100, Action: "deny"},
+				},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	log := zap.NewNop().Sugar()
+	eval := NewEvaluator(c, log)
+
+	// Create a pod with hostNetwork=true (score 50, triggers warn threshold)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+			Containers: []corev1.Container{
+				{Name: "test", Image: "busybox"},
+			},
+		},
+	}
+
+	act := Action{
+		Verb:        "create",
+		APIGroup:    "",
+		Resource:    "pods",
+		Subresource: "exec",
+		Namespace:   "default",
+		Pod:         pod,
+		ClusterID:   "test-cluster",
+	}
+
+	result := eval.evaluatePodSecurity(act, policy.Spec.PodSecurityRules)
+
+	// Verify the warn action populates the Reason field
+	if result.Action != "warn" {
+		t.Fatalf("expected action 'warn', got '%s'", result.Action)
+	}
+	if result.Denied {
+		t.Error("expected Denied=false for warn action")
+	}
+	if result.Reason == "" {
+		t.Error("expected Reason to be populated for warn action, got empty string")
+	}
+	if result.Score != 50 {
+		t.Errorf("expected score 50, got %d", result.Score)
+	}
+	// Verify the reason contains expected parts
+	if !strings.Contains(result.Reason, "50") {
+		t.Errorf("expected reason to contain score '50', got: %s", result.Reason)
+	}
+	if !strings.Contains(result.Reason, "hostNetwork") {
+		t.Errorf("expected reason to contain factor 'hostNetwork', got: %s", result.Reason)
+	}
+}
