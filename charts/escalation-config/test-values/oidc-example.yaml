@@ -1,0 +1,75 @@
+# Example values for OIDC authentication
+# This file demonstrates configuring a ClusterConfig with OIDC auth
+
+cluster:
+  clusterID: prod-cluster-eu-west
+  tenant: production-team
+  environment: production
+  site: eu-west
+  location: eu-west-1
+  
+  # Set auth type to OIDC
+  authType: OIDC
+  
+  # Direct OIDC configuration
+  oidcAuth:
+    # OIDC issuer URL (must be reachable from controller)
+    issuerURL: https://keycloak.example.com/realms/kubernetes
+    
+    # OIDC client ID registered for the breakglass controller
+    clientID: breakglass-controller
+    
+    # Target cluster's Kubernetes API server
+    server: https://api.prod-cluster-eu-west.example.com:6443
+    
+    # Reference to secret containing client secret
+    clientSecretRef:
+      name: prod-cluster-oidc-secret
+      namespace: breakglass-system
+      key: client-secret
+    
+    # Reference to secret containing cluster CA certificate
+    caSecretRef:
+      name: prod-cluster-ca
+      namespace: breakglass-system
+      key: ca.crt
+    
+    # Token audience (typically the cluster API server)
+    audience: https://api.prod-cluster-eu-west.example.com:6443
+    
+    # Additional OIDC scopes to request
+    scopes:
+      - groups
+      - email
+  
+  # Note: identityProviderRefs removed for testing - this would reference
+  # an IdentityProvider resource that must exist in the cluster
+  # identityProviderRefs:
+  #   - corporate-oidc
+  
+  # Rate limiting
+  qps: 100
+  burst: 200
+  
+  blockSelfApproval: true
+  allowedApproverDomains:
+    - example.com
+
+escalations:
+  - name: production-emergency
+    allowed:
+      clusters:
+        - prod-cluster-eu-west
+      groups:
+        - sre-team
+        - platform-ops
+    escalatedGroup: breakglass-admin
+    approvers:
+      groups:
+        - senior-sre
+        - incident-commander
+    maxValidFor: 2h
+    retainFor: 168h  # 7 days for audit
+    requestReason:
+      mandatory: true
+      description: "Include ticket ID and brief description"

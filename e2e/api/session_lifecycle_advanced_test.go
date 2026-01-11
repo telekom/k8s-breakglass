@@ -17,9 +17,7 @@ limitations under the License.
 */
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,49 +32,24 @@ import (
 // For immediate sessions: ActualStartTime equals ApprovedAt
 // For scheduled sessions: ActualStartTime is set when ScheduledStartTime is reached
 func TestSessionActualStartTimeTracking(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	s := helpers.SetupTest(t, helpers.WithMediumTimeout())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+	tc := helpers.NewTestContext(t, s.Ctx)
 
-	tc := helpers.NewTestContext(t, ctx)
-	cli := helpers.GetClient(t)
-	cleanup := helpers.NewCleanup(t, cli)
-
-	clusterName := helpers.GetTestClusterName()
-	namespace := helpers.GetTestNamespace()
-
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-actual-start"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  helpers.GenerateUniqueName("actual-start-group"),
-			MaxValidFor:     "2h",
-			ApprovalTimeout: "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
-	cleanup.Add(escalation)
-	err := cli.Create(ctx, escalation)
-	require.NoError(t, err)
+	escalation := helpers.NewEscalationBuilder(s.GenerateName("e2e-actual-start"), s.Namespace).
+		WithEscalatedGroup(s.GenerateName("actual-start-group")).
+		WithAllowedClusters(s.Cluster).
+		WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
+		WithApproverUsers(helpers.TestUsers.Approver.Email).
+		Build()
+	s.MustCreateResource(escalation)
 
 	t.Run("ImmediateSessionActualStartTime", func(t *testing.T) {
 		requesterClient := tc.RequesterClient()
 		approverClient := tc.ApproverClient()
 
-		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
-			Cluster: clusterName,
+		session, err := requesterClient.CreateSession(s.Ctx, t, helpers.SessionRequest{
+			Cluster: s.Cluster,
 			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Test actual start time tracking",
@@ -84,20 +57,20 @@ func TestSessionActualStartTimeTracking(t *testing.T) {
 		if err != nil {
 			t.Skipf("Could not create session via API: %v", err)
 		}
-		cleanup.Add(&telekomv1alpha1.BreakglassSession{
+		s.Cleanup.Add(&telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
-		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
+		err = approverClient.ApproveSessionViaAPI(s.Ctx, t, session.Name, session.Namespace)
 		if err != nil {
 			t.Skipf("Could not approve session via API: %v", err)
 		}
 
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace,
+			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		var fetched telekomv1alpha1.BreakglassSession
-		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
+		err = s.Client.Get(s.Ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
 		require.NoError(t, err)
 
 		assert.False(t, fetched.Status.ApprovedAt.IsZero(), "ApprovedAt should be set")
@@ -109,9 +82,7 @@ func TestSessionActualStartTimeTracking(t *testing.T) {
 
 // TestSessionIDPMismatchHandling tests AllowIDPMismatch field behavior.
 func TestSessionIDPMismatchHandling(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("AllowIDPMismatchFieldDocumentation", func(t *testing.T) {
 		t.Log("IDPMISMATCH-001: AllowIDPMismatch=false requires matching IDP for webhook authorization")
@@ -137,9 +108,7 @@ func TestSessionIDPMismatchHandling(t *testing.T) {
 
 // TestSessionConditionTypes tests that all condition types are properly documented.
 func TestSessionConditionTypes(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("AllConditionTypesDocumented", func(t *testing.T) {
 		conditionTypes := []telekomv1alpha1.BreakglassSessionConditionType{
@@ -178,9 +147,7 @@ func TestSessionConditionTypes(t *testing.T) {
 
 // TestEscalationConditionTypes tests escalation condition types.
 func TestEscalationConditionTypes(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("AllEscalationConditionTypesDocumented", func(t *testing.T) {
 		conditionTypes := []telekomv1alpha1.BreakglassEscalationConditionType{
@@ -202,9 +169,7 @@ func TestEscalationConditionTypes(t *testing.T) {
 
 // TestSessionClusterConfigRefTracking tests ClusterConfigRef field in session spec.
 func TestSessionClusterConfigRefTracking(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("ClusterConfigRefFieldExists", func(t *testing.T) {
 		spec := telekomv1alpha1.BreakglassSessionSpec{

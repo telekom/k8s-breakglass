@@ -142,7 +142,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 						KubectlDebug: &v1alpha1.KubectlDebugConfig{
 							EphemeralContainers: &v1alpha1.EphemeralContainersConfig{
 								Enabled:          true,
-								DeniedNamespaces: []string{"kube-system", "kube-*"},
+								DeniedNamespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "kube-*"}},
 							},
 						},
 					},
@@ -288,8 +288,8 @@ func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {
 	tests := []struct {
 		name      string
 		namespace string
-		allowed   []string
-		denied    []string
+		allowed   *v1alpha1.NamespaceFilter
+		denied    *v1alpha1.NamespaceFilter
 		expected  bool
 	}{
 		{
@@ -303,42 +303,42 @@ func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {
 			name:      "explicitly denied",
 			namespace: "kube-system",
 			allowed:   nil,
-			denied:    []string{"kube-system"},
+			denied:    &v1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 			expected:  false,
 		},
 		{
 			name:      "denied by pattern",
 			namespace: "kube-public",
 			allowed:   nil,
-			denied:    []string{"kube-*"},
+			denied:    &v1alpha1.NamespaceFilter{Patterns: []string{"kube-*"}},
 			expected:  false,
 		},
 		{
 			name:      "allowed list only - match",
 			namespace: "default",
-			allowed:   []string{"default", "app-*"},
+			allowed:   &v1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
 			denied:    nil,
 			expected:  true,
 		},
 		{
 			name:      "allowed list only - no match",
 			namespace: "other",
-			allowed:   []string{"default", "app-*"},
+			allowed:   &v1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
 			denied:    nil,
 			expected:  false,
 		},
 		{
 			name:      "allowed by pattern",
 			namespace: "app-frontend",
-			allowed:   []string{"default", "app-*"},
+			allowed:   &v1alpha1.NamespaceFilter{Patterns: []string{"default", "app-*"}},
 			denied:    nil,
 			expected:  true,
 		},
 		{
 			name:      "denied takes precedence",
 			namespace: "app-secret",
-			allowed:   []string{"app-*"},
-			denied:    []string{"app-secret"},
+			allowed:   &v1alpha1.NamespaceFilter{Patterns: []string{"app-*"}},
+			denied:    &v1alpha1.NamespaceFilter{Patterns: []string{"app-secret"}},
 			expected:  false,
 		},
 	}

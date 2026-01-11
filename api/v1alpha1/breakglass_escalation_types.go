@@ -183,9 +183,9 @@ type PodSecurityOverrides struct {
 
 	// namespaceScope limits where overrides apply. If set, overrides only work for pods in these namespaces.
 	// If empty, overrides apply to all namespaces (subject to DenyPolicy scope).
-	// Supports exact match only.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
 	// +optional
-	NamespaceScope []string `json:"namespaceScope,omitempty"`
+	NamespaceScope *NamespaceFilter `json:"namespaceScope,omitempty"`
 
 	// requireApproval requires additional approval before overrides can be used.
 	// When true, the session must be approved by someone in the approvers list.

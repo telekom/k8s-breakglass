@@ -30,15 +30,12 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
 // TestWebhookMalformedRequestHandling tests webhook response to malformed requests.
 func TestWebhookMalformedRequestHandling(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -122,9 +119,7 @@ func TestWebhookMalformedRequestHandling(t *testing.T) {
 
 // TestWebhookTimeoutBehavior tests webhook behavior under slow processing conditions.
 func TestWebhookTimeoutBehavior(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -208,9 +203,7 @@ func TestWebhookTimeoutBehavior(t *testing.T) {
 
 // TestWebhookHTTPMethodValidation tests that only POST is accepted.
 func TestWebhookHTTPMethodValidation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	clusterName := helpers.GetTestClusterName()
 	webhookURL := helpers.GetWebhookAuthorizePath(clusterName)
@@ -257,9 +250,7 @@ func TestWebhookHTTPMethodValidation(t *testing.T) {
 
 // TestWebhookContentTypeValidation tests content type handling.
 func TestWebhookContentTypeValidation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	clusterName := helpers.GetTestClusterName()
 	webhookURL := helpers.GetWebhookAuthorizePath(clusterName)
@@ -321,9 +312,7 @@ func TestWebhookContentTypeValidation(t *testing.T) {
 
 // TestWebhookNonResourceURLHandling tests handling of non-resource URLs in SAR.
 func TestWebhookNonResourceURLHandling(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -335,25 +324,12 @@ func TestWebhookNonResourceURLHandling(t *testing.T) {
 	webhookURL := helpers.GetWebhookAuthorizePath(clusterName)
 	namespace := helpers.GetTestNamespace()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-nonres"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  helpers.GenerateUniqueName("nonres-group"),
-			MaxValidFor:     "2h",
-			ApprovalTimeout: "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-nonres"), namespace).
+		WithEscalatedGroup(helpers.GenerateUniqueName("nonres-group")).
+		WithMaxValidFor("2h").
+		WithApprovalTimeout("1h").
+		WithAllowedClusters(clusterName).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)

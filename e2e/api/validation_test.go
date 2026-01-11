@@ -34,9 +34,7 @@ import (
 
 // TestInvalidBreakglassEscalationConfigs tests explicitly invalid BreakglassEscalation configurations
 func TestInvalidBreakglassEscalationConfigs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -46,24 +44,11 @@ func TestInvalidBreakglassEscalationConfigs(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("MissingEscalatedGroup", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-missing-escalated-group",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				// EscalatedGroup intentionally missing
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		// EscalatedGroup intentionally missing - don't call WithEscalatedGroup()
+		escalation := helpers.NewEscalationBuilder("e2e-missing-escalated-group", namespace).
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithApproverUsers(helpers.GetTestApproverEmail()).
+			Build()
 		cleanup.Add(escalation)
 
 		err := cli.Create(ctx, escalation)
@@ -76,24 +61,12 @@ func TestInvalidBreakglassEscalationConfigs(t *testing.T) {
 	})
 
 	t.Run("InvalidMaxValidForDuration", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-invalid-max-valid-for",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "invalid-duration-admins",
-				MaxValidFor:     "not-a-duration",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-invalid-max-valid-for", namespace).
+			WithEscalatedGroup("invalid-duration-admins").
+			WithMaxValidFor("not-a-duration").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithApproverUsers(helpers.GetTestApproverEmail()).
+			Build()
 		cleanup.Add(escalation)
 
 		err := cli.Create(ctx, escalation)
@@ -105,24 +78,12 @@ func TestInvalidBreakglassEscalationConfigs(t *testing.T) {
 	})
 
 	t.Run("InvalidApprovalTimeoutDuration", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-invalid-approval-timeout",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "invalid-timeout-admins",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "xyz123",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-invalid-approval-timeout", namespace).
+			WithEscalatedGroup("invalid-timeout-admins").
+			WithApprovalTimeout("xyz123").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithApproverUsers(helpers.GetTestApproverEmail()).
+			Build()
 		cleanup.Add(escalation)
 
 		err := cli.Create(ctx, escalation)
@@ -134,22 +95,12 @@ func TestInvalidBreakglassEscalationConfigs(t *testing.T) {
 	})
 
 	t.Run("NoApproversConfigured", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-no-approvers",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "no-approvers-admins",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-				},
-				// Approvers intentionally empty
-			},
-		}
+		// Approvers intentionally empty - use empty slice to override default
+		escalation := helpers.NewEscalationBuilder("e2e-no-approvers", namespace).
+			WithEscalatedGroup("no-approvers-admins").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithApproverUsers(). // Empty approvers to test validation
+			Build()
 		cleanup.Add(escalation)
 
 		err := cli.Create(ctx, escalation)
@@ -161,22 +112,12 @@ func TestInvalidBreakglassEscalationConfigs(t *testing.T) {
 	})
 
 	t.Run("EmptyAllowedSection", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-empty-allowed",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "empty-allowed-admins",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				// Allowed intentionally empty
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		// Allowed section intentionally empty - don't call WithAllowedClusters()
+		// Note: Builder defaults allowedGroups to TestUsers.Requester.Groups, but clusters will be empty
+		escalation := helpers.NewEscalationBuilder("e2e-empty-allowed", namespace).
+			WithEscalatedGroup("empty-allowed-admins").
+			WithApproverUsers(helpers.GetTestApproverEmail()).
+			Build()
 		cleanup.Add(escalation)
 
 		err := cli.Create(ctx, escalation)
@@ -188,24 +129,11 @@ func TestInvalidBreakglassEscalationConfigs(t *testing.T) {
 	})
 
 	t.Run("InvalidEmailInApprovers", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-invalid-approver-email",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "invalid-email-admins",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"not-an-email", "also-not-an-email"},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-invalid-approver-email", namespace).
+			WithEscalatedGroup("invalid-email-admins").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithApproverUsers("not-an-email", "also-not-an-email").
+			Build()
 		cleanup.Add(escalation)
 
 		err := cli.Create(ctx, escalation)
@@ -219,9 +147,7 @@ func TestInvalidBreakglassEscalationConfigs(t *testing.T) {
 
 // TestInvalidBreakglassSessionConfigs tests explicitly invalid BreakglassSession configurations
 func TestInvalidBreakglassSessionConfigs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -232,44 +158,24 @@ func TestInvalidBreakglassSessionConfigs(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// First create a valid escalation to reference
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-validation-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "validation-admins",
-			MaxValidFor:     "4h",
-			ApprovalTimeout: "2h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.GetTestApproverEmail()},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-validation-escalation", namespace).
+		WithEscalatedGroup("validation-admins").
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
+		WithApproverUsers(helpers.GetTestApproverEmail()).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)
 
 	t.Run("MissingClusterField", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-missing-cluster",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				// Cluster intentionally missing
-				User:          helpers.GetTestUserEmail(),
-				GrantedGroup:  escalation.Spec.EscalatedGroup,
-				MaxValidFor:   "1h",
-				RequestReason: "Testing missing cluster",
-			},
-		}
+		// Cluster intentionally missing - don't call WithCluster()
+		session := helpers.NewSessionBuilder("e2e-missing-cluster", namespace).
+			WithUser(helpers.GetTestUserEmail()).
+			WithGrantedGroup(escalation.Spec.EscalatedGroup).
+			WithMaxValidFor("1h").
+			WithRequestReason("Testing missing cluster").
+			Build()
 		cleanup.Add(session)
 
 		err := cli.Create(ctx, session)
@@ -281,20 +187,13 @@ func TestInvalidBreakglassSessionConfigs(t *testing.T) {
 	})
 
 	t.Run("MissingUserField", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-missing-user",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster: clusterName,
-				// User intentionally missing
-				GrantedGroup:  escalation.Spec.EscalatedGroup,
-				MaxValidFor:   "1h",
-				RequestReason: "Testing missing user",
-			},
-		}
+		// User intentionally missing - don't call WithUser()
+		session := helpers.NewSessionBuilder("e2e-missing-user", namespace).
+			WithCluster(clusterName).
+			WithGrantedGroup(escalation.Spec.EscalatedGroup).
+			WithMaxValidFor("1h").
+			WithRequestReason("Testing missing user").
+			Build()
 		cleanup.Add(session)
 
 		err := cli.Create(ctx, session)
@@ -306,20 +205,13 @@ func TestInvalidBreakglassSessionConfigs(t *testing.T) {
 	})
 
 	t.Run("MissingGrantedGroup", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-missing-granted-group",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster:       clusterName,
-				User:          helpers.GetTestUserEmail(),
-				MaxValidFor:   "1h",
-				RequestReason: "Testing missing granted group",
-				// GrantedGroup intentionally missing
-			},
-		}
+		// GrantedGroup intentionally missing - don't call WithGrantedGroup()
+		session := helpers.NewSessionBuilder("e2e-missing-granted-group", namespace).
+			WithCluster(clusterName).
+			WithUser(helpers.GetTestUserEmail()).
+			WithMaxValidFor("1h").
+			WithRequestReason("Testing missing granted group").
+			Build()
 		cleanup.Add(session)
 
 		err := cli.Create(ctx, session)
@@ -331,20 +223,13 @@ func TestInvalidBreakglassSessionConfigs(t *testing.T) {
 	})
 
 	t.Run("InvalidMaxValidForDuration", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-invalid-session-duration",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster:       clusterName,
-				User:          helpers.GetTestUserEmail(),
-				GrantedGroup:  escalation.Spec.EscalatedGroup,
-				MaxValidFor:   "invalid-duration",
-				RequestReason: "Testing invalid duration",
-			},
-		}
+		session := helpers.NewSessionBuilder("e2e-invalid-session-duration", namespace).
+			WithCluster(clusterName).
+			WithUser(helpers.GetTestUserEmail()).
+			WithGrantedGroup(escalation.Spec.EscalatedGroup).
+			WithMaxValidFor("invalid-duration").
+			WithRequestReason("Testing invalid duration").
+			Build()
 		cleanup.Add(session)
 
 		err := cli.Create(ctx, session)
@@ -356,20 +241,13 @@ func TestInvalidBreakglassSessionConfigs(t *testing.T) {
 	})
 
 	t.Run("ExcessiveDurationRequest", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-excessive-duration",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster:       clusterName,
-				User:          helpers.GetTestUserEmail(),
-				GrantedGroup:  escalation.Spec.EscalatedGroup,
-				MaxValidFor:   "8760h", // One year
-				RequestReason: "Testing excessive duration",
-			},
-		}
+		session := helpers.NewSessionBuilder("e2e-excessive-duration", namespace).
+			WithCluster(clusterName).
+			WithUser(helpers.GetTestUserEmail()).
+			WithGrantedGroup(escalation.Spec.EscalatedGroup).
+			WithMaxValidFor("8760h"). // One year
+			WithRequestReason("Testing excessive duration").
+			Build()
 		cleanup.Add(session)
 
 		err := cli.Create(ctx, session)
@@ -381,20 +259,13 @@ func TestInvalidBreakglassSessionConfigs(t *testing.T) {
 	})
 
 	t.Run("NonMatchingGrantedGroup", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-non-matching-group",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster:       clusterName,
-				User:          helpers.GetTestUserEmail(),
-				GrantedGroup:  "group-that-no-escalation-defines",
-				MaxValidFor:   "1h",
-				RequestReason: "Testing non-matching group",
-			},
-		}
+		session := helpers.NewSessionBuilder("e2e-non-matching-group", namespace).
+			WithCluster(clusterName).
+			WithUser(helpers.GetTestUserEmail()).
+			WithGrantedGroup("group-that-no-escalation-defines").
+			WithMaxValidFor("1h").
+			WithRequestReason("Testing non-matching group").
+			Build()
 		cleanup.Add(session)
 
 		err := cli.Create(ctx, session)
@@ -408,9 +279,7 @@ func TestInvalidBreakglassSessionConfigs(t *testing.T) {
 
 // TestInvalidDenyPolicyConfigs tests explicitly invalid DenyPolicy configurations
 func TestInvalidDenyPolicyConfigs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -420,16 +289,9 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("EmptyRulesAndPodSecurityRules", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-empty-rules-policy",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				// Both rules and podSecurityRules empty
-			},
-		}
+		// Build an empty policy (no rules) - testing validation edge case
+		policy := helpers.NewDenyPolicyBuilder("e2e-empty-rules-policy", namespace).
+			Build()
 		cleanup.Add(policy)
 
 		err := cli.Create(ctx, policy)
@@ -441,22 +303,14 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	})
 
 	t.Run("RuleWithEmptyVerbs", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-empty-verbs-policy",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{}, // Empty verbs
-						Resources: []string{"pods"},
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		// Testing validation of empty verbs - need to use WithRule for invalid rule
+		policy := helpers.NewDenyPolicyBuilder("e2e-empty-verbs-policy", namespace).
+			WithRule(telekomv1alpha1.DenyRule{
+				Verbs:     []string{}, // Empty verbs
+				Resources: []string{"pods"},
+				APIGroups: []string{""},
+			}).
+			Build()
 		cleanup.Add(policy)
 
 		err := cli.Create(ctx, policy)
@@ -468,22 +322,14 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	})
 
 	t.Run("RuleWithEmptyResources", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-empty-resources-policy",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"get"},
-						Resources: []string{}, // Empty resources
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		// Testing validation of empty resources - need to use WithRule for invalid rule
+		policy := helpers.NewDenyPolicyBuilder("e2e-empty-resources-policy", namespace).
+			WithRule(telekomv1alpha1.DenyRule{
+				Verbs:     []string{"get"},
+				Resources: []string{}, // Empty resources
+				APIGroups: []string{""},
+			}).
+			Build()
 		cleanup.Add(policy)
 
 		err := cli.Create(ctx, policy)
@@ -495,22 +341,14 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	})
 
 	t.Run("RuleWithInvalidVerb", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-invalid-verb-policy",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"invalid-verb-xyz"},
-						Resources: []string{"pods"},
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		// Testing validation of invalid verb - need to use WithRule for invalid rule
+		policy := helpers.NewDenyPolicyBuilder("e2e-invalid-verb-policy", namespace).
+			WithRule(telekomv1alpha1.DenyRule{
+				Verbs:     []string{"invalid-verb-xyz"},
+				Resources: []string{"pods"},
+				APIGroups: []string{""},
+			}).
+			Build()
 		cleanup.Add(policy)
 
 		err := cli.Create(ctx, policy)
@@ -522,27 +360,21 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 	})
 
 	t.Run("PodSecurityRulesWithInvalidBlockFactor", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-invalid-block-factor",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						HostNetwork: 50,
-					},
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{
-							MaxScore: 50,
-							Action:   "deny",
-						},
-					},
-					BlockFactors: []string{"invalid-factor-xyz"},
+		// Testing validation of invalid block factor
+		policy := helpers.NewDenyPolicyBuilder("e2e-invalid-block-factor", namespace).
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					HostNetwork: 50,
 				},
-			},
-		}
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{
+						MaxScore: 50,
+						Action:   "deny",
+					},
+				},
+				BlockFactors: []string{"invalid-factor-xyz"},
+			}).
+			Build()
 		cleanup.Add(policy)
 
 		err := cli.Create(ctx, policy)
@@ -556,9 +388,7 @@ func TestInvalidDenyPolicyConfigs(t *testing.T) {
 
 // TestInvalidIdentityProviderConfigs tests explicitly invalid IdentityProvider configurations
 func TestInvalidIdentityProviderConfigs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -572,7 +402,7 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-authority",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -596,7 +426,7 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-client-id",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -620,7 +450,7 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-authority",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -644,7 +474,7 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-nonexistent-secret-ref",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -677,9 +507,7 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 
 // TestInvalidMailProviderConfigs tests explicitly invalid MailProvider configurations
 func TestInvalidMailProviderConfigs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -693,7 +521,7 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-smtp-host",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
@@ -720,7 +548,7 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-smtp-port",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
@@ -747,7 +575,7 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-sender-email",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
@@ -774,7 +602,7 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-sender-address",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
@@ -799,9 +627,7 @@ func TestInvalidMailProviderConfigs(t *testing.T) {
 
 // TestInvalidClusterConfigConfigs tests explicitly invalid ClusterConfig configurations
 func TestInvalidClusterConfigConfigs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -815,7 +641,7 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-missing-kubeconfig-ref",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
@@ -837,11 +663,11 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-nonexistent-kubeconfig-secret",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      "kubeconfig-secret-that-does-not-exist",
 					Namespace: namespace,
 					Key:       "kubeconfig",
@@ -864,7 +690,7 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-wrong-key-secret",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Data: map[string][]byte{
 				"wrong-key": []byte("some data"),
@@ -878,11 +704,11 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-wrong-key-cluster",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig", // Key that doesn't exist
@@ -905,7 +731,7 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-qps-test-secret",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Data: map[string][]byte{
 				"kubeconfig": []byte("apiVersion: v1\nkind: Config"),
@@ -920,11 +746,11 @@ func TestInvalidClusterConfigConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-qps",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.ClusterConfigSpec{
 				ClusterID: "test-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
+				KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
 					Name:      secret.Name,
 					Namespace: namespace,
 					Key:       "kubeconfig",

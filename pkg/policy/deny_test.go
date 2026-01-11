@@ -23,7 +23,7 @@ func TestEvaluatorMatch(t *testing.T) {
 	pol := &telekomv1alpha1.DenyPolicy{}
 	pol.Name = "deny-secrets"
 	pol.Spec = telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{
-		Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"secrets"}, Namespaces: []string{"*"},
+		Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"secrets"}, Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 	}}}
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
@@ -56,10 +56,10 @@ func TestEvaluatorWildcards(t *testing.T) {
 	_ = telekomv1alpha1.AddToScheme(scheme)
 	// Build multiple policies exercising wildcard semantics.
 	pols := []runtime.Object{
-		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-verb-secret"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"*"}, APIGroups: []string{""}, Resources: []string{"secrets"}, Namespaces: []string{"ops-*"}}}}},
+		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-verb-secret"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"*"}, APIGroups: []string{""}, Resources: []string{"secrets"}, Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"ops-*"}}}}}},
 		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-configmap-specific-name"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{"prod-*"}}}}},
 		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-subresource-status"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"update"}, APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Subresources: []string{"status"}}}}},
-		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-resource"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"delete"}, APIGroups: []string{"*"}, Resources: []string{"*"}, Namespaces: []string{"*"}}}}},
+		&telekomv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-any-resource"}, Spec: telekomv1alpha1.DenyPolicySpec{Rules: []telekomv1alpha1.DenyRule{{Verbs: []string{"delete"}, APIGroups: []string{"*"}, Resources: []string{"*"}, Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}}}}}},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(pols...).Build()
 	eval := NewEvaluator(c, zap.NewNop().Sugar())
@@ -434,7 +434,7 @@ func TestEvaluatorPodSecurityExemptions(t *testing.T) {
 					{MaxScore: 50, Action: "deny"},
 				},
 				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-					Namespaces: []string{"kube-system"},
+					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 					PodLabels:  map[string]string{"exempt": "true"},
 				},
 			},
@@ -668,7 +668,7 @@ func TestEvaluatorPodSecurityOverrides(t *testing.T) {
 		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(50),
-			NamespaceScope:  []string{"kube-system", "monitoring"}, // not default
+			NamespaceScope:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}}, // not default
 		},
 	})
 	if err != nil {
@@ -702,7 +702,7 @@ func TestEvaluatorPodSecurityOverrides(t *testing.T) {
 		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(50),
-			NamespaceScope:  []string{"kube-system", "monitoring"},
+			NamespaceScope:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}},
 		},
 	})
 	if err != nil {
@@ -1597,7 +1597,7 @@ func TestEvaluatorPodSecurityExemptionMultipleNamespaces(t *testing.T) {
 					{MaxScore: 50, Action: "deny"},
 				},
 				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-					Namespaces: []string{"kube-system", "kube-public", "monitoring"},
+					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "kube-public", "monitoring"}},
 				},
 			},
 		},
@@ -2175,9 +2175,9 @@ func TestEvaluatorPodSecurityOverrideCombinedOptions(t *testing.T) {
 		Pod:         complexPod,
 		PodSecurityOverrides: &telekomv1alpha1.PodSecurityOverrides{
 			Enabled:         true,
-			MaxAllowedScore: ptr.To(60),              // allows score 50 (20+30)
-			ExemptFactors:   []string{"hostNetwork"}, // bypasses block
-			NamespaceScope:  []string{"monitoring"},  // only in monitoring
+			MaxAllowedScore: ptr.To(60),                                                         // allows score 50 (20+30)
+			ExemptFactors:   []string{"hostNetwork"},                                            // bypasses block
+			NamespaceScope:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"monitoring"}}, // only in monitoring
 		},
 	})
 	if err != nil {
@@ -2211,7 +2211,7 @@ func TestEvaluatorPodSecurityOverrideCombinedOptions(t *testing.T) {
 			Enabled:         true,
 			MaxAllowedScore: ptr.To(60),
 			ExemptFactors:   []string{"hostNetwork"},
-			NamespaceScope:  []string{"monitoring"}, // doesn't include default
+			NamespaceScope:  &telekomv1alpha1.NamespaceFilter{Patterns: []string{"monitoring"}}, // doesn't include default
 		},
 	})
 	if err != nil {
@@ -2999,5 +2999,422 @@ func TestEvaluatorPodSecurityScopeNil(t *testing.T) {
 	}
 	if !denied {
 		t.Fatalf("expected global policy to deny")
+	}
+}
+
+// TestEvaluatorNamespaceSelectorTerms tests DenyPolicy matching with namespace label selectors.
+func TestEvaluatorNamespaceSelectorTerms(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	// Create policies with different namespace selector configurations
+	policies := []runtime.Object{
+		// Policy with label selector only (no patterns)
+		&telekomv1alpha1.DenyPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "deny-prod-env"},
+			Spec: telekomv1alpha1.DenyPolicySpec{
+				Rules: []telekomv1alpha1.DenyRule{{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"services"},
+					Namespaces: &telekomv1alpha1.NamespaceFilter{
+						SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{{
+							MatchLabels: map[string]string{"env": "production"},
+						}},
+					},
+				}},
+			},
+		},
+		// Policy with matchExpressions
+		&telekomv1alpha1.DenyPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "deny-critical-tier"},
+			Spec: telekomv1alpha1.DenyPolicySpec{
+				Rules: []telekomv1alpha1.DenyRule{{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"configmaps"},
+					Namespaces: &telekomv1alpha1.NamespaceFilter{
+						SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{{
+							MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{{
+								Key:      "tier",
+								Operator: telekomv1alpha1.NamespaceSelectorOpIn,
+								Values:   []string{"critical", "high"},
+							}},
+						}},
+					},
+				}},
+			},
+		},
+		// Policy with both patterns and selectors (OR semantics)
+		&telekomv1alpha1.DenyPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "deny-mixed"},
+			Spec: telekomv1alpha1.DenyPolicySpec{
+				Rules: []telekomv1alpha1.DenyRule{{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"secrets"},
+					Namespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"kube-*"},
+						SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{{
+							MatchLabels: map[string]string{"restricted": "true"},
+						}},
+					},
+				}},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(policies...).Build()
+	eval := NewEvaluator(c, zap.NewNop().Sugar())
+
+	tests := []struct {
+		name     string
+		action   Action
+		wantDeny bool
+		wantPol  string
+	}{
+		// Label selector only tests
+		{
+			name: "label selector matches production env",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "services",
+				Namespace:       "my-prod-ns",
+				NamespaceLabels: map[string]string{"env": "production", "team": "alpha"},
+			},
+			wantDeny: true,
+			wantPol:  "deny-prod-env",
+		},
+		{
+			name: "label selector does not match staging env",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "services",
+				Namespace:       "my-staging-ns",
+				NamespaceLabels: map[string]string{"env": "staging", "team": "alpha"},
+			},
+			wantDeny: false,
+			wantPol:  "",
+		},
+		{
+			name: "label selector without namespace labels - cannot evaluate",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "services",
+				Namespace:       "unknown-ns",
+				NamespaceLabels: nil, // No labels provided
+			},
+			wantDeny: false, // Cannot evaluate selector-only rules without labels
+			wantPol:  "",
+		},
+		// matchExpressions tests
+		{
+			name: "matchExpressions In operator matches critical tier",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "configmaps",
+				Namespace:       "critical-ns",
+				NamespaceLabels: map[string]string{"tier": "critical"},
+			},
+			wantDeny: true,
+			wantPol:  "deny-critical-tier",
+		},
+		{
+			name: "matchExpressions In operator matches high tier",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "configmaps",
+				Namespace:       "high-ns",
+				NamespaceLabels: map[string]string{"tier": "high"},
+			},
+			wantDeny: true,
+			wantPol:  "deny-critical-tier",
+		},
+		{
+			name: "matchExpressions In operator does not match low tier",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "configmaps",
+				Namespace:       "low-ns",
+				NamespaceLabels: map[string]string{"tier": "low"},
+			},
+			wantDeny: false,
+			wantPol:  "",
+		},
+		// Mixed patterns and selectors tests (OR semantics)
+		{
+			name: "mixed policy matches by pattern (kube-system)",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "secrets",
+				Namespace:       "kube-system",
+				NamespaceLabels: map[string]string{"env": "system"}, // Labels don't match selector
+			},
+			wantDeny: true,
+			wantPol:  "deny-mixed",
+		},
+		{
+			name: "mixed policy matches by label selector",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "secrets",
+				Namespace:       "my-restricted-ns", // Pattern doesn't match
+				NamespaceLabels: map[string]string{"restricted": "true"},
+			},
+			wantDeny: true,
+			wantPol:  "deny-mixed",
+		},
+		{
+			name: "mixed policy no match - neither pattern nor label",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "secrets",
+				Namespace:       "my-normal-ns",
+				NamespaceLabels: map[string]string{"restricted": "false"},
+			},
+			wantDeny: false,
+			wantPol:  "",
+		},
+		{
+			name: "mixed policy matches pattern even without labels",
+			action: Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "secrets",
+				Namespace:       "kube-public",
+				NamespaceLabels: nil, // No labels, but pattern matches
+			},
+			wantDeny: true,
+			wantPol:  "deny-mixed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			denied, pol, err := eval.Match(context.Background(), tt.action)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if denied != tt.wantDeny {
+				t.Errorf("denied = %v, want %v (policy: %s)", denied, tt.wantDeny, pol)
+			}
+			if pol != tt.wantPol {
+				t.Errorf("policy = %q, want %q", pol, tt.wantPol)
+			}
+		})
+	}
+}
+
+// TestEvaluatorNamespaceSelectorMatchExpressionOperators tests all selector operators.
+func TestEvaluatorNamespaceSelectorMatchExpressionOperators(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	tests := []struct {
+		name     string
+		operator telekomv1alpha1.NamespaceSelectorOperator
+		key      string
+		values   []string
+		labels   map[string]string
+		want     bool
+	}{
+		// In operator
+		{"In - value present", telekomv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod", "staging"}, map[string]string{"env": "prod"}, true},
+		{"In - value not present", telekomv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod", "staging"}, map[string]string{"env": "dev"}, false},
+		{"In - key missing", telekomv1alpha1.NamespaceSelectorOpIn, "env", []string{"prod"}, map[string]string{"tier": "critical"}, false},
+		// NotIn operator
+		{"NotIn - value not in list", telekomv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod", "staging"}, map[string]string{"env": "dev"}, true},
+		{"NotIn - value in list", telekomv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod", "staging"}, map[string]string{"env": "prod"}, false},
+		{"NotIn - key missing (passes)", telekomv1alpha1.NamespaceSelectorOpNotIn, "env", []string{"prod"}, map[string]string{"tier": "critical"}, true},
+		// Exists operator
+		{"Exists - key present", telekomv1alpha1.NamespaceSelectorOpExists, "env", nil, map[string]string{"env": "any"}, true},
+		{"Exists - key missing", telekomv1alpha1.NamespaceSelectorOpExists, "env", nil, map[string]string{"tier": "critical"}, false},
+		// DoesNotExist operator
+		{"DoesNotExist - key missing", telekomv1alpha1.NamespaceSelectorOpDoesNotExist, "env", nil, map[string]string{"tier": "critical"}, true},
+		{"DoesNotExist - key present", telekomv1alpha1.NamespaceSelectorOpDoesNotExist, "env", nil, map[string]string{"env": "any"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pol := &telekomv1alpha1.DenyPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-policy"},
+				Spec: telekomv1alpha1.DenyPolicySpec{
+					Rules: []telekomv1alpha1.DenyRule{{
+						Verbs:     []string{"get"},
+						APIGroups: []string{""},
+						Resources: []string{"pods"},
+						Namespaces: &telekomv1alpha1.NamespaceFilter{
+							SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{{
+								MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{{
+									Key:      tt.key,
+									Operator: tt.operator,
+									Values:   tt.values,
+								}},
+							}},
+						},
+					}},
+				},
+			}
+
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
+			eval := NewEvaluator(c, zap.NewNop().Sugar())
+
+			denied, _, err := eval.Match(context.Background(), Action{
+				Verb:            "get",
+				APIGroup:        "",
+				Resource:        "pods",
+				Namespace:       "test-ns",
+				NamespaceLabels: tt.labels,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if denied != tt.want {
+				t.Errorf("denied = %v, want %v", denied, tt.want)
+			}
+		})
+	}
+}
+
+// TestEvaluatorNamespaceSelectorMultipleTerms tests OR semantics between selector terms.
+func TestEvaluatorNamespaceSelectorMultipleTerms(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	pol := &telekomv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "multi-term-policy"},
+		Spec: telekomv1alpha1.DenyPolicySpec{
+			Rules: []telekomv1alpha1.DenyRule{{
+				Verbs:     []string{"delete"},
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Namespaces: &telekomv1alpha1.NamespaceFilter{
+					SelectorTerms: []telekomv1alpha1.NamespaceSelectorTerm{
+						// Term 1: env=prod
+						{MatchLabels: map[string]string{"env": "prod"}},
+						// Term 2: tier=critical (OR semantics)
+						{MatchLabels: map[string]string{"tier": "critical"}},
+					},
+				},
+			}},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build()
+	eval := NewEvaluator(c, zap.NewNop().Sugar())
+
+	tests := []struct {
+		name     string
+		labels   map[string]string
+		wantDeny bool
+	}{
+		{"matches first term only", map[string]string{"env": "prod"}, true},
+		{"matches second term only", map[string]string{"tier": "critical"}, true},
+		{"matches both terms", map[string]string{"env": "prod", "tier": "critical"}, true},
+		{"matches neither term", map[string]string{"env": "dev", "tier": "low"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			denied, _, err := eval.Match(context.Background(), Action{
+				Verb:            "delete",
+				APIGroup:        "",
+				Resource:        "pods",
+				Namespace:       "test-ns",
+				NamespaceLabels: tt.labels,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if denied != tt.wantDeny {
+				t.Errorf("denied = %v, want %v", denied, tt.wantDeny)
+			}
+		})
+	}
+}
+
+// TestEvaluatorPodSecurityWarnActionReason tests that warn action populates the Reason field.
+func TestEvaluatorPodSecurityWarnActionReason(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	policy := &telekomv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "warn-test-policy"},
+		Spec: telekomv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					HostNetwork: 50,
+				},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 30, Action: "allow"},
+					{MaxScore: 70, Action: "warn", Reason: "Warning: Pod has risk score {{.Score}} due to {{.Factors}}"},
+					{MaxScore: 100, Action: "deny"},
+				},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	log := zap.NewNop().Sugar()
+	eval := NewEvaluator(c, log)
+
+	// Create a pod with hostNetwork=true (score 50, triggers warn threshold)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+			Containers: []corev1.Container{
+				{Name: "test", Image: "busybox"},
+			},
+		},
+	}
+
+	act := Action{
+		Verb:        "create",
+		APIGroup:    "",
+		Resource:    "pods",
+		Subresource: "exec",
+		Namespace:   "default",
+		Pod:         pod,
+		ClusterID:   "test-cluster",
+	}
+
+	result := eval.evaluatePodSecurity(act, policy.Spec.PodSecurityRules)
+
+	// Verify the warn action populates the Reason field
+	if result.Action != "warn" {
+		t.Fatalf("expected action 'warn', got '%s'", result.Action)
+	}
+	if result.Denied {
+		t.Error("expected Denied=false for warn action")
+	}
+	if result.Reason == "" {
+		t.Error("expected Reason to be populated for warn action, got empty string")
+	}
+	if result.Score != 50 {
+		t.Errorf("expected score 50, got %d", result.Score)
+	}
+	// Verify the reason contains expected parts
+	if !strings.Contains(result.Reason, "50") {
+		t.Errorf("expected reason to contain score '50', got: %s", result.Reason)
+	}
+	if !strings.Contains(result.Reason, "hostNetwork") {
+		t.Errorf("expected reason to contain factor 'hostNetwork', got: %s", result.Reason)
 	}
 }

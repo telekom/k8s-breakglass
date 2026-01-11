@@ -23,7 +23,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -37,9 +36,7 @@ import (
 
 // TestDenyPolicyNamespaceExemptionConfiguration tests that DenyPolicy namespace exemptions work correctly.
 func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -48,38 +45,31 @@ func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("CreatePolicyWithNamespaceExemption", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-exempt-ns"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "exemptions"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						PrivilegedContainer: 100,
-						HostNetwork:         80,
-						HostPID:             70,
-					},
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{MaxScore: 50, Action: "allow"},
-						{MaxScore: 100, Action: "deny", Reason: "Pod risk score {{.Score}} exceeds threshold"},
-					},
-					Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-						// Exempt kube-system and monitoring namespaces from security evaluation
-						Namespaces: []string{"kube-system", "monitoring", "logging"},
-					},
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-exempt-ns"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("exemptions")).
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					PrivilegedContainer: 100,
+					HostNetwork:         80,
+					HostPID:             70,
 				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:    []string{""},
-						Resources:    []string{"pods"},
-						Subresources: []string{"exec"},
-						Verbs:        []string{"create"},
-						Namespaces:   []string{"*"},
-					},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 50, Action: "allow"},
+					{MaxScore: 100, Action: "deny", Reason: "Pod risk score {{.Score}} exceeds threshold"},
 				},
-			},
-		}
+				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
+					// Exempt kube-system and monitoring namespaces from security evaluation
+					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring", "logging"}},
+				},
+			}).
+			WithRule(telekomv1alpha1.DenyRule{
+				APIGroups:    []string{""},
+				Resources:    []string{"pods"},
+				Subresources: []string{"exec"},
+				Verbs:        []string{"create"},
+				Namespaces:   &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+			}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create DenyPolicy with namespace exemptions")
@@ -90,9 +80,9 @@ func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, fetched.Spec.PodSecurityRules)
 		require.NotNil(t, fetched.Spec.PodSecurityRules.Exemptions)
-		assert.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, "kube-system")
-		assert.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, "monitoring")
-		assert.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, 3)
+		assert.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, "kube-system")
+		assert.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, "monitoring")
+		assert.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, 3)
 		t.Logf("EXEMPT-001: DenyPolicy with namespace exemptions created: %v",
 			fetched.Spec.PodSecurityRules.Exemptions.Namespaces)
 	})
@@ -100,9 +90,7 @@ func TestDenyPolicyNamespaceExemptionConfiguration(t *testing.T) {
 
 // TestDenyPolicyExemptionByPodLabels tests that DenyPolicy pod label exemptions work correctly.
 func TestDenyPolicyExemptionByPodLabels(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -111,39 +99,32 @@ func TestDenyPolicyExemptionByPodLabels(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("CreatePolicyWithPodLabelExemption", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-exempt-labels"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "exemptions"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						PrivilegedContainer: 100,
-						HostNetwork:         80,
-					},
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{MaxScore: 50, Action: "allow"},
-						{MaxScore: 100, Action: "deny", Reason: "Pod risk score {{.Score}} exceeds threshold"},
-					},
-					Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-						// Exempt pods with specific security exemption label
-						PodLabels: map[string]string{
-							"breakglass.t-caas.telekom.com/security-exempt": "true",
-						},
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-exempt-labels"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("exemptions")).
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					PrivilegedContainer: 100,
+					HostNetwork:         80,
+				},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 50, Action: "allow"},
+					{MaxScore: 100, Action: "deny", Reason: "Pod risk score {{.Score}} exceeds threshold"},
+				},
+				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
+					// Exempt pods with specific security exemption label
+					PodLabels: map[string]string{
+						"breakglass.t-caas.telekom.com/security-exempt": "true",
 					},
 				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:    []string{""},
-						Resources:    []string{"pods"},
-						Subresources: []string{"exec"},
-						Verbs:        []string{"create"},
-						Namespaces:   []string{"*"},
-					},
-				},
-			},
-		}
+			}).
+			WithRule(telekomv1alpha1.DenyRule{
+				APIGroups:    []string{""},
+				Resources:    []string{"pods"},
+				Subresources: []string{"exec"},
+				Verbs:        []string{"create"},
+				Namespaces:   &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+			}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create DenyPolicy with pod label exemptions")
@@ -162,9 +143,7 @@ func TestDenyPolicyExemptionByPodLabels(t *testing.T) {
 
 // TestDenyPolicyScopeByCluster tests DenyPolicy appliesTo cluster scoping.
 func TestDenyPolicyScopeByCluster(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -173,25 +152,11 @@ func TestDenyPolicyScopeByCluster(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("PolicyScopedToSpecificClusters", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-scoped-cluster"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{"production", "staging"},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"secrets"},
-						Verbs:      []string{"*"},
-						Namespaces: []string{"*"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-scoped-cluster"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("scoping")).
+			AppliesToClusters("production", "staging").
+			DenyAll([]string{""}, []string{"secrets"}, "*").
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create cluster-scoped policy")
@@ -206,24 +171,17 @@ func TestDenyPolicyScopeByCluster(t *testing.T) {
 	})
 
 	t.Run("GlobalPolicyNoScope", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-global"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				// No AppliesTo = global policy
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:     []string{""},
-						Resources:     []string{"nodes"},
-						Verbs:         []string{"delete"},
-						Namespaces:    []string{},
-						ResourceNames: []string{"*"},
-					},
-				},
-			},
-		}
+		// No AppliesTo = global policy
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-global"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("scoping")).
+			WithRule(telekomv1alpha1.DenyRule{
+				APIGroups:     []string{""},
+				Resources:     []string{"nodes"},
+				Verbs:         []string{"delete"},
+				Namespaces:    nil,
+				ResourceNames: []string{"*"},
+			}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create global policy")
@@ -238,9 +196,7 @@ func TestDenyPolicyScopeByCluster(t *testing.T) {
 
 // TestDenyPolicyPrecedenceConfiguration tests policy precedence ordering.
 func TestDenyPolicyPrecedenceConfiguration(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -249,24 +205,12 @@ func TestDenyPolicyPrecedenceConfiguration(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("PolicyWithHighPrecedence", func(t *testing.T) {
-		precedence := int32(10) // Lower number = higher precedence
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-high-prec"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "precedence"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Precedence: &precedence,
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"secrets"},
-						Verbs:      []string{"delete"},
-						Namespaces: []string{"*"},
-					},
-				},
-			},
-		}
+		// Lower number = higher precedence
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-high-prec"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("precedence")).
+			WithPrecedence(10).
+			DenyResource("", "secrets", []string{"delete"}, "*").
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -280,23 +224,11 @@ func TestDenyPolicyPrecedenceConfiguration(t *testing.T) {
 	})
 
 	t.Run("PolicyWithDefaultPrecedence", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-default-prec"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "precedence"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				// No precedence set = default (100)
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"pods"},
-						Verbs:      []string{"delete"},
-						Namespaces: []string{"*"},
-					},
-				},
-			},
-		}
+		// No precedence set = default (100)
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-default-prec"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("precedence")).
+			DenyPods([]string{"delete"}, "*").
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -311,9 +243,7 @@ func TestDenyPolicyPrecedenceConfiguration(t *testing.T) {
 
 // TestDenyPolicyBlockFactors tests immediate block factors configuration.
 func TestDenyPolicyBlockFactors(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -322,31 +252,26 @@ func TestDenyPolicyBlockFactors(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("PolicyWithBlockFactors", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-block-factors"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "block-factors"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					// Block factors cause immediate denial regardless of risk score
-					BlockFactors: []string{
-						"hostNetwork",
-						"hostPID",
-						"hostIPC",
-						"privilegedContainer",
-					},
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						HostPathWritable: 50,
-						RunAsRoot:        30,
-					},
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{MaxScore: 50, Action: "allow"},
-						{MaxScore: 100, Action: "deny"},
-					},
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-block-factors"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("block-factors")).
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				// Block factors cause immediate denial regardless of risk score
+				BlockFactors: []string{
+					"hostNetwork",
+					"hostPID",
+					"hostIPC",
+					"privilegedContainer",
 				},
-			},
-		}
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					HostPathWritable: 50,
+					RunAsRoot:        30,
+				},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 50, Action: "allow"},
+					{MaxScore: 100, Action: "deny"},
+				},
+			}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -365,9 +290,7 @@ func TestDenyPolicyBlockFactors(t *testing.T) {
 
 // TestDenyPolicyCapabilityRiskFactors tests capability-based risk scoring.
 func TestDenyPolicyCapabilityRiskFactors(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -376,32 +299,27 @@ func TestDenyPolicyCapabilityRiskFactors(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("PolicyWithCapabilityRiskFactors", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-capability-risk"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "capabilities"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						PrivilegedContainer: 100,
-						// Map specific Linux capabilities to risk scores
-						Capabilities: map[string]int{
-							"NET_ADMIN":    50, // Network admin
-							"SYS_ADMIN":    80, // System admin (very dangerous)
-							"SYS_PTRACE":   60, // Process tracing
-							"NET_RAW":      40, // Raw network access
-							"DAC_OVERRIDE": 30, // Bypass file permissions
-						},
-					},
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{MaxScore: 30, Action: "allow"},
-						{MaxScore: 60, Action: "warn", Reason: "Elevated capabilities detected: {{.Score}}"},
-						{MaxScore: 100, Action: "deny", Reason: "Dangerous capabilities: {{.Score}}"},
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-capability-risk"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("capabilities")).
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					PrivilegedContainer: 100,
+					// Map specific Linux capabilities to risk scores
+					Capabilities: map[string]int{
+						"NET_ADMIN":    50, // Network admin
+						"SYS_ADMIN":    80, // System admin (very dangerous)
+						"SYS_PTRACE":   60, // Process tracing
+						"NET_RAW":      40, // Raw network access
+						"DAC_OVERRIDE": 30, // Bypass file permissions
 					},
 				},
-			},
-		}
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 30, Action: "allow"},
+					{MaxScore: 60, Action: "warn", Reason: "Elevated capabilities detected: {{.Score}}"},
+					{MaxScore: 100, Action: "deny", Reason: "Dangerous capabilities: {{.Score}}"},
+				},
+			}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -419,9 +337,7 @@ func TestDenyPolicyCapabilityRiskFactors(t *testing.T) {
 
 // TestDenyPolicyScopeBySession tests DenyPolicy appliesTo session scoping.
 func TestDenyPolicyScopeBySession(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -430,25 +346,11 @@ func TestDenyPolicyScopeBySession(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("PolicyScopedToSpecificSessions", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-scoped-session"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "session-scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Sessions: []string{"high-risk-session-*", "emergency-access-*"},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"secrets"},
-						Verbs:      []string{"*"},
-						Namespaces: []string{"*"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-scoped-session"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("session-scoping")).
+			AppliesToSessions("high-risk-session-*", "emergency-access-*").
+			DenyAll([]string{""}, []string{"secrets"}, "*").
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -462,25 +364,11 @@ func TestDenyPolicyScopeBySession(t *testing.T) {
 	})
 
 	t.Run("PolicyScopedToTenants", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-scoped-tenant"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "tenant-scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Tenants: []string{"tenant-a", "tenant-b"},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"configmaps"},
-						Verbs:      []string{"delete"},
-						Namespaces: []string{"*"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-scoped-tenant"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("tenant-scoping")).
+			AppliesToTenants("tenant-a", "tenant-b").
+			DenyResource("", "configmaps", []string{"delete"}, "*").
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -498,9 +386,7 @@ func TestDenyPolicyScopeBySession(t *testing.T) {
 // Note: The current API doesn't have user/group exemptions in PodSecurityExemptions.
 // This test documents the expected behavior if/when this feature is added.
 func TestDenyPolicyUserGroupExemptionExpectations(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("UserExemptionDocumentation", func(t *testing.T) {
 		// Document expected behavior for user-based exemptions
@@ -534,9 +420,7 @@ func TestDenyPolicyUserGroupExemptionExpectations(t *testing.T) {
 
 // TestDenyPolicyCombinedScoping tests multiple scoping criteria combined.
 func TestDenyPolicyCombinedScoping(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -545,28 +429,21 @@ func TestDenyPolicyCombinedScoping(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("PolicyWithCombinedClusterAndTenantScope", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-combined-scope"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "combined-scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{"production", "staging"},
-					Tenants:  []string{"critical-apps"},
+		policy := helpers.NewDenyPolicyBuilder(helpers.GenerateUniqueName("e2e-combined-scope"), "").
+			WithLabels(helpers.E2ELabelsWithFeature("combined-scoping")).
+			AppliesToClusters("production", "staging").
+			AppliesToTenants("critical-apps").
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				BlockFactors: []string{"privilegedContainer", "hostNetwork"},
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					HostPathWritable: 100,
 				},
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					BlockFactors: []string{"privilegedContainer", "hostNetwork"},
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						HostPathWritable: 100,
-					},
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{MaxScore: 50, Action: "warn"},
-						{MaxScore: 100, Action: "deny", Reason: "High-risk pod access in critical environment"},
-					},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 50, Action: "warn"},
+					{MaxScore: 100, Action: "deny", Reason: "High-risk pod access in critical environment"},
 				},
-			},
-		}
+			}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)

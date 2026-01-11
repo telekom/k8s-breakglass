@@ -1,0 +1,97 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Example ClusterConfig using OIDC settings inherited from an IdentityProvider
+#
+# This method allows you to reuse OIDC configuration from an existing IdentityProvider
+# resource, reducing configuration duplication. It's useful when:
+# - You already have an IdentityProvider configured for user authentication
+# - Multiple ClusterConfigs share the same identity provider
+# - You want to ensure consistent OIDC settings across resources
+#
+# Prerequisites:
+# - An IdentityProvider resource must exist with the referenced name
+# - The IdentityProvider should have Keycloak configuration for service account credentials
+#   (or you must specify clientSecretRef in this ClusterConfig)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: my-cluster-from-idp
+  namespace: breakglass-system
+spec:
+  # Authentication type - OIDC for token-based authentication
+  authType: OIDC
+  
+  # Inherit OIDC settings from an existing IdentityProvider
+  oidcFromIdentityProvider:
+    # Required: Name of the IdentityProvider resource to inherit from
+    # The IdentityProvider must exist and not be disabled
+    name: corp-keycloak
+    
+    # Required: Target cluster's API server URL
+    # This is cluster-specific and cannot be inherited from IdentityProvider
+    server: https://my-cluster-api.example.com:6443
+    
+    # Optional: Override the client ID from the IdentityProvider
+    # Use this when the controller needs a different client than the UI
+    # If not specified, uses the IdentityProvider's clientID
+    # clientID: cluster-auth-client
+    
+    # Optional: Override the client secret reference
+    # If not specified, falls back to IdentityProvider's Keycloak service account
+    # clientSecretRef:
+    #   name: cluster-oidc-secret
+    #   namespace: breakglass-system
+    #   key: client-secret
+    
+    # Optional: CA certificate for the cluster API server
+    # Required if the API server uses a custom/private CA
+    # caSecretRef:
+    #   name: cluster-ca-cert
+    #   namespace: breakglass-system
+    #   key: ca.crt
+    
+    # Optional: Skip TLS verification (NOT for production!)
+    # insecureSkipTLSVerify: false
+  
+  # Optional: Cluster identification metadata
+  clusterID: my-cluster
+  tenant: my-team
+  environment: production
+  
+  # Optional: Restrict which IdentityProviders can authenticate users
+  # If not specified, all enabled IdentityProviders are accepted
+  identityProviderRefs:
+    - corp-keycloak
+  
+  # Optional: Client configuration for API server communication
+  qps: 100
+  burst: 200
+
+---
+# Example IdentityProvider that the ClusterConfig references
+# This must exist before creating the ClusterConfig above
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: corp-keycloak
+spec:
+  displayName: "Corporate Keycloak"
+  issuer: https://keycloak.example.com/realms/kubernetes
+  
+  # OIDC configuration for user authentication (UI)
+  oidc:
+    authority: https://keycloak.example.com/realms/kubernetes
+    clientID: breakglass-ui
+  
+  # Keycloak configuration - provides service account for cluster auth
+  keycloak:
+    baseURL: https://keycloak.example.com
+    realm: kubernetes
+    clientID: breakglass-service
+    clientSecretRef:
+      name: keycloak-credentials
+      namespace: breakglass-system
+      key: client-secret
+  
+  groupSyncProvider: Keycloak

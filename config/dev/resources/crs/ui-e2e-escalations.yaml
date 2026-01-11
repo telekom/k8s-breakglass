@@ -1,0 +1,142 @@
+# UI E2E Test Escalations
+# Each escalation is designed to be used by a specific test file to ensure test isolation
+# when running tests in parallel.
+
+# === request-session.spec.ts Tests ===
+# Uses bob@example.com (groups: developers, team-alpha, requester, dev, ops)
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-request-session-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - team-alpha  # Only bob has this group
+  escalatedGroup: ui-e2e-request-session-group
+  approvers:
+    groups:
+      - senior-ops  # carol@example.com
+  requestReason:
+    mandatory: true
+    description: "Request session test escalation"
+  maxValidFor: 1h
+  retainFor: 24h
+
+# === approve-via-email.spec.ts Tests ===
+# Uses dev-user-alpha (groups: dev, frontend-team, devs-a)
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-approve-email-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - frontend-team  # dev-user-alpha has this group
+  escalatedGroup: ui-e2e-approve-email-group
+  approvers:
+    groups:
+      - senior-ops  # carol@example.com (approver)
+  maxValidFor: 1h
+  retainFor: 24h
+
+# === reject-session.spec.ts Tests ===
+# Uses dev-user-beta (groups: dev, backend-team, database-team, devs-b)
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-reject-session-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - database-team  # dev-user-beta has this group
+  escalatedGroup: ui-e2e-reject-session-group
+  approvers:
+    groups:
+      - senior-ops  # carol@example.com
+  maxValidFor: 1h
+  retainFor: 24h
+
+# === my-requests.spec.ts Tests ===
+# Uses ops-user-gamma (groups: ops, monitoring-team)
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-my-requests-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - monitoring-team  # ops-user-gamma has this group
+  escalatedGroup: ui-e2e-my-requests-group
+  approvers:
+    groups:
+      - senior-ops
+  maxValidFor: 1h
+  retainFor: 24h
+
+# === Generic test escalations for view-only tests ===
+# These are for tests that don't create sessions (login, pending-approvals, session-browser, debug-session)
+# They can use any user since they just check UI elements
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-generic-test-1
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - developers  # bob@example.com has this
+  escalatedGroup: ui-e2e-generic-group-1
+  approvers:
+    groups:
+      - senior-ops
+  maxValidFor: 2h
+  retainFor: 24h
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-generic-test-2
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - dev  # Many users have this
+  escalatedGroup: ui-e2e-generic-group-2
+  approvers:
+    groups:
+      - approvers
+  maxValidFor: 2h
+  retainFor: 24h

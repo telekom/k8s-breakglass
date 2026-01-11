@@ -143,10 +143,10 @@ function handleIDPButtonClick(idpName: string) {
 </script>
 
 <template>
-  <div class="idp-selector">
+  <div class="idp-selector" data-testid="idp-selector">
     <!-- Show message if single IDP mode (no selection needed) -->
     <template v-if="!hasMultipleIDPs && !error && !loading">
-      <div v-if="allowedIDPs.length === 1" class="idp-single-mode">
+      <div v-if="allowedIDPs.length === 1" class="idp-single-mode" data-testid="idp-single-mode">
         <p class="idp-single-message">
           Using <strong>{{ allowedIDPs[0]?.displayName }}</strong> for authentication
         </p>
@@ -154,39 +154,41 @@ function handleIDPButtonClick(idpName: string) {
         <scale-button
           variant="primary"
           :disabled="disabled || loading"
+          data-testid="idp-login-button"
           @click="allowedIDPs[0] && handleIDPButtonClick(allowedIDPs[0].name)"
         >
           Log In
         </scale-button>
       </div>
-      <div v-else-if="allowedIDPs.length === 0" class="idp-no-available">
+      <div v-else-if="allowedIDPs.length === 0" class="idp-no-available" data-testid="idp-no-available">
         <p class="warning">No identity providers available for this escalation</p>
       </div>
     </template>
 
     <!-- Show individual buttons if multiple IDPs available -->
     <template v-if="hasMultipleIDPs">
-      <div class="idp-selector-group">
+      <div class="idp-selector-group" data-testid="idp-multi-mode">
         <h2 class="idp-heading">
           Select Identity Provider
           <span v-if="required" class="required" aria-hidden="true">*</span>
         </h2>
 
         <!-- Loading state -->
-        <div v-if="loading" class="idp-loading">
+        <div v-if="loading" class="idp-loading" data-testid="idp-loading">
           <scale-loading-spinner size="small" /> Loading identity providers...
         </div>
 
         <!-- Error message if config fetch failed -->
-        <scale-notification v-if="error" variant="danger" :heading="error" />
+        <scale-notification v-if="error" variant="danger" :heading="error" data-testid="idp-error" />
 
         <!-- Individual login buttons for each IDP -->
-        <div v-if="!loading && !error" class="idp-buttons-container">
+        <div v-if="!loading && !error" class="idp-buttons-container" data-testid="idp-buttons-container">
           <div v-for="idp in allowedIDPs" :key="idp.name" class="idp-button-row">
             <scale-button
               class="idp-button"
               :variant="selectedIDPName === idp.name ? 'primary' : 'secondary'"
               :disabled="disabled || !idp.enabled"
+              :data-testid="`idp-button-${idp.name}`"
               @click="handleIDPButtonClick(idp.name)"
             >
               <span class="idp-button-content">

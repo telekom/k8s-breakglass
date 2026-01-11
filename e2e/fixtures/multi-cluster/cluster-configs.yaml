@@ -1,0 +1,45 @@
+# Hub cluster configuration - refers to itself via local API
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: breakglass-hub
+  namespace: breakglass-system
+spec:
+  clusterID: breakglass-hub
+  tenant: "e2e-test"
+  environment: "multi-cluster-e2e"
+  # Hub uses the same kubeconfig secret (self-referencing for testing)
+  kubeconfigSecretRef:
+    name: breakglass-hub-kubeconfig
+    namespace: breakglass-system
+    key: value
+---
+# Spoke cluster A - configured to use hub webhooks
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: spoke-cluster-a
+  namespace: breakglass-system
+spec:
+  clusterID: spoke-cluster-a
+  tenant: "e2e-test"
+  environment: "multi-cluster-e2e"
+  kubeconfigSecretRef:
+    name: spoke-cluster-a-kubeconfig
+    namespace: breakglass-system
+    key: value
+---
+# Spoke cluster B - configured to use hub webhooks
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: spoke-cluster-b
+  namespace: breakglass-system
+spec:
+  clusterID: spoke-cluster-b
+  tenant: "e2e-test"
+  environment: "multi-cluster-e2e"
+  kubeconfigSecretRef:
+    name: spoke-cluster-b-kubeconfig
+    namespace: breakglass-system
+    key: value

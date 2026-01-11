@@ -50,9 +50,7 @@ import (
 // =============================================================================
 
 func TestAllowedApproverDomainsFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -64,30 +62,16 @@ func TestAllowedApproverDomainsFeature(t *testing.T) {
 
 	t.Run("EscalationWithAllowedApproverDomains", func(t *testing.T) {
 		// Create escalation with domain restrictions
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-approver-domains",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "approver-domains"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "domain-restricted-access",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "30m",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Groups: []string{"security-team@company.com"},
-				},
-				// Feature under test: AllowedApproverDomains
-				AllowedApproverDomains: []string{
-					"company.com",
-					"trusted-partner.com",
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-approver-domains", namespace).
+			WithEscalatedGroup("domain-restricted-access").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("30m").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
+			WithApproverGroups("security-team@company.com").
+			WithApproverDomains("company.com", "trusted-partner.com").
+			WithLabels(helpers.E2ELabelsWithFeature("approver-domains")).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with AllowedApproverDomains")
@@ -103,26 +87,16 @@ func TestAllowedApproverDomainsFeature(t *testing.T) {
 	})
 
 	t.Run("EscalationWithSingleDomain", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-single-domain",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "approver-domains"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "single-domain-access",
-				MaxValidFor:     "1h",
-				ApprovalTimeout: "15m",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   []string{"ops@example.com"},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"lead@internal.corp"},
-				},
-				AllowedApproverDomains: []string{"internal.corp"},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-single-domain", namespace).
+			WithEscalatedGroup("single-domain-access").
+			WithMaxValidFor("1h").
+			WithApprovalTimeout("15m").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups("ops@example.com").
+			WithApproverUsers("lead@internal.corp").
+			WithApproverDomains("internal.corp").
+			WithLabels(helpers.E2ELabelsWithFeature("approver-domains")).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with single AllowedApproverDomain")
@@ -141,9 +115,7 @@ func TestAllowedApproverDomainsFeature(t *testing.T) {
 // =============================================================================
 
 func TestMandatoryApprovalReasonFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -154,30 +126,16 @@ func TestMandatoryApprovalReasonFeature(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	t.Run("EscalationWithMandatoryApprovalReason", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-mandatory-approval-reason",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "approval-reason"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "approval-reason-required",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "30m",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   []string{"sre@example.com"},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Groups: []string{"sre-leads@example.com"},
-				},
-				// Feature under test: Mandatory ApprovalReason
-				ApprovalReason: &telekomv1alpha1.ReasonConfig{
-					Mandatory:   true,
-					Description: "Approval notes with compliance reference",
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-mandatory-approval-reason", namespace).
+			WithEscalatedGroup("approval-reason-required").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("30m").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups("sre@example.com").
+			WithApproverGroups("sre-leads@example.com").
+			WithApprovalReason(true, "Approval notes with compliance reference").
+			WithLabels(helpers.E2ELabelsWithFeature("approval-reason")).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with mandatory ApprovalReason")
@@ -192,29 +150,16 @@ func TestMandatoryApprovalReasonFeature(t *testing.T) {
 	})
 
 	t.Run("EscalationWithOptionalApprovalReason", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-optional-approval-reason",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "approval-reason"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "approval-reason-optional",
-				MaxValidFor:     "1h",
-				ApprovalTimeout: "15m",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   []string{"devs@example.com"},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"lead@example.com"},
-				},
-				ApprovalReason: &telekomv1alpha1.ReasonConfig{
-					Mandatory:   false,
-					Description: "Optional notes",
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-optional-approval-reason", namespace).
+			WithEscalatedGroup("approval-reason-optional").
+			WithMaxValidFor("1h").
+			WithApprovalTimeout("15m").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups("devs@example.com").
+			WithApproverUsers("lead@example.com").
+			WithApprovalReason(false, "Optional notes").
+			WithLabels(helpers.E2ELabelsWithFeature("approval-reason")).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with optional ApprovalReason")
@@ -234,9 +179,7 @@ func TestMandatoryApprovalReasonFeature(t *testing.T) {
 // =============================================================================
 
 func TestDebugSessionModesFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -249,7 +192,7 @@ func TestDebugSessionModesFeature(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
-			Labels: map[string]string{"e2e-test": "true", "feature": "debug-modes"},
+			Labels: helpers.E2ELabelsWithFeature("debug-modes"),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Debug Modes Test Pod",
@@ -275,7 +218,7 @@ func TestDebugSessionModesFeature(t *testing.T) {
 		template := &telekomv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-workload-mode",
-				Labels: map[string]string{"e2e-test": "true", "feature": "debug-modes"},
+				Labels: helpers.E2ELabelsWithFeature("debug-modes"),
 			},
 			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Workload Mode Template",
@@ -304,7 +247,7 @@ func TestDebugSessionModesFeature(t *testing.T) {
 		template := &telekomv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-kubectl-debug-mode",
-				Labels: map[string]string{"e2e-test": "true", "feature": "debug-modes"},
+				Labels: helpers.E2ELabelsWithFeature("debug-modes"),
 			},
 			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 				DisplayName:     "Kubectl Debug Mode Template",
@@ -343,7 +286,7 @@ func TestDebugSessionModesFeature(t *testing.T) {
 		template := &telekomv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-hybrid-mode",
-				Labels: map[string]string{"e2e-test": "true", "feature": "debug-modes"},
+				Labels: helpers.E2ELabelsWithFeature("debug-modes"),
 			},
 			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Hybrid Mode Template",
@@ -381,9 +324,7 @@ func TestDebugSessionModesFeature(t *testing.T) {
 // =============================================================================
 
 func TestDenyPolicyScopingFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -393,25 +334,11 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("PolicyScopedToClusters", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-scoped-to-clusters",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "policy-scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{"prod-cluster", "staging-cluster"},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"delete"},
-						APIGroups: []string{""},
-						Resources: []string{"configmaps"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-scoped-to-clusters", namespace).
+			WithLabels(helpers.E2ELabelsWithFeature("policy-scoping")).
+			AppliesToClusters("prod-cluster", "staging-cluster").
+			DenyResource("", "configmaps", []string{"delete"}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create cluster-scoped policy")
@@ -425,25 +352,11 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 	})
 
 	t.Run("PolicyScopedToTenants", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-scoped-to-tenants",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "policy-scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Tenants: []string{"tenant-a", "tenant-b"},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"*"},
-						APIGroups: []string{""},
-						Resources: []string{"secrets"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-scoped-to-tenants", namespace).
+			WithLabels(helpers.E2ELabelsWithFeature("policy-scoping")).
+			AppliesToTenants("tenant-a", "tenant-b").
+			DenyAll([]string{""}, []string{"secrets"}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create tenant-scoped policy")
@@ -457,25 +370,11 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 	})
 
 	t.Run("PolicyScopedToSessions", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-scoped-to-sessions",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "policy-scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Sessions: []string{"session-123", "session-456"},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"create", "update"},
-						APIGroups: []string{"apps"},
-						Resources: []string{"deployments"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-scoped-to-sessions", namespace).
+			WithLabels(helpers.E2ELabelsWithFeature("policy-scoping")).
+			AppliesToSessions("session-123", "session-456").
+			DenyResource("apps", "deployments", []string{"create", "update"}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create session-scoped policy")
@@ -489,26 +388,12 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 	})
 
 	t.Run("PolicyWithMultipleScopes", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-multiple-scopes",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "policy-scoping"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{"prod-*"},
-					Tenants:  []string{"critical-tenant"},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"delete"},
-						APIGroups: []string{""},
-						Resources: []string{"persistentvolumeclaims"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-multiple-scopes", namespace).
+			WithLabels(helpers.E2ELabelsWithFeature("policy-scoping")).
+			AppliesToClusters("prod-*").
+			AppliesToTenants("critical-tenant").
+			DenyResource("", "persistentvolumeclaims", []string{"delete"}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create multi-scope policy")
@@ -529,9 +414,7 @@ func TestDenyPolicyScopingFeature(t *testing.T) {
 // =============================================================================
 
 func TestClusterConfigQPSBurstFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -546,7 +429,7 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-qps-burst-kubeconfig",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Data: map[string][]byte{
 				"kubeconfig": []byte("dummy-kubeconfig-data"),
@@ -556,27 +439,15 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 		err := cli.Create(ctx, secret)
 		require.NoError(t, err, "Failed to create kubeconfig secret")
 
-		qps := int32(100)
-		burst := int32(200)
-		config := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-qps-burst-cluster",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "qps-burst"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      "e2e-qps-burst-kubeconfig",
-					Namespace: namespace,
-				},
-				ClusterID:   "e2e-qps-burst",
-				Tenant:      "test-tenant",
-				Environment: "test",
-				// Feature under test: QPS and Burst
-				QPS:   &qps,
-				Burst: &burst,
-			},
-		}
+		config := helpers.NewClusterConfigBuilder("e2e-qps-burst-cluster", namespace).
+			WithClusterID("e2e-qps-burst").
+			WithTenant("test-tenant").
+			WithEnvironment("test").
+			WithQPS(100).
+			WithBurst(200).
+			WithKubeconfigSecret("e2e-qps-burst-kubeconfig", "").
+			WithLabels(helpers.E2ELabelsWithFeature("qps-burst")).
+			Build()
 		cleanup.Add(config)
 		err = cli.Create(ctx, config)
 		require.NoError(t, err, "Failed to create ClusterConfig with QPS/Burst")
@@ -597,7 +468,7 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-tags-kubeconfig",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Data: map[string][]byte{
 				"kubeconfig": []byte("dummy-kubeconfig-data"),
@@ -607,25 +478,15 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 		err := cli.Create(ctx, secret)
 		require.NoError(t, err, "Failed to create kubeconfig secret")
 
-		config := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-tags-cluster",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "cluster-tags"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      "e2e-tags-kubeconfig",
-					Namespace: namespace,
-				},
-				// Feature under test: Cluster tags
-				ClusterID:   "prod-eu-west-1",
-				Tenant:      "tenant-a",
-				Environment: "production",
-				Site:        "eu-west",
-				Location:    "eu-west-1",
-			},
-		}
+		config := helpers.NewClusterConfigBuilder("e2e-tags-cluster", namespace).
+			WithClusterID("prod-eu-west-1").
+			WithTenant("tenant-a").
+			WithEnvironment("production").
+			WithSite("eu-west").
+			WithLocation("eu-west-1").
+			WithKubeconfigSecret("e2e-tags-kubeconfig", "").
+			WithLabels(helpers.E2ELabelsWithFeature("cluster-tags")).
+			Build()
 		cleanup.Add(config)
 		err = cli.Create(ctx, config)
 		require.NoError(t, err, "Failed to create ClusterConfig with tags")
@@ -648,9 +509,7 @@ func TestClusterConfigQPSBurstFeature(t *testing.T) {
 // =============================================================================
 
 func TestEscalationTimeoutConfigFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -661,27 +520,16 @@ func TestEscalationTimeoutConfigFeature(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	t.Run("EscalationWithTimeoutConfig", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-timeout-config",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "timeout-config"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "timeout-config-group",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "30m",
-				// Feature under test: RetainFor and ApprovalTimeout
-				RetainFor: "720h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   []string{"ops@example.com"},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"lead@example.com"},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-timeout-config", namespace).
+			WithEscalatedGroup("timeout-config-group").
+			WithMaxValidFor("4h").
+			WithApprovalTimeout("30m").
+			WithRetainFor("720h").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups("ops@example.com").
+			WithApproverUsers("lead@example.com").
+			WithLabels(helpers.E2ELabelsWithFeature("timeout-config")).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with timeout config")
@@ -703,9 +551,7 @@ func TestEscalationTimeoutConfigFeature(t *testing.T) {
 // =============================================================================
 
 func TestMailProviderSelectionFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -720,7 +566,7 @@ func TestMailProviderSelectionFeature(t *testing.T) {
 		mailProvider := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-escalation-mail-provider",
-				Labels: map[string]string{"e2e-test": "true", "feature": "mail-provider"},
+				Labels: helpers.E2ELabelsWithFeature("mail-provider"),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				DisplayName: "E2E Test Mail Provider",
@@ -739,27 +585,16 @@ func TestMailProviderSelectionFeature(t *testing.T) {
 		require.NoError(t, err, "Failed to create MailProvider")
 
 		// Create escalation referencing the mail provider
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-mail-provider-ref",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "mail-provider"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "mail-provider-group",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "30m",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   []string{"ops@example.com"},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"lead@example.com"},
-				},
-				// Feature under test: MailProvider reference
-				MailProvider: "e2e-escalation-mail-provider",
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-mail-provider-ref", namespace).
+			WithEscalatedGroup("mail-provider-group").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("30m").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups("ops@example.com").
+			WithApproverUsers("lead@example.com").
+			WithMailProvider("e2e-escalation-mail-provider").
+			WithLabels(helpers.E2ELabelsWithFeature("mail-provider")).
+			Build()
 		cleanup.Add(escalation)
 		err = cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with MailProvider")
@@ -778,9 +613,7 @@ func TestMailProviderSelectionFeature(t *testing.T) {
 // =============================================================================
 
 func TestMultipleIdentityProvidersFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -792,7 +625,7 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-primary-idp",
-				Labels: map[string]string{"e2e-test": "true", "feature": "multi-idp"},
+				Labels: helpers.E2ELabelsWithFeature("multi-idp"),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				Primary:     true,
@@ -820,7 +653,7 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-secondary-idp",
-				Labels: map[string]string{"e2e-test": "true", "feature": "multi-idp"},
+				Labels: helpers.E2ELabelsWithFeature("multi-idp"),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				Primary:     false,
@@ -851,9 +684,7 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 // =============================================================================
 
 func TestAuditConfigKafkaSinkFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -865,7 +696,7 @@ func TestAuditConfigKafkaSinkFeature(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-kafka",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-kafka"},
+				Labels: helpers.E2ELabelsWithFeature("audit-kafka"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -908,7 +739,7 @@ func TestAuditConfigKafkaSinkFeature(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-log",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-log"},
+				Labels: helpers.E2ELabelsWithFeature("audit-log"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -939,9 +770,7 @@ func TestAuditConfigKafkaSinkFeature(t *testing.T) {
 // =============================================================================
 
 func TestPodSecurityRulesAdvancedFeature(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -951,36 +780,30 @@ func TestPodSecurityRulesAdvancedFeature(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("PolicyWithCompleteSecurityRules", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-complete-security-rules",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "security-rules"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					// Risk Factors with custom scores
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						PrivilegedContainer: 100,
-						HostNetwork:         80,
-						HostPID:             70,
-						HostIPC:             60,
-					},
-					// Thresholds for different privilege levels
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{MaxScore: 50, Action: "allow", Reason: "low-risk"},
-						{MaxScore: 150, Action: "warn", Reason: "medium-risk"},
-						{MaxScore: 300, Action: "deny", Reason: "high-risk"},
-					},
-					// Block factors that always deny
-					BlockFactors: []string{"privilegedContainer", "hostNetwork"},
-					// Exemptions for specific namespaces
-					Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-						Namespaces: []string{"kube-system", "monitoring"},
-					},
+		policy := helpers.NewDenyPolicyBuilder("e2e-complete-security-rules", namespace).
+			WithLabels(helpers.E2ELabelsWithFeature("security-rules")).
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				// Risk Factors with custom scores
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					PrivilegedContainer: 100,
+					HostNetwork:         80,
+					HostPID:             70,
+					HostIPC:             60,
 				},
-			},
-		}
+				// Thresholds for different privilege levels
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 50, Action: "allow", Reason: "low-risk"},
+					{MaxScore: 150, Action: "warn", Reason: "medium-risk"},
+					{MaxScore: 300, Action: "deny", Reason: "high-risk"},
+				},
+				// Block factors that always deny
+				BlockFactors: []string{"privilegedContainer", "hostNetwork"},
+				// Exemptions for specific namespaces
+				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
+					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system", "monitoring"}},
+				},
+			}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err, "Failed to create policy with complete security rules")
@@ -997,7 +820,7 @@ func TestPodSecurityRulesAdvancedFeature(t *testing.T) {
 		assert.Len(t, fetched.Spec.PodSecurityRules.Thresholds, 3)
 		assert.Len(t, fetched.Spec.PodSecurityRules.BlockFactors, 2)
 		require.NotNil(t, fetched.Spec.PodSecurityRules.Exemptions)
-		assert.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, 2)
+		assert.Len(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, 2)
 		t.Logf("Verified: Complete PodSecurityRules with risk factors, thresholds, block factors, and exemptions")
 	})
 }

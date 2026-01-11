@@ -179,10 +179,13 @@ const requestReasonText = computed(() => {
     :title="groupName"
     :subtitle="`Cluster · ${clusterLabel}`"
     :status-tone="chipVariant"
+    data-testid="breakglass-session-card"
     dense
   >
     <template #status>
-      <scale-tag :variant="chipVariant">{{ breakglass.status.state || "Unknown" }}</scale-tag>
+      <scale-tag :variant="chipVariant" data-testid="session-status">{{
+        breakglass.status.state || "Unknown"
+      }}</scale-tag>
     </template>
 
     <template #chips>
@@ -203,24 +206,24 @@ const requestReasonText = computed(() => {
     </template>
 
     <template #timeline>
-      <div class="session-card__timeline">
-        <div v-if="requestedAt" class="timeline-item">
+      <div class="session-card__timeline" data-testid="session-timeline">
+        <div v-if="requestedAt" class="timeline-item" data-testid="timeline-requested">
           <span class="label">Requested</span>
           <span class="value">{{ requestedAt }}</span>
         </div>
-        <div v-if="approvedAt" class="timeline-item timeline-item--success">
+        <div v-if="approvedAt" class="timeline-item timeline-item--success" data-testid="timeline-approved">
           <span class="label">Approved</span>
           <span class="value">{{ approvedAt }}</span>
         </div>
-        <div v-if="rejectedAt" class="timeline-item timeline-item--danger">
+        <div v-if="rejectedAt" class="timeline-item timeline-item--danger" data-testid="timeline-rejected">
           <span class="label">Rejected</span>
           <span class="value">{{ rejectedAt }}</span>
         </div>
-        <div v-if="withdrawnAt" class="timeline-item timeline-item--warning">
+        <div v-if="withdrawnAt" class="timeline-item timeline-item--warning" data-testid="timeline-withdrawn">
           <span class="label">Withdrawn</span>
           <span class="value">{{ withdrawnAt }}</span>
         </div>
-        <div class="timeline-item" :class="{ 'timeline-item--muted': !isActionable }">
+        <div class="timeline-item" :class="{ 'timeline-item--muted': !isActionable }" data-testid="timeline-status">
           <span class="label">Status</span>
           <span class="value">{{
             isActionable ? (retained ? expiryHumanized : "Awaiting action") : "No longer actionable"
@@ -230,9 +233,15 @@ const requestReasonText = computed(() => {
     </template>
 
     <template v-if="isActionable" #footer>
-      <div class="session-card__actions">
-        <scale-button v-if="isPending" @click="openReview">Review</scale-button>
-        <scale-button v-if="isActive" variant="danger" @click="handleActiveAction">{{ ownerActionLabel }}</scale-button>
+      <div class="session-card__actions" data-testid="session-actions">
+        <scale-button v-if="isPending" data-testid="review-button" @click="openReview">Review</scale-button>
+        <scale-button
+          v-if="isActive"
+          variant="danger"
+          :data-testid="ownerAction === 'withdraw' ? 'drop-button' : 'cancel-button'"
+          @click="handleActiveAction"
+          >{{ ownerActionLabel }}</scale-button
+        >
       </div>
     </template>
   </SessionSummaryCard>

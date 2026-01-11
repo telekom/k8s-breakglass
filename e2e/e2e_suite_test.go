@@ -42,7 +42,6 @@ package e2e
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -52,11 +51,9 @@ import (
 
 // TestE2EPrerequisites verifies that the E2E test environment is ready
 func TestE2EPrerequisites(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), helpers.WaitForStateTimeout)
 	defer cancel()
 
 	t.Run("KubernetesClientConnects", func(t *testing.T) {

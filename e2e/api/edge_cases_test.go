@@ -36,9 +36,7 @@ import (
 
 // TestSlightlyBrokenConfigs tests edge cases with configurations that are almost valid
 func TestSlightlyBrokenConfigs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -48,25 +46,10 @@ func TestSlightlyBrokenConfigs(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("EscalationWithNonExistentCluster", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-nonexistent-cluster-esc",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "ghost-cluster-admins",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{"cluster-that-does-not-exist-xyz"},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-nonexistent-cluster-esc", namespace).
+			WithEscalatedGroup("ghost-cluster-admins").
+			WithAllowedClusters("cluster-that-does-not-exist-xyz").
+			Build()
 		cleanup.Add(escalation)
 
 		err := cli.Create(ctx, escalation)
@@ -78,27 +61,11 @@ func TestSlightlyBrokenConfigs(t *testing.T) {
 	})
 
 	t.Run("DenyPolicyWithNegativePrecedence", func(t *testing.T) {
-		precedence := int32(-100)
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-negative-precedence",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Precedence: &precedence,
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{helpers.GetTestClusterName()},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"delete"},
-						Resources: []string{"pods"},
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-negative-precedence", namespace).
+			WithPrecedence(-100).
+			AppliesToClusters(helpers.GetTestClusterName()).
+			DenyResource("", "pods", []string{"delete"}).
+			Build()
 		cleanup.Add(policy)
 
 		err := cli.Create(ctx, policy)
@@ -115,7 +82,7 @@ func TestSlightlyBrokenConfigs(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "e2e-invalid-kubeconfig-secret",
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Data: map[string][]byte{
 				"kubeconfig": []byte("this is not valid yaml kubeconfig"),
@@ -125,21 +92,10 @@ func TestSlightlyBrokenConfigs(t *testing.T) {
 		err := cli.Create(ctx, secret)
 		require.NoError(t, err)
 
-		clusterCfg := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-invalid-kubeconfig-cluster",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				ClusterID: "invalid-config-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      secret.Name,
-					Namespace: namespace,
-					Key:       "kubeconfig",
-				},
-			},
-		}
+		clusterCfg := helpers.NewClusterConfigBuilder("e2e-invalid-kubeconfig-cluster", namespace).
+			WithClusterID("invalid-config-cluster").
+			WithKubeconfigSecret(secret.Name, "kubeconfig").
+			Build()
 		cleanup.Add(clusterCfg)
 
 		err = cli.Create(ctx, clusterCfg)
@@ -174,9 +130,7 @@ func TestSlightlyBrokenConfigs(t *testing.T) {
 
 // TestConcurrentSessionCreation tests concurrent access patterns
 func TestConcurrentSessionCreation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -186,25 +140,10 @@ func TestConcurrentSessionCreation(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-concurrent-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "concurrent-admins",
-			MaxValidFor:     "4h",
-			ApprovalTimeout: "2h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.GetTestApproverEmail()},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-concurrent-escalation", namespace).
+		WithEscalatedGroup("concurrent-admins").
+		WithAllowedClusters(clusterName).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)
@@ -261,9 +200,7 @@ func TestConcurrentSessionCreation(t *testing.T) {
 
 // TestEdgeCaseStateTransitions tests valid and invalid state transitions
 func TestEdgeCaseStateTransitions(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -279,49 +216,19 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 	expiredTransitionGroup := helpers.GenerateUniqueName("expired-trans")
 
 	// Create escalation for invalid transition test
-	invalidTransitionEsc := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-invalid-trans"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  invalidTransitionGroup,
-			MaxValidFor:     "4h",
-			ApprovalTimeout: "2h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.GetTestApproverEmail()},
-			},
-		},
-	}
+	invalidTransitionEsc := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-invalid-trans"), namespace).
+		WithEscalatedGroup(invalidTransitionGroup).
+		WithAllowedClusters(clusterName).
+		Build()
 	cleanup.Add(invalidTransitionEsc)
 	err := cli.Create(ctx, invalidTransitionEsc)
 	require.NoError(t, err)
 
 	// Create escalation for expired transition test
-	expiredTransitionEsc := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-expired-trans"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  expiredTransitionGroup,
-			MaxValidFor:     "4h",
-			ApprovalTimeout: "2h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.GetTestApproverEmail()},
-			},
-		},
-	}
+	expiredTransitionEsc := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-expired-trans"), namespace).
+		WithEscalatedGroup(expiredTransitionGroup).
+		WithAllowedClusters(clusterName).
+		Build()
 	cleanup.Add(expiredTransitionEsc)
 	err = cli.Create(ctx, expiredTransitionEsc)
 	require.NoError(t, err)
@@ -347,14 +254,14 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 		})
 
 		// Wait for pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Approve via API
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Wait for approved state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Try to move back to pending (invalid) - this tests webhook validation
 		var toRevert telekomv1alpha1.BreakglassSession
@@ -386,7 +293,7 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 		})
 
 		// Wait for pending state
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Move to expired state (simulating expiration) - need to set status directly for this edge case test
 		var toExpire telekomv1alpha1.BreakglassSession
@@ -415,9 +322,7 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 
 // TestBoundaryConditions tests edge values for various fields
 func TestBoundaryConditions(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -428,27 +333,11 @@ func TestBoundaryConditions(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	t.Run("PolicyWithZeroPrecedence", func(t *testing.T) {
-		zeroPrecedence := int32(0)
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-zero-precedence",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Precedence: &zeroPrecedence,
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{clusterName},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"delete"},
-						Resources: []string{"pods"},
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-zero-precedence", namespace).
+			WithPrecedence(0).
+			AppliesToClusters(clusterName).
+			DenyResource("", "pods", []string{"delete"}).
+			Build()
 		cleanup.Add(policy)
 
 		err := cli.Create(ctx, policy)
@@ -460,27 +349,11 @@ func TestBoundaryConditions(t *testing.T) {
 	})
 
 	t.Run("PolicyWithMaxPrecedence", func(t *testing.T) {
-		maxPrecedence := int32(2147483647)
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-max-precedence",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Precedence: &maxPrecedence,
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{clusterName},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"delete"},
-						Resources: []string{"pods"},
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-max-precedence", namespace).
+			WithPrecedence(2147483647).
+			AppliesToClusters(clusterName).
+			DenyResource("", "pods", []string{"delete"}).
+			Build()
 		cleanup.Add(policy)
 
 		err := cli.Create(ctx, policy)
@@ -494,9 +367,7 @@ func TestBoundaryConditions(t *testing.T) {
 
 // TestErrorRecovery tests error recovery scenarios
 func TestErrorRecovery(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -506,25 +377,10 @@ func TestErrorRecovery(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("DeleteAndRecreateEscalation", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-recreate-esc",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "recreate-admins",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-recreate-esc", namespace).
+			WithEscalatedGroup("recreate-admins").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			Build()
 
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -535,25 +391,11 @@ func TestErrorRecovery(t *testing.T) {
 		// Wait for escalation to be fully deleted before recreating
 		helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &telekomv1alpha1.BreakglassEscalation{}, 10*time.Second)
 
-		escalation2 := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-recreate-esc",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "recreate-admins-v2",
-				MaxValidFor:     "8h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation2 := helpers.NewEscalationBuilder("e2e-recreate-esc", namespace).
+			WithEscalatedGroup("recreate-admins-v2").
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithMaxValidFor("8h").
+			Build()
 		cleanup.Add(escalation2)
 
 		err = cli.Create(ctx, escalation2)
@@ -569,15 +411,9 @@ func TestErrorRecovery(t *testing.T) {
 	})
 
 	t.Run("UpdateNonExistentSession", func(t *testing.T) {
-		session := &telekomv1alpha1.BreakglassSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-nonexistent-session",
-				Namespace: namespace,
-			},
-			Spec: telekomv1alpha1.BreakglassSessionSpec{
-				Cluster: helpers.GetTestClusterName(),
-			},
-		}
+		session := helpers.NewSessionBuilder("e2e-nonexistent-session", namespace).
+			WithCluster(helpers.GetTestClusterName()).
+			Build()
 
 		session.Status.State = telekomv1alpha1.SessionStateApproved
 		err := cli.Status().Update(ctx, session)

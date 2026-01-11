@@ -40,9 +40,7 @@ import (
 //
 // This is the critical end-to-end test for issue #48.
 func TestCompleteBreakglassFlow(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}
@@ -52,38 +50,28 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 
 	cli := helpers.GetClient(t)
 	tc := helpers.NewTestContext(t, ctx)
-	apiClient := tc.RequesterClient()
-	approverClient := tc.ApproverClient()
+	// Use dedicated CompleteFlow users to ensure isolation from other tests
+	// CompleteFlowRequester does NOT have complete-flow-test-admins by default
+	requester := helpers.TestUsers.CompleteFlowRequester
+	approver := helpers.TestUsers.CompleteFlowApprover
+	apiClient := tc.ClientForUser(requester)
+	approverClient := tc.ClientForUser(approver)
 	cleanup := helpers.NewCleanup(t, cli)
 	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
-	// Use the actual authenticated user's email and one of their groups
-	// RequesterClient authenticates as TestUsers.Requester
-	testUser := helpers.TestUsers.Requester.Email
+	// Use the dedicated test user - they do NOT have complete-flow-test-admins by default
+	testUser := requester.Email
 	testGroup := "complete-flow-test-admins"
-	// The requester has groups: ["dev", "ops", "requester"] - use "dev" for Allowed.Groups
-	requesterGroups := helpers.TestUsers.Requester.Groups
+	// The requester's base groups (minimal - just complete-flow-requester-base)
+	requesterGroups := requester.Groups
 
 	// Create a BreakglassEscalation first
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-complete-flow-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  testGroup,
-			MaxValidFor:     "4h",
-			ApprovalTimeout: "2h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   requesterGroups, // Use the authenticated user's actual groups
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-complete-flow-esc"), namespace).
+		WithEscalatedGroup(testGroup).
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(requesterGroups...). // Use the authenticated user's actual groups
+		WithApproverUsers(approver.Email).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -117,7 +105,7 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 			User:    testUser,
 			Group:   testGroup,
 			Reason:  "Complete flow E2E test",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 		sessionName = session.Name
@@ -128,7 +116,7 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session")
 
 		// Wait for session to be approved
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify session is approved
 		var approved telekomv1alpha1.BreakglassSession
@@ -181,9 +169,7 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 // 3. Delete the policy
 // 4. Request is now ALLOWED
 func TestCompleteFlowWithDenyPolicy(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}
@@ -204,25 +190,11 @@ func TestCompleteFlowWithDenyPolicy(t *testing.T) {
 	requesterGroups := helpers.TestUsers.Requester.Groups
 
 	// Create escalation
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-deny-policy-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  testGroup,
-			MaxValidFor:     "4h",
-			ApprovalTimeout: "2h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   requesterGroups, // Use the authenticated user's actual groups
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-deny-policy-esc"), namespace).
+		WithEscalatedGroup(testGroup).
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(requesterGroups...). // Use the authenticated user's actual groups
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -232,14 +204,14 @@ func TestCompleteFlowWithDenyPolicy(t *testing.T) {
 		User:    testUser,
 		Group:   testGroup,
 		Reason:  "Deny policy flow test",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err, "Failed to approve session")
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 	t.Logf("Created and approved session for user %s", testUser)
 
 	t.Run("Step1_RequestAllowedWithoutPolicy", func(t *testing.T) {
@@ -252,25 +224,10 @@ func TestCompleteFlowWithDenyPolicy(t *testing.T) {
 	})
 
 	t.Run("Step2_CreateDenyPolicy", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-block-configmap-deletion",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{clusterName},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"delete"},
-						Resources: []string{"configmaps"},
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-block-configmap-deletion", namespace).
+			AppliesToClusters(clusterName).
+			DenyResource("", "configmaps", []string{"delete"}).
+			Build()
 		cleanup.Add(policy)
 		require.NoError(t, cli.Create(ctx, policy))
 		t.Logf("Step 2: Created deny policy blocking configmap deletion")
@@ -324,9 +281,7 @@ func TestCompleteFlowWithDenyPolicy(t *testing.T) {
 
 // TestCompleteFlowMultipleUsers tests concurrent access by multiple users
 func TestCompleteFlowMultipleUsers(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
 		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}
@@ -372,25 +327,11 @@ func TestCompleteFlowMultipleUsers(t *testing.T) {
 	}
 
 	// Create escalation for both
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-multi-user-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  testGroup,
-			MaxValidFor:     "4h",
-			ApprovalTimeout: "2h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   allowedGroups, // Allow both users' groups
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-multi-user-esc"), namespace).
+		WithEscalatedGroup(testGroup).
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(allowedGroups...). // Allow both users' groups
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -402,7 +343,7 @@ func TestCompleteFlowMultipleUsers(t *testing.T) {
 				User:    u.email,
 				Group:   u.group,
 				Reason:  "Multi-user flow test",
-			}, 30*time.Second)
+			}, helpers.WaitForStateTimeout)
 			require.NoError(t, err, "Failed to create session via API")
 			cleanup.Add(session)
 			users[i].sessionName = session.Name
@@ -411,7 +352,7 @@ func TestCompleteFlowMultipleUsers(t *testing.T) {
 			err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 			require.NoError(t, err, "Failed to approve session")
 
-			helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+			helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 			t.Logf("Created and approved session for %s", u.email)
 		}
 	}

@@ -42,7 +42,12 @@ const displayIcon = computed(() => props.icon || defaultIcons[props.variant]);
 </script>
 
 <template>
-  <div class="empty-state" :class="{ 'empty-state--compact': compact }" :data-variant="variant">
+  <div
+    class="empty-state"
+    :class="{ 'empty-state--compact': compact }"
+    :data-variant="variant"
+    data-testid="empty-state"
+  >
     <span v-if="displayIcon" class="empty-state__icon" aria-hidden="true">{{ displayIcon }}</span>
     <p class="empty-state__title">{{ title }}</p>
     <p v-if="description" class="empty-state__description">{{ description }}</p>

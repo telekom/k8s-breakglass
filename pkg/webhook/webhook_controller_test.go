@@ -167,7 +167,7 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 				ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "default"},
 				Spec: v1alpha1.ClusterConfigSpec{
 					Tenant:              fmt.Sprintf("tenant-%s", clusterName),
-					KubeconfigSecretRef: v1alpha1.SecretKeyReference{Name: secretName, Namespace: "default"},
+					KubeconfigSecretRef: &v1alpha1.SecretKeyReference{Name: secretName, Namespace: "default"},
 				},
 			},
 		)
@@ -424,7 +424,7 @@ func TestDenyPolicyGlobal(t *testing.T) {
 				Verbs:      []string{"get"},
 				APIGroups:  []string{""},
 				Resources:  []string{"pods"},
-				Namespaces: []string{"test"},
+				Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"test"}},
 			}},
 		},
 	}
@@ -443,7 +443,7 @@ func TestDenyPolicyGlobal(t *testing.T) {
 				Verbs:      []string{"delete"},
 				APIGroups:  []string{"*"},
 				Resources:  []string{"*"},
-				Namespaces: []string{"*"},
+				Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"*"}},
 			}},
 		},
 	}
@@ -502,8 +502,8 @@ func TestDenyPolicySessionScope(t *testing.T) {
 			Rules: []v1alpha1.DenyRule{{
 				Verbs:      []string{"get"},
 				APIGroups:  []string{""},
-				Resources:  []string{"pods"},  // explicit resource
-				Namespaces: []string{"test*"}, // wildcard namespace pattern
+				Resources:  []string{"pods"},                                       // explicit resource
+				Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"test*"}}, // wildcard namespace pattern
 			}},
 		},
 	}

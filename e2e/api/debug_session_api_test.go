@@ -384,9 +384,7 @@ func (c *DebugSessionAPIClient) ListPodTemplates(ctx context.Context, t *testing
 
 // TestDebugSessionAPIList tests the GET /api/debugSessions endpoint
 func TestDebugSessionAPIList(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -412,9 +410,7 @@ func TestDebugSessionAPIList(t *testing.T) {
 
 // TestDebugSessionAPITemplates tests the template listing endpoints
 func TestDebugSessionAPITemplates(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -430,7 +426,7 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
-			Labels: map[string]string{"e2e-test": "true", "feature": "api-test"},
+			Labels: helpers.E2ELabelsWithFeature("api-test"),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "API Test Pod Template",
@@ -454,7 +450,7 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
-			Labels: map[string]string{"e2e-test": "true", "feature": "api-test"},
+			Labels: helpers.E2ELabelsWithFeature("api-test"),
 		},
 		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:    "API Test Session Template",
@@ -492,7 +488,7 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 				}
 			}
 			return false
-		}, 30*time.Second, 1*time.Second)
+		}, helpers.WaitForStateTimeout, 1*time.Second)
 
 		if err != nil {
 			t.Logf("Available templates: %v", func() []string {
@@ -524,7 +520,7 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 				}
 			}
 			return false
-		}, 30*time.Second, 1*time.Second)
+		}, helpers.WaitForStateTimeout, 1*time.Second)
 
 		if err != nil {
 			t.Logf("Available templates: %v", func() []string {
@@ -542,9 +538,7 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 
 // TestDebugSessionAPICreateAndGet tests creating and retrieving debug sessions via API
 func TestDebugSessionAPICreateAndGet(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -560,7 +554,7 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Create Test Pod",
@@ -583,7 +577,7 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Create Test Session",
@@ -665,9 +659,7 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 // TestDebugSessionAPIJoinLeave tests the join and leave endpoints
 func TestDebugSessionAPIJoinLeave(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -683,7 +675,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Join Test Pod",
@@ -703,7 +695,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Join Test Session",
@@ -746,7 +738,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 
 	// Wait for session to become Active
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, 60*time.Second)
+		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 	t.Log("Debug session is now Active")
 
 	sessionName := session.Name
@@ -788,9 +780,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 
 // TestDebugSessionAPITerminate tests the session termination endpoint
 func TestDebugSessionAPITerminate(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -806,7 +796,7 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podTemplateName,
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Terminate Test Pod",
@@ -826,7 +816,7 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   sessionTemplateName,
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Terminate Test Session",
@@ -865,7 +855,7 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 
 	// Wait for session to become Active
 	helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
-		telekomv1alpha1.DebugSessionStateActive, 60*time.Second)
+		telekomv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 	t.Log("Debug session is now Active")
 
 	sessionName := session.Name
@@ -905,9 +895,7 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 
 // TestDebugSessionAPIUnauthorized tests API calls without authentication
 func TestDebugSessionAPIUnauthorized(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

@@ -24,4 +24,3 @@ escalations:
       description: "Allow devs short-lived read access to pods"
     maxValidFor: "2h"
     retainFor: "48h"
-    idleTimeout: "1h"

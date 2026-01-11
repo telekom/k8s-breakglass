@@ -145,14 +145,14 @@ func TestDenyRuleWithNamespaces(t *testing.T) {
 					Verbs:      []string{"delete"},
 					APIGroups:  []string{""},
 					Resources:  []string{"configmaps"},
-					Namespaces: []string{"kube-system", "kube-public"},
+					Namespaces: &NamespaceFilter{Patterns: []string{"kube-system", "kube-public"}},
 				},
 			},
 		},
 	}
 
-	assert.Len(t, policy.Spec.Rules[0].Namespaces, 2)
-	assert.Contains(t, policy.Spec.Rules[0].Namespaces, "kube-system")
+	assert.Len(t, policy.Spec.Rules[0].Namespaces.Patterns, 2)
+	assert.Contains(t, policy.Spec.Rules[0].Namespaces.Patterns, "kube-system")
 }
 
 // TestDenyRuleWithResourceNames verifies resource name scoping
@@ -430,7 +430,7 @@ func TestDenyPolicyIntegration(t *testing.T) {
 					Verbs:         []string{"create", "update"},
 					APIGroups:     []string{""},
 					Resources:     []string{"secrets"},
-					Namespaces:    []string{"prod-*"},
+					Namespaces:    &NamespaceFilter{Patterns: []string{"prod-*"}},
 					ResourceNames: []string{"admin-secret"},
 					Subresources:  []string{"*"},
 				},

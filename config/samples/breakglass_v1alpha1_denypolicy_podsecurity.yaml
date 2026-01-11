@@ -70,11 +70,16 @@ spec:
     
     # Exemptions - skip evaluation for these pods
     exemptions:
-      # Trusted system namespaces
+      # Trusted system namespaces (supports patterns and label selectors)
       namespaces:
-        - kube-system
-        - monitoring
-        - logging
+        patterns:
+          - "kube-system"
+          - "monitoring"
+          - "logging"
+        # Also exempt namespaces with the 'security-exempt' label
+        selectorTerms:
+          - matchLabels:
+              breakglass.telekom.com/security-exempt: "true"
       
       # Pods with this label are exempt
       podLabels:
@@ -116,7 +121,8 @@ spec:
     
     exemptions:
       namespaces:
-        - kube-system
+        patterns:
+          - kube-system
     
     # Fail-open in dev for convenience
     failMode: open
@@ -159,8 +165,8 @@ spec:
       - hostPID
       - hostNetwork
     
-    exemptions:
-      namespaces: []  # No exemptions in critical prod
+    # No exemptions in critical prod - empty filter
+    exemptions: {}
     
     failMode: closed
   

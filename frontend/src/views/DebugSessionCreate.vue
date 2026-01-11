@@ -142,7 +142,7 @@ function handleScheduleTimeChange(ev: Event) {
 </script>
 
 <template>
-  <main class="ui-page debug-session-create">
+  <main class="ui-page debug-session-create" data-testid="debug-session-create">
     <PageHeader
       title="Create Debug Session"
       subtitle="Request temporary debug access to a cluster using a predefined template."
@@ -157,13 +157,19 @@ function handleScheduleTimeChange(ev: Event) {
           Select a debug session template that defines the access level and constraints.
         </p>
 
-        <scale-dropdown-select label="Template" :value="form.templateRef" required @scaleChange="handleTemplateChange">
+        <scale-dropdown-select
+          label="Template"
+          :value="form.templateRef"
+          required
+          data-testid="template-select"
+          @scaleChange="handleTemplateChange"
+        >
           <scale-dropdown-select-item v-for="template in templates" :key="template.name" :value="template.name">
             {{ template.displayName || template.name }}
           </scale-dropdown-select-item>
         </scale-dropdown-select>
 
-        <div v-if="selectedTemplate" class="template-info">
+        <div v-if="selectedTemplate" class="template-info" data-testid="template-info">
           <p class="template-description">{{ selectedTemplate.description }}</p>
           <div class="template-details">
             <span class="detail"> <strong>Mode:</strong> {{ selectedTemplate.mode }} </span>
@@ -186,6 +192,7 @@ function handleScheduleTimeChange(ev: Event) {
 
         <scale-dropdown-select
           label="Cluster"
+          data-testid="cluster-select"
           :value="form.cluster"
           :disabled="!form.templateRef || availableClusters.length === 0"
           required
@@ -204,7 +211,12 @@ function handleScheduleTimeChange(ev: Event) {
       <div class="form-section">
         <h3>Session Details</h3>
 
-        <scale-dropdown-select label="Duration" :value="form.requestedDuration" @scaleChange="handleDurationChange">
+        <scale-dropdown-select
+          label="Duration"
+          :value="form.requestedDuration"
+          data-testid="duration-select"
+          @scaleChange="handleDurationChange"
+        >
           <scale-dropdown-select-item v-for="opt in durationOptions" :key="opt.value" :value="opt.value">
             {{ opt.label }}
           </scale-dropdown-select-item>
@@ -212,6 +224,7 @@ function handleScheduleTimeChange(ev: Event) {
 
         <scale-textarea
           label="Reason"
+          data-testid="reason-input"
           :value="form.reason"
           placeholder="Explain why you need debug access..."
           rows="3"
@@ -223,6 +236,7 @@ function handleScheduleTimeChange(ev: Event) {
           <scale-checkbox
             :checked="form.useScheduledStart"
             label="Schedule for later"
+            data-testid="schedule-checkbox"
             @scaleChange="handleScheduleToggle"
           ></scale-checkbox>
 
@@ -230,6 +244,7 @@ function handleScheduleTimeChange(ev: Event) {
             v-if="form.useScheduledStart"
             type="datetime-local"
             label="Scheduled Start Time"
+            data-testid="schedule-time-input"
             :value="form.scheduledStartTime"
             @scaleChange="handleScheduleTimeChange"
           ></scale-text-field>
@@ -237,8 +252,13 @@ function handleScheduleTimeChange(ev: Event) {
       </div>
 
       <div class="form-actions">
-        <scale-button variant="secondary" @click="handleCancel"> Cancel </scale-button>
-        <scale-button variant="primary" :disabled="!isValid || submitting" @click="handleSubmit">
+        <scale-button variant="secondary" data-testid="cancel-button" @click="handleCancel"> Cancel </scale-button>
+        <scale-button
+          variant="primary"
+          :disabled="!isValid || submitting"
+          data-testid="create-session-button"
+          @click="handleSubmit"
+        >
           <scale-loading-spinner v-if="submitting" slot="icon" size="small"></scale-loading-spinner>
           {{ submitting ? "Creating..." : "Create Session" }}
         </scale-button>

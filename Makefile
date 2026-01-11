@@ -71,6 +71,12 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet ## Run tests.
 	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+.PHONY: validate-samples
+validate-samples: manifests ## Validate all YAML samples in config/samples against CRD schemas.
+	@echo "Validating sample YAML files..."
+	go test ./api/v1alpha1/... -run TestSamplesAreValid -v
+	@echo "Sample validation passed"
+
 .PHONY: e2e
 e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deployed (no tests).
 	# Run the single-cluster setup script which builds and loads images into kind

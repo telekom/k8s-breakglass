@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	authorizationv1 "k8s.io/api/authorization/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -38,9 +37,7 @@ import (
 // - Verify policy is created and can be fetched
 // - Test policy lifecycle (create, update, delete)
 func TestDenyPolicyEnforcement(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -49,27 +46,10 @@ func TestDenyPolicyEnforcement(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("CreateDenyPolicy", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "e2e-test-deny-secrets",
-				Labels: map[string]string{
-					"e2e-test": "true",
-				},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{"production"},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"secrets"},
-						Verbs:      []string{"*"},
-						Namespaces: []string{"*"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-test-deny-secrets", "").
+			AppliesToClusters("production").
+			DenyAll([]string{""}, []string{"secrets"}, "*").
+			Build()
 
 		cleanup.Add(policy)
 
@@ -85,30 +65,10 @@ func TestDenyPolicyEnforcement(t *testing.T) {
 	})
 
 	t.Run("CreateMultiRuleDenyPolicy", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "e2e-test-deny-multi-rule",
-				Labels: map[string]string{
-					"e2e-test": "true",
-				},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"secrets"},
-						Verbs:      []string{"delete"},
-						Namespaces: []string{"kube-system"},
-					},
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"configmaps"},
-						Verbs:      []string{"delete"},
-						Namespaces: []string{"kube-system"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-test-deny-multi-rule", "").
+			DenyResource("", "secrets", []string{"delete"}, "kube-system").
+			DenyResource("", "configmaps", []string{"delete"}, "kube-system").
+			Build()
 
 		cleanup.Add(policy)
 
@@ -131,7 +91,7 @@ func TestDenyPolicyEnforcement(t *testing.T) {
 			APIGroups:  []string{""},
 			Resources:  []string{"configmaps"},
 			Verbs:      []string{"delete"},
-			Namespaces: []string{"kube-system"},
+			Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 		})
 
 		err = cli.Update(ctx, &policy)
@@ -151,16 +111,14 @@ func TestDenyPolicyEnforcement(t *testing.T) {
 		err = cli.Delete(ctx, &policy)
 		require.NoError(t, err, "Failed to delete DenyPolicy")
 
-		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: policy.Name}, &telekomv1alpha1.DenyPolicy{}, 30*time.Second)
+		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: policy.Name}, &telekomv1alpha1.DenyPolicy{}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "DenyPolicy was not deleted")
 	})
 }
 
 // TestDenyPolicyWithPodSecurityRules tests DenyPolicy with pod security evaluation.
 func TestDenyPolicyWithPodSecurityRules(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -169,40 +127,25 @@ func TestDenyPolicyWithPodSecurityRules(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	t.Run("CreatePolicyWithPodSecurityRules", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "e2e-test-pod-security-policy",
-				Labels: map[string]string{
-					"e2e-test": "true",
+		policy := helpers.NewDenyPolicyBuilder("e2e-test-pod-security-policy", "").
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				BlockFactors: []string{
+					"hostNetwork",
+					"hostPID",
 				},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					BlockFactors: []string{
-						"hostNetwork",
-						"hostPID",
-					},
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						PrivilegedContainer: 100,
-						HostNetwork:         80,
-						HostPID:             80,
-					},
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{MaxScore: 50, Action: "allow"},
-						{MaxScore: 80, Action: "warn"},
-						{MaxScore: 100, Action: "deny", Reason: "Pod risk score too high: {{.Score}}"},
-					},
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					PrivilegedContainer: 100,
+					HostNetwork:         80,
+					HostPID:             80,
 				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						APIGroups:  []string{""},
-						Resources:  []string{"pods/exec"},
-						Verbs:      []string{"create"},
-						Namespaces: []string{"*"},
-					},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 50, Action: "allow"},
+					{MaxScore: 80, Action: "warn"},
+					{MaxScore: 100, Action: "deny", Reason: "Pod risk score too high: {{.Score}}"},
 				},
-			},
-		}
+			}).
+			DenyPodsExec("*").
+			Build()
 
 		cleanup.Add(policy)
 
@@ -220,9 +163,7 @@ func TestDenyPolicyWithPodSecurityRules(t *testing.T) {
 // TestDenyPolicyBlocksSpecificVerbs [DP-001] tests that DenyPolicy can block specific verbs
 // while allowing others.
 func TestDenyPolicyBlocksSpecificVerbs(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -236,48 +177,23 @@ func TestDenyPolicyBlocksSpecificVerbs(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create DenyPolicy that blocks "delete" verb on pods
-	denyPolicy := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp001-block-delete",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Rules: []telekomv1alpha1.DenyRule{
-				{
-					APIGroups:  []string{""},
-					Resources:  []string{"pods"},
-					Verbs:      []string{"delete"},
-					Namespaces: []string{"*"},
-				},
-			},
-		},
-	}
+	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp001-block-delete", "").
+		DenyPods([]string{"delete"}, "*").
+		Build()
 	cleanup.Add(denyPolicy)
 	err := cli.Create(ctx, denyPolicy)
 	require.NoError(t, err, "Failed to create DenyPolicy")
 
 	// Create escalation referencing the DenyPolicy
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-dp001-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			// Use breakglass-pods-admin which has RBAC for pods (get, list, create, update, patch, delete)
-			EscalatedGroup:  "breakglass-pods-admin",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "15m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.PolicyTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.PolicyTestApprover.Email},
-			},
-			DenyPolicyRefs: []string{denyPolicy.Name},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-dp001-escalation", namespace).
+		WithEscalatedGroup("breakglass-pods-admin"). // Use breakglass-pods-admin which has RBAC for pods
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("15m").
+		WithAllowedGroups(helpers.TestUsers.PolicyTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.PolicyTestApprover.Email).
+		WithDenyPolicyRefs(denyPolicy.Name).
+		Build()
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -288,14 +204,14 @@ func TestDenyPolicyBlocksSpecificVerbs(t *testing.T) {
 		User:    helpers.TestUsers.PolicyTestRequester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Test deny policy verb blocking",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("DeleteVerbBlocked", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -340,9 +256,7 @@ func TestDenyPolicyBlocksSpecificVerbs(t *testing.T) {
 // TestDenyPolicyBlocksSpecificResources [DP-002] tests that DenyPolicy can block
 // specific resources while allowing others.
 func TestDenyPolicyBlocksSpecificResources(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -356,48 +270,23 @@ func TestDenyPolicyBlocksSpecificResources(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create DenyPolicy that blocks all verbs on secrets
-	denyPolicy := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp002-block-secrets",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Rules: []telekomv1alpha1.DenyRule{
-				{
-					APIGroups:  []string{""},
-					Resources:  []string{"secrets"},
-					Verbs:      []string{"*"},
-					Namespaces: []string{"*"},
-				},
-			},
-		},
-	}
+	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp002-block-secrets", "").
+		DenyAll([]string{""}, []string{"secrets"}, "*").
+		Build()
 	cleanup.Add(denyPolicy)
 	err := cli.Create(ctx, denyPolicy)
 	require.NoError(t, err, "Failed to create DenyPolicy")
 
 	// Create escalation referencing the DenyPolicy
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-dp002-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			// Use breakglass-emergency-admin which has RBAC for all resources
-			EscalatedGroup:  "breakglass-emergency-admin",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "15m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.PolicyTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.PolicyTestApprover.Email},
-			},
-			DenyPolicyRefs: []string{denyPolicy.Name},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-dp002-escalation", namespace).
+		WithEscalatedGroup("breakglass-emergency-admin"). // Use breakglass-emergency-admin which has RBAC for all resources
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("15m").
+		WithAllowedGroups(helpers.TestUsers.PolicyTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.PolicyTestApprover.Email).
+		WithDenyPolicyRefs(denyPolicy.Name).
+		Build()
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -408,14 +297,14 @@ func TestDenyPolicyBlocksSpecificResources(t *testing.T) {
 		User:    helpers.TestUsers.PolicyTestRequester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Test deny policy resource blocking",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("SecretsBlocked", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -459,9 +348,7 @@ func TestDenyPolicyBlocksSpecificResources(t *testing.T) {
 // TestDenyPolicyBlocksSpecificNamespaces [DP-003] tests that DenyPolicy can block
 // access to specific namespaces while allowing others.
 func TestDenyPolicyBlocksSpecificNamespaces(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -475,48 +362,23 @@ func TestDenyPolicyBlocksSpecificNamespaces(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create DenyPolicy that blocks access to "production" namespace
-	denyPolicy := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp003-block-production",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Rules: []telekomv1alpha1.DenyRule{
-				{
-					APIGroups:  []string{""},
-					Resources:  []string{"*"},
-					Verbs:      []string{"*"},
-					Namespaces: []string{"production"},
-				},
-			},
-		},
-	}
+	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp003-block-production", "").
+		DenyAll([]string{""}, []string{"*"}, "production").
+		Build()
 	cleanup.Add(denyPolicy)
 	err := cli.Create(ctx, denyPolicy)
 	require.NoError(t, err, "Failed to create DenyPolicy")
 
 	// Create escalation referencing the DenyPolicy
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-dp003-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			// Use breakglass-pods-admin which has RBAC for pods
-			EscalatedGroup:  "breakglass-pods-admin",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "15m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.PolicyTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.PolicyTestApprover.Email},
-			},
-			DenyPolicyRefs: []string{denyPolicy.Name},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-dp003-escalation", namespace).
+		WithEscalatedGroup("breakglass-pods-admin"). // Use breakglass-pods-admin which has RBAC for pods
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("15m").
+		WithAllowedGroups(helpers.TestUsers.PolicyTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.PolicyTestApprover.Email).
+		WithDenyPolicyRefs(denyPolicy.Name).
+		Build()
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -527,14 +389,14 @@ func TestDenyPolicyBlocksSpecificNamespaces(t *testing.T) {
 		User:    helpers.TestUsers.PolicyTestRequester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Test deny policy namespace blocking",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("ProductionNamespaceBlocked", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -579,9 +441,7 @@ func TestDenyPolicyBlocksSpecificNamespaces(t *testing.T) {
 // TestDenyPolicyBlocksSpecificAPIGroups [DP-004] tests that DenyPolicy can block
 // specific API groups while allowing others.
 func TestDenyPolicyBlocksSpecificAPIGroups(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -595,48 +455,23 @@ func TestDenyPolicyBlocksSpecificAPIGroups(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create DenyPolicy that blocks "apps" API group
-	denyPolicy := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp004-block-apps",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Rules: []telekomv1alpha1.DenyRule{
-				{
-					APIGroups:  []string{"apps"},
-					Resources:  []string{"*"},
-					Verbs:      []string{"*"},
-					Namespaces: []string{"*"},
-				},
-			},
-		},
-	}
+	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp004-block-apps", "").
+		DenyAll([]string{"apps"}, []string{"*"}, "*").
+		Build()
 	cleanup.Add(denyPolicy)
 	err := cli.Create(ctx, denyPolicy)
 	require.NoError(t, err, "Failed to create DenyPolicy")
 
 	// Create escalation referencing the DenyPolicy
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-dp004-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			// Use breakglass-multi-cluster-ops which has RBAC for apps group (deployments, etc.)
-			EscalatedGroup:  "breakglass-multi-cluster-ops",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "15m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.PolicyTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.PolicyTestApprover.Email},
-			},
-			DenyPolicyRefs: []string{denyPolicy.Name},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-dp004-escalation", namespace).
+		WithEscalatedGroup("breakglass-multi-cluster-ops"). // Use breakglass-multi-cluster-ops which has RBAC for apps group
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("15m").
+		WithAllowedGroups(helpers.TestUsers.PolicyTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.PolicyTestApprover.Email).
+		WithDenyPolicyRefs(denyPolicy.Name).
+		Build()
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -647,14 +482,14 @@ func TestDenyPolicyBlocksSpecificAPIGroups(t *testing.T) {
 		User:    helpers.TestUsers.PolicyTestRequester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Test deny policy API group blocking",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("AppsGroupBlocked", func(t *testing.T) {
 		// Deployments are in the "apps" group
@@ -701,9 +536,7 @@ func TestDenyPolicyBlocksSpecificAPIGroups(t *testing.T) {
 // TestDenyPolicyBlocksSpecificResourceNames [DP-005] tests that DenyPolicy can block
 // access to specific resource names while allowing others.
 func TestDenyPolicyBlocksSpecificResourceNames(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -717,49 +550,29 @@ func TestDenyPolicyBlocksSpecificResourceNames(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create DenyPolicy that blocks access to secret named "database-password"
-	denyPolicy := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp005-block-resource-name",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Rules: []telekomv1alpha1.DenyRule{
-				{
-					APIGroups:     []string{""},
-					Resources:     []string{"secrets"},
-					Verbs:         []string{"*"},
-					Namespaces:    []string{"*"},
-					ResourceNames: []string{"database-password"},
-				},
-			},
-		},
-	}
+	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp005-block-resource-name", "").
+		WithRule(telekomv1alpha1.DenyRule{
+			APIGroups:     []string{""},
+			Resources:     []string{"secrets"},
+			Verbs:         []string{"*"},
+			Namespaces:    &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+			ResourceNames: []string{"database-password"},
+		}).
+		Build()
 	cleanup.Add(denyPolicy)
 	err := cli.Create(ctx, denyPolicy)
 	require.NoError(t, err, "Failed to create DenyPolicy")
 
 	// Create escalation referencing the DenyPolicy
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-dp005-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			// Use breakglass-emergency-admin which has RBAC for all resources
-			EscalatedGroup:  "breakglass-emergency-admin",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "15m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.PolicyTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.PolicyTestApprover.Email},
-			},
-			DenyPolicyRefs: []string{denyPolicy.Name},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-dp005-escalation", namespace).
+		WithEscalatedGroup("breakglass-emergency-admin"). // Use breakglass-emergency-admin which has RBAC for all resources
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("15m").
+		WithAllowedGroups(helpers.TestUsers.PolicyTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.PolicyTestApprover.Email).
+		WithDenyPolicyRefs(denyPolicy.Name).
+		Build()
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -770,14 +583,14 @@ func TestDenyPolicyBlocksSpecificResourceNames(t *testing.T) {
 		User:    helpers.TestUsers.PolicyTestRequester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Test deny policy resource name blocking",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("SpecificSecretBlocked", func(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
@@ -826,9 +639,7 @@ func TestDenyPolicyBlocksSpecificResourceNames(t *testing.T) {
 // TestDenyPolicyPrecedenceOrdering [DP-007] tests that DenyPolicy precedence controls
 // evaluation order when multiple policies apply.
 func TestDenyPolicyPrecedenceOrdering(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -843,73 +654,33 @@ func TestDenyPolicyPrecedenceOrdering(t *testing.T) {
 
 	// Create two overlapping policies with different precedence
 	// Policy 1: Lower precedence (10) - blocks secrets
-	lowerPrecedence := int32(10)
-	denyPolicy1 := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp007-low-precedence",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Precedence: &lowerPrecedence,
-			Rules: []telekomv1alpha1.DenyRule{
-				{
-					APIGroups:  []string{""},
-					Resources:  []string{"secrets"},
-					Verbs:      []string{"*"},
-					Namespaces: []string{"*"},
-				},
-			},
-		},
-	}
+	denyPolicy1 := helpers.NewDenyPolicyBuilder("e2e-dp007-low-precedence", "").
+		WithPrecedence(10).
+		DenyAll([]string{""}, []string{"secrets"}, "*").
+		Build()
 	cleanup.Add(denyPolicy1)
 	err := cli.Create(ctx, denyPolicy1)
 	require.NoError(t, err, "Failed to create low precedence DenyPolicy")
 
 	// Policy 2: Higher precedence (50) - blocks configmaps
-	higherPrecedence := int32(50)
-	denyPolicy2 := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp007-high-precedence",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			Precedence: &higherPrecedence,
-			Rules: []telekomv1alpha1.DenyRule{
-				{
-					APIGroups:  []string{""},
-					Resources:  []string{"configmaps"},
-					Verbs:      []string{"*"},
-					Namespaces: []string{"*"},
-				},
-			},
-		},
-	}
+	denyPolicy2 := helpers.NewDenyPolicyBuilder("e2e-dp007-high-precedence", "").
+		WithPrecedence(50).
+		DenyAll([]string{""}, []string{"configmaps"}, "*").
+		Build()
 	cleanup.Add(denyPolicy2)
 	err = cli.Create(ctx, denyPolicy2)
 	require.NoError(t, err, "Failed to create high precedence DenyPolicy")
 
 	// Create escalation referencing both policies
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-dp007-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			// Use breakglass-emergency-admin which has RBAC for all resources
-			EscalatedGroup:  "breakglass-emergency-admin",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "15m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.PolicyTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.PolicyTestApprover.Email},
-			},
-			DenyPolicyRefs: []string{denyPolicy1.Name, denyPolicy2.Name},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-dp007-escalation", namespace).
+		WithEscalatedGroup("breakglass-emergency-admin"). // Use breakglass-emergency-admin which has RBAC for all resources
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("15m").
+		WithAllowedGroups(helpers.TestUsers.PolicyTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.PolicyTestApprover.Email).
+		WithDenyPolicyRefs(denyPolicy1.Name, denyPolicy2.Name).
+		Build()
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -920,14 +691,14 @@ func TestDenyPolicyPrecedenceOrdering(t *testing.T) {
 		User:    helpers.TestUsers.PolicyTestRequester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Test deny policy precedence ordering",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Both policies should be evaluated and block their respective resources
 	t.Run("SecretsBlockedByLowerPrecedence", func(t *testing.T) {
@@ -992,9 +763,7 @@ func TestDenyPolicyPrecedenceOrdering(t *testing.T) {
 // TestDenyPolicyExemptionByNamespace [DP-008] tests that PodSecurityRules exemptions
 // by namespace work correctly.
 func TestDenyPolicyExemptionByNamespace(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1003,27 +772,21 @@ func TestDenyPolicyExemptionByNamespace(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 
 	// Create DenyPolicy with PodSecurityRules that exempts kube-system namespace
-	denyPolicy := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp008-exempt-namespace",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-				RiskFactors: telekomv1alpha1.RiskFactors{
-					HostNetwork:         80,
-					PrivilegedContainer: 100,
-				},
-				Thresholds: []telekomv1alpha1.RiskThreshold{
-					{MaxScore: 50, Action: "allow"},
-					{MaxScore: 100, Action: "deny", Reason: "High risk pod"},
-				},
-				Exemptions: &telekomv1alpha1.PodSecurityExemptions{
-					Namespaces: []string{"kube-system"},
-				},
+	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp008-exempt-namespace", "").
+		WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+			RiskFactors: telekomv1alpha1.RiskFactors{
+				HostNetwork:         80,
+				PrivilegedContainer: 100,
 			},
-		},
-	}
+			Thresholds: []telekomv1alpha1.RiskThreshold{
+				{MaxScore: 50, Action: "allow"},
+				{MaxScore: 100, Action: "deny", Reason: "High risk pod"},
+			},
+			Exemptions: &telekomv1alpha1.PodSecurityExemptions{
+				Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+			},
+		}).
+		Build()
 	cleanup.Add(denyPolicy)
 	err := cli.Create(ctx, denyPolicy)
 	require.NoError(t, err, "Failed to create DenyPolicy with namespace exemption")
@@ -1034,15 +797,13 @@ func TestDenyPolicyExemptionByNamespace(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, fetched.Spec.PodSecurityRules)
 	require.NotNil(t, fetched.Spec.PodSecurityRules.Exemptions)
-	require.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces, "kube-system")
+	require.Contains(t, fetched.Spec.PodSecurityRules.Exemptions.Namespaces.Patterns, "kube-system")
 }
 
 // TestDenyPolicyAppliesToClusters [DP-011] tests that DenyPolicy appliesTo.clusters
 // scopes the policy to specific clusters.
 func TestDenyPolicyAppliesToClusters(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1056,50 +817,24 @@ func TestDenyPolicyAppliesToClusters(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create DenyPolicy that only applies to a different cluster (not our test cluster)
-	denyPolicy := &telekomv1alpha1.DenyPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "e2e-dp011-applies-to-cluster",
-			Labels: map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.DenyPolicySpec{
-			AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-				Clusters: []string{"other-cluster"}, // Not our test cluster
-			},
-			Rules: []telekomv1alpha1.DenyRule{
-				{
-					APIGroups:  []string{""},
-					Resources:  []string{"secrets"},
-					Verbs:      []string{"*"},
-					Namespaces: []string{"*"},
-				},
-			},
-		},
-	}
+	denyPolicy := helpers.NewDenyPolicyBuilder("e2e-dp011-applies-to-cluster", "").
+		AppliesToClusters("other-cluster"). // Not our test cluster
+		DenyAll([]string{""}, []string{"secrets"}, "*").
+		Build()
 	cleanup.Add(denyPolicy)
 	err := cli.Create(ctx, denyPolicy)
 	require.NoError(t, err, "Failed to create DenyPolicy with appliesTo.clusters")
 
 	// Create escalation referencing the DenyPolicy
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-dp011-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "breakglass-emergency-admin", // Must have RBAC binding for SAR to succeed
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "15m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.PolicyTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.PolicyTestApprover.Email},
-			},
-			DenyPolicyRefs: []string{denyPolicy.Name},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-dp011-escalation", namespace).
+		WithEscalatedGroup("breakglass-emergency-admin"). // Must have RBAC binding for SAR to succeed
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("15m").
+		WithAllowedGroups(helpers.TestUsers.PolicyTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.PolicyTestApprover.Email).
+		WithDenyPolicyRefs(denyPolicy.Name).
+		Build()
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation")
@@ -1110,14 +845,14 @@ func TestDenyPolicyAppliesToClusters(t *testing.T) {
 		User:    helpers.TestUsers.PolicyTestRequester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Test deny policy cluster scope",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
 
 	err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.NoError(t, err)
 
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("PolicyNotEnforcedOnOtherCluster", func(t *testing.T) {
 		// Policy applies to "other-cluster", not our test cluster

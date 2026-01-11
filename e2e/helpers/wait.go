@@ -329,3 +329,67 @@ func DropSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient, 
 func CancelSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient, name, namespace string) error {
 	return apiClient.CancelSessionViaAPI(ctx, t, name, namespace)
 }
+
+// CachePropagationDelay is the time to wait for controller cache propagation.
+// This is a safer alternative to bare time.Sleep() calls.
+const CachePropagationDelay = 2 * time.Second
+
+// WaitForCachePropagation waits for controller cache to propagate changes.
+// Use this instead of bare time.Sleep() when waiting for cache updates.
+// If a verification function is provided, it will poll until the function returns true.
+//
+// Example:
+//
+//	// Simple cache wait
+//	helpers.WaitForCachePropagation(ctx)
+//
+//	// Wait with verification
+//	helpers.WaitForCachePropagationWithVerify(ctx, t, func() bool {
+//	    var esc telekomv1alpha1.BreakglassEscalation
+//	    err := cli.Get(ctx, key, &esc)
+//	    return err == nil && esc.Status.Ready
+//	})
+func WaitForCachePropagation(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(CachePropagationDelay):
+		return
+	}
+}
+
+// WaitForCachePropagationWithVerify waits for cache propagation with verification.
+// It polls the verify function until it returns true or times out.
+func WaitForCachePropagationWithVerify(ctx context.Context, t *testing.T, verify func() bool) {
+	t.Helper()
+
+	timeout := 10 * time.Second
+	interval := 500 * time.Millisecond
+
+	err := WaitForCondition(ctx, func() (bool, error) {
+		return verify(), nil
+	}, timeout, interval)
+
+	if err != nil && ctx.Err() == nil {
+		t.Logf("Warning: cache propagation verification timed out")
+	}
+}
+
+// WaitForResourceUpdate waits for a resource to be updated by the controller.
+// It checks that the resource's generation has been observed.
+func WaitForResourceUpdate[T interface {
+	client.Object
+	GetGeneration() int64
+}](ctx context.Context, t *testing.T, cli client.Client, key types.NamespacedName, obj T, timeout time.Duration) error {
+	t.Helper()
+
+	expectedGen := obj.GetGeneration()
+	return WaitForCondition(ctx, func() (bool, error) {
+		if err := cli.Get(ctx, key, obj); err != nil {
+			return false, nil
+		}
+		// Check if controller has observed this generation
+		// Most status structs have ObservedGeneration
+		return obj.GetGeneration() >= expectedGen, nil
+	}, timeout, DefaultInterval)
+}

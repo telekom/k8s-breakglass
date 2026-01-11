@@ -113,8 +113,8 @@ func TestDebugSessionTemplate_KubectlDebugMode(t *testing.T) {
 			KubectlDebug: &KubectlDebugConfig{
 				EphemeralContainers: &EphemeralContainersConfig{
 					Enabled:           true,
-					AllowedNamespaces: []string{"app-*", "service-*"},
-					DeniedNamespaces:  []string{"kube-system", "kube-public"},
+					AllowedNamespaces: &NamespaceFilter{Patterns: []string{"app-*", "service-*"}},
+					DeniedNamespaces:  &NamespaceFilter{Patterns: []string{"kube-system", "kube-public"}},
 					AllowedImages:     []string{"busybox:*", "nicolaka/netshoot:*"},
 					RequireNonRoot:    true,
 					AllowPrivileged:   false,
@@ -191,8 +191,8 @@ func TestDebugSessionTemplate_EphemeralContainersConfig(t *testing.T) {
 			name: "with namespace restrictions",
 			config: EphemeralContainersConfig{
 				Enabled:           true,
-				AllowedNamespaces: []string{"default", "app-*"},
-				DeniedNamespaces:  []string{"kube-system"},
+				AllowedNamespaces: &NamespaceFilter{Patterns: []string{"default", "app-*"}},
+				DeniedNamespaces:  &NamespaceFilter{Patterns: []string{"kube-system"}},
 			},
 		},
 		{

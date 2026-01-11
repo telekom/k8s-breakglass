@@ -29,6 +29,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // KubectlDebugHandler handles kubectl-debug mode operations
@@ -48,6 +49,37 @@ func NewKubectlDebugHandler(client ctrlclient.Client, ccProvider ClientProviderI
 		client:     client,
 		ccProvider: ccProvider,
 	}
+}
+
+// FindActiveSession finds an active debug session for the user/cluster
+func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*v1alpha1.DebugSession, error) {
+	var list v1alpha1.DebugSessionList
+	// TODO: Add field selector for performance in future - NOT IMPLEMENTED (requires indexer setup)
+	if err := h.client.List(ctx, &list); err != nil {
+		return nil, err
+	}
+
+	for _, ds := range list.Items {
+		// If cluster is specified, filter by it
+		if cluster != "" && ds.Spec.Cluster != cluster {
+			continue
+		}
+		if ds.Status.State != v1alpha1.DebugSessionStateActive {
+			continue
+		}
+		// Check expiration just in case status is stale
+		if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
+			continue
+		}
+
+		// Check if user is a participant
+		for _, p := range ds.Status.Participants {
+			if p.User == user {
+				return &ds, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 // ValidateEphemeralContainerRequest validates an ephemeral container injection request
@@ -518,27 +550,10 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 
 // Helper functions
 
-func (h *KubectlDebugHandler) isNamespaceAllowed(namespace string, allowed, denied []string) bool {
-	// Check denied first
-	for _, pattern := range denied {
-		if matched, _ := filepath.Match(pattern, namespace); matched {
-			return false
-		}
-	}
-
-	// If no allowed list, all namespaces are allowed (except denied)
-	if len(allowed) == 0 {
-		return true
-	}
-
-	// Check allowed list
-	for _, pattern := range allowed {
-		if matched, _ := filepath.Match(pattern, namespace); matched {
-			return true
-		}
-	}
-
-	return false
+func (h *KubectlDebugHandler) isNamespaceAllowed(namespace string, allowed, denied *v1alpha1.NamespaceFilter) bool {
+	// Use NamespaceAllowDenyMatcher for combined allow/deny logic
+	matcher := utils.NewNamespaceAllowDenyMatcher(allowed, denied)
+	return matcher.IsAllowed(namespace)
 }
 
 func (h *KubectlDebugHandler) isImageAllowed(image string, allowed []string) bool {

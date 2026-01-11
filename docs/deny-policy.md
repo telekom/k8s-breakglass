@@ -51,7 +51,8 @@ rules:
     apiGroups: [""]                        # Core API group
     resources: ["secrets", "configmaps"]   # Resource types
     resourceNames: ["secret-1"]            # Specific names (optional)
-    namespaces: ["prod", "system"]         # Namespaces (optional)
+    namespaces:                            # Namespaces (optional)
+      patterns: ["prod", "system"]
     subresources: ["status"]               # Subresources (optional)
 ```
 
@@ -60,6 +61,65 @@ Each rule must specify:
 - `verbs` - Actions to block
 - `apiGroups` - API groups (empty string for core API)
 - `resources` - Resource types
+
+### Namespace Filtering with Labels
+
+The `namespaces` field supports advanced filtering using both string patterns and Kubernetes label selectors:
+
+```yaml
+rules:
+  - verbs: ["delete"]
+    apiGroups: [""]
+    resources: ["pods"]
+    namespaces:
+      # Match by name patterns (wildcards supported)
+      patterns:
+        - "prod-*"
+        - "staging"
+      # OR match by namespace labels
+      selectorTerms:
+        - matchLabels:
+            env: production
+        - matchLabels:
+            tier: critical
+```
+
+**Matching Logic:**
+- Patterns and selectorTerms use OR logic - a namespace matches if it matches ANY pattern OR ANY selector term
+- Within a selectorTerm, matchLabels and matchExpressions use AND logic
+- Empty namespaces field means the rule applies to all namespaces
+
+**Label Selector Examples:**
+
+Match namespaces with specific label:
+```yaml
+namespaces:
+  selectorTerms:
+    - matchLabels:
+        environment: production
+```
+
+Match namespaces with complex expressions:
+```yaml
+namespaces:
+  selectorTerms:
+    - matchExpressions:
+        - key: env
+          operator: In
+          values: ["production", "staging"]
+        - key: tier
+          operator: NotIn
+          values: ["dev", "test"]
+```
+
+Match namespaces with the "restricted" label set to any value:
+```yaml
+namespaces:
+  selectorTerms:
+    - matchExpressions:
+        - key: restricted
+          operator: Exists
+```
 
 ## Optional Fields
 
@@ -127,7 +187,8 @@ podSecurityRules:
   
   # Exemptions - skip evaluation
   exemptions:
-    namespaces: ["kube-system"]
+    namespaces:
+      patterns: ["kube-system"]
     podLabels:
       breakglass.telekom.com/security-exempt: "true"
   
@@ -234,7 +295,8 @@ spec:
     - verbs: ["*"]
       apiGroups: ["*"]
       resources: ["*"]
-      namespaces: ["kube-system", "kube-node-lease"]
+      namespaces:
+        patterns: ["kube-system", "kube-node-lease"]
   precedence: 5
 ```
 
@@ -272,7 +334,8 @@ spec:
     blockFactors:
       - privilegedContainer
     exemptions:
-      namespaces: ["kube-system", "monitoring"]
+      namespaces:
+        patterns: ["kube-system", "monitoring"]
     failMode: closed
   precedence: 15
 ```
@@ -333,6 +396,22 @@ When pod security rules are configured, the following Prometheus metrics are emi
 | `breakglass_pod_security_evaluations_total` | Counter | Total pod security evaluations |
 | `breakglass_pod_security_denied_total` | Counter | Pod security denials by policy and reason |
 | `breakglass_pod_security_risk_score` | Histogram | Distribution of calculated risk scores |
+| `breakglass_pod_security_warnings_total` | Counter | High-risk access allowed with warnings |
+| `breakglass_pod_security_factors_total` | Counter | Risk factors detected by type |
+
+### Pod Security Audit Events
+
+The following audit events are emitted for pod security evaluations:
+
+| Event Type | Severity | Description |
+|------------|----------|-------------|
+| `pod_security.evaluated` | Info | Security evaluation completed |
+| `pod_security.allowed` | Info | Access allowed after evaluation |
+| `pod_security.denied` | Critical | Access denied by security rules |
+| `pod_security.warning` | Warning | High-risk access allowed |
+| `pod_security.override` | Warning | Escalation override was applied |
+
+These events include details such as the risk score, detected risk factors, policy name, and whether overrides were applied.
 
 Example PromQL queries:
 

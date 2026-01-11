@@ -1,0 +1,25 @@
+# Main identity provider - for employee users
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: main-idp
+spec:
+  displayName: "Main IDP (Employees)"
+  oidc:
+    authority: "https://auth.example.com"
+    clientID: "breakglass"
+  # Issuer URL for token validation
+  issuer: "https://auth.example.com"
+  primary: true
+---
+# Contractors identity provider - restricted to specific cluster
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: contractors-idp
+spec:
+  displayName: "Contractors IDP"
+  oidc:
+    authority: "https://contractors-auth.example.com"
+    clientID: "breakglass-contractors"
+  issuer: "https://contractors-auth.example.com"

@@ -10,6 +10,7 @@ import (
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -26,6 +27,9 @@ type Action struct {
 	ClusterID   string
 	Tenant      string
 	Session     string
+	// NamespaceLabels contains labels of the namespace for label selector matching.
+	// If nil, DenyPolicy SelectorTerms cannot be evaluated and will be skipped.
+	NamespaceLabels map[string]string
 	// Pod is populated for exec/attach/portforward requests to enable security evaluation.
 	// If nil and podSecurityRules are configured, behavior depends on failMode.
 	Pod *corev1.Pod
@@ -36,11 +40,12 @@ type Action struct {
 
 // PodSecurityResult contains the outcome of pod security evaluation.
 type PodSecurityResult struct {
-	Denied  bool
-	Reason  string
-	Score   int
-	Factors []string
-	Action  string // "allow", "warn", "deny"
+	Denied          bool
+	Reason          string
+	Score           int
+	Factors         []string
+	Action          string // "allow", "warn", "deny"
+	OverrideApplied bool   // true if escalation overrides were applied
 }
 
 type Evaluator struct {
@@ -181,9 +186,10 @@ func (e *Evaluator) evaluatePodSecurity(act Action, rules *telekomv1alpha1.PodSe
 	overrides := act.PodSecurityOverrides
 	if overrides != nil && overrides.Enabled {
 		// Check namespace scope for overrides
-		if len(overrides.NamespaceScope) > 0 && !contains(overrides.NamespaceScope, act.Pod.Namespace) {
+		nsMatcher := utils.NewNamespaceMatcher(overrides.NamespaceScope)
+		if !overrides.NamespaceScope.IsEmpty() && !nsMatcher.Matches(act.Pod.Namespace) {
 			e.log.Debugw("Pod security overrides not applicable: namespace not in scope",
-				"pod", act.Pod.Name, "namespace", act.Pod.Namespace, "allowedNamespaces", overrides.NamespaceScope)
+				"pod", act.Pod.Name, "namespace", act.Pod.Namespace, "namespaceScope", overrides.NamespaceScope)
 			// Continue with normal evaluation - overrides don't apply to this namespace
 			overrides = nil
 		}
@@ -236,11 +242,12 @@ func (e *Evaluator) evaluatePodSecurity(act Action, rules *telekomv1alpha1.PodSe
 				"score", score, "maxAllowed", *overrides.MaxAllowedScore,
 				"pod", act.Pod.Name, "namespace", act.Pod.Namespace, "factors", factors)
 			return PodSecurityResult{
-				Denied:  false,
-				Score:   score,
-				Factors: factors,
-				Action:  "allow",
-				Reason:  fmt.Sprintf("allowed by escalation override (score %d <= %d)", score, *overrides.MaxAllowedScore),
+				Denied:          false,
+				Score:           score,
+				Factors:         factors,
+				Action:          "allow",
+				Reason:          fmt.Sprintf("allowed by escalation override (score %d <= %d)", score, *overrides.MaxAllowedScore),
+				OverrideApplied: true,
 			}
 		}
 	}
@@ -262,8 +269,13 @@ func (e *Evaluator) evaluatePodSecurity(act Action, rules *telekomv1alpha1.PodSe
 				}
 			case "warn":
 				result.Denied = false
+				// Render reason for audit events and structured logging
+				result.Reason = e.renderReason(t.Reason, score, factors, act.Pod)
+				if result.Reason == "" {
+					result.Reason = fmt.Sprintf("pod security risk score %d triggered warning threshold", score)
+				}
 				e.log.Warnw("High-risk pod access allowed (warn threshold)",
-					"score", score, "factors", factors,
+					"score", score, "factors", factors, "reason", result.Reason,
 					"pod", act.Pod.Name, "namespace", act.Pod.Namespace, "cluster", act.ClusterID)
 			default: // allow
 				result.Denied = false
@@ -302,11 +314,10 @@ func (e *Evaluator) isPodExempt(pod *corev1.Pod, exemptions *telekomv1alpha1.Pod
 	if exemptions == nil {
 		return false
 	}
-	// Check namespace exemption
-	for _, ns := range exemptions.Namespaces {
-		if ns == pod.Namespace {
-			return true
-		}
+	// Check namespace exemption using NamespaceMatcher
+	nsMatcher := utils.NewNamespaceMatcher(exemptions.Namespaces)
+	if nsMatcher.Matches(pod.Namespace) {
+		return true
 	}
 	// Check label exemption (all labels must match)
 	if len(exemptions.PodLabels) > 0 {
@@ -511,8 +522,26 @@ func ruleMatches(r telekomv1alpha1.DenyRule, act Action) bool {
 	if len(r.Subresources) > 0 && !contains(r.Subresources, act.Subresource) && !contains(r.Subresources, "*") {
 		return false
 	}
-	if len(r.Namespaces) > 0 && !matchAny(r.Namespaces, act.Namespace) {
-		return false
+	// Namespace matching: use MatchesWithLabels if we have namespace labels,
+	// otherwise fall back to pattern-only matching (SelectorTerms cannot be evaluated)
+	if !r.Namespaces.IsEmpty() {
+		nsMatcher := utils.NewNamespaceMatcher(r.Namespaces)
+		if act.NamespaceLabels != nil {
+			// We have labels, use full matching including SelectorTerms
+			if !nsMatcher.MatchesWithLabels(act.Namespace, act.NamespaceLabels) {
+				return false
+			}
+		} else {
+			// No labels available, only pattern matching is possible
+			// If rule has SelectorTerms but no patterns, we cannot match
+			if r.Namespaces.HasSelectorTerms() && !r.Namespaces.HasPatterns() {
+				// Cannot evaluate selector-only rules without labels - skip this rule
+				return false
+			}
+			if !nsMatcher.Matches(act.Namespace) {
+				return false
+			}
+		}
 	}
 	if len(r.ResourceNames) > 0 && !matchAny(r.ResourceNames, act.Name) {
 		return false

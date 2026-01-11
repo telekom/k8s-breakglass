@@ -1187,6 +1187,148 @@
       }
     },
     {
+      "username": "complete-flow-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "complete-flow-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "complete-flow-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "complete-flow-requester-base"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "complete-flow-requester"
+        ]
+      }
+    },
+    {
+      "username": "complete-flow-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "complete-flow-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "complete-flow-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approver",
+        "complete-flow-approver"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "complete-flow-approver"
+        ]
+      }
+    },
+    {
+      "username": "bob@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Developer",
+      "email": "bob@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "developers",
+        "team-alpha",
+        "requester",
+        "dev",
+        "ops"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "bob@example.com"
+        ]
+      }
+    },
+    {
+      "username": "carol@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Security",
+      "email": "carol@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "carol123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "approvers",
+        "security-team",
+        "approver",
+        "senior-ops"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "carol@example.com"
+        ]
+      }
+    },
+    {
+      "username": "alice@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Admin",
+      "email": "alice@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "platform-admins",
+        "approver",
+        "senior-ops",
+        "emergency-response"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "alice@example.com"
+        ]
+      }
+    },
+    {
       "username": "service-account-breakglass-group-sync",
       "enabled": true,
       "serviceAccountClientId": "breakglass-group-sync",
@@ -1404,6 +1546,27 @@
     },
     {
       "name": "multi-cluster-approver"
+    },
+    {
+      "name": "complete-flow-requester-base"
+    },
+    {
+      "name": "complete-flow-approver"
+    },
+    {
+      "name": "developers"
+    },
+    {
+      "name": "approvers"
+    },
+    {
+      "name": "platform-admins"
+    },
+    {
+      "name": "team-alpha"
+    },
+    {
+      "name": "security-team"
     }
   ]
 }
