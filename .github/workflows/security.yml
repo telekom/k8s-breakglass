@@ -25,7 +25,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
       - name: Upload SBOM
-        uses: anchore/sbom-action@a930d0ac434e3182448fe678398ba5713717112a # v0.21.0
+        uses: anchore/sbom-action@0b82b0b1a22399a1c542d4d656f70cd903571b5c # v0.21.1
         id: sbom
         with:
           image: breakglass:scan
