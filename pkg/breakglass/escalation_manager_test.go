@@ -387,6 +387,21 @@ func TestEscalationManager_GetClusterGroupBreakglassEscalations(t *testing.T) {
 		},
 	}
 
+	// Global escalation - applies to all clusters (uses "*" wildcard for ClusterConfigRefs and Allowed.Clusters)
+	globalEscalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "global-readonly-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			ClusterConfigRefs: []string{"*"}, // "*" = global (matches any cluster)
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"*"}, // "*" = global (matches any cluster)
+				Groups:   []string{"readonly-users"},
+			},
+		},
+	}
+
 	tests := []struct {
 		name            string
 		existingObjects []client.Object
@@ -435,6 +450,22 @@ func TestEscalationManager_GetClusterGroupBreakglassEscalations(t *testing.T) {
 			expectedCount:   0,
 			expectError:     false,
 		},
+		{
+			name:            "global escalation matches any cluster",
+			existingObjects: []client.Object{escalation1, escalation2, globalEscalation},
+			cluster:         "any-random-cluster",
+			userGroups:      []string{"readonly-users"},
+			expectedCount:   1,
+			expectError:     false,
+		},
+		{
+			name:            "global escalation matches alongside cluster-specific",
+			existingObjects: []client.Object{escalation1, globalEscalation},
+			cluster:         "cluster1",
+			userGroups:      []string{"admin", "readonly-users"},
+			expectedCount:   2,
+			expectError:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -462,6 +493,369 @@ func TestEscalationManager_GetClusterGroupBreakglassEscalations(t *testing.T) {
 
 			if len(result) != tt.expectedCount {
 				t.Errorf("GetClusterGroupBreakglassEscalations() count = %v, want %v", len(result), tt.expectedCount)
+			}
+		})
+	}
+}
+
+func TestEscalationManager_GlobPatternMatching(t *testing.T) {
+	// TestEscalationManager_GlobPatternMatching
+	//
+	// Purpose:
+	//   Validates glob pattern matching for cluster selection in escalations.
+	//   Tests various glob patterns like "*", "prod-*", "*-staging", etc.
+	//
+	// Reasoning:
+	//   Glob patterns enable flexible cluster targeting without listing
+	//   every cluster explicitly. This is essential for multi-cluster
+	//   environments with naming conventions.
+	//
+	scheme := breakglass.Scheme
+
+	// Escalation with prefix pattern (prod-*)
+	prefixEscalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prod-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			ClusterConfigRefs: []string{"prod-*"},
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-*"},
+				Groups:   []string{"prod-team"},
+			},
+			EscalatedGroup: "prod-admin",
+		},
+	}
+
+	// Escalation with suffix pattern (*-staging)
+	suffixEscalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "staging-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			ClusterConfigRefs: []string{"*-staging"},
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"*-staging"},
+				Groups:   []string{"dev-team"},
+			},
+			EscalatedGroup: "staging-admin",
+		},
+	}
+
+	// Escalation with single char pattern (cluster-?)
+	singleCharEscalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "numbered-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			ClusterConfigRefs: []string{"cluster-?"},
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"cluster-?"},
+				Groups:   []string{"ops-team"},
+			},
+			EscalatedGroup: "cluster-admin",
+		},
+	}
+
+	// Global escalation with "*"
+	globalEscalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "global-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			ClusterConfigRefs: []string{"*"},
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"*"},
+				Groups:   []string{"emergency-team"},
+			},
+			EscalatedGroup: "emergency-admin",
+		},
+	}
+
+	// Escalation with empty arrays (should NOT match anything)
+	emptyEscalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "empty-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			ClusterConfigRefs: []string{}, // Empty = matches NOTHING
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{}, // Empty = matches NOTHING
+				Groups:   []string{"any-team"},
+			},
+			EscalatedGroup: "some-admin",
+		},
+	}
+
+	// Exact match escalation
+	exactEscalation := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "exact-escalation",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			ClusterConfigRefs: []string{"prod-eu-west"},
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-eu-west"},
+				Groups:   []string{"eu-team"},
+			},
+			EscalatedGroup: "eu-admin",
+		},
+	}
+
+	tests := []struct {
+		name            string
+		existingObjects []client.Object
+		cluster         string
+		userGroups      []string
+		expectedCount   int
+		expectedNames   []string // Optional: verify specific escalation names matched
+	}{
+		{
+			name:            "prefix pattern matches prod-eu-west",
+			existingObjects: []client.Object{prefixEscalation},
+			cluster:         "prod-eu-west",
+			userGroups:      []string{"prod-team"},
+			expectedCount:   1,
+			expectedNames:   []string{"prod-escalation"},
+		},
+		{
+			name:            "prefix pattern matches prod-us-east",
+			existingObjects: []client.Object{prefixEscalation},
+			cluster:         "prod-us-east",
+			userGroups:      []string{"prod-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "prefix pattern does NOT match staging-eu",
+			existingObjects: []client.Object{prefixEscalation},
+			cluster:         "staging-eu",
+			userGroups:      []string{"prod-team"},
+			expectedCount:   0,
+		},
+		{
+			name:            "suffix pattern matches eu-staging",
+			existingObjects: []client.Object{suffixEscalation},
+			cluster:         "eu-staging",
+			userGroups:      []string{"dev-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "suffix pattern matches us-staging",
+			existingObjects: []client.Object{suffixEscalation},
+			cluster:         "us-staging",
+			userGroups:      []string{"dev-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "suffix pattern does NOT match eu-production",
+			existingObjects: []client.Object{suffixEscalation},
+			cluster:         "eu-production",
+			userGroups:      []string{"dev-team"},
+			expectedCount:   0,
+		},
+		{
+			name:            "single char pattern matches cluster-1",
+			existingObjects: []client.Object{singleCharEscalation},
+			cluster:         "cluster-1",
+			userGroups:      []string{"ops-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "single char pattern matches cluster-a",
+			existingObjects: []client.Object{singleCharEscalation},
+			cluster:         "cluster-a",
+			userGroups:      []string{"ops-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "single char pattern does NOT match cluster-10",
+			existingObjects: []client.Object{singleCharEscalation},
+			cluster:         "cluster-10",
+			userGroups:      []string{"ops-team"},
+			expectedCount:   0,
+		},
+		{
+			name:            "global pattern matches any cluster",
+			existingObjects: []client.Object{globalEscalation},
+			cluster:         "random-cluster-name",
+			userGroups:      []string{"emergency-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "global pattern matches prod-eu-west",
+			existingObjects: []client.Object{globalEscalation},
+			cluster:         "prod-eu-west",
+			userGroups:      []string{"emergency-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "empty arrays do NOT match any cluster",
+			existingObjects: []client.Object{emptyEscalation},
+			cluster:         "any-cluster",
+			userGroups:      []string{"any-team"},
+			expectedCount:   0,
+		},
+		{
+			name:            "exact match works for prod-eu-west",
+			existingObjects: []client.Object{exactEscalation},
+			cluster:         "prod-eu-west",
+			userGroups:      []string{"eu-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "exact match does NOT match prod-eu-east",
+			existingObjects: []client.Object{exactEscalation},
+			cluster:         "prod-eu-east",
+			userGroups:      []string{"eu-team"},
+			expectedCount:   0,
+		},
+		{
+			name:            "multiple patterns - global and exact both match",
+			existingObjects: []client.Object{globalEscalation, exactEscalation},
+			cluster:         "prod-eu-west",
+			userGroups:      []string{"emergency-team", "eu-team"},
+			expectedCount:   2,
+		},
+		{
+			name:            "multiple patterns - prefix and global match same cluster",
+			existingObjects: []client.Object{globalEscalation, prefixEscalation},
+			cluster:         "prod-us-east",
+			userGroups:      []string{"emergency-team", "prod-team"},
+			expectedCount:   2,
+		},
+		{
+			name:            "no match when user not in allowed groups",
+			existingObjects: []client.Object{globalEscalation, prefixEscalation},
+			cluster:         "prod-us-east",
+			userGroups:      []string{"random-group"},
+			expectedCount:   0,
+		},
+	}
+
+	// Add test cases for allowed.clusters glob patterns WITHOUT clusterConfigRefs
+	// This tests that allowed.clusters alone supports glob patterns
+
+	// Escalation using only allowed.clusters with glob (no clusterConfigRefs)
+	allowedClustersOnlyGlob := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "allowed-clusters-only-glob",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			// No clusterConfigRefs - only using allowed.clusters
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"dev-*"}, // Glob pattern in allowed.clusters only
+				Groups:   []string{"dev-team"},
+			},
+			EscalatedGroup: "dev-admin",
+		},
+	}
+
+	// Escalation using only allowed.clusters with global wildcard (no clusterConfigRefs)
+	allowedClustersOnlyGlobal := &telekomv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "allowed-clusters-only-global",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassEscalationSpec{
+			// No clusterConfigRefs - only using allowed.clusters
+			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"*"}, // Global wildcard in allowed.clusters only
+				Groups:   []string{"global-team"},
+			},
+			EscalatedGroup: "global-admin",
+		},
+	}
+
+	allowedClustersOnlyTests := []struct {
+		name            string
+		existingObjects []client.Object
+		cluster         string
+		userGroups      []string
+		expectedCount   int
+		expectedNames   []string
+	}{
+		{
+			name:            "allowed.clusters glob matches dev-eu without clusterConfigRefs",
+			existingObjects: []client.Object{allowedClustersOnlyGlob},
+			cluster:         "dev-eu",
+			userGroups:      []string{"dev-team"},
+			expectedCount:   1,
+			expectedNames:   []string{"allowed-clusters-only-glob"},
+		},
+		{
+			name:            "allowed.clusters glob matches dev-us without clusterConfigRefs",
+			existingObjects: []client.Object{allowedClustersOnlyGlob},
+			cluster:         "dev-us",
+			userGroups:      []string{"dev-team"},
+			expectedCount:   1,
+		},
+		{
+			name:            "allowed.clusters glob does NOT match prod-eu without clusterConfigRefs",
+			existingObjects: []client.Object{allowedClustersOnlyGlob},
+			cluster:         "prod-eu",
+			userGroups:      []string{"dev-team"},
+			expectedCount:   0,
+		},
+		{
+			name:            "allowed.clusters global wildcard matches any cluster",
+			existingObjects: []client.Object{allowedClustersOnlyGlobal},
+			cluster:         "random-cluster-123",
+			userGroups:      []string{"global-team"},
+			expectedCount:   1,
+			expectedNames:   []string{"allowed-clusters-only-global"},
+		},
+		{
+			name:            "allowed.clusters global wildcard works alongside clusterConfigRefs glob",
+			existingObjects: []client.Object{allowedClustersOnlyGlobal, prefixEscalation},
+			cluster:         "prod-eu-west",
+			userGroups:      []string{"global-team", "prod-team"},
+			expectedCount:   2,
+		},
+	}
+	tests = append(tests, allowedClustersOnlyTests...)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.existingObjects...).
+				Build()
+
+			em := breakglass.EscalationManager{Client: fakeClient}
+
+			result, err := em.GetClusterGroupBreakglassEscalations(context.Background(), tt.cluster, tt.userGroups)
+
+			if err != nil {
+				t.Errorf("GetClusterGroupBreakglassEscalations() unexpected error: %v", err)
+				return
+			}
+
+			if len(result) != tt.expectedCount {
+				names := make([]string, len(result))
+				for i, e := range result {
+					names[i] = e.Name
+				}
+				t.Errorf("GetClusterGroupBreakglassEscalations() count = %v (got: %v), want %v", len(result), names, tt.expectedCount)
+			}
+
+			// Verify specific expected names if provided
+			if len(tt.expectedNames) > 0 {
+				gotNames := make(map[string]bool)
+				for _, e := range result {
+					gotNames[e.Name] = true
+				}
+				for _, expectedName := range tt.expectedNames {
+					if !gotNames[expectedName] {
+						t.Errorf("GetClusterGroupBreakglassEscalations() missing expected escalation %q", expectedName)
+					}
+				}
 			}
 		})
 	}

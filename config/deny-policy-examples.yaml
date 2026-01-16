@@ -13,7 +13,8 @@ spec:
     - verbs: ["get", "list", "create", "update", "delete"]
       apiGroups: [""]
       resources: ["secrets"]
-      namespaces: ["prod", "system"]
+      namespaces:
+        patterns: ["prod", "system"]
       resourceNames:
         - "database-credentials"
         - "api-keys"
@@ -44,7 +45,8 @@ spec:
     - verbs: ["*"]
       apiGroups: ["*"]
       resources: ["*"]
-      namespaces: ["kube-system", "kube-node-lease"]
+      namespaces:
+        patterns: ["kube-system", "kube-node-lease"]
   precedence: 5
 ---
 # 4. Block creation of external network policies (data exfiltration risk)

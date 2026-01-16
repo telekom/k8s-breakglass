@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -111,6 +112,7 @@ func ensureClusterWideUniqueIssuer(
 	// Use provided context, or TODO context if nil (explicit workaround marker)
 	// This indicates validation is being called outside proper request context
 	if ctx == nil {
+		zap.S().Warnw("ensureClusterWideUniqueIssuer called with nil context, using context.TODO() - this may indicate missing request context propagation")
 		ctx = context.TODO()
 	}
 
@@ -733,4 +735,189 @@ func validateDurationFormat(duration string, fieldPath *field.Path) field.ErrorL
 	}
 
 	return nil
+}
+
+// validateClusterAuthConfig validates that exactly one authentication method is configured
+// for a ClusterConfig. Either kubeconfigSecretRef OR oidcAuth/oidcFromIdentityProvider must be specified, but not both.
+func validateClusterAuthConfig(spec ClusterConfigSpec, specPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+
+	hasKubeconfig := spec.KubeconfigSecretRef != nil
+	hasOIDC := spec.OIDCAuth != nil
+	hasOIDCFromIDP := spec.OIDCFromIdentityProvider != nil
+
+	// Check that at least one auth method is specified
+	if !hasKubeconfig && !hasOIDC && !hasOIDCFromIDP {
+		errs = append(errs, field.Required(specPath,
+			"either kubeconfigSecretRef, oidcAuth, or oidcFromIdentityProvider must be specified for cluster authentication"))
+		return errs
+	}
+
+	// Check that only one auth method is specified (mutually exclusive)
+	if hasKubeconfig && (hasOIDC || hasOIDCFromIDP) {
+		errs = append(errs, field.Invalid(specPath, nil,
+			"kubeconfigSecretRef is mutually exclusive with oidcAuth and oidcFromIdentityProvider"))
+		return errs
+	}
+
+	// oidcAuth and oidcFromIdentityProvider are mutually exclusive
+	if hasOIDC && hasOIDCFromIDP {
+		errs = append(errs, field.Invalid(specPath, nil,
+			"oidcAuth and oidcFromIdentityProvider are mutually exclusive"))
+		return errs
+	}
+
+	// Validate authType matches the provided auth configuration
+	if hasKubeconfig {
+		if spec.AuthType != "" && spec.AuthType != ClusterAuthTypeKubeconfig {
+			errs = append(errs, field.Invalid(specPath.Child("authType"), spec.AuthType,
+				"authType must be 'Kubeconfig' when kubeconfigSecretRef is specified"))
+		}
+		// Validate kubeconfigSecretRef fields
+		if spec.KubeconfigSecretRef.Name == "" {
+			errs = append(errs, field.Required(specPath.Child("kubeconfigSecretRef", "name"),
+				"secret name is required"))
+		}
+		if spec.KubeconfigSecretRef.Namespace == "" {
+			errs = append(errs, field.Required(specPath.Child("kubeconfigSecretRef", "namespace"),
+				"secret namespace is required"))
+		}
+	}
+
+	if hasOIDC || hasOIDCFromIDP {
+		if spec.AuthType != "" && spec.AuthType != ClusterAuthTypeOIDC {
+			errs = append(errs, field.Invalid(specPath.Child("authType"), spec.AuthType,
+				"authType must be 'OIDC' when oidcAuth or oidcFromIdentityProvider is specified"))
+		}
+		if hasOIDC {
+			errs = append(errs, validateOIDCAuthConfig(spec.OIDCAuth, specPath.Child("oidcAuth"))...)
+		}
+		if hasOIDCFromIDP {
+			errs = append(errs, validateOIDCFromIdentityProviderConfig(spec.OIDCFromIdentityProvider, specPath.Child("oidcFromIdentityProvider"))...)
+		}
+	}
+
+	return errs
+}
+
+// validateOIDCFromIdentityProviderConfig validates the OIDC-from-IDP configuration.
+func validateOIDCFromIdentityProviderConfig(cfg *OIDCFromIdentityProviderConfig, fieldPath *field.Path) field.ErrorList {
+	if cfg == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate required fields
+	if cfg.Name == "" {
+		errs = append(errs, field.Required(fieldPath.Child("name"), "IdentityProvider name is required"))
+	}
+
+	if cfg.Server == "" {
+		errs = append(errs, field.Required(fieldPath.Child("server"), "cluster API server URL is required"))
+	} else {
+		errs = append(errs, validateHTTPSURL(cfg.Server, fieldPath.Child("server"))...)
+	}
+
+	// Validate clientSecretRef if provided
+	if cfg.ClientSecretRef != nil {
+		if cfg.ClientSecretRef.Name == "" {
+			errs = append(errs, field.Required(fieldPath.Child("clientSecretRef", "name"), "secret name is required"))
+		}
+		if cfg.ClientSecretRef.Namespace == "" {
+			errs = append(errs, field.Required(fieldPath.Child("clientSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	// Validate caSecretRef if provided
+	if cfg.CASecretRef != nil {
+		if cfg.CASecretRef.Name == "" {
+			errs = append(errs, field.Required(fieldPath.Child("caSecretRef", "name"), "secret name is required"))
+		}
+		if cfg.CASecretRef.Namespace == "" {
+			errs = append(errs, field.Required(fieldPath.Child("caSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	return errs
+}
+
+// validateOIDCAuthConfig validates the OIDC authentication configuration for a cluster.
+func validateOIDCAuthConfig(oidc *OIDCAuthConfig, fieldPath *field.Path) field.ErrorList {
+	if oidc == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate required fields
+	if oidc.IssuerURL == "" {
+		errs = append(errs, field.Required(fieldPath.Child("issuerURL"), "OIDC issuer URL is required"))
+	} else {
+		errs = append(errs, validateHTTPSURL(oidc.IssuerURL, fieldPath.Child("issuerURL"))...)
+	}
+
+	if oidc.ClientID == "" {
+		errs = append(errs, field.Required(fieldPath.Child("clientID"), "OIDC client ID is required"))
+	}
+
+	if oidc.Server == "" {
+		errs = append(errs, field.Required(fieldPath.Child("server"), "cluster API server URL is required"))
+	} else {
+		errs = append(errs, validateHTTPSURL(oidc.Server, fieldPath.Child("server"))...)
+	}
+
+	// Validate clientSecretRef if provided
+	if oidc.ClientSecretRef != nil {
+		if oidc.ClientSecretRef.Name == "" {
+			errs = append(errs, field.Required(fieldPath.Child("clientSecretRef", "name"), "secret name is required"))
+		}
+		if oidc.ClientSecretRef.Namespace == "" {
+			errs = append(errs, field.Required(fieldPath.Child("clientSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	// Validate caSecretRef if provided
+	if oidc.CASecretRef != nil {
+		if oidc.CASecretRef.Name == "" {
+			errs = append(errs, field.Required(fieldPath.Child("caSecretRef", "name"), "secret name is required"))
+		}
+		if oidc.CASecretRef.Namespace == "" {
+			errs = append(errs, field.Required(fieldPath.Child("caSecretRef", "namespace"), "secret namespace is required"))
+		}
+	}
+
+	// Validate token exchange config if provided
+	if oidc.TokenExchange != nil && oidc.TokenExchange.Enabled {
+		// Token exchange requires client secret for authentication
+		if oidc.ClientSecretRef == nil {
+			errs = append(errs, field.Required(fieldPath.Child("clientSecretRef"),
+				"clientSecretRef is required when token exchange is enabled"))
+		}
+
+		// Token exchange requires a subject token secret reference
+		if oidc.TokenExchange.SubjectTokenSecretRef == nil {
+			errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "subjectTokenSecretRef"),
+				"subjectTokenSecretRef is required when token exchange is enabled"))
+		} else {
+			// Validate the subject token secret reference
+			if oidc.TokenExchange.SubjectTokenSecretRef.Name == "" {
+				errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "subjectTokenSecretRef", "name"),
+					"secret name is required"))
+			}
+		}
+
+		// Validate actor token secret reference if provided
+		if oidc.TokenExchange.ActorTokenSecretRef != nil && oidc.TokenExchange.ActorTokenSecretRef.Name == "" {
+			errs = append(errs, field.Required(fieldPath.Child("tokenExchange", "actorTokenSecretRef", "name"),
+				"secret name is required"))
+		}
+	}
+
+	// Validate scopes - check for duplicates
+	if len(oidc.Scopes) > 0 {
+		errs = append(errs, validateStringListNoDuplicates(oidc.Scopes, fieldPath.Child("scopes"))...)
+	}
+
+	return errs
 }

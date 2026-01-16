@@ -82,6 +82,20 @@ func TestNewSenderFromMailProvider(t *testing.T) {
 			brandingName: "",
 			description:  "Should create sender for unauthenticated SMTP relay",
 		},
+		{
+			name: "MailHog configuration with DisableTLS",
+			mpConfig: &config.MailProviderConfig{
+				Name:               "mailhog-provider",
+				Host:               "mailhog.local",
+				Port:               1025,
+				DisableTLS:         true,
+				InsecureSkipVerify: true,
+				SenderAddress:      "noreply@breakglass.local",
+				SenderName:         "Breakglass Dev",
+			},
+			brandingName: "Dev Environment",
+			description:  "Should create sender with TLS completely disabled for MailHog",
+		},
 	}
 
 	for _, tt := range tests {
@@ -192,6 +206,183 @@ func TestSender_Interface(t *testing.T) {
 	var _ = sender
 
 	assert.NotNil(t, sender, "Sender should not be nil")
+}
+
+// TestSanitizeHeaderValue tests that all control characters are stripped from header values
+// to prevent email header injection attacks
+func TestSanitizeHeaderValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "normal text unchanged",
+			input:    "Hello World",
+			expected: "Hello World",
+		},
+		{
+			name:     "removes carriage return",
+			input:    "Hello\rWorld",
+			expected: "HelloWorld",
+		},
+		{
+			name:     "removes newline",
+			input:    "Hello\nWorld",
+			expected: "HelloWorld",
+		},
+		{
+			name:     "removes CRLF sequence",
+			input:    "Hello\r\nWorld",
+			expected: "HelloWorld",
+		},
+		{
+			name:     "removes header injection attempt",
+			input:    "Test Subject\r\nBcc: attacker@evil.com",
+			expected: "Test SubjectBcc: attacker@evil.com",
+		},
+		{
+			name:     "removes NUL character",
+			input:    "Hello\x00World",
+			expected: "HelloWorld",
+		},
+		{
+			name:     "removes tab character",
+			input:    "Hello\tWorld",
+			expected: "HelloWorld",
+		},
+		{
+			name:     "removes all control characters 0x00-0x1F",
+			input:    "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1fText",
+			expected: "Text",
+		},
+		{
+			name:     "removes DEL character 0x7F",
+			input:    "Hello\x7FWorld",
+			expected: "HelloWorld",
+		},
+		{
+			name:     "preserves printable ASCII",
+			input:    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;':\",./<>?`~",
+			expected: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;':\",./<>?`~",
+		},
+		{
+			name:     "preserves UTF-8 characters",
+			input:    "Hello Wörld 你好 🌍",
+			expected: "Hello Wörld 你好 🌍",
+		},
+		{
+			name:     "preserves space character",
+			input:    "Hello World Test",
+			expected: "Hello World Test",
+		},
+		{
+			name:     "empty string unchanged",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "string of only control characters becomes empty",
+			input:    "\r\n\t\x00",
+			expected: "",
+		},
+		{
+			name:     "mixed control chars and text",
+			input:    "\x01Subject\x02: \r\nTest\x7F!",
+			expected: "Subject: Test!",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeHeaderValue(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestSanitizeBodyValue tests that body values are properly sanitized
+func TestSanitizeBodyValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "normal text unchanged",
+			input:    "Hello World",
+			expected: "Hello World",
+		},
+		{
+			name:     "removes carriage return",
+			input:    "Hello\rWorld",
+			expected: "HelloWorld",
+		},
+		{
+			name:     "preserves newlines (LF only)",
+			input:    "Hello\nWorld",
+			expected: "Hello\nWorld",
+		},
+		{
+			name:     "CRLF becomes LF only",
+			input:    "Line1\r\nLine2",
+			expected: "Line1\nLine2",
+		},
+		{
+			name:     "HTML content preserved",
+			input:    "<html><body><p>Test</p></body></html>",
+			expected: "<html><body><p>Test</p></body></html>",
+		},
+		{
+			name:     "empty string unchanged",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "multiple CR characters removed",
+			input:    "Test\r\r\rContent",
+			expected: "TestContent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeBodyValue(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestJoinReceivers tests the receiver joining function
+func TestJoinReceivers(t *testing.T) {
+	tests := []struct {
+		name      string
+		receivers []string
+		expected  string
+	}{
+		{
+			name:      "single receiver",
+			receivers: []string{"user@example.com"},
+			expected:  "user@example.com",
+		},
+		{
+			name:      "multiple receivers",
+			receivers: []string{"a@example.com", "b@example.com", "c@example.com"},
+			expected:  "a@example.com, b@example.com, c@example.com",
+		},
+		{
+			name:      "empty list",
+			receivers: []string{},
+			expected:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := joinReceivers(tt.receivers)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }
 
 func TestSender_Configuration_Edge_Cases(t *testing.T) {
@@ -375,4 +566,26 @@ func TestSender_Send_HappyPath(t *testing.T) {
 
 	err := sender.Send([]string{"recipient@example.com"}, "Hello", "<p>body</p>")
 	assert.NoError(t, err, "expected Send to succeed against test SMTP server")
+}
+
+// TestSender_Send_PlainSMTP tests the DisableTLS path using plain SMTP without STARTTLS
+func TestSender_Send_PlainSMTP(t *testing.T) {
+	host, port, stop := startTestSMTPServer(t)
+	defer stop()
+
+	mpConfig := &config.MailProviderConfig{
+		Name:          "plain-smtp",
+		Host:          host,
+		Port:          port,
+		Username:      "", // no auth for our test server
+		SenderAddress: "sender@breakglass.local",
+		SenderName:    "Breakglass Dev",
+		DisableTLS:    true, // Use plain SMTP without STARTTLS
+	}
+	sender := NewSenderFromMailProvider(mpConfig, "")
+
+	// Test sending with DisableTLS - this uses the sendPlainSMTP code path
+	// Send to multiple recipients in a single call (the test server only handles one connection)
+	err := sender.Send([]string{"user1@example.com", "user2@example.com"}, "Test Subject", "<p>Test body for plain SMTP</p>")
+	assert.NoError(t, err, "expected Send with DisableTLS to succeed against test SMTP server")
 }

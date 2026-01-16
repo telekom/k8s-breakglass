@@ -339,13 +339,15 @@ type AuditFilterConfig struct {
 	ExcludeUsers []string `json:"excludeUsers,omitempty"`
 
 	// IncludeNamespaces only captures events in these namespaces.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
 	// +optional
-	IncludeNamespaces []string `json:"includeNamespaces,omitempty"`
+	IncludeNamespaces *NamespaceFilter `json:"includeNamespaces,omitempty"`
 
 	// ExcludeNamespaces excludes events from these namespaces.
 	// Useful for filtering out kube-system.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
 	// +optional
-	ExcludeNamespaces []string `json:"excludeNamespaces,omitempty"`
+	ExcludeNamespaces *NamespaceFilter `json:"excludeNamespaces,omitempty"`
 
 	// IncludeResources only captures events for these resource kinds.
 	// +optional

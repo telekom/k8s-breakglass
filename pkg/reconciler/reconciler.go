@@ -83,6 +83,7 @@ func Setup(
 	ccProvider *cluster.ClientProvider,
 	auditService *audit.Service,
 	mailService *mail.Service,
+	escalationManager *breakglass.EscalationManager,
 	log *zap.SugaredLogger,
 ) error {
 	// Register health check handlers for liveness and readiness probes
@@ -105,7 +106,27 @@ func Setup(
 		mgr.GetClient(),
 		log,
 		func(reloadCtx context.Context) error {
-			return server.ReloadIdentityProvider(idpLoader)
+			// Reload the IdentityProvider configuration in the API server
+			if err := server.ReloadIdentityProvider(idpLoader); err != nil {
+				return err
+			}
+
+			// Also update the EscalationManager's resolver to use the new Keycloak config
+			// This ensures group member resolution uses the latest IdentityProvider settings
+			if escalationManager != nil {
+				idpConfig, loadErr := idpLoader.LoadIdentityProvider(reloadCtx)
+				if loadErr != nil {
+					log.Warnw("Failed to load IdentityProvider config for resolver update", "error", loadErr)
+					// Don't fail the reload - the API server was updated successfully
+					// The resolver will continue using its current (possibly stale) config
+					return nil
+				}
+				newResolver := breakglass.SetupResolver(idpConfig, log)
+				escalationManager.SetResolver(newResolver)
+				log.Infow("Updated EscalationManager resolver after IdentityProvider change")
+			}
+
+			return nil
 		},
 	)
 	idpReconciler.WithErrorHandler(func(ctx context.Context, err error) {

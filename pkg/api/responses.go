@@ -59,6 +59,17 @@ func RespondUnauthorized(c *gin.Context) {
 	})
 }
 
+// RespondUnauthorizedWithMessage sends a 401 Unauthorized response with a custom message.
+func RespondUnauthorizedWithMessage(c *gin.Context, message string) {
+	if message == "" {
+		message = "user not authenticated"
+	}
+	c.JSON(http.StatusUnauthorized, APIError{
+		Error: message,
+		Code:  "UNAUTHORIZED",
+	})
+}
+
 // RespondForbidden sends a 403 Forbidden response with an optional reason.
 // Use this when the user is authenticated but not authorized for the action.
 func RespondForbidden(c *gin.Context, reason string) {
@@ -116,6 +127,18 @@ func RespondInternalErrorSimple(c *gin.Context, message string) {
 	c.JSON(http.StatusInternalServerError, APIError{
 		Error: message,
 		Code:  "INTERNAL_ERROR",
+	})
+}
+
+// RespondBadGateway sends a 502 Bad Gateway response.
+// Useful when proxying upstream services.
+func RespondBadGateway(c *gin.Context, message string) {
+	if message == "" {
+		message = "bad gateway"
+	}
+	c.JSON(http.StatusBadGateway, APIError{
+		Error: message,
+		Code:  "BAD_GATEWAY",
 	})
 }
 

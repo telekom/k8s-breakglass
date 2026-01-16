@@ -1,0 +1,116 @@
+# Example DenyPolicy with Namespace Label Selectors
+#
+# This example demonstrates using Kubernetes label selectors to dynamically
+# match namespaces in deny policies. This is useful when:
+# - Namespace naming conventions are inconsistent
+# - Namespaces are created dynamically
+# - You want to use Kubernetes-native labeling conventions
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: deny-by-namespace-labels
+spec:
+  # Block secret access in production namespaces
+  rules:
+    - verbs: ["get", "list", "watch", "delete"]
+      apiGroups: [""]
+      resources: ["secrets"]
+      namespaces:
+        # Match using Kubernetes label selectors
+        selectorTerms:
+          # Match namespaces with env=production
+          - matchLabels:
+              env: production
+          # OR match namespaces with tier=critical
+          - matchLabels:
+              tier: critical
+
+---
+# Example: Combined pattern and label matching
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: deny-mixed-namespace-filter
+spec:
+  rules:
+    - verbs: ["delete"]
+      apiGroups: ["apps"]
+      resources: ["deployments", "statefulsets", "daemonsets"]
+      namespaces:
+        # Match by name patterns (supports wildcards)
+        patterns:
+          - "prod-*"
+          - "staging-*"
+        # OR match by namespace labels
+        selectorTerms:
+          - matchLabels:
+              lifecycle: protected
+          - matchExpressions:
+              - key: env
+                operator: In
+                values: ["production", "staging"]
+              - key: team
+                operator: NotIn
+                values: ["dev-sandbox"]
+
+---
+# Example: Match namespaces using expressions
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: deny-complex-expressions
+spec:
+  rules:
+    - verbs: ["*"]
+      apiGroups: [""]
+      resources: ["pods"]
+      subresources: ["exec", "attach"]
+      namespaces:
+        selectorTerms:
+          # Match namespaces where 'restricted' label exists
+          - matchExpressions:
+              - key: restricted
+                operator: Exists
+          # OR match namespaces in specific environments
+          - matchExpressions:
+              - key: environment
+                operator: In
+                values: ["production", "pre-production"]
+              - key: security-level
+                operator: NotIn
+                values: ["low", "none"]
+
+---
+# Example: Dynamic namespace exemptions
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: pod-security-with-label-exemptions
+spec:
+  podSecurityRules:
+    riskFactors:
+      privilegedContainer: 50
+      hostNetwork: 20
+      runAsRoot: 20
+    
+    thresholds:
+      - maxScore: 50
+        action: warn
+      - maxScore: 100
+        action: deny
+        reason: "High-risk pod access blocked"
+    
+    exemptions:
+      # Exempt namespaces using both patterns and labels
+      namespaces:
+        patterns:
+          - "kube-system"
+          - "monitoring"
+        selectorTerms:
+          # Exempt namespaces labeled for security override
+          - matchLabels:
+              breakglass.telekom.com/security-override: "allowed"
+          # Exempt development namespaces
+          - matchLabels:
+              env: development

@@ -853,7 +853,7 @@ func TestCleanupRoutine_clean(t *testing.T) {
 	routine := CleanupRoutine{Log: logger, Manager: manager}
 
 	// Should not panic
-	routine.clean()
+	routine.clean(context.Background())
 }
 
 func TestCleanupRoutine_DebugSessionRetentionPeriod(t *testing.T) {

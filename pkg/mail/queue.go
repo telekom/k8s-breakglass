@@ -147,6 +147,16 @@ func (q *Queue) Enqueue(id string, receivers []string, subject, body string) err
 // worker processes items from the queue
 func (q *Queue) worker() {
 	defer q.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			q.log.Errorw("panic in mail queue worker recovered",
+				"panic", r)
+			metrics.MailFailed.WithLabelValues(q.sender.GetHost()).Inc()
+			// Restart the worker to maintain processing capacity
+			q.wg.Add(1)
+			go q.worker()
+		}
+	}()
 
 	pendingItems := make([]*QueueItem, 0)
 	ticker := time.NewTicker(50 * time.Millisecond)

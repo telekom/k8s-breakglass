@@ -454,3 +454,69 @@ func BenchmarkNormalizeMembers(b *testing.B) {
 		_ = normalizeMembers(members)
 	}
 }
+
+// TestNewKeycloakGroupMemberResolver_InsecureSkipVerify tests that the resolver is
+// correctly configured with InsecureSkipVerify for E2E testing with self-signed certs
+func TestNewKeycloakGroupMemberResolver_InsecureSkipVerify(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	defer func() { _ = log.Sync() }()
+	slog := log.Sugar()
+
+	// Test with InsecureSkipVerify enabled
+	cfg := cfgpkg.KeycloakRuntimeConfig{
+		BaseURL:            "https://keycloak.example.com:8443",
+		Realm:              "test-realm",
+		ClientID:           "test-client",
+		ClientSecret:       "test-secret",
+		InsecureSkipVerify: true,
+		CacheTTL:           "5m",
+	}
+
+	resolver := NewKeycloakGroupMemberResolver(slog, cfg)
+
+	assert.NotNil(t, resolver)
+	assert.NotNil(t, resolver.gocloak)
+	assert.Equal(t, cfg.BaseURL, resolver.cfg.BaseURL)
+	assert.Equal(t, cfg.Realm, resolver.cfg.Realm)
+	assert.True(t, resolver.cfg.InsecureSkipVerify)
+}
+
+// TestNewKeycloakGroupMemberResolver_SecureByDefault tests that the resolver uses
+// secure TLS by default when InsecureSkipVerify is not enabled
+func TestNewKeycloakGroupMemberResolver_SecureByDefault(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	defer func() { _ = log.Sync() }()
+	slog := log.Sugar()
+
+	// Test with default secure configuration
+	cfg := cfgpkg.KeycloakRuntimeConfig{
+		BaseURL:            "https://keycloak.example.com:8443",
+		Realm:              "test-realm",
+		ClientID:           "test-client",
+		ClientSecret:       "test-secret",
+		InsecureSkipVerify: false, // Secure by default
+		CacheTTL:           "10m",
+	}
+
+	resolver := NewKeycloakGroupMemberResolver(slog, cfg)
+
+	assert.NotNil(t, resolver)
+	assert.NotNil(t, resolver.gocloak)
+	assert.False(t, resolver.cfg.InsecureSkipVerify)
+}
+
+// TestNewKeycloakGroupMemberResolver_CustomCacheTTL tests custom cache TTL configuration
+func TestNewKeycloakGroupMemberResolver_CustomCacheTTL(t *testing.T) {
+	cfg := cfgpkg.KeycloakRuntimeConfig{
+		BaseURL:  "https://keycloak.example.com:8443",
+		Realm:    "test-realm",
+		CacheTTL: "30m",
+	}
+
+	resolver := NewKeycloakGroupMemberResolver(nil, cfg)
+
+	assert.NotNil(t, resolver)
+	assert.NotNil(t, resolver.cache)
+	// Cache TTL should be 30 minutes
+	assert.Equal(t, "30m", resolver.cfg.CacheTTL)
+}
