@@ -77,13 +77,13 @@ function handleRenew() {
 </script>
 
 <template>
-  <div class="debug-session-card" :class="`state-${session.state.toLowerCase()}`">
-    <div class="card-header">
+  <div class="debug-session-card" :class="`state-${session.state.toLowerCase()}`" data-testid="debug-session-card">
+    <div class="card-header" data-testid="card-header">
       <div class="session-info">
-        <h3 class="session-name">{{ session.name }}</h3>
+        <h3 class="session-name" data-testid="session-name">{{ session.name }}</h3>
         <div class="session-meta">
-          <span class="cluster">{{ session.cluster }}</span>
-          <scale-tag :variant="stateVariant" size="small">{{ stateLabel }}</scale-tag>
+          <span class="cluster" data-testid="session-cluster">{{ session.cluster }}</span>
+          <scale-tag :variant="stateVariant" size="small" data-testid="session-state">{{ stateLabel }}</scale-tag>
         </div>
       </div>
     </div>
@@ -117,30 +117,67 @@ function handleRenew() {
       </div>
     </div>
 
-    <div class="card-actions">
-      <scale-button variant="secondary" size="small" @click="emit('viewDetails')"> View Details </scale-button>
+    <div class="card-actions" data-testid="card-actions">
+      <scale-button variant="secondary" size="small" data-testid="view-details-button" @click="emit('viewDetails')">
+        View Details
+      </scale-button>
 
-      <scale-button v-if="canJoin" variant="primary" size="small" @click="emit('join')"> Join Session </scale-button>
+      <scale-button v-if="canJoin" variant="primary" size="small" data-testid="join-button" @click="emit('join')">
+        Join Session
+      </scale-button>
 
-      <scale-button v-if="canLeave" variant="secondary" size="small" @click="emit('leave')"> Leave </scale-button>
+      <scale-button v-if="canLeave" variant="secondary" size="small" data-testid="leave-button" @click="emit('leave')">
+        Leave
+      </scale-button>
 
-      <scale-button v-if="canRenew" variant="secondary" size="small" @click="showRenewModal = true">
+      <scale-button
+        v-if="canRenew"
+        variant="secondary"
+        size="small"
+        data-testid="renew-button"
+        @click="showRenewModal = true"
+      >
         Renew
       </scale-button>
 
-      <scale-button v-if="canTerminate" variant="secondary" size="small" @click="emit('terminate')">
+      <scale-button
+        v-if="canTerminate"
+        variant="secondary"
+        size="small"
+        data-testid="terminate-button"
+        @click="emit('terminate')"
+      >
         Terminate
       </scale-button>
 
-      <scale-button v-if="canApprove" variant="primary" size="small" @click="emit('approve')"> Approve </scale-button>
+      <scale-button
+        v-if="canApprove"
+        variant="primary"
+        size="small"
+        data-testid="approve-button"
+        @click="emit('approve')"
+      >
+        Approve
+      </scale-button>
 
-      <scale-button v-if="canReject" variant="secondary" size="small" @click="showRejectModal = true">
+      <scale-button
+        v-if="canReject"
+        variant="secondary"
+        size="small"
+        data-testid="reject-button"
+        @click="showRejectModal = true"
+      >
         Reject
       </scale-button>
     </div>
 
     <!-- Reject Modal -->
-    <scale-modal :opened="showRejectModal" heading="Reject Debug Session" @scaleClose="showRejectModal = false">
+    <scale-modal
+      :opened="showRejectModal"
+      heading="Reject Debug Session"
+      data-testid="reject-modal"
+      @scaleClose="showRejectModal = false"
+    >
       <div class="modal-content">
         <p>Provide a reason for rejecting this debug session request.</p>
         <scale-text-field
@@ -148,27 +185,44 @@ function handleRenew() {
           label="Rejection Reason"
           placeholder="Enter reason..."
           required
+          data-testid="reject-reason-input"
         ></scale-text-field>
       </div>
       <div slot="action">
-        <scale-button variant="secondary" @click="showRejectModal = false">Cancel</scale-button>
-        <scale-button variant="primary" :disabled="!rejectReason.trim()" @click="handleReject"> Reject </scale-button>
+        <scale-button variant="secondary" data-testid="reject-cancel-button" @click="showRejectModal = false"
+          >Cancel</scale-button
+        >
+        <scale-button
+          variant="primary"
+          :disabled="!rejectReason.trim()"
+          data-testid="reject-confirm-button"
+          @click="handleReject"
+        >
+          Reject
+        </scale-button>
       </div>
     </scale-modal>
 
     <!-- Renew Modal -->
-    <scale-modal :opened="showRenewModal" heading="Renew Debug Session" @scaleClose="showRenewModal = false">
+    <scale-modal
+      :opened="showRenewModal"
+      heading="Renew Debug Session"
+      data-testid="renew-modal"
+      @scaleClose="showRenewModal = false"
+    >
       <div class="modal-content">
         <p>Extend the duration of this debug session.</p>
-        <scale-dropdown-select v-model="renewDuration" label="Extend By">
+        <scale-dropdown-select v-model="renewDuration" label="Extend By" data-testid="renew-duration-select">
           <scale-dropdown-select-item value="30m">30 minutes</scale-dropdown-select-item>
           <scale-dropdown-select-item value="1h">1 hour</scale-dropdown-select-item>
           <scale-dropdown-select-item value="2h">2 hours</scale-dropdown-select-item>
         </scale-dropdown-select>
       </div>
       <div slot="action">
-        <scale-button variant="secondary" @click="showRenewModal = false">Cancel</scale-button>
-        <scale-button variant="primary" @click="handleRenew">Renew</scale-button>
+        <scale-button variant="secondary" data-testid="renew-cancel-button" @click="showRenewModal = false"
+          >Cancel</scale-button
+        >
+        <scale-button variant="primary" data-testid="renew-confirm-button" @click="handleRenew">Renew</scale-button>
       </div>
     </scale-modal>
   </div>

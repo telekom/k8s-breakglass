@@ -367,6 +367,7 @@ watch(
               v-if="authenticated"
               ref="profileMenuRef"
               class="profile-menu"
+              data-testid="user-menu"
               :label="profileMenuLabel"
               :accessibility-label="profileMenuAriaLabel"
               :close-menu-accessibility-label="profileMenuCloseLabel"

@@ -28,6 +28,10 @@ export default defineConfigWithVueTs(
       "public",
       "cypress/videos/**",
       "cypress/screenshots/**",
+      "playwright-report/**",
+      "playwright-report-e2e/**",
+      "test-results/**",
+      ".playwright/**",
     ],
   },
   pluginVue.configs["flat/recommended"],
@@ -38,6 +42,13 @@ export default defineConfigWithVueTs(
       "vue/v-on-event-hyphenation": "off",
       "vue/no-deprecated-slot-attribute": "off",
       "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
+  {
+    // Disable one-component-per-file rule for test files
+    files: ["**/*.spec.ts", "**/*.test.ts", "**/__tests__/**/*.ts"],
+    rules: {
+      "vue/one-component-per-file": "off",
     },
   },
   eslintPluginPrettierRecommended,

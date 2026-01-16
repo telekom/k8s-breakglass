@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, computed, ref, onMounted, reactive, defineAsyncComponent } from "vue";
+import { inject, computed, ref, onMounted, reactive, watch, nextTick } from "vue";
 import { AuthKey } from "@/keys";
 import { useRoute } from "vue-router";
 import { useUser } from "@/services/auth";
@@ -10,9 +10,7 @@ import useCurrentTime from "@/utils/currentTime";
 import BreakglassSessionCard from "@/components/BreakglassSessionCard.vue";
 import { handleAxiosError } from "@/services/logger";
 import { pushError, pushSuccess } from "@/services/toast";
-
-// Lazy load the modal content component
-const ApprovalModalContent = defineAsyncComponent(() => import("@/components/ApprovalModalContent.vue"));
+import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 
 const route = useRoute();
 const user = useUser();
@@ -139,9 +137,88 @@ async function getActiveBreakglasses() {
   }
   state.loading = false;
 }
-onMounted(async () => {
+
+// Auto-open modal when a specific session is requested via query params (for email approval links)
+async function autoOpenSessionModal() {
+  // Only auto-open if we have a specific session name in the query
+  if (!resourceName.value) return;
+
+  // Wait for sessions to load using nextTick and watch
+  // This is more reliable than setInterval and handles Vue's reactive updates properly
+  await nextTick();
+
+  if (state.loading) {
+    // Create a promise that resolves when loading completes
+    await new Promise<void>((resolve) => {
+      const stopWatch = watch(
+        () => state.loading,
+        (isLoading) => {
+          if (!isLoading) {
+            stopWatch();
+            resolve();
+          }
+        },
+        { immediate: true },
+      );
+      // Timeout after 15 seconds
+      setTimeout(() => {
+        stopWatch();
+        resolve();
+      }, 15000);
+    });
+  }
+
+  openFirstMatchingSession();
+}
+
+function openFirstMatchingSession() {
+  // Find the session matching the requested name
+  const session = state.breakglasses.find(
+    (bg) => bg.metadata?.name === resourceName.value || bg.name === resourceName.value,
+  );
+  if (session) {
+    openReviewModal(session);
+  }
+}
+
+// Track whether initial load has been done
+const initialLoadDone = ref(false);
+
+async function loadSessionsIfAuthenticated() {
+  if (!authenticated.value || initialLoadDone.value) return;
+  initialLoadDone.value = true;
   await getActiveBreakglasses();
+  // Auto-open modal if a specific session is requested (approver=true indicates email approval flow)
+  if (resourceName.value && routeApprover.value) {
+    autoOpenSessionModal();
+  }
+}
+
+// Wait for authentication to be ready before loading sessions
+// This handles the case where the page is loaded via direct navigation (page.goto)
+// and the auth state needs time to be restored from storage
+onMounted(async () => {
+  // Wait for next tick to ensure auth state is initialized
+  await nextTick();
+
+  // If already authenticated, load immediately
+  if (authenticated.value) {
+    loadSessionsIfAuthenticated();
+  }
+  // Otherwise, watch for auth state to become ready
 });
+
+// Watch for authentication to become available after mount
+// Use immediate: true to catch auth state that becomes true during mount
+watch(
+  authenticated,
+  (isAuth) => {
+    if (isAuth && !initialLoadDone.value) {
+      loadSessionsIfAuthenticated();
+    }
+  },
+  { immediate: true },
+);
 
 function matchesSearch(bg: SessionCR, term: string) {
   if (!term) return true;
@@ -219,7 +296,7 @@ async function onCancel(bg: SessionCR) {
 </script>
 
 <template>
-  <main v-if="authenticated" class="ui-page review-session-page">
+  <main v-if="authenticated" class="ui-page review-session-page" data-testid="session-review-page">
     <div class="page-heading">
       <h2 class="ui-page-title">Review Session</h2>
       <p class="ui-page-subtitle">Inspect outstanding sessions and take action when needed.</p>

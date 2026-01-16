@@ -46,19 +46,30 @@ export default class BreakglassSessionService {
 
   public async getSessionStatus(request: BreakglassSessionRequest) {
     // RESTful: GET /breakglassSessions?user=...&cluster=...&group=...&name=...
-    // backend doesn't implement an `activeOnly` query parameter; filtering is done client-side
     try {
       const params: Record<string, any> = {};
       if (request.user && request.user !== "") params.user = request.user;
       if (request.cluster && request.cluster !== "") params.cluster = request.cluster;
       if (request.group && request.group !== "") params.group = request.group;
       if (request.name && request.name !== "") params.name = request.name;
+
+      if (typeof request.activeOnly !== "undefined") params.activeOnly = request.activeOnly;
       // Default client-side policy: mine defaults to true, approver defaults to false
       params.mine = request.mine === undefined ? true : request.mine;
       params.approver = request.approver === undefined ? false : request.approver;
       return await this.client.get("/breakglassSessions", { params });
     } catch (e) {
       handleAxiosError("BreakglassSessionService.getSessionStatus", e, "Failed to fetch session status");
+      throw e;
+    }
+  }
+
+  public async getSessionByName(name: string) {
+    // RESTful: GET /breakglassSessions/:name - returns a single session
+    try {
+      return await this.client.get(`/breakglassSessions/${encodeURIComponent(name)}`);
+    } catch (e) {
+      handleAxiosError("BreakglassSessionService.getSessionByName", e, "Failed to fetch session");
       throw e;
     }
   }

@@ -142,16 +142,24 @@ const groupsDisplay = computed(() => {
 </script>
 
 <template>
-  <div class="debug-panel-container">
-    <scale-button variant="secondary" class="debug-toggle" title="Toggle debug panel" @click="showDebug = !showDebug">
+  <div class="debug-panel-container" data-testid="debug-panel-container">
+    <scale-button
+      variant="secondary"
+      class="debug-toggle"
+      title="Toggle debug panel"
+      data-testid="debug-toggle-button"
+      @click="showDebug = !showDebug"
+    >
       🔧
     </scale-button>
 
-    <div v-if="showDebug" class="debug-panel-wrapper">
+    <div v-if="showDebug" class="debug-panel-wrapper" data-testid="debug-panel">
       <scale-card class="debug-panel">
         <div class="debug-header">
           <h3>Debug Information</h3>
-          <scale-button variant="ghost" size="small" @click="showDebug = false">✕</scale-button>
+          <scale-button variant="ghost" size="small" data-testid="debug-close-button" @click="showDebug = false"
+            >✕</scale-button
+          >
         </div>
 
         <div class="debug-content">

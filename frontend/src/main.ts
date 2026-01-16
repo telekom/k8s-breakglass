@@ -9,11 +9,20 @@ import getConfig from "@/services/config";
 import { BrandingKey } from "@/keys";
 import type Config from "@/model/config";
 import { exposeDebugControls, debug } from "@/services/logger";
+import logger from "@/services/logger-console";
 
 const CONFIG_CACHE_KEY = "breakglass_runtime_config";
 const explicitMockFlag = import.meta.env.VITE_USE_MOCK_AUTH;
 const USE_MOCK_AUTH =
   explicitMockFlag === "false" ? false : explicitMockFlag === "true" ? true : import.meta.env.DEV === true;
+
+// Log application startup
+logger.info("App", "Application starting", {
+  mode: import.meta.env.MODE,
+  dev: import.meta.env.DEV,
+  useMockAuth: USE_MOCK_AUTH,
+  baseUrl: import.meta.env.BASE_URL,
+});
 
 exposeDebugControls();
 
@@ -45,11 +54,16 @@ function readCachedRuntimeConfig(): Config | null {
 async function initializeApp() {
   // Fetch configuration from backend, which includes runtime-configurable UI flavour
   debug("App.init", "Fetching runtime config");
+  logger.info("App", "Fetching runtime config from backend");
+
   const config = await getConfig();
   cacheRuntimeConfig(config);
 
   // Determine flavour from backend config or fall back to default
-  const flavour = config.uiFlavour || "oss";
+  const rawFlavour = config.uiFlavour || "oss";
+  // Backward compatibility: treat legacy "default" as neutral/oss.
+  const flavour = rawFlavour === "default" ? "oss" : rawFlavour;
+  logger.info("App", "UI flavour determined", { flavour });
 
   // Configure favicon based on flavour
   try {
@@ -96,7 +110,7 @@ async function initializeApp() {
 
   // Load appropriate Scale components based on runtime flavour
   debug("App.init", "Applying Scale components for flavour", { flavour });
-  if (flavour === "oss" || flavour === "neutral" || flavour === "default") {
+  if (flavour === "oss" || flavour === "neutral") {
     // Use neutral variant. Stylesheet imports are side-effect only; types not provided.
     await import("@telekom/scale-components-neutral/dist/scale-components/scale-components.css");
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -113,6 +127,7 @@ async function initializeApp() {
   }
 
   // Initialize Vue app
+  logger.info("App", "Initializing Vue application");
   const app = createApp(App);
 
   app.use(createPinia());
@@ -121,6 +136,7 @@ async function initializeApp() {
   const auth = new AuthService(config, { mock: USE_MOCK_AUTH });
   if (USE_MOCK_AUTH) {
     console.info("[AuthService] Mock authentication enabled (dev default)");
+    logger.info("App", "Mock authentication enabled");
     // Expose auth service and router for Playwright/E2E testing
     (window as any).__BREAKGLASS_AUTH = auth;
     (window as any).__VUE_ROUTER__ = router;
@@ -132,19 +148,25 @@ async function initializeApp() {
   // If backend provided a branding name, set the document title as a convenience.
   if (config.brandingName) {
     document.title = config.brandingName;
+    logger.info("App", "Branding applied", { brandingName: config.brandingName });
   }
 
   // Handle OIDC login callback
   await router.isReady();
+  logger.debug("App", "Router ready", { currentPath: router.currentRoute.value.path });
+
   if (router.currentRoute.value.path === AuthRedirect) {
     try {
       debug("Auth.callback", "Processing signin callback");
+      logger.info("App", "Processing OIDC signin callback");
       const user = await auth.handleSigninCallback();
       if (user && user.state) {
         const state = user.state as State;
         if (state.path) {
+          logger.info("App", "Redirecting to original path", { path: state.path });
           router.replace(state.path);
         } else {
+          logger.info("App", "Redirecting to home");
           router.replace("/");
         }
       } else {
@@ -152,17 +174,28 @@ async function initializeApp() {
       }
     } catch (error) {
       // Log and surface a friendly message
-
+      logger.error("App", "OIDC signin callback failed", error);
       console.error("[AuthCallback]", error);
     }
+  } else {
+    // Wait for initial auth state to be loaded before mounting
+    // This prevents a race condition where the app renders with authenticated=false
+    // before the stored user session is loaded from storage
+    logger.debug("App", "Waiting for auth initialization");
+    await auth.ready;
+    logger.debug("App", "Auth initialization complete");
   }
 
+  logger.info("App", "Mounting Vue application");
   app.mount("#app");
 }
 
 async function initializeSilentRenew() {
+  logger.info("SilentRenew", "Initializing silent renew callback");
+
   if (USE_MOCK_AUTH) {
     console.info("[SilentRenew] Mock auth enabled, skipping silent renew callback");
+    logger.info("SilentRenew", "Skipping silent renew - mock auth enabled");
     return;
   }
   const cachedConfig = readCachedRuntimeConfig();
@@ -173,20 +206,28 @@ async function initializeSilentRenew() {
   const auth = new AuthService(config);
   try {
     await auth.userManager.signinSilentCallback();
+    logger.info("SilentRenew", "Silent renew callback completed successfully");
   } catch (error) {
+    logger.error("SilentRenew", "Silent renew callback failed", error);
     console.error("[SilentRenew]", error);
   }
 }
 
 const isSilentRenew = window.location.pathname === AuthSilentRedirect;
+logger.info("App", "Bootstrap check", {
+  isSilentRenew,
+  pathname: window.location.pathname,
+});
 
 if (isSilentRenew) {
   initializeSilentRenew().catch((error) => {
+    logger.error("SilentRenew", "Initialization error", error);
     console.error("[SilentRenewInit]", error);
   });
 } else {
   // Bootstrap the application
   initializeApp().catch((error) => {
+    logger.error("App", "Application initialization failed", error);
     console.error("[AppInitialization]", error);
     // Show error message to user if initialization fails
     const app = document.getElementById("app");

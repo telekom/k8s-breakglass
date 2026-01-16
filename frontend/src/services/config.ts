@@ -7,7 +7,7 @@ import { pushError } from "@/services/errors";
 const CONFIG_RETRY_ATTEMPTS = 3;
 const CONFIG_RETRY_BASE_DELAY_MS = 500;
 const UI_FLAVOUR_STORAGE_KEY = "k8sBreakglassUiFlavourOverride";
-const SUPPORTED_UI_FLAVOURS = new Set(["telekom", "oss"]);
+const SUPPORTED_UI_FLAVOURS = new Set(["telekom", "oss", "neutral"]);
 const CLEAR_OVERRIDE_TOKENS = new Set(["auto", "clear", "default", "reset"]);
 
 function sleep(ms: number) {

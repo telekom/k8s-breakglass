@@ -83,6 +83,29 @@ describe("Config service", () => {
     expect(window.localStorage.getItem("k8sBreakglassUiFlavourOverride")).toBe("oss");
   });
 
+  it("accepts neutral flavour override", async () => {
+    mockedGetIdentityProvider.mockResolvedValue({
+      type: "Keycloak",
+      clientID: "ui",
+      keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
+    } as any);
+    mockedExtractOIDC.mockReturnValue({
+      oidcAuthority: "https://keycloak.example.com/realms/schiff",
+      oidcClientID: "ui",
+    });
+    mockedAxios.get.mockResolvedValue({ data: { frontend: { brandingName: "Breakglass", uiFlavour: "telekom" } } });
+
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, search: "?flavour=neutral" },
+      writable: true,
+    });
+
+    const config = await getConfig();
+
+    expect(config.uiFlavour).toBe("neutral");
+    expect(window.localStorage.getItem("k8sBreakglassUiFlavourOverride")).toBe("neutral");
+  });
+
   it("falls back to stored override when query parameter is absent", async () => {
     mockedGetIdentityProvider.mockResolvedValue({
       type: "Keycloak",
@@ -94,6 +117,11 @@ describe("Config service", () => {
       oidcClientID: "ui",
     });
     mockedAxios.get.mockResolvedValue({ data: { frontend: { uiFlavour: "telekom" } } });
+
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, search: "" },
+      writable: true,
+    });
 
     window.localStorage.setItem("k8sBreakglassUiFlavourOverride", "oss");
 

@@ -198,13 +198,14 @@ function toggleState(state: string) {
 </script>
 
 <template>
-  <main class="ui-page debug-session-browser">
+  <main class="ui-page debug-session-browser" data-testid="debug-session-browser">
     <PageHeader title="Debug Sessions" subtitle="Browse and manage debug sessions for temporary cluster access." />
 
     <div class="toolbar">
       <div class="toolbar-left">
         <scale-text-field
           id="debug-session-search"
+          data-testid="debug-session-search-input"
           type="search"
           label="Search sessions"
           placeholder="Name, cluster, template..."
@@ -215,6 +216,7 @@ function toggleState(state: string) {
 
       <div class="toolbar-filters">
         <scale-checkbox
+          data-testid="my-sessions-filter"
           :checked="filters.mine"
           label="My Sessions Only"
           @scaleChange="updateMineFilter"
@@ -223,22 +225,30 @@ function toggleState(state: string) {
 
       <div class="toolbar-right">
         <scale-loading-spinner v-if="refreshing" size="small"></scale-loading-spinner>
-        <scale-button v-else icon-only variant="secondary" aria-label="Refresh" @click="refresh()">
+        <scale-button
+          v-else
+          icon-only
+          variant="secondary"
+          aria-label="Refresh"
+          data-testid="refresh-button"
+          @click="refresh()"
+        >
           <scale-icon-action-refresh></scale-icon-action-refresh>
         </scale-button>
 
-        <scale-button variant="primary" @click="navigateToCreate">
+        <scale-button variant="primary" data-testid="create-debug-session-button" @click="navigateToCreate">
           <scale-icon-action-add slot="icon"></scale-icon-action-add>
           New Session
         </scale-button>
       </div>
     </div>
 
-    <div class="state-filters">
+    <div class="state-filters" data-testid="state-filters">
       <span class="filter-label">Filter by state:</span>
       <scale-tag
         v-for="opt in stateOptions"
         :key="opt.value"
+        :data-testid="`state-filter-${opt.value}`"
         :variant="filters.states.includes(opt.value) ? 'standard' : 'strong'"
         size="small"
         dismissible
@@ -251,10 +261,11 @@ function toggleState(state: string) {
 
     <LoadingState v-if="loading" message="Loading debug sessions..." />
 
-    <div v-else-if="filteredSessions.length > 0" class="sessions-grid">
+    <div v-else-if="filteredSessions.length > 0" class="sessions-grid" data-testid="debug-sessions-grid">
       <DebugSessionCard
         v-for="session in filteredSessions"
         :key="session.name"
+        :data-testid="`debug-session-card-${session.name}`"
         :session="session"
         :is-owner="isOwner(session)"
         @join="handleJoin(session)"
@@ -267,7 +278,12 @@ function toggleState(state: string) {
       />
     </div>
 
-    <EmptyState v-else icon="🔧" message="No debug sessions found matching your filters.">
+    <EmptyState
+      v-else
+      icon="🔧"
+      message="No debug sessions found matching your filters."
+      data-testid="debug-sessions-empty-state"
+    >
       <scale-button variant="primary" @click="navigateToCreate"> Create Debug Session </scale-button>
     </EmptyState>
 

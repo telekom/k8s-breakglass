@@ -22,9 +22,9 @@ function formatValue(value?: string | number | null) {
 </script>
 
 <template>
-  <div class="meta-grid" role="table">
+  <div class="meta-grid" role="table" data-testid="session-meta-grid">
     <div role="rowgroup">
-      <div v-for="item in items" :key="item.id" class="meta-grid__row" role="row">
+      <div v-for="item in items" :key="item.id" class="meta-grid__row" role="row" :data-testid="`meta-row-${item.id}`">
         <div class="meta-grid__label" role="rowheader">
           <div class="meta-label">
             <span class="meta-label__text">{{ item.label }}</span>
@@ -35,7 +35,7 @@ function formatValue(value?: string | number | null) {
             </scale-tooltip>
           </div>
         </div>
-        <div class="meta-grid__value" role="cell">
+        <div class="meta-grid__value" role="cell" :data-testid="`meta-value-${item.id}`">
           <slot v-if="hasCustomRenderer" name="item" :item="item"></slot>
           <span v-else :class="{ mono: item.mono }">{{ formatValue(item.value) }}</span>
         </div>
