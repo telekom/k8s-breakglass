@@ -119,6 +119,11 @@ Express server automatically after each save.
 
 ### Type-Check, Compile and Minify for Production
 
+## UI E2E tests
+
+UI E2E tests (`frontend/tests/e2e/`) run against a shared kind cluster (Keycloak, MailHog, backend API).
+To avoid cross-test interference from shared users/escalations, they are configured to run serially (single worker).
+
 ```sh
 npm run build
 ```

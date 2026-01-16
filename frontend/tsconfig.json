@@ -20,7 +20,7 @@
     "composite": true,
     "lib": ["DOM", "ES2019"],
     "esModuleInterop": true,
-    "types": ["vitest/globals"],
+    "types": ["vitest/globals", "node"],
     "verbatimModuleSyntax": false
   },
   "references": [

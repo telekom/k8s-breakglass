@@ -246,10 +246,11 @@ async function onDrop(bg: any) {
 
     <LoadingState v-if="state.loading" message="Loading escalations..." />
     <div v-else-if="state.breakglasses.length > 0">
-      <div class="breakglass-toolbar">
+      <div class="breakglass-toolbar" data-testid="breakglass-toolbar">
         <div class="breakglass-toolbar__field">
           <scale-text-field
             id="breakglass-search"
+            data-testid="escalation-search"
             type="search"
             label="Search escalations"
             placeholder="Cluster, group or approver"
@@ -262,6 +263,7 @@ async function onDrop(bg: any) {
           <scale-loading-spinner v-if="state.refreshing"></scale-loading-spinner>
           <scale-button
             v-else
+            data-testid="refresh-escalations-button"
             icon-only="true"
             icon-position="before"
             variant="secondary"
@@ -271,12 +273,12 @@ async function onDrop(bg: any) {
             <scale-icon-action-refresh></scale-icon-action-refresh>
           </scale-button>
         </div>
-        <div class="toolbar-info">
+        <div class="toolbar-info" data-testid="toolbar-info">
           Showing {{ filteredBreakglasses.length }} of {{ dedupedBreakglasses.length }} escalations
         </div>
       </div>
 
-      <div class="breakglass-grid">
+      <div class="breakglass-grid" data-testid="escalation-list">
         <BreakglassCard
           v-for="bg in filteredBreakglasses"
           :key="

@@ -288,6 +288,12 @@ export default class AuthService {
   private mockManager?: MockUserManager;
   private mockUser: User | null = null;
 
+  /**
+   * Promise that resolves when the initial authentication check is complete.
+   * This ensures the user state is populated before the app renders.
+   */
+  public readonly ready: Promise<void>;
+
   constructor(config: Config, options?: AuthServiceOptions) {
     this.baseConfig = config;
     this.baseURL = isBrowser ? `${window.location.protocol}//${window.location.host}` : "";
@@ -303,12 +309,15 @@ export default class AuthService {
       this.mockManager = new MockUserManager();
       this.userManager = this.mockManager as unknown as UserManager;
       this.registerUserManagerEvents(this.userManager);
+      // Mock mode is immediately ready
+      this.ready = Promise.resolve();
       return;
     }
 
     this.userManager = this.buildUserManager(config.oidcAuthority, config.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
-    this.userManager.getUser().then((u) => {
+    // Store the initialization promise so callers can await it
+    this.ready = this.userManager.getUser().then((u) => {
       if (u) {
         user.value = u;
       }

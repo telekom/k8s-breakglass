@@ -1,5 +1,5 @@
 <template>
-  <main class="ui-page approvals-page">
+  <main class="ui-page approvals-page" data-testid="pending-approvals-view">
     <PageHeader
       title="Pending Approvals"
       subtitle="Review and approve access requests from your team members."
@@ -8,9 +8,15 @@
     />
 
     <!-- Filter and Sort Controls -->
-    <div class="approvals-toolbar">
+    <div class="approvals-toolbar" data-testid="approvals-toolbar">
       <div class="approvals-toolbar__control">
-        <scale-dropdown-select id="sort-select" label="Sort by" :value="sortBy" @scaleChange="handleSortChange">
+        <scale-dropdown-select
+          id="sort-select"
+          data-testid="sort-select"
+          label="Sort by"
+          :value="sortBy"
+          @scaleChange="handleSortChange"
+        >
           <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
           <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
           <scale-dropdown-select-option value="groups">By Group</scale-dropdown-select-option>
@@ -20,6 +26,7 @@
       <div class="approvals-toolbar__control">
         <scale-dropdown-select
           id="urgency-filter"
+          data-testid="urgency-filter"
           label="Urgency"
           :value="urgencyFilter"
           @scaleChange="handleUrgencyChange"
@@ -31,7 +38,7 @@
         </scale-dropdown-select>
       </div>
 
-      <div class="toolbar-info">
+      <div class="toolbar-info" data-testid="toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} pending requests
       </div>
     </div>
@@ -40,6 +47,7 @@
 
     <EmptyState
       v-else-if="sortedSessions.length === 0"
+      data-testid="empty-state"
       :title="pendingSessions.length === 0 ? 'No pending requests' : 'No matching requests'"
       :description="
         pendingSessions.length === 0
@@ -49,10 +57,11 @@
       :icon="pendingSessions.length === 0 ? '✅' : '🔍'"
     />
 
-    <div v-else class="masonry-layout">
+    <div v-else class="masonry-layout" data-testid="pending-sessions-list">
       <SessionSummaryCard
         v-for="session in sortedSessions"
         :key="getSessionKey(session)"
+        :data-testid="`pending-session-card-${session.metadata?.name}`"
         :class="['approval-card-shell', `approval-card-shell--${session.urgency}`]"
         :eyebrow="getSessionCluster(session)"
         :title="getSessionGroup(session)"
@@ -163,6 +172,7 @@
             <div class="action-row">
               <ActionButton
                 label="Review"
+                data-testid="review-button"
                 :loading="approving === session.metadata?.name"
                 loading-label="Processing..."
                 :disabled="isSessionBusy(session)"
@@ -179,12 +189,14 @@
       v-if="showApproveModal && modalSession"
       :opened="showApproveModal"
       heading="Review Session"
+      data-testid="approval-modal"
       @scale-close="closeApproveModal"
     >
       <ApprovalModalContent
         :session="modalSession"
         :approver-note="approverNotes[modalSession.metadata?.name || ''] || ''"
         :is-approving="approving !== null"
+        data-testid="approval-modal-content"
         @update:approver-note="updateApproverNote"
         @approve="confirmApprove"
         @reject="confirmReject"
@@ -195,7 +207,7 @@
 </template>
 
 <script setup lang="ts">
-import { inject, ref, onMounted, reactive, computed, defineAsyncComponent } from "vue";
+import { inject, ref, onMounted, reactive, computed } from "vue";
 import CountdownTimer from "@/components/CountdownTimer.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
@@ -218,9 +230,7 @@ import {
   dedupeSessions,
 } from "@/composables";
 import type { SessionCR } from "@/model/breakglass";
-
-// Lazy load the modal content component
-const ApprovalModalContent = defineAsyncComponent(() => import("@/components/ApprovalModalContent.vue"));
+import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 
 // Services
 const auth = inject(AuthKey);

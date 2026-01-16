@@ -263,9 +263,9 @@ function podStatusVariant(pod: DebugPodInfo): string {
 </script>
 
 <template>
-  <main class="ui-page debug-session-details">
+  <main class="ui-page debug-session-details" data-testid="debug-session-details">
     <div class="back-link">
-      <scale-button variant="secondary" size="small" @click="goBack">
+      <scale-button variant="secondary" size="small" data-testid="back-to-sessions-button" @click="goBack">
         <scale-icon-navigation-left slot="icon"></scale-icon-navigation-left>
         Back to Sessions
       </scale-button>
@@ -280,12 +280,12 @@ function podStatusVariant(pod: DebugPodInfo): string {
     <template v-else-if="session">
       <PageHeader :title="session.metadata.name" :subtitle="`Debug session on ${session.spec.cluster}`" />
 
-      <div class="details-grid">
+      <div class="details-grid" data-testid="details-grid">
         <!-- Status Section -->
-        <div class="detail-card status-card">
+        <div class="detail-card status-card" data-testid="status-card">
           <h3>Status</h3>
           <div class="status-header">
-            <scale-tag :variant="stateVariant" size="large">
+            <scale-tag :variant="stateVariant" size="large" data-testid="session-state-tag">
               {{ session.status?.state || "Unknown" }}
             </scale-tag>
           </div>
@@ -322,19 +322,48 @@ function podStatusVariant(pod: DebugPodInfo): string {
             </div>
           </div>
 
-          <div v-if="canJoin || canTerminate || canRenew || canApprove || canReject" class="actions">
-            <scale-button v-if="canJoin" variant="primary" @click="handleJoin"> Join Session </scale-button>
-            <scale-button v-if="canRenew" variant="secondary" @click="handleRenew"> Renew (+1h) </scale-button>
-            <scale-button v-if="canTerminate" variant="secondary" @click="handleTerminate"> Terminate </scale-button>
-            <scale-button v-if="canApprove" variant="primary" @click="handleApprove"> Approve </scale-button>
-            <scale-button v-if="canReject" variant="secondary" @click="handleReject"> Reject </scale-button>
+          <div
+            v-if="canJoin || canTerminate || canRenew || canApprove || canReject"
+            class="actions"
+            data-testid="session-actions"
+          >
+            <scale-button v-if="canJoin" variant="primary" data-testid="join-session-button" @click="handleJoin">
+              Join Session
+            </scale-button>
+            <scale-button v-if="canRenew" variant="secondary" data-testid="renew-session-button" @click="handleRenew">
+              Renew (+1h)
+            </scale-button>
+            <scale-button
+              v-if="canTerminate"
+              variant="secondary"
+              data-testid="terminate-session-button"
+              @click="handleTerminate"
+            >
+              Terminate
+            </scale-button>
+            <scale-button
+              v-if="canApprove"
+              variant="primary"
+              data-testid="approve-session-button"
+              @click="handleApprove"
+            >
+              Approve
+            </scale-button>
+            <scale-button
+              v-if="canReject"
+              variant="secondary"
+              data-testid="reject-session-button"
+              @click="handleReject"
+            >
+              Reject
+            </scale-button>
           </div>
         </div>
 
         <!-- Session Info -->
-        <div class="detail-card">
+        <div class="detail-card" data-testid="session-info-card">
           <h3>Session Information</h3>
-          <dl class="info-list">
+          <dl class="info-list" data-testid="session-info-list">
             <div class="info-item">
               <dt>Template</dt>
               <dd>{{ session.spec.templateRef }}</dd>
@@ -363,10 +392,10 @@ function podStatusVariant(pod: DebugPodInfo): string {
         </div>
 
         <!-- Participants -->
-        <div class="detail-card">
+        <div class="detail-card" data-testid="participants-card">
           <h3>Participants ({{ participants.length }})</h3>
           <div v-if="participants.length === 0" class="empty-section">No participants yet.</div>
-          <ul v-else class="participant-list">
+          <ul v-else class="participant-list" data-testid="participant-list">
             <li v-for="participant in participants" :key="participant.user" class="participant-item">
               <div class="participant-info">
                 <span class="participant-user">{{ participant.user }}</span>
@@ -385,10 +414,10 @@ function podStatusVariant(pod: DebugPodInfo): string {
         </div>
 
         <!-- Debug Pods -->
-        <div class="detail-card">
+        <div class="detail-card" data-testid="debug-pods-card">
           <h3>Debug Pods ({{ allowedPods.length }})</h3>
           <div v-if="allowedPods.length === 0" class="empty-section">No debug pods deployed yet.</div>
-          <ul v-else class="pod-list">
+          <ul v-else class="pod-list" data-testid="pod-list">
             <li v-for="pod in allowedPods" :key="pod.name" class="pod-item">
               <div class="pod-header">
                 <span class="pod-name">{{ pod.name }}</span>
@@ -408,16 +437,17 @@ function podStatusVariant(pod: DebugPodInfo): string {
         </div>
 
         <!-- Kubectl Debug Operations -->
-        <div v-if="canUseKubectlDebug" class="detail-card kubectl-debug-card">
+        <div v-if="canUseKubectlDebug" class="detail-card kubectl-debug-card" data-testid="kubectl-debug-card">
           <h3>Kubectl Debug Operations</h3>
           <p class="card-description">
             Use kubectl-debug style operations to debug pods and nodes in the target cluster.
           </p>
 
-          <div v-if="!showKubectlDebugForm" class="kubectl-debug-buttons">
+          <div v-if="!showKubectlDebugForm" class="kubectl-debug-buttons" data-testid="kubectl-debug-buttons">
             <scale-button
               variant="secondary"
               size="small"
+              data-testid="inject-ephemeral-button"
               @click="
                 kubectlDebugType = 'ephemeral';
                 showKubectlDebugForm = true;
@@ -428,6 +458,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
             <scale-button
               variant="secondary"
               size="small"
+              data-testid="create-pod-copy-button"
               @click="
                 kubectlDebugType = 'podCopy';
                 showKubectlDebugForm = true;
@@ -438,6 +469,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
             <scale-button
               variant="secondary"
               size="small"
+              data-testid="debug-node-button"
               @click="
                 kubectlDebugType = 'nodeDebug';
                 showKubectlDebugForm = true;
