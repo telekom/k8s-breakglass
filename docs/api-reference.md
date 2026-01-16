@@ -127,7 +127,7 @@ The API provides endpoints for managing breakglass sessions.
 Query sessions with server-side filtering.
 
 ```http
-GET /api/breakglass/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>
+GET /api/breakglass/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>
 Authorization: Bearer <token>
 ```
 
@@ -143,6 +143,7 @@ Authorization: Bearer <token>
 | `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions) |
 | `approver` | boolean | Sessions user can approve (default: `true`) |
 | `approvedByMe` | boolean | Sessions the user has already approved |
+| `activeOnly` | boolean | Only return active (currently running) sessions |
 | `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `rejected`, `withdrawn`, `expired`, `timeout`. |
 
 **Response:** Array of `BreakglassSession` resources filtered by query parameters:

@@ -8,18 +8,16 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Installation](./installation.md)** - Complete step-by-step installation
 - **[Use Cases](./use-cases.md)** - Real-world use cases with configuration examples
 - **[Building](./building.md)** - Build breakglass from source
-- **[CLI Flags Reference](./cli-flags-reference.md)** - All configuration flags
 - **[Troubleshooting](./troubleshooting.md)** - Common issues and solutions
 
 ## Configuration & Operations
 
+- **[Configuration Reference](./configuration-reference.md)** - config.yaml settings and examples
+- **[CLI Flags Reference](./cli-flags-reference.md)** - All controller flags and environment variables
 - **[Scaling and Leader Election](./scaling-and-leader-election.md)** - Multi-replica deployments with leader election
 - **[Webhook Setup](./webhook-setup.md)** - Configure authorization webhooks
-- **[CLI Flags Reference](./cli-flags-reference.md)** - All controller flags and environment variables
-- **[Configuration Reference](./configuration-reference.md)** - config.yaml settings and examples
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
-- **[Mail Provider](./mail-provider.md)** - SMTP configuration for email notifications
-- **[Email Templates](./email-templates.md)** - Customize and override email notification templates
+- **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
 
 ## Identity & Authentication
 
@@ -55,6 +53,7 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Security & Policy
 
+- **[Security Best Practices](./security-best-practices.md)** - Rate limiting, input sanitization, network security
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions and pod security rules
 - **[Pod Security Evaluation](./deny-policy.md#podsecurityrules)** - Risk-based exec/attach/portforward controls
 - **[BreakglassEscalation - Security Overrides](./breakglass-escalation.md#podsecurityoverrides)** - Per-escalation pod security exemptions

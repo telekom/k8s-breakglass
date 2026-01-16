@@ -301,6 +301,41 @@ Valid formats: `30s`, `5m`, `1h`
 
 **Note**: Can also be set via CLI flag `--cluster-config-check-interval` (takes precedence).
 
+#### `userIdentifierClaim` (Optional)
+
+Specifies which OIDC claim to use as the user identifier for session matching. This is a global default that can be overridden per-cluster in ClusterConfig.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` |
+| **Default** | `email` |
+| **Valid Values** | `email`, `preferred_username`, `sub` |
+
+```yaml
+kubernetes:
+  userIdentifierClaim: "email"
+```
+
+**Purpose**: Controls which JWT claim is used to identify users when creating sessions. This value is stored in `spec.user` of BreakglassSession and must match the claim configured in spoke clusters' OIDC `claimMappings.username.claim`.
+
+**Priority**: ClusterConfig setting > Global config > Default (email)
+
+**Example**:
+
+If your spoke clusters are configured with OIDC like:
+```yaml
+# kube-apiserver OIDC flags on spoke cluster
+--oidc-username-claim=preferred_username
+```
+
+Then set:
+```yaml
+kubernetes:
+  userIdentifierClaim: "preferred_username"
+```
+
+This ensures that when the spoke cluster sends SubjectAccessReview requests to the hub, the username in the SAR matches the user identifier stored in the session.
+
 ---
 
 ## Complete Example
@@ -322,6 +357,7 @@ frontend:
 kubernetes:
   context: ""
   clusterConfigCheckInterval: "10m"
+  userIdentifierClaim: "email"  # Which OIDC claim to use for user matching
   oidcPrefixes:
     - "oidc:"
     - "keycloak:"

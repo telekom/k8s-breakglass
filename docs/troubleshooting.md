@@ -171,6 +171,20 @@ webhook:
 ping -c 5 breakglass.example.com
 ```
 
+3. **Check for recursive webhook calls** (multi-cluster OIDC setups only)
+
+If you're using OIDC authentication for spoke clusters, the breakglass manager's OIDC identity may be triggering recursive webhook calls. See [Preventing Recursive Webhook Calls](webhook-setup.md#preventing-recursive-webhook-calls) for the full explanation.
+
+**Quick fix:** Add the OIDC identity to the webhook's matchConditions exclusion:
+
+```yaml
+matchConditions:
+  # ... existing conditions ...
+  - expression: "request.user != 'breakglass-group-sync@service.local'"
+```
+
+And grant RBAC permissions to the OIDC identity on spoke clusters. See [RBAC Requirements for OIDC Authentication](cluster-config.md#rbac-requirements-for-oidc-authentication).
+
 ## Authorization Issues
 
 ### Authorization Always Denied
@@ -335,6 +349,182 @@ kubectl exec -it -n breakglass-system deployment/breakglass-controller -- \
 
 ```bash
 echo $TOKEN | cut -d'.' -f2 | base64 -d | jq '.'
+```
+
+## ClusterConfig OIDC Authentication Issues
+
+This section covers issues specific to `ClusterConfig` resources using `authType: OIDC` for authenticating to managed clusters.
+
+### ClusterConfig Shows "OIDCDiscoveryFailed"
+
+**Symptoms:** ClusterConfig status shows `Ready=False` with reason `OIDCDiscoveryFailed`
+
+**Solutions:**
+
+1. Verify the issuer URL is correct and accessible
+
+```bash
+# Check the ClusterConfig's OIDC issuer URL
+kubectl get clusterconfig <name> -o yaml | grep issuerURL
+
+# Test OIDC discovery endpoint
+curl -s https://<issuer>/.well-known/openid-configuration | jq .
+```
+
+2. If using a private CA, ensure `certificateAuthority` is set in the OIDC config
+
+```yaml
+spec:
+  oidcAuth:
+    issuerURL: https://keycloak.internal.example.com/realms/kubernetes
+    certificateAuthority: |
+      -----BEGIN CERTIFICATE-----
+      ...
+      -----END CERTIFICATE-----
+```
+
+3. Check controller logs for detailed error
+
+```bash
+kubectl logs -n breakglass-system deployment/breakglass-controller | grep -i oidc
+```
+
+### ClusterConfig Shows "OIDCTokenFetchFailed"
+
+**Symptoms:** ClusterConfig status shows `Ready=False` with reason `OIDCTokenFetchFailed`
+
+**Solutions:**
+
+1. Verify client credentials are correct
+
+```bash
+# Check the client secret exists
+kubectl get secret <client-secret-name> -n <namespace>
+
+# Test client credentials flow manually
+curl -X POST https://<issuer>/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=<client-id>" \
+  -d "client_secret=<client-secret>"
+```
+
+2. Verify the OIDC client has:
+   - Service accounts enabled
+   - Client credentials grant enabled
+   - Correct permissions/roles
+
+3. Check if the client is confidential (has a secret)
+
+### ClusterConfig Shows "OIDCRefreshFailed"
+
+**Symptoms:** ClusterConfig initially works but later shows `OIDCRefreshFailed`
+
+**Solutions:**
+
+1. Verify refresh tokens are enabled in the OIDC provider
+2. Check token lifetimes are reasonable (not too short)
+3. The controller will automatically fall back to re-authentication
+
+### ClusterConfig Shows "SecretMissing" for OIDC
+
+**Symptoms:** ClusterConfig status shows `Ready=False` mentioning OIDC client secret missing
+
+**Solutions:**
+
+1. Verify the secret exists in the correct namespace
+
+```bash
+kubectl get secret <name> -n <namespace>
+```
+
+2. Verify the secret has the correct key
+
+```bash
+kubectl get secret <name> -n <namespace> -o jsonpath='{.data}' | jq
+```
+
+3. Common key names are `client-secret` (default) or check your `clientSecretRef.key` setting
+
+### ClusterConfig Using oidcFromIdentityProvider Shows "IdentityProvider not found"
+
+**Symptoms:** ClusterConfig referencing an IdentityProvider fails with "not found" error
+
+**Solutions:**
+
+1. Verify the IdentityProvider exists
+
+```bash
+kubectl get identityprovider <name>
+```
+
+2. Verify the name matches exactly (case-sensitive)
+
+```bash
+# Check the reference in ClusterConfig
+kubectl get clusterconfig <name> -o yaml | grep -A 3 oidcFromIdentityProvider
+```
+
+### ClusterConfig Using oidcFromIdentityProvider Shows "IdentityProvider is disabled"
+
+**Symptoms:** ClusterConfig fails because referenced IdentityProvider is disabled
+
+**Solutions:**
+
+1. Enable the IdentityProvider
+
+```bash
+kubectl patch identityprovider <name> --type=merge -p '{"spec":{"disabled":false}}'
+```
+
+2. Or use a different IdentityProvider that is enabled
+
+### Target Cluster Connection Fails with TLS Errors
+
+**Symptoms:** "x509: certificate signed by unknown authority" or similar TLS errors
+
+**Solutions:**
+
+1. Provide the cluster CA certificate
+
+```yaml
+spec:
+  oidcAuth:
+    server: https://api.my-cluster.example.com:6443
+    caSecretRef:
+      name: cluster-ca-secret
+      namespace: breakglass-system
+      key: ca.crt
+```
+
+2. Or enable TOFU (Trust On First Use) - the controller will automatically trust the first CA it sees
+
+3. As a last resort (NOT for production), use `insecureSkipTLSVerify: true`
+
+### Debugging OIDC Token Issues
+
+**Steps to debug:**
+
+1. Check ClusterConfig status and conditions
+
+```bash
+kubectl get clusterconfig <name> -o yaml | grep -A 20 status
+```
+
+2. Look at controller logs
+
+```bash
+kubectl logs -n breakglass-system deployment/breakglass-controller --since=5m | grep -i "oidc\|token"
+```
+
+3. Test token acquisition manually using the configured credentials
+
+4. Verify the target cluster accepts OIDC tokens
+
+```bash
+# Use kubectl with OIDC plugin to test
+kubectl --server=https://api.cluster.example.com:6443 \
+  --token=<oidc-token> \
+  auth can-i get pods
 ```
 
 ## Deployment Issues

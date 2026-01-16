@@ -381,7 +381,8 @@ spec:
     - verbs: ["*"]
       apiGroups: ["*"]
       resources: ["*"]
-      namespaces: ["kube-system"]
+      namespaces:
+        patterns: ["kube-system"]
   precedence: 10
 ```
 
