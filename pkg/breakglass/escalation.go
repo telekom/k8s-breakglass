@@ -47,7 +47,7 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 	}
 
 	isEscalationForUser := func(esc telekomv1alpha1.BreakglassEscalation) bool {
-		clusterMatch := slices.Contains(esc.Spec.Allowed.Clusters, ef.FilterUserData.Clustername)
+		clusterMatch := clusterMatchesPatterns(ef.FilterUserData.Clustername, esc.Spec.Allowed.Clusters)
 		ef.Log.Debugw("Checking cluster match for escalation", "escalation", esc.Name, "requiredClusters", esc.Spec.Allowed.Clusters, "userCluster", ef.FilterUserData.Clustername, "clusterMatch", clusterMatch)
 		return clusterMatch
 	}
@@ -112,7 +112,7 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 
 		for _, esc := range escalations {
 			if ses.Spec.GrantedGroup != esc.Spec.EscalatedGroup ||
-				!slices.Contains(esc.Spec.Allowed.Clusters, ses.Spec.Cluster) {
+				!clusterMatchesPatterns(ses.Spec.Cluster, esc.Spec.Allowed.Clusters) {
 				ef.Log.Debugw("Session-escalation mismatch", "session", ses.Name, "escalation", esc.Name, "sessionGroup", ses.Spec.GrantedGroup, "escalationGroup", esc.Spec.EscalatedGroup)
 				continue
 			}

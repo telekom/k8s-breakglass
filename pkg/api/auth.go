@@ -21,6 +21,9 @@ import (
 
 const (
 	AuthHeaderKey = "Authorization"
+	// maxJWKSCacheSize limits the number of cached JWKS to prevent memory exhaustion
+	// from malicious tokens claiming many different issuers
+	maxJWKSCacheSize = 100
 )
 
 type AuthHandler struct {
@@ -160,8 +163,27 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		return nil, fmt.Errorf("failed to load JWKS for IDP %s (%s): %w", idpCfg.Name, issuer, err)
 	}
 
-	// Cache it
+	// Cache it with size limit to prevent memory exhaustion
 	a.jwksMutex.Lock()
+	// If cache is full, evict oldest entries (simple eviction: clear half the cache)
+	if len(a.jwksCache) >= maxJWKSCacheSize {
+		a.log.Warnw("JWKS cache full, evicting oldest entries",
+			"currentSize", len(a.jwksCache),
+			"maxSize", maxJWKSCacheSize)
+		// Simple eviction: remove half the entries to avoid thrashing
+		evictCount := len(a.jwksCache) / 2
+		for k := range a.jwksCache {
+			if evictCount <= 0 {
+				break
+			}
+			// EndBackground stops the JWKS refresh goroutine
+			if oldJwks := a.jwksCache[k]; oldJwks != nil {
+				oldJwks.EndBackground()
+			}
+			delete(a.jwksCache, k)
+			evictCount--
+		}
+	}
 	a.jwksCache[issuer] = jwks
 	a.jwksMutex.Unlock()
 
@@ -186,9 +208,7 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 		// delete the header to avoid logging it by accident
 		c.Request.Header.Del(AuthHeaderKey)
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "No Bearer token provided in Authorization header",
-			})
+			RespondUnauthorizedWithMessage(c, "No Bearer token provided in Authorization header")
 			c.Abort()
 			return
 		}
@@ -199,9 +219,7 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 		parser := jwt.NewParser()
 		_, _, err := parser.ParseUnverified(bearer, unverifiedClaims)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid JWT format",
-			})
+			RespondUnauthorizedWithMessage(c, "Invalid JWT format")
 			c.Abort()
 			return
 		}
@@ -238,17 +256,14 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 				a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
 				metrics.JWTValidationFailure.WithLabelValues(issuer, "jwks_load_failed").Inc()
 
-				// Try to provide helpful error message with IDP suggestions
+				// Try to provide helpful error message with IDP suggestions.
+				// Do not echo the raw issuer back to the client to avoid reconnaissance leaks.
 				idpName, idpLookupErr := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
-				errorMsg := fmt.Sprintf("unable to verify token for issuer %s: %v", issuer, err)
+				errorMsg := "unable to verify token"
 				if idpLookupErr == nil && idpName != "" {
-					errorMsg = fmt.Sprintf("token issuer '%s' is not configured. Please use the '%s' identity provider to log in.", issuer, idpName)
+					errorMsg = fmt.Sprintf("token issuer is not configured. Please use the '%s' identity provider to log in.", idpName)
 				}
-
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":  errorMsg,
-					"issuer": issuer,
-				})
+				RespondUnauthorizedWithMessage(c, errorMsg)
 				c.Abort()
 				return
 			}
@@ -262,9 +277,7 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 		} else if a.idpLoader != nil && issuer == "" {
 			// Multi-IDP mode but no issuer in token: require issuer claim
 			metrics.JWTValidationFailure.WithLabelValues("", "missing_issuer").Inc()
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.",
-			})
+			RespondUnauthorizedWithMessage(c, "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.")
 			c.Abort()
 			return
 		} else {
@@ -296,15 +309,8 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 			}
 			metrics.JWTValidationFailure.WithLabelValues(issuer, failureReason).Inc()
 
-			errorMsg := "Token verification failed"
-			if issuer != "" {
-				errorMsg = fmt.Sprintf("Token verification failed for issuer '%s'. Please re-authenticate with the correct identity provider.", issuer)
-			}
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":   errorMsg,
-				"issuer":  issuer,
-				"details": err.Error(),
-			})
+			errorMsg := "Token verification failed. Please re-authenticate."
+			RespondUnauthorizedWithMessage(c, errorMsg)
 			c.Abort()
 			return
 		}
@@ -412,6 +418,126 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// MiddlewareWithRateLimiting returns a Gin middleware chain that combines:
+// 1. JWT authentication (same as Middleware())
+// 2. Authenticated rate limiting (higher limits for authenticated users, lower for unauthenticated)
+// This should be used for API endpoints that handle authenticated requests.
+// The rate limiter uses the "email" context key to identify users after authentication.
+func (a *AuthHandler) MiddlewareWithRateLimiting(rl RateLimiter) gin.HandlerFunc {
+	authMiddleware := a.Middleware()
+	return func(c *gin.Context) {
+		// First run authentication
+		authMiddleware(c)
+		if c.IsAborted() {
+			return
+		}
+
+		// Then apply rate limiting (uses email set by auth middleware)
+		allowed, isAuthenticated := rl.Allow(c)
+		if !allowed {
+			msg := "Rate limit exceeded, please try again later"
+			if !isAuthenticated {
+				msg = "Rate limit exceeded. Please authenticate for higher limits."
+			}
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":         msg,
+				"authenticated": isAuthenticated,
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// OptionalAuthRateLimitMiddleware returns a middleware that applies rate limiting
+// with higher limits for users who provide a valid JWT token, even on public endpoints.
+// Unlike MiddlewareWithRateLimiting, this does NOT require authentication - it just
+// gives better rate limits to authenticated users.
+// This should be used for public endpoints that the frontend calls frequently.
+func (a *AuthHandler) OptionalAuthRateLimitMiddleware(rl RateLimiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Try to extract user identity from JWT if present
+		userIdentity := a.tryExtractUserIdentity(c)
+		if userIdentity != "" {
+			// Set the identity so the rate limiter can use it
+			c.Set("email", userIdentity)
+		}
+
+		// Apply rate limiting (uses email if set, otherwise falls back to IP)
+		allowed, isAuthenticated := rl.Allow(c)
+		if !allowed {
+			msg := "Rate limit exceeded, please try again later"
+			if !isAuthenticated {
+				msg = "Rate limit exceeded. Please authenticate for higher limits."
+			}
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":         msg,
+				"authenticated": isAuthenticated,
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// tryExtractUserIdentity attempts to extract user identity from a JWT token
+// without enforcing authentication. Returns empty string if no valid token.
+func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
+	authHeader := c.GetHeader(AuthHeaderKey)
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return ""
+	}
+	bearer := authHeader[7:]
+
+	// Parse JWT without verification first to extract issuer
+	unverifiedClaims := jwt.MapClaims{}
+	parser := jwt.NewParser()
+	_, _, err := parser.ParseUnverified(bearer, unverifiedClaims)
+	if err != nil {
+		return ""
+	}
+
+	// Extract issuer from claims
+	var issuer string
+	if iss, ok := unverifiedClaims["iss"]; ok {
+		issuer, _ = iss.(string)
+	}
+
+	// Get JWKS for verification
+	jwks, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
+	if err != nil || jwks == nil {
+		return ""
+	}
+
+	// Verify the token
+	claims := jwt.MapClaims{}
+	_, err = jwt.ParseWithClaims(bearer, claims, jwks.Keyfunc)
+	if err != nil {
+		return ""
+	}
+
+	// Extract email as user identity
+	if email, ok := claims["email"].(string); ok && email != "" {
+		return email
+	}
+
+	// Fallback to subject if email not available
+	if sub, ok := claims["sub"].(string); ok && sub != "" {
+		return sub
+	}
+
+	return ""
+}
+
+// RateLimiter interface for rate limiters that support authentication differentiation
+type RateLimiter interface {
+	Allow(c *gin.Context) (allowed bool, isAuthenticated bool)
 }
 
 func buildCertPoolFromPEM(pemData string) (*x509.CertPool, error) {

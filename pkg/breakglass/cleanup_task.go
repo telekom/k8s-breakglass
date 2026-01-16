@@ -42,7 +42,17 @@ func getCleanupInterval() time.Duration {
 // DebugSessionRetentionPeriod defines how long terminated/expired debug sessions are kept
 // for audit purposes before being deleted. This can be configured via environment variable
 // DEBUG_SESSION_RETENTION_PERIOD (default: 168h = 7 days)
-var DebugSessionRetentionPeriod = 168 * time.Hour // 7 days default
+var DebugSessionRetentionPeriod = getDebugSessionRetentionPeriod()
+
+func getDebugSessionRetentionPeriod() time.Duration {
+	const defaultRetention = 168 * time.Hour // 7 days
+	if env := os.Getenv("DEBUG_SESSION_RETENTION_PERIOD"); env != "" {
+		if d, err := time.ParseDuration(env); err == nil {
+			return d
+		}
+	}
+	return defaultRetention
+}
 
 func (cr CleanupRoutine) CleanupRoutine(ctx context.Context) {
 	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
@@ -58,21 +68,25 @@ func (cr CleanupRoutine) CleanupRoutine(ctx context.Context) {
 	}
 
 	// run initial cleanup
-	cr.clean()
+	cr.clean(ctx)
 
-	tick := time.Tick(CleanupInterval)
+	// Use time.NewTicker instead of time.Tick to avoid memory leak.
+	// time.Tick creates a ticker that is never garbage collected.
+	ticker := time.NewTicker(CleanupInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			cr.Log.Warnw("cleanup routine stopped (context cancelled)")
 			return
-		case <-tick:
-			cr.clean()
+		case <-ticker.C:
+			cr.clean(ctx)
 		}
 	}
 }
 
-func (cr CleanupRoutine) clean() {
+func (cr CleanupRoutine) clean(ctx context.Context) {
 	cr.Log.Info("Running breakglass session cleanup task")
 	// Activate scheduled sessions first (before expiry checks)
 	if cr.Manager != nil {
@@ -91,9 +105,18 @@ func (cr CleanupRoutine) clean() {
 		// Expire approved sessions whose ExpiresAt has passed
 		ctrl.ExpireApprovedSessions()
 	}
-	cr.markCleanupExpiredSession(context.Background())
+
+	cleanupCtx := ctx
+	if cleanupCtx == nil {
+		cleanupCtx = context.Background()
+	}
+	// Bound cleanup operations so shutdown is predictable and we don't accumulate slow API calls.
+	opCtx, cancel := context.WithTimeout(cleanupCtx, 2*time.Minute)
+	defer cancel()
+
+	cr.markCleanupExpiredSession(opCtx)
 	// Cleanup expired debug sessions
-	cr.cleanupExpiredDebugSessions(context.Background())
+	cr.cleanupExpiredDebugSessions(opCtx)
 	cr.Log.Info("Finished breakglass session cleanup task")
 }
 

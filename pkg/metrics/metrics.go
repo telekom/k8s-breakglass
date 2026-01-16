@@ -85,6 +85,10 @@ var (
 		Name: "breakglass_session_created_total",
 		Help: "Total number of Breakglass sessions created",
 	}, []string{"cluster"})
+	SessionCreateFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_session_create_failed_total",
+		Help: "Total number of Breakglass session creation failures",
+	}, []string{"cluster", "reason"})
 	SessionUpdated = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_session_updated_total",
 		Help: "Total number of Breakglass session updates",
@@ -510,6 +514,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARErrors)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARSSkipped)
 	ctrlmetrics.Registry.MustRegister(SessionCreated)
+	ctrlmetrics.Registry.MustRegister(SessionCreateFailed)
 	ctrlmetrics.Registry.MustRegister(SessionUpdated)
 	ctrlmetrics.Registry.MustRegister(SessionDeleted)
 	ctrlmetrics.Registry.MustRegister(SessionExpired)

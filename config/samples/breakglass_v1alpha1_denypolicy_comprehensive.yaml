@@ -1,0 +1,201 @@
+# Comprehensive DenyPolicy Examples
+# This file shows various deny policy configurations for access control.
+#
+# DenyPolicy resources define what actions are blocked even when a user
+# has an active breakglass session. They provide an additional layer of
+# security to prevent accidental or malicious actions.
+
+---
+# Example 1: Basic deny policy - Block dangerous operations globally
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: deny-dangerous-operations
+spec:
+  # No appliesTo = applies globally to all clusters
+  
+  rules:
+    # Block deletion of namespaces
+    - verbs: ["delete"]
+      apiGroups: [""]
+      resources: ["namespaces"]
+    
+    # Block deletion of PVs
+    - verbs: ["delete"]
+      apiGroups: [""]
+      resources: ["persistentvolumes"]
+    
+    # Block deletion of CRDs
+    - verbs: ["delete"]
+      apiGroups: ["apiextensions.k8s.io"]
+      resources: ["customresourcedefinitions"]
+    
+    # Block modifications to cluster roles
+    - verbs: ["create", "update", "patch", "delete"]
+      apiGroups: ["rbac.authorization.k8s.io"]
+      resources: ["clusterroles", "clusterrolebindings"]
+  
+  # Lower precedence = evaluated first
+  precedence: 10
+
+---
+# Example 2: Scoped deny policy - Protect specific clusters
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: protect-production-clusters
+spec:
+  # Only applies to production clusters
+  appliesTo:
+    clusters:
+      - "prod-*"
+      - "production-*"
+  
+  rules:
+    # Block all secret access (read and write)
+    - verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      apiGroups: [""]
+      resources: ["secrets"]
+      # Only in sensitive namespaces
+      namespaces:
+        patterns:
+          - "payment-*"
+          - "auth-*"
+          - "pii-*"
+    
+    # Block exec into pods (use pod security rules instead for fine-grained control)
+    - verbs: ["create"]
+      apiGroups: [""]
+      resources: ["pods"]
+      subresources: ["exec", "attach"]
+      namespaces:
+        patterns:
+          - "payment-*"
+          - "auth-*"
+    
+    # Block port-forward to database pods
+    - verbs: ["create"]
+      apiGroups: [""]
+      resources: ["pods"]
+      subresources: ["portforward"]
+      resourceNames:
+        - "postgres-*"
+        - "mysql-*"
+        - "mongodb-*"
+  
+  precedence: 15
+
+---
+# Example 3: Deny policy with label-based namespace selection
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: protect-labeled-namespaces
+spec:
+  rules:
+    # Block modifications in namespaces with specific labels
+    - verbs: ["create", "update", "patch", "delete"]
+      apiGroups: [""]
+      resources: ["configmaps", "secrets"]
+      namespaces:
+        # Use label selectors for dynamic namespace matching
+        selectorTerms:
+          - matchLabels:
+              environment: production
+              sensitivity: high
+          # OR match namespaces with "compliance-scope" label
+          - matchExpressions:
+              - key: compliance-scope
+                operator: Exists
+  
+  precedence: 20
+
+---
+# Example 4: Tenant-scoped deny policy
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: tenant-isolation
+spec:
+  # Apply to specific tenants
+  appliesTo:
+    tenants:
+      - "tenant-alpha"
+      - "tenant-beta"
+  
+  rules:
+    # Block cross-tenant resource access
+    - verbs: ["*"]
+      apiGroups: [""]
+      resources: ["*"]
+      namespaces:
+        patterns:
+          # Block access to other tenant namespaces
+          - "tenant-*"
+        selectorTerms:
+          # Except namespaces matching our tenant
+          - matchExpressions:
+              - key: tenant
+                operator: NotIn
+                values: ["tenant-alpha", "tenant-beta"]
+  
+  precedence: 25
+
+---
+# Example 5: Workload protection policy
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: protect-workloads
+spec:
+  rules:
+    # Block deletion of deployments in production
+    - verbs: ["delete"]
+      apiGroups: ["apps"]
+      resources: ["deployments", "statefulsets", "daemonsets"]
+      namespaces:
+        patterns:
+          - "prod-*"
+    
+    # Block scaling to zero
+    - verbs: ["update", "patch"]
+      apiGroups: ["apps"]
+      resources: ["deployments"]
+      subresources: ["scale"]
+      namespaces:
+        selectorTerms:
+          - matchLabels:
+              protect-from-scale-down: "true"
+    
+    # Block eviction of critical pods
+    - verbs: ["create"]
+      apiGroups: [""]
+      resources: ["pods"]
+      subresources: ["eviction"]
+      namespaces:
+        patterns:
+          - "kube-system"
+          - "monitoring"
+          - "logging"
+  
+  precedence: 30
+
+---
+# Example 6: Session-specific deny policy
+# This can be attached to individual sessions via denyPolicyRefs
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: limited-access-policy
+spec:
+  # Applied to specific sessions only (referenced in escalation.denyPolicyRefs)
+  appliesTo:
+    sessions: []  # Empty = not applied globally, only when explicitly referenced
+  
+  rules:
+    # Only allow read operations
+    - verbs: ["create", "update", "patch", "delete", "deletecollection"]
+      apiGroups: ["*"]
+      resources: ["*"]
+  
+  precedence: 50

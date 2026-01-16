@@ -207,6 +207,17 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 // processQueue is the worker goroutine that processes events from the queue.
 func (qs *QueuedSink) processQueue(workerID int) {
 	defer qs.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			qs.logger.Error("panic in audit queue worker recovered",
+				zap.Int("worker", workerID),
+				zap.Any("panic", r))
+			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "panic").Inc()
+			// Restart the worker to maintain processing capacity
+			qs.wg.Add(1)
+			go qs.processQueue(workerID)
+		}
+	}()
 
 	for event := range qs.queue {
 		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)

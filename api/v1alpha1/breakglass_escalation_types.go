@@ -183,9 +183,9 @@ type PodSecurityOverrides struct {
 
 	// namespaceScope limits where overrides apply. If set, overrides only work for pods in these namespaces.
 	// If empty, overrides apply to all namespaces (subject to DenyPolicy scope).
-	// Supports exact match only.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
 	// +optional
-	NamespaceScope []string `json:"namespaceScope,omitempty"`
+	NamespaceScope *NamespaceFilter `json:"namespaceScope,omitempty"`
 
 	// requireApproval requires additional approval before overrides can be used.
 	// When true, the session must be approved by someone in the approvers list.
@@ -237,8 +237,9 @@ type ReasonConfig struct {
 // Future enhancement: Consider explicit configuration for how to combine users and groups (AND vs OR logic).
 type BreakglassEscalationAllowed struct {
 	// clusters is a list of clusters this escalation can be used for.
-	// Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
-	// Future enhancement: Consider adding globbing (e.g., "prod-*") or regex support for cluster name matching.
+	// Supports exact string matching and glob patterns (e.g., "prod-*", "*-staging", "*").
+	// Use "*" to match all clusters (global escalation).
+	// Glob patterns follow filepath.Match semantics: * matches any sequence of characters, ? matches single character.
 	Clusters []string `json:"clusters,omitempty"`
 	// groups is a list of groups this escalation can be used by.
 	// Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.

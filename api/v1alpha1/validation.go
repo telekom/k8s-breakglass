@@ -107,6 +107,12 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 		result.Errors = append(result.Errors, field.Required(specPath.Child("allowed"), "either groups or cluster targets (allowed.clusters or clusterConfigRefs) must be specified"))
 	}
 
+	// Warn if groups are specified but no cluster targets - escalation won't match cluster-specific requests
+	if len(escalation.Spec.Allowed.Groups) > 0 && !clustersProvided {
+		result.Warnings = append(result.Warnings,
+			"escalation has allowed.groups but no cluster targets (allowed.clusters or clusterConfigRefs); it won't match any cluster-specific session requests - consider adding cluster targets or using '*' glob pattern for global access")
+	}
+
 	// Validate allowed groups
 	result.Errors = append(result.Errors, validateStringListEntriesNotEmpty(escalation.Spec.Allowed.Groups, allowedGroupsPath)...)
 	result.Errors = append(result.Errors, validateStringListNoDuplicates(escalation.Spec.Allowed.Groups, allowedGroupsPath)...)
@@ -347,11 +353,8 @@ func ValidateClusterConfig(cc *ClusterConfig) *ValidationResult {
 
 	specPath := field.NewPath("spec")
 
-	// Validate required kubeconfig reference
-	secretRefPath := specPath.Child("kubeconfigSecretRef")
-	if cc.Spec.KubeconfigSecretRef.Name == "" || cc.Spec.KubeconfigSecretRef.Namespace == "" {
-		result.Errors = append(result.Errors, field.Required(secretRefPath, "kubeconfigSecretRef name and namespace are required"))
-	}
+	// Validate auth config (includes kubeconfigSecretRef or OIDC)
+	result.Errors = append(result.Errors, validateClusterAuthConfig(cc.Spec, specPath)...)
 
 	// Validate QPS/Burst if specified
 	if cc.Spec.QPS != nil && *cc.Spec.QPS < 1 {

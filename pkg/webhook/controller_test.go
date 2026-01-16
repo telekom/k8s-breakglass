@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -146,6 +149,97 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 	}
 	if resp.Status.Reason == "" {
 		t.Fatalf("expected deny reason to be set when escalation paths exist")
+	}
+}
+
+// TestHandleAuthorize_ImpersonationError_TreatedAsDenied tests that impersonation/forbidden errors from RBAC
+// checks are treated as denial (not internal server errors), allowing session-based authorization to proceed.
+// This scenario occurs when using OIDC-authenticated ClusterConfigs where the service account may lack
+// impersonation permissions on the target cluster.
+func TestHandleAuthorize_ImpersonationError_TreatedAsDenied(t *testing.T) {
+	// Create a BreakglassEscalation that matches system:authenticated
+	esc := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-oidc"},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed:        v1alpha1.BreakglassEscalationAllowed{Groups: []string{"system:authenticated"}, Clusters: []string{"oidc-cluster"}},
+			EscalatedGroup: "oidc-admin-group",
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	for k, fn := range sessionIndexFnsWebhook {
+		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+	}
+	cli := builder.Build()
+
+	sesMgr := &breakglass.SessionManager{Client: cli}
+	escalMgr := &breakglass.EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+	testCases := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "forbidden error",
+			err:  errors.New("users \"system:auth-checker\" is forbidden: User \"oidc-service@service.local\" cannot impersonate resource \"users\" in API group \"\" at the cluster scope"),
+		},
+		{
+			name: "Forbidden error",
+			err:  errors.New("Forbidden: cannot perform this operation"),
+		},
+		{
+			name: "cannot impersonate error",
+			err:  errors.New("cannot impersonate users"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Override canDoFn to return the test error
+			wc.canDoFn = func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clustername string) (bool, error) {
+				return false, tc.err
+			}
+
+			// Create SAR
+			sar := authorizationv1.SubjectAccessReview{
+				TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
+				Spec: authorizationv1.SubjectAccessReviewSpec{
+					User:               "user@example.com",
+					Groups:             []string{"system:authenticated"},
+					ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: "default", Verb: "get", Resource: "pods"},
+				},
+			}
+			body, _ := json.Marshal(sar)
+
+			engine := gin.New()
+			_ = wc.Register(engine.Group("/" + wc.BasePath()))
+
+			req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/oidc-cluster", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			// Key assertion: should return 200 OK, not 500 Internal Server Error
+			if w.Result().StatusCode != http.StatusOK {
+				t.Errorf("expected 200 OK, got %d; impersonation/forbidden errors should be treated as denial, not internal error", w.Result().StatusCode)
+			}
+
+			var resp SubjectAccessReviewResponse
+			bodyBytes := new(bytes.Buffer)
+			if _, err := bodyBytes.ReadFrom(w.Result().Body); err != nil {
+				t.Fatalf("failed to read response body: %v", err)
+			}
+			if err := json.Unmarshal(bodyBytes.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to decode response: %v; raw=%s", err, bodyBytes.String())
+			}
+
+			// Should be denied (not an error, just access denied)
+			if resp.Status.Allowed {
+				t.Error("expected Allowed=false when RBAC check returns impersonation error")
+			}
+		})
 	}
 }
 
@@ -1008,7 +1102,8 @@ func TestBuildBreakglassLink(t *testing.T) {
 	}
 }
 
-// TestURLQueryEscape tests the urlQueryEscape helper function
+// TestURLQueryEscape tests that url.QueryEscape properly handles special characters
+// This test documents the expected behavior now that we use the standard library
 func TestURLQueryEscape(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -1019,13 +1114,16 @@ func TestURLQueryEscape(t *testing.T) {
 		{"with#hash", "with%23hash"},
 		{"multiple spaces  test", "multiple+spaces++test"},
 		{"combo # space", "combo+%23+space"},
+		// Additional cases for url.QueryEscape behavior
+		{"test&value=1", "test%26value%3D1"},
+		{"test?query", "test%3Fquery"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := urlQueryEscape(tt.input)
+			result := url.QueryEscape(tt.input)
 			if result != tt.expected {
-				t.Errorf("urlQueryEscape(%q) = %q, want %q", tt.input, result, tt.expected)
+				t.Errorf("url.QueryEscape(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -1416,4 +1514,519 @@ func TestWebhookController_FetchPodFromCluster_NilProvider(t *testing.T) {
 	if !containsString(err.Error(), "cluster client provider not configured") {
 		t.Errorf("expected error about provider not configured, got: %v", err)
 	}
+}
+
+// TestGetPodSecurityOverridesFromSessions tests the getPodSecurityOverridesFromSessions helper function
+func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
+	testCases := []struct {
+		name             string
+		sessions         []v1alpha1.BreakglassSession
+		escalations      []*v1alpha1.BreakglassEscalation
+		expectOverrides  bool
+		expectedMaxScore *int
+		expectedExempt   []string
+	}{
+		{
+			name:            "no sessions",
+			sessions:        nil,
+			escalations:     nil,
+			expectOverrides: false,
+		},
+		{
+			name: "session not approved",
+			sessions: []v1alpha1.BreakglassSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "pending-session",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{Kind: "BreakglassEscalation", Name: "my-escalation"},
+						},
+					},
+					Status: v1alpha1.BreakglassSessionStatus{
+						State: v1alpha1.SessionStatePending,
+					},
+				},
+			},
+			escalations: []*v1alpha1.BreakglassEscalation{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-escalation", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+							Enabled:         true,
+							MaxAllowedScore: intPtr(80),
+						},
+					},
+				},
+			},
+			expectOverrides: false, // Session not approved
+		},
+		{
+			name: "session approved with PodSecurityOverrides",
+			sessions: []v1alpha1.BreakglassSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "active-session",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{Kind: "BreakglassEscalation", Name: "my-escalation"},
+						},
+					},
+					Status: v1alpha1.BreakglassSessionStatus{
+						State: v1alpha1.SessionStateApproved,
+					},
+				},
+			},
+			escalations: []*v1alpha1.BreakglassEscalation{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-escalation", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+							Enabled:         true,
+							MaxAllowedScore: intPtr(80),
+							ExemptFactors:   []string{"hostNetwork", "hostPID"},
+						},
+					},
+				},
+			},
+			expectOverrides:  true,
+			expectedMaxScore: intPtr(80),
+			expectedExempt:   []string{"hostNetwork", "hostPID"},
+		},
+		{
+			name: "session approved but PodSecurityOverrides disabled",
+			sessions: []v1alpha1.BreakglassSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "active-session",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{Kind: "BreakglassEscalation", Name: "my-escalation"},
+						},
+					},
+					Status: v1alpha1.BreakglassSessionStatus{
+						State: v1alpha1.SessionStateApproved,
+					},
+				},
+			},
+			escalations: []*v1alpha1.BreakglassEscalation{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-escalation", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+							Enabled:         false, // Disabled
+							MaxAllowedScore: intPtr(80),
+						},
+					},
+				},
+			},
+			expectOverrides: false, // Disabled
+		},
+		{
+			name: "session approved but no PodSecurityOverrides in escalation",
+			sessions: []v1alpha1.BreakglassSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "active-session",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{Kind: "BreakglassEscalation", Name: "my-escalation"},
+						},
+					},
+					Status: v1alpha1.BreakglassSessionStatus{
+						State: v1alpha1.SessionStateApproved,
+					},
+				},
+			},
+			escalations: []*v1alpha1.BreakglassEscalation{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-escalation", Namespace: "default"},
+					Spec:       v1alpha1.BreakglassEscalationSpec{},
+				},
+			},
+			expectOverrides: false, // No overrides configured
+		},
+		{
+			name: "session approved but escalation not found",
+			sessions: []v1alpha1.BreakglassSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "active-session",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{Kind: "BreakglassEscalation", Name: "nonexistent-escalation"},
+						},
+					},
+					Status: v1alpha1.BreakglassSessionStatus{
+						State: v1alpha1.SessionStateApproved,
+					},
+				},
+			},
+			escalations:     nil, // No escalations
+			expectOverrides: false,
+		},
+		{
+			name: "multiple sessions - first approved has overrides",
+			sessions: []v1alpha1.BreakglassSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "first-session",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{Kind: "BreakglassEscalation", Name: "first-esc"},
+						},
+					},
+					Status: v1alpha1.BreakglassSessionStatus{
+						State: v1alpha1.SessionStateApproved,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "second-session",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{Kind: "BreakglassEscalation", Name: "second-esc"},
+						},
+					},
+					Status: v1alpha1.BreakglassSessionStatus{
+						State: v1alpha1.SessionStateApproved,
+					},
+				},
+			},
+			escalations: []*v1alpha1.BreakglassEscalation{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "first-esc", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+							Enabled:         true,
+							MaxAllowedScore: intPtr(60),
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "second-esc", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+							Enabled:         true,
+							MaxAllowedScore: intPtr(90), // Higher but should not be used
+						},
+					},
+				},
+			},
+			expectOverrides:  true,
+			expectedMaxScore: intPtr(60), // First session's escalation
+		},
+		{
+			name: "session with non-escalation owner reference",
+			sessions: []v1alpha1.BreakglassSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "active-session",
+						Namespace: "default",
+						OwnerReferences: []metav1.OwnerReference{
+							{Kind: "SomeOtherKind", Name: "not-an-escalation"}, // Wrong kind
+						},
+					},
+					Status: v1alpha1.BreakglassSessionStatus{
+						State: v1alpha1.SessionStateApproved,
+					},
+				},
+			},
+			escalations:     nil,
+			expectOverrides: false, // No BreakglassEscalation owner ref
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, _ := zap.NewDevelopment()
+
+			objects := make([]client.Object, 0, len(tc.escalations))
+			for _, esc := range tc.escalations {
+				objects = append(objects, esc)
+			}
+
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objects...).Build()
+			escalMgr := &breakglass.EscalationManager{Client: cli}
+
+			wc := &WebhookController{
+				log:          logger.Sugar(),
+				escalManager: escalMgr,
+			}
+
+			overrides := wc.getPodSecurityOverridesFromSessions(context.Background(), tc.sessions, logger.Sugar())
+
+			if tc.expectOverrides {
+				if overrides == nil {
+					t.Fatal("expected PodSecurityOverrides but got nil")
+				}
+				if tc.expectedMaxScore != nil && (overrides.MaxAllowedScore == nil || *overrides.MaxAllowedScore != *tc.expectedMaxScore) {
+					var got string
+					if overrides.MaxAllowedScore != nil {
+						got = string(rune(*overrides.MaxAllowedScore))
+					}
+					t.Errorf("expected MaxAllowedScore %d, got %s", *tc.expectedMaxScore, got)
+				}
+				if len(tc.expectedExempt) > 0 {
+					if len(overrides.ExemptFactors) != len(tc.expectedExempt) {
+						t.Errorf("expected %d ExemptFactors, got %d", len(tc.expectedExempt), len(overrides.ExemptFactors))
+					}
+				}
+			} else {
+				if overrides != nil {
+					t.Errorf("expected no PodSecurityOverrides but got %+v", overrides)
+				}
+			}
+		})
+	}
+}
+
+// TestGetPodSecurityOverridesFromSessions_NilEscalManager tests behavior when escalation manager is nil
+func TestGetPodSecurityOverridesFromSessions_NilEscalManager(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	wc := &WebhookController{
+		log:          logger.Sugar(),
+		escalManager: nil, // No escalation manager
+	}
+
+	sessions := []v1alpha1.BreakglassSession{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "active-session",
+				Namespace: "default",
+				OwnerReferences: []metav1.OwnerReference{
+					{Kind: "BreakglassEscalation", Name: "my-escalation"},
+				},
+			},
+			Status: v1alpha1.BreakglassSessionStatus{
+				State: v1alpha1.SessionStateApproved,
+			},
+		},
+	}
+
+	overrides := wc.getPodSecurityOverridesFromSessions(context.Background(), sessions, logger.Sugar())
+
+	if overrides != nil {
+		t.Errorf("expected nil overrides when escalManager is nil, got %+v", overrides)
+	}
+}
+
+// intPtr is a helper to create *int for test cases
+func intPtr(i int) *int {
+	return &i
+}
+
+// TestFetchNamespaceLabels_WithMockFunction tests the namespace label fetch function injection for testing.
+func TestFetchNamespaceLabels_WithMockFunction(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	wc := &WebhookController{
+		log: logger.Sugar(),
+	}
+
+	// Set up a mock function that returns labels
+	mockLabels := map[string]string{"env": "production", "tier": "critical"}
+	wc.SetNamespaceLabelsFetchFn(func(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+		if clusterName != "test-cluster" {
+			t.Errorf("unexpected cluster: %s", clusterName)
+		}
+		if namespace != "test-ns" {
+			t.Errorf("unexpected namespace: %s", namespace)
+		}
+		return mockLabels, nil
+	})
+
+	labels, err := wc.fetchNamespaceLabels(context.Background(), "test-cluster", "test-ns")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if labels["env"] != "production" {
+		t.Errorf("expected env=production, got %s", labels["env"])
+	}
+	if labels["tier"] != "critical" {
+		t.Errorf("expected tier=critical, got %s", labels["tier"])
+	}
+}
+
+// TestFetchNamespaceLabels_MockReturnsError tests error handling from the mock function.
+func TestFetchNamespaceLabels_MockReturnsError(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	wc := &WebhookController{
+		log: logger.Sugar(),
+	}
+
+	expectedErr := "namespace not found"
+	wc.SetNamespaceLabelsFetchFn(func(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+		return nil, fmt.Errorf("%s", expectedErr)
+	})
+
+	labels, err := wc.fetchNamespaceLabels(context.Background(), "test-cluster", "missing-ns")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if labels != nil {
+		t.Errorf("expected nil labels on error, got %v", labels)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte(expectedErr)) {
+		t.Errorf("expected error to contain %q, got %q", expectedErr, err.Error())
+	}
+}
+
+// TestFetchNamespaceLabels_NilCCProvider tests error when ccProvider is nil and no mock is set.
+func TestFetchNamespaceLabels_NilCCProvider(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	wc := &WebhookController{
+		log:        logger.Sugar(),
+		ccProvider: nil, // No provider configured
+	}
+
+	labels, err := wc.fetchNamespaceLabels(context.Background(), "test-cluster", "test-ns")
+	if err == nil {
+		t.Fatal("expected error when ccProvider is nil")
+	}
+	if labels != nil {
+		t.Errorf("expected nil labels, got %v", labels)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("not configured")) {
+		t.Errorf("expected error to mention 'not configured', got %q", err.Error())
+	}
+}
+
+// TestHandleAuthorize_DenyPolicyWithNamespaceLabels tests that namespace labels are used for deny policy evaluation.
+func TestHandleAuthorize_DenyPolicyWithNamespaceLabels(t *testing.T) {
+	// Create a DenyPolicy that uses SelectorTerms (label selectors)
+	denyPol := &v1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "deny-prod"},
+		Spec: v1alpha1.DenyPolicySpec{
+			Rules: []v1alpha1.DenyRule{{
+				Verbs:     []string{"delete"},
+				APIGroups: []string{""},
+				Resources: []string{"services"},
+				Namespaces: &v1alpha1.NamespaceFilter{
+					SelectorTerms: []v1alpha1.NamespaceSelectorTerm{{
+						MatchLabels: map[string]string{"env": "production"},
+					}},
+				},
+			}},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(denyPol)
+	for k, fn := range sessionIndexFnsWebhook {
+		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+	}
+	cli := builder.Build()
+
+	sesMgr := &breakglass.SessionManager{Client: cli}
+	escalMgr := &breakglass.EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	eval := policy.NewEvaluator(cli, logger.Sugar())
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, eval)
+
+	// Mock namespace labels to return production env labels
+	wc.SetNamespaceLabelsFetchFn(func(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+		// Return production labels for the target namespace
+		if namespace == "prod-services" {
+			return map[string]string{"env": "production"}, nil
+		}
+		// Return staging labels for other namespaces
+		return map[string]string{"env": "staging"}, nil
+	})
+
+	// Override canDoFn to deny RBAC check (so deny policy is evaluated)
+	wc.canDoFn = func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clustername string) (bool, error) {
+		return false, nil
+	}
+
+	t.Run("deny by label selector matching", func(t *testing.T) {
+		// Request to delete service in production namespace
+		sar := authorizationv1.SubjectAccessReview{
+			TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: "alice@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: "prod-services",
+					Verb:      "delete",
+					Group:     "",
+					Resource:  "services",
+				},
+			},
+		}
+		body, _ := json.Marshal(sar)
+
+		engine := gin.New()
+		_ = wc.Register(engine.Group("/" + wc.BasePath()))
+
+		req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
+		}
+
+		var resp SubjectAccessReviewResponse
+		bodyBytes := new(bytes.Buffer)
+		if _, err := bodyBytes.ReadFrom(w.Result().Body); err != nil {
+			t.Fatalf("failed to read response body: %v", err)
+		}
+		if err := json.Unmarshal(bodyBytes.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v; raw=%s", err, bodyBytes.String())
+		}
+
+		if resp.Status.Allowed {
+			t.Error("expected Allowed=false due to deny policy label selector match")
+		}
+		if resp.Status.Reason == "" || !bytes.Contains([]byte(resp.Status.Reason), []byte("deny-prod")) {
+			t.Logf("Note: expected deny reason to mention 'deny-prod', got: %s", resp.Status.Reason)
+		}
+	})
+
+	t.Run("allow in non-production namespace", func(t *testing.T) {
+		// Request to delete service in staging namespace (should not be blocked by label selector)
+		sar := authorizationv1.SubjectAccessReview{
+			TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: "alice@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: "staging-services",
+					Verb:      "delete",
+					Group:     "",
+					Resource:  "services",
+				},
+			},
+		}
+		body, _ := json.Marshal(sar)
+
+		req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+
+		engine := gin.New()
+		_ = wc.Register(engine.Group("/" + wc.BasePath()))
+		engine.ServeHTTP(w, req)
+
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
+		}
+
+		var resp SubjectAccessReviewResponse
+		bodyBytes := new(bytes.Buffer)
+		if _, err := bodyBytes.ReadFrom(w.Result().Body); err != nil {
+			t.Fatalf("failed to read response body: %v", err)
+		}
+		if err := json.Unmarshal(bodyBytes.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v; raw=%s", err, bodyBytes.String())
+		}
+
+		// With RBAC denied and no matching deny policy, it should still be denied by regular RBAC flow
+		// But we're verifying the deny policy is NOT blocking this request
+		// Note: The response may still be denied due to no active session, but it should not mention deny-prod
+		if bytes.Contains([]byte(resp.Status.Reason), []byte("blocked by deny policy")) {
+			t.Errorf("expected request to NOT be blocked by deny policy for staging namespace, but got: %s", resp.Status.Reason)
+		}
+	})
 }

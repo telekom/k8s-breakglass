@@ -226,14 +226,16 @@ type EphemeralContainersConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 
 	// allowedNamespaces restricts which namespaces users can debug pods in.
-	// Supports glob patterns. Empty means all namespaces allowed.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
+	// Empty means all namespaces allowed.
 	// +optional
-	AllowedNamespaces []string `json:"allowedNamespaces,omitempty"`
+	AllowedNamespaces *NamespaceFilter `json:"allowedNamespaces,omitempty"`
 
 	// deniedNamespaces blocks debugging in specific namespaces.
 	// Evaluated after allowedNamespaces.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
 	// +optional
-	DeniedNamespaces []string `json:"deniedNamespaces,omitempty"`
+	DeniedNamespaces *NamespaceFilter `json:"deniedNamespaces,omitempty"`
 
 	// allowedImages restricts which images can be used for ephemeral containers.
 	// Supports glob patterns. Empty means all images allowed.

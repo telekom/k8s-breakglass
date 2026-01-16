@@ -26,7 +26,9 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
+	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/version"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 	"go.uber.org/zap"
 )
@@ -55,6 +57,9 @@ type Server struct {
 	idpMutex sync.RWMutex
 	// parsed OIDC authority (original configured value) used by the OIDC proxy
 	oidcAuthority *url.URL
+	// rateLimiters holds references to rate limiters for cleanup
+	publicRateLimiter     *ratelimit.IPRateLimiter
+	publicAuthRateLimiter *ratelimit.AuthenticatedRateLimiter
 }
 type ServerConfig struct {
 	Auth  *AuthHandler
@@ -101,6 +106,23 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	}
 
 	engine := gin.New()
+
+	// Request body size limit middleware (1MB default)
+	// Prevents DoS attacks via excessively large request bodies
+	const maxBodySize = 1 << 20 // 1 MiB
+	engine.Use(func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
+		}
+		c.Next()
+	})
+
+	// Basic per-IP rate limiter for public/unauthenticated endpoints
+	// This applies to all requests before authentication (e.g., /api/config, /api/identity-provider)
+	// Uses a moderate limit: 20 req/s per IP, burst of 50
+	// Authenticated endpoints have separate, more generous per-user limits applied in their handlers
+	publicRateLimiter := ratelimit.New(ratelimit.DefaultAPIConfig())
+	engine.Use(publicRateLimiter.Middleware())
 
 	// Configure trusted proxies for X-Forwarded-For headers
 	// Only trust proxies that are explicitly configured (typically the ingress/load balancer)
@@ -243,15 +265,21 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		auth = NewAuth(log.Sugar(), cfg)
 	}
 
+	// Create authenticated rate limiter for public endpoints
+	// Even public endpoints get better rate limits if the user provides a valid JWT
+	// Unauthenticated: 10 req/s per IP, Authenticated: 50 req/s per user
+	publicAuthRateLimiter := ratelimit.NewAuthenticated(ratelimit.DefaultAuthenticatedAPIConfig())
+
 	s := &Server{
-		gin:    engine,
-		config: cfg,
-		auth:   auth,
-		log:    log,
+		gin:                   engine,
+		config:                cfg,
+		auth:                  auth,
+		log:                   log,
+		publicRateLimiter:     publicRateLimiter,
+		publicAuthRateLimiter: publicAuthRateLimiter,
 	}
 
 	// Note: oidcAuthority is set dynamically when IdentityProvider is loaded via SetIdentityProvider()
-	// No need to parse from config.AuthorizationServer since we now use IdentityProvider CRD
 
 	// OIDC proxy endpoint: proxies discovery and JWKS calls to the configured OIDC authority
 	// This allows the browser to fetch .well-known/openid-configuration and jwks via the
@@ -269,14 +297,17 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		})
 	})
 
-	// Public configuration endpoint
-	engine.GET("api/config", s.getConfig)
+	// Public configuration endpoints with optional auth rate limiting
+	// These endpoints don't require auth, but authenticated users get higher rate limits
+	optionalAuthRateLimit := auth.OptionalAuthRateLimitMiddleware(publicAuthRateLimiter)
+	engine.GET("/api/config", optionalAuthRateLimit, s.getConfig)
+	engine.GET("/api/identity-provider", optionalAuthRateLimit, s.getIdentityProvider)
+	engine.GET("/api/config/idps", optionalAuthRateLimit, s.getMultiIDPConfig)
 
-	// Identity Provider configuration endpoint (non-secrets)
-	engine.GET("api/identity-provider", s.getIdentityProvider)
-
-	// Multi-IDP configuration endpoint for frontend IDP selection
-	engine.GET("api/config/idps", s.getMultiIDPConfig)
+	// Debug endpoint: build information
+	engine.GET("/api/debug/buildinfo", func(c *gin.Context) {
+		c.JSON(http.StatusOK, version.GetBuildInfo())
+	})
 
 	return s
 }
@@ -425,7 +456,7 @@ func (s *Server) SetEscalationReconciler(reconciler *config.EscalationReconciler
 }
 
 func (s *Server) RegisterAll(controllers []APIController) error {
-	apiGroup := s.gin.Group("api")
+	apiGroup := s.gin.Group("/api")
 	for _, c := range controllers {
 		// Register under /api/<base>
 		if err := c.Register(apiGroup.Group(c.BasePath(), c.Handlers()...)); err != nil {
@@ -459,6 +490,17 @@ func (s *Server) Listen() {
 // for tests that need to exercise the full API stack without starting a real TCP server.
 func (s *Server) Handler() http.Handler {
 	return s.gin
+}
+
+// Close cleans up server resources including stopping rate limiter cleanup goroutines.
+// This should be called when the server is no longer needed (e.g., in tests or graceful shutdown).
+func (s *Server) Close() {
+	if s.publicAuthRateLimiter != nil {
+		s.publicAuthRateLimiter.Stop()
+	}
+	if s.publicRateLimiter != nil {
+		s.publicRateLimiter.Stop()
+	}
 }
 
 type FrontendConfig struct {
@@ -695,7 +737,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if s.oidcAuthority == nil {
 		s.log.Sugar().Warnw("oidc_proxy_missing_authority")
 		recordOIDCProxyFailure("missing_authority", start)
-		c.JSON(http.StatusNotFound, gin.H{"error": "OIDC authority not configured"})
+		c.JSON(http.StatusNotFound, APIError{Error: "OIDC authority not configured", Code: "NOT_FOUND"})
 		return
 	}
 
@@ -729,7 +771,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_client_error", "error", err)
 		recordOIDCProxyFailure("tls_configuration_error", start)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "oidc proxy TLS configuration error", "detail": err.Error()})
+		RespondInternalErrorSimple(c, "oidc proxy TLS configuration error")
 		return
 	}
 	req, err := buildOIDCProxyHTTPRequest(c, target)
@@ -737,10 +779,10 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
 		if errors.Is(err, errOIDCProxyReadBody) {
 			recordOIDCProxyFailure("read_body_error", start)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read request body", "detail": err.Error()})
+			RespondInternalErrorSimple(c, "failed to read request body")
 		} else {
 			recordOIDCProxyFailure("request_build_error", start)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build proxy request", "detail": err.Error()})
+			RespondInternalErrorSimple(c, "failed to build proxy request")
 		}
 		return
 	}
@@ -749,7 +791,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_upstream_error", "error", err, "target", target, "elapsed", time.Since(start))
 		recordOIDCProxyFailure("upstream_error", start)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch from authority", "detail": err.Error(), "target": target})
+		RespondBadGateway(c, "failed to fetch from authority")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -768,7 +810,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if _, err := io.Copy(c.Writer, resp.Body); err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_copy_error", "error", err, "target", target)
 		recordOIDCProxyFailure("response_copy_error", start)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to stream response from authority", "detail": err.Error(), "target": target})
+		RespondBadGateway(c, "failed to stream response from authority")
 		return
 	}
 
@@ -780,31 +822,31 @@ func (s *Server) handleOIDCProxyPathError(c *gin.Context, proxyPath, normalizedP
 	case errors.Is(err, errProxyPathNotAllowed):
 		s.log.Sugar().Warnw("oidc_proxy_path_not_whitelisted", "path", proxyPath, "normalized", normalizedPath)
 		recordOIDCProxyFailure("path_not_allowed", start)
-		c.JSON(http.StatusForbidden, gin.H{"error": errProxyPathNotAllowed.Error()})
+		c.JSON(http.StatusForbidden, APIError{Error: errProxyPathNotAllowed.Error(), Code: "FORBIDDEN"})
 	case errors.Is(err, errProxyPathSuspicious):
 		s.log.Sugar().Warnw("oidc_proxy_suspicious_pattern", "path", proxyPath)
 		recordOIDCProxyFailure("suspicious_pattern", start)
-		c.JSON(http.StatusForbidden, gin.H{"error": errProxyPathSuspicious.Error()})
+		c.JSON(http.StatusForbidden, APIError{Error: errProxyPathSuspicious.Error(), Code: "FORBIDDEN"})
 	case errors.Is(err, errProxyPathMalformed):
 		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "normalized", normalizedPath, "error", err)
 		recordOIDCProxyFailure("malformed_path", start)
-		c.JSON(http.StatusBadRequest, gin.H{"error": errProxyPathMalformed.Error()})
+		c.JSON(http.StatusBadRequest, APIError{Error: errProxyPathMalformed.Error(), Code: "BAD_REQUEST"})
 	case errors.Is(err, errProxyAuthorityMissing):
 		s.log.Sugar().Errorw("oidc_proxy_missing_authority_base", "path", proxyPath)
 		recordOIDCProxyFailure("missing_authority", start)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errProxyAuthorityMissing.Error()})
+		RespondInternalErrorSimple(c, errProxyAuthorityMissing.Error())
 	case errors.Is(err, errProxyPathAbsolute):
 		s.log.Sugar().Warnw("oidc_proxy_absolute_url_detected", "path", proxyPath)
 		recordOIDCProxyFailure("absolute_url_detected", start)
-		c.JSON(http.StatusForbidden, gin.H{"error": errProxyPathAbsolute.Error()})
+		c.JSON(http.StatusForbidden, APIError{Error: errProxyPathAbsolute.Error(), Code: "FORBIDDEN"})
 	case errors.Is(err, errURLResolutionAttack):
 		s.log.Sugar().Warnw("oidc_proxy_url_resolution_attack", "originalPath", proxyPath)
 		recordOIDCProxyFailure("url_resolution_attack", start)
-		c.JSON(http.StatusForbidden, gin.H{"error": errURLResolutionAttack.Error()})
+		c.JSON(http.StatusForbidden, APIError{Error: errURLResolutionAttack.Error(), Code: "FORBIDDEN"})
 	default:
 		s.log.Sugar().Errorw("oidc_proxy_unknown_path_error", "path", proxyPath, "error", err)
 		recordOIDCProxyFailure("path_error", start)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy path"})
+		c.JSON(http.StatusBadRequest, APIError{Error: "invalid proxy path", Code: "BAD_REQUEST"})
 	}
 }
 
@@ -813,15 +855,15 @@ func (s *Server) handleOIDCProxyAuthorityError(c *gin.Context, headerValue strin
 	case errors.Is(err, errInvalidAuthorityHeader):
 		s.log.Sugar().Warnw("oidc_proxy_invalid_authority_header", "customAuthority", headerValue, "error", err)
 		recordOIDCProxyFailure("invalid_authority_header", start)
-		c.JSON(http.StatusBadRequest, gin.H{"error": errInvalidAuthorityHeader.Error()})
+		c.JSON(http.StatusBadRequest, APIError{Error: errInvalidAuthorityHeader.Error(), Code: "BAD_REQUEST"})
 	case errors.Is(err, errUnknownOIDCAuthority):
 		s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", headerValue)
 		recordOIDCProxyFailure("unknown_authority", start)
-		c.JSON(http.StatusForbidden, gin.H{"error": errUnknownOIDCAuthority.Error()})
+		c.JSON(http.StatusForbidden, APIError{Error: errUnknownOIDCAuthority.Error(), Code: "FORBIDDEN"})
 	default:
 		s.log.Sugar().Errorw("oidc_proxy_authority_error", "customAuthority", headerValue, "error", err)
 		recordOIDCProxyFailure("authority_error", start)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid authority header"})
+		c.JSON(http.StatusBadRequest, APIError{Error: "invalid authority header", Code: "BAD_REQUEST"})
 	}
 }
 
@@ -954,9 +996,14 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 		log.Infow("Frontend UI enabled via --enable-frontend=true")
 	}
 
+	// Create authenticated rate limiter for API endpoints
+	// Authenticated users get 50 req/s (per user), unauthenticated get 10 req/s (per IP)
+	apiRateLimiter := ratelimit.NewAuthenticated(ratelimit.DefaultAuthenticatedAPIConfig())
+
 	if enableAPI {
 		apiControllers = append(apiControllers, sessionController)
-		apiControllers = append(apiControllers, breakglass.NewBreakglassEscalationController(log, escalationManager, auth.Middleware(), configPath))
+		// Use combined auth + rate limiting middleware for escalation controller
+		apiControllers = append(apiControllers, breakglass.NewBreakglassEscalationController(log, escalationManager, auth.MiddlewareWithRateLimiting(apiRateLimiter), configPath))
 		// Register debug session API controller if provided
 		if debugSessionCtrl != nil {
 			apiControllers = append(apiControllers, debugSessionCtrl)

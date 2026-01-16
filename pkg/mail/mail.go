@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net"
+	"net/smtp"
+	"strings"
 	"time"
 
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -27,12 +30,44 @@ type sender struct {
 	senderName     string
 	retryCount     int
 	retryBackoffMs int
+	disableTLS     bool // when true, use plain SMTP without STARTTLS
+	host           string
+	port           int
+	username       string
+	password       string
+}
+
+// sanitizeHeaderValue removes all ASCII control characters from header values
+// to prevent email header injection attacks. This includes CR, LF, NUL, and
+// other control characters (0x00-0x1F and 0x7F) that could be used to inject
+// additional headers or break MIME structure.
+func sanitizeHeaderValue(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		// Skip ASCII control characters (0x00-0x1F) and DEL (0x7F)
+		if ch < 0x20 || ch == 0x7F {
+			continue
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
+}
+
+// sanitizeBodyValue normalizes the message body to avoid accidentally breaking the
+// MIME structure when constructing raw messages. It preserves HTML content while
+// removing bare CR characters that could interfere with SMTP parsing.
+func sanitizeBodyValue(s string) string {
+	// Remove carriage returns; SMTP line endings will be added by fmt.Sprintf template.
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
 }
 
 // NewSenderFromMailProvider creates a mail sender from MailProvider configuration
 func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName string) Sender {
-	log.Printf("[mail] Initializing mail sender from MailProvider: %s (host: %s, port: %d)",
-		mpConfig.Name, mpConfig.Host, mpConfig.Port)
+	log.Printf("[mail] Initializing mail sender from MailProvider: %s (host: %s, port: %d, disableTLS: %v)",
+		mpConfig.Name, mpConfig.Host, mpConfig.Port, mpConfig.DisableTLS)
 
 	d := gomail.NewDialer(mpConfig.Host, mpConfig.Port, mpConfig.Username, mpConfig.Password)
 
@@ -73,6 +108,11 @@ func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName
 		senderName:     senderName,
 		retryCount:     retryCount,
 		retryBackoffMs: retryBackoffMs,
+		disableTLS:     mpConfig.DisableTLS,
+		host:           mpConfig.Host,
+		port:           mpConfig.Port,
+		username:       mpConfig.Username,
+		password:       mpConfig.Password,
 	}
 }
 
@@ -83,18 +123,34 @@ func (s *sender) Send(receivers []string, subject, body string) error {
 		return fmt.Errorf("cannot send email with no receivers")
 	}
 
-	log.Printf("[mail] Preparing to send mail to %d receivers. Subject: %s", len(receivers), subject)
-	msg := gomail.NewMessage()
-	msg.SetAddressHeader("From", s.senderAddress, s.senderName)
-	msg.SetHeader("Bcc", receivers...)
-	msg.SetHeader("Subject", subject)
-	msg.SetBody("text/html", body)
+	// Sanitize subject to prevent email header injection
+	// Subject is a header value and must not contain CRLF characters
+	safeSubject := sanitizeHeaderValue(subject)
+
+	// Sanitize body to prevent MIME structure manipulation
+	// This removes bare CR characters that could break email parsing
+	safeBody := sanitizeBodyValue(body)
+
+	log.Printf("[mail] Preparing to send mail to %d receivers. Subject: %s", len(receivers), safeSubject)
 
 	var lastErr error
 	backoffMs := s.retryBackoffMs
 
 	for attempt := 0; attempt <= s.retryCount; attempt++ {
-		err := s.dialer.DialAndSend(msg)
+		var err error
+		if s.disableTLS {
+			// Use plain SMTP without STARTTLS (for MailHog and similar dev servers)
+			err = s.sendPlainSMTP(receivers, safeSubject, safeBody)
+		} else {
+			// Use gomail with TLS/STARTTLS support
+			msg := gomail.NewMessage()
+			msg.SetAddressHeader("From", s.senderAddress, s.senderName)
+			msg.SetHeader("Bcc", receivers...)
+			msg.SetHeader("Subject", safeSubject)
+			msg.SetBody("text/html", safeBody)
+			err = s.dialer.DialAndSend(msg)
+		}
+
 		if err == nil {
 			log.Printf("[mail] Mail sent successfully to %d receivers on attempt %d", len(receivers), attempt+1)
 			metrics.MailSendSuccess.WithLabelValues(s.GetHost()).Inc()
@@ -114,6 +170,108 @@ func (s *sender) Send(receivers []string, subject, body string) error {
 
 	metrics.MailSendFailure.WithLabelValues(s.GetHost()).Inc()
 	return lastErr
+}
+
+// sendPlainSMTP sends email using plain SMTP without STARTTLS
+// This is used for development SMTP servers like MailHog that don't support TLS
+func (s *sender) sendPlainSMTP(receivers []string, subject, body string) error {
+	addr := net.JoinHostPort(s.host, fmt.Sprintf("%d", s.port))
+
+	// Connect to the server
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Create SMTP client
+	client, err := smtp.NewClient(conn, s.host)
+	if err != nil {
+		return fmt.Errorf("failed to create SMTP client: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	// Authenticate if credentials are provided
+	if s.username != "" && s.password != "" {
+		auth := smtp.PlainAuth("", s.username, s.password, s.host)
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("SMTP authentication failed: %w", err)
+		}
+	}
+
+	// Set sender
+	fromAddr := s.senderAddress
+	if err := client.Mail(fromAddr); err != nil {
+		return fmt.Errorf("MAIL FROM failed: %w", err)
+	}
+
+	// Set recipients
+	for _, rcpt := range receivers {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("RCPT TO failed for %s: %w", rcpt, err)
+		}
+	}
+
+	// Send the email body
+	wc, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("DATA command failed: %w", err)
+	}
+
+	// Build email headers and body
+	// Sanitize header values to prevent email header injection attacks
+	safeSenderName := sanitizeHeaderValue(s.senderName)
+	safeSenderAddress := sanitizeHeaderValue(s.senderAddress)
+	fromHeader := safeSenderAddress
+	if safeSenderName != "" {
+		fromHeader = fmt.Sprintf("%s <%s>", safeSenderName, safeSenderAddress)
+	}
+
+	// Sanitize receivers to prevent header injection through Bcc field
+	safeReceivers := make([]string, len(receivers))
+	for i, r := range receivers {
+		safeReceivers[i] = sanitizeHeaderValue(r)
+	}
+
+	// Sanitize subject and body before constructing raw MIME message
+	safeSubject := sanitizeHeaderValue(subject)
+	safeBody := sanitizeBodyValue(body)
+
+	msg := fmt.Sprintf("From: %s\r\n"+
+		"Bcc: %s\r\n"+
+		"Subject: %s\r\n"+
+		"MIME-Version: 1.0\r\n"+
+		"Content-Type: text/html; charset=UTF-8\r\n"+
+		"\r\n"+
+		"%s",
+		fromHeader,
+		joinReceivers(safeReceivers),
+		safeSubject,
+		safeBody)
+
+	if _, err := wc.Write([]byte(msg)); err != nil {
+		_ = wc.Close()
+		return fmt.Errorf("failed to write message: %w", err)
+	}
+
+	if err := wc.Close(); err != nil {
+		return fmt.Errorf("failed to close message writer: %w", err)
+	}
+
+	// Quit gracefully
+	return client.Quit()
+}
+
+// joinReceivers joins email addresses for the Bcc header
+func joinReceivers(receivers []string) string {
+	result := ""
+	for i, r := range receivers {
+		if i > 0 {
+			result += ", "
+		}
+		result += r
+	}
+	return result
 }
 
 func (s *sender) GetHost() string {

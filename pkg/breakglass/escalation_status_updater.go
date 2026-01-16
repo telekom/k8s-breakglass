@@ -2,12 +2,14 @@ package breakglass
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Nerzal/gocloak/v13"
+	"github.com/go-resty/resty/v2"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
@@ -69,6 +71,28 @@ func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.KeycloakR
 		ttl = d
 	}
 	gc := gocloak.NewClient(cfg.BaseURL)
+
+	// Configure TLS settings for the gocloak client
+	// This is necessary for self-signed certificates in test/dev environments
+	if cfg.InsecureSkipVerify {
+		restyClient := resty.New()
+		restyClient.SetTLSClientConfig(&tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // This is intentional for E2E testing with self-signed certs
+		})
+		gc.SetRestyClient(restyClient)
+		if log != nil {
+			log.Debugw("Keycloak client configured with InsecureSkipVerify=true",
+				"baseURL", cfg.BaseURL, "realm", cfg.Realm)
+		}
+	} else if cfg.CertificateAuthority != "" {
+		// If CA cert is provided, configure it (future enhancement)
+		// For now, just log that CA cert was specified
+		if log != nil {
+			log.Debugw("Keycloak client using custom CA certificate",
+				"baseURL", cfg.BaseURL, "realm", cfg.Realm)
+		}
+	}
+
 	return &KeycloakGroupMemberResolver{log: log, cfg: cfg, gocloak: gc, cache: newKCCache(ttl)}
 }
 

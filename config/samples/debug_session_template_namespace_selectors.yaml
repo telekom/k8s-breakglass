@@ -1,0 +1,174 @@
+# Sample DebugSessionTemplate with Namespace Label Selectors
+#
+# This example demonstrates using Kubernetes label selectors to dynamically
+# filter which namespaces can be targeted for debugging. This is useful when:
+# - Namespace naming conventions are inconsistent
+# - Namespaces are created dynamically
+# - You want to allow/deny debugging based on team/environment labels
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: debug-with-namespace-selectors
+spec:
+  displayName: "Debug with Namespace Selectors"
+  description: "Debug session using label selectors to filter target namespaces"
+  mode: kubectl-debug
+  targetNamespace: breakglass-debug
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: true
+      
+      # Allow debugging in namespaces matching labels
+      allowedNamespaces:
+        # Allow by name patterns
+        patterns:
+          - "app-*"
+          - "service-*"
+        # OR allow by labels (OR logic between selectorTerms)
+        selectorTerms:
+          # Allow debugging in development namespaces
+          - matchLabels:
+              env: development
+          # Allow debugging in namespaces owned by the user's team
+          - matchLabels:
+              debugging-allowed: "true"
+          # Allow debugging in non-production namespaces
+          - matchExpressions:
+              - key: env
+                operator: In
+                values: ["dev", "test", "staging"]
+      
+      # Deny debugging in sensitive namespaces
+      deniedNamespaces:
+        # Deny by name patterns
+        patterns:
+          - "kube-*"
+          - "openshift-*"
+          - "*-system"
+        # OR deny by labels
+        selectorTerms:
+          # Deny debugging in production namespaces
+          - matchLabels:
+              env: production
+          # Deny debugging in compliance-sensitive namespaces
+          - matchLabels:
+              compliance: pci-dss
+          # Deny debugging in namespaces with restricted label
+          - matchExpressions:
+              - key: restricted
+                operator: Exists
+      
+      allowedImages:
+        - "nicolaka/netshoot:*"
+        - "busybox:*"
+        - "alpine:*"
+      requireImageDigest: false
+      allowPrivileged: false
+      requireNonRoot: true
+    
+    nodeDebug:
+      enabled: false
+    podCopy:
+      enabled: false
+  
+  allowed:
+    groups:
+      - developers
+      - platform-engineers
+    clusters:
+      - "*"
+  
+  approvers:
+    autoApproveFor:
+      groups:
+        - sre-team
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# Example: Node debugging with namespace constraints for pod targeting
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: node-debug-restricted
+spec:
+  displayName: "Node Debug (Restricted)"
+  description: "Node debugging with strict namespace-based access control"
+  mode: kubectl-debug
+  targetNamespace: breakglass-debug
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: true
+      
+      # Only allow debugging pods in specific labeled namespaces
+      allowedNamespaces:
+        selectorTerms:
+          # Only allow debugging in SRE-owned namespaces
+          - matchLabels:
+              owner: sre
+          # Or namespaces explicitly allowing node debug
+          - matchLabels:
+              node-debug-allowed: "true"
+          # Or infrastructure namespaces
+          - matchExpressions:
+              - key: layer
+                operator: In
+                values: ["infrastructure", "platform"]
+      
+      # Always deny these critical namespaces
+      deniedNamespaces:
+        selectorTerms:
+          # Never debug in production-critical namespaces
+          - matchExpressions:
+              - key: criticality
+                operator: In
+                values: ["critical", "high"]
+              - key: env
+                operator: In
+                values: ["production"]
+      
+      allowedImages:
+        - "busybox:*"
+      requireNonRoot: true
+    
+    nodeDebug:
+      enabled: true
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+    
+    podCopy:
+      enabled: false
+  
+  allowed:
+    groups:
+      - sre-team
+    clusters:
+      - "prod-*"
+  
+  # No auto-approve for node debugging
+  approvers:
+    groups:
+      - sre-leads
+  
+  constraints:
+    maxDuration: "30m"
+    defaultDuration: "15m"
+    allowRenewal: false
+    maxConcurrentSessions: 1
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true

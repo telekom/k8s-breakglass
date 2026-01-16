@@ -138,12 +138,12 @@ func TestAuthHandler_MiddlewareErrorResponses(t *testing.T) {
 		{
 			name:         "No Bearer token error",
 			authHeader:   "Basic test",
-			expectedBody: `{"error":"No Bearer token provided in Authorization header"}`,
+			expectedBody: `{"error":"No Bearer token provided in Authorization header","code":"UNAUTHORIZED"}`,
 		},
 		{
 			name:         "Empty header error",
 			authHeader:   "",
-			expectedBody: `{"error":"No Bearer token provided in Authorization header"}`,
+			expectedBody: `{"error":"No Bearer token provided in Authorization header","code":"UNAUTHORIZED"}`,
 		},
 	}
 

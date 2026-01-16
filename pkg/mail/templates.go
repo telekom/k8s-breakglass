@@ -3,6 +3,7 @@ package mail
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
 	"html/template"
 )
 
@@ -175,18 +176,31 @@ type RequestBreakglassSessionMailParams struct {
 	BrandingName string
 }
 
+// MustParseTemplate parses a template and logs a fatal error if parsing fails.
+// This provides better error messages than panic() during startup.
+func MustParseTemplate(name, content string) *template.Template {
+	t, err := template.New(name).Parse(content)
+	if err != nil {
+		// Log the error with context before panicking.
+		// This is acceptable in init() because template parsing errors indicate
+		// a bug in the embedded template files that must be fixed before deployment.
+		panic(fmt.Sprintf("failed to parse email template %q: %v", name, err))
+	}
+	return t
+}
+
 var (
-	requestTemplate                = template.New("request")
-	approvedTempate                = template.New("approved")
-	rejectedTemplate               = template.New("rejected")
-	breakglassSessionTemplate      = template.New("breakglassSessionRequest")
-	breakglassNotificationTemplate = template.New("breakglassSessionNotification")
-	debugSessionRequestTemplate    = template.New("debugSessionRequest")
-	debugSessionApprovedTemplate   = template.New("debugSessionApproved")
-	debugSessionRejectedTemplate   = template.New("debugSessionRejected")
-	sessionExpiredTemplate         = template.New("sessionExpired")
-	sessionActivatedTemplate       = template.New("sessionActivated")
-	debugSessionExpiredTemplate    = template.New("debugSessionExpired")
+	requestTemplate                *template.Template
+	approvedTempate                *template.Template
+	rejectedTemplate               *template.Template
+	breakglassSessionTemplate      *template.Template
+	breakglassNotificationTemplate *template.Template
+	debugSessionRequestTemplate    *template.Template
+	debugSessionApprovedTemplate   *template.Template
+	debugSessionRejectedTemplate   *template.Template
+	sessionExpiredTemplate         *template.Template
+	sessionActivatedTemplate       *template.Template
+	debugSessionExpiredTemplate    *template.Template
 
 	//go:embed templates/request.html
 	requestTemplateRaw string
@@ -213,39 +227,21 @@ var (
 )
 
 func init() {
-	if _, err := requestTemplate.Parse(requestTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := approvedTempate.Parse(approvedTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := rejectedTemplate.Parse(rejectedTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := breakglassSessionTemplate.Parse(breakglassSessionReqTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := breakglassNotificationTemplate.Parse(breakglassSessionNotifiTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := debugSessionRequestTemplate.Parse(debugSessionRequestTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := debugSessionApprovedTemplate.Parse(debugSessionApprovedTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := debugSessionRejectedTemplate.Parse(debugSessionRejectedTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := sessionExpiredTemplate.Parse(sessionExpiredTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := sessionActivatedTemplate.Parse(sessionActivatedTemplateRaw); err != nil {
-		panic(err)
-	}
-	if _, err := debugSessionExpiredTemplate.Parse(debugSessionExpiredTemplateRaw); err != nil {
-		panic(err)
-	}
+	// Parse all email templates at startup using MustParseTemplate.
+	// Any parsing errors will panic with a descriptive error message.
+	// This is acceptable because template errors indicate bugs in embedded files
+	// that must be fixed before deployment.
+	requestTemplate = MustParseTemplate("request", requestTemplateRaw)
+	approvedTempate = MustParseTemplate("approved", approvedTemplateRaw)
+	rejectedTemplate = MustParseTemplate("rejected", rejectedTemplateRaw)
+	breakglassSessionTemplate = MustParseTemplate("breakglassSessionRequest", breakglassSessionReqTemplateRaw)
+	breakglassNotificationTemplate = MustParseTemplate("breakglassSessionNotification", breakglassSessionNotifiTemplateRaw)
+	debugSessionRequestTemplate = MustParseTemplate("debugSessionRequest", debugSessionRequestTemplateRaw)
+	debugSessionApprovedTemplate = MustParseTemplate("debugSessionApproved", debugSessionApprovedTemplateRaw)
+	debugSessionRejectedTemplate = MustParseTemplate("debugSessionRejected", debugSessionRejectedTemplateRaw)
+	sessionExpiredTemplate = MustParseTemplate("sessionExpired", sessionExpiredTemplateRaw)
+	sessionActivatedTemplate = MustParseTemplate("sessionActivated", sessionActivatedTemplateRaw)
+	debugSessionExpiredTemplate = MustParseTemplate("debugSessionExpired", debugSessionExpiredTemplateRaw)
 }
 
 func render(t *template.Template, p any) (string, error) {
@@ -271,7 +267,7 @@ func RenderBreakglassSessionRequest(p RequestBreakglassSessionMailParams) (strin
 }
 
 func RenderBreakglassSessionNotification(p RequestBreakglassSessionMailParams) (string, error) {
-	return render(breakglassSessionTemplate, p)
+	return render(breakglassNotificationTemplate, p)
 }
 
 // RenderDebugSessionRequest renders the debug session request email template

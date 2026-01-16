@@ -66,9 +66,10 @@ type DenyRule struct {
 	APIGroups []string `json:"apiGroups"`
 	// resources names (plural). Use "*" for wildcard. Subresources are matched via subresource field.
 	Resources []string `json:"resources"`
-	// namespaces supports wildcards (shell style). Empty slice means cluster-scoped only resources.
+	// namespaces supports patterns (glob-style) and label-based namespace selection.
+	// Empty means cluster-scoped only resources.
 	// +optional
-	Namespaces []string `json:"namespaces,omitempty"`
+	Namespaces *NamespaceFilter `json:"namespaces,omitempty"`
 	// resourceNames are specific resource object names (supports wildcards). If empty matches any.
 	// +optional
 	ResourceNames []string `json:"resourceNames,omitempty"`
@@ -169,10 +170,11 @@ type RiskThreshold struct {
 
 // PodSecurityExemptions defines pods that should skip security evaluation.
 type PodSecurityExemptions struct {
-	// namespaces to skip evaluation for (exact match).
+	// namespaces to skip evaluation for.
+	// Supports pattern matching (glob-style) and label-based namespace selection.
 	// Common exemptions: kube-system, monitoring, logging
 	// +optional
-	Namespaces []string `json:"namespaces,omitempty"`
+	Namespaces *NamespaceFilter `json:"namespaces,omitempty"`
 	// podLabels: pods with ALL specified labels are exempt.
 	// Example: {"breakglass.telekom.com/security-exempt": "true"}
 	// +optional
