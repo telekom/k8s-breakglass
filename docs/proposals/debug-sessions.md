@@ -1133,8 +1133,7 @@ spec:
         reason: "Cannot inject ephemeral container into high-risk pod"
     
     # Block ephemeral containers in specific namespaces
-    exemptions:
-      namespaces: []  # No exemptions
+    exemptions: {}  # No exemptions
 ```
 
 ### DebugSession Status for Kubectl Debug Mode
@@ -1229,42 +1228,86 @@ spec:
 
 ## Implementation Status
 
-### Implemented (Pod Security Classification)
+> **Last Updated:** 2025
 
-The following features from the pod security proposal are **implemented and tested**:
-
-| Feature | Status | Location |
-|---------|--------|----------|
-| `PodSecurityRules` in DenyPolicy | ✅ Implemented | `api/v1alpha1/deny_policy_types.go` |
-| Risk factor scoring | ✅ Implemented | `pkg/policy/pod_security.go` |
-| Block factors (immediate deny) | ✅ Implemented | `pkg/policy/pod_security.go` |
-| Threshold-based actions | ✅ Implemented | `pkg/policy/pod_security.go` |
-| Namespace/label exemptions | ✅ Implemented | `pkg/policy/pod_security.go` |
-| Fail mode (open/closed) | ✅ Implemented | `pkg/webhook/controller.go` |
-| Pod fetch injection for tests | ✅ Implemented | `pkg/webhook/controller.go` |
-| Unit tests (94.9% coverage) | ✅ Implemented | `pkg/policy/pod_security_test.go` |
-| E2E tests for SAR flows | ✅ Implemented | `pkg/api/api_end_to_end_test.go` |
-| Documentation | ✅ Implemented | `docs/deny-policy.md` |
-
-### Implemented (Escalation Overrides)
+### Phase 1: Core CRDs and Controller ✅ COMPLETE
 
 | Feature | Status | Location |
 |---------|--------|----------|
-| `PodSecurityOverrides` type | ✅ Implemented | `api/v1alpha1/breakglass_escalation_types.go` |
-| Override in Action struct | ⏳ Partial | Type exists, webhook wiring pending |
+| `DebugPodTemplate` CRD | ✅ Implemented | `api/v1alpha1/debug_pod_template_types.go` |
+| `DebugSessionTemplate` CRD | ✅ Implemented | `api/v1alpha1/debug_session_template_types.go` |
+| `DebugSession` CRD | ✅ Implemented | `api/v1alpha1/debug_session_types.go` |
+| Admission webhooks | ✅ Implemented | `api/v1alpha1/debug_*_webhook.go` |
+| Debug session controller | ✅ Implemented | `pkg/breakglass/debug_session_controller.go` |
+| State machine (Pending→Active→Expired) | ✅ Implemented | `pkg/breakglass/debug_session_controller.go` |
+| Pod deployment (DaemonSet/Deployment) | ✅ Implemented | Deploys to target clusters |
+| Template resolution & caching | ✅ Implemented | Status stores resolved template |
+| Approval workflow | ✅ Implemented | Auto-approve and manual approval |
+| Expiration checking | ✅ Implemented | Controller transitions to Expired |
+| Resource cleanup | ✅ Implemented | Deletes workloads on termination |
 
-### Not Yet Implemented (Debug Sessions)
+### Phase 2: Webhook Integration ✅ COMPLETE
 
-| Feature | Status | Priority |
+| Feature | Status | Location |
 |---------|--------|----------|
-| `DebugPodTemplate` CRD | ❌ Not started | Phase 1 |
-| `DebugSessionTemplate` CRD | ❌ Not started | Phase 1 |
-| `DebugSession` CRD | ❌ Not started | Phase 1 |
-| Debug session controller | ❌ Not started | Phase 1 |
-| Webhook pod whitelisting | ❌ Not started | Phase 2 |
-| REST API endpoints | ❌ Not started | Phase 3 |
-| Frontend components | ❌ Not started | Phase 3 |
-| Kubectl debug support | ❌ Not started | Phase 4 |
-| Terminal sharing (tmux) | ❌ Not started | Phase 5 |
-| Audit sidecar | ❌ Not started | Phase 5 |
+| Pod whitelisting | ✅ Implemented | `pkg/webhook/controller.go` |
+| `checkDebugSessionAccess()` | ✅ Implemented | Validates pods/exec against AllowedPods |
+| Participant verification | ✅ Implemented | Checks user is session participant |
+| Session lookup | ✅ Implemented | Lists active DebugSessions for cluster |
+
+### Phase 3: REST API and Frontend ✅ COMPLETE
+
+| Feature | Status | Location |
+|---------|--------|----------|
+| `GET /api/debug-sessions` | ✅ Implemented | `pkg/api/debug_session_handler.go` |
+| `POST /api/debug-sessions` | ✅ Implemented | Create with template validation |
+| `POST /api/debug-sessions/:name/join` | ✅ Implemented | Join as participant |
+| `POST /api/debug-sessions/:name/leave` | ✅ Implemented | Leave session |
+| `POST /api/debug-sessions/:name/renew` | ✅ Implemented | Extend duration |
+| `POST /api/debug-sessions/:name/terminate` | ✅ Implemented | Early termination |
+| `POST /api/debug-sessions/:name/approve` | ✅ Implemented | Approval workflow |
+| `POST /api/debug-sessions/:name/reject` | ✅ Implemented | Rejection workflow |
+| `GET /api/debug-session-templates` | ✅ Implemented | List templates |
+| `GET /api/debug-pod-templates` | ✅ Implemented | List pod templates |
+| Frontend: DebugSessionBrowser.vue | ✅ Implemented | `frontend/src/views/` |
+| Frontend: CreateDebugSession.vue | ✅ Implemented | Create form |
+| Frontend: DebugSessionDetail.vue | ✅ Implemented | Session details |
+| Frontend: API service | ✅ Implemented | `frontend/src/services/` |
+
+### Phase 4: Metrics ✅ COMPLETE
+
+| Feature | Status | Location |
+|---------|--------|----------|
+| `breakglass_debug_sessions_created_total` | ✅ Implemented | `pkg/metrics/metrics.go` |
+| `breakglass_debug_sessions_active` | ✅ Implemented | Gauge per cluster/template |
+| `breakglass_debug_session_duration_seconds` | ✅ Implemented | Histogram |
+| `breakglass_debug_pod_failures_total` | ✅ Implemented | Pod failure counter |
+| `breakglass_debug_pod_restarts_total` | ✅ Implemented | Pod restart counter |
+
+### Phase 5: E2E Tests ✅ EXTENSIVE
+
+| Feature | Status | Location |
+|---------|--------|----------|
+| Template creation tests | ✅ Implemented | `e2e/debug_session_e2e_test.go` |
+| Session lifecycle tests | ✅ Implemented | Create → Approve → Active |
+| Multi-participant tests | ✅ Implemented | Join/leave scenarios |
+| Access control tests | ✅ Implemented | Allowed groups validation |
+| Cleanup tests | ✅ Implemented | Workload removal |
+
+### Not Yet Implemented
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Kubectl debug mode | ✅ Implemented | Controller handles `kubectl-debug` mode via admission webhooks |
+| Ephemeral container injection | ✅ Implemented | Validation webhook implemented |
+| Node debugging | ✅ Implemented | Supported via debug pods and webhook validation |
+| Pod copy operations | ✅ Implemented | Supported via status tracking |
+| Terminal sharing (tmux) | ✅ Implemented | tmux/screen multiplexer injection implemented |
+| Audit sidecar | ❌ Not started | Shell command logging sidecar not implemented |
+| Auto-approve for groups | ⏳ Partial | Comment: "Auto-approve for groups would require user group lookup" |
+| Hybrid mode | ✅ Implemented | Both workload and kubectl-debug features supported |
+
+### Remaining Work
+
+1. **Audit Sidecar**: In-pod command logging via audit sidecar is not implemented. Consider integrating with Tetragon/Falco as documented.
 

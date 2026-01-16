@@ -42,13 +42,16 @@ Configure the API server with webhook authorization:
 apiVersion: apiserver.config.k8s.io/v1beta1
 kind: AuthorizationConfiguration
 authorizers:
-  # Standard authorizers (order matters)
+  # Node authorizer for kubelet operations (first for performance)
   - type: Node
     name: node
+  
+  # RBAC handles normal permissions
   - type: RBAC
     name: rbac
   
-  # Breakglass webhook (evaluated after RBAC)
+  # Breakglass webhook AFTER RBAC - grants ADDITIONAL temporary access
+  # Only consulted when RBAC denies but user has valid breakglass session
   - type: Webhook
     name: breakglass
     webhook:
@@ -66,18 +69,23 @@ authorizers:
       subjectAccessReviewVersion: v1
       matchConditionSubjectAccessReviewVersion: v1
       
-      # Failure handling
+      # Failure handling: Use NoOpinion for resilience, Deny for strict security
       failurePolicy: Deny  # Deny on webhook failure (recommended for security)
       
-      # Match conditions (optimize performance)
+      # Match conditions filter which requests go through the webhook
+      # System users skip the webhook and fall through to RBAC
       matchConditions:
         - expression: "'system:authenticated' in request.groups"
         - expression: "!request.user.startsWith('system:')"
         - expression: "!('system:serviceaccounts' in request.groups)"
+        # IMPORTANT: Skip the breakglass manager's OIDC identity to prevent
+        # recursive webhook calls (see "Preventing Recursive Webhook Calls" below)
+        - expression: "request.user != 'breakglass-group-sync@service.local'"
 ```
 
-### API Server Flags
+> **Important:** The last matchCondition excludes the breakglass manager's OIDC identity from webhook processing. This is critical for multi-cluster setups using OIDC authentication. See [Preventing Recursive Webhook Calls](#preventing-recursive-webhook-calls) for details.
 
+### API Server Flags
 Add the authorization configuration to your API server:
 
 ```bash
@@ -360,6 +368,7 @@ Check:
 - Webhook timeout settings
 - Network latency
 - Webhook performance
+- **Recursive webhook calls** (see [Preventing Recursive Webhook Calls](#preventing-recursive-webhook-calls))
 
 ### Debugging
 
@@ -374,6 +383,100 @@ kubectl --kubeconfig=/etc/kubernetes/breakglass-webhook-kubeconfig.yaml cluster-
 kubectl logs -n breakglass-system deployment/breakglass-controller
 ```
 
+## Preventing Recursive Webhook Calls
+
+In multi-cluster setups where the breakglass manager uses OIDC authentication to connect to spoke clusters, **recursive webhook calls** can cause authorization timeouts. This section explains the issue and how to prevent it.
+
+### The Problem
+
+When the breakglass authorization webhook processes a request, it may need to call back to the spoke cluster to:
+
+1. **Fetch namespace labels** for DenyPolicy evaluation
+2. **Deploy debug session workloads** (pods, daemonsets, deployments)
+3. **Perform RBAC checks** via impersonation
+
+If the breakglass manager connects to spoke clusters using OIDC authentication, and the OIDC identity doesn't have explicit RBAC permissions, these callback requests trigger the spoke cluster's authorization webhook - which calls the breakglass manager again, creating a recursive loop:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│  User kubectl command                                                    │
+│         │                                                                │
+│         ▼                                                                │
+│  Spoke Cluster API Server                                                │
+│         │                                                                │
+│         ▼ (authz webhook)                                                │
+│  Breakglass Manager (hub)                                                │
+│         │                                                                │
+│         ▼ (fetch namespace labels using OIDC)                            │
+│  Spoke Cluster API Server                                                │
+│         │                                                                │
+│         ▼ (authz webhook - RECURSIVE!)                                   │
+│  Breakglass Manager (hub) ← TIMEOUT                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### The Solution
+
+Implement **two layers of protection**:
+
+#### 1. Grant RBAC Permissions to the OIDC Identity
+
+Create ClusterRoles and ClusterRoleBindings on each spoke cluster that grant the breakglass manager's OIDC identity the permissions it needs. Since RBAC runs before the webhook in the authorization chain, these operations are allowed directly without triggering the webhook.
+
+See [RBAC Requirements for OIDC Authentication](cluster-config.md#rbac-requirements-for-oidc-authentication) for the complete list of required permissions.
+
+#### 2. Exclude the OIDC Identity from Webhook Processing
+
+Add a `matchCondition` to the authorization webhook configuration that skips requests from the breakglass manager's OIDC identity:
+
+```yaml
+matchConditions:
+  - expression: "'system:authenticated' in request.groups"
+  - expression: "!request.user.startsWith('system:')"
+  - expression: "!('system:serviceaccounts' in request.groups)"
+  # Exclude the breakglass manager's OIDC identity
+  - expression: "request.user != 'breakglass-group-sync@service.local'"
+```
+
+Replace `breakglass-group-sync@service.local` with the actual username claim value from your OIDC tokens.
+
+### Identifying Your OIDC Identity
+
+The username used in the `matchCondition` must match the claim value from OIDC tokens. This is typically:
+
+- **For Keycloak with client credentials flow:** The `email` claim set on the service account client (e.g., `breakglass-group-sync@service.local`)
+- **For Azure AD:** The `preferred_username` or `email` claim
+
+To find your OIDC identity, check the controller logs for messages like:
+
+```text
+Using cached token {"cluster": "spoke-cluster-a", "expiresAt": "..."}
+```
+
+Or decode a token manually:
+
+```bash
+# Get the access token from controller logs or OIDC provider
+echo $ACCESS_TOKEN | cut -d. -f2 | base64 -d | jq '.email, .preferred_username'
+```
+
+### Symptoms of Recursive Webhook Calls
+
+If you're experiencing this issue, you'll see:
+
+1. **Timeout errors** in E2E tests or production:
+   ```text
+   context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+   ```
+
+2. **Breakglass manager logs** showing namespace fetch failures:
+   ```text
+   Failed to fetch namespace labels for DenyPolicy evaluation
+   error: "failed to get namespace default from cluster X: context canceled"
+   ```
+
+3. **Webhook requests taking ~3 seconds** (the full timeout duration) even for simple operations
+
 ## Production Deployment Checklist
 
 - [ ] TLS certificates configured and valid
@@ -386,6 +489,8 @@ kubectl logs -n breakglass-system deployment/breakglass-controller
 - [ ] Health checks working
 - [ ] Connectivity tested
 - [ ] Authorization flow validated
+- [ ] **OIDC identity excluded from webhook matchConditions** (multi-cluster setups)
+- [ ] **RBAC permissions granted to OIDC identity** (multi-cluster setups)
 
 ## Related Resources
 

@@ -59,6 +59,7 @@ MailProvider replaces the legacy `mail` configuration from `config.yaml` with a 
 | `passwordRef` | SecretKeyReference | No | Reference to secret containing password |
 | `insecureSkipVerify` | bool | No | Skip TLS cert verification (testing only!) |
 | `certificateAuthority` | string | No | PEM-encoded CA certificate for TLS |
+| `disableTLS` | bool | No | Disable TLS/STARTTLS entirely (for dev servers like MailHog) |
 
 **Validation Rules:**
 - If `username` is set, `passwordRef` must be provided
@@ -254,6 +255,34 @@ spec:
     address: noreply@internal.example.com
     name: "Internal Breakglass"
 ```
+
+### Development with MailHog
+
+MailHog is a local email testing tool that doesn't support TLS. Use `disableTLS: true` to skip STARTTLS negotiation:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: mailhog
+spec:
+  displayName: "Development MailHog"
+  default: true
+  smtp:
+    host: mailhog.local
+    port: 1025
+    disableTLS: true  # MailHog doesn't support TLS
+    insecureSkipVerify: true
+  sender:
+    address: noreply@breakglass.local
+    name: "Breakglass Dev"
+  retry:
+    count: 3
+    initialBackoffMs: 100
+    queueSize: 1000
+```
+
+> **Warning**: Only use `disableTLS: true` in development/testing environments. Never use it in production as it sends emails in plaintext.
 
 ## Provider Selection
 

@@ -12,6 +12,7 @@ The `BreakglassSession` custom resource represents an active or requested privil
 - Expiration and idle timeout
 - Active privileges granted
 - Audit information
+- A metadata owner reference to the originating `BreakglassEscalation` for proper garbage collection
 
 ## Session State Machine
 

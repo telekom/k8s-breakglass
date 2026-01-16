@@ -88,7 +88,8 @@ spec:
         action: deny
         reason: "Exec into privileged pods requires SRE escalation"
     exemptions:
-      namespaces: ["kube-system"]
+      namespaces:
+        patterns: ["kube-system"]
 ```
 
 ### Usage
@@ -486,7 +487,8 @@ spec:
   podSecurityRules:
     # Block exec to all pods except those in debug namespace or with debug label
     exemptions:
-      namespaces: ["debug-tools"]
+      namespaces:
+        patterns: ["debug-tools"]
       labels:
         app.kubernetes.io/component: "debug-tool"
     thresholds:

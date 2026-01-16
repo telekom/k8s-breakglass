@@ -270,6 +270,39 @@ kubectlDebug:
     requireNonRoot: true
 ```
 
+#### Namespace Filtering with Labels
+
+The `allowedNamespaces` and `deniedNamespaces` fields support label selectors for dynamic namespace matching:
+
+```yaml
+kubectlDebug:
+  ephemeralContainers:
+    enabled: true
+    # Allow namespaces matching patterns OR labels
+    allowedNamespaces:
+      patterns:
+        - "app-*"
+      selectorTerms:
+        - matchLabels:
+            debug-enabled: "true"
+    # Deny namespaces matching patterns OR labels  
+    deniedNamespaces:
+      patterns:
+        - "kube-*"
+      selectorTerms:
+        - matchLabels:
+            restricted: "true"
+        - matchExpressions:
+            - key: tier
+              operator: In
+              values: ["critical", "production"]
+```
+
+This allows:
+- Pattern-based matching (e.g., `app-*` matches `app-frontend`, `app-backend`)
+- Label-based matching using Kubernetes label selectors
+- Combined patterns and labels (OR logic between them)
+
 ### Node Debugging
 
 Allow debugging nodes directly:
@@ -332,7 +365,7 @@ Enable collaborative debugging with terminal sharing:
 ```yaml
 terminalSharing:
   enabled: true
-  method: tmux  # or "screen"
+  provider: tmux  # or "screen"
   maxParticipants: 5
   readOnlyParticipants: false
 ```
@@ -341,6 +374,11 @@ When enabled, participants can attach to shared terminals:
 - Owner starts the debug session
 - Participants join using the `attachCommand` from status
 - All participants see the same terminal output
+
+**Implementation details:**
+- When terminal sharing is enabled, the controller wraps the container command with `tmux new-session` or `screen` 
+- The attach command is populated in `status.terminalSharing.attachCommand`
+- Participants can exec into the debug pod and run the attach command to join the session
 
 ## Approval Workflow
 

@@ -1,5 +1,7 @@
 # Pod Security Risk Classification for pod/exec Requests
 
+**Status**: ✅ IMPLEMENTED (January 2026)
+
 ## Overview
 
 This proposal introduces a pod security risk classification system that evaluates pod configurations before allowing `pods/exec`, `pods/attach`, and `pods/portforward` operations. High-risk pods (those with elevated privileges) can be blocked or require additional approval based on configurable thresholds.
@@ -78,7 +80,8 @@ spec:
     
     # Exemptions for trusted pods
     exemptions:
-      namespaces: ["kube-system", "monitoring"]
+      namespaces:
+        patterns: ["kube-system", "monitoring"]
       podLabels:
         breakglass.telekom.com/security-exempt: "true"
     
@@ -346,7 +349,8 @@ spec:
         action: deny
         reason: "Exec to high-risk pod blocked. Risk score: {{.score}}, factors: {{.factors}}"
     exemptions:
-      namespaces: ["kube-system"]
+      namespaces:
+        patterns: ["kube-system"]
     failMode: "closed"
 ```
 
@@ -437,6 +441,8 @@ var (
 
 ## Implementation Status
 
+> **Last Updated:** 2025
+
 This proposal has been **fully implemented**. All core features are available and tested.
 
 ### Implemented Features
@@ -459,6 +465,18 @@ This proposal has been **fully implemented**. All core features are available an
 | Pod fetch from cluster | ✅ | `pkg/webhook/controller.go` |
 | Fail mode handling | ✅ | `pkg/webhook/controller.go` |
 | Test injection (podFetchFn) | ✅ | `pkg/webhook/controller.go` |
+
+### Prometheus Metrics ✅ IMPLEMENTED
+
+| Metric | Type | Status | Location |
+|--------|------|--------|----------|
+| `breakglass_pod_security_evaluations_total` | Counter | ✅ | `pkg/metrics/metrics.go` |
+| `breakglass_pod_security_risk_score` | Histogram | ✅ | `pkg/metrics/metrics.go` |
+| `breakglass_pod_security_factors_total` | Counter | ✅ | `pkg/metrics/metrics.go` |
+| `breakglass_pod_security_denied_total` | Counter | ✅ | `pkg/metrics/metrics.go` |
+| `breakglass_pod_security_warnings_total` | Counter | ✅ | `pkg/metrics/metrics.go` |
+
+Metrics are registered at startup (lines 558-560 in metrics.go) and used in `pkg/policy/deny.go`.
 
 ### Test Coverage
 
@@ -493,7 +511,14 @@ The following end-to-end SAR scenarios are tested:
 
 ### Remaining Work
 
-1. **Escalation Override Wiring**: The `PodSecurityOverrides` field exists in `BreakglassEscalation` but is not yet wired to the webhook's `Action` struct during SAR evaluation.
-2. **Prometheus Metrics**: Pod security metrics are defined but need integration.
-3. **Kubernetes Audit Events**: Optional audit event emission not yet implemented.
+✅ **All work items completed!**
+
+1. ~~**Escalation Override Wiring**~~: ✅ IMPLEMENTED. The webhook controller now populates `act.PodSecurityOverrides` from the active session's escalation via `getPodSecurityOverridesFromSessions()` in `pkg/webhook/controller.go` (lines 316-354). The E2E test `TestEndToEndSARPodSecurityWithEscalationOverride` validates this functionality.
+
+2. ~~**Kubernetes Audit Events**~~: ✅ IMPLEMENTED. Pod security audit events are now emitted via `emitPodSecurityAudit()` in `pkg/webhook/controller.go`. The following event types are defined in `pkg/audit/types.go`:
+   - `EventPodSecurityEvaluated` - Normal evaluation completed
+   - `EventPodSecurityAllowed` - Access allowed after evaluation
+   - `EventPodSecurityDenied` - Access denied (critical severity)
+   - `EventPodSecurityWarning` - High-risk access allowed with warning
+   - `EventPodSecurityOverride` - Escalation override was applied
 

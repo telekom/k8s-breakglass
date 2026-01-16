@@ -179,7 +179,8 @@ spec:
     - verbs: ["*"]
       apiGroups: [""]
       resources: ["secrets"]
-      namespaces: ["kube-system"]
+      namespaces:
+        patterns: ["kube-system"]
 ```
 
 First matching rule denies the access. If no rules match, access is allowed (unless caught by another policy).

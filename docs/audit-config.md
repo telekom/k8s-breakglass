@@ -256,6 +256,36 @@ spec:
       - pods
 ```
 
+### Namespace Filtering with Labels
+
+Namespace filters support both string patterns and Kubernetes label selectors:
+
+```yaml
+spec:
+  filtering:
+    # Include namespaces matching patterns OR labels
+    includeNamespaces:
+      patterns:
+        - "prod-*"
+        - "staging-*"
+      selectorTerms:
+        - matchLabels:
+            audit-enabled: "true"
+    
+    # Exclude system namespaces by pattern
+    excludeNamespaces:
+      patterns:
+        - "kube-*"
+      selectorTerms:
+        - matchLabels:
+            audit-exclude: "true"
+```
+
+This allows dynamic namespace selection based on labels, which is useful when:
+- New namespaces are created frequently
+- Namespace naming conventions vary
+- You want to use Kubernetes-native label selectors
+
 ## Sampling
 
 For high-volume environments, sample frequent events:
@@ -317,6 +347,7 @@ sinks:
       - access.denied*
       - secret.*
       - policy.violation
+      - pod_security.*
       - auth.failure
     webhook: {...}
   

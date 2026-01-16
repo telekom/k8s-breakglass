@@ -25,7 +25,7 @@ spec:
   
   # Required: Who can request this escalation
   allowed:
-    clusters: ["prod-cluster-1", "staging-cluster"]  # Cluster names
+    clusters: ["prod-cluster-1", "staging-cluster"]  # Cluster names (supports glob patterns like "prod-*", "*")
     groups: ["developers", "site-reliability-engineers"]  # User groups
   
   # Optional: Who can approve this escalation (if empty, no approval required)
@@ -38,8 +38,8 @@ spec:
   idleTimeout: "1h"      # Max idle time before revocation (default: 1h)
   retainFor: "720h"      # Time to retain expired sessions (default: 720h)
   
-  # Optional: Alternative cluster specification
-  clusterConfigRefs: ["cluster-config-1", "cluster-config-2"]
+  # Optional: Alternative cluster specification (supports glob patterns)
+  clusterConfigRefs: ["cluster-config-1", "cluster-config-2"]  # Or use "*" for all clusters
   
   # Optional: Default deny policies for sessions
   denyPolicyRefs: ["deny-policy-1", "deny-policy-2"]
@@ -65,12 +65,14 @@ Defines who can request this escalation and for which clusters:
 
 ```yaml
 allowed:
-  clusters: ["prod-cluster", "staging-cluster"]  # ClusterConfig names
+  clusters: ["prod-cluster", "staging-cluster"]  # ClusterConfig names (supports glob patterns)
   groups: ["developers", "sre"]                  # User groups who can request
   users: ["emergency@example.com"]               # Individual users who can request
 ```
 
 **Note**: At least one of `groups` or `users` must be specified.
+
+**Glob patterns**: The `clusters` field supports glob patterns like `*` (all clusters), `prod-*` (clusters starting with "prod-"), etc. See [Glob Pattern Matching](#glob-pattern-matching) for details.
 
 ### approvers
 
@@ -453,11 +455,18 @@ kubectl get breakglassescalation -w
 
 ### clusterConfigRefs
 
-Alternative to `allowed.clusters` - list specific `ClusterConfig` resource names:
+Alternative to `allowed.clusters` - list specific `ClusterConfig` resource names or glob patterns:
 
 ```yaml
+# Specific clusters
 clusterConfigRefs: ["prod-cluster-config", "staging-cluster-config"]
+
+# Glob patterns
+clusterConfigRefs: ["prod-*"]    # All clusters starting with "prod-"
+clusterConfigRefs: ["*"]         # ALL clusters (global escalation)
 ```
+
+**Glob patterns**: Supports `*` (any characters), `?` (single character), and `[abc]` (character class). See [Glob Pattern Matching](#glob-pattern-matching) for details.
 
 > **Runtime validation:** The admission webhook intentionally accepts escalations even if the referenced `ClusterConfig` objects are missing. The Escalation controller re-validates these references and updates the `ClusterRefsValid` condition (and emits warning events) whenever a reference cannot be resolved.
 
@@ -496,11 +505,115 @@ podSecurityOverrides:
 | Field | Description | Default |
 |-------|-------------|---------|
 | `enabled` | Whether overrides are active | `false` |
-| `maxAllowedScore` | Override the risk score threshold | Policy default |
-| `exemptFactors` | Skip specific block factors | `[]` |
-| `namespaceScope` | Limit overrides to namespaces | All namespaces |
-| `requireApproval` | Require explicit approval | `false` |
-| `approvers` | Who can approve (if required) | - |
+| `maxAllowedScore` | Override the risk score threshold (0-1000) | Policy default |
+| `exemptFactors` | Skip specific block factors during evaluation | `[]` |
+| `namespaceScope` | Limit overrides to specific namespaces (patterns or label selectors) | All namespaces |
+| `requireApproval` | Require explicit approval before overrides apply | `false` |
+| `approvers` | Who can approve (users/groups, only used when `requireApproval: true`) | - |
+
+#### exemptFactors Valid Values
+
+The `exemptFactors` field accepts these risk factor names:
+
+| Factor | Description | Risk Score |
+|--------|-------------|------------|
+| `hostNetwork` | Pod uses host network namespace | High |
+| `hostPID` | Pod shares host PID namespace | High |
+| `hostIPC` | Pod shares host IPC namespace | High |
+| `privilegedContainer` | Container runs in privileged mode | Critical |
+| `hostPathWritable` | Mounts writable host path volume | High |
+| `hostPathReadOnly` | Mounts read-only host path volume | Medium |
+| `runAsRoot` | Container runs as root user (UID 0) | Medium |
+
+**Example: Exempt multiple factors for SRE access**
+
+```yaml
+podSecurityOverrides:
+  enabled: true
+  exemptFactors:
+    - privilegedContainer    # Allow exec to privileged containers
+    - hostNetwork            # Allow exec to host-network pods
+    - hostPID                # Allow exec to pods with host PID access
+```
+
+#### namespaceScope Configuration
+
+The `namespaceScope` field uses `NamespaceFilter` which supports both glob patterns and label-based selection:
+
+**Option 1: Simple Pattern List (glob-style)**
+
+```yaml
+podSecurityOverrides:
+  enabled: true
+  namespaceScope:
+    patterns:
+      - "kube-*"             # All kube-system, kube-public, etc.
+      - "monitoring"         # Exact match
+      - "prod-*-services"    # Pattern matching
+```
+
+**Option 2: Label-Based Selection**
+
+```yaml
+podSecurityOverrides:
+  enabled: true
+  namespaceScope:
+    selectorTerms:
+      - matchLabels:
+          environment: production
+          team: sre
+      - matchExpressions:
+          - key: tier
+            operator: In
+            values: ["critical", "high"]
+```
+
+**Option 3: Combined (OR semantics between patterns and selectors)**
+
+```yaml
+podSecurityOverrides:
+  enabled: true
+  namespaceScope:
+    patterns:
+      - "kube-system"        # Always include kube-system
+    selectorTerms:
+      - matchLabels:
+          override-allowed: "true"
+```
+
+**Label Selector Operators:**
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `In` | Value must be in the set | `key: tier, operator: In, values: [critical, high]` |
+| `NotIn` | Value must NOT be in the set | `key: team, operator: NotIn, values: [external]` |
+| `Exists` | Label key must exist (any value) | `key: override-allowed, operator: Exists` |
+| `DoesNotExist` | Label key must NOT exist | `key: protected, operator: DoesNotExist` |
+
+#### requireApproval and approvers
+
+When `requireApproval: true`, the session must receive additional approval specifically for pod security overrides before the overrides take effect:
+
+```yaml
+podSecurityOverrides:
+  enabled: true
+  maxAllowedScore: 150
+  exemptFactors:
+    - privilegedContainer
+  requireApproval: true              # Needs additional approval for overrides
+  approvers:
+    users:
+      - "security-lead@example.com"
+    groups:
+      - "security-team"
+      - "sre-leads"
+```
+
+**Approval Flow:**
+1. User requests escalation → Standard escalation approval
+2. User attempts to exec into high-risk pod → Override approval required
+3. Security team member approves override usage
+4. User can now exec into the pod
 
 #### Use Cases
 
@@ -676,6 +789,73 @@ The controller matches requested clusters against `spec.allowed.clusters` and `s
 - Use `allowed.clusters` with exact cluster names that clients will request
 - Use `clusterConfigRefs` to reference `ClusterConfig` resource names
 - Ensure the value used in webhook URLs matches these identifiers exactly
+
+#### Glob Pattern Matching
+
+Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for flexible cluster matching. This uses Go's `filepath.Match` syntax:
+
+| Pattern | Matches |
+|---------|---------|
+| `*` | Any single cluster (global wildcard) |
+| `prod-*` | Clusters starting with `prod-` (e.g., `prod-eu`, `prod-us`) |
+| `*-staging` | Clusters ending with `-staging` |
+| `cluster-?` | Clusters like `cluster-1`, `cluster-2` (single character) |
+| `[abc]-cluster` | `a-cluster`, `b-cluster`, or `c-cluster` |
+
+**Example: Regional cluster access**
+
+```yaml
+spec:
+  escalatedGroup: "regional-admin"
+  clusterConfigRefs: ["eu-*"]  # Matches eu-west, eu-central, eu-north, etc.
+  allowed:
+    clusters: ["eu-*"]
+    groups: ["eu-ops-team"]
+```
+
+**Example: Environment-specific access**
+
+```yaml
+spec:
+  escalatedGroup: "staging-admin"
+  clusterConfigRefs: ["*-staging", "*-dev"]  # All staging and dev clusters
+  allowed:
+    clusters: ["*-staging", "*-dev"]
+    groups: ["developers"]
+```
+
+**Example: Using only allowed.clusters (without clusterConfigRefs)**
+
+You can use glob patterns in `allowed.clusters` alone - `clusterConfigRefs` is optional:
+
+```yaml
+spec:
+  escalatedGroup: "dev-admin"
+  allowed:
+    clusters: ["dev-*"]   # Glob pattern - matches dev-eu, dev-us, etc.
+    groups: ["dev-team"]
+  approvers:
+    groups: ["dev-leads"]
+```
+
+#### Global Escalations
+
+To create an escalation that applies to **all clusters**, use the `*` wildcard pattern:
+
+```yaml
+spec:
+  escalatedGroup: "breakglass-read-only"
+  clusterConfigRefs: ["*"]  # Matches ALL clusters
+  allowed:
+    clusters: ["*"]         # Required: also use "*" here
+    groups: ["all-developers"]
+  approvers:
+    groups: ["security-team"]
+```
+
+This is useful for organization-wide read-only access or emergency response escalations that should work across all managed clusters.
+
+> **Important:** Empty arrays (`[]`) do **not** match any clusters. You must explicitly use `*` for global escalations.
 
 ### Approval Requirements
 
