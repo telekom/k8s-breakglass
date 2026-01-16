@@ -1,31 +1,307 @@
+# Comprehensive MailProvider Examples
+# MailProvider resources configure SMTP servers for email notifications
+# about session requests, approvals, and rejections.
+#
+# NOTE: MailProvider is cluster-scoped (no namespace in metadata)
+#
+# Use Cases Covered:
+# 1. Default SMTP with STARTTLS (port 587)
+# 2. Critical alerts with direct TLS (port 465) and custom CA
+# 3. Development mail catcher (MailHog)
+# 4. Corporate internal relay (no auth)
+# 5. Disabled/maintenance mode provider
+# 6. Minimal configuration (required fields only)
+# 7. Gmail/Google Workspace with App Password
+# 8. Microsoft 365 / Office 365
+
+---
+# Example 1: Default mail provider with STARTTLS (port 587)
+# This is the most common configuration for external SMTP servers
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: MailProvider
 metadata:
   name: default-mail
 spec:
   displayName: "Default SMTP Server"
+  
+  # Mark as default - used when no specific provider is specified
+  # Only one MailProvider should have default: true
   default: true
+  
   smtp:
     host: smtp.example.com
-    port: 587
+    port: 587  # STARTTLS port (connection starts unencrypted, upgrades to TLS)
     username: breakglass@example.com
     passwordRef:
       name: smtp-credentials
       key: password
-      namespace: default
+      namespace: breakglass-system
+    # TLS verification (set to false only for dev/test)
     insecureSkipVerify: false
+    
   sender:
     address: noreply@example.com
     name: "Breakglass System"
+    
   retry:
     count: 3
     initialBackoffMs: 100
     queueSize: 1000
+
 ---
+# Example 2: High-priority mail provider with direct TLS (port 465)
+# Used for critical escalations, with custom CA certificate
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: critical-alerts-smtp
+spec:
+  displayName: "Critical Alerts SMTP"
+  
+  # Not default - referenced explicitly by BreakglassEscalation.spec.mailProvider
+  default: false
+  
+  smtp:
+    host: priority-smtp.example.com
+    port: 465  # Direct TLS (SMTPS) - connection is TLS from start
+    username: alerts@example.com
+    passwordRef:
+      name: critical-smtp-credentials
+      key: password
+      namespace: breakglass-system
+    insecureSkipVerify: false
+    # Custom CA for internal/private SMTP server
+    certificateAuthority: |
+      -----BEGIN CERTIFICATE-----
+      MIIDXTCCAkWgAwIBAgIJAJXuYv...
+      (your CA certificate here)
+      -----END CERTIFICATE-----
+    
+  sender:
+    address: critical-alerts@example.com
+    name: "CRITICAL: Breakglass Alert"
+    
+  retry:
+    # More aggressive retry for critical alerts
+    count: 5
+    initialBackoffMs: 50
+    queueSize: 500
+
+---
+# Example 3: Development mail provider (MailHog/MailCatcher/MailPit)
+# For local development and testing without sending real emails
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: dev-mail
+spec:
+  displayName: "Development MailHog"
+  default: false
+  
+  smtp:
+    # MailHog/MailPit typically runs on port 1025
+    host: mailhog.dev.svc.cluster.local
+    port: 1025
+    # No authentication required for dev mail catchers
+    # username and passwordRef can be omitted
+    insecureSkipVerify: true  # Dev environment, no TLS
+    
+  sender:
+    address: dev-breakglass@localhost
+    name: "DEV Breakglass"
+    
+  # Minimal retry for dev - fail fast
+  retry:
+    count: 1
+    initialBackoffMs: 50
+    queueSize: 100
+
+---
+# Example 4: Corporate internal SMTP relay (no authentication)
+# Many enterprises have internal SMTP relays that don't require auth
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: corporate-relay
+spec:
+  displayName: "Corporate SMTP Relay"
+  default: false
+  
+  smtp:
+    host: smtp-relay.internal.corp
+    port: 25  # Plain SMTP (internal network, no encryption)
+    # No username/passwordRef - relay accepts from trusted IPs
+    insecureSkipVerify: true  # Internal relay, usually no TLS
+    
+  sender:
+    address: breakglass@corp.example.com
+    name: "Corp Breakglass"
+
+---
+# Example 5: Disabled/Maintenance mode provider
+# Show how to temporarily disable a provider without deleting it
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: maintenance-provider
+spec:
+  displayName: "Provider Under Maintenance"
+  
+  # Disabled providers won't send emails - useful during SMTP migrations
+  disabled: true
+  
+  smtp:
+    host: old-smtp.example.com
+    port: 587
+    username: old-system@example.com
+    passwordRef:
+      name: old-smtp-credentials
+      key: password
+      namespace: breakglass-system
+    
+  sender:
+    address: old-noreply@example.com
+    name: "Old System"
+
+---
+# Example 6: Minimal configuration (required fields only)
+# Shows the absolute minimum needed for a MailProvider
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: minimal-provider
+spec:
+  # Required: SMTP host and port
+  smtp:
+    host: smtp.minimal.example.com
+    port: 587
+    
+  # Required: Sender address
+  sender:
+    address: minimal@example.com
+  
+  # Everything else is optional with sensible defaults:
+  # - default: false
+  # - disabled: false
+  # - sender.name: (empty)
+  # - retry.count: 3
+  # - retry.initialBackoffMs: 100
+  # - retry.queueSize: 1000
+
+---
+# Example 7: Gmail / Google Workspace with App Password
+# For Google accounts, you must use an App Password (not regular password)
+# Enable 2FA and create App Password at: https://myaccount.google.com/apppasswords
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: gmail-provider
+spec:
+  displayName: "Gmail / Google Workspace"
+  
+  smtp:
+    host: smtp.gmail.com
+    port: 587  # Gmail uses STARTTLS on 587 (or SMTPS on 465)
+    username: your-account@gmail.com  # or your-account@yourdomain.com for Workspace
+    passwordRef:
+      name: gmail-app-password
+      key: password
+      namespace: breakglass-system
+    insecureSkipVerify: false  # Gmail has valid certs
+    
+  sender:
+    # Must match the authenticated account or an alias
+    address: your-account@gmail.com
+    name: "Breakglass Notifications"
+    
+  retry:
+    count: 3
+    initialBackoffMs: 1000  # Gmail has rate limits, use longer backoff
+    queueSize: 500
+
+---
+# Example 8: Microsoft 365 / Office 365
+# Use SMTP AUTH with your Microsoft account
+# May require enabling SMTP AUTH in Microsoft 365 admin center
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: MailProvider
+metadata:
+  name: microsoft365-provider
+spec:
+  displayName: "Microsoft 365"
+  
+  smtp:
+    host: smtp.office365.com
+    port: 587  # Microsoft 365 uses STARTTLS
+    username: breakglass@yourdomain.com
+    passwordRef:
+      name: m365-smtp-credentials
+      key: password
+      namespace: breakglass-system
+    insecureSkipVerify: false
+    
+  sender:
+    # Must be a valid mailbox or shared mailbox with send-as permission
+    address: breakglass@yourdomain.com
+    name: "Breakglass System"
+    
+  retry:
+    count: 3
+    initialBackoffMs: 500
+    queueSize: 1000
+
+---
+# Example Secret for default SMTP
 apiVersion: v1
 kind: Secret
 metadata:
   name: smtp-credentials
+  namespace: breakglass-system
 type: Opaque
 stringData:
   password: "your-smtp-password-here"
+
+---
+# Example Secret for critical SMTP
+apiVersion: v1
+kind: Secret
+metadata:
+  name: critical-smtp-credentials
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  password: "your-critical-smtp-password-here"
+
+---
+# Example Secret for Gmail App Password
+# Generate at: https://myaccount.google.com/apppasswords
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gmail-app-password
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  password: "xxxx-xxxx-xxxx-xxxx"  # 16-char app password from Google
+
+---
+# Example Secret for Microsoft 365
+apiVersion: v1
+kind: Secret
+metadata:
+  name: m365-smtp-credentials
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  password: "your-m365-password-or-app-password"
+
+---
+# Example Secret for old/maintenance provider
+apiVersion: v1
+kind: Secret
+metadata:
+  name: old-smtp-credentials
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  password: "old-password"
