@@ -35,39 +35,50 @@ type BreakglassSessionRequest struct {
 // Trims whitespace and removes dangerous HTML/JS/TS patterns while preserving safe content.
 // Does not enforce a hard length limit - frontend handles length validation.
 func (r *BreakglassSessionRequest) SanitizeReason() error {
-	// Trim whitespace
-	r.Reason = strings.TrimSpace(r.Reason)
-
-	// Remove HTML/JS/TS potentially dangerous characters and patterns
-	// This prevents injection of script tags, event handlers, and other malicious content
-	dangerousPatterns := []string{
-		"<script", "</script",
-		"<iframe", "</iframe",
-		"javascript:", "data:text/html",
-		"onerror=", "onload=", "onclick=", "onmouseover=",
-		"<svg", "</svg",
-		"<object", "</object",
-		"<embed", "</embed",
-		"<link", "</link",
-		"<style", "</style",
-		"<img", "</img",
-		"<frame", "</frame",
-		"<frameset", "</frameset",
-		"<base",
-		"<form", "</form",
-		"<input", "</input",
-		"<button", "</button",
-		"<textarea", "</textarea",
-		"<select", "</select",
-		"<option", "</option",
-		"<label",
-		"<legend",
-		"<fieldset",
-		"eval(", "expression(", "vbscript:",
-		"<!--", "-->", // HTML comments can hide malicious content
-		"<?php", "<?=", "?>", // PHP injection
-		"<%", "%>", // ASP injection
+	sanitized, err := SanitizeReasonText(r.Reason)
+	if err != nil {
+		return err
 	}
+	r.Reason = sanitized
+	return nil
+}
+
+// dangerousPatterns contains patterns that could be used for injection attacks.
+var dangerousPatterns = []string{
+	"<script", "</script",
+	"<iframe", "</iframe",
+	"javascript:", "data:text/html",
+	"onerror=", "onload=", "onclick=", "onmouseover=",
+	"<svg", "</svg",
+	"<object", "</object",
+	"<embed", "</embed",
+	"<link", "</link",
+	"<style", "</style",
+	"<img", "</img",
+	"<frame", "</frame",
+	"<frameset", "</frameset",
+	"<base",
+	"<form", "</form",
+	"<input", "</input",
+	"<button", "</button",
+	"<textarea", "</textarea",
+	"<select", "</select",
+	"<option", "</option",
+	"<label",
+	"<legend",
+	"<fieldset",
+	"eval(", "expression(", "vbscript:",
+	"<!--", "-->", // HTML comments can hide malicious content
+	"<?php", "<?=", "?>", // PHP injection
+	"<%", "%>", // ASP injection
+}
+
+// SanitizeReasonText sanitizes a reason string to prevent injection attacks.
+// Trims whitespace and removes dangerous HTML/JS/TS patterns while preserving safe content.
+// This is a standalone function that can be used for any reason field.
+func SanitizeReasonText(reason string) (string, error) {
+	// Trim whitespace
+	reason = strings.TrimSpace(reason)
 
 	// Check each pattern in a case-insensitive manner
 	// We iterate multiple times until no more patterns are found to handle nested cases
@@ -76,11 +87,11 @@ func (r *BreakglassSessionRequest) SanitizeReason() error {
 		for _, pattern := range dangerousPatterns {
 			// Find pattern case-insensitively by searching in the original string
 			// We need to find the byte position in the original string, not the lowercased one
-			idx := indexCaseInsensitive(r.Reason, pattern)
+			idx := indexCaseInsensitive(reason, pattern)
 			if idx >= 0 {
 				// Strip out the dangerous pattern and everything after it
-				r.Reason = r.Reason[:idx]
-				r.Reason = strings.TrimSpace(r.Reason)
+				reason = reason[:idx]
+				reason = strings.TrimSpace(reason)
 				foundPattern = true
 				break // Restart the loop with the modified string
 			}
@@ -90,7 +101,7 @@ func (r *BreakglassSessionRequest) SanitizeReason() error {
 		}
 	}
 
-	return nil
+	return reason, nil
 }
 
 // indexCaseInsensitive finds the byte index of pattern in s using case-insensitive matching.

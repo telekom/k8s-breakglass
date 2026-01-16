@@ -195,6 +195,59 @@ subjects:
 - kind: Group
   name: complete-flow-test-admins
 ---
+# complete-flow-requester-base - minimal permissions for complete flow test requester
+# This group has NO access to configmaps - the user only gets access via breakglass session
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: complete-flow-requester-base-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: complete-flow-requester-base-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: complete-flow-requester-base-role
+subjects:
+- kind: Group
+  name: complete-flow-requester-base
+---
+# complete-flow-approver - permissions for complete flow test approver
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: complete-flow-approver-role
+  labels:
+    breakglass.dev/test-resource: "true"
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: complete-flow-approver-binding
+  labels:
+    breakglass.dev/test-resource: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: complete-flow-approver-role
+subjects:
+- kind: Group
+  name: complete-flow-approver
+---
 # e2e-test-group - used by escalation_flow_test.go
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

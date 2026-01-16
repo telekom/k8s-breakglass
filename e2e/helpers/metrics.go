@@ -31,10 +31,10 @@ import (
 )
 
 // GetMetricsURL returns the metrics URL for the breakglass controller.
-// The controller exposes Prometheus metrics on port 8081 by default.
-// In e2e tests, this port may be forwarded to a local port.
+// The controller exposes Prometheus metrics on port 8081 inside the cluster.
+// In e2e tests, this port is forwarded to localhost:8181 by default.
 func GetMetricsURL() string {
-	return getEnvOrDefault("BREAKGLASS_METRICS_URL", "http://localhost:8081/metrics")
+	return getEnvOrDefault("BREAKGLASS_METRICS_URL", "http://localhost:8181/metrics")
 }
 
 // MetricValue represents a parsed Prometheus metric with its labels and value.
@@ -71,6 +71,26 @@ func FetchMetrics(ctx context.Context) (string, error) {
 	}
 
 	return string(body), nil
+}
+
+// IsMetricsEndpointReachable checks if the metrics endpoint is accessible.
+// Returns true if the endpoint responds, false if connection fails.
+func IsMetricsEndpointReachable(ctx context.Context) bool {
+	client := &http.Client{Timeout: 2 * time.Second}
+	metricsURL := GetMetricsURL()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsURL, nil)
+	if err != nil {
+		return false
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	return resp.StatusCode == http.StatusOK
 }
 
 // ParseBreakglassMetrics filters and parses only breakglass_* metrics from the raw Prometheus output.

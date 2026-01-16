@@ -17,6 +17,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -43,7 +44,8 @@ var ErrSessionNotFound error = errors.New("session not found")
 type BreakglassSessionController struct {
 	log               *zap.SugaredLogger
 	config            config.Config
-	configPath        string // Path to breakglass config file for OIDC prefix stripping
+	configPath        string               // Path to breakglass config file for OIDC prefix stripping
+	configLoader      *config.CachedLoader // Cached config loader to avoid disk reads per request
 	sessionManager    *SessionManager
 	escalationManager *EscalationManager
 	middleware        gin.HandlerFunc
@@ -129,65 +131,6 @@ func (wc BreakglassSessionController) validateSessionRequest(request BreakglassS
 	return nil
 }
 
-// toRFC1123Subdomain converts a string to a Kubernetes RFC1123 subdomain compatible value.
-// It lowercases the string, replaces invalid characters with '-', collapses multiple
-// separators and ensures the result starts and ends with an alphanumeric character.
-// If the input cannot produce a valid name, returns "x" as a fallback.
-func toRFC1123Subdomain(s string) string {
-	if s == "" {
-		return "x"
-	}
-	// Lowercase
-	s = strings.ToLower(s)
-
-	// Replace any character that is not a-z, 0-9, '-' or '.' with '-'
-	// Also collapse runs of invalid chars into a single '-'
-	var b strings.Builder
-	prevDash := false
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
-			b.WriteRune(r)
-			prevDash = false
-		} else {
-			if !prevDash {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-	}
-	out := b.String()
-	// Trim leading/trailing non-alphanumeric (dash or dot) characters
-	out = strings.TrimLeft(out, "-.")
-	out = strings.TrimRight(out, "-.")
-
-	// Collapse multiple dots or dashes into single ones
-	out = strings.ReplaceAll(out, "..", ".")
-	for strings.Contains(out, "--") {
-		out = strings.ReplaceAll(out, "--", "-")
-	}
-
-	// Ensure starts and ends with alphanumeric; if not, fallback to 'x'
-	if out == "" {
-		return "x"
-	}
-	// If first/last char is not alnum, strip until alnum or return x
-	// First
-	for len(out) > 0 && !isAlnum(rune(out[0])) {
-		out = out[1:]
-	}
-	for len(out) > 0 && !isAlnum(rune(out[len(out)-1])) {
-		out = out[:len(out)-1]
-	}
-	if out == "" {
-		return "x"
-	}
-	return out
-}
-
-func isAlnum(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-}
-
 // addIfNotPresent appends value to the slice only if it's not already present.
 // Uses slices.Contains for efficiency.
 func addIfNotPresent[T comparable](slice []T, value T) []T {
@@ -195,71 +138,6 @@ func addIfNotPresent[T comparable](slice []T, value T) []T {
 		slice = append(slice, value)
 	}
 	return slice
-}
-
-// toRFC1123Label converts an arbitrary string to a Kubernetes label-safe value.
-// It lowercases the string, replaces invalid characters with '-', collapses
-// multiple separators, ensures it starts/ends with an alphanumeric character
-// and truncates to 63 characters (max label value length). If the input
-// cannot produce a valid value, returns "x" as a fallback.
-func toRFC1123Label(s string) string {
-	if s == "" {
-		return "x"
-	}
-	s = strings.ToLower(s)
-
-	var b strings.Builder
-	prevDash := false
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			b.WriteRune(r)
-			prevDash = false
-		} else {
-			if !prevDash {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-	}
-	out := b.String()
-	out = strings.TrimLeft(out, "-._")
-	out = strings.TrimRight(out, "-._")
-
-	for strings.Contains(out, "..") {
-		out = strings.ReplaceAll(out, "..", ".")
-	}
-	for strings.Contains(out, "__") {
-		out = strings.ReplaceAll(out, "__", "_")
-	}
-	for strings.Contains(out, "--") {
-		out = strings.ReplaceAll(out, "--", "-")
-	}
-
-	// Ensure starts and ends with alphanumeric
-	for len(out) > 0 && !isAlnum(rune(out[0])) {
-		out = out[1:]
-	}
-	for len(out) > 0 && !isAlnum(rune(out[len(out)-1])) {
-		out = out[:len(out)-1]
-	}
-
-	if out == "" {
-		return "x"
-	}
-
-	// Truncate to 63 chars (max label value length)
-	if len(out) > 63 {
-		out = out[:63]
-		// Strip trailing non-alnum if truncated
-		for len(out) > 0 && !isAlnum(rune(out[len(out)-1])) {
-			out = out[:len(out)-1]
-		}
-		if out == "" {
-			return "x"
-		}
-	}
-
-	return out
 }
 
 func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Context) {
@@ -301,6 +179,16 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	reqLog = reqLog.With("cluster", cug.Clustername, "user", cug.Username, "group", cug.GroupName)
 	reqLog.Info("Validated session request parameters")
 
+	// Load global config via cached loader (avoids disk reads per request)
+	var globalCfg *config.Config
+	if wc.configLoader != nil {
+		if cfg, cerr := wc.configLoader.Get(); cerr == nil {
+			globalCfg = &cfg
+		} else {
+			reqLog.With("error", errors.Wrap(cerr, "cached config load failed")).Debug("Continuing without global config")
+		}
+	}
+
 	// Resolve user groups: prefer token groups, fallback to cluster-based resolution
 	var userGroups []string
 	if raw, exists := c.Get("groups"); exists { // trace raw token groups before any normalization
@@ -323,10 +211,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		}
 	}
 	// Strip OIDC prefixes if configured (cluster retrieval might include them; token groups usually not)
-	if cfg, cerr := config.Load(wc.configPath); cerr == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
-		userGroups = stripOIDCPrefixes(userGroups, cfg.Kubernetes.OIDCPrefixes)
-	} else if cerr != nil {
-		reqLog.With("error", errors.Wrap(cerr, "config load failed for OIDC prefix stripping")).Debug("Continuing without OIDC prefix stripping")
+	if globalCfg != nil && len(globalCfg.Kubernetes.OIDCPrefixes) > 0 {
+		userGroups = stripOIDCPrefixes(userGroups, globalCfg.Kubernetes.OIDCPrefixes)
 	}
 
 	escalations, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, cug.Clustername, userGroups)
@@ -337,10 +223,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	}
 	// We already filtered by cluster & user groups; treat these as possible escalations.
 	possibleEscals := escalations
-	// Strip K8s internal fields before logging
-	for i := range possibleEscals {
-		dropK8sInternalFieldsEscalation(&possibleEscals[i])
-	}
+	// Note: Do NOT call dropK8sInternalFieldsEscalation here - we need the UID for owner references.
+	// The UID stripping is only for API response serialization, not for internal processing.
 	if len(possibleEscals) == 0 {
 		// Provide extra debug information in logs to help e2e diagnosis when no escalations are found
 		rawGroups, _ := c.Get("groups")
@@ -523,10 +407,49 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		"requestedGroup", request.GroupName,
 		"requestedCluster", request.Clustername)
 
+	// Determine the user identifier claim.
+	// This ensures the session's spec.User matches what the spoke cluster's OIDC sends in SAR.
+	// Priority: ClusterConfig > Global config
+	var userIdentifierClaim v1alpha1.UserIdentifierClaimType
+	if globalCfg != nil {
+		userIdentifierClaim = globalCfg.GetUserIdentifierClaim()
+	}
+
+	// Check ClusterConfig for per-cluster override
+	var clusterConfig *v1alpha1.ClusterConfig
+	if wc.clusterConfigManager != nil {
+		var ccErr error
+		clusterConfig, ccErr = wc.clusterConfigManager.GetClusterConfigByName(ctx, request.Clustername)
+		if ccErr != nil {
+			reqLog.Debugw("Could not fetch cluster config for user identifier claim",
+				"cluster", request.Clustername,
+				"error", ccErr)
+		} else if clusterConfig.Spec.UserIdentifierClaim != "" {
+			userIdentifierClaim = clusterConfig.GetUserIdentifierClaim()
+			reqLog.Debugw("Using cluster-specific userIdentifierClaim",
+				"cluster", request.Clustername,
+				"userIdentifierClaim", userIdentifierClaim)
+		}
+	}
+
+	// Get the user identifier based on the configured claim type
+	userIdentifier, err := wc.identityProvider.GetUserIdentifier(c, userIdentifierClaim)
+	if err != nil {
+		reqLog.Errorw("Error getting user identifier from token",
+			"error", err,
+			"userIdentifierClaim", userIdentifierClaim)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract user identifier (%s) from token: %v", userIdentifierClaim, err)})
+		return
+	}
+	reqLog.Debugw("Resolved user identifier for session",
+		"userIdentifier", userIdentifier,
+		"userIdentifierClaim", userIdentifierClaim,
+		"requestUsername", request.Username)
+
 	// Initialize session spec and populate duration fields from matched escalation when available
 	spec := v1alpha1.BreakglassSessionSpec{
 		Cluster:        request.Clustername,
-		User:           request.Username,
+		User:           userIdentifier, // Use the identifier based on ClusterConfig's userIdentifierClaim
 		GrantedGroup:   request.GroupName,
 		DenyPolicyRefs: selectedDenyPolicies,
 		RequestReason:  request.Reason,
@@ -554,19 +477,16 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		escalationHasIDPRestriction := len(matchedEsc.Spec.AllowedIdentityProviders) > 0
 		clusterHasIDPRestriction := false
 
-		// Try to fetch cluster config to check for IDP restrictions
-		if wc.clusterConfigManager != nil {
-			if clusterConfig, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, request.Clustername); err == nil {
-				clusterHasIDPRestriction = len(clusterConfig.Spec.IdentityProviderRefs) > 0
-				reqLog.Debugw("Fetched cluster config for IDP restriction check",
-					"cluster", request.Clustername,
-					"clusterHasIDPRestriction", clusterHasIDPRestriction,
-					"escalationHasIDPRestriction", escalationHasIDPRestriction)
-			} else {
-				reqLog.Debugw("Could not fetch cluster config for IDP check (will default to false for restriction)",
-					"cluster", request.Clustername,
-					"error", err)
-			}
+		// Use the already-fetched clusterConfig for IDP restriction check (avoid duplicate fetch)
+		if clusterConfig != nil {
+			clusterHasIDPRestriction = len(clusterConfig.Spec.IdentityProviderRefs) > 0
+			reqLog.Debugw("Using already-fetched cluster config for IDP restriction check",
+				"cluster", request.Clustername,
+				"clusterHasIDPRestriction", clusterHasIDPRestriction,
+				"escalationHasIDPRestriction", escalationHasIDPRestriction)
+		} else {
+			reqLog.Debugw("Cluster config not available for IDP check (will default to false for restriction)",
+				"cluster", request.Clustername)
 		}
 
 		// AllowIDPMismatch=true means: ignore IDP checks during authorization
@@ -639,9 +559,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		bs.Labels = map[string]string{}
 	}
 	// Sanitize label values to conform to Kubernetes label restrictions (RFC1123-ish)
-	bs.Labels["breakglass.t-caas.telekom.com/cluster"] = toRFC1123Label(request.Clustername)
-	bs.Labels["breakglass.t-caas.telekom.com/user"] = toRFC1123Label(request.Username)
-	bs.Labels["breakglass.t-caas.telekom.com/group"] = toRFC1123Label(request.GroupName)
+	bs.Labels["breakglass.t-caas.telekom.com/cluster"] = naming.ToRFC1123Label(request.Clustername)
+	bs.Labels["breakglass.t-caas.telekom.com/user"] = naming.ToRFC1123Label(userIdentifier) // Use resolved identifier, not request.Username
+	bs.Labels["breakglass.t-caas.telekom.com/group"] = naming.ToRFC1123Label(request.GroupName)
 	// Ensure session is created in the same namespace as the matched escalation
 	if matchedEsc != nil {
 		reqLog.Debugw("Matched escalation found during session creation; attaching ownerRef",
@@ -665,52 +585,45 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	// If no escalation was matched, reject creation: sessions must be tied to an escalation
 	if matchedEsc == nil {
-		reqLog.Warnw("Refusing to create session without matched escalation", "user", request.Username, "cluster", request.Clustername, "group", request.GroupName)
+		reqLog.Warnw("Refusing to create session without matched escalation", "user", userIdentifier, "cluster", request.Clustername, "group", request.GroupName)
 		c.JSON(http.StatusUnauthorized, "no escalation found for requested group")
 		return
 	}
 
 	// Generate RFC1123-safe name parts for cluster and group
-	safeCluster := toRFC1123Subdomain(request.Clustername)
-	safeGroup := toRFC1123Subdomain(request.GroupName)
+	safeCluster := naming.ToRFC1123Subdomain(request.Clustername)
+	safeGroup := naming.ToRFC1123Subdomain(request.GroupName)
 	bs.GenerateName = fmt.Sprintf("%s-%s-", safeCluster, safeGroup)
 	if err := wc.sessionManager.AddBreakglassSession(ctx, &bs); err != nil {
 		reqLog.Errorw("error while adding breakglass session", "error", err)
+		reason := "internal_error"
 		if apierrors.IsInvalid(err) {
+			reason = "invalid"
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		} else if apierrors.IsForbidden(err) {
+			reason = "forbidden"
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		} else if apierrors.IsBadRequest(err) {
+			reason = "bad_request"
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create session: %v", err)})
 		}
+		metrics.SessionCreateFailed.WithLabelValues(request.Clustername, reason).Inc()
 		return
 	}
 	// Note: bs already has its Name populated by AddBreakglassSession (passed as pointer).
 	// Do not try to fetch it again as this can race with informer cache population.
 	// Instead, reuse the bs object that was created.
 
-	// Get approval timeout from escalation spec, or use cluster default
-	approvalTimeout := time.Hour // Default: 1 hour
+	// Get approval timeout from escalation spec using helper
+	approvalTimeout := ParseApprovalTimeout(matchedEsc.Spec, reqLog)
 	if matchedEsc.Spec.ApprovalTimeout != "" {
-		if d, err := time.ParseDuration(matchedEsc.Spec.ApprovalTimeout); err == nil && d > 0 {
-			approvalTimeout = d
-			reqLog.Debugw("Using approval timeout from escalation spec", "approvalTimeout", approvalTimeout)
-		} else {
-			reqLog.Warnw("Invalid ApprovalTimeout in escalation spec; falling back to default", "value", matchedEsc.Spec.ApprovalTimeout, "error", err)
-		}
+		reqLog.Debugw("Using approval timeout from escalation spec", "approvalTimeout", approvalTimeout)
 	}
 
 	// Compute retained-until at creation so sessions always expose when they will be cleaned up.
-	retainFor := DefaultRetainForDuration
-	if spec.RetainFor != "" {
-		if d, err := time.ParseDuration(spec.RetainFor); err == nil && d > 0 {
-			retainFor = d
-		} else {
-			reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", spec.RetainFor, "error", err)
-		}
-	}
+	retainFor := ParseRetainFor(spec, reqLog)
 
 	bs.Status = v1alpha1.BreakglassSessionStatus{
 		RetainedUntil: metav1.NewTime(time.Now().Add(retainFor)),
@@ -765,7 +678,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 				// emitted during group sync include the same correlation id.
 				goroutineLog := reqLog.With("cluster", bs.Spec.Cluster)
 				go func(log *zap.SugaredLogger) {
-					ctx := context.Background()
+					// Use a timeout context for background work to prevent goroutine leaks
+					ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
+					defer cancel()
 					// Run a sync for all approver groups in the escalation(s) for this request
 					escalations, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, bs.Spec.Cluster, []string{})
 					if err != nil {
@@ -860,6 +775,11 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	if c.Request != nil && c.Request.Body != nil {
 		_ = json.NewDecoder(c.Request.Body).Decode(&approverPayload)
 	}
+	// Sanitize approver reason to prevent injection attacks
+	if approverPayload.Reason != "" {
+		sanitized, _ := SanitizeReasonText(approverPayload.Reason)
+		approverPayload.Reason = sanitized
+	}
 
 	var lastCondition metav1.Condition
 	if l := len(bs.Status.Conditions); l > 0 {
@@ -916,24 +836,10 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		bs.Status.ApprovedAt = metav1.Now()
 
 		// Determine expiry based on session spec MaxValidFor if provided, otherwise use default
-		validFor := DefaultValidForDuration
-		if bs.Spec.MaxValidFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
-				validFor = d
-			} else {
-				reqLog.Warnw("Invalid MaxValidFor in session spec; falling back to default", "value", bs.Spec.MaxValidFor, "error", err)
-			}
-		}
+		validFor := ParseMaxValidFor(bs.Spec, reqLog)
 
 		// Determine retention based on session spec RetainFor if provided, otherwise use default
-		retainFor := DefaultRetainForDuration
-		if bs.Spec.RetainFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
-				retainFor = d
-			} else {
-				reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
-			}
-		}
+		retainFor := ParseRetainFor(bs.Spec, reqLog)
 
 		bs.Status.TimeoutAt = metav1.Time{} // Clear approval timeout
 
@@ -983,15 +889,8 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		bs.Status.State = v1alpha1.SessionStateRejected
 		bs.Status.ReasonEnded = "rejected"
 
-		// Set RetainedUntil for rejected sessions (same logic as approved sessions)
-		retainFor := DefaultRetainForDuration
-		if bs.Spec.RetainFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
-				retainFor = d
-			} else {
-				reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
-			}
-		}
+		// Set RetainedUntil for rejected sessions
+		retainFor := ParseRetainFor(bs.Spec, reqLog)
 		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 		// record approver (rejector)
@@ -1196,6 +1095,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	includeMine := parseBoolQuery(c.Query("mine"), false)
 	includeApprover := parseBoolQuery(c.Query("approver"), true)
 	includeApprovedByMe := parseBoolQuery(c.Query("approvedByMe"), false)
+	activeOnly := parseBoolQuery(c.Query("activeOnly"), false)
 	stateFilters := normalizeStateFilters(c)
 	statePredicates := buildStateFilterPredicates(stateFilters)
 
@@ -1251,6 +1151,10 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			}
 		}
 
+		if activeOnly && !IsSessionActive(ses) {
+			continue
+		}
+
 		filtered = append(filtered, ses)
 	}
 
@@ -1258,22 +1162,128 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	c.JSON(http.StatusOK, dropK8sInternalFieldsSessionList(filtered))
 }
 
+// SessionApprovalMeta contains authorization metadata for a session
+type SessionApprovalMeta struct {
+	CanApprove   bool   `json:"canApprove"`
+	CanReject    bool   `json:"canReject"`
+	IsRequester  bool   `json:"isRequester"`
+	IsApprover   bool   `json:"isApprover"`
+	DenialReason string `json:"denialReason,omitempty"`
+	SessionState string `json:"sessionState"`
+	StateMessage string `json:"stateMessage,omitempty"`
+}
+
+// getSessionApprovalMeta determines the user's authorization status for a session
+func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, session v1alpha1.BreakglassSession) SessionApprovalMeta {
+	reqLog := system.GetReqLogger(c, wc.log)
+	meta := SessionApprovalMeta{
+		SessionState: string(session.Status.State),
+	}
+
+	// Get user email
+	email, err := wc.identityProvider.GetEmail(c)
+	if err != nil {
+		reqLog.Warnw("Failed to get user email for approval meta", "error", err)
+		meta.DenialReason = "Unable to verify your identity"
+		return meta
+	}
+
+	// Check if user is the requester
+	meta.IsRequester = email == session.Spec.User
+
+	// Check session state first
+	switch session.Status.State {
+	case v1alpha1.SessionStateApproved:
+		meta.StateMessage = "This session has already been approved"
+		if session.Status.Approver != "" {
+			meta.StateMessage += " by " + session.Status.Approver
+		}
+		return meta
+	case v1alpha1.SessionStateRejected:
+		meta.StateMessage = "This session has already been rejected"
+		if session.Status.Approver != "" {
+			meta.StateMessage += " by " + session.Status.Approver
+		}
+		return meta
+	case v1alpha1.SessionStateWithdrawn:
+		meta.StateMessage = "This session has been withdrawn by the requester"
+		return meta
+	case v1alpha1.SessionStateExpired:
+		meta.StateMessage = "This session has expired"
+		return meta
+	case v1alpha1.SessionStateTimeout:
+		meta.StateMessage = "This session has timed out waiting for approval"
+		return meta
+	}
+
+	// Session is pending - check if user can approve
+	if session.Status.State != v1alpha1.SessionStatePending {
+		meta.DenialReason = fmt.Sprintf("Session is in unexpected state: %s", session.Status.State)
+		return meta
+	}
+
+	// Check if user is an approver (reuse existing logic)
+	meta.IsApprover = wc.isSessionApprover(c, session)
+
+	if meta.IsApprover {
+		meta.CanApprove = true
+		meta.CanReject = true
+		reqLog.Debugw("User is authorized to approve/reject session",
+			"session", session.Name, "user", email, "isRequester", meta.IsRequester)
+	} else {
+		// Determine specific reason for denial
+		if meta.IsRequester {
+			meta.DenialReason = "You cannot approve your own session request"
+		} else {
+			meta.DenialReason = "You are not in an approver group for this escalation"
+		}
+		reqLog.Debugw("User is not authorized to approve session",
+			"session", session.Name, "user", email, "reason", meta.DenialReason)
+	}
+
+	// Requester can always reject their own pending session (withdraw equivalent)
+	if meta.IsRequester && session.Status.State == v1alpha1.SessionStatePending {
+		meta.CanReject = true
+	}
+
+	return meta
+}
+
 // handleGetBreakglassSessionByName handles GET /breakglassSessions/:name and returns a single session
+// It includes authorization metadata to help the frontend display appropriate UI/errors
 func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 
 	sessionName := c.Param("name")
-	reqLog.Debugw("Handling GET /breakglassSessions/:name", system.NamespacedFields(sessionName, "")...)
+	reqLog.Infow("Handling GET /breakglassSessions/:name", "session", sessionName)
+
 	ses, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
-		reqLog.Debugw("Get by name: session not found", append(system.NamespacedFields(sessionName, ""), "error", err)...)
-		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		reqLog.Warnw("Session not found", "session", sessionName, "error", err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "session not found",
+			"session": sessionName,
+		})
 		return
 	}
-	// Return a single session object, not an array
+
+	// Get authorization metadata
+	approvalMeta := wc.getSessionApprovalMeta(c, ses)
+	reqLog.Infow("Session retrieved with approval metadata",
+		"session", sessionName,
+		"state", ses.Status.State,
+		"canApprove", approvalMeta.CanApprove,
+		"isApprover", approvalMeta.IsApprover,
+		"isRequester", approvalMeta.IsRequester,
+		"denialReason", approvalMeta.DenialReason)
+
+	// Return a single session object with metadata
 	dropK8sInternalFieldsSession(&ses)
-	c.JSON(http.StatusOK, ses)
+	c.JSON(http.StatusOK, gin.H{
+		"session":      ses,
+		"approvalMeta": approvalMeta,
+	})
 }
 
 // handleWithdrawMyRequest allows the session requester to withdraw their own pending request
@@ -1322,15 +1332,8 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	bs.Status.Approver = ""
 	bs.Status.Approvers = nil
 
-	// Set RetainedUntil for withdrawn sessions (same logic as other terminal states)
-	retainFor := DefaultRetainForDuration
-	if bs.Spec.RetainFor != "" {
-		if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
-			retainFor = d
-		} else {
-			reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
-		}
-	}
+	// Set RetainedUntil for withdrawn sessions
+	retainFor := ParseRetainFor(bs.Spec, reqLog)
 	bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 	bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
@@ -1404,15 +1407,8 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		})
 		bs.Status.ReasonEnded = "dropped"
 
-		// Set RetainedUntil for expired sessions (same logic as other terminal states)
-		retainFor := DefaultRetainForDuration
-		if bs.Spec.RetainFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
-				retainFor = d
-			} else {
-				reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
-			}
-		}
+		// Set RetainedUntil for expired sessions
+		retainFor := ParseRetainFor(bs.Spec, reqLog)
 		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 	} else {
 		// Pending or other state -> behave like withdraw
@@ -1422,15 +1418,9 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		bs.Status.Approver = ""
 		bs.Status.Approvers = nil
 
-		// Set RetainedUntil for withdrawn sessions (same logic as other terminal states)
-		retainFor := DefaultRetainForDuration
-		if bs.Spec.RetainFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
-				retainFor = d
-			} else {
-				reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
-			}
-		}
+		// Set RetainedUntil for withdrawn sessions
+		retainFor := ParseRetainFor(bs.Spec, reqLog)
+		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 		bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
@@ -1496,15 +1486,8 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	bs.Status.ExpiresAt = metav1.NewTime(time.Now())
 	bs.Status.State = v1alpha1.SessionStateExpired
 
-	// Set RetainedUntil for expired sessions (same logic as other terminal states)
-	retainFor := DefaultRetainForDuration
-	if bs.Spec.RetainFor != "" {
-		if d, err := time.ParseDuration(bs.Spec.RetainFor); err == nil && d > 0 {
-			retainFor = d
-		} else {
-			reqLog.Warnw("Invalid RetainFor in session spec; falling back to default", "value", bs.Spec.RetainFor, "error", err)
-		}
-	}
+	// Set RetainedUntil for expired sessions
+	retainFor := ParseRetainFor(bs.Spec, reqLog)
 	bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 	// record approver who canceled
@@ -1747,7 +1730,7 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		ApproverGroups:          approverGroupsToShow,
 		RequestedApprovalGroups: requestedApprovalGroupsStr,
 		TimeRemaining:           timeRemaining,
-		URL:                     fmt.Sprintf("%s/review?name=%s", wc.config.Frontend.BaseURL, bs.Name),
+		URL:                     fmt.Sprintf("%s/session/%s/approve", wc.config.Frontend.BaseURL, bs.Name),
 		BrandingName: func() string {
 			if wc.config.Frontend.BrandingName != "" {
 				return wc.config.Frontend.BrandingName
@@ -1972,7 +1955,9 @@ func (wc BreakglassSessionController) filterExcludedNotificationRecipients(
 	// Get members of excluded groups
 	excludedGroupMembers := make(map[string]bool)
 	if len(exclusions.Groups) > 0 && wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
-		ctx := context.Background()
+		// Use a timeout context to prevent hanging on slow group resolution
+		ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
+		defer cancel()
 		resolvedGroupsCount := 0
 		totalMembersCount := 0
 
@@ -2080,7 +2065,9 @@ func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
 	// Get members of hidden groups
 	hiddenGroupMembers := make(map[string]bool)
 	if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
-		ctx := context.Background()
+		// Use a timeout context to prevent hanging on slow group resolution
+		ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
+		defer cancel()
 		resolvedGroupsCount := 0
 		totalMembersCount := 0
 
@@ -2460,6 +2447,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		mailQueue:            nil,
 		disableEmail:         disableEmailFlag,
 		configPath:           configPath,
+		configLoader:         config.NewCachedLoader(configPath, 5*time.Second), // Cache config, check file every 5s
 		ccProvider:           ccProvider,
 		clusterConfigManager: NewClusterConfigManager(clusterConfigClient),
 	}
@@ -2479,9 +2467,11 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 				}
 				ui := res.Status.UserInfo
 				groups := ui.Groups
-				cfgLoaded, lerr := config.Load(ctrl.configPath)
-				if lerr == nil && len(cfgLoaded.Kubernetes.OIDCPrefixes) > 0 {
-					groups = stripOIDCPrefixes(groups, cfgLoaded.Kubernetes.OIDCPrefixes)
+				// Use cached config loader for OIDC prefix stripping
+				if ctrl.configLoader != nil {
+					if cfgLoaded, lerr := ctrl.configLoader.Get(); lerr == nil && len(cfgLoaded.Kubernetes.OIDCPrefixes) > 0 {
+						groups = stripOIDCPrefixes(groups, cfgLoaded.Kubernetes.OIDCPrefixes)
+					}
 				}
 				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groups", groups)
 				return groups, nil

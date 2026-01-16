@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 func TestKeycloakIdentityProvider_GetEmail(t *testing.T) {
@@ -145,6 +146,129 @@ func TestKeycloakIdentityProvider_GetIdentity(t *testing.T) {
 			identity := provider.GetIdentity(c)
 
 			assert.Equal(t, tt.expectIdentity, identity)
+		})
+	}
+}
+
+func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
+	// TestKeycloakIdentityProvider_GetUserIdentifier
+	//
+	// Purpose:
+	//   Verifies that GetUserIdentifier correctly extracts the user identifier
+	//   based on the configured UserIdentifierClaimType setting.
+	//
+	// Reasoning:
+	//   The userIdentifierClaim field in ClusterConfig determines which OIDC claim
+	//   the spoke cluster uses for its username. The hub must store the matching
+	//   identifier in the session to enable SAR authorization matching.
+	//
+	gin.SetMode(gin.TestMode)
+	provider := KeycloakIdentityProvider{}
+
+	tests := []struct {
+		name             string
+		claimType        v1alpha1.UserIdentifierClaimType
+		email            string
+		username         string
+		userID           string
+		expectIdentifier string
+		expectError      bool
+	}{
+		{
+			name:             "Email claim - valid",
+			claimType:        v1alpha1.UserIdentifierClaimEmail,
+			email:            "test@example.com",
+			username:         "testuser",
+			userID:           "sub-123",
+			expectIdentifier: "test@example.com",
+			expectError:      false,
+		},
+		{
+			name:             "Email claim - missing",
+			claimType:        v1alpha1.UserIdentifierClaimEmail,
+			email:            "",
+			username:         "testuser",
+			userID:           "sub-123",
+			expectIdentifier: "",
+			expectError:      true,
+		},
+		{
+			name:             "Preferred username claim - valid",
+			claimType:        v1alpha1.UserIdentifierClaimPreferredUsername,
+			email:            "test@example.com",
+			username:         "testuser",
+			userID:           "sub-123",
+			expectIdentifier: "testuser",
+			expectError:      false,
+		},
+		{
+			name:             "Preferred username claim - missing",
+			claimType:        v1alpha1.UserIdentifierClaimPreferredUsername,
+			email:            "test@example.com",
+			username:         "",
+			userID:           "sub-123",
+			expectIdentifier: "",
+			expectError:      true,
+		},
+		{
+			name:             "Sub claim - valid",
+			claimType:        v1alpha1.UserIdentifierClaimSub,
+			email:            "test@example.com",
+			username:         "testuser",
+			userID:           "sub-123",
+			expectIdentifier: "sub-123",
+			expectError:      false,
+		},
+		{
+			name:             "Sub claim - missing",
+			claimType:        v1alpha1.UserIdentifierClaimSub,
+			email:            "test@example.com",
+			username:         "testuser",
+			userID:           "",
+			expectIdentifier: "",
+			expectError:      true,
+		},
+		{
+			name:             "Default (empty) claim type - falls back to email",
+			claimType:        "",
+			email:            "default@example.com",
+			username:         "defaultuser",
+			userID:           "sub-default",
+			expectIdentifier: "default@example.com",
+			expectError:      false,
+		},
+		{
+			name:             "Unknown claim type - falls back to email",
+			claimType:        "unknown_claim",
+			email:            "fallback@example.com",
+			username:         "fallbackuser",
+			userID:           "sub-fallback",
+			expectIdentifier: "fallback@example.com",
+			expectError:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(nil)
+			if tt.email != "" {
+				c.Set("email", tt.email)
+			}
+			if tt.username != "" {
+				c.Set("username", tt.username)
+			}
+			if tt.userID != "" {
+				c.Set("user_id", tt.userID)
+			}
+
+			identifier, err := provider.GetUserIdentifier(c, tt.claimType)
+
+			assert.Equal(t, tt.expectIdentifier, identifier)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }

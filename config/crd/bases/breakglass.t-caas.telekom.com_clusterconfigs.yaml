@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.4
+    controller-gen.kubebuilder.io/version: v0.20.0
   name: clusterconfigs.breakglass.t-caas.telekom.com
 spec:
   group: breakglass.t-caas.telekom.com
@@ -59,6 +59,19 @@ spec:
                 items:
                   type: string
                 type: array
+              authType:
+                allOf:
+                - enum:
+                  - Kubeconfig
+                  - OIDC
+                - enum:
+                  - Kubeconfig
+                  - OIDC
+                default: Kubeconfig
+                description: |-
+                  authType specifies the authentication method for connecting to the target cluster.
+                  Defaults to "Kubeconfig" if kubeconfigSecretRef is specified, "OIDC" if oidcAuth is specified.
+                type: string
               blockSelfApproval:
                 description: blockSelfApproval, if true, prevents users from self-approving
                   their own breakglass sessions for this cluster.
@@ -90,7 +103,7 @@ spec:
               kubeconfigSecretRef:
                 description: |-
                   kubeconfigSecretRef references a secret containing an admin-level kubeconfig for the target cluster.
-                  The referenced Secret MUST exist in the specified namespace and contain the key (default: "value", compatible with cluster-api).
+                  Required when authType is "Kubeconfig". The referenced Secret MUST exist in the specified namespace and contain the key (default: "value", compatible with cluster-api).
                 properties:
                   key:
                     description: Key is the data key in the secret (defaults to "value"
@@ -120,6 +133,253 @@ spec:
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              oidcAuth:
+                description: |-
+                  oidcAuth configures OIDC-based authentication for the target cluster.
+                  Required when authType is "OIDC" (unless oidcFromIdentityProvider is set).
+                  Supports client credentials and token exchange flows.
+                properties:
+                  audience:
+                    description: |-
+                      audience specifies the intended audience for the token (typically the cluster's API server).
+                      If empty, defaults to the target server URL.
+                    type: string
+                  caSecretRef:
+                    description: |-
+                      caSecretRef references a secret containing the CA certificate for the target cluster.
+                      The CA is used to verify the target server's TLS certificate.
+                    properties:
+                      key:
+                        description: Key is the data key in the secret (defaults to
+                          "value" if not specified)
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace containing the secret
+                          (supports cross-namespace references)
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  certificateAuthority:
+                    description: certificateAuthority contains a PEM-encoded CA certificate
+                      for validating the OIDC issuer's TLS cert.
+                    type: string
+                  clientID:
+                    description: clientID is the OIDC client ID for authenticating
+                      the breakglass controller.
+                    minLength: 1
+                    type: string
+                  clientSecretRef:
+                    description: |-
+                      clientSecretRef references a secret containing the OIDC client secret.
+                      Required for client credentials flow.
+                    properties:
+                      key:
+                        description: Key is the data key in the secret (defaults to
+                          "value" if not specified)
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace containing the secret
+                          (supports cross-namespace references)
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  insecureSkipTLSVerify:
+                    description: insecureSkipTLSVerify skips TLS verification for
+                      the target cluster (NOT recommended for production).
+                    type: boolean
+                  issuerURL:
+                    description: |-
+                      issuerURL is the OIDC issuer URL (e.g., https://keycloak.example.com/realms/myrealm).
+                      Must match the issuer configured on the target cluster's API server.
+                    minLength: 1
+                    pattern: ^https://.+
+                    type: string
+                  scopes:
+                    description: |-
+                      scopes specifies additional OIDC scopes to request.
+                      Default scopes (openid, email, groups) are always included.
+                    items:
+                      type: string
+                    type: array
+                  server:
+                    description: |-
+                      server is the URL of the target cluster's Kubernetes API server.
+                      Required when using OIDC auth to know where to send authenticated requests.
+                    minLength: 1
+                    pattern: ^https://.+
+                    type: string
+                  tokenExchange:
+                    description: |-
+                      tokenExchange enables token exchange flow instead of client credentials.
+                      When enabled, the controller exchanges the user's token for a cluster-scoped token.
+                    properties:
+                      actorTokenSecretRef:
+                        description: |-
+                          actorTokenSecretRef optionally references a secret containing an actor token.
+                          This is used in delegation scenarios where the actor (controller) is acting
+                          on behalf of the subject (user/service).
+                        properties:
+                          key:
+                            description: Key is the data key in the secret (defaults
+                              to "value" if not specified)
+                            type: string
+                          name:
+                            description: Name is the name of the secret
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: Namespace is the namespace containing the
+                              secret (supports cross-namespace references)
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        - namespace
+                        type: object
+                      actorTokenType:
+                        description: |-
+                          actorTokenType specifies the type of the actor token.
+                          Default: urn:ietf:params:oauth:token-type:access_token
+                        type: string
+                      enabled:
+                        description: enabled activates token exchange flow.
+                        type: boolean
+                      requestedTokenType:
+                        description: |-
+                          requestedTokenType specifies the type of token to request.
+                          Default: urn:ietf:params:oauth:token-type:access_token
+                        type: string
+                      resource:
+                        description: |-
+                          resource specifies the target resource for the exchanged token.
+                          This typically identifies the target API server or service.
+                        type: string
+                      subjectTokenSecretRef:
+                        description: |-
+                          subjectTokenSecretRef references a secret containing the subject token to exchange.
+                          This is required when enabled=true. The controller reads this token and exchanges
+                          it for a cluster-scoped token using RFC 8693 token exchange.
+                        properties:
+                          key:
+                            description: Key is the data key in the secret (defaults
+                              to "value" if not specified)
+                            type: string
+                          name:
+                            description: Name is the name of the secret
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: Namespace is the namespace containing the
+                              secret (supports cross-namespace references)
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        - namespace
+                        type: object
+                      subjectTokenType:
+                        description: |-
+                          subjectTokenType specifies the type of the subject token being exchanged.
+                          Default: urn:ietf:params:oauth:token-type:access_token
+                        type: string
+                    type: object
+                required:
+                - clientID
+                - issuerURL
+                - server
+                type: object
+              oidcFromIdentityProvider:
+                description: |-
+                  oidcFromIdentityProvider references an IdentityProvider to inherit OIDC configuration from.
+                  When set, the cluster uses the referenced IdentityProvider's OIDC issuer URL and settings.
+                  You must still provide clusterAPIServer and optionally clientSecretRef for controller authentication.
+                  This is useful when the same OIDC provider is used for both user auth and cluster auth.
+                  Mutually exclusive with oidcAuth.issuerURL - if both are set, oidcAuth.issuerURL takes precedence.
+                properties:
+                  caSecretRef:
+                    description: caSecretRef references a secret containing the CA
+                      certificate for the target cluster.
+                    properties:
+                      key:
+                        description: Key is the data key in the secret (defaults to
+                          "value" if not specified)
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace containing the secret
+                          (supports cross-namespace references)
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  clientID:
+                    description: |-
+                      clientID overrides the client ID from the IdentityProvider.
+                      Use this when the controller needs a different client (service account) than the UI.
+                      If empty, uses the IdentityProvider's clientID.
+                    type: string
+                  clientSecretRef:
+                    description: |-
+                      clientSecretRef references a secret containing the client secret for the controller.
+                      Required for client credentials flow when using a service account client.
+                    properties:
+                      key:
+                        description: Key is the data key in the secret (defaults to
+                          "value" if not specified)
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace containing the secret
+                          (supports cross-namespace references)
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - namespace
+                    type: object
+                  insecureSkipTLSVerify:
+                    description: insecureSkipTLSVerify skips TLS verification for
+                      the target cluster (NOT recommended for production).
+                    type: boolean
+                  name:
+                    description: |-
+                      name is the name of the IdentityProvider resource to inherit OIDC settings from.
+                      The IdentityProvider must exist and be enabled.
+                    minLength: 1
+                    type: string
+                  server:
+                    description: |-
+                      server is the URL of the target cluster's Kubernetes API server.
+                      Required - this is cluster-specific and cannot be inherited from IdentityProvider.
+                    minLength: 1
+                    pattern: ^https://.+
+                    type: string
+                required:
+                - name
+                - server
+                type: object
               qps:
                 description: qps configures the client QPS against the target cluster.
                 format: int32
@@ -134,8 +394,23 @@ spec:
                   the clusterID.
                 maxLength: 253
                 type: string
-            required:
-            - kubeconfigSecretRef
+              userIdentifierClaim:
+                allOf:
+                - enum:
+                  - email
+                  - preferred_username
+                  - sub
+                - enum:
+                  - email
+                  - preferred_username
+                  - sub
+                description: |-
+                  userIdentifierClaim specifies which OIDC claim is used to identify users on this cluster.
+                  This MUST match the `claimMappings.username.claim` configured on the target cluster's
+                  Kubernetes API server OIDC configuration.
+                  Common values: "email" (recommended), "preferred_username", "sub"
+                  If not set, falls back to global config kubernetes.userIdentifierClaim.
+                type: string
             type: object
           status:
             description: ClusterConfigStatus captures readiness of the cluster configuration.

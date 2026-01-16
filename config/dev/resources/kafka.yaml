@@ -19,8 +19,8 @@ data:
     # Listener configuration
     listeners=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
     inter.broker.listener.name=PLAINTEXT
-    # NOTE: Must match the kustomize-prefixed service name 'breakglass-dev-kafka'
-    advertised.listeners=PLAINTEXT://breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092,EXTERNAL://localhost:9094
+    # NOTE: Must match the kustomize-prefixed service name 'breakglass-kafka'
+    advertised.listeners=PLAINTEXT://breakglass-kafka.breakglass-system.svc.cluster.local:9092,EXTERNAL://localhost:9094
     controller.listener.names=CONTROLLER
     listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
     
@@ -80,9 +80,9 @@ spec:
           value: "broker,controller"
         - name: KAFKA_LISTENERS
           value: "PLAINTEXT://:9092,CONTROLLER://:9093"
-        # NOTE: Must match the kustomize-prefixed service name 'breakglass-dev-kafka'
+        # NOTE: Must match the kustomize-prefixed service name 'breakglass-kafka'
         - name: KAFKA_ADVERTISED_LISTENERS
-          value: "PLAINTEXT://breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092"
+          value: "PLAINTEXT://breakglass-kafka.breakglass-system.svc.cluster.local:9092"
         - name: KAFKA_CONTROLLER_LISTENER_NAMES
           value: "CONTROLLER"
         - name: KAFKA_INTER_BROKER_LISTENER_NAME

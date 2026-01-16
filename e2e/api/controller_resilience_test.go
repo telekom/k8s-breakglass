@@ -25,7 +25,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -34,9 +33,7 @@ import (
 
 // TestControllerConcurrentUpdates tests controller behavior with concurrent updates.
 func TestControllerConcurrentUpdates(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -47,25 +44,12 @@ func TestControllerConcurrentUpdates(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 	namespace := helpers.GetTestNamespace()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-concurrent"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  helpers.GenerateUniqueName("concurrent-group"),
-			MaxValidFor:     "2h",
-			ApprovalTimeout: "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-concurrent"), namespace).
+		WithEscalatedGroup(helpers.GenerateUniqueName("concurrent-group")).
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("2h").
+		WithApprovalTimeout("1h").
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)
@@ -119,9 +103,7 @@ func TestControllerConcurrentUpdates(t *testing.T) {
 
 // TestControllerReconcileIdempotency tests that reconcile is idempotent.
 func TestControllerReconcileIdempotency(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -132,25 +114,12 @@ func TestControllerReconcileIdempotency(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 	namespace := helpers.GetTestNamespace()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-idempotent"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  helpers.GenerateUniqueName("idempotent-group"),
-			MaxValidFor:     "2h",
-			ApprovalTimeout: "1h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-idempotent"), namespace).
+		WithEscalatedGroup(helpers.GenerateUniqueName("idempotent-group")).
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("2h").
+		WithApprovalTimeout("1h").
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)
@@ -190,9 +159,7 @@ func TestControllerReconcileIdempotency(t *testing.T) {
 
 // TestControllerFinalizerBehavior tests finalizer handling during deletion.
 func TestControllerFinalizerBehavior(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -203,25 +170,12 @@ func TestControllerFinalizerBehavior(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("ResourceDeletedWithoutFinalizer", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-no-finalizer"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  helpers.GenerateUniqueName("nofin-group"),
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-no-finalizer"), namespace).
+			WithEscalatedGroup(helpers.GenerateUniqueName("nofin-group")).
+			WithAllowedClusters(clusterName).
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("1h").
+			Build()
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
 
@@ -239,9 +193,7 @@ func TestControllerFinalizerBehavior(t *testing.T) {
 
 // TestControllerOwnerReferences tests owner reference propagation.
 func TestControllerOwnerReferences(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("OwnerReferenceDocumentation", func(t *testing.T) {
 		t.Log("OWNERREF-001: Sessions have owner references to their escalations")
@@ -252,9 +204,7 @@ func TestControllerOwnerReferences(t *testing.T) {
 
 // TestControllerHealthEndpoints tests controller health endpoints.
 func TestControllerHealthEndpoints(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	baseURL := helpers.GetAPIBaseURL()
 
@@ -279,11 +229,9 @@ func TestControllerHealthEndpoints(t *testing.T) {
 
 // TestControllerMetricsEndpoint tests the metrics endpoint.
 func TestControllerMetricsEndpoint(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMetricsTestEnabled() {
-		t.Skip("Skipping metrics test. Set E2E_SKIP_METRICS_TESTS=false to enable (requires metrics port-forward on 8081).")
+		t.Skip("Skipping metrics test. Set E2E_SKIP_METRICS_TESTS=false to enable (requires metrics port-forward on localhost:8181).")
 	}
 
 	metricsURL := helpers.GetMetricsURL()
@@ -303,9 +251,7 @@ func TestControllerMetricsEndpoint(t *testing.T) {
 
 // TestControllerRequeueOnError tests that failed reconciles are requeued.
 func TestControllerRequeueOnError(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("RequeueDocumentation", func(t *testing.T) {
 		t.Log("REQUEUE-001: Failed reconciles are automatically requeued")
@@ -316,9 +262,7 @@ func TestControllerRequeueOnError(t *testing.T) {
 
 // TestControllerLeaderElection documents leader election behavior.
 func TestControllerLeaderElection(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("LeaderElectionDocumentation", func(t *testing.T) {
 		t.Log("LEADER-001: Only leader instance processes reconciles")
@@ -330,9 +274,7 @@ func TestControllerLeaderElection(t *testing.T) {
 
 // TestControllerGracefulShutdown documents graceful shutdown behavior.
 func TestControllerGracefulShutdown(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("GracefulShutdownDocumentation", func(t *testing.T) {
 		t.Log("SHUTDOWN-001: SIGTERM triggers graceful shutdown")

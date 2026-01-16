@@ -17,12 +17,9 @@ limitations under the License.
 package api
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -31,21 +28,13 @@ import (
 
 // TestIdentityProviderGroupSync tests KeycloakGroupSync configuration.
 func TestIdentityProviderGroupSync(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
-	cli := helpers.GetClient(t)
-	cleanup := helpers.NewCleanup(t, cli)
+	s := helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("KeycloakGroupSyncConfig", func(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-idp-keycloak-sync"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Name:   s.GenerateName("e2e-idp-keycloak-sync"),
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -66,9 +55,7 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 				},
 			},
 		}
-		cleanup.Add(idp)
-		err := cli.Create(ctx, idp)
-		require.NoError(t, err)
+		s.MustCreateResource(idp)
 
 		assert.Equal(t, telekomv1alpha1.GroupSyncProviderKeycloak, idp.Spec.GroupSyncProvider)
 		assert.NotNil(t, idp.Spec.Keycloak)
@@ -81,8 +68,8 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 	t.Run("KeycloakGroupSyncWithRequestTimeout", func(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-idp-keycloak-timeout"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Name:   s.GenerateName("e2e-idp-keycloak-timeout"),
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -104,9 +91,7 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 				},
 			},
 		}
-		cleanup.Add(idp)
-		err := cli.Create(ctx, idp)
-		require.NoError(t, err)
+		s.MustCreateResource(idp)
 
 		assert.Equal(t, "30s", idp.Spec.Keycloak.RequestTimeout)
 		t.Logf("GROUPSYNC-002: Created IdentityProvider with RequestTimeout: %v", idp.Spec.Keycloak.RequestTimeout)
@@ -115,8 +100,8 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 	t.Run("KeycloakGroupSyncWithInsecureSkipVerify", func(t *testing.T) {
 		idp := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   helpers.GenerateUniqueName("e2e-idp-keycloak-insecure"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Name:   s.GenerateName("e2e-idp-keycloak-insecure"),
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -137,9 +122,7 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 				},
 			},
 		}
-		cleanup.Add(idp)
-		err := cli.Create(ctx, idp)
-		require.NoError(t, err)
+		s.MustCreateResource(idp)
 
 		assert.True(t, idp.Spec.Keycloak.InsecureSkipVerify)
 		t.Logf("GROUPSYNC-003: Created IdentityProvider with InsecureSkipVerify=true: %s", idp.Name)
@@ -148,9 +131,7 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 
 // TestIdentityProviderOIDCConfig tests OIDC configuration options.
 func TestIdentityProviderOIDCConfig(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("OIDCConfigFields", func(t *testing.T) {
 		oidcConfig := telekomv1alpha1.OIDCConfig{
@@ -169,9 +150,7 @@ func TestIdentityProviderOIDCConfig(t *testing.T) {
 
 // TestGroupSyncProviderEnum tests the GroupSyncProvider enum values.
 func TestGroupSyncProviderEnum(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("GroupSyncProviderKeycloak", func(t *testing.T) {
 		provider := telekomv1alpha1.GroupSyncProviderKeycloak

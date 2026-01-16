@@ -1,6 +1,10 @@
 package breakglass
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/telekom/k8s-breakglass/pkg/naming"
+)
 
 func TestToRFC1123Subdomain(t *testing.T) {
 	tests := []struct {
@@ -19,9 +23,9 @@ func TestToRFC1123Subdomain(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := toRFC1123Subdomain(tt.in)
+		got := naming.ToRFC1123Subdomain(tt.in)
 		if got != tt.want {
-			t.Fatalf("toRFC1123Subdomain(%q) = %q, want %q", tt.in, got, tt.want)
+			t.Fatalf("naming.ToRFC1123Subdomain(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

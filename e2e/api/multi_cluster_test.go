@@ -38,9 +38,7 @@ import (
 // - Test cross-cluster escalation setup
 // - Verify kubeconfig secret reference handling
 func TestMultiClusterConfiguration(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -86,27 +84,17 @@ users:
 		require.NoError(t, err, "Failed to create kubeconfig secret")
 
 		// Create ClusterConfig referencing the secret
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-spoke-cluster",
-				Namespace: namespace,
-				Labels: map[string]string{
-					"e2e-test":    "true",
-					"environment": "test",
-				},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				ClusterID:   "spoke-cluster",
-				Tenant:      "test-tenant",
-				Environment: "e2e-test",
-				Location:    "eu-central-1",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      kubeconfigSecret.Name,
-					Namespace: namespace,
-					Key:       "kubeconfig",
-				},
-			},
-		}
+		clusterConfig := helpers.NewClusterConfigBuilder("e2e-test-spoke-cluster", namespace).
+			WithClusterID("spoke-cluster").
+			WithTenant("test-tenant").
+			WithEnvironment("e2e-test").
+			WithLocation("eu-central-1").
+			WithKubeconfigSecret(kubeconfigSecret.Name, "kubeconfig").
+			WithLabels(map[string]string{
+				"e2e-test":    "true",
+				"environment": "test",
+			}).
+			Build()
 
 		cleanup.Add(clusterConfig)
 		err = cli.Create(ctx, clusterConfig)
@@ -216,25 +204,12 @@ users:
 		err = cli.Create(ctx, kubeconfigSecret)
 		require.NoError(t, err)
 
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-idp-cluster",
-				Namespace: namespace,
-				Labels: map[string]string{
-					"e2e-test": "true",
-				},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				ClusterID: "idp-cluster",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      kubeconfigSecret.Name,
-					Namespace: namespace,
-					Key:       "kubeconfig",
-				},
-				IdentityProviderRefs: []string{"primary-idp", "backup-idp"},
-				BlockSelfApproval:    true,
-			},
-		}
+		clusterConfig := helpers.NewClusterConfigBuilder("e2e-test-idp-cluster", namespace).
+			WithClusterID("idp-cluster").
+			WithKubeconfigSecret(kubeconfigSecret.Name, "kubeconfig").
+			WithIdentityProviderRefs("primary-idp", "backup-idp").
+			WithBlockSelfApproval(true).
+			Build()
 
 		cleanup.Add(clusterConfig)
 		err = cli.Create(ctx, clusterConfig)
@@ -255,16 +230,14 @@ users:
 		err = cli.Delete(ctx, &clusterConfig)
 		require.NoError(t, err, "Failed to delete ClusterConfig")
 
-		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &telekomv1alpha1.ClusterConfig{}, 30*time.Second)
+		err = helpers.WaitForResourceDeleted(ctx, cli, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &telekomv1alpha1.ClusterConfig{}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "ClusterConfig was not deleted")
 	})
 }
 
 // TestCrossClusterEscalation tests escalation setup spanning multiple clusters.
 func TestCrossClusterEscalation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -274,30 +247,13 @@ func TestCrossClusterEscalation(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 
 	t.Run("EscalationWithMultipleClusters", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-multi-cluster-escalation",
-				Namespace: namespace,
-				Labels: map[string]string{
-					"e2e-test": "true",
-				},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup: "cross-cluster-group",
-				MaxValidFor:    "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{
-						"cluster-a",
-						"cluster-b",
-						"cluster-c",
-					},
-					Groups: []string{"sre-team@example.com"},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-test-multi-cluster-escalation", namespace).
+			WithEscalatedGroup("cross-cluster-group").
+			WithMaxValidFor("2h").
+			WithAllowedClusters("cluster-a", "cluster-b", "cluster-c").
+			WithAllowedGroups("sre-team@example.com").
+			WithApproverUsers(helpers.GetTestApproverEmail()).
+			Build()
 
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
@@ -314,28 +270,14 @@ func TestCrossClusterEscalation(t *testing.T) {
 
 	t.Run("EscalationWithClusterConfigRefs", func(t *testing.T) {
 		// Create an escalation that uses ClusterConfigRefs instead of explicit cluster list
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-clusterconfig-ref-escalation",
-				Namespace: namespace,
-				Labels: map[string]string{
-					"e2e-test": "true",
-				},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "clusterconfig-ref-group",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				// Use ClusterConfigRefs to reference ClusterConfig objects by name
-				ClusterConfigRefs: []string{"e2e-test-clusterconfig"},
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Groups: []string{"platform-team@example.com"},
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Groups: []string{"security-approvers"},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-test-clusterconfig-ref-escalation", namespace).
+			WithEscalatedGroup("clusterconfig-ref-group").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("1h").
+			WithClusterConfigRefs("e2e-test-clusterconfig").
+			WithAllowedGroups("platform-team@example.com").
+			WithApproverGroups("security-approvers").
+			Build()
 
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
@@ -350,27 +292,14 @@ func TestCrossClusterEscalation(t *testing.T) {
 
 	t.Run("SessionTargetingSpecificCluster", func(t *testing.T) {
 		// Create escalation first
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-target-cluster-escalation",
-				Namespace: namespace,
-				Labels: map[string]string{
-					"e2e-test": "true",
-				},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "target-cluster-group",
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName(), "secondary-cluster"},
-					Groups:   helpers.TestUsers.MultiClusterRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.MultiClusterApprover.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-test-target-cluster-escalation", namespace).
+			WithEscalatedGroup("target-cluster-group").
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("1h").
+			WithAllowedClusters(helpers.GetTestClusterName(), "secondary-cluster").
+			WithAllowedGroups(helpers.TestUsers.MultiClusterRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.MultiClusterApprover.Email).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -384,7 +313,7 @@ func TestCrossClusterEscalation(t *testing.T) {
 			User:    helpers.GetTestUserEmail(),
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "E2E test - targeting specific cluster",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session targeting specific cluster via API")
 		cleanup.Add(session)
 
@@ -397,9 +326,7 @@ func TestCrossClusterEscalation(t *testing.T) {
 
 // TestClusterConfigValidation tests ClusterConfig validation rules.
 func TestClusterConfigValidation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -444,22 +371,9 @@ func TestClusterConfigValidation(t *testing.T) {
 		err := cli.Create(ctx, secret)
 		require.NoError(t, err)
 
-		clusterConfig := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-valid-cluster",
-				Namespace: namespace,
-				Labels: map[string]string{
-					"e2e-test": "true",
-				},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      secret.Name,
-					Namespace: namespace,
-					Key:       "kubeconfig",
-				},
-			},
-		}
+		clusterConfig := helpers.NewClusterConfigBuilder("e2e-test-valid-cluster", namespace).
+			WithKubeconfigSecret(secret.Name, "kubeconfig").
+			Build()
 
 		cleanup.Add(clusterConfig)
 		err = cli.Create(ctx, clusterConfig)

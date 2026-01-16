@@ -1,5 +1,7 @@
 # Test Escalation: Auto-Approval
-# Escalation with auto-approval enabled for low-risk access
+# Escalation with minimal approval workflow for low-risk access
+# Note: Approvers are still required by CRD validation, but this escalation
+# is intended for low-risk scenarios where approval can be quick
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
@@ -9,12 +11,14 @@ metadata:
 spec:
   escalatedGroup: auto-approval-group
   maxValidFor: "30m"
-  autoApprove: true
   allowed:
     clusters:
       - tenant-a
     groups:
       - developers@example.com
+  approvers:
+    groups:
+      - platform-admins@example.com
   permissions:
     - apiGroups: [""]
       resources: ["pods"]

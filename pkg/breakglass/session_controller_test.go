@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -800,6 +802,164 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 	}
 }
 
+// TestSessionCreatedUsesUserIdentifierClaim
+//
+// Purpose:
+//
+//	Verifies that session creation uses the correct user identifier based on
+//	ClusterConfig's userIdentifierClaim setting.
+//
+// Reasoning:
+//
+//	The session's spec.User must match what the spoke cluster's OIDC sends in SAR.
+//	Different clusters may use different OIDC claims (email, preferred_username, sub).
+//	The controller should respect the ClusterConfig's userIdentifierClaim setting.
+//
+// Flow pattern:
+//   - Create ClusterConfig with specific userIdentifierClaim
+//   - Create escalation for the cluster
+//   - Create session and verify spec.User matches the expected claim value
+func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
+	tests := []struct {
+		name                string
+		userIdentifierClaim v1alpha1.UserIdentifierClaimType
+		contextEmail        string
+		contextUsername     string
+		contextUserID       string
+		expectedSpecUser    string
+	}{
+		{
+			name:                "Email claim (default)",
+			userIdentifierClaim: v1alpha1.UserIdentifierClaimEmail,
+			contextEmail:        "user@example.com",
+			contextUsername:     "testuser",
+			contextUserID:       "sub-123",
+			expectedSpecUser:    "user@example.com",
+		},
+		{
+			name:                "Preferred username claim",
+			userIdentifierClaim: v1alpha1.UserIdentifierClaimPreferredUsername,
+			contextEmail:        "user@example.com",
+			contextUsername:     "testuser",
+			contextUserID:       "sub-123",
+			expectedSpecUser:    "testuser",
+		},
+		{
+			name:                "Sub claim",
+			userIdentifierClaim: v1alpha1.UserIdentifierClaimSub,
+			contextEmail:        "user@example.com",
+			contextUsername:     "testuser",
+			contextUserID:       "sub-123",
+			expectedSpecUser:    "sub-123",
+		},
+		{
+			name:                "Empty claim defaults to email",
+			userIdentifierClaim: "",
+			contextEmail:        "default@example.com",
+			contextUsername:     "defaultuser",
+			contextUserID:       "sub-default",
+			expectedSpecUser:    "default@example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			}
+
+			clusterName := "test-cluster-" + string(tt.userIdentifierClaim)
+			if tt.userIdentifierClaim == "" {
+				clusterName = "test-cluster-default"
+			}
+
+			// Create ClusterConfig with specific userIdentifierClaim
+			clusterConfig := &v1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: clusterName,
+				},
+				Spec: v1alpha1.ClusterConfigSpec{
+					KubeconfigSecretRef: &v1alpha1.SecretKeyReference{
+						Name:      "test-secret",
+						Namespace: "default",
+					},
+					UserIdentifierClaim: tt.userIdentifierClaim,
+				},
+			}
+
+			// Create escalation for the cluster
+			escalation := &v1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "esc-" + clusterName,
+					Namespace: "default",
+				},
+				Spec: v1alpha1.BreakglassEscalationSpec{
+					Allowed: v1alpha1.BreakglassEscalationAllowed{
+						Clusters: []string{clusterName},
+						Groups:   []string{"system:authenticated"},
+					},
+					EscalatedGroup: "test-group",
+					Approvers: v1alpha1.BreakglassEscalationApprovers{
+						Users: []string{"approver@example.com"},
+					},
+				},
+			}
+
+			cli := builder.WithObjects(clusterConfig, escalation).
+				WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+			sesmanager := SessionManager{Client: cli}
+			escmanager := EscalationManager{Client: cli}
+
+			logger, _ := zap.NewDevelopment()
+			// Pass cli as clusterConfigClient - the controller will create its own ClusterConfigManager
+			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+				func(c *gin.Context) {
+					// Set all identity claims in context
+					c.Set("email", tt.contextEmail)
+					c.Set("username", tt.contextUsername)
+					c.Set("user_id", tt.contextUserID)
+					c.Next()
+				}, "/config/config.yaml", nil, cli)
+
+			ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+				return []string{"system:authenticated"}, nil
+			}
+
+			engine := gin.New()
+			_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+			// Create session request
+			reqData := BreakglassSessionRequest{
+				Clustername: clusterName,
+				Username:    tt.contextEmail, // Frontend typically sends email
+				GroupName:   "test-group",
+			}
+			b, _ := json.Marshal(reqData)
+			req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			if w.Result().StatusCode != http.StatusCreated {
+				body, _ := io.ReadAll(w.Result().Body)
+				t.Fatalf("expected created, got %d: %s", w.Result().StatusCode, string(body))
+			}
+
+			// Verify the created session has the correct spec.User
+			list := &v1alpha1.BreakglassSessionList{}
+			if err := cli.List(context.Background(), list); err != nil {
+				t.Fatalf("failed to list sessions: %v", err)
+			}
+			if len(list.Items) != 1 {
+				t.Fatalf("expected 1 session, got %d", len(list.Items))
+			}
+			if list.Items[0].Spec.User != tt.expectedSpecUser {
+				t.Errorf("expected spec.User=%q, got %q", tt.expectedSpecUser, list.Items[0].Spec.User)
+			}
+		})
+	}
+}
+
 // helper to get *bool
 func ptrBool(b bool) *bool { return &b }
 
@@ -1163,10 +1323,13 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("/breakglassSessions/%s", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	var got v1alpha1.BreakglassSession
-	if err := json.NewDecoder(w.Result().Body).Decode(&got); err != nil {
+	var gotResp struct {
+		Session v1alpha1.BreakglassSession `json:"session"`
+	}
+	if err := json.NewDecoder(w.Result().Body).Decode(&gotResp); err != nil {
 		t.Fatalf("failed to decode session status: %v", err)
 	}
+	got := gotResp.Session
 	if got.Status.State != v1alpha1.SessionStateApproved || got.Status.ApprovedAt.IsZero() {
 		t.Fatalf("expected approved session, got state=%s approvedAt=%v", got.Status.State, got.Status.ApprovedAt)
 	}
@@ -1183,10 +1346,13 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, fmt.Sprintf("/breakglassSessions/%s", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	var gotAfterDrop v1alpha1.BreakglassSession
-	if err := json.NewDecoder(w.Result().Body).Decode(&gotAfterDrop); err != nil {
+	var gotAfterDropResp struct {
+		Session v1alpha1.BreakglassSession `json:"session"`
+	}
+	if err := json.NewDecoder(w.Result().Body).Decode(&gotAfterDropResp); err != nil {
 		t.Fatalf("failed to decode session status after drop: %v", err)
 	}
+	gotAfterDrop := gotAfterDropResp.Session
 	if gotAfterDrop.Status.State != v1alpha1.SessionStateExpired {
 		t.Fatalf("expected expired session after drop, got state=%s", gotAfterDrop.Status.State)
 	}
@@ -2529,6 +2695,9 @@ func (e ErrIdentityProvider) GetEmail(c *gin.Context) (string, error) {
 }
 func (e ErrIdentityProvider) GetUsername(c *gin.Context) string { return "" }
 func (e ErrIdentityProvider) GetIdentity(c *gin.Context) string { return "" }
+func (e ErrIdentityProvider) GetUserIdentifier(c *gin.Context, claimType v1alpha1.UserIdentifierClaimType) (string, error) {
+	return "", fmt.Errorf("simulated idp error")
+}
 
 // Test that when identity provider fails to return email and mine=true is requested,
 // the handler returns HTTP 500.
@@ -4219,7 +4388,7 @@ func TestIsSessionValidFunction(t *testing.T) {
 	}
 }
 
-// TestToRFC1123SubdomainEdgeCases covers edge cases in toRFC1123Subdomain
+// TestToRFC1123SubdomainEdgeCases covers edge cases in naming.ToRFC1123Subdomain
 func TestToRFC1123SubdomainEdgeCases(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -4241,13 +4410,13 @@ func TestToRFC1123SubdomainEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := toRFC1123Subdomain(tt.input)
+			result := naming.ToRFC1123Subdomain(tt.input)
 			require.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-// TestToRFC1123LabelEdgeCases covers edge cases in toRFC1123Label
+// TestToRFC1123LabelEdgeCases covers edge cases in naming.ToRFC1123Label
 func TestToRFC1123LabelEdgeCases(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -4265,34 +4434,8 @@ func TestToRFC1123LabelEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := toRFC1123Label(tt.input)
+			result := naming.ToRFC1123Label(tt.input)
 			require.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestIsAlnum covers the isAlnum helper
-// Note: isAlnum only checks lowercase letters since input is lowercased before use
-func TestIsAlnumFunction(t *testing.T) {
-	tests := []struct {
-		input    rune
-		expected bool
-	}{
-		{'a', true},
-		{'z', true},
-		{'A', false}, // uppercase not valid (input is lowercased before isAlnum is called)
-		{'Z', false}, // uppercase not valid
-		{'0', true},
-		{'9', true},
-		{'-', false},
-		{'_', false},
-		{'@', false},
-		{' ', false},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.input), func(t *testing.T) {
-			require.Equal(t, tt.expected, isAlnum(tt.input))
 		})
 	}
 }

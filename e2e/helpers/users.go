@@ -17,7 +17,7 @@ limitations under the License.
 package helpers
 
 // TestUser represents a test user configured in Keycloak
-// These users are defined in config/dev/resources/keycloak-realm.json
+// These users are defined in config/dev/resources/breakglass-e2e-realm.json
 type TestUser struct {
 	Username string
 	Password string
@@ -26,7 +26,7 @@ type TestUser struct {
 }
 
 // TestUsers provides access to pre-configured test users in Keycloak.
-// These users are seeded via the keycloak-realm.json configuration.
+// These users are seeded via the breakglass-e2e-realm.json configuration.
 var TestUsers = struct {
 	// Requester is a user that can request breakglass sessions
 	// Groups: dev, ops, requester
@@ -164,6 +164,15 @@ var TestUsers = struct {
 	// MultiClusterApprover is an approver for multi-cluster tests
 	// Groups: approver, multi-cluster-approver
 	MultiClusterApprover TestUser
+
+	// CompleteFlowRequester is specifically for TestCompleteBreakglassFlow
+	// This user does NOT have complete-flow-test-admins group by default - they get it via session
+	// Groups: complete-flow-requester-base (minimal group with no special permissions)
+	CompleteFlowRequester TestUser
+
+	// CompleteFlowApprover is an approver for complete flow tests
+	// Groups: approver, complete-flow-approver
+	CompleteFlowApprover TestUser
 }{
 	Requester: TestUser{
 		Username: "test-user",
@@ -171,6 +180,8 @@ var TestUsers = struct {
 		Email:    "test-user@example.com",
 		Groups: []string{
 			"dev", "ops", "requester",
+			// Multi-cluster E2E required group - escalations use this
+			"breakglass-users",
 			// E2E test groups with RBAC bindings
 			"complete-flow-test-admins",
 			"e2e-test-group",
@@ -213,25 +224,25 @@ var TestUsers = struct {
 		Username: "approver-user",
 		Password: "approver-password",
 		Email:    "approver@example.org", // Must match Keycloak realm config
-		Groups:   []string{"approver", "senior-ops", "approval-notes"},
+		Groups:   []string{"approver", "senior-ops", "approval-notes", "breakglass-approvers"},
 	},
 	ApproverInternal: TestUser{
 		Username: "approver-internal",
 		Password: "approver-internal-password",
-		Email:    "approver@example.com", // Must match Keycloak realm config
-		Groups:   []string{"approver", "senior-ops", "breakglass"},
+		Email:    "approver-internal@example.com", // Must match Keycloak realm config
+		Groups:   []string{"approver", "senior-ops", "breakglass", "breakglass-approvers"},
 	},
 	SeniorApprover: TestUser{
 		Username: "senior-approver",
 		Password: "senior-approver-password",
 		Email:    "senior-approver@example.com",
-		Groups:   []string{"approver", "senior-ops", "emergency-response"},
+		Groups:   []string{"approver", "senior-ops", "emergency-response", "breakglass-approvers"},
 	},
 	DevAlpha: TestUser{
 		Username: "dev-user-alpha",
 		Password: "dev-alpha-password",
 		Email:    "dev-alpha@example.com",
-		Groups:   []string{"dev", "frontend-team", "devs-a"},
+		Groups:   []string{"dev", "frontend-team", "devs-a", "breakglass-users"},
 	},
 	DevBeta: TestUser{
 		Username: "dev-user-beta",
@@ -372,7 +383,7 @@ var TestUsers = struct {
 		Username: "policy-requester",
 		Password: "policy-requester-password",
 		Email:    "policy-requester@example.com",
-		Groups:   []string{"policy-test-group"}, // Minimal for deny policy testing
+		Groups:   []string{"policy-test-group", "breakglass-users"}, // Minimal for deny policy testing + multi-cluster access
 	},
 	PolicyTestApprover: TestUser{
 		Username: "policy-approver",
@@ -396,7 +407,7 @@ var TestUsers = struct {
 		Username: "scheduling-requester",
 		Password: "scheduling-requester-password",
 		Email:    "scheduling-requester@example.com",
-		Groups:   []string{"scheduled-admins", "dev"},
+		Groups:   []string{"scheduled-admins", "dev", "breakglass-users"},
 	},
 	SchedulingTestApprover: TestUser{
 		Username: "scheduling-approver",
@@ -408,7 +419,7 @@ var TestUsers = struct {
 		Username: "webhook-requester",
 		Password: "webhook-requester-password",
 		Email:    "webhook-requester@example.com",
-		Groups:   []string{"webhook-test-group", "dev"},
+		Groups:   []string{"webhook-test-group", "dev", "breakglass-users"},
 	},
 	WebhookTestApprover: TestUser{
 		Username: "webhook-approver",
@@ -427,6 +438,18 @@ var TestUsers = struct {
 		Password: "multi-cluster-approver-password",
 		Email:    "multi-cluster-approver@example.com",
 		Groups:   []string{"approver", "multi-cluster-approver"},
+	},
+	CompleteFlowRequester: TestUser{
+		Username: "complete-flow-requester",
+		Password: "complete-flow-requester-password",
+		Email:    "complete-flow-requester@example.com",
+		Groups:   []string{"complete-flow-requester-base"}, // Minimal - NO complete-flow-test-admins!
+	},
+	CompleteFlowApprover: TestUser{
+		Username: "complete-flow-approver",
+		Password: "complete-flow-approver-password",
+		Email:    "complete-flow-approver@example.com",
+		Groups:   []string{"approver", "complete-flow-approver"},
 	},
 }
 

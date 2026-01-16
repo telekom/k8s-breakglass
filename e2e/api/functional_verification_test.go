@@ -46,9 +46,7 @@ import (
 // generated when breakglass sessions are created and approved, and that these
 // events reach the configured Kafka sink.
 func TestAuditEventFunctionalVerification(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsKafkaEnabled() {
 		t.Skip("Skipping Kafka audit test. Set KAFKA_TEST=true and ensure Kafka is available.")
 	}
@@ -66,7 +64,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-functional-audit",
-				Labels: map[string]string{"e2e-test": "true", "feature": "functional-audit"},
+				Labels: helpers.E2ELabelsWithFeature("functional-audit"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -75,7 +73,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 						Name: "kafka-functional-test",
 						Type: telekomv1alpha1.AuditSinkTypeKafka,
 						Kafka: &telekomv1alpha1.KafkaSinkSpec{
-							Brokers:     []string{"breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092"},
+							Brokers:     []string{"breakglass-kafka.breakglass-system.svc.cluster.local:9092"},
 							Topic:       "breakglass-audit-functional-test",
 							Compression: "snappy",
 						},
@@ -99,25 +97,12 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 	})
 
 	// Step 2: Create escalation for the test
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-audit-func-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "audit-functional-test-group",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-audit-func-esc"), namespace).
+		WithEscalatedGroup("audit-functional-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation for audit functional test")
@@ -134,7 +119,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Functional audit verification test",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session")
 		cleanup.Add(session)
 
@@ -146,7 +131,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 
 		// Wait for approval
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStateApproved, 30*time.Second)
+			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Give time for audit events to be generated and delivered
 		time.Sleep(3 * time.Second)
@@ -208,9 +193,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 // (DaemonSets/Deployments) are actually created on the target cluster when
 // a debug session is approved and activated.
 func TestDebugSessionWorkloadDeployment(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -225,7 +208,7 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 		targetNs := &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "breakglass-debug",
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 		}
 		// Don't fail if namespace already exists
@@ -240,7 +223,7 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-workload-pod"),
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Workload Verification Pod",
@@ -280,7 +263,7 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-workload-tmpl"),
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "E2E Workload Verification Template",
@@ -334,7 +317,7 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 			}
 			t.Logf("DebugSession state: %s, message: %s", ds.Status.State, ds.Status.Message)
 			return ds.Status.State == telekomv1alpha1.DebugSessionStateActive
-		}, 60*time.Second, 2*time.Second)
+		}, helpers.WaitForConditionTimeout, 2*time.Second)
 		require.NoError(t, err, "DebugSession did not become active")
 
 		// Verify the session has DeployedResources populated
@@ -398,7 +381,7 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 				return false
 			}
 			return ds.Status.State == telekomv1alpha1.DebugSessionStateActive
-		}, 60*time.Second, 2*time.Second)
+		}, helpers.WaitForConditionTimeout, 2*time.Second)
 		require.NoError(t, err, "Cleanup test session did not become active")
 
 		// Terminate session via API
@@ -412,7 +395,7 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 				return false
 			}
 			return ds.Status.State == telekomv1alpha1.DebugSessionStateTerminated
-		}, 30*time.Second, 2*time.Second)
+		}, helpers.WaitForStateTimeout, 2*time.Second)
 		require.NoError(t, err, "Cleanup test session did not become terminated")
 
 		// Check that pods with this session label are gone or terminating
@@ -439,9 +422,7 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 // TestDebugSessionPodSecurityContext verifies that security contexts from
 // the pod template are correctly applied to deployed workloads.
 func TestDebugSessionPodSecurityContext(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -458,7 +439,7 @@ func TestDebugSessionPodSecurityContext(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-secure-pod"),
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Secure Debug Pod",
@@ -491,7 +472,7 @@ func TestDebugSessionPodSecurityContext(t *testing.T) {
 	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-secure-tmpl"),
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Secure Template",
@@ -529,9 +510,7 @@ func TestDebugSessionPodSecurityContext(t *testing.T) {
 // TestDebugSessionParticipantJoin verifies that additional users can join
 // an active debug session as participants.
 func TestDebugSessionParticipantJoin(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -545,7 +524,7 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-collab-pod"),
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Collaborative Pod",
@@ -569,16 +548,17 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   helpers.GenerateUniqueName("e2e-collab-tmpl"),
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Collaborative Session",
 			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
 			TargetNamespace: "breakglass-debug",
-			TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
-				Enabled:         true,
-				MaxParticipants: 5,
-			},
+			// TODO: Re-enable tmux terminal sharing after fixing image to include tmux
+			// TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+			// 	Enabled:         true,
+			// 	MaxParticipants: 5,
+			// },
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
 				Clusters: []string{clusterName, "*"},
 				Groups:   helpers.TestUsers.Requester.Groups,
@@ -615,7 +595,7 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 			return false
 		}
 		return ds.Status.State == telekomv1alpha1.DebugSessionStateActive
-	}, 60*time.Second, 2*time.Second)
+	}, helpers.WaitForConditionTimeout, 2*time.Second)
 	require.NoError(t, err, "Session did not become active")
 
 	// Add a participant via API (use join)

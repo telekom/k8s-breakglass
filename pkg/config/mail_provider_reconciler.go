@@ -189,36 +189,40 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 	}
 	defer func() { _ = client.Close() }()
 
-	// Try STARTTLS with proper TLS config
-	if !mp.Spec.SMTP.InsecureSkipVerify {
-		tlsConfig := &tls.Config{
-			ServerName:         mp.Spec.SMTP.Host,
-			InsecureSkipVerify: false,
-		}
+	// Try STARTTLS unless explicitly disabled (e.g., for MailHog)
+	if !mp.Spec.SMTP.DisableTLS {
+		if !mp.Spec.SMTP.InsecureSkipVerify {
+			tlsConfig := &tls.Config{
+				ServerName:         mp.Spec.SMTP.Host,
+				InsecureSkipVerify: false,
+			}
 
-		// Add custom CA certificate if provided
-		if mp.Spec.SMTP.CertificateAuthority != "" {
-			certPool := x509.NewCertPool()
-			if ok := certPool.AppendCertsFromPEM([]byte(mp.Spec.SMTP.CertificateAuthority)); !ok {
-				log.Warnw("Failed to parse CA certificate")
-			} else {
-				tlsConfig.RootCAs = certPool
+			// Add custom CA certificate if provided
+			if mp.Spec.SMTP.CertificateAuthority != "" {
+				certPool := x509.NewCertPool()
+				if ok := certPool.AppendCertsFromPEM([]byte(mp.Spec.SMTP.CertificateAuthority)); !ok {
+					log.Warnw("Failed to parse CA certificate")
+				} else {
+					tlsConfig.RootCAs = certPool
+				}
+			}
+
+			if err := client.StartTLS(tlsConfig); err != nil {
+				// STARTTLS might not be supported, log but don't fail
+				log.Debugw("STARTTLS not available or failed", "error", err)
+			}
+		} else {
+			// Only use insecure TLS if explicitly configured
+			tlsConfig := &tls.Config{
+				ServerName:         mp.Spec.SMTP.Host,
+				InsecureSkipVerify: true,
+			}
+			if err := client.StartTLS(tlsConfig); err != nil {
+				log.Debugw("STARTTLS not available or failed (insecure mode)", "error", err)
 			}
 		}
-
-		if err := client.StartTLS(tlsConfig); err != nil {
-			// STARTTLS might not be supported, log but don't fail
-			log.Debugw("STARTTLS not available or failed", "error", err)
-		}
 	} else {
-		// Only use insecure TLS if explicitly configured
-		tlsConfig := &tls.Config{
-			ServerName:         mp.Spec.SMTP.Host,
-			InsecureSkipVerify: true,
-		}
-		if err := client.StartTLS(tlsConfig); err != nil {
-			log.Debugw("STARTTLS not available or failed (insecure mode)", "error", err)
-		}
+		log.Debugw("TLS disabled for SMTP connection, skipping STARTTLS")
 	}
 
 	// Try authentication if username is provided

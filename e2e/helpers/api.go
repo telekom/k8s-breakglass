@@ -423,12 +423,16 @@ func (c *APIClient) GetSession(ctx context.Context, name, namespace string) (*te
 		return nil, fmt.Errorf("failed to get session: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	var session telekomv1alpha1.BreakglassSession
-	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
-		return nil, fmt.Errorf("failed to decode session: %w", err)
+	// The API returns {"session": {...}, "approvalMeta": {...}}
+	// We need to extract the session from the response wrapper
+	var response struct {
+		Session telekomv1alpha1.BreakglassSession `json:"session"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode session response: %w", err)
 	}
 
-	return &session, nil
+	return &response.Session, nil
 }
 
 // SendSAR sends a SubjectAccessReview to the webhook endpoint

@@ -1,0 +1,145 @@
+# UI E2E Test Escalations
+# Each escalation is designed to be used by a specific test file to ensure test isolation
+# when running tests in parallel.
+#
+# IMPORTANT: Each test file has its own:
+# - Dedicated requester user (ui-e2e-*-user)
+# - Unique requester group (ui-e2e-*-requester) that ONLY that user belongs to
+# - Dedicated escalation targeting that group
+# - Shared approver (ui-e2e-approver) for approval actions
+#
+# This ensures tests cannot interfere with each other's sessions.
+
+# === request-session.spec.ts Tests ===
+# User: ui-e2e-req-session-user (groups: ui-e2e-req-session-requester)
+# Approver: ui-e2e-approver (groups: ui-e2e-approver-group, senior-ops)
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-request-session-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ui-e2e-req-session-requester  # Only ui-e2e-req-session-user has this
+  escalatedGroup: ui-e2e-request-session-group
+  approvers:
+    groups:
+      - ui-e2e-approver-group
+    users:
+      - ui-e2e-approver@example.com
+  requestReason:
+    mandatory: true
+    description: "Request session test escalation"
+  maxValidFor: 1h
+  retainFor: 24h
+
+# === approve-via-email.spec.ts Tests ===
+# User: ui-e2e-approve-email-user (groups: ui-e2e-approve-email-requester)
+# Approver: ui-e2e-approver (groups: ui-e2e-approver-group, senior-ops)
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-approve-email-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ui-e2e-approve-email-requester  # Only ui-e2e-approve-email-user has this
+  escalatedGroup: ui-e2e-approve-email-group
+  approvers:
+    groups:
+      - ui-e2e-approver-group
+    users:
+      - ui-e2e-approver@example.com
+  maxValidFor: 1h
+  retainFor: 24h
+
+# === reject-session.spec.ts Tests ===
+# User: ui-e2e-reject-session-user (groups: ui-e2e-reject-session-requester)
+# Approver: ui-e2e-approver (groups: ui-e2e-approver-group, senior-ops)
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-reject-session-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ui-e2e-reject-session-requester  # Only ui-e2e-reject-session-user has this
+  escalatedGroup: ui-e2e-reject-session-group
+  approvers:
+    groups:
+      - ui-e2e-approver-group
+    users:
+      - ui-e2e-approver@example.com
+  maxValidFor: 1h
+  retainFor: 24h
+
+# === my-requests.spec.ts Tests ===
+# User: ui-e2e-my-requests-user (groups: ui-e2e-my-requests-requester)
+# Approver: ui-e2e-approver (groups: ui-e2e-approver-group, senior-ops)
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-my-requests-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ui-e2e-my-requests-requester  # Only ui-e2e-my-requests-user has this
+  escalatedGroup: ui-e2e-my-requests-group
+  approvers:
+    groups:
+      - ui-e2e-approver-group
+    users:
+      - ui-e2e-approver@example.com
+  maxValidFor: 1h
+  retainFor: 24h
+
+# === pending-approvals.spec.ts Tests ===
+# User: ui-e2e-pending-approvals-user (groups: ui-e2e-pending-approvals-requester)
+# Approver: ui-e2e-approver (groups: ui-e2e-approver-group, senior-ops)
+# This test needs its own escalation so it can create sessions to review
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-pending-approvals-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ui-e2e-pending-approvals-requester  # Only ui-e2e-pending-approvals-user has this
+  escalatedGroup: ui-e2e-pending-approvals-group
+  approvers:
+    groups:
+      - ui-e2e-approver-group
+    users:
+      - ui-e2e-approver@example.com
+  maxValidFor: 1h
+  retainFor: 24h

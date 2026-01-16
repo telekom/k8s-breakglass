@@ -7,18 +7,44 @@ metadata:
   namespace: {{ $.Release.Namespace }}
 spec:
   allowed:
+    {{- if $esc.allowed.clusters }}
     clusters:
 {{ toYaml $esc.allowed.clusters | indent 6 }}
+    {{- end }}
+    {{- if $esc.allowed.groups }}
     groups:
 {{ toYaml $esc.allowed.groups | indent 6 }}
+    {{- end }}
+    {{- if $esc.allowed.users }}
+    users:
+{{ toYaml $esc.allowed.users | indent 6 }}
+    {{- end }}
   escalatedGroup: {{ $esc.escalatedGroup }}
+  {{- if $esc.approvers }}
   approvers:
+    {{- if $esc.approvers.groups }}
     groups:
 {{ toYaml $esc.approvers.groups | indent 6 }}
+    {{- end }}
+    {{- if $esc.approvers.users }}
+    users:
+{{ toYaml $esc.approvers.users | indent 6 }}
+    {{- end }}
     {{- if $esc.approvers.hiddenFromUI }}
     hiddenFromUI:
 {{ toYaml $esc.approvers.hiddenFromUI | indent 6 }}
     {{- end }}
+  {{- end }}
+  # Optional: use ClusterConfig references instead of cluster names
+  {{- if $esc.clusterConfigRefs }}
+  clusterConfigRefs:
+{{ toYaml $esc.clusterConfigRefs | indent 4 }}
+  {{- end }}
+  # Optional: attach deny policies to sessions from this escalation
+  {{- if $esc.denyPolicyRefs }}
+  denyPolicyRefs:
+{{ toYaml $esc.denyPolicyRefs | indent 4 }}
+  {{- end }}
   # Optional: restrict approver email domains for this escalation
   {{- if $esc.allowedApproverDomains }}
   allowedApproverDomains:
@@ -44,11 +70,74 @@ spec:
 {{ toYaml $esc.notificationExclusions.groups | indent 6 }}
     {{- end }}
   {{- end }}
+  {{- if $esc.requestReason }}
   requestReason:
     mandatory: {{ default false $esc.requestReason.mandatory }}
-    description: {{ quote $esc.requestReason.description }}
+    description: {{ quote (default "" $esc.requestReason.description) }}
+  {{- end }}
+  {{- if $esc.approvalReason }}
+  approvalReason:
+    mandatory: {{ default false $esc.approvalReason.mandatory }}
+    description: {{ quote (default "" $esc.approvalReason.description) }}
+  {{- end }}
   maxValidFor: {{ $esc.maxValidFor | default "1h" }}
   retainFor: {{ $esc.retainFor | default "24h" }}
-  idleTimeout: {{ $esc.idleTimeout | default "1h" }}
+  {{- if $esc.approvalTimeout }}
+  approvalTimeout: {{ $esc.approvalTimeout }}
+  {{- end }}
+  # Optional: route notifications through specific mail provider
+  {{- if $esc.mailProvider }}
+  mailProvider: {{ $esc.mailProvider }}
+  {{- end }}
+  # Optional: Multi-IDP configuration (use ONE of the following approaches)
+  {{- if $esc.allowedIdentityProviders }}
+  allowedIdentityProviders:
+{{ toYaml $esc.allowedIdentityProviders | indent 4 }}
+  {{- end }}
+  {{- if $esc.allowedIdentityProvidersForRequests }}
+  allowedIdentityProvidersForRequests:
+{{ toYaml $esc.allowedIdentityProvidersForRequests | indent 4 }}
+  {{- end }}
+  {{- if $esc.allowedIdentityProvidersForApprovers }}
+  allowedIdentityProvidersForApprovers:
+{{ toYaml $esc.allowedIdentityProvidersForApprovers | indent 4 }}
+  {{- end }}
+  # Optional: Pod security overrides for DenyPolicy relaxation
+  {{- if $esc.podSecurityOverrides }}
+  podSecurityOverrides:
+    enabled: {{ default false $esc.podSecurityOverrides.enabled }}
+    {{- if $esc.podSecurityOverrides.maxAllowedScore }}
+    maxAllowedScore: {{ $esc.podSecurityOverrides.maxAllowedScore }}
+    {{- end }}
+    {{- if $esc.podSecurityOverrides.exemptFactors }}
+    exemptFactors:
+{{ toYaml $esc.podSecurityOverrides.exemptFactors | indent 6 }}
+    {{- end }}
+    {{- if $esc.podSecurityOverrides.namespaceScope }}
+    namespaceScope:
+      {{- if $esc.podSecurityOverrides.namespaceScope.patterns }}
+      patterns:
+{{ toYaml $esc.podSecurityOverrides.namespaceScope.patterns | indent 8 }}
+      {{- end }}
+      {{- if $esc.podSecurityOverrides.namespaceScope.selectorTerms }}
+      selectorTerms:
+{{ toYaml $esc.podSecurityOverrides.namespaceScope.selectorTerms | indent 8 }}
+      {{- end }}
+    {{- end }}
+    {{- if hasKey $esc.podSecurityOverrides "requireApproval" }}
+    requireApproval: {{ $esc.podSecurityOverrides.requireApproval }}
+    {{- end }}
+    {{- if $esc.podSecurityOverrides.approvers }}
+    approvers:
+      {{- if $esc.podSecurityOverrides.approvers.groups }}
+      groups:
+{{ toYaml $esc.podSecurityOverrides.approvers.groups | indent 8 }}
+      {{- end }}
+      {{- if $esc.podSecurityOverrides.approvers.users }}
+      users:
+{{ toYaml $esc.podSecurityOverrides.approvers.users | indent 8 }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
 ---
 {{- end }}

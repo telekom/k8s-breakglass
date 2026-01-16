@@ -54,9 +54,7 @@ import (
 // Steps: Create AuditConfig with log sink. Verify it is accepted.
 // Expected: AuditConfig created, status becomes Ready.
 func TestAuditConfigLogSink(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -68,7 +66,7 @@ func TestAuditConfigLogSink(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-log-sink",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-log"},
+				Labels: helpers.E2ELabelsWithFeature("audit-log"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -103,7 +101,7 @@ func TestAuditConfigLogSink(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-log-json",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-log-json"},
+				Labels: helpers.E2ELabelsWithFeature("audit-log-json"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -136,9 +134,7 @@ func TestAuditConfigLogSink(t *testing.T) {
 // Steps: Create AuditConfig with Kafka sink. Verify configuration accepted.
 // Expected: AuditConfig created with valid Kafka settings.
 func TestAuditConfigKafkaSink(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -150,7 +146,7 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-kafka-basic",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-kafka"},
+				Labels: helpers.E2ELabelsWithFeature("audit-kafka"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -159,7 +155,7 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 						Name: "kafka-sink",
 						Type: telekomv1alpha1.AuditSinkTypeKafka,
 						Kafka: &telekomv1alpha1.KafkaSinkSpec{
-							Brokers:     []string{"breakglass-dev-kafka.breakglass-dev-system.svc.cluster.local:9092"},
+							Brokers:     []string{"breakglass-kafka.breakglass-system.svc.cluster.local:9092"},
 							Topic:       "breakglass-audit-events",
 							Compression: "snappy",
 						},
@@ -184,7 +180,7 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-kafka-batch",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-kafka-batch"},
+				Labels: helpers.E2ELabelsWithFeature("audit-kafka-batch"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -223,9 +219,7 @@ func TestAuditConfigKafkaSink(t *testing.T) {
 // Steps: Create AuditConfig with webhook sink pointing to test endpoint.
 // Expected: AuditConfig created with valid webhook settings.
 func TestAuditConfigWebhookSink(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -237,7 +231,7 @@ func TestAuditConfigWebhookSink(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-webhook",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-webhook"},
+				Labels: helpers.E2ELabelsWithFeature("audit-webhook"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -272,9 +266,7 @@ func TestAuditConfigWebhookSink(t *testing.T) {
 // Steps: Create AuditConfig with Kubernetes event sink.
 // Expected: AuditConfig created, events should be generated for actions.
 func TestAuditConfigKubernetesSink(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -287,7 +279,7 @@ func TestAuditConfigKubernetesSink(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-k8s-events",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-k8s-events"},
+				Labels: helpers.E2ELabelsWithFeature("audit-k8s-events"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -320,9 +312,7 @@ func TestAuditConfigKubernetesSink(t *testing.T) {
 // Steps: Create AuditConfig with log + Kafka + webhook sinks.
 // Expected: All sinks configured, events should fan out to all.
 func TestAuditConfigMultiSink(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -334,7 +324,7 @@ func TestAuditConfigMultiSink(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-multi-sink",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-multi-sink"},
+				Labels: helpers.E2ELabelsWithFeature("audit-multi-sink"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -392,9 +382,7 @@ func TestAuditConfigMultiSink(t *testing.T) {
 // Steps: Create AuditConfig with specific event type filters.
 // Expected: Only specified event types should be captured (verified at config level).
 func TestAuditConfigEventFiltering(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -406,7 +394,7 @@ func TestAuditConfigEventFiltering(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-filter-type",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-filter"},
+				Labels: helpers.E2ELabelsWithFeature("audit-filter"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -446,9 +434,7 @@ func TestAuditConfigEventFiltering(t *testing.T) {
 // Steps: Create AuditConfig with minimum severity level.
 // Expected: Only events at or above severity should be captured.
 func TestAuditConfigSeverityFiltering(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -460,7 +446,7 @@ func TestAuditConfigSeverityFiltering(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-filter-severity",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-severity"},
+				Labels: helpers.E2ELabelsWithFeature("audit-severity"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -494,9 +480,7 @@ func TestAuditConfigSeverityFiltering(t *testing.T) {
 // Steps: Create AuditConfig with custom queue settings.
 // Expected: Queue parameters are persisted correctly.
 func TestAuditConfigQueue(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -508,7 +492,7 @@ func TestAuditConfigQueue(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-queue",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-queue"},
+				Labels: helpers.E2ELabelsWithFeature("audit-queue"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -545,9 +529,7 @@ func TestAuditConfigQueue(t *testing.T) {
 // Steps: Create AuditConfig with enabled=false.
 // Expected: AuditConfig is created but audit is disabled.
 func TestAuditConfigDisabled(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -563,7 +545,7 @@ func TestAuditConfigDisabled(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-disabled",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-disabled"},
+				Labels: helpers.E2ELabelsWithFeature("audit-disabled"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: false,
@@ -594,9 +576,7 @@ func TestAuditConfigDisabled(t *testing.T) {
 // TestAuditEventGenerationOnSessionApproval tests that audit events are generated
 // when sessions are approved. This is the critical end-to-end test.
 func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -611,7 +591,7 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 	auditConfig := &telekomv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "e2e-audit-event-test",
-			Labels: map[string]string{"e2e-test": "true"},
+			Labels: helpers.E2ETestLabels(),
 		},
 		Spec: telekomv1alpha1.AuditConfigSpec{
 			Enabled: true,
@@ -631,25 +611,14 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 	require.NoError(t, err, "Failed to create AuditConfig for event test")
 
 	// Create escalation
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-audit-session-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "audit-test-admins",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.AuditTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.AuditTestApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-audit-session-escalation", namespace).
+		WithEscalatedGroup("audit-test-admins").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		WithAllowedGroups(helpers.TestUsers.AuditTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.AuditTestApprover.Email).
+		Build()
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err, "Failed to create escalation for audit test")
@@ -664,7 +633,7 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 		User:    helpers.TestUsers.AuditTestRequester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Testing audit event generation",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
 
@@ -674,7 +643,7 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 
 	// Wait for approval
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-		telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Give time for audit events to be generated
 	time.Sleep(2 * time.Second)
@@ -707,9 +676,7 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 // 3. Trigger an action that generates audit events (create/approve session)
 // 4. Verify events were received by the webhook receiver
 func TestWebhookAuditSinkFunctional(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsAuditWebhookTestEnabled() {
 		t.Skip("Skipping audit webhook test. Set AUDIT_WEBHOOK_TEST=true to run.")
 	}
@@ -727,6 +694,19 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 	webhookInternalURL := helpers.GetAuditWebhookReceiverURL()
 	// External URL (port-forwarded) for test verification
 	webhookExternalURL := helpers.GetAuditWebhookReceiverExternalURL()
+
+	// Check if webhook receiver is actually accessible before running any subtests
+	// This prevents partial test failures when only some subtests skip
+	client := helpers.ShortTimeoutHTTPClient()
+	checkReq, err := http.NewRequestWithContext(ctx, http.MethodGet, webhookExternalURL+"/health", nil)
+	if err == nil {
+		resp, err := client.Do(checkReq)
+		if err != nil {
+			t.Skipf("Skipping webhook audit test - receiver not accessible at %s: %v", webhookExternalURL, err)
+		} else {
+			_ = resp.Body.Close()
+		}
+	}
 
 	t.Run("ClearExistingEvents", func(t *testing.T) {
 		// Clear any existing events from previous tests
@@ -750,7 +730,7 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 		auditConfig := &telekomv1alpha1.AuditConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "e2e-audit-webhook-functional",
-				Labels: map[string]string{"e2e-test": "true", "feature": "audit-webhook-functional"},
+				Labels: helpers.E2ELabelsWithFeature("audit-webhook-functional"),
 			},
 			Spec: telekomv1alpha1.AuditConfigSpec{
 				Enabled: true,
@@ -777,25 +757,15 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 
 	t.Run("TriggerAuditEvents", func(t *testing.T) {
 		// Create an escalation and session to trigger audit events
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-webhook-audit-esc"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "webhook-audit"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "webhook-audit-test-admins",
-				MaxValidFor:     "1h",
-				ApprovalTimeout: "30m",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.AuditTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.AuditTestApprover.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-webhook-audit-esc"), namespace).
+			WithEscalatedGroup("webhook-audit-test-admins").
+			WithAllowedClusters(clusterName).
+			WithMaxValidFor("1h").
+			WithApprovalTimeout("30m").
+			WithAllowedGroups(helpers.TestUsers.AuditTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.AuditTestApprover.Email).
+			WithLabels(map[string]string{"feature": "webhook-audit"}).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation")
@@ -809,7 +779,7 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 			User:    helpers.TestUsers.AuditTestRequester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Testing webhook audit delivery",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session")
 		cleanup.Add(session)
 
@@ -818,7 +788,7 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session")
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
-			telekomv1alpha1.SessionStateApproved, 30*time.Second)
+			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Wait for audit events to be delivered
 		time.Sleep(3 * time.Second)

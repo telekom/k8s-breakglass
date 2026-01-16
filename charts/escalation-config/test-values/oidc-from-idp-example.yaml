@@ -1,0 +1,57 @@
+# Example values for OIDC from IdentityProvider reference
+# This file demonstrates configuring a ClusterConfig that inherits OIDC settings
+# from an IdentityProvider resource
+
+cluster:
+  clusterID: staging-cluster-us-east
+  tenant: staging-team
+  environment: staging
+  site: us-east
+  location: us-east-1
+  
+  # Set auth type to OIDC
+  authType: OIDC
+  
+  # Reference an IdentityProvider for OIDC settings
+  # This reduces duplication when the same OIDC provider is used for both
+  # user authentication and cluster authentication
+  oidcFromIdentityProvider:
+    # Name of the IdentityProvider resource
+    name: corporate-keycloak
+    
+    # Target cluster's Kubernetes API server
+    server: https://api.staging-cluster-us-east.example.com:6443
+    
+    # Override client ID (useful when controller needs different client than UI)
+    clientID: breakglass-cluster-client
+    
+    # Client secret for controller authentication
+    clientSecretRef:
+      name: staging-cluster-client-secret
+      namespace: breakglass-system
+      key: client-secret
+    
+    # CA certificate for the cluster API server
+    caSecretRef:
+      name: staging-cluster-ca
+      namespace: breakglass-system
+      key: ca.crt
+  
+  blockSelfApproval: false
+  allowedApproverDomains:
+    - example.com
+
+escalations:
+  - name: staging-debug
+    allowed:
+      clusters:
+        - staging-cluster-us-east
+      groups:
+        - developers
+        - qa-team
+    escalatedGroup: breakglass-debug
+    approvers:
+      groups:
+        - tech-leads
+    maxValidFor: 4h
+    retainFor: 72h

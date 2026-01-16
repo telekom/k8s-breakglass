@@ -23,7 +23,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -32,9 +31,7 @@ import (
 
 // TestApprovalSingleApprover tests AW-001: Single approver can approve session
 func TestApprovalSingleApprover(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -45,25 +42,12 @@ func TestApprovalSingleApprover(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-aw001-single-approver",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "aw001-test-group",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-aw001-single-approver", namespace).
+		WithEscalatedGroup("aw001-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -75,12 +59,12 @@ func TestApprovalSingleApprover(t *testing.T) {
 		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "AW-001 test - single approver",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
 
 	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	// Verify approver recorded
 	var fetched telekomv1alpha1.BreakglassSession
@@ -90,9 +74,7 @@ func TestApprovalSingleApprover(t *testing.T) {
 
 // TestApprovalAnyFromList tests AW-002: Any approver from list can approve
 func TestApprovalAnyFromList(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -104,29 +86,17 @@ func TestApprovalAnyFromList(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create escalation with multiple allowed approvers
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-aw002-any-approver",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "aw002-test-group",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{
-					helpers.TestUsers.Approver.Email,
-					helpers.TestUsers.SeniorApprover.Email,
-					helpers.TestUsers.ApproverInternal.Email,
-				},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-aw002-any-approver", namespace).
+		WithEscalatedGroup("aw002-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		WithApproverUsers(
+			helpers.TestUsers.Approver.Email,
+			helpers.TestUsers.SeniorApprover.Email,
+			helpers.TestUsers.ApproverInternal.Email,
+		).
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -138,13 +108,13 @@ func TestApprovalAnyFromList(t *testing.T) {
 		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "AW-002 test - any approver",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
 
 	// Use a different approver than the first one
 	require.NoError(t, seniorApproverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	var fetched telekomv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &fetched))
@@ -153,9 +123,7 @@ func TestApprovalAnyFromList(t *testing.T) {
 
 // TestApprovalUnauthorizedRejected tests AW-003: Unauthorized approver rejected
 func TestApprovalUnauthorizedRejected(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -167,25 +135,12 @@ func TestApprovalUnauthorizedRejected(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Escalation only allows a specific approver
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-aw003-unauthorized",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "aw003-test-group",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email}, // Only this specific approver
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-aw003-unauthorized", namespace).
+		WithEscalatedGroup("aw003-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		Build() // Only TestUsers.Approver.Email can approve (default)
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -198,7 +153,7 @@ func TestApprovalUnauthorizedRejected(t *testing.T) {
 		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "AW-003 test - unauthorized approver",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
 
@@ -209,9 +164,7 @@ func TestApprovalUnauthorizedRejected(t *testing.T) {
 
 // TestApprovalByGroup tests AW-004: Approval based on group membership
 func TestApprovalByGroup(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -223,25 +176,13 @@ func TestApprovalByGroup(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create escalation with group-based approvers
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-aw004-group-approver",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "aw004-test-group",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Groups: []string{"approver"}, // Anyone in the "approver" group can approve
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-aw004-group-approver", namespace).
+		WithEscalatedGroup("aw004-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		WithApproverGroups("approver"). // Anyone in the "approver" group can approve
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -253,19 +194,17 @@ func TestApprovalByGroup(t *testing.T) {
 		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "AW-004 test - group-based approver",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
 
 	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, session.Name, namespace))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 }
 
 // TestRejectionWithReason tests AW-006: Rejection with reason is recorded
 func TestRejectionWithReason(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -276,25 +215,12 @@ func TestRejectionWithReason(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-aw006-rejection-reason",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "aw006-test-group",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "30m",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-aw006-rejection-reason", namespace).
+		WithEscalatedGroup("aw006-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -306,13 +232,13 @@ func TestRejectionWithReason(t *testing.T) {
 		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "AW-006 test - rejection with reason",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
 
 	rejectionReason := "Access not needed for this maintenance window"
 	require.NoError(t, approverClient.RejectSessionViaAPI(ctx, t, session.Name, namespace, rejectionReason))
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateRejected, 30*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateRejected, helpers.WaitForStateTimeout)
 
 	// Verify rejection details
 	var fetched telekomv1alpha1.BreakglassSession
@@ -323,9 +249,7 @@ func TestRejectionWithReason(t *testing.T) {
 
 // TestApprovalTimeoutNoAutoApprove tests AW-009: Timeout doesn't auto-approve
 func TestApprovalTimeoutNoAutoApprove(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -336,25 +260,12 @@ func TestApprovalTimeoutNoAutoApprove(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-aw009-timeout-no-approve",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "aw009-test-group",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "20s", // Very short
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.Approver.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-aw009-timeout-no-approve", namespace).
+		WithEscalatedGroup("aw009-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("20s"). // Very short
+		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
 
@@ -365,13 +276,13 @@ func TestApprovalTimeoutNoAutoApprove(t *testing.T) {
 		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "AW-009 test - timeout no auto-approve",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)
 
 	// Wait for timeout
 	t.Log("Waiting for approval timeout...")
-	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateTimeout, 60*time.Second)
+	helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateTimeout, helpers.WaitForConditionTimeout)
 
 	// Verify state is timeout, not approved
 	var fetched telekomv1alpha1.BreakglassSession

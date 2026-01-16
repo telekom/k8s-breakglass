@@ -1,22 +1,28 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Configuration for cert-manager name references
+configurations:
+  - kustomizeconfig.yaml
+
 # Include webhook manifests, certificate resources, and service
 resources:
   - manifests.yaml
   # [CERT-CONTROLLER] certificate.yaml should be commented if automated webhook certificate generation is enabled
   # [CERT-MANAGER] certificate.yaml should be uncommented if cert-manager is being used
-  # - certificate.yaml
+  - certificate.yaml
   - service.yaml
   # [CERT-CONTROLLER] secret.yaml should be uncommented if automated webhook certificate generation is enabled
   # - secret.yaml
 
-# Add breakglass- prefix to webhook resources (except Service which has explicit namespace)
-namePrefix: breakglass-
+# NOTE: namePrefix is NOT set here - the parent kustomization (e.g., config/dev) should set the prefix
+# This allows the webhook config to be reused with different prefixes
 
+# Patch the ValidatingWebhookConfiguration to:
 # Patch the ValidatingWebhookConfiguration to:
 # 1. Add cert-manager annotation for automatic CA injection
 # 2. Fix the webhook service references to use the correct prefixed service name and namespace
+# NOTE: These patches use the prefixed names since parent kustomizations typically use namePrefix: breakglass-
 patches:
   - target:
       group: admissionregistration.k8s.io

@@ -9,7 +9,9 @@ KUBECTL=${KUBECTL:-kubectl}
 # Port-forward keycloak if not already running (default to HTTPS forwarded port)
 PORT=${PORT:-8443}
 CA=${CA:-}
-HOST_HEADER=${HOST_HEADER:-keycloak.keycloak.svc.cluster.local}
+# HOST_HEADER sets the Host header for Keycloak requests, which controls the token's issuer claim.
+# Use KEYCLOAK_ISSUER_HOST (set by setup scripts) or fall back to the in-cluster service name.
+HOST_HEADER=${HOST_HEADER:-${KEYCLOAK_ISSUER_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local:8443}}
 PROTO=${PROTO:-https}
 curl_args=(-s -H "Host: $HOST_HEADER" -d grant_type=password -d client_id=breakglass-ui -d username="${USER}" -d password="${PASS}")
 if [ "$PROTO" = "https" ]; then

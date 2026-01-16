@@ -33,9 +33,7 @@ import (
 
 // TestHappyPathCompleteBreakglassFlow tests the complete happy path of a breakglass session
 func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -47,25 +45,10 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 
 	t.Run("FullBreakglassSessionLifecycle", func(t *testing.T) {
 		// Step 1: Create a valid BreakglassEscalation
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-happy-path-escalation",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "breakglass-pods-admin", // Must have RBAC binding for SAR to succeed
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups, // Use actual test user groups
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-happy-path-escalation", namespace).
+			WithEscalatedGroup("breakglass-pods-admin"). // Must have RBAC binding for SAR to succeed
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -88,7 +71,7 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 			User:    helpers.GetTestUserEmail(),
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Happy path E2E test session",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
 		t.Logf("Step 2: Created session %s for cluster %s via API", session.Name, clusterName)
@@ -98,7 +81,7 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Wait for session to be approved
-		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, 30*time.Second)
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify session is now approved
 		var approvedSession telekomv1alpha1.BreakglassSession
@@ -142,9 +125,7 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 
 // TestHappyPathMultipleEscalationsForSameCluster tests multiple escalations targeting same cluster
 func TestHappyPathMultipleEscalationsForSameCluster(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -158,25 +139,10 @@ func TestHappyPathMultipleEscalationsForSameCluster(t *testing.T) {
 	groups := []string{"breakglass-pods-admin", "breakglass-read-only", "breakglass-emergency-admin"}
 
 	for i, group := range groups {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-multi-esc-" + group,
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  group,
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-multi-esc-"+group, namespace).
+			WithEscalatedGroup(group).
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -215,9 +181,7 @@ func TestHappyPathMultipleEscalationsForSameCluster(t *testing.T) {
 
 // TestHappyPathSessionRejection tests the session rejection flow
 func TestHappyPathSessionRejection(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -228,25 +192,10 @@ func TestHappyPathSessionRejection(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create escalation
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-rejection-escalation",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "breakglass-pods-admin",
-			MaxValidFor:     "4h",
-			ApprovalTimeout: "2h",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.Requester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.GetTestApproverEmail()},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder("e2e-rejection-escalation", namespace).
+		WithEscalatedGroup("breakglass-pods-admin").
+		WithAllowedClusters(clusterName).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)
@@ -261,7 +210,7 @@ func TestHappyPathSessionRejection(t *testing.T) {
 		User:    helpers.GetTestUserEmail(),
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Session that will be rejected",
-	}, 30*time.Second)
+	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)
 	t.Logf("Created session to be rejected: %s", session.Name)
@@ -283,9 +232,7 @@ func TestHappyPathSessionRejection(t *testing.T) {
 
 // TestHappyPathDenyPolicyCreationAndEvaluation tests deny policy happy path
 func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -296,23 +243,10 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	t.Run("CreateGlobalDenyPolicy", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-global-deny-policy",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				// Global policy - no AppliesTo
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"delete"},
-						Resources: []string{"secrets"},
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		// Global policy - no AppliesTo
+		policy := helpers.NewDenyPolicyBuilder("e2e-global-deny-policy", namespace).
+			DenyResource("", "secrets", []string{"delete"}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -327,26 +261,10 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 	})
 
 	t.Run("CreateClusterScopedDenyPolicy", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-cluster-scoped-deny-policy",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				AppliesTo: &telekomv1alpha1.DenyPolicyScope{
-					Clusters: []string{clusterName},
-				},
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:      []string{"create", "delete"},
-						Resources:  []string{"pods"},
-						APIGroups:  []string{""},
-						Namespaces: []string{"kube-system"},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-cluster-scoped-deny-policy", namespace).
+			AppliesToClusters(clusterName).
+			DenyPods([]string{"create", "delete"}, "kube-system").
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -362,36 +280,29 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 	})
 
 	t.Run("CreatePodSecurityDenyPolicy", func(t *testing.T) {
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-pod-security-deny-policy",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
-					RiskFactors: telekomv1alpha1.RiskFactors{
-						HostNetwork:         30,
-						HostPID:             40,
-						HostIPC:             40,
-						PrivilegedContainer: 50,
-						HostPathWritable:    25,
-						RunAsRoot:           15,
-					},
-					Thresholds: []telekomv1alpha1.RiskThreshold{
-						{
-							MaxScore: 50,
-							Action:   "deny",
-						},
-						{
-							MaxScore: 30,
-							Action:   "warn",
-						},
-					},
-					BlockFactors: []string{"hostNetwork", "privilegedContainer"},
+		policy := helpers.NewDenyPolicyBuilder("e2e-pod-security-deny-policy", namespace).
+			WithPodSecurityRules(&telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					HostNetwork:         30,
+					HostPID:             40,
+					HostIPC:             40,
+					PrivilegedContainer: 50,
+					HostPathWritable:    25,
+					RunAsRoot:           15,
 				},
-			},
-		}
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{
+						MaxScore: 50,
+						Action:   "deny",
+					},
+					{
+						MaxScore: 30,
+						Action:   "warn",
+					},
+				},
+				BlockFactors: []string{"hostNetwork", "privilegedContainer"},
+			}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
@@ -409,9 +320,7 @@ func TestHappyPathDenyPolicyCreationAndEvaluation(t *testing.T) {
 
 // TestHappyPathListResources tests listing all resources
 func TestHappyPathListResources(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -510,9 +419,7 @@ func TestHappyPathListResources(t *testing.T) {
 
 // TestHappyPathResourceUpdate tests updating resources
 func TestHappyPathResourceUpdate(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -524,25 +431,10 @@ func TestHappyPathResourceUpdate(t *testing.T) {
 
 	t.Run("UpdateEscalationMaxValidFor", func(t *testing.T) {
 		// Create escalation
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-update-escalation",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  "update-test-admins",
-				MaxValidFor:     "4h",
-				ApprovalTimeout: "2h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.GetTestApproverEmail()},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder("e2e-update-escalation", namespace).
+			WithEscalatedGroup("update-test-admins").
+			WithAllowedClusters(clusterName).
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -577,22 +469,9 @@ func TestHappyPathResourceUpdate(t *testing.T) {
 
 	t.Run("UpdateDenyPolicyRules", func(t *testing.T) {
 		// Create policy
-		policy := &telekomv1alpha1.DenyPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-update-deny-policy",
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.DenyPolicySpec{
-				Rules: []telekomv1alpha1.DenyRule{
-					{
-						Verbs:     []string{"delete"},
-						Resources: []string{"pods"},
-						APIGroups: []string{""},
-					},
-				},
-			},
-		}
+		policy := helpers.NewDenyPolicyBuilder("e2e-update-deny-policy", namespace).
+			DenyPods([]string{"delete"}).
+			Build()
 		cleanup.Add(policy)
 		err := cli.Create(ctx, policy)
 		require.NoError(t, err)
