@@ -16,7 +16,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # Config files
 [[annotations]]
-path = ["config/**.yaml", "charts/**.yaml", "charts/**.txt", "e2e/**.yaml", "utils/config/**.yaml","config.example.yaml","config/dev/resources/keycloak-realm.json"]
+path = ["config/**.yaml", "charts/**.yaml", "charts/**.txt", "e2e/**.yaml", "utils/config/**.yaml","config.example.yaml","config/dev/resources/breakglass-e2e-realm.json","config/dev/resources/breakglass-e2e-contractors-realm.json"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
@@ -28,7 +28,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # Documentation
 [[annotations]]
-path = ["*.md", "docs/**"]
+path = ["*.md", "docs/**", "config/samples/README.md"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC-BY-4.0"
 

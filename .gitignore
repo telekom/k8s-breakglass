@@ -61,3 +61,19 @@ pkg/breakglass/testdata/fuzz/*
 **/.DS_Store
 .DS_Store
 coverage.out
+
+# E2E test temporary files and directories
+e2e/kind-setup-multi-tdir/
+e2e/kind-setup-multi-tls/
+e2e/kind-setup-single-tdir/
+e2e/kind-setup-single-tls/
+e2e/*.log
+e2e/e2e-env.sh
+e2e-setup-failure-logs/
+e2e-diagnostics/
+logs/
+multi-cluster-e2e-diagnostics/
+multi-cluster-setup-failure-logs/
+frontend/vite.log
+frontend/playwright-report/
+frontend/test-results/
