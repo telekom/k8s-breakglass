@@ -35,6 +35,7 @@ type MailProviderConfig struct {
 	Password             string
 	InsecureSkipVerify   bool
 	CertificateAuthority string
+	DisableTLS           bool
 
 	// Sender configuration
 	SenderAddress string
@@ -242,6 +243,7 @@ func (l *MailProviderLoader) convertToRuntimeConfig(ctx context.Context, mp *bre
 		Username:             mp.Spec.SMTP.Username,
 		InsecureSkipVerify:   mp.Spec.SMTP.InsecureSkipVerify,
 		CertificateAuthority: mp.Spec.SMTP.CertificateAuthority,
+		DisableTLS:           mp.Spec.SMTP.DisableTLS,
 		SenderAddress:        mp.Spec.Sender.Address,
 		SenderName:           mp.Spec.Sender.Name,
 		RetryCount:           mp.Spec.Retry.Count,

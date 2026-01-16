@@ -1,0 +1,153 @@
+# Global escalation - applies to all clusters (use "*" for global scope)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-global-readonly
+  namespace: breakglass-system
+spec:
+  escalatedGroup: "breakglass-read-only"
+  # Use "*" glob pattern for global escalations
+  clusterConfigRefs:
+  - "*"
+  maxValidFor: 2h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
+---
+# Hub-only escalation
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-hub-admin
+  namespace: breakglass-system
+spec:
+  escalatedGroup: "breakglass-emergency-admin"
+  clusterConfigRefs:
+  - breakglass-hub
+  maxValidFor: 1h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
+---
+# Spoke A only escalation
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-spoke-a-pods
+  namespace: breakglass-system
+spec:
+  escalatedGroup: "breakglass-pods-admin"
+  clusterConfigRefs:
+  - spoke-cluster-a
+  maxValidFor: 4h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
+---
+# Spoke B only escalation - for contractors
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-spoke-b-debugger
+  namespace: breakglass-system
+spec:
+  escalatedGroup: "contractor-debugger"
+  clusterConfigRefs:
+  - spoke-cluster-b
+  maxValidFor: 2h
+  allowed:
+    groups:
+    - contractors
+  approvers:
+    groups:
+    - vendor-supervisors
+---
+# Multi-cluster escalation (specific subset)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-spoke-clusters-admin
+  namespace: breakglass-system
+spec:
+  escalatedGroup: "breakglass-pods-admin"
+  clusterConfigRefs:
+  - spoke-cluster-a
+  - spoke-cluster-b
+  maxValidFor: 4h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
+---
+# Team-specific namespace scoped escalation
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-team-alpha-ns
+  namespace: breakglass-system
+spec:
+  escalatedGroup: "team-alpha-ns-admin"
+  clusterConfigRefs:
+  - spoke-cluster-a
+  maxValidFor: 8h
+  allowed:
+    groups:
+    - team-alpha
+    clusters:
+    - spoke-cluster-a
+  approvers:
+    groups:
+    - team-alpha-leads
+---
+# Limited access escalation with DenyPolicy for secrets
+# Used by TestDenyPolicyEnforcedOnSpoke
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-limited-access
+  namespace: breakglass-system
+spec:
+  escalatedGroup: "breakglass-limited-access"
+  clusterConfigRefs:
+  - spoke-cluster-a
+  - spoke-cluster-b
+  maxValidFor: 2h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers
+  denyPolicyRefs:
+  - mc-deny-secrets
+---
+# Emergency admin escalation for spoke clusters
+# Used by TestMultipleUsersIndependentSessions
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: mc-spoke-emergency-admin
+  namespace: breakglass-system
+spec:
+  escalatedGroup: "breakglass-emergency-admin"
+  clusterConfigRefs:
+  - spoke-cluster-a
+  - spoke-cluster-b
+  maxValidFor: 1h
+  allowed:
+    groups:
+    - breakglass-users
+  approvers:
+    groups:
+    - breakglass-approvers

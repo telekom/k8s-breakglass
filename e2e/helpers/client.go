@@ -85,6 +85,39 @@ func MustGetClient(t *testing.T) client.Client {
 	return cli
 }
 
+// GetClientForCluster creates a Kubernetes client for a specific cluster by kubeconfig path.
+// This is useful for multi-cluster tests where resources need to be created on spoke clusters.
+func GetClientForCluster(t *testing.T, kubeconfigPath string) client.Client {
+	if kubeconfigPath == "" {
+		t.Fatal("kubeconfig path is empty")
+	}
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	require.NoError(t, err, "Failed to build kubeconfig from %s", kubeconfigPath)
+	cli, err := client.New(config, client.Options{Scheme: scheme.Scheme})
+	require.NoError(t, err, "Failed to create client for %s", kubeconfigPath)
+	return cli
+}
+
+// GetSpokeAClient returns a Kubernetes client for spoke-cluster-a.
+// Returns nil if the spoke kubeconfig is not configured.
+func GetSpokeAClient(t *testing.T) client.Client {
+	kubeconfig := GetSpokeAKubeconfig()
+	if kubeconfig == "" {
+		return nil
+	}
+	return GetClientForCluster(t, kubeconfig)
+}
+
+// GetSpokeBClient returns a Kubernetes client for spoke-cluster-b.
+// Returns nil if the spoke kubeconfig is not configured.
+func GetSpokeBClient(t *testing.T) client.Client {
+	kubeconfig := GetSpokeBKubeconfig()
+	if kubeconfig == "" {
+		return nil
+	}
+	return GetClientForCluster(t, kubeconfig)
+}
+
 // CreateAndCleanup creates a resource and registers cleanup
 func CreateAndCleanup[T client.Object](t *testing.T, ctx context.Context, cli client.Client, obj T) T {
 	// Try to delete first in case it exists from a previous run
@@ -128,10 +161,17 @@ func LogClusterConfigStatus(t *testing.T, ctx context.Context, cli client.Client
 	for _, cc := range list.Items {
 		t.Logf("ClusterConfig: %s/%s", cc.Namespace, cc.Name)
 		t.Logf("  Tenant: %s, ClusterID: %s", cc.Spec.Tenant, cc.Spec.ClusterID)
-		t.Logf("  KubeconfigSecretRef: name=%s, namespace=%s, key=%s",
-			cc.Spec.KubeconfigSecretRef.Name,
-			cc.Spec.KubeconfigSecretRef.Namespace,
-			cc.Spec.KubeconfigSecretRef.Key)
+		if cc.Spec.KubeconfigSecretRef != nil {
+			t.Logf("  KubeconfigSecretRef: name=%s, namespace=%s, key=%s",
+				cc.Spec.KubeconfigSecretRef.Name,
+				cc.Spec.KubeconfigSecretRef.Namespace,
+				cc.Spec.KubeconfigSecretRef.Key)
+		}
+		if cc.Spec.OIDCAuth != nil {
+			t.Logf("  OIDCAuth: issuerURL=%s, clientID=%s",
+				cc.Spec.OIDCAuth.IssuerURL,
+				cc.Spec.OIDCAuth.ClientID)
+		}
 
 		// Log conditions
 		if len(cc.Status.Conditions) > 0 {
@@ -167,6 +207,7 @@ func LogSessionStatus(t *testing.T, ctx context.Context, cli client.Client, name
 
 // VerifyClusterConfigSecret verifies that a ClusterConfig's secret is properly configured
 // Returns an error if the secret is missing or doesn't have the expected key
+// For OIDC-based ClusterConfigs (no kubeconfigSecretRef), this function returns nil as no secret verification is needed.
 func VerifyClusterConfigSecret(t *testing.T, ctx context.Context, cli client.Client, clusterName string) error {
 	t.Helper()
 
@@ -185,6 +226,16 @@ func VerifyClusterConfigSecret(t *testing.T, ctx context.Context, cli client.Cli
 	}
 	if cc == nil {
 		return fmt.Errorf("ClusterConfig not found for cluster: %s", clusterName)
+	}
+
+	// If using OIDC auth instead of kubeconfig secret, skip secret verification
+	if cc.Spec.KubeconfigSecretRef == nil {
+		if cc.Spec.OIDCAuth != nil {
+			t.Logf("ClusterConfig %s: uses OIDC auth (issuer=%s, clientID=%s) - no secret verification needed ✓",
+				clusterName, cc.Spec.OIDCAuth.IssuerURL, cc.Spec.OIDCAuth.ClientID)
+			return nil
+		}
+		return fmt.Errorf("ClusterConfig %s has neither kubeconfigSecretRef nor oidcAuth configured", clusterName)
 	}
 
 	// Check the secret

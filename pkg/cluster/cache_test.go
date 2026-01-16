@@ -64,7 +64,7 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	cc := telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
 		},
 	}
 	secret := corev1.Secret{
@@ -96,7 +96,7 @@ func TestGetRESTConfig_MissingSecretKey(t *testing.T) {
 	cc := telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "c2", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "kube-secret-2", Namespace: "default", Key: "nonexistent"},
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "kube-secret-2", Namespace: "default", Key: "nonexistent"},
 		},
 	}
 	secret := corev1.Secret{
@@ -120,7 +120,7 @@ func TestGet_CachingAndNotFound(t *testing.T) {
 	cc := telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "c1", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc).Build()
@@ -149,7 +149,7 @@ func TestInvalidate_ClearsCache(t *testing.T) {
 	cc := telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "ci1", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
 		},
 	}
 
@@ -182,7 +182,7 @@ func TestInvalidateSecret_EvictsTrackedEntries(t *testing.T) {
 	cc := telekomv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "kind", Namespace: "default"},
 		Spec: telekomv1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{Name: "kind-kube", Namespace: "default"},
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "kind-kube", Namespace: "default"},
 		},
 	}
 	secret := corev1.Secret{

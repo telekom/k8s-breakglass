@@ -28,7 +28,6 @@ escalations:
       description: "Emergency operations access for critical fixes"
     maxValidFor: "1h"
     retainFor: "72h"
-    idleTimeout: "30m"
 
   - allowed:
       clusters:
@@ -44,4 +43,3 @@ escalations:
       description: "Read-only access for auditors"
     maxValidFor: "8h"
     retainFor: "24h"
-    idleTimeout: "1h"

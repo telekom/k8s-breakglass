@@ -29,6 +29,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -334,6 +335,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	// Sanitize reason to prevent injection attacks
+	if req.Reason != "" {
+		sanitized, _ := SanitizeReasonText(req.Reason)
+		req.Reason = sanitized
+	}
+
 	// Validate template exists
 	template := &v1alpha1.DebugSessionTemplate{}
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
@@ -380,7 +387,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Generate session name
-	sessionName := fmt.Sprintf("debug-%s-%s-%d", toRFC1123Subdomain(currentUser.(string)), toRFC1123Subdomain(req.Cluster), time.Now().Unix())
+	sessionName := fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(currentUser.(string)), naming.ToRFC1123Subdomain(req.Cluster), time.Now().Unix())
 
 	// Determine namespace from ClusterConfig for the requested cluster
 	// DebugSessions should be in the same namespace as the ClusterConfig
@@ -757,7 +764,13 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 	session.Status.Approval.ApprovedBy = currentUser.(string)
 	session.Status.Approval.ApprovedAt = &now
-	session.Status.Approval.Reason = req.Reason
+	// Sanitize approval reason to prevent injection attacks
+	if req.Reason != "" {
+		sanitized, _ := SanitizeReasonText(req.Reason)
+		session.Status.Approval.Reason = sanitized
+	} else {
+		session.Status.Approval.Reason = req.Reason
+	}
 
 	if err := c.client.Status().Update(apiCtx, session); err != nil {
 		reqLog.Errorw("Failed to approve session", "session", name, "error", err)
@@ -827,11 +840,16 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	}
 	session.Status.Approval.RejectedBy = currentUser.(string)
 	session.Status.Approval.RejectedAt = &now
-	session.Status.Approval.Reason = req.Reason
+	// Sanitize rejection reason to prevent injection attacks
+	sanitizedReason := req.Reason
+	if req.Reason != "" {
+		sanitizedReason, _ = SanitizeReasonText(req.Reason)
+	}
+	session.Status.Approval.Reason = sanitizedReason
 
 	// Move to terminated state
 	session.Status.State = v1alpha1.DebugSessionStateTerminated
-	session.Status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, req.Reason)
+	session.Status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
 
 	if err := c.client.Status().Update(apiCtx, session); err != nil {
 		reqLog.Errorw("Failed to reject session", "session", name, "error", err)

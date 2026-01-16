@@ -215,9 +215,6 @@ type BreakglassSession struct {
 	// +required
 	Spec   BreakglassSessionSpec   `json:"spec"`
 	Status BreakglassSessionStatus `json:"status,omitempty"`
-
-	// OwnerReferences allows linking this session to its escalation
-	OwnerReferences []metav1.OwnerReference `json:"ownerReferences,omitempty"`
 }
 
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglasssessions,verbs=create;update,versions=v1alpha1,name=breakglasssession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}

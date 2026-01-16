@@ -28,9 +28,7 @@ import (
 // TestDebugSessionViewerRoleFunctionality tests the viewer role for debug sessions.
 // Viewers should be able to see terminal output but not interact with it.
 func TestDebugSessionViewerRoleFunctionality(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("ViewerRoleConstants", func(t *testing.T) {
 		// Verify role constants are defined correctly
@@ -49,9 +47,7 @@ func TestDebugSessionViewerRoleFunctionality(t *testing.T) {
 
 // TestDebugSessionParticipantManagement tests adding and removing participants.
 func TestDebugSessionParticipantManagement(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("ParticipantStructure", func(t *testing.T) {
 		// Test that DebugSessionParticipant can hold required fields
@@ -92,9 +88,7 @@ func TestDebugSessionParticipantManagement(t *testing.T) {
 
 // TestDebugSessionTerminalSharing documents tmux-based terminal sharing behavior.
 func TestDebugSessionTerminalSharing(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("TmuxSharingDocumentation", func(t *testing.T) {
 		t.Log("TERMINAL-001: Debug sessions use tmux for terminal sharing")
@@ -119,9 +113,7 @@ func TestDebugSessionTerminalSharing(t *testing.T) {
 
 // TestDebugSessionCommandLogging documents command logging behavior.
 func TestDebugSessionCommandLogging(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("CommandLoggingDocumentation", func(t *testing.T) {
 		t.Log("LOGGING-001: Commands executed in debug sessions can be logged")
@@ -148,9 +140,7 @@ func TestDebugSessionCommandLogging(t *testing.T) {
 
 // TestDebugSessionNetworkPolicies documents network policy behavior for debug sessions.
 func TestDebugSessionNetworkPolicies(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("NetworkPolicyDocumentation", func(t *testing.T) {
 		t.Log("NETPOL-001: Debug pods can have network policies applied")
@@ -161,9 +151,7 @@ func TestDebugSessionNetworkPolicies(t *testing.T) {
 
 // TestDebugSessionOwnerPermissions tests owner-specific permissions.
 func TestDebugSessionOwnerPermissions(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	t.Run("OwnerPermissionsDocumentation", func(t *testing.T) {
 		t.Log("OWNER-001: Owner can terminate debug session")

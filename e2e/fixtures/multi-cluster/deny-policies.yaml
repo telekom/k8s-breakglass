@@ -1,0 +1,59 @@
+# Policy blocking contractor access to hub
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: mc-deny-contractors-hub
+  namespace: breakglass-system
+spec:
+  appliesTo:
+    clusters:
+    - breakglass-hub
+  rules:
+  - verbs: ["*"]
+    apiGroups: ["*"]
+    resources: ["*"]
+  # Note: User pattern filtering would need to be done at escalation level
+  precedence: 100
+---
+# Policy blocking contractor access to spoke-cluster-a
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: mc-deny-contractors-spoke-a
+  namespace: breakglass-system
+spec:
+  appliesTo:
+    clusters:
+    - spoke-cluster-a
+  rules:
+  - verbs: ["*"]
+    apiGroups: ["*"]
+    resources: ["*"]
+  precedence: 100
+---
+# Policy blocking secrets access for all non-admin groups
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: mc-deny-secrets-readonly
+  namespace: breakglass-system
+spec:
+  rules:
+  - verbs: ["get", "list", "watch"]
+    apiGroups: [""]
+    resources: ["secrets"]
+  precedence: 200
+---
+# Policy blocking secrets access for limited-access group
+# Used by TestDenyPolicyEnforcedOnSpoke via mc-limited-access escalation
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: mc-deny-secrets
+  namespace: breakglass-system
+spec:
+  rules:
+  - verbs: ["*"]
+    apiGroups: [""]
+    resources: ["secrets"]
+  precedence: 100

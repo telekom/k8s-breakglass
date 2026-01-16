@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
   labels:
     app: keycloak
   name: keycloak
@@ -19,25 +19,28 @@ spec:
     spec:
       containers:
       - name: keycloak
-        image: quay.io/keycloak/keycloak:23.0.0
+        image: quay.io/keycloak/keycloak:26.5.0
         # Use dev mode for faster startup while still serving HTTPS
-        args: ["start-dev", "--https-port=8443", "--http-enabled=true", "--hostname-strict=false", "--hostname-strict-https=false", "--import-realm"]
+        args: ["start-dev", "--https-port=8443", "--http-enabled=true", "--hostname-strict=false", "--import-realm"]
         env:
-        - name: KEYCLOAK_ADMIN
-          value: admin
-        - name: KEYCLOAK_ADMIN_PASSWORD
+        - name: KC_BOOTSTRAP_ADMIN_USERNAME
+          value: "admin"
+        - name: KC_BOOTSTRAP_ADMIN_PASSWORD
           value: admin
         - name: KC_HTTPS_CERTIFICATE_FILE
           value: /etc/x509/https/tls.crt
         - name: KC_HTTPS_CERTIFICATE_KEY_FILE
           value: /etc/x509/https/tls.key
-        # Enable HTTP access logging and more verbose console logs so we can inspect requests during e2e
+        # Enable HTTP access logging for inspecting requests during e2e
         - name: QUARKUS_HTTP_ACCESS_LOG_ENABLED
           value: "true"
         - name: QUARKUS_HTTP_ACCESS_LOG_FORMAT
           value: "%h %l %u %t \"%r\" %s %b %D"
         - name: QUARKUS_LOG_CONSOLE_LEVEL
-          value: DEBUG
+          value: INFO
+        # Use INFO level for startup, DEBUG causes OOM during OpenAPI processing
+        - name: KC_LOG_LEVEL
+          value: INFO
         ports:
         - containerPort: 8443
           name: https
@@ -53,17 +56,17 @@ spec:
             path: /realms/master
             port: 8443
             scheme: HTTPS
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 10
           timeoutSeconds: 5
-          failureThreshold: 6
+          failureThreshold: 12
         resources:
           limits:
-            cpu: 500m
-            memory: 512Mi
+            cpu: "1"
+            memory: 1Gi
           requests:
-            cpu: 200m
-            memory: 256Mi
+            cpu: 250m
+            memory: 512Mi
       volumes:
       - name: realm
         configMap:
@@ -78,7 +81,7 @@ metadata:
   labels:
     app: keycloak
   name: keycloak
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   ports:
   - name: 8443-8443

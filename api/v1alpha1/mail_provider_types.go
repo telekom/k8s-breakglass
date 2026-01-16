@@ -86,6 +86,12 @@ type SMTPConfig struct {
 	// CertificateAuthority contains a PEM encoded CA certificate for TLS validation
 	// +optional
 	CertificateAuthority string `json:"certificateAuthority,omitempty"`
+
+	// DisableTLS disables TLS/STARTTLS encryption for the SMTP connection.
+	// Use this when connecting to plain SMTP servers like MailHog that don't support TLS.
+	// WARNING: Only use for testing/development environments!
+	// +optional
+	DisableTLS bool `json:"disableTLS,omitempty"`
 }
 
 // SenderConfig defines email sender information

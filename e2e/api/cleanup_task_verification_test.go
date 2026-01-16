@@ -39,14 +39,12 @@ import (
 // TestCleanupTaskRunning verifies the cleanup task background process is running
 // by checking for cleanup-related metrics.
 func TestCleanupTaskRunning(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsMetricsTestEnabled() {
 		t.Skip("Skipping metrics test. Set E2E_SKIP_METRICS_TESTS=false to enable (requires metrics port-forward on 8081).")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), helpers.WaitForStateTimeout)
 	defer cancel()
 
 	t.Run("CleanupMetricsExist", func(t *testing.T) {
@@ -85,9 +83,7 @@ func TestCleanupTaskRunning(t *testing.T) {
 // TestCleanupTaskSessionExpiration verifies that expired sessions are properly
 // transitioned to Expired state by the cleanup task.
 func TestCleanupTaskSessionExpiration(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -99,25 +95,15 @@ func TestCleanupTaskSessionExpiration(t *testing.T) {
 
 	// Create escalation with short maxValidFor
 	testGroup := helpers.GenerateUniqueName("expiry-grp")
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-expiry-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true", "feature": "expiration"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  testGroup,
-			MaxValidFor:     "1m", // Short validity for testing
-			ApprovalTimeout: "30s",
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.SchedulingTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.SchedulingTestApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-expiry-esc"), namespace).
+		WithEscalatedGroup(testGroup).
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1m"). // Short validity for testing
+		WithApprovalTimeout("30s").
+		WithAllowedGroups(helpers.TestUsers.SchedulingTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.SchedulingTestApprover.Email).
+		WithLabels(map[string]string{"feature": "expiration"}).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)
@@ -141,13 +127,13 @@ func TestCleanupTaskSessionExpiration(t *testing.T) {
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, 30*time.Second)
+			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		err = approverClient.ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace)
 		require.NoError(t, err)
 
 		session = helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStateApproved, 30*time.Second)
+			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 		// Verify ExpiresAt is set
 		var fetchedSession telekomv1alpha1.BreakglassSession
@@ -170,9 +156,7 @@ func TestCleanupTaskSessionExpiration(t *testing.T) {
 // TestCleanupDebugSessionResources verifies that debug session resources
 // (pods, services) are cleaned up when sessions terminate.
 func TestCleanupDebugSessionResources(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -187,7 +171,7 @@ func TestCleanupDebugSessionResources(t *testing.T) {
 		podTemplate := &telekomv1alpha1.DebugPodTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   podTemplateName,
-				Labels: map[string]string{"e2e-test": "true", "feature": "cleanup"},
+				Labels: helpers.E2ELabelsWithFeature("cleanup"),
 			},
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Cleanup Test Pod Template",
@@ -212,7 +196,7 @@ func TestCleanupDebugSessionResources(t *testing.T) {
 		sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-cleanup-sess-tpl"),
-				Labels: map[string]string{"e2e-test": "true", "feature": "cleanup"},
+				Labels: helpers.E2ELabelsWithFeature("cleanup"),
 			},
 			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
 				DisplayName: "Cleanup Test Session Template",
@@ -248,9 +232,7 @@ func TestCleanupDebugSessionResources(t *testing.T) {
 // TestCleanupOrphanedResources verifies that orphaned resources
 // (resources without parent sessions) are eventually cleaned up.
 func TestCleanupOrphanedResources(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -300,9 +282,7 @@ func TestCleanupOrphanedResources(t *testing.T) {
 // TestCleanupApprovalTimeout verifies that sessions exceeding approval timeout
 // are transitioned to appropriate state.
 func TestCleanupApprovalTimeout(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -313,25 +293,15 @@ func TestCleanupApprovalTimeout(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	// Create escalation with very short approval timeout
-	escalation := &telekomv1alpha1.BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      helpers.GenerateUniqueName("e2e-timeout-esc"),
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true", "feature": "approval-timeout"},
-		},
-		Spec: telekomv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  "timeout-test-group",
-			MaxValidFor:     "1h",
-			ApprovalTimeout: "1m", // Short timeout for testing
-			Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-				Clusters: []string{clusterName},
-				Groups:   helpers.TestUsers.SchedulingTestRequester.Groups,
-			},
-			Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{helpers.TestUsers.SchedulingTestApprover.Email},
-			},
-		},
-	}
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-timeout-esc"), namespace).
+		WithEscalatedGroup("timeout-test-group").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("1m"). // Short timeout for testing
+		WithAllowedGroups(helpers.TestUsers.SchedulingTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.SchedulingTestApprover.Email).
+		WithLabels(map[string]string{"feature": "approval-timeout"}).
+		Build()
 	cleanup.Add(escalation)
 	err := cli.Create(ctx, escalation)
 	require.NoError(t, err)
@@ -353,7 +323,7 @@ func TestCleanupApprovalTimeout(t *testing.T) {
 		})
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
-			telekomv1alpha1.SessionStatePending, 30*time.Second)
+			telekomv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
 		// Check that ApprovalTimeout is reflected in the session
 		// with approval timeout to determine expiration

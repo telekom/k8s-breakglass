@@ -51,7 +51,7 @@ func DefaultOIDCProvider() *OIDCTokenProvider {
 		ClientID:     getEnvOrDefault("KEYCLOAK_CLIENT_ID", "breakglass-ui"),
 		ClientSecret: getEnvOrDefault("KEYCLOAK_CLIENT_SECRET", ""),
 		// IssuerHost should match the authority in the IdentityProvider CR
-		// e.g., "breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443"
+		// e.g., "breakglass-keycloak.breakglass-system.svc.cluster.local:8443"
 		IssuerHost: getEnvOrDefault("KEYCLOAK_ISSUER_HOST", ""),
 	}
 }
@@ -85,8 +85,15 @@ func (p *OIDCTokenProvider) getTokenViaScript(ctx context.Context, username, pas
 
 // getTokenViaHTTP retrieves token via direct HTTP call to Keycloak
 func (p *OIDCTokenProvider) getTokenViaHTTP(ctx context.Context, username, password string) (string, error) {
+	// Normalize KeycloakHost to ensure it has a protocol scheme
+	keycloakHost := p.KeycloakHost
+	if !strings.HasPrefix(keycloakHost, "http://") && !strings.HasPrefix(keycloakHost, "https://") {
+		// Default to https if no scheme provided
+		keycloakHost = "https://" + keycloakHost
+	}
+
 	// Keycloak token endpoint: ${KeycloakHost}/realms/${Realm}/protocol/openid-connect/token
-	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", p.KeycloakHost, p.Realm)
+	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", keycloakHost, p.Realm)
 
 	// Build form data for password grant
 	form := url.Values{

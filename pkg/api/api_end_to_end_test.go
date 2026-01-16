@@ -133,7 +133,7 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 			Namespace: e2eNamespace,
 		},
 		Spec: v1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: v1alpha1.SecretKeyReference{
+			KubeconfigSecretRef: &v1alpha1.SecretKeyReference{
 				Name:      "ccfg-secret",
 				Namespace: e2eNamespace,
 				Key:       "value",
@@ -147,7 +147,7 @@ func setupAPIEndToEndEnv(t *testing.T) *apiEndToEndEnv {
 			Namespace: e2eNamespace,
 		},
 		Spec: v1alpha1.ClusterConfigSpec{
-			KubeconfigSecretRef: v1alpha1.SecretKeyReference{
+			KubeconfigSecretRef: &v1alpha1.SecretKeyReference{
 				Name:      "ccfg-secret",
 				Namespace: e2eNamespace,
 				Key:       "value",
@@ -723,7 +723,7 @@ func TestEndToEndSARAllowedByPodSecurityExemption(t *testing.T) {
 				{MaxScore: 1000, Action: "deny", Reason: "Risk score too high"},
 			},
 			Exemptions: &v1alpha1.PodSecurityExemptions{
-				Namespaces: []string{"kube-system"},
+				Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 			},
 		},
 	})
@@ -943,12 +943,7 @@ func TestEndToEndSARPodsPortforwardEvaluated(t *testing.T) {
 
 // TestEndToEndSARPodSecurityWithEscalationOverride tests that BreakglassEscalation
 // podSecurityOverrides can increase the allowed risk score threshold.
-// NOTE: This test is skipped because the webhook controller doesn't yet populate
-// PodSecurityOverrides from the escalation when building the Action. The unit tests
-// in pkg/policy/deny_test.go verify the override logic works correctly.
 func TestEndToEndSARPodSecurityWithEscalationOverride(t *testing.T) {
-	t.Skip("Escalation override wiring not yet implemented in webhook controller")
-
 	env := setupAPIEndToEndEnv(t)
 	defer env.Close()
 
@@ -969,6 +964,7 @@ func TestEndToEndSARPodSecurityWithEscalationOverride(t *testing.T) {
 				Users: []string{approverEmail},
 			},
 			PodSecurityOverrides: &v1alpha1.PodSecurityOverrides{
+				Enabled:         true,        // Required for overrides to take effect
 				MaxAllowedScore: intPtr(200), // Higher threshold
 			},
 		},
@@ -1358,7 +1354,7 @@ func TestEndToEndSARWildcardDenyPolicy(t *testing.T) {
 			Verbs:      []string{"*"},
 			APIGroups:  []string{"*"},
 			Resources:  []string{"*"},
-			Namespaces: []string{"kube-system"},
+			Namespaces: &v1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
 		}},
 	})
 

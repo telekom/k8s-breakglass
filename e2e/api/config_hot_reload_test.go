@@ -35,9 +35,7 @@ import (
 
 // TestIdentityProviderHotReload tests that changes to IdentityProvider CRs are detected and applied.
 func TestIdentityProviderHotReload(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -52,7 +50,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      idpName,
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "hot-reload"},
+				Labels:    helpers.E2ELabelsWithFeature("hot-reload"),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -97,7 +95,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      idpName,
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "hot-reload-disabled"},
+				Labels:    helpers.E2ELabelsWithFeature("hot-reload-disabled"),
 			},
 			Spec: telekomv1alpha1.IdentityProviderSpec{
 				OIDC: telekomv1alpha1.OIDCConfig{
@@ -135,9 +133,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 
 // TestClusterConfigHotReload tests that changes to ClusterConfig CRs are detected and applied.
 func TestClusterConfigHotReload(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -169,7 +165,7 @@ users:
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      secretName,
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{
@@ -180,21 +176,12 @@ users:
 		require.NoError(t, cli.Create(ctx, secret), "Failed to create kubeconfig secret")
 
 		ccName := helpers.GenerateUniqueName("e2e-reload-cc")
-		cc := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      ccName,
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "hot-reload"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				ClusterID:   "original-cluster-id",
-				Environment: "dev",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      secretName,
-					Namespace: namespace,
-				},
-			},
-		}
+		cc := helpers.NewClusterConfigBuilder(ccName, namespace).
+			WithClusterID("original-cluster-id").
+			WithEnvironment("dev").
+			WithLabels(helpers.E2ELabelsWithFeature("hot-reload")).
+			WithKubeconfigSecret(secretName, "").
+			Build()
 		cleanup.Add(cc)
 		require.NoError(t, cli.Create(ctx, cc), "Failed to create ClusterConfig")
 
@@ -243,7 +230,7 @@ users:
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      secretName,
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{
@@ -254,20 +241,11 @@ users:
 		require.NoError(t, cli.Create(ctx, secret), "Failed to create kubeconfig secret")
 
 		ccName := helpers.GenerateUniqueName("e2e-reload-cc-secret")
-		cc := &telekomv1alpha1.ClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      ccName,
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "hot-reload-secret"},
-			},
-			Spec: telekomv1alpha1.ClusterConfigSpec{
-				ClusterID: "secret-reload-test",
-				KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-					Name:      secretName,
-					Namespace: namespace,
-				},
-			},
-		}
+		cc := helpers.NewClusterConfigBuilder(ccName, namespace).
+			WithClusterID("secret-reload-test").
+			WithLabels(helpers.E2ELabelsWithFeature("hot-reload-secret")).
+			WithKubeconfigSecret(secretName, "").
+			Build()
 		cleanup.Add(cc)
 		require.NoError(t, cli.Create(ctx, cc), "Failed to create ClusterConfig")
 
@@ -317,9 +295,7 @@ users:
 
 // TestMailProviderHotReload tests that changes to MailProvider CRs are detected and applied.
 func TestMailProviderHotReload(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -334,7 +310,7 @@ func TestMailProviderHotReload(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      secretName,
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
+				Labels:    helpers.E2ETestLabels(),
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{
@@ -349,7 +325,7 @@ func TestMailProviderHotReload(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      mpName,
 				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true", "feature": "hot-reload"},
+				Labels:    helpers.E2ELabelsWithFeature("hot-reload"),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				DisplayName: "Original Mail Provider",
@@ -391,9 +367,7 @@ func TestMailProviderHotReload(t *testing.T) {
 
 // TestAPIReloadsDuringLiveTraffic tests that the API continues to work during config reloads.
 func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

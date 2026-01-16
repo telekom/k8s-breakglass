@@ -32,9 +32,7 @@ import (
 
 // TestMailProviderCRUD tests MailProvider create/read/update/delete operations.
 func TestMailProviderCRUD(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -46,7 +44,7 @@ func TestMailProviderCRUD(t *testing.T) {
 		provider := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-provider"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				DisplayName: "E2E Test Mail Provider",
@@ -75,21 +73,44 @@ func TestMailProviderCRUD(t *testing.T) {
 	})
 
 	t.Run("CreateDefaultMailProvider", func(t *testing.T) {
-		// Check if a default MailProvider already exists
+		// Check if a default MailProvider already exists and temporarily unset default
 		var existingProviders telekomv1alpha1.MailProviderList
 		err := cli.List(ctx, &existingProviders)
 		require.NoError(t, err)
 
-		for _, p := range existingProviders.Items {
-			if p.Spec.Default {
-				t.Skipf("Default MailProvider already exists: %s", p.Name)
+		var originalDefault *telekomv1alpha1.MailProvider
+		for i := range existingProviders.Items {
+			if existingProviders.Items[i].Spec.Default {
+				originalDefault = &existingProviders.Items[i]
+				// Temporarily remove default flag to test creating a new default
+				originalDefault.Spec.Default = false
+				err = cli.Update(ctx, originalDefault)
+				require.NoError(t, err, "Failed to temporarily unset default on existing MailProvider %s", originalDefault.Name)
+				t.Logf("Temporarily unset default on existing MailProvider: %s", originalDefault.Name)
+				break
 			}
 		}
+
+		// Ensure we restore the original default at the end
+		defer func() {
+			if originalDefault != nil {
+				// Re-fetch to get latest version to avoid conflict
+				var restored telekomv1alpha1.MailProvider
+				if err := cli.Get(ctx, types.NamespacedName{Name: originalDefault.Name, Namespace: originalDefault.Namespace}, &restored); err == nil {
+					restored.Spec.Default = true
+					if err := cli.Update(ctx, &restored); err != nil {
+						t.Logf("Warning: failed to restore default on MailProvider %s: %v", originalDefault.Name, err)
+					} else {
+						t.Logf("Restored default on MailProvider: %s", originalDefault.Name)
+					}
+				}
+			}
+		}()
 
 		provider := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-default"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				DisplayName: "Default Mail Provider",
@@ -119,9 +140,7 @@ func TestMailProviderCRUD(t *testing.T) {
 
 // TestNotificationExclusions tests NotificationExclusions field in BreakglassEscalation.
 func TestNotificationExclusions(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -132,26 +151,13 @@ func TestNotificationExclusions(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	t.Run("EscalationWithUserNotificationExclusion", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-esc-exclude-user"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup: "notification-test-group",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.NotificationTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.NotificationTestApprover.Email},
-				},
-				NotificationExclusions: &telekomv1alpha1.NotificationExclusions{
-					Users: []string{"excluded@example.com", "silent-admin@example.com"},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-esc-exclude-user"), namespace).
+			WithEscalatedGroup("notification-test-group").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups(helpers.TestUsers.NotificationTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.NotificationTestApprover.Email).
+			WithNotificationExclusionUsers("excluded@example.com", "silent-admin@example.com").
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with notification exclusions")
@@ -166,26 +172,13 @@ func TestNotificationExclusions(t *testing.T) {
 	})
 
 	t.Run("EscalationWithGroupNotificationExclusion", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-esc-exclude-group"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup: "notification-group-test",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.NotificationTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.NotificationTestApprover.Email},
-				},
-				NotificationExclusions: &telekomv1alpha1.NotificationExclusions{
-					Groups: []string{"silent-team", "no-notifications"},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-esc-exclude-group"), namespace).
+			WithEscalatedGroup("notification-group-test").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups(helpers.TestUsers.NotificationTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.NotificationTestApprover.Email).
+			WithNotificationExclusionGroups("silent-team", "no-notifications").
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with group notification exclusions")
@@ -202,9 +195,7 @@ func TestNotificationExclusions(t *testing.T) {
 
 // TestApproversHiddenFromUI tests the HiddenFromUI field in Approvers.
 func TestApproversHiddenFromUI(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -215,24 +206,13 @@ func TestApproversHiddenFromUI(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	t.Run("EscalationWithHiddenApprovers", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-esc-hidden-approvers"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup: "hidden-approvers-group",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.NotificationTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users:        []string{helpers.TestUsers.NotificationTestApprover.Email},
-					HiddenFromUI: []string{"hidden-admin@example.com", "silent-approver@example.com"},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-esc-hidden-approvers"), namespace).
+			WithEscalatedGroup("hidden-approvers-group").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups(helpers.TestUsers.NotificationTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.NotificationTestApprover.Email).
+			WithHiddenApproverUsers("hidden-admin@example.com", "silent-approver@example.com").
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with hidden approvers")
@@ -248,9 +228,7 @@ func TestApproversHiddenFromUI(t *testing.T) {
 
 // TestApproverGroups tests the Groups field in Approvers.
 func TestApproverGroups(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -261,24 +239,13 @@ func TestApproverGroups(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	t.Run("EscalationWithApproverGroups", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-esc-approver-groups"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup: "approver-groups-test",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.NotificationTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users:  []string{helpers.TestUsers.NotificationTestApprover.Email},
-					Groups: []string{"sre-team", "platform-team", "security-team"},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-esc-approver-groups"), namespace).
+			WithEscalatedGroup("approver-groups-test").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups(helpers.TestUsers.NotificationTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.NotificationTestApprover.Email).
+			WithApproverGroups("sre-team", "platform-team", "security-team").
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with approver groups")
@@ -294,9 +261,7 @@ func TestApproverGroups(t *testing.T) {
 
 // TestRequestReasonConfiguration tests RequestReason field in BreakglassEscalation.
 func TestRequestReasonConfiguration(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -307,27 +272,13 @@ func TestRequestReasonConfiguration(t *testing.T) {
 	clusterName := helpers.GetTestClusterName()
 
 	t.Run("EscalationWithMandatoryReason", func(t *testing.T) {
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-esc-mandatory-reason"),
-				Namespace: namespace,
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup: "mandatory-reason-group",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{clusterName},
-					Groups:   helpers.TestUsers.NotificationTestRequester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.NotificationTestApprover.Email},
-				},
-				RequestReason: &telekomv1alpha1.ReasonConfig{
-					Mandatory:   true,
-					Description: "Please provide a ticket number and justification",
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-esc-mandatory-reason"), namespace).
+			WithEscalatedGroup("mandatory-reason-group").
+			WithAllowedClusters(clusterName).
+			WithAllowedGroups(helpers.TestUsers.NotificationTestRequester.Groups...).
+			WithApproverUsers(helpers.TestUsers.NotificationTestApprover.Email).
+			WithRequestReason(true, "Please provide a ticket number and justification").
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err, "Failed to create escalation with mandatory reason")

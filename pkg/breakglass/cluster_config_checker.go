@@ -2,11 +2,13 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -97,69 +99,32 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 			continue
 		}
 
-		// if no kubeconfigSecretRef is set, log a warning
-		ref := cc.Spec.KubeconfigSecretRef
-		if ref.Name == "" || ref.Namespace == "" {
-			lg.Warnw("ClusterConfig has no kubeconfigSecretRef configured",
-				"cluster", cc.Name,
-				"namespace", cc.Namespace)
-			continue
+		// Determine auth type and validate accordingly
+		authType := cc.Spec.AuthType
+		if authType == "" {
+			// Default to kubeconfig for backward compatibility
+			authType = telekomv1alpha1.ClusterAuthTypeKubeconfig
 		}
-		// fetch secret
-		key := client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}
-		sec := corev1.Secret{}
-		if err := ccc.Client.Get(ctx, key, &sec); err != nil {
-			msg := "Referenced kubeconfig secret missing or unreadable"
-			lg.Warnw(msg,
-				"cluster", cc.Name,
-				"secret", ref.Name,
-				"secretNamespace", ref.Namespace,
-				"error", err)
-			// update status and emit event
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
-				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
-			}
-			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
-			continue
-		}
-		// check for kubeconfig key (cluster-api provides key 'value')
-		keyName := "value"
-		if ref.Key != "" {
-			keyName = ref.Key
-		}
-		if _, ok := sec.Data[keyName]; !ok {
-			// If secret exists but missing key, warn with metadata
-			msg := "Referenced kubeconfig secret missing key: " + keyName
-			lg.Warnw(msg,
-				"cluster", cc.Name,
-				"secret", ref.Name,
-				"secretNamespace", ref.Namespace,
-				"secretCreation", sec.CreationTimestamp.Format(time.RFC3339))
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
-				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
-			}
-			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
-			continue
-		}
-		// Good: secret exists and has key
-		lg.Debugw("ClusterConfig kubeconfig validated",
-			"cluster", cc.Name,
-			"secret", ref.Name,
-			"secretNamespace", ref.Namespace)
 
-		// Try to parse kubeconfig and attempt a simple discovery to verify reachability
-		kubecfgBytes := sec.Data[keyName]
-		// Build rest.Config from kubeconfig bytes via overridable function for testing
-		restCfg, err := RestConfigFromKubeConfig(kubecfgBytes)
-		if err != nil {
-			msg := "kubeconfig parse failed: " + err.Error()
-			lg.Warnw(msg, "cluster", cc.Name)
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
-				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
-			}
+		var restCfg *rest.Config
+		var authValidationErr error
+		var successMsg string
+
+		switch authType {
+		case telekomv1alpha1.ClusterAuthTypeOIDC:
+			restCfg, authValidationErr = ccc.validateOIDCAuth(ctx, &cc, lg)
+			successMsg = "OIDC auth validated and cluster reachable"
+		default:
+			restCfg, authValidationErr = ccc.validateKubeconfigAuth(ctx, &cc, lg)
+			successMsg = "Kubeconfig validated and cluster reachable"
+		}
+
+		if authValidationErr != nil {
+			// Error already logged and status updated in validation function
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
 			continue
 		}
+
 		// discovery client to attempt server version call
 		if err := CheckClusterReachable(restCfg); err != nil {
 			msg := "cluster unreachable: " + err.Error()
@@ -172,11 +137,366 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		}
 
 		// Success: update status Ready and emit Normal event
-		if err2 := ccc.setStatusAndEvent(ctx, &cc, "Ready", "Kubeconfig validated and cluster reachable", corev1.EventTypeNormal, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, &cc, "Ready", successMsg, corev1.EventTypeNormal, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 	}
 	lg.Debug("ClusterConfig validation check completed")
+}
+
+// validateKubeconfigAuth validates kubeconfig-based authentication and returns a rest.Config
+func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
+	ref := cc.Spec.KubeconfigSecretRef
+	if ref == nil || ref.Name == "" || ref.Namespace == "" {
+		msg := "ClusterConfig has no kubeconfigSecretRef configured"
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"namespace", cc.Namespace)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+	// fetch secret
+	key := client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}
+	sec := corev1.Secret{}
+	if err := ccc.Client.Get(ctx, key, &sec); err != nil {
+		msg := "Referenced kubeconfig secret missing or unreadable"
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"secret", ref.Name,
+			"secretNamespace", ref.Namespace,
+			"error", err)
+		// update status and emit event
+		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		return nil, err
+	}
+	// check for kubeconfig key (cluster-api provides key 'value')
+	keyName := "value"
+	if ref.Key != "" {
+		keyName = ref.Key
+	}
+	if _, ok := sec.Data[keyName]; !ok {
+		// If secret exists but missing key, warn with metadata
+		msg := "Referenced kubeconfig secret missing key: " + keyName
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"secret", ref.Name,
+			"secretNamespace", ref.Namespace,
+			"secretCreation", sec.CreationTimestamp.Time.Format(time.RFC3339))
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+	// Good: secret exists and has key
+	lg.Debugw("ClusterConfig kubeconfig validated",
+		"cluster", cc.Name,
+		"secret", ref.Name,
+		"secretNamespace", ref.Namespace)
+
+	// Try to parse kubeconfig and attempt a simple discovery to verify reachability
+	kubecfgBytes := sec.Data[keyName]
+	// Build rest.Config from kubeconfig bytes via overridable function for testing
+	restCfg, err := RestConfigFromKubeConfig(kubecfgBytes)
+	if err != nil {
+		msg := "kubeconfig parse failed: " + err.Error()
+		lg.Warnw(msg, "cluster", cc.Name)
+		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		return nil, err
+	}
+	return restCfg, nil
+}
+
+// validateOIDCAuth validates OIDC-based authentication and returns a rest.Config.
+// It supports both direct oidcAuth configuration and oidcFromIdentityProvider references.
+func (ccc ClusterConfigChecker) validateOIDCAuth(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
+	// Check if we have either oidcAuth or oidcFromIdentityProvider
+	hasOIDCAuth := cc.Spec.OIDCAuth != nil
+	hasOIDCFromIDP := cc.Spec.OIDCFromIdentityProvider != nil
+
+	if !hasOIDCAuth && !hasOIDCFromIDP {
+		msg := "ClusterConfig has authType=oidc but neither oidcAuth nor oidcFromIdentityProvider configured"
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"namespace", cc.Namespace)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+
+	// Validate based on which config type is used
+	if hasOIDCFromIDP {
+		return ccc.validateOIDCFromIdentityProvider(ctx, cc, lg)
+	}
+
+	return ccc.validateDirectOIDCAuth(ctx, cc, lg)
+}
+
+// validateOIDCFromIdentityProvider validates OIDC config that references an IdentityProvider
+func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
+	ref := cc.Spec.OIDCFromIdentityProvider
+
+	// Validate required fields
+	if ref.Name == "" || ref.Server == "" {
+		msg := "oidcFromIdentityProvider missing required fields (name or server)"
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"identityProviderRef", ref.Name,
+			"server", ref.Server)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+
+	// Fetch and validate the referenced IdentityProvider
+	idp := &telekomv1alpha1.IdentityProvider{}
+	if err := ccc.Client.Get(ctx, client.ObjectKey{Name: ref.Name}, idp); err != nil {
+		msg := fmt.Sprintf("Referenced IdentityProvider %q not found or unreadable", ref.Name)
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"identityProvider", ref.Name,
+			"error", err)
+		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		return nil, err
+	}
+
+	// Check if IdentityProvider is disabled
+	if idp.Spec.Disabled {
+		msg := fmt.Sprintf("Referenced IdentityProvider %q is disabled", ref.Name)
+		lg.Warnw(msg, "cluster", cc.Name, "identityProvider", ref.Name)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+
+	// Determine which client secret to use
+	secretRef := ref.ClientSecretRef
+	if secretRef == nil && idp.Spec.Keycloak != nil {
+		// Use Keycloak service account credentials if no explicit secret provided
+		secretRef = &idp.Spec.Keycloak.ClientSecretRef
+	}
+	if secretRef == nil {
+		msg := "oidcFromIdentityProvider requires clientSecretRef or IdentityProvider must have Keycloak service account configured"
+		lg.Warnw(msg, "cluster", cc.Name, "identityProvider", ref.Name)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+
+	// Validate client secret exists
+	key := client.ObjectKey{Namespace: secretRef.Namespace, Name: secretRef.Name}
+	sec := corev1.Secret{}
+	if err := ccc.Client.Get(ctx, key, &sec); err != nil {
+		msg := "Referenced OIDC client secret missing or unreadable"
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"secret", secretRef.Name,
+			"secretNamespace", secretRef.Namespace,
+			"error", err)
+		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		return nil, err
+	}
+
+	// Check for secret key
+	keyName := secretRef.Key
+	if keyName == "" {
+		keyName = "client-secret"
+	}
+	if _, ok := sec.Data[keyName]; !ok {
+		msg := "Referenced OIDC client secret missing key: " + keyName
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"secret", secretRef.Name,
+			"secretNamespace", secretRef.Namespace)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+
+	// Check cluster CA secret exists if configured
+	// NOTE: We don't fail if the CA key is missing - the OIDCTokenProvider supports TOFU
+	// (Trust On First Use) which will auto-discover the CA and persist it to the secret
+	if ref.CASecretRef != nil {
+		caKey := client.ObjectKey{Namespace: ref.CASecretRef.Namespace, Name: ref.CASecretRef.Name}
+		caSec := corev1.Secret{}
+		if err := ccc.Client.Get(ctx, caKey, &caSec); err != nil {
+			// Secret doesn't exist at all - this is an error (we need a place to persist TOFU CA)
+			msg := "Referenced cluster CA secret missing or unreadable"
+			lg.Warnw(msg,
+				"cluster", cc.Name,
+				"secret", ref.CASecretRef.Name,
+				"secretNamespace", ref.CASecretRef.Namespace,
+				"error", err)
+			if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+			}
+			return nil, err
+		}
+		// Note: We intentionally don't check if the CA key exists in the secret.
+		// If the secret exists but the key is missing, TOFU will discover the CA
+		// and persist it to this secret. See pkg/cluster/oidc.go configureTLS().
+		caKeyName := ref.CASecretRef.Key
+		if caKeyName == "" {
+			caKeyName = "ca.crt"
+		}
+		if _, ok := caSec.Data[caKeyName]; !ok {
+			lg.Infow("CA key not found in secret, TOFU will attempt to discover and persist",
+				"cluster", cc.Name,
+				"secret", ref.CASecretRef.Name,
+				"secretNamespace", ref.CASecretRef.Namespace,
+				"key", caKeyName)
+		}
+	}
+
+	lg.Debugw("ClusterConfig OIDC from IdentityProvider validated",
+		"cluster", cc.Name,
+		"identityProvider", ref.Name,
+		"server", ref.Server)
+
+	// Use the OIDCTokenProvider to get a rest.Config - it handles resolving the IdentityProvider
+	tokenProvider := cluster.NewOIDCTokenProvider(ccc.Client, lg)
+	restCfg, err := tokenProvider.GetRESTConfig(ctx, cc)
+	if err != nil {
+		msg := "Failed to build OIDC rest config: " + err.Error()
+		lg.Warnw(msg, "cluster", cc.Name)
+		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		return nil, err
+	}
+
+	return restCfg, nil
+}
+
+// validateDirectOIDCAuth validates direct oidcAuth configuration
+func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, lg *zap.SugaredLogger) (*rest.Config, error) {
+	oidcConfig := cc.Spec.OIDCAuth
+
+	// Validate required fields
+	if oidcConfig.IssuerURL == "" || oidcConfig.ClientID == "" || oidcConfig.Server == "" {
+		msg := "OIDC config missing required fields (issuerURL, clientID, or server)"
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"issuerURL", oidcConfig.IssuerURL,
+			"clientID", oidcConfig.ClientID,
+			"server", oidcConfig.Server)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+
+	// Fetch client secret if configured (required for client credentials flow)
+	if oidcConfig.ClientSecretRef == nil {
+		msg := "OIDC config missing clientSecretRef (required for client credentials flow)"
+		lg.Warnw(msg, "cluster", cc.Name)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+
+	secretRef := oidcConfig.ClientSecretRef
+	key := client.ObjectKey{Namespace: secretRef.Namespace, Name: secretRef.Name}
+	sec := corev1.Secret{}
+	if err := ccc.Client.Get(ctx, key, &sec); err != nil {
+		msg := "Referenced OIDC client secret missing or unreadable"
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"secret", secretRef.Name,
+			"secretNamespace", secretRef.Namespace,
+			"error", err)
+		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		return nil, err
+	}
+
+	// Check for secret key
+	keyName := secretRef.Key
+	if keyName == "" {
+		keyName = "client-secret"
+	}
+	if _, ok := sec.Data[keyName]; !ok {
+		msg := "Referenced OIDC client secret missing key: " + keyName
+		lg.Warnw(msg,
+			"cluster", cc.Name,
+			"secret", secretRef.Name,
+			"secretNamespace", secretRef.Namespace)
+		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
+		}
+		return nil, errors.New(msg)
+	}
+
+	// Check CA certificate secret exists if configured
+	// NOTE: We don't fail if the CA key is missing - the OIDCTokenProvider supports TOFU
+	// (Trust On First Use) which will auto-discover the CA and persist it to the secret
+	if oidcConfig.CASecretRef != nil {
+		caKey := client.ObjectKey{Namespace: oidcConfig.CASecretRef.Namespace, Name: oidcConfig.CASecretRef.Name}
+		caSec := corev1.Secret{}
+		if err := ccc.Client.Get(ctx, caKey, &caSec); err != nil {
+			// Secret doesn't exist at all - this is an error (we need a place to persist TOFU CA)
+			msg := "Referenced cluster CA secret missing or unreadable"
+			lg.Warnw(msg,
+				"cluster", cc.Name,
+				"secret", oidcConfig.CASecretRef.Name,
+				"secretNamespace", oidcConfig.CASecretRef.Namespace,
+				"error", err)
+			if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+			}
+			return nil, err
+		}
+		// Note: We intentionally don't check if the CA key exists in the secret.
+		// If the secret exists but the key is missing, TOFU will discover the CA
+		// and persist it to this secret. See pkg/cluster/oidc.go configureTLS().
+		caKeyName := oidcConfig.CASecretRef.Key
+		if caKeyName == "" {
+			caKeyName = "ca.crt"
+		}
+		if _, ok := caSec.Data[caKeyName]; !ok {
+			lg.Infow("CA key not found in secret, TOFU will attempt to discover and persist",
+				"cluster", cc.Name,
+				"secret", oidcConfig.CASecretRef.Name,
+				"secretNamespace", oidcConfig.CASecretRef.Namespace,
+				"key", caKeyName)
+		}
+	}
+
+	lg.Debugw("ClusterConfig OIDC config validated",
+		"cluster", cc.Name,
+		"issuerURL", oidcConfig.IssuerURL,
+		"clientID", oidcConfig.ClientID,
+		"server", oidcConfig.Server)
+
+	// Use the OIDCTokenProvider to get a rest.Config and validate we can get a token
+	tokenProvider := cluster.NewOIDCTokenProvider(ccc.Client, lg)
+	restCfg, err := tokenProvider.GetRESTConfig(ctx, cc)
+	if err != nil {
+		msg := "Failed to build OIDC rest config: " + err.Error()
+		lg.Warnw(msg, "cluster", cc.Name)
+		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
+		}
+		return nil, err
+	}
+
+	return restCfg, nil
 }
 
 func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
@@ -190,24 +510,48 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 		failureType = determineClusterConfigFailureType(message)
 	}
 
+	// Determine if this is OIDC auth
+	authType := cc.Spec.AuthType
+	isOIDC := authType == telekomv1alpha1.ClusterAuthTypeOIDC
+
 	// Determine condition status and reason
 	var conditionStatus metav1.ConditionStatus
-	var conditionReason string
+	var conditionReason telekomv1alpha1.ClusterConfigConditionReason
 
 	if isSuccess {
 		conditionStatus = metav1.ConditionTrue
-		conditionReason = "KubeconfigValidated"
+		if isOIDC {
+			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCValidated
+		} else {
+			conditionReason = telekomv1alpha1.ClusterConfigReasonKubeconfigValidated
+		}
 	} else {
 		conditionStatus = metav1.ConditionFalse
 		switch failureType {
-		case "secret_missing", "secret_key_missing":
-			conditionReason = "SecretMissing"
+		// OIDC-specific reasons
+		case "oidc_discovery":
+			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCDiscoveryFailed
+		case "oidc_token":
+			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCTokenFailed
+		case "oidc_refresh":
+			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCRefreshFailed
+		case "oidc_config":
+			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCConfigMissing
+		case "oidc_ca_missing":
+			conditionReason = telekomv1alpha1.ClusterConfigReasonOIDCCAMissing
+		case "tofu":
+			conditionReason = telekomv1alpha1.ClusterConfigReasonTOFUFailed
+		// Kubeconfig-specific reasons
+		case "secret_missing":
+			conditionReason = telekomv1alpha1.ClusterConfigReasonSecretMissing
+		case "secret_key_missing":
+			conditionReason = telekomv1alpha1.ClusterConfigReasonSecretKeyMissing
 		case "parse":
-			conditionReason = "KubeconfigParseFailed"
+			conditionReason = telekomv1alpha1.ClusterConfigReasonKubeconfigInvalid
 		case "connection":
-			conditionReason = "ClusterUnreachable"
+			conditionReason = telekomv1alpha1.ClusterConfigReasonClusterUnreachable
 		default:
-			conditionReason = "ValidationFailed"
+			conditionReason = telekomv1alpha1.ClusterConfigReasonValidationFailed
 		}
 	}
 
@@ -216,7 +560,7 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 		Type:               string(telekomv1alpha1.ClusterConfigConditionReady),
 		Status:             conditionStatus,
 		ObservedGeneration: cc.Generation,
-		Reason:             conditionReason,
+		Reason:             string(conditionReason),
 		Message:            message,
 		LastTransitionTime: now,
 	}
@@ -275,6 +619,20 @@ func NewStatusUpdateHelper(phase, message, eventType string) *StatusUpdateHelper
 // DescribeFailure provides a human-readable description of what failed and why
 func DescribeFailure(failureType, message string) (failureCategory, advice string) {
 	switch failureType {
+	// OIDC-specific failures
+	case "oidc_discovery":
+		return "oidc_discovery_failed", fmt.Sprintf("OIDC discovery failed. Check issuer URL is correct and reachable. Error: %s", message)
+	case "oidc_token":
+		return "oidc_token_failed", fmt.Sprintf("Failed to obtain OIDC token. Check client ID/secret and issuer configuration. Error: %s", message)
+	case "oidc_refresh":
+		return "oidc_refresh_failed", fmt.Sprintf("Failed to refresh OIDC token. Token may have been revoked. Error: %s", message)
+	case "oidc_config":
+		return "oidc_config_missing", "OIDC configuration is incomplete. Ensure issuerURL, clientID, and server are set."
+	case "oidc_ca_missing":
+		return "oidc_ca_secret_missing", "Referenced cluster CA secret doesn't exist or is inaccessible. Check caSecretRef."
+	case "tofu":
+		return "tofu_failed", fmt.Sprintf("TOFU (Trust On First Use) failed. Could not fetch API server certificate. Error: %s", message)
+	// Kubeconfig-specific failures
 	case "connection":
 		return "connection_failed", fmt.Sprintf("Cluster is unreachable. Check network connectivity and cluster status. Error: %s", message)
 	case "parse":
@@ -292,7 +650,22 @@ func DescribeFailure(failureType, message string) (failureCategory, advice strin
 
 // determineClusterConfigFailureType categorizes the failure message to populate appropriate status fields
 func determineClusterConfigFailureType(message string) string {
+	lowerMsg := strings.ToLower(message)
 	switch {
+	// OIDC-specific failures
+	case strings.Contains(lowerMsg, "oidc") && strings.Contains(lowerMsg, "discovery"):
+		return "oidc_discovery"
+	case strings.Contains(lowerMsg, "oidc") && strings.Contains(lowerMsg, "token"):
+		return "oidc_token"
+	case strings.Contains(lowerMsg, "refresh"):
+		return "oidc_refresh"
+	case strings.Contains(lowerMsg, "tofu"):
+		return "tofu"
+	case strings.Contains(lowerMsg, "oidc") && strings.Contains(lowerMsg, "config"):
+		return "oidc_config"
+	case strings.Contains(lowerMsg, "ca secret") || (strings.Contains(lowerMsg, "ca") && strings.Contains(lowerMsg, "missing")):
+		return "oidc_ca_missing"
+	// Kubeconfig-specific failures
 	case strings.Contains(message, "secret missing") || strings.Contains(message, "not found"):
 		return "secret_missing"
 	case strings.Contains(message, "missing key"):

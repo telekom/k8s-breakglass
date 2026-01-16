@@ -1,0 +1,134 @@
+{
+  "realm": "breakglass-e2e-contractors",
+  "enabled": true,
+  "displayName": "Breakglass E2E Contractors",
+  "sslRequired": "none",
+  "verifyEmail": false,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "clients": [
+    {
+      "clientId": "breakglass-contractors",
+      "name": "Breakglass Contractors",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience-kubernetes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "kubernetes",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "name": "contractors"
+    },
+    {
+      "name": "vendor-team"
+    },
+    {
+      "name": "breakglass-users"
+    },
+    {
+      "name": "breakglass-approvers"
+    },
+    {
+      "name": "vendor-supervisors"
+    }
+  ],
+  "users": [
+    {
+      "username": "contractor1@vendor.com",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "contractor1@vendor.com",
+      "firstName": "Contractor1@vendor.com",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "contractors",
+        "breakglass-users"
+      ]
+    },
+    {
+      "username": "contractor2@vendor.com",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "contractor2@vendor.com",
+      "firstName": "Contractor2@vendor.com",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "contractors",
+        "vendor-team",
+        "vendor-supervisors",
+        "breakglass-users",
+        "breakglass-approvers"
+      ]
+    }
+  ]
+}

@@ -17,9 +17,7 @@ limitations under the License.
 package api
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,57 +32,32 @@ import (
 // TestClusterConfigWithKubeconfigSecret [CC-001] tests that ClusterConfig can be created
 // with a kubeconfig secret reference.
 func TestClusterConfigWithKubeconfigSecret(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	cli := helpers.GetClient(t)
-	cleanup := helpers.NewCleanup(t, cli)
-	namespace := helpers.GetTestNamespace()
+	s := helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	// Create a dummy kubeconfig secret for testing
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-cc001-kubeconfig",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
+			Name:      helpers.GenerateUniqueName("e2e-cc001-kubeconfig"),
+			Namespace: s.Namespace,
+			Labels:    helpers.E2ETestLabels(),
 		},
 		Data: map[string][]byte{
 			"kubeconfig": []byte("dummy-kubeconfig-data"),
 		},
 	}
-	cleanup.Add(secret)
-	err := cli.Create(ctx, secret)
-	require.NoError(t, err, "Failed to create kubeconfig secret")
+	s.MustCreateResource(secret)
 
-	clusterConfig := &telekomv1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-cc001-test-cluster",
-			Namespace: namespace,
-			Labels:    map[string]string{"e2e-test": "true"},
-		},
-		Spec: telekomv1alpha1.ClusterConfigSpec{
-			ClusterID:   "e2e-test-cluster",
-			Tenant:      "e2e-tenant",
-			Environment: "test",
-			KubeconfigSecretRef: telekomv1alpha1.SecretKeyReference{
-				Name:      secret.Name,
-				Namespace: namespace,
-				Key:       "kubeconfig",
-			},
-		},
-	}
-	cleanup.Add(clusterConfig)
-
-	err = cli.Create(ctx, clusterConfig)
-	require.NoError(t, err, "Failed to create ClusterConfig")
+	clusterConfig := helpers.NewClusterConfigBuilder(helpers.GenerateUniqueName("e2e-cc001-test-cluster"), s.Namespace).
+		WithClusterID("e2e-test-cluster").
+		WithTenant("e2e-tenant").
+		WithEnvironment("test").
+		WithKubeconfigSecret(secret.Name, "kubeconfig").
+		Build()
+	s.MustCreateResource(clusterConfig)
 
 	// Verify it can be fetched
 	var fetched telekomv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &fetched)
+	err := s.Client.Get(s.Ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: s.Namespace}, &fetched)
 	require.NoError(t, err, "Failed to get ClusterConfig")
 	assert.Equal(t, "e2e-test-cluster", fetched.Spec.ClusterID)
 	assert.Equal(t, "e2e-tenant", fetched.Spec.Tenant)

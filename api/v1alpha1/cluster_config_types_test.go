@@ -21,7 +21,7 @@ func TestClusterConfig_ValidateCreate_Success(t *testing.T) {
 	cc := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-1"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 		},
 	}
 	_, err := cc.ValidateCreate(context.Background(), cc)
@@ -34,7 +34,7 @@ func TestClusterConfig_ValidateCreate_DuplicateIdentityProviderRefs(t *testing.T
 	cc := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-dup"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef:  SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef:  &SecretKeyReference{Name: "k", Namespace: "ns"},
 			IdentityProviderRefs: []string{"idp-a", "idp-a"},
 		},
 	}
@@ -49,7 +49,7 @@ func TestClusterConfig_ValidateCreate_InvalidApproverDomains(t *testing.T) {
 	cc := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-domain"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef:    SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef:    &SecretKeyReference{Name: "k", Namespace: "ns"},
 			AllowedApproverDomains: []string{"invalid_domain"},
 		},
 	}
@@ -91,7 +91,7 @@ func TestClusterConfig_ValidateCreate_MailProviderReference(t *testing.T) {
 	valid := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-valid"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 			MailProvider:        "mail-enabled",
 		},
 	}
@@ -103,7 +103,7 @@ func TestClusterConfig_ValidateCreate_MailProviderReference(t *testing.T) {
 	disabled := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-disabled"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 			MailProvider:        "mail-disabled",
 		},
 	}
@@ -115,7 +115,7 @@ func TestClusterConfig_ValidateCreate_MailProviderReference(t *testing.T) {
 	missing := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-mail-missing"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 			MailProvider:        "does-not-exist",
 		},
 	}
@@ -129,7 +129,7 @@ func TestClusterConfig_ValidateUpdate_Immutable(t *testing.T) {
 	old := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-2"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 		},
 	}
 	modified := old.DeepCopy()
@@ -185,7 +185,7 @@ func TestClusterConfig_ValidateCreate_WrongType(t *testing.T) {
 func TestClusterConfig_ValidateUpdate_WrongNewType(t *testing.T) {
 	cc := &ClusterConfig{
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 		},
 	}
 	wrongType := &BreakglassSession{}
@@ -199,7 +199,7 @@ func TestClusterConfig_ValidateCreate_EmptyIdentityProviderRef(t *testing.T) {
 	cc := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-empty-idp"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef:  SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef:  &SecretKeyReference{Name: "k", Namespace: "ns"},
 			IdentityProviderRefs: []string{"idp-a", ""},
 		},
 	}
@@ -214,7 +214,7 @@ func TestClusterConfig_ValidateCreate_DuplicateApproverDomains(t *testing.T) {
 	cc := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-dup-domain"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef:    SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef:    &SecretKeyReference{Name: "k", Namespace: "ns"},
 			AllowedApproverDomains: []string{"example.com", "example.com"},
 		},
 	}
@@ -229,13 +229,13 @@ func TestClusterConfig_ValidateUpdate_DuplicateIdentityProviderRefs(t *testing.T
 	old := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-upd"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef: SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 		},
 	}
 	updated := &ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cc-upd"},
 		Spec: ClusterConfigSpec{
-			KubeconfigSecretRef:  SecretKeyReference{Name: "k", Namespace: "ns"},
+			KubeconfigSecretRef:  &SecretKeyReference{Name: "k", Namespace: "ns"},
 			IdentityProviderRefs: []string{"idp-a", "idp-a"}, // duplicate
 		},
 	}
@@ -243,5 +243,69 @@ func TestClusterConfig_ValidateUpdate_DuplicateIdentityProviderRefs(t *testing.T
 	_, err := updated.ValidateUpdate(context.Background(), old, updated)
 	if err == nil {
 		t.Fatalf("expected ValidateUpdate to fail due to duplicate identityProviderRefs")
+	}
+}
+
+func TestClusterConfig_GetUserIdentifierClaim(t *testing.T) {
+	// TestClusterConfig_GetUserIdentifierClaim
+	//
+	// Purpose:
+	//   Verifies that GetUserIdentifierClaim returns the configured claim type.
+	//   When not specified, it returns empty string (callers should fallback to global config).
+	//
+	// Reasoning:
+	//   The userIdentifierClaim field determines which OIDC claim the spoke cluster
+	//   uses for its username in SAR requests. The hub must store the matching
+	//   identifier in sessions to enable authorization matching.
+	//   Empty return indicates caller should use global config fallback.
+	//
+
+	tests := []struct {
+		name          string
+		claimType     UserIdentifierClaimType
+		expectedClaim UserIdentifierClaimType
+	}{
+		{
+			name:          "Email claim returns email",
+			claimType:     UserIdentifierClaimEmail,
+			expectedClaim: UserIdentifierClaimEmail,
+		},
+		{
+			name:          "PreferredUsername claim returns preferred_username",
+			claimType:     UserIdentifierClaimPreferredUsername,
+			expectedClaim: UserIdentifierClaimPreferredUsername,
+		},
+		{
+			name:          "Sub claim returns sub",
+			claimType:     UserIdentifierClaimSub,
+			expectedClaim: UserIdentifierClaimSub,
+		},
+		{
+			name:          "Empty claim returns empty (fallback to global config)",
+			claimType:     "",
+			expectedClaim: "",
+		},
+		{
+			name:          "Unset claim returns empty (fallback to global config)",
+			claimType:     UserIdentifierClaimType(""),
+			expectedClaim: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cc := &ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cc"},
+				Spec: ClusterConfigSpec{
+					KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
+					UserIdentifierClaim: tt.claimType,
+				},
+			}
+
+			result := cc.GetUserIdentifierClaim()
+			if result != tt.expectedClaim {
+				t.Errorf("expected %s, got %s", tt.expectedClaim, result)
+			}
+		})
 	}
 }

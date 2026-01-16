@@ -32,9 +32,7 @@ import (
 
 // TestMailProviderConfigurationValidation tests MailProvider configuration validation.
 func TestMailProviderConfigurationValidation(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -46,11 +44,11 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 		provider := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-valid"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
-					Host: "mailhog.breakglass-dev-system.svc.cluster.local",
+					Host: "breakglass-mailhog.breakglass-system.svc.cluster.local",
 					Port: 1025,
 				},
 				Sender: telekomv1alpha1.SenderConfig{
@@ -65,7 +63,7 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 		var fetched telekomv1alpha1.MailProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: provider.Name}, &fetched)
 		require.NoError(t, err)
-		assert.Equal(t, "mailhog.breakglass-dev-system.svc.cluster.local", fetched.Spec.SMTP.Host)
+		assert.Equal(t, "breakglass-mailhog.breakglass-system.svc.cluster.local", fetched.Spec.SMTP.Host)
 		assert.Equal(t, 1025, fetched.Spec.SMTP.Port)
 		t.Logf("MAIL-001: Valid MailProvider created: host=%s, port=%d", fetched.Spec.SMTP.Host, fetched.Spec.SMTP.Port)
 	})
@@ -74,7 +72,7 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 		provider := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-tls"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
@@ -100,7 +98,7 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 		provider := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-auth"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
@@ -134,9 +132,7 @@ func TestMailProviderConfigurationValidation(t *testing.T) {
 
 // TestMailProviderStatusHealth tests MailProvider status health tracking.
 func TestMailProviderStatusHealth(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -147,9 +143,9 @@ func TestMailProviderStatusHealth(t *testing.T) {
 
 	t.Run("HealthyMailProviderHasReadyCondition", func(t *testing.T) {
 		var provider telekomv1alpha1.MailProvider
-		err := cli.Get(ctx, types.NamespacedName{Name: "breakglass-dev-e2e-mail", Namespace: namespace}, &provider)
+		err := cli.Get(ctx, types.NamespacedName{Name: "breakglass-mailhog", Namespace: namespace}, &provider)
 		if err != nil {
-			err = cli.Get(ctx, types.NamespacedName{Name: "breakglass-dev-e2e-mail"}, &provider)
+			err = cli.Get(ctx, types.NamespacedName{Name: "breakglass-mailhog"}, &provider)
 		}
 		if err != nil {
 			t.Skip("No e2e MailProvider found, skipping health check test")
@@ -165,7 +161,7 @@ func TestMailProviderStatusHealth(t *testing.T) {
 		provider := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-unreachable"),
-				Labels: map[string]string{"e2e-test": "true"},
+				Labels: helpers.E2ETestLabels(),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
@@ -196,9 +192,7 @@ func TestMailProviderStatusHealth(t *testing.T) {
 
 // TestMailProviderRetryBehavior tests that email delivery retries on transient failures.
 func TestMailProviderRetryBehavior(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -216,25 +210,12 @@ func TestMailProviderRetryBehavior(t *testing.T) {
 	t.Run("NotificationFailureDoesNotBlockApproval", func(t *testing.T) {
 		cleanup := helpers.NewCleanup(t, cli)
 
-		escalation := &telekomv1alpha1.BreakglassEscalation{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      helpers.GenerateUniqueName("e2e-mail-resilience"),
-				Namespace: helpers.GetTestNamespace(),
-				Labels:    map[string]string{"e2e-test": "true"},
-			},
-			Spec: telekomv1alpha1.BreakglassEscalationSpec{
-				EscalatedGroup:  helpers.GenerateUniqueName("mail-test-group"),
-				MaxValidFor:     "2h",
-				ApprovalTimeout: "1h",
-				Allowed: telekomv1alpha1.BreakglassEscalationAllowed{
-					Clusters: []string{helpers.GetTestClusterName()},
-					Groups:   helpers.TestUsers.Requester.Groups,
-				},
-				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{helpers.TestUsers.Approver.Email},
-				},
-			},
-		}
+		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-mail-resilience"), helpers.GetTestNamespace()).
+			WithEscalatedGroup(helpers.GenerateUniqueName("mail-test-group")).
+			WithAllowedClusters(helpers.GetTestClusterName()).
+			WithMaxValidFor("2h").
+			WithApprovalTimeout("1h").
+			Build()
 		cleanup.Add(escalation)
 		err := cli.Create(ctx, escalation)
 		require.NoError(t, err)
@@ -248,7 +229,7 @@ func TestMailProviderRetryBehavior(t *testing.T) {
 			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Mail resilience test",
-		}, 30*time.Second)
+		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err)
 		cleanup.Add(session)
 
@@ -261,9 +242,7 @@ func TestMailProviderRetryBehavior(t *testing.T) {
 
 // TestMailProviderMultipleProviders tests behavior when multiple MailProviders exist.
 func TestMailProviderMultipleProviders(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -275,7 +254,7 @@ func TestMailProviderMultipleProviders(t *testing.T) {
 		provider1 := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-primary"),
-				Labels: map[string]string{"e2e-test": "true", "purpose": "primary"},
+				Labels: helpers.E2ELabelsWithExtra(map[string]string{"purpose": "primary"}),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{
@@ -290,7 +269,7 @@ func TestMailProviderMultipleProviders(t *testing.T) {
 		provider2 := &telekomv1alpha1.MailProvider{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   helpers.GenerateUniqueName("e2e-mail-secondary"),
-				Labels: map[string]string{"e2e-test": "true", "purpose": "secondary"},
+				Labels: helpers.E2ELabelsWithExtra(map[string]string{"purpose": "secondary"}),
 			},
 			Spec: telekomv1alpha1.MailProviderSpec{
 				SMTP: telekomv1alpha1.SMTPConfig{

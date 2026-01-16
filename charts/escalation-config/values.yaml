@@ -2,9 +2,100 @@ cluster:
   clusterID: tenant-b-virtual-test
   tenant: tenant-b
   environment: development
+  # Optional cluster identification fields
+  # site: eu-west
+  # location: eu-west-1
+  
+  # ==========================================
+  # Authentication Configuration
+  # ==========================================
+  # Choose ONE of the following auth types:
+  # - authType: Kubeconfig (default) - uses kubeconfigSecretRef
+  # - authType: OIDC - uses either oidcAuth or oidcFromIdentityProvider
+  
+  # Default: Kubeconfig authentication
+  # authType: Kubeconfig
   kubeconfigSecretRef:
     name: tenant-b-admin
     namespace: default
+    # key: kubeconfig  # Optional, defaults to "kubeconfig"
+  
+  # ==========================================
+  # OIDC Authentication (when authType=OIDC)
+  # ==========================================
+  # Option 1: Direct OIDC configuration
+  # authType: OIDC
+  # oidcAuth:
+  #   # Required: OIDC issuer URL
+  #   issuerURL: https://keycloak.example.com/realms/kubernetes
+  #   # Required: OIDC client ID
+  #   clientID: breakglass-controller
+  #   # Required: Target cluster API server URL
+  #   server: https://api.cluster.example.com:6443
+  #   # Required: Client secret reference
+  #   clientSecretRef:
+  #     name: oidc-client-secret
+  #     namespace: breakglass-system
+  #     key: client-secret
+  #   # Optional: CA certificate for cluster API server
+  #   caSecretRef:
+  #     name: cluster-ca
+  #     namespace: breakglass-system
+  #     key: ca.crt
+  #   # Optional: Token audience (defaults to server URL)
+  #   audience: https://api.cluster.example.com:6443
+  #   # Optional: Additional OIDC scopes
+  #   scopes:
+  #     - groups
+  #     - email
+  #   # Optional: Skip TLS verification (not recommended for production)
+  #   insecureSkipTLSVerify: false
+  #   # Optional: Token exchange configuration (RFC 8693)
+  #   tokenExchange:
+  #     enabled: false
+  #     subjectTokenSecretRef:
+  #       name: subject-token-secret
+  #       namespace: breakglass-system
+  #       key: token
+  #     resource: https://api.cluster.example.com:6443
+  
+  # Option 2: OIDC from IdentityProvider reference
+  # authType: OIDC
+  # oidcFromIdentityProvider:
+  #   # Required: Name of the IdentityProvider resource
+  #   name: my-keycloak-idp
+  #   # Required: Target cluster API server URL
+  #   server: https://api.cluster.example.com:6443
+  #   # Optional: Override client ID from IdentityProvider
+  #   clientID: cluster-specific-client
+  #   # Optional: Client secret for this cluster
+  #   clientSecretRef:
+  #     name: cluster-client-secret
+  #     namespace: breakglass-system
+  #   # Optional: CA certificate for cluster API server
+  #   caSecretRef:
+  #     name: cluster-ca
+  #     namespace: breakglass-system
+  #   # Optional: Skip TLS verification
+  #   insecureSkipTLSVerify: false
+  
+  # ==========================================
+  # Additional Options
+  # ==========================================
+  # Restrict which IdentityProviders can authenticate for this cluster
+  # identityProviderRefs:
+  #   - my-keycloak-idp
+  
+  # User identifier claim: Specifies which OIDC claim the spoke cluster uses
+  # for extracting the username. Must match the spoke cluster's OIDC config
+  # (e.g., --oidc-username-claim or claimMappings.username.claim).
+  # Valid values: "email" (default), "preferred_username", "sub"
+  # userIdentifierClaim: email
+  
+  # Client rate limiting
+  # qps: 100
+  # burst: 200
+  
   blockSelfApproval: false
   allowedApproverDomains: []
 
@@ -16,14 +107,59 @@ escalations: []
   #     groups:
   #       - dev
   #       - senior-ops
+  #     # Optional: individual users allowed to request (in addition to groups)
+  #     users:
+  #       - emergency@example.com
+  #       - oncall@example.com
   #   escalatedGroup: breakglass-create-all
   #   approvers:
   #     groups:
   #       - senior-ops
   #       - flm-on-duty  # FLM group added as fallback
+  #     # Optional: individual users who can approve
+  #     users:
+  #       - manager@example.com
+  #       - security@example.com
   #     hiddenFromUI:
   #       - flm-on-duty  # Hide FLM from UI and notifications (fallback only)
-  #   # Per-escalation optional fields:
+  #   
+  #   # ==========================================
+  #   # Cluster and Policy Configuration
+  #   # ==========================================
+  #   # Alternative: Use ClusterConfig references instead of cluster names
+  #   # Supports glob patterns: "*" (all clusters), "prod-*" (prefix), "*-staging" (suffix)
+  #   # clusterConfigRefs:
+  #   #   - prod-cluster-config
+  #   #   - staging-cluster-config
+  #   #   - "*"  # Use "*" for global escalations (applies to all clusters)
+  #   
+  #   # Optional: Attach deny policies to sessions from this escalation
+  #   # denyPolicyRefs:
+  #   #   - pod-security-policy
+  #   #   - network-restriction-policy
+  #   
+  #   # ==========================================
+  #   # Timing Configuration
+  #   # ==========================================
+  #   maxValidFor: 1h
+  #   retainFor: 24h
+  #   # Optional: Max time allowed for approval before session expires
+  #   # approvalTimeout: 30m
+  #   
+  #   # ==========================================
+  #   # Reason Configuration
+  #   # ==========================================
+  #   requestReason:
+  #     mandatory: true
+  #     description: "Please provide a short justification or ticket ID"
+  #   # Optional: Require approver to provide a reason
+  #   # approvalReason:
+  #   #   mandatory: true
+  #   #   description: "Provide approval justification"
+  #   
+  #   # ==========================================
+  #   # Approval and Notification Configuration
+  #   # ==========================================
   #   allowedApproverDomains:
   #     - example.org
   #   blockSelfApproval: true
@@ -34,17 +170,52 @@ escalations: []
   #       - bot@example.com
   #     groups:
   #       - automated-services
-  #   requestReason:
-  #     mandatory: true
-  #     description: "Please provide a short justification or ticket ID"
-  #   maxValidFor: 1h
-  #   retainFor: 24h
-  #   idleTimeout: 30m
-  #   # Multi-IDP: Restrict escalation to specific identity providers (optional)
-  #   allowedIdentityProviders:
-  #     - corporate-oidc
-  #     - external-keycloak
-  #   # Note: If allowedIdentityProviders is not set or empty, all IDPs are allowed
+  #   
+  #   # Optional: Route notifications through specific mail provider
+  #   # mailProvider: prod-smtp-relay
+  #   
+  #   # ==========================================
+  #   # Multi-IDP Configuration (choose ONE approach)
+  #   # ==========================================
+  #   # Option 1: Legacy single list (backward compatible)
+  #   # allowedIdentityProviders:
+  #   #   - corporate-oidc
+  #   #   - external-keycloak
+  #   
+  #   # Option 2: Split IDP lists (recommended for fine-grained control)
+  #   # Cannot be mixed with allowedIdentityProviders
+  #   # allowedIdentityProvidersForRequests:
+  #   #   - corporate-oidc
+  #   #   - external-keycloak
+  #   # allowedIdentityProvidersForApprovers:
+  #   #   - corporate-oidc
+  #   
+  #   # Note: If IDP fields are not set or empty, all IDPs are allowed
+  #   
+  #   # ==========================================
+  #   # Pod Security Overrides (for DenyPolicy relaxation)
+  #   # ==========================================
+  #   # Allow this escalation to access high-risk pods by relaxing DenyPolicy rules
+  #   # podSecurityOverrides:
+  #   #   enabled: true
+  #   #   # Override risk score threshold (default from DenyPolicy)
+  #   #   maxAllowedScore: 150
+  #   #   # Exempt specific risk factors from blocking
+  #   #   exemptFactors:
+  #   #     - privilegedContainer
+  #   #     - hostNetwork
+  #   #   # Limit overrides to specific namespaces
+  #   #   namespaceScope:
+  #   #     patterns:
+  #   #       - "kube-system"
+  #   #       - "critical-*"
+  #   #   # Require additional approval before using overrides
+  #   #   requireApproval: true
+  #   #   approvers:
+  #   #     groups:
+  #   #       - security-team
+  #   #     users:
+  #   #       - ciso@example.com
 
 # Multi-IDP Identity Provider Configuration Examples:
 #

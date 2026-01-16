@@ -23,15 +23,8 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 			wc.log.Infow("Expiring pending session due to approval timeout", "session", ses.Name)
 			ses.Status.State = telekomv1alpha1.SessionStateTimeout
 
-			// Set RetainedUntil for timeout sessions (same logic as other terminal states)
-			retainFor := DefaultRetainForDuration
-			if ses.Spec.RetainFor != "" {
-				if d, err := time.ParseDuration(ses.Spec.RetainFor); err == nil && d > 0 {
-					retainFor = d
-				} else {
-					wc.log.Warnw("Invalid RetainFor in session spec; falling back to default", "value", ses.Spec.RetainFor, "error", err)
-				}
-			}
+			// Set RetainedUntil for timeout sessions
+			retainFor := ParseRetainFor(ses.Spec, wc.log)
 			ses.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 			ses.Status.Conditions = append(ses.Status.Conditions, metav1.Condition{

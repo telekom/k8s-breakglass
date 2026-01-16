@@ -1,0 +1,267 @@
+# Advanced BreakglassEscalation Examples
+# This file showcases advanced features and newer API capabilities
+# For basic examples, see breakglass.t-cass.telekom.com_v1alpha1_breakglassescalation.yaml
+
+---
+# Example 1: Multi-IDP Escalation with Split Request/Approval IDPs
+# This escalation allows requests from external contractors (via external-keycloak)
+# but requires approval from internal corporate IDP users
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: multi-idp-split-control
+spec:
+  escalatedGroup: "namespace-admin"
+  
+  allowed:
+    clusters: ["prod-cluster-1", "prod-cluster-2"]
+    groups: ["external-contractors", "internal-developers"]
+    # NOTE: 'users' field is not supported in spec.allowed. Use groups instead or add users to groups.
+  
+  approvers:
+    groups: ["security-team", "platform-leads"]
+    users: ["ciso@example.com", "vp-engineering@example.com"]
+  
+  # Split IDP control: external users can request, only internal can approve
+  allowedIdentityProvidersForRequests:
+    - corporate-oidc
+    - external-keycloak
+  allowedIdentityProvidersForApprovers:
+    - corporate-oidc  # Only corporate users can approve
+  
+  maxValidFor: "2h"
+  approvalTimeout: "30m"  # Request expires if not approved within 30m
+  retainFor: "720h"
+  
+  # Both requester and approver must provide reasons
+  requestReason:
+    mandatory: true
+    description: "Incident ticket ID (INC-XXXXX) or change request number"
+  approvalReason:
+    mandatory: true
+    description: "Approval justification and risk assessment"
+  
+  blockSelfApproval: true
+  mailProvider: "critical-alerts-smtp"  # Use dedicated SMTP for critical escalations
+
+---
+# Example 2: Pod Security Override for SRE Team
+# This escalation allows trusted SRE team to access high-risk pods
+# that would normally be blocked by DenyPolicy
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: sre-privileged-debug
+spec:
+  escalatedGroup: "cluster-admin"
+  
+  allowed:
+    clusters: ["prod-*"]  # All production clusters
+    groups: ["sre-team", "incident-responders"]
+  
+  approvers:
+    groups: ["sre-leads", "security-team"]
+    hiddenFromUI: ["security-team"]  # Security team as fallback, not bothered with notifications
+  
+  # Override pod security rules from DenyPolicy
+  podSecurityOverrides:
+    enabled: true
+    # Allow access to pods with risk scores up to 150 (higher than default threshold)
+    maxAllowedScore: 150
+    # Exempt these risk factors from blocking
+    exemptFactors:
+      - privilegedContainer
+      - hostNetwork
+      - hostPID
+    # Limit overrides to system namespaces
+    namespaceScope:
+      patterns:
+        - "kube-system"
+        - "kube-*"
+        - "istio-system"
+        - "monitoring"
+      selectorTerms:
+        - matchLabels:
+            security-override-allowed: "true"
+    # Require additional approval for using these overrides
+    requireApproval: true
+    approvers:
+      groups: ["security-team", "platform-architects"]
+      users: ["ciso@example.com"]
+  
+  maxValidFor: "1h"
+  approvalTimeout: "15m"
+  
+  requestReason:
+    mandatory: true
+    description: "Production incident ticket and reason for privileged access"
+  
+  blockSelfApproval: true
+
+---
+# Example 3: Using ClusterConfig References and DenyPolicies
+# This shows alternative cluster specification and policy attachment
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: namespace-admin-with-restrictions
+spec:
+  escalatedGroup: "namespace-admin"
+  
+  allowed:
+    clusters: ["dev-*", "staging-*", "test-*"]
+    groups: ["developers", "qa-team"]
+  
+  approvers:
+    groups: ["team-leads"]
+  
+  # Use ClusterConfig references instead of cluster names
+  # Uncomment when you have these ClusterConfig resources created
+  # clusterConfigRefs:
+  #   - dev-cluster-config
+  #   - staging-cluster-config
+  #   - test-cluster-config
+  
+  # Or use cluster name patterns directly (shown above in spec.allowed.clusters)
+  
+  # Attach deny policies to restrict actions even with elevated privileges
+  # Uncomment when you have these DenyPolicy resources created
+  # denyPolicyRefs:
+  #   - namespace-resource-limits  # Prevent resource quota changes
+  #   - critical-namespace-protection  # Block access to critical namespaces
+  #   - pod-security-enforcement  # Enforce pod security standards
+  
+  maxValidFor: "4h"
+  approvalTimeout: "1h"
+  retainFor: "168h"  # Keep for 1 week
+  
+  requestReason:
+    mandatory: false
+    description: "Optional: Provide reason for access"
+  
+  # Route through standard mail provider (could be omitted to use cluster default)
+  # Uncomment when you have this MailProvider resource created
+  # mailProvider: "standard-smtp"
+
+---
+# Example 4: Emergency Access with Notification Exclusions
+# Quick approval escalation with selective notifications
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: emergency-access
+spec:
+  escalatedGroup: "cluster-admin"
+  
+  allowed:
+    clusters: ["prod-*", "critical-*"]
+    groups: ["oncall-sre", "incident-commanders"]
+    # NOTE: There is no spec.allowed.users field in this CRD.
+    # If you need to allow specific people, put them into a group and list that group above.
+  
+  approvers:
+    groups: ["oncall-sre", "duty-managers"]
+    users:
+      - "vp-operations@example.com"
+      - "security-oncall@example.com"
+  
+  maxValidFor: "30m"  # Short-lived emergency access
+  approvalTimeout: "5m"  # Fast approval required
+  
+  requestReason:
+    mandatory: true
+    description: "EMERGENCY ONLY: Incident description and severity"
+  
+  blockSelfApproval: false  # Allow self-approval in emergencies
+  disableNotifications: false  # Keep notifications enabled
+  
+  # Exclude automation accounts and bots from notifications
+  notificationExclusions:
+    users:
+      - "automation-bot@example.com"
+      - "ci-cd-service@example.com"
+      - "monitoring-alerts@example.com"
+    groups:
+      - "automated-services"
+      - "service-accounts"
+  
+  # Legacy single IDP list (backward compatible)
+  allowedIdentityProviders:
+    - corporate-oidc
+    - backup-oidc
+
+---
+# Example 5: Development Environment (Permissive)
+# Less strict escalation for development environments
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: dev-full-access
+spec:
+  escalatedGroup: "cluster-admin"
+  
+  allowed:
+    clusters: ["dev-*", "sandbox-*"]
+    groups: ["all-developers", "contractors", "interns"]
+  
+  # No approvers = auto-approved
+  approvers:
+    groups: ["developers"]  # Self-approval essentially
+  
+  maxValidFor: "8h"  # Full workday
+  approvalTimeout: "8h"  # Approval window (must be <= maxValidFor)
+  retainFor: "72h"
+  
+  requestReason:
+    mandatory: false
+    description: "Optional: What are you working on?"
+  
+  blockSelfApproval: false  # Allow self-approval in dev
+  disableNotifications: true  # No email spam for dev access
+  
+  allowedApproverDomains:
+    - "example.com"
+    - "contractor.example.com"
+    - "partner.example.com"
+
+---
+# Example 6: Scheduled Maintenance Window
+# Escalation designed for planned maintenance with extended duration
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: maintenance-window
+spec:
+  escalatedGroup: "cluster-admin"
+  
+  allowed:
+    clusters: ["prod-cluster-1"]
+    groups: ["platform-team", "database-admins"]
+  
+  approvers:
+    groups: ["change-advisory-board"]
+    users: ["change-manager@example.com"]
+  
+  maxValidFor: "48h"  # Long maintenance window (increased to allow longer approvalTimeout)
+  approvalTimeout: "48h"  # Approve in advance
+  retainFor: "2160h"  # Keep for 90 days (compliance)
+  
+  requestReason:
+    mandatory: true
+    description: "Change request number (CHG-XXXXX), planned maintenance window, and rollback plan"
+  approvalReason:
+    mandatory: true
+    description: "CAB approval reference and reviewed change plan"
+  
+  blockSelfApproval: true
+  
+  # Attach strict policies even during maintenance
+  denyPolicyRefs:
+    - production-safeguards
+    - data-protection-policy
+  
+  # Only allow corporate authenticated users
+  allowedIdentityProvidersForRequests:
+    - corporate-oidc
+  allowedIdentityProvidersForApprovers:
+    - corporate-oidc

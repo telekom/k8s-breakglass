@@ -21,11 +21,16 @@ spec:
     groups:
       - platform-engineers
       - developers
+      - dev
+      - ops
+      - requester
+      - breakglass-pods-admin
     clusters:
       - "dev-*"
       - "test-*"
       - "local-*"
       - "kind-*"
+      - "breakglass-*"
   
   approvers:
     autoApproveFor:
@@ -34,6 +39,7 @@ spec:
         - "test-*"
         - "local-*"
         - "kind-*"
+        - "breakglass-*"
   
   constraints:
     maxDuration: "8h"

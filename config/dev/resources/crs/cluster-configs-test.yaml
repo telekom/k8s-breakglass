@@ -1,3 +1,27 @@
+# ClusterConfig for the main hub cluster - used by UI E2E tests
+# This is the primary cluster where escalations target 'breakglass-hub'
+# NOTE: Name is 'hub' so that sed prefix transformation creates 'breakglass-hub'
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: hub
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  clusterID: breakglass-hub
+  tenant: hub
+  environment: development
+  kubeconfigSecretRef:
+    name: tenant-a-admin
+    namespace: default
+    key: kubeconfig
+  blockSelfApproval: false
+  allowedApproverDomains:
+    - example.org
+    - example.com
+    - telekom.de
+  # Main hub cluster - accessible via the same kubeconfig as tenant-a
+---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
@@ -18,14 +42,16 @@ spec:
     - t-systems.com
   # This cluster exists as a kind cluster
 ---
+# ClusterConfig for breakglass-hub-2 (virtual second cluster for multi-cluster tests)
+# NOTE: Name is 'hub-2' so that sed prefix transformation creates 'breakglass-hub-2'
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
-  name: tenant-b-config-test
+  name: hub-2
   labels:
     breakglass.dev/test-resource: "true"
 spec:
-  clusterID: tenant-b-virtual-test
+  clusterID: breakglass-hub-2
   tenant: tenant-b
   environment: development
   kubeconfigSecretRef:
@@ -36,4 +62,24 @@ spec:
   allowedApproverDomains:
     - telekom.de
     - t-systems.com
-  # This is a virtual cluster for testing UI flows - exists only in breakglass config
+  # Virtual second cluster for multi-cluster tests
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: tenant-b-config-test
+  labels:
+    breakglass.dev/test-resource: "true"
+spec:
+  clusterID: breakglass-hub-2
+  tenant: tenant-b
+  environment: development
+  kubeconfigSecretRef:
+    name: tenant-b-admin
+    namespace: default
+    key: kubeconfig
+  blockSelfApproval: false
+  allowedApproverDomains:
+    - telekom.de
+    - t-systems.com
+  # This references the virtual breakglass-hub-2 cluster

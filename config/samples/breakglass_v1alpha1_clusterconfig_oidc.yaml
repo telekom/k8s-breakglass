@@ -1,0 +1,145 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Example ClusterConfig using OIDC-based authentication
+# This method uses OIDC client credentials flow to obtain tokens for authenticating
+# to the managed cluster's API server. The API server must be configured to accept
+# tokens from the specified OIDC issuer.
+#
+# This is useful when:
+# - You want to avoid storing long-lived kubeconfig credentials
+# - The managed cluster's API server supports OIDC authentication
+# - You're using an IAM/OIDC provider like Keycloak, AWS IAM, or similar
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: my-oidc-cluster
+  namespace: breakglass-system
+spec:
+  # Authentication type - OIDC for token-based authentication
+  authType: OIDC
+  
+  # OIDC authentication configuration
+  oidcAuth:
+    # OIDC issuer URL - must match what's configured on the cluster API server
+    # This is where the breakglass controller will fetch tokens from
+    issuerURL: https://keycloak.example.com/realms/kubernetes
+    
+    # Client ID registered in the OIDC provider for the breakglass controller
+    clientID: breakglass-controller
+    
+    # Reference to secret containing the OIDC client secret
+    clientSecretRef:
+      name: oidc-client-secret
+      namespace: breakglass-system
+      key: client-secret
+    
+    # Target cluster's API server URL
+    server: https://my-cluster-api.example.com:6443
+    
+    # Optional: CA certificate for the cluster API server
+    # Required if the API server uses a custom/private CA
+    caSecretRef:
+      name: cluster-ca-cert
+      namespace: breakglass-system
+      key: ca.crt
+    
+    # Optional: Intended audience for the token (defaults to cluster API server URL)
+    audience: https://my-cluster-api.example.com:6443
+    
+    # Optional: Additional OIDC scopes to request
+    # Default scopes (openid) are always included
+    scopes:
+      - groups
+      - email
+  
+  # Optional: Identity provider references for user authentication
+  # Uncomment and set to your actual IdentityProvider name(s)
+  # identityProviderRefs:
+  #   - primary-keycloak
+  
+  # Optional: Approved domains for session approvers
+  allowedApproverDomains:
+    - example.com
+    - telekom.de
+  
+  # Optional: QPS and burst settings for API server requests
+  qps: 50
+  burst: 100
+---
+# Example: OIDC client secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oidc-client-secret
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  client-secret: my-super-secret-client-credential
+---
+# Example: Cluster CA certificate (if using private CA)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-ca-cert
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  # PEM-encoded CA certificate for the target cluster API server.
+  # Use stringData for examples to avoid base64 encoding errors.
+  ca.crt: |-
+    -----BEGIN CERTIFICATE-----
+    REPLACE_WITH_YOUR_CLUSTER_CA_CERTIFICATE
+    -----END CERTIFICATE-----
+---
+# Example ClusterConfig with token exchange enabled
+# Token exchange is used when the controller needs to exchange a user's token
+# for a cluster-scoped token (useful for user impersonation scenarios)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: my-oidc-cluster-with-token-exchange
+  namespace: breakglass-system
+spec:
+  authType: OIDC
+  
+  oidcAuth:
+    issuerURL: https://keycloak.example.com/realms/kubernetes
+    clientID: breakglass-controller
+    clientSecretRef:
+      name: oidc-client-secret
+      namespace: breakglass-system
+      key: client-secret
+    server: https://my-cluster-api.example.com:6443
+    
+    # Token exchange configuration
+    tokenExchange:
+      # Enable token exchange flow
+      enabled: true
+      # Subject token is the token to be exchanged (e.g., service account token)
+      subjectTokenSecretRef:
+        name: subject-token-secret
+        namespace: breakglass-system
+        key: token
+      # Token type identifiers (optional - defaults shown)
+      subjectTokenType: "urn:ietf:params:oauth:token-type:access_token"
+      requestedTokenType: "urn:ietf:params:oauth:token-type:access_token"
+      # Target resource (usually the API server URL)
+      resource: https://my-cluster-api.example.com:6443
+
+  # Optional: restrict which IdentityProviders can authenticate users for this cluster.
+  # If set, referenced IdentityProvider CRs must exist.
+  # identityProviderRefs:
+  #   - my-keycloak-idp
+
+---
+# Example: subject token secret referenced by tokenExchange.subjectTokenSecretRef
+apiVersion: v1
+kind: Secret
+metadata:
+  name: subject-token-secret
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  # Token to exchange (e.g., access token). Replace with a real token.
+  token: REPLACE_WITH_SUBJECT_TOKEN

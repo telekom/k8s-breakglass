@@ -28,11 +28,9 @@ import (
 // This test fetches and logs all breakglass controller metrics after other e2e tests complete.
 // It provides visibility into the controller's state and can help diagnose issues.
 //
-// Run with: E2E_TEST=true BREAKGLASS_METRICS_URL=http://localhost:8081/metrics go test -v ./e2e/... -run TestZZZ_MetricsSummary
+// Run with: E2E_TEST=true BREAKGLASS_METRICS_URL=http://localhost:8181/metrics go test -v ./e2e/... -run TestZZZ_MetricsSummary
 func TestZZZ_MetricsSummary(t *testing.T) {
-	if !helpers.IsE2EEnabled() {
-		t.Skip("Skipping E2E test. Set E2E_TEST=true to run.")
-	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	// Log all breakglass metrics using the test logger
 	helpers.LogBreakglassMetrics(t)

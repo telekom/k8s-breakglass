@@ -13,7 +13,7 @@ TDIR=${TDIR:-}
 TLS_DIR=${TLS_DIR:-}
 
 # --- Keycloak ---
-KEYCLOAK_HOST=${KEYCLOAK_HOST:-breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local}
+KEYCLOAK_HOST=${KEYCLOAK_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local}
 CONTROLLER_FORWARD_PORT=${CONTROLLER_FORWARD_PORT:-28081} # local port forwarded to controller svc:8080
 
 
@@ -47,7 +47,7 @@ DNS.3 = keycloak.keycloak.svc
 DNS.4 = keycloak.keycloak.svc.cluster.local
 DNS.5 = localhost
 DNS.6 = ${KEYCLOAK_HOST}
-DNS.7 = breakglass-dev-keycloak
+DNS.7 = breakglass-keycloak
 DNS.8 = breakglass.system.svc.cluster.local
 EOF
 openssl genrsa -out "$TLS_DIR/ca.key" 2048

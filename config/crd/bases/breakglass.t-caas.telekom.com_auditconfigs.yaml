@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.4
+    controller-gen.kubebuilder.io/version: v0.20.0
   name: auditconfigs.breakglass.t-caas.telekom.com
 spec:
   group: breakglass.t-caas.telekom.com
@@ -81,9 +81,81 @@ spec:
                     description: |-
                       ExcludeNamespaces excludes events from these namespaces.
                       Useful for filtering out kube-system.
-                    items:
-                      type: string
-                    type: array
+                      Supports pattern matching (glob-style) and label-based namespace selection.
+                    properties:
+                      patterns:
+                        description: |-
+                          patterns contains namespace name patterns (glob-style, legacy format).
+                          Supports wildcards: "app-*", "kube-*", "prod-??-*"
+                          Empty list matches no namespaces via patterns.
+                        items:
+                          type: string
+                        type: array
+                      selectorTerms:
+                        description: |-
+                          selectorTerms enables label-based namespace selection.
+                          When specified, namespaces matching ANY term are included (OR semantics).
+                          Each term's matchLabels and matchExpressions are ANDed within the term.
+                        items:
+                          description: |-
+                            NamespaceSelectorTerm represents a single selector term.
+                            All requirements within a term are ANDed together.
+                            Multiple terms are ORed (like Kubernetes node affinity).
+                          properties:
+                            matchExpressions:
+                              description: |-
+                                matchExpressions matches namespaces using set-based requirements.
+                                Multiple expressions are ANDed together.
+                              items:
+                                description: |-
+                                  NamespaceSelectorRequirement is a selector requirement for namespaces.
+                                  Mirrors metav1.LabelSelectorRequirement for consistency with Kubernetes patterns.
+                                properties:
+                                  key:
+                                    description: key is the label key the selector
+                                      applies to.
+                                    maxLength: 63
+                                    minLength: 1
+                                    type: string
+                                  operator:
+                                    allOf:
+                                    - enum:
+                                      - In
+                                      - NotIn
+                                      - Exists
+                                      - DoesNotExist
+                                    - enum:
+                                      - In
+                                      - NotIn
+                                      - Exists
+                                      - DoesNotExist
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators: In, NotIn, Exists, DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values.
+                                      Required for In and NotIn operators.
+                                      Must be empty for Exists and DoesNotExist.
+                                    items:
+                                      type: string
+                                    type: array
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels matches namespaces with ALL specified labels (AND semantics).
+                                Example: {"environment": "production", "team": "sre"}
+                              type: object
+                          type: object
+                        type: array
+                    type: object
                   excludeResources:
                     description: ExcludeResources excludes events for these resource
                       kinds.
@@ -105,10 +177,83 @@ spec:
                       type: string
                     type: array
                   includeNamespaces:
-                    description: IncludeNamespaces only captures events in these namespaces.
-                    items:
-                      type: string
-                    type: array
+                    description: |-
+                      IncludeNamespaces only captures events in these namespaces.
+                      Supports pattern matching (glob-style) and label-based namespace selection.
+                    properties:
+                      patterns:
+                        description: |-
+                          patterns contains namespace name patterns (glob-style, legacy format).
+                          Supports wildcards: "app-*", "kube-*", "prod-??-*"
+                          Empty list matches no namespaces via patterns.
+                        items:
+                          type: string
+                        type: array
+                      selectorTerms:
+                        description: |-
+                          selectorTerms enables label-based namespace selection.
+                          When specified, namespaces matching ANY term are included (OR semantics).
+                          Each term's matchLabels and matchExpressions are ANDed within the term.
+                        items:
+                          description: |-
+                            NamespaceSelectorTerm represents a single selector term.
+                            All requirements within a term are ANDed together.
+                            Multiple terms are ORed (like Kubernetes node affinity).
+                          properties:
+                            matchExpressions:
+                              description: |-
+                                matchExpressions matches namespaces using set-based requirements.
+                                Multiple expressions are ANDed together.
+                              items:
+                                description: |-
+                                  NamespaceSelectorRequirement is a selector requirement for namespaces.
+                                  Mirrors metav1.LabelSelectorRequirement for consistency with Kubernetes patterns.
+                                properties:
+                                  key:
+                                    description: key is the label key the selector
+                                      applies to.
+                                    maxLength: 63
+                                    minLength: 1
+                                    type: string
+                                  operator:
+                                    allOf:
+                                    - enum:
+                                      - In
+                                      - NotIn
+                                      - Exists
+                                      - DoesNotExist
+                                    - enum:
+                                      - In
+                                      - NotIn
+                                      - Exists
+                                      - DoesNotExist
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators: In, NotIn, Exists, DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values.
+                                      Required for In and NotIn operators.
+                                      Must be empty for Exists and DoesNotExist.
+                                    items:
+                                      type: string
+                                    type: array
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels matches namespaces with ALL specified labels (AND semantics).
+                                Example: {"environment": "production", "team": "sre"}
+                              type: object
+                          type: object
+                        type: array
+                    type: object
                   includeResources:
                     description: IncludeResources only captures events for these resource
                       kinds.

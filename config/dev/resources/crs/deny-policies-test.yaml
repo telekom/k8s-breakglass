@@ -9,7 +9,8 @@ spec:
     - verbs: ["get"]
       apiGroups: [""]
       resources: ["pods"]
-      namespaces: ["default"]
+      namespaces:
+        patterns: ["default"]
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DenyPolicy
@@ -22,7 +23,8 @@ spec:
     - verbs: ["*"]
       apiGroups: [""]
       resources: ["secrets"]
-      namespaces: ["kube-system", "default"]
+      namespaces:
+        patterns: ["kube-system", "default"]
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DenyPolicy
@@ -35,7 +37,8 @@ spec:
     - verbs: ["delete", "create"]
       apiGroups: [""]
       resources: ["secrets"]
-      namespaces: ["kube-system"]
+      namespaces:
+        patterns: ["kube-system"]
   appliesTo:
     clusters: ["breakglass-hub"]
 ---

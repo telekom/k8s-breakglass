@@ -2,13 +2,28 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
   name: production-idp
-  namespace: breakglass-dev-system
+  namespace: breakglass-system
 spec:
   primary: true
   # Issuer URL must match the 'iss' claim in JWT tokens from Keycloak
-  issuer: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e"
+  issuer: "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e"
   oidc:
-    authority: "https://breakglass-dev-keycloak.breakglass-dev-system.svc.cluster.local:8443/realms/breakglass-e2e"
+    authority: "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e"
     clientID: "breakglass-ui"
+    # Skip TLS verification for self-signed Keycloak certificate in dev/e2e environment
+    insecureSkipVerify: true
+  # Keycloak group sync enables resolving group members for group-based approvers
+  # This is required for notification emails to be sent to group members
+  groupSyncProvider: Keycloak
+  keycloak:
+    baseURL: "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443"
+    realm: "breakglass-e2e"
+    clientID: "breakglass-group-sync"
+    clientSecretRef:
+      name: breakglass-group-sync-secret
+      namespace: breakglass-system
+      key: client-secret
+    # Cache group memberships for 5 minutes
+    cacheTTL: "5m"
     # Skip TLS verification for self-signed Keycloak certificate in dev/e2e environment
     insecureSkipVerify: true

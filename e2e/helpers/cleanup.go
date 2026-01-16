@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/naming"
 )
 
 // isCleanupDisabled returns true if E2E_SKIP_CLEANUP is set.
@@ -63,6 +63,31 @@ func NewCleanup(t *testing.T, cli client.Client) *Cleanup {
 // Add registers a resource for cleanup
 func (c *Cleanup) Add(obj client.Object) {
 	c.resources = append(c.resources, obj)
+}
+
+// CreateAndRegister creates a resource and registers it for cleanup only on success.
+// This is the recommended pattern - it avoids registering cleanup for resources
+// that failed to create (which would cause noisy "not found" errors during cleanup).
+//
+// Usage:
+//
+//	err := cleanup.CreateAndRegister(ctx, cli, escalation)
+//	require.NoError(t, err)
+func (c *Cleanup) CreateAndRegister(ctx context.Context, cli client.Client, obj client.Object) error {
+	if err := cli.Create(ctx, obj); err != nil {
+		return err
+	}
+	c.Add(obj)
+	return nil
+}
+
+// MustCreateAndRegister creates a resource and registers it for cleanup.
+// Fails the test immediately if creation fails.
+func (c *Cleanup) MustCreateAndRegister(ctx context.Context, cli client.Client, obj client.Object) {
+	c.t.Helper()
+	if err := c.CreateAndRegister(ctx, cli, obj); err != nil {
+		c.t.Fatalf("Failed to create resource %T %s: %v", obj, obj.GetName(), err)
+	}
 }
 
 // Run executes cleanup of all registered resources.
@@ -108,7 +133,7 @@ func ExpireActiveSessionsForUser(ctx context.Context, cli client.Client, namespa
 	sessions := &telekomv1alpha1.BreakglassSessionList{}
 	if err := cli.List(ctx, sessions,
 		client.InNamespace(namespace),
-		client.MatchingLabels{"breakglass.t-caas.telekom.com/user": sanitizeUserLabel(userEmail)},
+		client.MatchingLabels{"breakglass.t-caas.telekom.com/user": naming.ToRFC1123Label(userEmail)},
 	); err != nil {
 		return err
 	}
@@ -132,70 +157,6 @@ func ExpireActiveSessionsForUser(ctx context.Context, cli client.Client, namespa
 	return nil
 }
 
-// sanitizeUserLabel converts an email to a valid label value.
-// This MUST match the toRFC1123Label function in pkg/breakglass/session_controller.go
-func sanitizeUserLabel(email string) string {
-	if email == "" {
-		return "x"
-	}
-	s := strings.ToLower(email)
-
-	var b strings.Builder
-	prevDash := false
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			b.WriteRune(r)
-			prevDash = false
-		} else {
-			if !prevDash {
-				b.WriteByte('-')
-				prevDash = true
-			}
-		}
-	}
-	out := b.String()
-	out = strings.TrimLeft(out, "-._")
-	out = strings.TrimRight(out, "-._")
-
-	for strings.Contains(out, "..") {
-		out = strings.ReplaceAll(out, "..", ".")
-	}
-	for strings.Contains(out, "__") {
-		out = strings.ReplaceAll(out, "__", "_")
-	}
-	for strings.Contains(out, "--") {
-		out = strings.ReplaceAll(out, "--", "-")
-	}
-
-	// Ensure starts and ends with alphanumeric
-	for len(out) > 0 && !isAlnum(rune(out[0])) {
-		out = out[1:]
-	}
-	for len(out) > 0 && !isAlnum(rune(out[len(out)-1])) {
-		out = out[:len(out)-1]
-	}
-
-	if out == "" {
-		return "x"
-	}
-
-	// Truncate to 63 chars (max label value length)
-	if len(out) > 63 {
-		out = out[:63]
-		// Trim trailing non-alphanumerics after truncation
-		for len(out) > 0 && !isAlnum(rune(out[len(out)-1])) {
-			out = out[:len(out)-1]
-		}
-	}
-
-	return out
-}
-
-// isAlnum returns true if the rune is alphanumeric
-func isAlnum(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
-}
-
 // ExpireActiveSessionsForUserAndGroup deletes all active sessions for a specific user+group+cluster
 // and waits for the deletion to complete.
 // This is more precise than ExpireActiveSessionsForUser and helps avoid conflicts in tests
@@ -203,7 +164,7 @@ func isAlnum(r rune) bool {
 // Note: We delete rather than expire because the API server may cache the old state.
 func ExpireActiveSessionsForUserAndGroup(ctx context.Context, cli client.Client, namespace, cluster, userEmail, group string) error {
 	matchingLabels := client.MatchingLabels{
-		"breakglass.t-caas.telekom.com/user":    sanitizeUserLabel(userEmail),
+		"breakglass.t-caas.telekom.com/user":    naming.ToRFC1123Label(userEmail),
 		"breakglass.t-caas.telekom.com/cluster": cluster,
 		"breakglass.t-caas.telekom.com/group":   group,
 	}

@@ -1,8 +1,11 @@
 package config_test
 
 import (
+	"fmt"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/telekom/k8s-breakglass/pkg/config"
 )
@@ -158,5 +161,119 @@ func TestLoadDefaultPath(t *testing.T) {
 	// We expect an error since the default config file doesn't exist
 	if err == nil {
 		t.Errorf("Load() with default path expected error but got none")
+	}
+}
+func TestCachedLoader(t *testing.T) {
+	// Create a temp config file
+	tmpFile, err := os.CreateTemp("", "config-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	initialContent := `
+frontend:
+  baseURL: "http://initial.example.com"
+kubernetes:
+  userIdentifierClaim: "email"
+`
+	if _, err := tmpFile.WriteString(initialContent); err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close()
+
+	// Create cached loader with short check interval for testing
+	loader := config.NewCachedLoader(tmpFile.Name(), 10*time.Millisecond)
+
+	// First load should read from disk
+	cfg1, err := loader.Get()
+	if err != nil {
+		t.Fatalf("First Get() failed: %v", err)
+	}
+	if cfg1.Frontend.BaseURL != "http://initial.example.com" {
+		t.Errorf("Expected baseURL 'http://initial.example.com', got %q", cfg1.Frontend.BaseURL)
+	}
+
+	// Second load should return cached value (no disk read)
+	cfg2, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Second Get() failed: %v", err)
+	}
+	if cfg2.Frontend.BaseURL != "http://initial.example.com" {
+		t.Errorf("Expected cached baseURL, got %q", cfg2.Frontend.BaseURL)
+	}
+
+	// Wait for check interval to pass
+	time.Sleep(20 * time.Millisecond)
+
+	// Update the file
+	updatedContent := `
+frontend:
+  baseURL: "http://updated.example.com"
+kubernetes:
+  userIdentifierClaim: "preferred_username"
+`
+	if err := os.WriteFile(tmpFile.Name(), []byte(updatedContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for check interval
+	time.Sleep(20 * time.Millisecond)
+
+	// Third load should detect file change and reload
+	cfg3, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Third Get() failed: %v", err)
+	}
+	if cfg3.Frontend.BaseURL != "http://updated.example.com" {
+		t.Errorf("Expected updated baseURL 'http://updated.example.com', got %q", cfg3.Frontend.BaseURL)
+	}
+	if cfg3.Kubernetes.UserIdentifierClaim != "preferred_username" {
+		t.Errorf("Expected userIdentifierClaim 'preferred_username', got %q", cfg3.Kubernetes.UserIdentifierClaim)
+	}
+}
+
+func TestCachedLoaderConcurrency(t *testing.T) {
+	// Create a temp config file
+	tmpFile, err := os.CreateTemp("", "config-concurrent-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := `
+frontend:
+  baseURL: "http://concurrent.example.com"
+`
+	if err := os.WriteFile(tmpFile.Name(), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := config.NewCachedLoader(tmpFile.Name(), 5*time.Millisecond)
+
+	// Run concurrent reads
+	var wg sync.WaitGroup
+	errors := make(chan error, 100)
+
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cfg, err := loader.Get()
+			if err != nil {
+				errors <- err
+				return
+			}
+			if cfg.Frontend.BaseURL != "http://concurrent.example.com" {
+				errors <- fmt.Errorf("unexpected baseURL: %s", cfg.Frontend.BaseURL)
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errors)
+
+	for err := range errors {
+		t.Errorf("Concurrent access error: %v", err)
 	}
 }
