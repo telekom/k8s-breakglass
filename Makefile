@@ -71,6 +71,18 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet ## Run tests.
 	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+.PHONY: validate-samples
+validate-samples: manifests ## Validate all YAML samples in config/samples against CRD schemas.
+	@echo "Validating sample YAML files..."
+	go test ./api/v1alpha1/... -run TestSamplesAreValid -v
+	@echo "Sample validation passed"
+
+.PHONY: verify
+verify: fmt vet lint ## Run all verification checks (fmt, vet, lint) and build all packages including e2e.
+	@echo "Building all packages (including e2e)..."
+	go build ./...
+	@echo "✅ All verification checks passed"
+
 .PHONY: e2e
 e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deployed (no tests).
 	# Run the single-cluster setup script which builds and loads images into kind
@@ -78,17 +90,40 @@ e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deplo
 	# e2e/kind-setup-single-hub-kubeconfig.yaml (repo-local) and exposes services for local use.
 	bash e2e/kind-setup-single.sh
 
+# Version and build metadata
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+
 .PHONY: docker-build
 docker-build: ## Build docker image with controller.
-	docker build -t ${IMG} .
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t ${IMG} .
 
 .PHONY: docker-build-oss
 docker-build-oss: ## Build OSS (neutral UI) image
-	docker build --build-arg UI_FLAVOUR=oss -t ${IMG:-breakglass:oss} .
+	docker build \
+		--build-arg UI_FLAVOUR=oss \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t ${IMG:-breakglass:oss} .
 
 .PHONY: docker-build-telekom
 docker-build-telekom: ## Build Telekom branded UI image
-	docker build --build-arg UI_FLAVOUR=telekom -t ${IMG:-breakglass:telekom} .
+	docker build \
+		--build-arg UI_FLAVOUR=telekom \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		BUILD_DATE=$(BUILD_DATE) \
+		-t ${IMG:-breakglass:telekom} .
 
 .PHONY: docker-build-dev
 docker-build-dev: ## Build docker image with controller.
@@ -146,14 +181,13 @@ $(LOCALBIN):
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 KUBECTL ?= kubectl
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
-CONTROLLER_TOOLS_VERSION ?= v0.16.4
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v5.6.0
-CONTROLLER_TOOLS_VERSION ?= v0.16.4
+KUSTOMIZE_VERSION ?= v5.8.0
+CONTROLLER_TOOLS_VERSION ?= v0.20.0
 ENVTEST_VERSION ?= release-1.19
-GOLANGCI_LINT_VERSION ?= v2.7.2
+GOLANGCI_LINT_VERSION ?= v2.8.0
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.

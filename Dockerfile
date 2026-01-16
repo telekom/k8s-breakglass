@@ -32,7 +32,14 @@ COPY pkg/ pkg/
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 go build -a -o breakglass cmd/main.go
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+RUN CGO_ENABLED=0 go build -a \
+    -ldflags "-X github.com/telekom/k8s-breakglass/pkg/version.Version=${VERSION} \
+              -X github.com/telekom/k8s-breakglass/pkg/version.GitCommit=${GIT_COMMIT} \
+              -X github.com/telekom/k8s-breakglass/pkg/version.BuildDate=${BUILD_DATE}" \
+    -o breakglass cmd/main.go
 
 FROM gcr.io/distroless/static:nonroot@sha256:cba10d7abd3e203428e86f5b2d7fd5eb7d8987c387864ae4996cf97191b33764
 WORKDIR /

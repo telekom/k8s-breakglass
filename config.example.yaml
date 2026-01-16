@@ -23,3 +23,8 @@ kubernetes:
   oidcPrefixes: # List of prefixes to strip from user groups for cluster matching
     - "keycloak:"
     - "oidc:"
+  # userIdentifierClaim specifies which OIDC claim to use as the user identifier for session matching.
+  # This is the global default that can be overridden per-cluster in ClusterConfig.
+  # Valid values: "email" (default), "preferred_username", "sub"
+  # This must match the OIDC claimMappings.username.claim on spoke clusters.
+  # userIdentifierClaim: "email"

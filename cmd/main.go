@@ -31,6 +31,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
+	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/reconciler"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
@@ -144,7 +145,14 @@ func main() {
 	}
 
 	if cliConfig.Debug {
-		log.Infof("Configuration: %#v", cfg)
+		log.Infow("Configuration loaded (redacted)",
+			"configPath", cliConfig.ConfigPath,
+			"enableFrontend", cliConfig.EnableFrontend,
+			"enableAPI", cliConfig.EnableAPI,
+			"enableWebhooks", cliConfig.EnableWebhooks,
+			"enableCleanup", cliConfig.EnableCleanup,
+			"frontendBaseURL", cfg.Frontend.BaseURL,
+			"trustedProxies", len(cfg.Server.TrustedProxies))
 	}
 
 	// Setup authentication
@@ -190,7 +198,10 @@ func main() {
 
 	resolver := breakglass.SetupResolver(idpConfig, log)
 
-	escalationManager := breakglass.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver)
+	// Create cached config loader to avoid disk reads per request
+	cfgLoader := config.NewCachedLoader(cliConfig.ConfigPath, 5*time.Second)
+
+	escalationManager := breakglass.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver, log, cfgLoader)
 
 	// Build shared cluster config provider & deny policy evaluator reusing kubernetes client
 	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
@@ -211,12 +222,18 @@ func main() {
 
 	sessionManager := breakglass.NewSessionManagerWithClient(reconcilerMgr.GetClient())
 
+	// Create authenticated rate limiter for API endpoints
+	// Authenticated users get 50 req/s (per user), unauthenticated get 10 req/s (per IP)
+	apiRateLimiter := ratelimit.NewAuthenticated(ratelimit.DefaultAuthenticatedAPIConfig())
+
 	// Setup session controller with all dependencies
+	// Uses combined auth + rate limiting middleware
 	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager,
-		auth.Middleware(), cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).WithMailService(mailService).WithAuditService(auditService)
+		auth.MiddlewareWithRateLimiting(apiRateLimiter), cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).WithMailService(mailService).WithAuditService(auditService)
 
 	// Setup debug session API controller with mail and audit services
-	debugSessionAPICtrl := breakglass.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, auth.Middleware()).
+	// Uses combined auth + rate limiting middleware
+	debugSessionAPICtrl := breakglass.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, auth.MiddlewareWithRateLimiting(apiRateLimiter)).
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).
 		WithDisableEmail(cliConfig.DisableEmail)
@@ -395,7 +412,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, auditService, mailService, log); err != nil {
+		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, auditService, mailService, &escalationManager, log); err != nil {
 			recMgrErr <- err
 		}
 	}()
