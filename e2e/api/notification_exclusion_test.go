@@ -87,6 +87,17 @@ func TestMailProviderCRUD(t *testing.T) {
 				err = cli.Update(ctx, originalDefault)
 				require.NoError(t, err, "Failed to temporarily unset default on existing MailProvider %s", originalDefault.Name)
 				t.Logf("Temporarily unset default on existing MailProvider: %s", originalDefault.Name)
+
+				// Wait for the webhook cache to sync the update
+				// The webhook uses a cached reader which may take a moment to see the change
+				require.Eventually(t, func() bool {
+					var refreshed telekomv1alpha1.MailProvider
+					if err := cli.Get(ctx, types.NamespacedName{Name: originalDefault.Name, Namespace: originalDefault.Namespace}, &refreshed); err != nil {
+						return false
+					}
+					return !refreshed.Spec.Default
+				}, 5*time.Second, 100*time.Millisecond, "Waiting for MailProvider update to propagate")
+
 				break
 			}
 		}
