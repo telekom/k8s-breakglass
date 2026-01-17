@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Version command works without configuration** - `bgctl version` now functions without config file
   - **Dev builds show commit ID and dirty flag** - Build process injects git metadata into version info
   - **Comprehensive multi-cluster E2E tests** - Full test coverage for multi-cluster scenarios
+  - **Comprehensive CLI E2E test suite** - Added `cli_comprehensive_test.go` with tests for all CLI commands and features including auth, config, session, escalation, debug, update, version, completion, output formats, pagination, error handling, global flags, and edge cases
 - Graceful HTTP server shutdown with configurable timeouts
 - Index registration assertions for escalation queries with metrics for fallback scans
 - End-to-end example documentation for complete production setup
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ARM64 builds re-enabled for release workflow
 - CI log and artifact retrieval guidance in docs/ci-logs.md
 - Tmux-enabled debug image for terminal sharing E2E coverage
+- Unit tests for `pkg/bgctl/output` package
 
 ### Changed
 
@@ -49,12 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-enabled tmux terminal sharing E2E assertions and templates
 - Escaped cluster names in webhook deny reason URLs
 - Technical debt documentation now references the correct PR for webhook validation fix
+- **CLI completion** now writes to configured output writer instead of hardcoded stdout
+- **CLI E2E tests** fixed to use correct flag names (`--context` instead of `--context-name`)
 
 ### Security
 
 - Reduced PII in logs by logging approver counts instead of individual identities
 - Added structured audit events with automatic PII redaction
 - Blocked mock JWT generation in production builds
+- **Fixed Zip Slip vulnerability** in CLI self-update archive extraction (CodeQL finding)
+- Updated security dependencies: `golang-jwt/jwt/v5` to v5.3.0, `coreos/go-oidc/v3` to v3.17.0, `google/cel-go` to v0.26.1
 
 ---
 

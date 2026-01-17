@@ -21,6 +21,34 @@ This proposal outlines a Go-based CLI tool (`bgctl`) that provides a command-lin
 
 ---
 
+## Implementation Status (as of 2026-01-17)
+
+### v1.0.0 (Implemented)
+
+- [x] Library-first package layout (`pkg/bgctl/*`)
+- [x] `bgctl` binary entry point (`cmd/bgctl/main.go`)
+- [x] Config management (load/save, contexts, OIDC providers, settings)
+- [x] Auth flows: browser OIDC, device code, client credentials
+- [x] Token cache with refresh handling
+- [x] Session commands (list/get/request/approve/reject/withdraw/drop/cancel/watch)
+- [x] Escalation commands (list/get)
+- [x] Debug session commands (list/get/create/join/leave/renew/terminate/approve/reject/watch)
+- [x] Debug template and pod-template commands
+- [x] Kubectl-debug commands (inject, copy-pod, node-debug)
+- [x] Output formats (table/json/yaml/wide) + pagination
+- [x] Shell completion
+- [x] Self-update with rollback
+- [x] CLI docs (docs/cli.md) and index update
+- [x] Makefile targets for CLI build/test
+- [x] CI coverage for bgctl (unit + mocked e2e)
+- [x] Release assets for bgctl (archives + per-asset checksums)
+
+Notes:
+- Escalation `get` is implemented client-side by filtering the list (API is list-only).
+- Update command expects release assets named `bgctl_<os>_<arch>` (tar.gz or zip) plus `<asset>.sha256`.
+
+---
+
 ## Installation
 
 ### Binary Distribution

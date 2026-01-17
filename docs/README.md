@@ -9,6 +9,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Installation](./installation.md)** - Complete step-by-step installation
 - **[Use Cases](./use-cases.md)** - Real-world use cases with configuration examples
 - **[Building](./building.md)** - Build breakglass from source
+- **[CLI Tool (bgctl)](./cli.md)** - Command-line interface for terminal access and automation
 - **[Troubleshooting](./troubleshooting.md)** - Common issues and solutions
 
 ## Configuration & Operations

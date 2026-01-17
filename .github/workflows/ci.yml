@@ -40,6 +40,10 @@ jobs:
         run: make lint
       - name: Unit tests (excluding e2e)
         run: make test
+      - name: bgctl unit tests
+        run: make test-cli
+      - name: bgctl e2e tests (mocked)
+        run: make test-cli-e2e
       - name: Upload coverage
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         if: always()
@@ -493,6 +497,14 @@ jobs:
           # Use the group-sync client for OIDC tests (has client credentials flow enabled)
           KEYCLOAK_CLIENT_ID: breakglass-group-sync
           KEYCLOAK_CLIENT_SECRET_NAME: breakglass-group-sync-secret
+
+      - name: Run CLI E2E tests
+        run: |
+          set -o pipefail
+          go test -v ./e2e/cli/... -timeout 15m 2>&1 | tee cli-e2e-results.txt
+        env:
+          E2E_TEST: "true"
+          E2E_NAMESPACE: "breakglass-system"
 
       - name: Collect comprehensive diagnostics
         if: always()

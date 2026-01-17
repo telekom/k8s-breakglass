@@ -213,17 +213,38 @@ type DebugTemplateService struct {
 	client *Client
 }
 
+// DebugSessionTemplateSummary represents a template summary from the API
+type DebugSessionTemplateSummary struct {
+	Name             string                            `json:"name"`
+	DisplayName      string                            `json:"displayName"`
+	Description      string                            `json:"description,omitempty"`
+	Mode             v1alpha1.DebugSessionTemplateMode `json:"mode"`
+	WorkloadType     v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
+	PodTemplateRef   string                            `json:"podTemplateRef,omitempty"`
+	TargetNamespace  string                            `json:"targetNamespace,omitempty"`
+	Constraints      *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	AllowedClusters  []string                          `json:"allowedClusters,omitempty"`
+	AllowedGroups    []string                          `json:"allowedGroups,omitempty"`
+	RequiresApproval bool                              `json:"requiresApproval"`
+}
+
+// DebugTemplateListResponse represents the API response for template list
+type DebugTemplateListResponse struct {
+	Templates []DebugSessionTemplateSummary `json:"templates"`
+	Total     int                           `json:"total"`
+}
+
 func (c *Client) DebugTemplates() *DebugTemplateService {
 	return &DebugTemplateService{client: c}
 }
 
-func (d *DebugTemplateService) List(ctx context.Context) ([]v1alpha1.DebugSessionTemplate, error) {
+func (d *DebugTemplateService) List(ctx context.Context) (*DebugTemplateListResponse, error) {
 	endpoint := "api/debugSessions/templates"
-	var templates []v1alpha1.DebugSessionTemplate
-	if err := d.client.do(ctx, http.MethodGet, endpoint, nil, &templates); err != nil {
+	var resp DebugTemplateListResponse
+	if err := d.client.do(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
 		return nil, err
 	}
-	return templates, nil
+	return &resp, nil
 }
 
 func (d *DebugTemplateService) Get(ctx context.Context, name string) (*v1alpha1.DebugSessionTemplate, error) {
@@ -239,17 +260,31 @@ type DebugPodTemplateService struct {
 	client *Client
 }
 
+// DebugPodTemplateSummary represents a pod template summary from the API
+type DebugPodTemplateSummary struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	Containers  int    `json:"containers"`
+}
+
+// DebugPodTemplateListResponse represents the API response for pod template list
+type DebugPodTemplateListResponse struct {
+	Templates []DebugPodTemplateSummary `json:"templates"`
+	Total     int                       `json:"total"`
+}
+
 func (c *Client) DebugPodTemplates() *DebugPodTemplateService {
 	return &DebugPodTemplateService{client: c}
 }
 
-func (d *DebugPodTemplateService) List(ctx context.Context) ([]v1alpha1.DebugPodTemplate, error) {
+func (d *DebugPodTemplateService) List(ctx context.Context) (*DebugPodTemplateListResponse, error) {
 	endpoint := "api/debugSessions/podTemplates"
-	var templates []v1alpha1.DebugPodTemplate
-	if err := d.client.do(ctx, http.MethodGet, endpoint, nil, &templates); err != nil {
+	var resp DebugPodTemplateListResponse
+	if err := d.client.do(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
 		return nil, err
 	}
-	return templates, nil
+	return &resp, nil
 }
 
 func (d *DebugPodTemplateService) Get(ctx context.Context, name string) (*v1alpha1.DebugPodTemplate, error) {

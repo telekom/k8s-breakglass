@@ -17,7 +17,8 @@
 - **Flexible Authorization** - Define escalations, approvers, and access restrictions using Kubernetes CRDs
 - **Multi-Cluster Support** - Centralized hub manages access across multiple spoke clusters
 - **OIDC/JWT Authentication** - Integrates with identity providers like Keycloak and Azure AD
-- **Web UI & REST API** - User-friendly interface with programmatic access
+- **Web UI, CLI & REST API** - User-friendly web interface, `bgctl` command-line tool, and programmatic access
+- **Command-Line Interface (`bgctl`)** - Terminal-based access for automation and scripting
 - **Automatic Cluster Cache Invalidation** - Watches ClusterConfig and kubeconfig Secret changes to refresh connectivity instantly
 - **Rich Prometheus Signals** - API endpoints expose dedicated request/error/duration metrics for fine-grained SLOs
 
@@ -27,6 +28,7 @@
 
 - **Backend Service** - Go REST API server with Kubernetes webhook support
 - **Frontend** - TypeScript/Vue web application for request management
+- **CLI Tool (`bgctl`)** - Command-line interface for automation and terminal access
 - **Custom Resources** - Configuration and persistence via Kubernetes CRDs:
   - `BreakglassEscalation` - Define available privilege escalations
   - `BreakglassSession` - Track active sessions
@@ -56,6 +58,7 @@ Complete documentation is available in the [docs/](./docs/) directory:
 **Integration & Advanced Topics:**
 
 - **[Webhook Setup](./docs/webhook-setup.md)** - Integrate with Kubernetes authorization
+- **[CLI Tool (bgctl)](./docs/cli.md)** - Command-line interface for terminal access and automation
 - **[API Reference](./docs/api-reference.md)** - REST API endpoints and examples
 - **[Metrics](./docs/metrics.md)** - Prometheus metrics, alerting, and dashboards
 - **[Advanced Features](./docs/advanced-features.md)** - Request reasons, approval reasons, self-approval prevention, domain restrictions

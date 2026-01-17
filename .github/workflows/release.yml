@@ -37,6 +37,36 @@ jobs:
         with:
           name: manifests
           path: manifests-${{ github.ref_name }}.tgz
+      - name: Build bgctl release assets
+        run: |
+          set -e
+          VERSION=${{ github.ref_name }}
+          GIT_COMMIT=${{ github.sha }}
+          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          mkdir -p dist
+          platforms="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+          for platform in $platforms; do
+            os=${platform%/*}
+            arch=${platform#*/}
+            bin=bgctl
+            ext=""
+            if [ "$os" = "windows" ]; then
+              ext=".exe"
+            fi
+            outdir="dist/bgctl_${os}_${arch}"
+            mkdir -p "$outdir"
+            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X github.com/telekom/k8s-breakglass/pkg/version.Version=$VERSION -X github.com/telekom/k8s-breakglass/pkg/version.GitCommit=$GIT_COMMIT -X github.com/telekom/k8s-breakglass/pkg/version.BuildDate=$BUILD_DATE" \
+              -o "$outdir/$bin$ext" ./cmd/bgctl
+            if [ "$os" = "windows" ]; then
+              (cd dist && zip -r "bgctl_${os}_${arch}.zip" "bgctl_${os}_${arch}")
+              (cd dist && shasum -a 256 "bgctl_${os}_${arch}.zip" > "bgctl_${os}_${arch}.zip.sha256")
+            else
+              (cd dist && tar -czf "bgctl_${os}_${arch}.tar.gz" "bgctl_${os}_${arch}")
+              (cd dist && shasum -a 256 "bgctl_${os}_${arch}.tar.gz" > "bgctl_${os}_${arch}.tar.gz.sha256")
+            fi
+          done
+          (cd dist && shasum -a 256 bgctl_* > bgctl_${VERSION}_checksums.txt)
       - name: Login to GHCR
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
@@ -129,6 +159,10 @@ jobs:
         with:
           files: |
             manifests-${{ github.ref_name }}.tgz
+            dist/bgctl_*.tar.gz
+            dist/bgctl_*.zip
+            dist/bgctl_*.sha256
+            dist/bgctl_${{ github.ref_name }}_checksums.txt
           generate_release_notes: true
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@a930d0ac434e3182448fe678398ba5713717112a # v0.21.0
