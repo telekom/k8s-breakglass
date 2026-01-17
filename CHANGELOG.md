@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - End-to-end example documentation for complete production setup
 - Additional unit tests for `pkg/reconciler` and `pkg/leaderelection`
 - ARM64 builds re-enabled for release workflow
+- CI log and artifact retrieval guidance in docs/ci-logs.md
 
 ### Changed
 

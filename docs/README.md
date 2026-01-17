@@ -19,6 +19,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Webhook Setup](./webhook-setup.md)** - Configure authorization webhooks
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
+- **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
 
 ## Identity & Authentication
 
