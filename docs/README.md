@@ -5,6 +5,7 @@ Complete documentation for the breakglass privilege escalation system.
 ## Getting Started
 
 - **[Quick Start](./quickstart.md)** - Get up and running in 5 minutes
+- **[End-to-End Example](./end-to-end-example.md)** - Complete production deployment walkthrough
 - **[Installation](./installation.md)** - Complete step-by-step installation
 - **[Use Cases](./use-cases.md)** - Real-world use cases with configuration examples
 - **[Building](./building.md)** - Build breakglass from source

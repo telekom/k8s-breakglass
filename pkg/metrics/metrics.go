@@ -38,6 +38,21 @@ var (
 		Name: "breakglass_cluster_cache_invalidations_total",
 		Help: "Total number of cluster cache invalidations",
 	}, []string{"reason"})
+
+	// Field index metrics
+	IndexLookupTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_index_lookup_total",
+		Help: "Total number of field index lookups",
+	}, []string{"resource", "field", "result"})
+	IndexFallbackScans = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_index_fallback_scans_total",
+		Help: "Total number of fallback full scans when index lookup failed or was unavailable",
+	}, []string{"resource", "field"})
+	IndexRegistrationTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_index_registrations",
+		Help: "Number of successfully registered field indexes (should equal expected count at startup)",
+	}, []string{"resource"})
+
 	// Webhook SAR metrics
 	WebhookSARRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_sar_requests_total",
@@ -504,6 +519,12 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigLoaded)
 	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigErrors)
 	ctrlmetrics.Registry.MustRegister(ClusterCacheInvalidations)
+
+	// Register field index metrics
+	ctrlmetrics.Registry.MustRegister(IndexLookupTotal)
+	ctrlmetrics.Registry.MustRegister(IndexFallbackScans)
+	ctrlmetrics.Registry.MustRegister(IndexRegistrationTotal)
+
 	ctrlmetrics.Registry.MustRegister(WebhookSARRequests)
 	ctrlmetrics.Registry.MustRegister(WebhookSARRequestsByAction)
 	ctrlmetrics.Registry.MustRegister(WebhookSARAllowed)

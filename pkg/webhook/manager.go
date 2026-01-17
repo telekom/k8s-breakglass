@@ -143,6 +143,11 @@ func Setup(
 		return fmt.Errorf("failed to register common field indexes: %w", err)
 	}
 
+	// Assert that all expected indexes are registered
+	if err := indexer.AssertIndexesRegistered(log); err != nil {
+		return fmt.Errorf("index registration assertion failed: %w", err)
+	}
+
 	// Register health check handlers for the webhook manager
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
 		return fmt.Errorf("failed to add webhook healthz check: %w", err)

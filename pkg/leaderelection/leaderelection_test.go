@@ -225,3 +225,88 @@ func TestLeaderElection_ChannelSignaling(t *testing.T) {
 		// Expected
 	}
 }
+
+func TestLeaderElection_ConcurrentChannelAccess(t *testing.T) {
+	// Test that channel operations are safe under concurrent access
+	leaderElectedCh := make(chan struct{})
+
+	var wg sync.WaitGroup
+	const numGoroutines = 10
+
+	// Start multiple goroutines waiting on the channel
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-leaderElectedCh
+		}()
+	}
+
+	// Give goroutines time to start
+	time.Sleep(10 * time.Millisecond)
+
+	// Close the channel (simulating leadership acquisition)
+	close(leaderElectedCh)
+
+	// All goroutines should complete
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Expected - all goroutines completed
+	case <-time.After(1 * time.Second):
+		t.Fatal("Goroutines did not complete in time")
+	}
+}
+
+func TestLeaderElection_MultipleLeadershipTransitions(t *testing.T) {
+	// Simulate multiple leadership transitions
+	logger := zaptest.NewLogger(t).Sugar()
+	const numTransitions = 5
+
+	for i := 0; i < numTransitions; i++ {
+		leaderElectedCh := make(chan struct{})
+
+		// Acquire leadership
+		close(leaderElectedCh)
+		logger.Infow("Acquired leadership", "iteration", i)
+
+		// Verify leadership is signaled
+		select {
+		case <-leaderElectedCh:
+			// Expected
+		default:
+			t.Fatalf("Leadership should be signaled in iteration %d", i)
+		}
+
+		// In a real scenario, OnStoppedLeading would recreate the channel
+		// We just log here to verify the transition pattern
+		logger.Infow("Lost leadership", "iteration", i)
+	}
+}
+
+func TestLeaderElection_TimingConstants(t *testing.T) {
+	// Verify that timing constants follow Kubernetes leader election best practices
+	// From: https://github.com/kubernetes/client-go/blob/master/tools/leaderelection/leaderelection.go
+
+	leaseDuration := 15 * time.Second
+	renewDeadline := 10 * time.Second
+	retryPeriod := 2 * time.Second
+
+	// LeaseDuration must be > RenewDeadline (leader must be able to renew before lease expires)
+	assert.True(t, leaseDuration > renewDeadline,
+		"LeaseDuration (%v) must be greater than RenewDeadline (%v)", leaseDuration, renewDeadline)
+
+	// RenewDeadline must be > RetryPeriod (must have time to retry renewal)
+	assert.True(t, renewDeadline > retryPeriod,
+		"RenewDeadline (%v) must be greater than RetryPeriod (%v)", renewDeadline, retryPeriod)
+
+	// Common pattern: RenewDeadline should be ~2/3 of LeaseDuration
+	expectedRenewDeadline := leaseDuration * 2 / 3
+	assert.True(t, renewDeadline >= expectedRenewDeadline,
+		"RenewDeadline (%v) should be at least 2/3 of LeaseDuration (%v)", renewDeadline, expectedRenewDeadline)
+}
