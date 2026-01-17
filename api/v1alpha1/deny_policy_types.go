@@ -259,10 +259,7 @@ func (dp *DenyPolicy) ValidateDelete(ctx context.Context, obj runtime.Object) (a
 
 // SetupWebhookWithManager registers webhooks for DenyPolicy
 func (dp *DenyPolicy) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	webhookClient = mgr.GetClient()
-	if c := mgr.GetCache(); c != nil {
-		webhookCache = c
-	}
+	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(dp).
 		WithValidator(dp).

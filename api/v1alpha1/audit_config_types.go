@@ -448,10 +448,7 @@ type AuditConfig struct {
 
 // SetupWebhookWithManager registers webhooks for AuditConfig
 func (ac *AuditConfig) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	webhookClient = mgr.GetClient()
-	if c := mgr.GetCache(); c != nil {
-		webhookCache = c
-	}
+	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(ac).
 		WithValidator(ac).

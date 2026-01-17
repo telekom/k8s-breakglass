@@ -230,10 +230,7 @@ func (dpt *DebugPodTemplate) ValidateDelete(ctx context.Context, obj runtime.Obj
 
 // SetupWebhookWithManager registers webhooks for DebugPodTemplate
 func (dpt *DebugPodTemplate) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	webhookClient = mgr.GetClient()
-	if c := mgr.GetCache(); c != nil {
-		webhookCache = c
-	}
+	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(dpt).
 		WithValidator(dpt).

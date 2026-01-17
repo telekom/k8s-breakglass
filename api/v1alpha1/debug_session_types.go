@@ -408,10 +408,7 @@ func (ds *DebugSession) ValidateDelete(ctx context.Context, obj runtime.Object) 
 
 // SetupWebhookWithManager registers webhooks for DebugSession
 func (ds *DebugSession) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	webhookClient = mgr.GetClient()
-	if c := mgr.GetCache(); c != nil {
-		webhookCache = c
-	}
+	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(ds).
 		WithValidator(ds).

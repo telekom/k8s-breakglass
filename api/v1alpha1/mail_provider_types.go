@@ -201,10 +201,7 @@ func init() {
 
 // SetupWebhookWithManager registers webhooks for MailProvider
 func (mp *MailProvider) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	webhookClient = mgr.GetClient()
-	if c := mgr.GetCache(); c != nil {
-		webhookCache = c
-	}
+	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(mp).
 		WithValidator(mp).
