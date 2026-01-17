@@ -315,7 +315,7 @@ func TestLeaderElection_TimingConstants(t *testing.T) {
 // TestStart_ActualExecution tests the actual Start function with real leader election.
 // This test provides actual code coverage for the Start function.
 func TestStart_ActualExecution(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset() //nolint:staticcheck // Using NewClientset for testing
 	namespace := "test-namespace"
 	_, err := fakeClient.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: namespace},
