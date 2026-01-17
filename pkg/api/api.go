@@ -44,6 +44,8 @@ type Server struct {
 	config config.Config
 	auth   *AuthHandler
 	log    *zap.Logger
+	// httpServer is the underlying http.Server for graceful shutdown support
+	httpServer *http.Server
 	// idpReconciler maintains a cache of enabled IdentityProviders
 	// Used by getMultiIDPConfig to avoid querying the Kubernetes APIServer
 	idpReconciler *config.IdentityProviderReconciler
@@ -475,15 +477,45 @@ func (s *Server) RegisterAll(controllers []APIController) error {
 }
 
 func (s *Server) Listen() {
+	// Create http.Server with proper timeouts for production use
+	s.httpServer = &http.Server{
+		Addr:              s.config.Server.ListenAddress,
+		Handler:           s.gin,
+		ReadTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      60 * time.Second, // Longer for streaming/websocket
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
+	}
+
 	var err error
 	if s.config.Server.TLSCertFile != "" && s.config.Server.TLSKeyFile != "" {
-		err = s.gin.RunTLS(s.config.Server.ListenAddress, s.config.Server.TLSCertFile, s.config.Server.TLSKeyFile)
+		s.log.Sugar().Infow("Starting HTTPS server", "address", s.config.Server.ListenAddress)
+		err = s.httpServer.ListenAndServeTLS(s.config.Server.TLSCertFile, s.config.Server.TLSKeyFile)
 	} else {
-		err = s.gin.Run(s.config.Server.ListenAddress)
+		s.log.Sugar().Infow("Starting HTTP server", "address", s.config.Server.ListenAddress)
+		err = s.httpServer.ListenAndServe()
 	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		s.log.Sugar().Errorw("Server listen error", "error", err)
+	}
+}
+
+// Shutdown gracefully shuts down the HTTP server, allowing in-flight requests to complete.
+// The provided context can set a deadline for the shutdown. If the deadline is exceeded,
+// remaining connections are forcibly closed.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
+	}
+	s.log.Sugar().Infow("Initiating graceful HTTP server shutdown")
+	err := s.httpServer.Shutdown(ctx)
 	if err != nil {
-		s.log.Sugar().Errorw("[E2E-DEBUG] Server listen error", "error", err)
+		s.log.Sugar().Warnw("HTTP server shutdown error", "error", err)
+	} else {
+		s.log.Sugar().Infow("HTTP server shutdown complete")
 	}
+	return err
 }
 
 // Handler exposes the underlying HTTP handler (Gin engine). This is primarily intended
