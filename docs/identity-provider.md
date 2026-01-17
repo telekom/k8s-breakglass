@@ -15,6 +15,8 @@ The `IdentityProvider` is a **mandatory cluster-scoped Kubernetes custom resourc
 
 IdentityProvider is **MANDATORY** for Breakglass operation. The system will not start without at least one enabled IdentityProvider resource.
 
+> **Development only:** The frontend supports mock authentication for local development. Mock tokens are blocked in production builds and must never be used outside non-production environments.
+
 ## OIDC Configuration
 
 The OIDC configuration defines how users authenticate with the system. This is required for all providers.

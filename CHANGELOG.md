@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Reduced PII in logs by logging approver counts instead of individual identities
 - Added structured audit events with automatic PII redaction
+- Blocked mock JWT generation in production builds
 
 ---
 

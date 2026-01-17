@@ -233,6 +233,9 @@ function base64UrlEncodeObject(obj: Record<string, any>): string {
  * Consumers must NEVER rely on the signature because the header uses alg "none".
  */
 function createMockJWT(payload: Record<string, any>): string {
+  if (isProdBuild) {
+    throw new Error("Mock JWT generation is disabled in production builds.");
+  }
   const header = { alg: "none", typ: "JWT" };
   const signature = base64UrlEncodeString("mock-signature");
   return `${base64UrlEncodeObject(header)}.${base64UrlEncodeObject(payload)}.${signature}`;
