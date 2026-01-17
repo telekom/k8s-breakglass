@@ -120,8 +120,8 @@ describe("BreakglassCard Duration and Reason Handling", () => {
     });
 
     it("escapes XSS attempts", () => {
-      expect(sanitizeReason('<img src=x onerror="alert(1)">')).toBe("&lt;img src=x onerror=\"alert(1)\"&gt;");
-      expect(sanitizeReason('<svg onload="alert(1)">')).toBe("&lt;svg onload=\"alert(1)\"&gt;");
+      expect(sanitizeReason('<img src=x onerror="alert(1)">')).toBe('&lt;img src=x onerror="alert(1)"&gt;');
+      expect(sanitizeReason('<svg onload="alert(1)">')).toBe('&lt;svg onload="alert(1)"&gt;');
     });
 
     it("preserves normal text", () => {
