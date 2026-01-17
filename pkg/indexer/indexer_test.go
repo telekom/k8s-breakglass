@@ -64,6 +64,7 @@ func (m *mockFieldIndexer) IndexField(ctx context.Context, obj client.Object, fi
 }
 
 func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
+	ResetRegisteredIndexes()
 	ctx := context.Background()
 	logger := zaptest.NewLogger(t).Sugar()
 	indexer := newMockFieldIndexer()
@@ -90,6 +91,7 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 }
 
 func TestRegisterCommonFieldIndexes_NilIndexer(t *testing.T) {
+	ResetRegisteredIndexes()
 	ctx := context.Background()
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -98,6 +100,7 @@ func TestRegisterCommonFieldIndexes_NilIndexer(t *testing.T) {
 }
 
 func TestRegisterCommonFieldIndexes_NilContext(t *testing.T) {
+	ResetRegisteredIndexes()
 	logger := zaptest.NewLogger(t).Sugar()
 	indexer := newMockFieldIndexer()
 
@@ -411,6 +414,7 @@ func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 
 func TestRegisterCommonFieldIndexes_LoggerOutput(t *testing.T) {
 	ctx := context.Background()
+	ResetRegisteredIndexes() // Reset for clean test
 
 	// Use a real zap logger to capture output
 	logger := zap.NewNop().Sugar()
@@ -421,4 +425,79 @@ func TestRegisterCommonFieldIndexes_LoggerOutput(t *testing.T) {
 
 	// Verify all indexes were registered
 	assert.NotEmpty(t, indexer.indexedFields)
+}
+
+func TestAssertIndexesRegistered_Success(t *testing.T) {
+	ctx := context.Background()
+	ResetRegisteredIndexes()
+	logger := zap.NewNop().Sugar()
+	indexer := newMockFieldIndexer()
+
+	// Register all indexes
+	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
+	require.NoError(t, err)
+
+	// Assert should pass
+	err = AssertIndexesRegistered(logger)
+	assert.NoError(t, err)
+	assert.Equal(t, ExpectedIndexCount, GetRegisteredIndexCount())
+}
+
+func TestAssertIndexesRegistered_Failure(t *testing.T) {
+	ResetRegisteredIndexes()
+	logger := zap.NewNop().Sugar()
+
+	// Don't register any indexes, assertion should fail
+	err := AssertIndexesRegistered(logger)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "index registration mismatch")
+}
+
+func TestIsIndexRegistered(t *testing.T) {
+	ctx := context.Background()
+	ResetRegisteredIndexes()
+	logger := zap.NewNop().Sugar()
+	indexer := newMockFieldIndexer()
+
+	// Before registration
+	assert.False(t, IsIndexRegistered("BreakglassSession", "spec.cluster"))
+
+	// Register indexes
+	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
+	require.NoError(t, err)
+
+	// After registration
+	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.cluster"))
+	assert.True(t, IsIndexRegistered("BreakglassEscalation", "spec.allowed.cluster"))
+	assert.True(t, IsIndexRegistered("ClusterConfig", "metadata.name"))
+	assert.False(t, IsIndexRegistered("NonExistent", "field"))
+}
+
+func TestGetRegisteredIndexCount(t *testing.T) {
+	ResetRegisteredIndexes()
+	assert.Equal(t, 0, GetRegisteredIndexCount())
+
+	ctx := context.Background()
+	logger := zap.NewNop().Sugar()
+	indexer := newMockFieldIndexer()
+
+	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
+	require.NoError(t, err)
+
+	assert.Equal(t, ExpectedIndexCount, GetRegisteredIndexCount())
+}
+
+func TestResetRegisteredIndexes(t *testing.T) {
+	ctx := context.Background()
+	logger := zap.NewNop().Sugar()
+	indexer := newMockFieldIndexer()
+
+	// Register some indexes
+	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
+	require.NoError(t, err)
+	assert.Greater(t, GetRegisteredIndexCount(), 0)
+
+	// Reset
+	ResetRegisteredIndexes()
+	assert.Equal(t, 0, GetRegisteredIndexCount())
 }
