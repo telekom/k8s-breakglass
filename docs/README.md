@@ -55,9 +55,14 @@ Complete documentation for the breakglass privilege escalation system.
 ## Security & Policy
 
 - **[Security Best Practices](./security-best-practices.md)** - Rate limiting, input sanitization, network security
+- **Frontend input sanitization** - Request reason sanitization and duration parsing are centralized in shared UI utilities for consistent validation.
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions and pod security rules
 - **[Pod Security Evaluation](./deny-policy.md#podsecurityrules)** - Risk-based exec/attach/portforward controls
 - **[BreakglassEscalation - Security Overrides](./breakglass-escalation.md#podsecurityoverrides)** - Per-escalation pod security exemptions
+
+## Development & Maintenance
+
+- **[Technical Debt](./TECHNICAL_DEBT.md)** - Known TODOs, future enhancements, and maintenance tracking
 
 ## Architecture
 
