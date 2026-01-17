@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -344,7 +345,7 @@ func TestHandleAuthorize_LogsActionStructured(t *testing.T) {
 func TestStatusReasons(t *testing.T) {
 	controller := SetupController(nil)
 	controller.canDoFn = alwaysCanNotDo
-	expReason := fmt.Sprintf(denyReasonMessage, controller.config.Frontend.BaseURL, clusterNameWithEscalation)
+	expReason := fmt.Sprintf(denyReasonMessage, controller.config.Frontend.BaseURL, url.QueryEscape(clusterNameWithEscalation))
 	engine := gin.New()
 	_ = controller.Register(engine.Group(""))
 	var inBytes []byte
