@@ -1631,7 +1631,7 @@ jobs:
           # E2E_CLUSTER_NAME is used by non-multicluster tests that also run in this suite
           # Set to spoke-cluster-a which exists in multi-cluster setup
           E2E_CLUSTER_NAME: "spoke-cluster-a"
-          KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG }}
+          KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG || '' }}
           # Keycloak runs as Docker container with port 8443 mapped to host
           # Go tests run on host so use localhost (e2e-keycloak is only in Kind /etc/hosts)
           KEYCLOAK_HOST: https://localhost:8443
@@ -1677,9 +1677,9 @@ jobs:
           NAMESPACE: breakglass-system
           TIMEOUT: 60
           PROCESS_WAIT: 20
-          HUB_KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG }}
-          SPOKE_A_KUBECONFIG: ${{ env.E2E_SPOKE_A_KUBECONFIG }}
-          SPOKE_B_KUBECONFIG: ${{ env.E2E_SPOKE_B_KUBECONFIG }}
+          HUB_KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG || '' }}
+          SPOKE_A_KUBECONFIG: ${{ env.E2E_SPOKE_A_KUBECONFIG || '' }}
+          SPOKE_B_KUBECONFIG: ${{ env.E2E_SPOKE_B_KUBECONFIG || '' }}
           KEYCLOAK_CONTAINER_NAME: e2e-keycloak
           KEYCLOAK_PORT: "8443"
           KEYCLOAK_MAIN_REALM: breakglass-e2e
