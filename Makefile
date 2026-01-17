@@ -108,7 +108,7 @@ test-cli: ## Run bgctl unit tests
 	go test -v ./pkg/bgctl/...
 
 .PHONY: test-cli-e2e
-test-cli-e2e: ## Run bgctl CLI tests (basic tests only - full E2E requires E2E_TEST=true with kind cluster)
+test-cli-e2e: ## Run bgctl CLI e2e tests (mocked)
 	go test -v ./e2e/cli/...
 
 # Version and build metadata
@@ -139,7 +139,11 @@ docker-build-telekom: ## Build Telekom branded UI image
 		--build-arg UI_FLAVOUR=telekom \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		BUILD_DATE=$(BUILD_DATE) \
 		-t ${IMG:-breakglass:telekom} .
 
 .PHONY: docker-build-dev
@@ -180,7 +184,7 @@ undeploy_dev: kustomize ## Undeploy controller from the K8s cluster specified in
 	$(KUSTOMIZE) build config/dev | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: build_frontend
-build_frontend:
+build_frontent:
 	cd frontend && npm i && npm run build
 
 .PHONY: samples

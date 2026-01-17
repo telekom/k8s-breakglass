@@ -26,7 +26,6 @@ type Settings struct {
 	OutputFormat string `yaml:"output-format,omitempty"`
 	Color        string `yaml:"color,omitempty"`
 	PageSize     int    `yaml:"page-size,omitempty"`
-	Timeout      string `yaml:"timeout,omitempty"`
 }
 
 type OIDCProvider struct {

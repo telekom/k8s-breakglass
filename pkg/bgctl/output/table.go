@@ -53,20 +53,6 @@ func WriteEscalationTable(w io.Writer, escs []v1alpha1.BreakglassEscalation) {
 
 func WriteDebugSessionTable(w io.Writer, sessions []client.DebugSessionSummary) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTER\tREQUESTED_BY\tSTATE\tEXPIRES")
-	for _, s := range sessions {
-		expires := "-"
-		if s.ExpiresAt != nil {
-			expires = formatTime(s.ExpiresAt.Time)
-		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.RequestedBy, string(s.State), expires)
-	}
-	_ = tw.Flush()
-}
-
-// WriteDebugSessionTableWide outputs debug sessions in wide table format with all available fields.
-func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSummary) {
-	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tTEMPLATE\tCLUSTER\tREQUESTED_BY\tSTATE\tSTARTS\tEXPIRES\tPARTICIPANTS\tALLOWED_PODS")
 	for _, s := range sessions {
 		starts := "-"
@@ -82,20 +68,20 @@ func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSumma
 	_ = tw.Flush()
 }
 
-func WriteDebugTemplateTable(w io.Writer, templates []client.DebugSessionTemplateSummary) {
+func WriteDebugTemplateTable(w io.Writer, templates []v1alpha1.DebugSessionTemplate) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tMODE\tTARGET_NAMESPACE\tREQUIRES_APPROVAL")
+	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tMODE\tTARGET_NAMESPACE\tAGE")
 	for _, t := range templates {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%v\n", t.Name, t.DisplayName, t.Mode, t.TargetNamespace, t.RequiresApproval)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", t.Name, t.Spec.DisplayName, t.Spec.Mode, t.Spec.TargetNamespace, formatTime(t.CreationTimestamp.Time))
 	}
 	_ = tw.Flush()
 }
 
-func WriteDebugPodTemplateTable(w io.Writer, templates []client.DebugPodTemplateSummary) {
+func WriteDebugPodTemplateTable(w io.Writer, templates []v1alpha1.DebugPodTemplate) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tDESCRIPTION\tCONTAINERS")
+	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tAGE")
 	for _, t := range templates {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", t.Name, t.DisplayName, t.Description, t.Containers)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", t.Name, t.Spec.DisplayName, formatTime(t.CreationTimestamp.Time))
 	}
 	_ = tw.Flush()
 }

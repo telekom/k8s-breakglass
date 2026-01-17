@@ -3,9 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -94,12 +91,6 @@ func newDebugSessionListCommand() *cobra.Command {
 					_, _ = fmt.Fprintln(rt.Writer(), info)
 				}
 				return nil
-			case output.FormatWide:
-				output.WriteDebugSessionTableWide(rt.Writer(), paged)
-				if info != "" && !allPages {
-					_, _ = fmt.Fprintln(rt.Writer(), info)
-				}
-				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", format)
 			}
@@ -132,22 +123,13 @@ func newDebugSessionWatchCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			// Set up signal handling for graceful exit
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			apiClient, err := buildClient(ctx, rt)
+			apiClient, err := buildClient(context.Background(), rt)
 			if err != nil {
 				return err
 			}
 			seen := map[string]string{}
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-
-			// Run first iteration immediately
-			runWatch := func() error {
-				resp, err := apiClient.DebugSessions().List(ctx, client.DebugSessionListOptions{
+			for {
+				resp, err := apiClient.DebugSessions().List(context.Background(), client.DebugSessionListOptions{
 					Cluster: cluster,
 					State:   state,
 					User:    user,
@@ -168,25 +150,7 @@ func newDebugSessionWatchCommand() *cobra.Command {
 						}
 					}
 				}
-				return nil
-			}
-
-			// First iteration
-			if err := runWatch(); err != nil {
-				return err
-			}
-
-			// Watch loop with graceful exit
-			for {
-				select {
-				case <-ctx.Done():
-					_, _ = fmt.Fprintln(rt.Writer(), "\nWatch stopped.")
-					return nil
-				case <-ticker.C:
-					if err := runWatch(); err != nil {
-						return err
-					}
-				}
+				time.Sleep(interval)
 			}
 		},
 	}
@@ -467,16 +431,16 @@ func newDebugTemplateListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := apiClient.DebugTemplates().List(context.Background())
+			templates, err := apiClient.DebugTemplates().List(context.Background())
 			if err != nil {
 				return err
 			}
 			format := output.Format(rt.OutputFormat())
 			switch format {
 			case output.FormatJSON, output.FormatYAML:
-				return output.WriteObject(rt.Writer(), format, resp.Templates)
+				return output.WriteObject(rt.Writer(), format, templates)
 			case output.FormatTable:
-				output.WriteDebugTemplateTable(rt.Writer(), resp.Templates)
+				output.WriteDebugTemplateTable(rt.Writer(), templates)
 				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", format)
@@ -532,16 +496,16 @@ func newDebugPodTemplateListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := apiClient.DebugPodTemplates().List(context.Background())
+			templates, err := apiClient.DebugPodTemplates().List(context.Background())
 			if err != nil {
 				return err
 			}
 			format := output.Format(rt.OutputFormat())
 			switch format {
 			case output.FormatJSON, output.FormatYAML:
-				return output.WriteObject(rt.Writer(), format, resp.Templates)
+				return output.WriteObject(rt.Writer(), format, templates)
 			case output.FormatTable:
-				output.WriteDebugPodTemplateTable(rt.Writer(), resp.Templates)
+				output.WriteDebugPodTemplateTable(rt.Writer(), templates)
 				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", format)

@@ -16,7 +16,6 @@ func NewEscalationCommand() *cobra.Command {
 	cmd.AddCommand(
 		newEscalationListCommand(),
 		newEscalationGetCommand(),
-		newEscalationListClustersCommand(),
 	)
 	return cmd
 }
@@ -71,39 +70,6 @@ func newEscalationGetCommand() *cobra.Command {
 				return err
 			}
 			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), esc)
-		},
-	}
-}
-
-func newEscalationListClustersCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list-clusters",
-		Short: "List available clusters from escalation policies",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			rt, err := getRuntime(cmd)
-			if err != nil {
-				return err
-			}
-			apiClient, err := buildClient(context.Background(), rt)
-			if err != nil {
-				return err
-			}
-			clusters, err := apiClient.Escalations().ListClusters(context.Background())
-			if err != nil {
-				return err
-			}
-			format := output.Format(rt.OutputFormat())
-			switch format {
-			case output.FormatJSON, output.FormatYAML:
-				return output.WriteObject(rt.Writer(), format, clusters)
-			case output.FormatTable, output.FormatWide:
-				for _, c := range clusters {
-					_, _ = fmt.Fprintln(rt.Writer(), c)
-				}
-				return nil
-			default:
-				return fmt.Errorf("unknown output format: %s", format)
-			}
 		},
 	}
 }

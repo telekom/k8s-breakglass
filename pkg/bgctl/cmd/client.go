@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/auth"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
@@ -35,15 +34,8 @@ func buildClient(cmdCtx context.Context, rt *runtimeState) (*client.Client, erro
 		client.WithServer(server),
 		client.WithToken(token),
 		client.WithUserAgent("bgctl"),
+		client.WithTLSConfig(resolveCAFile(ctxCfg, rt), ctxCfg.InsecureSkipTLSVerify),
 	}
-	// Apply timeout from config if specified
-	if rt.cfg != nil && rt.cfg.Settings.Timeout != "" {
-		if timeout, parseErr := time.ParseDuration(rt.cfg.Settings.Timeout); parseErr == nil {
-			options = append(options, client.WithTimeout(timeout))
-		}
-	}
-	// TLS config should be applied after timeout to ensure timeout is set on the http client
-	options = append(options, client.WithTLSConfig(resolveCAFile(ctxCfg, rt), ctxCfg.InsecureSkipTLSVerify))
 	return client.New(options...)
 }
 
