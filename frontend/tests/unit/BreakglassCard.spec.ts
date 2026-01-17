@@ -1,3 +1,10 @@
+import {
+  formatDurationSeconds,
+  parseDurationInput,
+  sanitizeReason,
+  validateDuration,
+} from "@/utils/breakglassSession";
+
 /**
  * Tests for BreakglassCard component duration parsing, reason sanitization,
  * and validation logic.
@@ -25,33 +32,6 @@ describe("BreakglassCard Duration and Reason Handling", () => {
    * - With/without spaces
    */
   describe("parseDurationInput()", () => {
-    // Helper function simulating the parseDurationInput logic
-    function parseDurationInput(input: string): number | null {
-      if (!input || !input.trim()) {
-        return null;
-      }
-
-      let totalSeconds = 0;
-
-      // Pattern: "1h 30m", "2h", "30m", or "3600"
-      const hoursMatch = input.match(/(\d+)\s*h/i);
-      if (hoursMatch && hoursMatch[1]) {
-        totalSeconds += parseInt(hoursMatch[1], 10) * 3600;
-      }
-
-      const minutesMatch = input.match(/(\d+)\s*m/i);
-      if (minutesMatch && minutesMatch[1]) {
-        totalSeconds += parseInt(minutesMatch[1], 10) * 60;
-      }
-
-      // If only numbers (seconds)
-      if (!input.match(/[a-z]/i) && input.match(/^\d+$/)) {
-        totalSeconds = parseInt(input, 10);
-      }
-
-      return totalSeconds > 0 ? totalSeconds : null;
-    }
-
     it("parses simple hours", () => {
       expect(parseDurationInput("1h")).toBe(3600);
       expect(parseDurationInput("2h")).toBe(7200);
@@ -129,18 +109,6 @@ describe("BreakglassCard Duration and Reason Handling", () => {
    * Covers: normal text, HTML entities, special characters
    */
   describe("sanitizeReason()", () => {
-    // Helper function simulating the sanitizeReason logic
-    function sanitizeReason(text: string): string {
-      const htmlEntities: Record<string, string> = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      };
-      return text.replace(/[&<>"']/g, (char) => htmlEntities[char] || char);
-    }
-
     it("escapes angle brackets", () => {
       expect(sanitizeReason("<script>")).toBe("&lt;script&gt;");
       expect(sanitizeReason("<div>test</div>")).toBe("&lt;div&gt;test&lt;/div&gt;");
@@ -191,29 +159,11 @@ describe("BreakglassCard Duration and Reason Handling", () => {
    * Covers: minimum duration (60s), maximum boundary, valid ranges
    */
   describe("validateDuration()", () => {
-    // Helper function simulating the validateDuration logic
-    function validateDuration(seconds: number | null, maxAllowed: number): { valid: boolean; error?: string } {
-      if (seconds === null || seconds === undefined) {
-        return { valid: true }; // No duration specified, will use default
-      }
-
-      if (seconds < 60) {
-        return { valid: false, error: "Minimum duration is 1 minute" };
-      }
-
-      if (seconds > maxAllowed) {
-        return {
-          valid: false,
-          error: `Duration cannot exceed ${maxAllowed} seconds`,
-        };
-      }
-
-      return { valid: true };
-    }
-
-    it("accepts null/undefined (will use default)", () => {
-      expect(validateDuration(null, 3600)).toEqual({ valid: true });
-      expect(validateDuration(undefined as any, 3600)).toEqual({ valid: true });
+    it("rejects null/undefined", () => {
+      expect(validateDuration(null, 3600).valid).toBe(false);
+      expect(validateDuration(null, 3600).error).toContain("must be specified");
+      expect(validateDuration(undefined as any, 3600).valid).toBe(false);
+      expect(validateDuration(undefined as any, 3600).error).toContain("must be specified");
     });
 
     it("rejects duration below 60 seconds", () => {
@@ -238,7 +188,7 @@ describe("BreakglassCard Duration and Reason Handling", () => {
     it("rejects duration exceeding maximum", () => {
       const result = validateDuration(3601, 3600);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain("cannot exceed");
+      expect(result.error).toContain("exceeds maximum allowed time");
     });
 
     it("rejects negative duration", () => {
@@ -248,10 +198,9 @@ describe("BreakglassCard Duration and Reason Handling", () => {
     });
 
     it("handles different max values", () => {
-      expect(validateDuration(7200, 3600)).toEqual({
-        valid: false,
-        error: "Duration cannot exceed 3600 seconds",
-      });
+      const result = validateDuration(7200, 3600);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("exceeds maximum allowed time");
       expect(validateDuration(7200, 86400)).toEqual({ valid: true });
     });
 
@@ -272,22 +221,6 @@ describe("BreakglassCard Duration and Reason Handling", () => {
    * Supports output like "1h", "30m", "1h 30m"
    */
   describe("formatDurationSeconds()", () => {
-    // Helper function simulating the formatDurationSeconds logic
-    function formatDurationSeconds(seconds: number): string {
-      if (seconds <= 0) return "0s";
-
-      const hours = Math.floor(seconds / 3600);
-      const minutes = Math.floor((seconds % 3600) / 60);
-      const secs = seconds % 60;
-
-      const parts = [];
-      if (hours > 0) parts.push(`${hours}h`);
-      if (minutes > 0) parts.push(`${minutes}m`);
-      if (secs > 0) parts.push(`${secs}s`);
-
-      return parts.join(" ");
-    }
-
     it("formats hours only", () => {
       expect(formatDurationSeconds(3600)).toBe("1h");
       expect(formatDurationSeconds(7200)).toBe("2h");
@@ -343,47 +276,6 @@ describe("BreakglassCard Duration and Reason Handling", () => {
    * Tests the interaction between parsing, sanitization, and validation
    */
   describe("Integration", () => {
-    function parseDurationInput(input: string): number | null {
-      if (!input || !input.trim()) return null;
-      let totalSeconds = 0;
-      const hoursMatch = input.match(/(\d+)\s*h/i);
-      if (hoursMatch && hoursMatch[1]) {
-        totalSeconds += parseInt(hoursMatch[1], 10) * 3600;
-      }
-      const minutesMatch = input.match(/(\d+)\s*m/i);
-      if (minutesMatch && minutesMatch[1]) {
-        totalSeconds += parseInt(minutesMatch[1], 10) * 60;
-      }
-      if (!input.match(/[a-z]/i) && input.match(/^\d+$/)) {
-        totalSeconds = parseInt(input, 10);
-      }
-      return totalSeconds > 0 ? totalSeconds : null;
-    }
-
-    function validateDuration(seconds: number | null, maxAllowed: number): { valid: boolean; error?: string } {
-      if (seconds === null || seconds === undefined) {
-        return { valid: true };
-      }
-      if (seconds < 60) {
-        return { valid: false, error: "Minimum duration is 1 minute" };
-      }
-      if (seconds > maxAllowed) {
-        return { valid: false, error: `Duration cannot exceed ${maxAllowed} seconds` };
-      }
-      return { valid: true };
-    }
-
-    function sanitizeReason(text: string): string {
-      const htmlEntities: Record<string, string> = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      };
-      return text.replace(/[&<>"']/g, (char) => htmlEntities[char] || char);
-    }
-
     it("parses and validates a request with custom duration", () => {
       const userInput = "1h 30m";
       const parsed = parseDurationInput(userInput);
@@ -400,7 +292,7 @@ describe("BreakglassCard Duration and Reason Handling", () => {
 
       expect(parsed).toBe(10800);
       expect(validation.valid).toBe(false);
-      expect(validation.error).toContain("cannot exceed");
+      expect(validation.error).toContain("exceeds maximum allowed time");
     });
 
     it("sanitizes reason with XSS attempt", () => {
