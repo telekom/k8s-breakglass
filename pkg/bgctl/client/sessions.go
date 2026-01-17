@@ -79,19 +79,13 @@ func (s *SessionService) List(ctx context.Context, opts SessionListOptions) ([]v
 	return sessions, nil
 }
 
-// SessionGetResponse wraps the session with authorization metadata
-type SessionGetResponse struct {
-	Session      v1alpha1.BreakglassSession `json:"session"`
-	ApprovalMeta map[string]interface{}     `json:"approvalMeta,omitempty"`
-}
-
 func (s *SessionService) Get(ctx context.Context, name string) (*v1alpha1.BreakglassSession, error) {
 	endpoint := fmt.Sprintf("api/breakglassSessions/%s", url.PathEscape(name))
-	var resp SessionGetResponse
-	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
+	var session v1alpha1.BreakglassSession
+	if err := s.client.do(ctx, http.MethodGet, endpoint, nil, &session); err != nil {
 		return nil, err
 	}
-	return &resp.Session, nil
+	return &session, nil
 }
 
 func (s *SessionService) Request(ctx context.Context, req SessionRequest) (*v1alpha1.BreakglassSession, error) {

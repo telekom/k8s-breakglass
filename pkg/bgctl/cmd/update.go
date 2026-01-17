@@ -234,67 +234,8 @@ func downloadFile(url, path string) error {
 	defer func() {
 		_ = out.Close()
 	}()
-
-	// Use progress writer if content length is known
-	if resp.ContentLength > 0 {
-		_, err = io.Copy(out, &progressReader{
-			reader: resp.Body,
-			total:  resp.ContentLength,
-		})
-	} else {
-		_, err = io.Copy(out, resp.Body)
-	}
-	// Clear the progress line
-	if resp.ContentLength > 0 {
-		_, _ = fmt.Fprint(os.Stderr, "\r                                                  \r")
-	}
+	_, err = io.Copy(out, resp.Body)
 	return err
-}
-
-// progressReader wraps an io.Reader and prints download progress to stderr.
-type progressReader struct {
-	reader      io.Reader
-	total       int64
-	downloaded  int64
-	lastPercent int
-}
-
-func (pr *progressReader) Read(p []byte) (int, error) {
-	n, err := pr.reader.Read(p)
-	if n > 0 {
-		pr.downloaded += int64(n)
-		percent := int(float64(pr.downloaded) / float64(pr.total) * 100)
-		// Only update display when percent changes to avoid excessive output
-		if percent != pr.lastPercent {
-			pr.lastPercent = percent
-			downloaded := formatBytes(pr.downloaded)
-			total := formatBytes(pr.total)
-			bar := progressBar(percent, 30)
-			_, _ = fmt.Fprintf(os.Stderr, "\r%s %s/%s %d%%", bar, downloaded, total, percent)
-		}
-	}
-	return n, err
-}
-
-// progressBar generates a simple ASCII progress bar.
-func progressBar(percent, width int) string {
-	filled := width * percent / 100
-	empty := width - filled
-	return "[" + strings.Repeat("=", filled) + strings.Repeat(" ", empty) + "]"
-}
-
-// formatBytes formats bytes into a human-readable string.
-func formatBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 func verifyChecksumIfAvailable(assets []githubAsset, name, filePath string) error {
@@ -373,13 +314,7 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 		if header.Typeflag != tar.TypeReg {
 			continue
 		}
-		// Sanitize archive entry name to prevent path traversal attacks
-		safeName := filepath.Base(header.Name)
-		if safeName == "" || safeName == "." || safeName == ".." ||
-			strings.Contains(safeName, "/") || strings.Contains(safeName, "\\") {
-			continue
-		}
-		if safeName == "bgctl" {
+		if filepath.Base(header.Name) == "bgctl" {
 			outPath := filepath.Join(destDir, "bgctl")
 			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
 			if err != nil {
@@ -405,55 +340,29 @@ func extractZip(archivePath, destDir string) (string, error) {
 		_ = reader.Close()
 	}()
 	for _, file := range reader.File {
-		// Sanitize archive entry name to prevent Zip Slip attacks
-		// First reject entries whose original name contains path traversal patterns
-		if file.Name == "" ||
-			strings.Contains(file.Name, "..") ||
-			strings.Contains(file.Name, "/") ||
-			strings.Contains(file.Name, "\\") {
+		if filepath.Base(file.Name) != "bgctl.exe" && filepath.Base(file.Name) != "bgctl" {
 			continue
 		}
-		// Extract base name and validate it doesn't contain traversal patterns
-		safeName := filepath.Base(file.Name)
-		if safeName == "" || safeName == "." || safeName == ".." ||
-			strings.Contains(safeName, "..") ||
-			strings.Contains(safeName, "/") || strings.Contains(safeName, "\\") {
-			continue
-		}
-		// Only extract the expected binary files
-		if safeName != "bgctl.exe" && safeName != "bgctl" {
-			continue
-		}
-		outPath, err := extractZipEntry(file, destDir, safeName)
+		rc, err := file.Open()
 		if err != nil {
 			return "", err
 		}
+		defer func() {
+			_ = rc.Close()
+		}()
+		outPath := filepath.Join(destDir, filepath.Base(file.Name))
+		outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+		if err != nil {
+			return "", err
+		}
+		if _, err := io.Copy(outFile, rc); err != nil {
+			_ = outFile.Close()
+			return "", err
+		}
+		_ = outFile.Close()
 		return outPath, nil
 	}
 	return "", errors.New("bgctl binary not found in archive")
-}
-
-// extractZipEntry extracts a single zip entry to the destination directory.
-// This is a helper function to avoid defer inside a loop.
-func extractZipEntry(file *zip.File, destDir, safeName string) (string, error) {
-	rc, err := file.Open()
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		_ = rc.Close()
-	}()
-	outPath := filepath.Join(destDir, safeName)
-	outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
-	if err != nil {
-		return "", err
-	}
-	if _, err := io.Copy(outFile, rc); err != nil {
-		_ = outFile.Close()
-		return "", err
-	}
-	_ = outFile.Close()
-	return outPath, nil
 }
 
 func replaceBinary(target, source string) error {

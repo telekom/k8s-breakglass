@@ -22,17 +22,13 @@ type Client struct {
 	token     string
 	http      *http.Client
 	userAgent string
-	timeout   time.Duration
 }
-
-// DefaultTimeout is the default HTTP client timeout.
-const DefaultTimeout = 30 * time.Second
 
 type Option func(*Client) error
 
 func New(opts ...Option) (*Client, error) {
 	c := &Client{
-		timeout:   DefaultTimeout,
+		http:      &http.Client{Timeout: 30 * time.Second},
 		userAgent: "bgctl",
 	}
 	for _, opt := range opts {
@@ -42,10 +38,6 @@ func New(opts ...Option) (*Client, error) {
 	}
 	if c.baseURL == nil {
 		return nil, errors.New("server is required")
-	}
-	// Initialize http client if not set by TLS option
-	if c.http == nil {
-		c.http = &http.Client{Timeout: c.timeout}
 	}
 	return c, nil
 }
@@ -78,16 +70,6 @@ func WithUserAgent(userAgent string) Option {
 	}
 }
 
-// WithTimeout sets the HTTP client timeout. If not specified, DefaultTimeout is used.
-func WithTimeout(timeout time.Duration) Option {
-	return func(c *Client) error {
-		if timeout > 0 {
-			c.timeout = timeout
-		}
-		return nil
-	}
-}
-
 func WithTLSConfig(caFile string, insecureSkipTLSVerify bool) Option {
 	return func(c *Client) error {
 		tlsConfig, err := loadTLSConfig(caFile, insecureSkipTLSVerify)
@@ -95,7 +77,7 @@ func WithTLSConfig(caFile string, insecureSkipTLSVerify bool) Option {
 			return err
 		}
 		transport := &http.Transport{TLSClientConfig: tlsConfig}
-		c.http = &http.Client{Transport: transport, Timeout: c.timeout}
+		c.http = &http.Client{Transport: transport, Timeout: 30 * time.Second}
 		return nil
 	}
 }
