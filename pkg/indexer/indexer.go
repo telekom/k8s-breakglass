@@ -13,7 +13,7 @@ import (
 
 // ExpectedIndexCount is the number of field indexes that should be registered.
 // Update this constant when adding or removing indexes.
-const ExpectedIndexCount = 10
+const ExpectedIndexCount = 13
 
 // registeredIndexes tracks which indexes have been successfully registered.
 var registeredIndexes = make(map[string]bool)
@@ -81,6 +81,49 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 				return []string{bs.Name}
 			}
 			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("DebugSession", "spec.cluster", func() error {
+		return idx.IndexField(ctx, &v1alpha1.DebugSession{}, "spec.cluster", func(rawObj client.Object) []string {
+			if ds, ok := rawObj.(*v1alpha1.DebugSession); ok && ds.Spec.Cluster != "" {
+				return []string{ds.Spec.Cluster}
+			}
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("DebugSession", "status.state", func() error {
+		return idx.IndexField(ctx, &v1alpha1.DebugSession{}, "status.state", func(rawObj client.Object) []string {
+			if ds, ok := rawObj.(*v1alpha1.DebugSession); ok && ds.Status.State != "" {
+				return []string{string(ds.Status.State)}
+			}
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("DebugSession", "status.participants.user", func() error {
+		return idx.IndexField(ctx, &v1alpha1.DebugSession{}, "status.participants.user", func(rawObj client.Object) []string {
+			ds, ok := rawObj.(*v1alpha1.DebugSession)
+			if !ok || ds == nil || len(ds.Status.Participants) == 0 {
+				return nil
+			}
+			users := make([]string, 0, len(ds.Status.Participants))
+			for _, p := range ds.Status.Participants {
+				if p.User != "" {
+					users = append(users, p.User)
+				}
+			}
+			if len(users) == 0 {
+				return nil
+			}
+			return users
 		})
 	}); err != nil {
 		return err

@@ -78,6 +78,8 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 		"spec.user",
 		"spec.grantedGroup",
 		"metadata.name",
+		"status.state",
+		"status.participants.user",
 		"spec.allowed.cluster",
 		"spec.allowed.group",
 		"spec.escalatedGroup",
@@ -137,6 +139,14 @@ func TestRegisterCommonFieldIndexes_FailureOnField(t *testing.T) {
 			name:        "fail on spec.clusterID",
 			failOnField: "spec.clusterID",
 		},
+		{
+			name:        "fail on status.state",
+			failOnField: "status.state",
+		},
+		{
+			name:        "fail on status.participants.user",
+			failOnField: "status.participants.user",
+		},
 	}
 
 	for _, tt := range tests {
@@ -172,7 +182,7 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 	}
 
 	t.Run("spec.cluster index", func(t *testing.T) {
-		fn := indexer.indexedFields["spec.cluster"]
+		fn := indexer.indexedFields["*v1alpha1.BreakglassSession:spec.cluster"]
 		require.NotNil(t, fn)
 
 		result := fn(session)
@@ -221,6 +231,68 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 		// Test with empty name
 		emptySession := &v1alpha1.BreakglassSession{}
 		result = fn(emptySession)
+		assert.Nil(t, result)
+	})
+}
+
+func TestIndexerFunctions_DebugSession(t *testing.T) {
+	indexer := newMockFieldIndexer()
+	logger := zaptest.NewLogger(t).Sugar()
+	ctx := context.Background()
+
+	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
+	require.NoError(t, err)
+
+	debugSession := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "debug-session",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster: "debug-cluster",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			State: v1alpha1.DebugSessionStateActive,
+			Participants: []v1alpha1.DebugSessionParticipant{
+				{User: "user-a@example.com"},
+				{User: "user-b@example.com"},
+			},
+		},
+	}
+
+	t.Run("spec.cluster index", func(t *testing.T) {
+		fn := indexer.indexedFields["*v1alpha1.DebugSession:spec.cluster"]
+		require.NotNil(t, fn)
+
+		result := fn(debugSession)
+		assert.Equal(t, []string{"debug-cluster"}, result)
+
+		empty := &v1alpha1.DebugSession{}
+		result = fn(empty)
+		assert.Nil(t, result)
+	})
+
+	t.Run("status.state index", func(t *testing.T) {
+		fn := indexer.indexedFields["status.state"]
+		require.NotNil(t, fn)
+
+		result := fn(debugSession)
+		assert.Equal(t, []string{string(v1alpha1.DebugSessionStateActive)}, result)
+
+		empty := &v1alpha1.DebugSession{}
+		result = fn(empty)
+		assert.Nil(t, result)
+	})
+
+	t.Run("status.participants.user index", func(t *testing.T) {
+		fn := indexer.indexedFields["status.participants.user"]
+		require.NotNil(t, fn)
+
+		result := fn(debugSession)
+		assert.ElementsMatch(t, []string{"user-a@example.com", "user-b@example.com"}, result)
+
+		empty := &v1alpha1.DebugSession{}
+		result = fn(empty)
 		assert.Nil(t, result)
 	})
 }
