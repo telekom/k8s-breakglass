@@ -63,7 +63,7 @@ func (wc *WebhookController) finalizeReason(reason string, allowed bool, cluster
 		if allowed {
 			return fmt.Sprintf("Allowed; view details or sessions at %s", link)
 		}
-		return fmt.Sprintf(denyReasonMessage, wc.config.Frontend.BaseURL, cluster)
+		return fmt.Sprintf(denyReasonMessage, wc.config.Frontend.BaseURL, url.QueryEscape(cluster))
 	}
 	// If reason already contains something, append a short pointer to the link
 	return fmt.Sprintf("%s; see %s", reason, link)
@@ -859,7 +859,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		if len(escals) > 0 {
 			reqLog.Debugw("Escalation paths available", "count", len(escals))
 			reason = fmt.Sprintf(denyReasonMessage,
-				wc.config.Frontend.BaseURL, clusterName)
+				wc.config.Frontend.BaseURL, url.QueryEscape(clusterName))
 		} else {
 			reqLog.Debugw("No escalation paths for user", "username", username)
 		}
