@@ -85,7 +85,7 @@ Using deprecated `NewSimpleClientset()` - should migrate when non-deprecated alt
 - `api/v1alpha1/validation_helpers_test.go` (multiple occurrences)
 
 **Description:**
-Test code uses `context.TODO()` for validation function calls. This is acceptable in test code but production code should always use proper contexts (fixed in #PR_NUMBER).
+Test code uses `context.TODO()` for validation function calls. This is acceptable in test code but production code should always use proper contexts (fixed in #248).
 
 **Action Items:**
 None - test code usage is acceptable. Production code usage has been fixed.
@@ -96,7 +96,7 @@ None - test code usage is acceptable. Production code usage has been fixed.
 
 ### ✅ Context.TODO() in Webhook Validation (CRITICAL)
 
-**Status:** ✅ Fixed in PR #[NUMBER]  
+**Status:** ✅ Fixed in PR #248  
 **Impact:** High - Could cause webhook timeouts  
 **File:** `api/v1alpha1/validation_helpers.go:116`
 
