@@ -1,36 +1,18 @@
 <script setup lang="ts">
-import humanizeDuration from "humanize-duration";
 import { computed, ref, watch } from "vue";
 import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
+import {
+  formatDurationSeconds,
+  humanizeDurationShort,
+  parseDurationInput,
+  sanitizeReason,
+  validateDuration,
+} from "@/utils/breakglassSession";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 
-const humanizeConfig = { round: true, largest: 2 };
 const props = defineProps<{ breakglass: any; time: number }>();
 const emit = defineEmits(["request", "drop", "withdraw"]);
-
-function sanitizeReason(text: string): string {
-  if (!text) return "";
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function validateDuration(seconds: number | null, maxAllowed: number): { valid: boolean; error?: string } {
-  if (!seconds || seconds === 0) {
-    return { valid: false, error: "Duration must be specified" };
-  }
-  if (seconds < 60) {
-    return { valid: false, error: "Duration must be at least 1 minute" };
-  }
-  if (seconds > maxAllowed) {
-    return {
-      valid: false,
-      error: `Duration exceeds maximum allowed time of ${humanizeDuration(maxAllowed * 1000, humanizeConfig)}`,
-    };
-  }
-  return { valid: true };
-}
 
 const requestReason = ref("");
 const selectedDuration = ref<number | null>(null);
@@ -77,49 +59,6 @@ watch(
     showAllApprovalGroups.value = false;
   },
 );
-
-function parseDurationInput(input: string): number | null {
-  if (!input.trim()) return null;
-
-  const trimmed = input.toLowerCase().trim();
-  const directNum = parseFloat(trimmed);
-  if (!isNaN(directNum) && trimmed.match(/^\d+(\.\d+)?$/)) {
-    return directNum;
-  }
-
-  let totalSeconds = 0;
-  const hoursMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*h/);
-  if (hoursMatch?.[1]) {
-    totalSeconds += parseFloat(hoursMatch[1]) * 3600;
-  }
-
-  const minutesMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*m/);
-  if (minutesMatch?.[1]) {
-    totalSeconds += parseFloat(minutesMatch[1]) * 60;
-  }
-
-  const secondsMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*s/);
-  if (secondsMatch?.[1]) {
-    totalSeconds += parseFloat(secondsMatch[1]);
-  }
-
-  return totalSeconds > 0 ? totalSeconds : null;
-}
-
-function formatDurationSeconds(seconds: number): string {
-  if (!seconds) return "";
-
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-
-  const parts = [] as string[];
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
-
-  return parts.join(" ");
-}
 
 const reasonCharLimit = 1024;
 const reasonCharCount = computed(() => requestReason.value.length);
@@ -404,17 +343,17 @@ const stateChipVariant = computed<TagVariant>(() => {
 const expiryHumanized = computed(() => {
   if (sessionActive.value && sessionActive.value.expiry) {
     const duration = sessionActive.value.expiry * 1000 - props.time;
-    return humanizeDuration(duration > 0 ? duration : 0, humanizeConfig);
+    return humanizeDurationShort(duration);
   }
   return "";
 });
 
-const durationHumanized = computed(() => humanizeDuration(props.breakglass.duration * 1000, humanizeConfig));
+const durationHumanized = computed(() => humanizeDurationShort(props.breakglass.duration * 1000));
 
 const timeoutHumanized = computed(() => {
   if (sessionPending.value && sessionPending.value.status?.timeoutAt) {
     const t = new Date(sessionPending.value.status.timeoutAt).getTime() - props.time;
-    return humanizeDuration(t > 0 ? t : 0, humanizeConfig);
+    return humanizeDurationShort(t);
   }
   return "";
 });
@@ -607,12 +546,12 @@ function drop() {
         label="Duration"
         type="text"
         :value="durationInput"
-        :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
+        :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDurationShort(breakglass.duration * 1000)}`"
         @scaleChange="handleDurationChange"
       ></scale-text-field>
       <p class="helper">
-        Max allowed: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}. Minimum: 1 minute. Enter a
-        shorter duration if needed.
+        Max allowed: {{ humanizeDurationShort(breakglass.duration * 1000) }}. Minimum: 1 minute. Enter a shorter
+        duration if needed.
       </p>
       <p v-if="durationInput" class="helper">
         Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}
@@ -628,7 +567,7 @@ function drop() {
       <div v-if="showDurationHints" class="hint-box">
         <p>
           Examples: 30m, 1h, 2h, 4h (all less than max
-          {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
+          {{ humanizeDurationShort(breakglass.duration * 1000) }})
         </p>
       </div>
     </div>
