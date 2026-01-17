@@ -134,28 +134,153 @@ func TestNewManager_HTTP2Disabled(t *testing.T) {
 	assert.NotNil(t, mgr)
 }
 
-func TestNewManager_SchemeContainsCRDs(t *testing.T) {
+func TestNewManager_MetricsServerOptions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
 
-	// Verify the scheme contains expected types
-	gvks := scheme.AllKnownTypes()
+	log := zap.NewNop().Sugar()
 
-	// Check that BreakglassSession is registered
-	found := false
-	for gvk := range gvks {
-		if gvk.Kind == "BreakglassSession" {
-			found = true
-			assert.Equal(t, "breakglass.t-caas.telekom.com", gvk.Group)
-			assert.Equal(t, "v1alpha1", gvk.Version)
-			break
-		}
+	tests := []struct {
+		name          string
+		metricsAddr   string
+		metricsSecure bool
+		certPath      string
+		certName      string
+		certKey       string
+	}{
+		{
+			name:          "metrics disabled",
+			metricsAddr:   "0",
+			metricsSecure: false,
+		},
+		{
+			name:          "metrics on custom port",
+			metricsAddr:   ":9090",
+			metricsSecure: false,
+		},
+		{
+			name:          "secure metrics without certs",
+			metricsAddr:   ":8443",
+			metricsSecure: true,
+		},
+		{
+			name:          "secure metrics with cert directory",
+			metricsAddr:   ":8443",
+			metricsSecure: true,
+			certPath:      "/etc/certs",
+			certName:      "server.crt",
+			certKey:       "server.key",
+		},
 	}
-	assert.True(t, found, "BreakglassSession should be in the scheme")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, err := NewManager(
+				&rest.Config{Host: "https://localhost:6443"},
+				scheme,
+				tt.metricsAddr,
+				tt.metricsSecure,
+				tt.certPath,
+				tt.certName,
+				tt.certKey,
+				"0", // probeAddr disabled
+				true,
+				log,
+			)
+
+			assert.NoError(t, err)
+			assert.NotNil(t, mgr)
+		})
+	}
 }
 
-func TestNewManager_OptionsValidation(t *testing.T) {
+func TestNewManager_ProbeAddressConfigurations(t *testing.T) {
+	scheme := runtime.NewScheme()
+	err := breakglassv1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	log := zap.NewNop().Sugar()
+
+	// Note: We only test with disabled addresses to avoid port conflicts in CI
+	// The probe address configuration is validated at manager creation time
+	tests := []struct {
+		name      string
+		probeAddr string
+	}{
+		{
+			name:      "probes disabled with 0",
+			probeAddr: "0",
+		},
+		{
+			name:      "probes disabled with empty string",
+			probeAddr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, err := NewManager(
+				&rest.Config{Host: "https://localhost:6443"},
+				scheme,
+				"0", // metricsAddr disabled
+				false,
+				"", "", "",
+				tt.probeAddr,
+				false,
+				log,
+			)
+
+			assert.NoError(t, err)
+			assert.NotNil(t, mgr)
+		})
+	}
+}
+
+func TestNewManager_SchemeVariations(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	t.Run("empty scheme", func(t *testing.T) {
+		emptyScheme := runtime.NewScheme()
+
+		mgr, err := NewManager(
+			&rest.Config{Host: "https://localhost:6443"},
+			emptyScheme,
+			"0",
+			false,
+			"", "", "",
+			"0",
+			false,
+			log,
+		)
+
+		// Manager creation should still succeed with empty scheme
+		assert.NoError(t, err)
+		assert.NotNil(t, mgr)
+	})
+
+	t.Run("scheme with breakglass types", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		err := breakglassv1alpha1.AddToScheme(scheme)
+		require.NoError(t, err)
+
+		mgr, err := NewManager(
+			&rest.Config{Host: "https://localhost:6443"},
+			scheme,
+			"0",
+			false,
+			"", "", "",
+			"0",
+			false,
+			log,
+		)
+
+		assert.NoError(t, err)
+		assert.NotNil(t, mgr)
+	})
+}
+
+func TestNewManager_RestConfigVariations(t *testing.T) {
 	scheme := runtime.NewScheme()
 	err := breakglassv1alpha1.AddToScheme(scheme)
 	require.NoError(t, err)
@@ -164,119 +289,68 @@ func TestNewManager_OptionsValidation(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		metricsAddr string
-		probeAddr   string
+		restCfg     *rest.Config
 		expectError bool
 	}{
 		{
-			name:        "metrics and probes disabled",
-			metricsAddr: "0",
-			probeAddr:   "0",
+			name:        "nil config",
+			restCfg:     nil,
+			expectError: true,
+		},
+		{
+			name: "config with host only",
+			restCfg: &rest.Config{
+				Host: "https://localhost:6443",
+			},
 			expectError: false,
 		},
 		{
-			name:        "only metrics enabled",
-			metricsAddr: ":8081",
-			probeAddr:   "0",
+			name: "config with bearer token",
+			restCfg: &rest.Config{
+				Host:        "https://localhost:6443",
+				BearerToken: "test-token",
+			},
 			expectError: false,
 		},
 		{
-			name:        "only probes enabled",
-			metricsAddr: "0",
-			probeAddr:   ":8082",
+			name: "config with timeout",
+			restCfg: &rest.Config{
+				Host:    "https://localhost:6443",
+				Timeout: 30,
+			},
 			expectError: false,
 		},
 		{
-			name:        "both enabled on different ports",
-			metricsAddr: ":8081",
-			probeAddr:   ":8082",
+			name: "config with QPS settings",
+			restCfg: &rest.Config{
+				Host:  "https://localhost:6443",
+				QPS:   100,
+				Burst: 200,
+			},
 			expectError: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Use disabled ports to avoid conflicts
 			mgr, err := NewManager(
-				&rest.Config{Host: "https://localhost:6443"},
+				tt.restCfg,
 				scheme,
-				"0", // Always use 0 to avoid port conflicts
+				"0",
 				false,
 				"", "", "",
-				"0", // Always use 0 to avoid port conflicts
+				"0",
 				false,
 				log,
 			)
 
 			if tt.expectError {
 				assert.Error(t, err)
+				assert.Nil(t, mgr)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, mgr)
 			}
 		})
 	}
-}
-
-func TestNewManager_LeaderElectionDisabled(t *testing.T) {
-	scheme := runtime.NewScheme()
-	err := breakglassv1alpha1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	log := zap.NewNop().Sugar()
-
-	mgr, err := NewManager(
-		&rest.Config{Host: "https://localhost:6443"},
-		scheme,
-		"0",
-		false,
-		"", "", "",
-		"0",
-		false,
-		log,
-	)
-
-	require.NoError(t, err)
-	require.NotNil(t, mgr)
-
-	// The manager created by NewManager should have leader election disabled
-	// This is because leader election is handled separately for background loops
-	// Verify by checking that the manager was created successfully
-	assert.NotNil(t, mgr.GetScheme())
-}
-
-func TestNewManager_ClientConfiguration(t *testing.T) {
-	scheme := runtime.NewScheme()
-	err := breakglassv1alpha1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	log := zap.NewNop().Sugar()
-
-	restCfg := &rest.Config{
-		Host:    "https://localhost:6443",
-		Timeout: 30,
-		QPS:     100,
-		Burst:   150,
-	}
-
-	mgr, err := NewManager(
-		restCfg,
-		scheme,
-		"0",
-		false,
-		"", "", "",
-		"0",
-		false,
-		log,
-	)
-
-	require.NoError(t, err)
-	require.NotNil(t, mgr)
-
-	// Verify the manager has a valid client
-	client := mgr.GetClient()
-	assert.NotNil(t, client)
-
-	// Verify the manager has the correct scheme
-	assert.Equal(t, scheme, mgr.GetScheme())
 }

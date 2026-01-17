@@ -115,6 +115,67 @@ server:
 - When left empty, the server falls back to a safe set of localhost origins plus the configured `frontend.baseURL` for developer convenience.
 - **Important:** If you specify custom `allowedOrigins`, the frontend base URL is *not* auto-included. Add the UI origin explicitly whenever you override this list.
 
+**Operational Guidance - CORS Origins:**
+
+| Scenario | Recommended Configuration |
+|----------|---------------------------|
+| Single domain deployment | Add only `https://breakglass.yourdomain.com` |
+| Multi-region with CDN | Add each CDN endpoint origin (e.g., `https://breakglass-us.example.com`, `https://breakglass-eu.example.com`) |
+| Development + Production | Use separate config files; never include `localhost` origins in production |
+| Behind reverse proxy | Use the external-facing origin, not internal service names |
+
+**Security Best Practices:**
+
+1. **Never use wildcard origins** (`*`) - Breakglass explicitly rejects wildcard CORS.
+2. **Audit origins regularly** - Remove stale or decommissioned frontend URLs.
+3. **Use HTTPS only** in production - HTTP origins should only appear in development configs.
+4. **Match exactly** - `https://breakglass.example.com` and `https://breakglass.example.com:443` are treated as different origins.
+
+**Troubleshooting CORS Issues:**
+
+```bash
+# Check if origin is allowed (look for blocked_request_origin in logs)
+kubectl logs -l app=breakglass-controller | grep blocked_request_origin
+
+# Verify CORS headers in response
+curl -v -H "Origin: https://breakglass.example.com" https://api.breakglass.example.com/api/config
+```
+
+---
+
+#### `trustedProxies` (Optional)
+
+List of CIDR ranges or IP addresses of trusted reverse proxies for `X-Forwarded-For` header processing.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `[]string` |
+| **Default** | `[]` (trust no proxies - safe default) |
+| **Example** | `["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]` |
+
+```yaml
+server:
+  trustedProxies:
+    - 10.0.0.0/8      # Private networks
+    - 172.16.0.0/12   # Private networks
+    - 127.0.0.1       # Loopback
+```
+
+**Notes:**
+
+- When set, Gin uses `X-Forwarded-For` headers from these proxies to determine client IP.
+- When empty (default), the server uses the direct connection IP for rate limiting and logging.
+- **Security Warning:** Only trust proxies you control. Untrusted proxies can spoof client IPs.
+
+**Operational Guidance - Trusted Proxies:**
+
+| Deployment | Recommended Configuration |
+|------------|---------------------------|
+| Direct (no proxy) | Leave empty `[]` |
+| Kubernetes Ingress (NGINX) | Add pod network CIDR (e.g., `10.244.0.0/16`) |
+| Cloud Load Balancer | Add LB IP ranges (check cloud provider docs) |
+| Multiple proxy layers | Add all proxy layer CIDRs |
+
 ---
 
 ### `frontend`
@@ -458,6 +519,82 @@ spec:
         secret:
           secretName: breakglass-config
 ```
+
+## Timeouts and Rate Limiting
+
+### HTTP Server Timeouts
+
+The breakglass API server applies sensible defaults for HTTP timeouts. These are not configurable via config.yaml but can be tuned via environment variables or by modifying the deployment.
+
+| Timeout | Default | Purpose |
+|---------|---------|---------|
+| Read Timeout | 30s | Maximum time to read request body |
+| Write Timeout | 30s | Maximum time to write response |
+| Idle Timeout | 120s | Keep-alive connection timeout |
+| Shutdown Timeout | 30s | Grace period for in-flight requests during shutdown |
+
+**Operational Guidance - Timeouts:**
+
+```yaml
+# Kubernetes deployment with custom timeouts
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: controller
+        # Configure terminationGracePeriodSeconds to allow graceful shutdown
+        # Should be >= server shutdown timeout (30s) + buffer
+        terminationGracePeriodSeconds: 45
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          timeoutSeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          timeoutSeconds: 5
+          periodSeconds: 5
+```
+
+### Rate Limiting
+
+Breakglass implements multi-tier rate limiting to protect against DoS attacks while allowing legitimate traffic.
+
+| Tier | Limit | Burst | Scope | Applied To |
+|------|-------|-------|-------|------------|
+| Public (unauthenticated) | 20 req/s | 50 | Per IP | All requests before auth |
+| Public (authenticated) | 50 req/s | 100 | Per user | Authenticated requests to public endpoints |
+| SAR Webhook | 1000 req/s | 2000 | Per cluster | SubjectAccessReview from spoke clusters |
+
+**Rate Limit Headers:**
+
+```http
+X-RateLimit-Limit: 50
+X-RateLimit-Remaining: 49
+X-RateLimit-Reset: 1642502400
+Retry-After: 1  # Only on 429 responses
+```
+
+**Operational Guidance - Rate Limiting:**
+
+1. **Monitor rate limit metrics:**
+   ```promql
+   # Requests rate limited
+   sum(rate(breakglass_api_rate_limited_total[5m])) by (endpoint)
+   ```
+
+2. **Increase limits for high-traffic deployments:**
+   Rate limits are currently hardcoded. For custom limits, modify `pkg/ratelimit/config.go` and rebuild.
+
+3. **IP-based vs User-based limiting:**
+   - Unauthenticated requests are limited by source IP
+   - Authenticated requests are limited by user identifier (from JWT `sub` claim)
+   - Behind proxies, ensure `trustedProxies` is configured correctly for accurate IP detection
 
 ## Troubleshooting
 
