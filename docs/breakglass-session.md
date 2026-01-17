@@ -83,8 +83,8 @@ spec:
   
   # Optional: Session duration settings
   maxValidFor: "1h"           # Max time active after approval (default: 1h)
-  idleTimeout: "1h"           # Max idle time before revocation (default: 1h)  
   retainFor: "720h"           # Time to retain expired sessions (default: 720h)
+  # Note: idleTimeout is NOT YET IMPLEMENTED
   
   # Optional: ClusterConfig reference (if different from cluster name parsing)
   clusterConfigRef: "my-cluster-config"
@@ -154,14 +154,17 @@ maxValidFor: "30m"  # 30 minutes
 
 #### idleTimeout
 
-Maximum time a session can sit idle without being used:
+> **⚠️ NOT YET IMPLEMENTED**: This field is reserved for future use. The idle timeout detection feature is not currently functional.
+
+Maximum time a session can sit idle without being used (planned):
 
 ```yaml
-idleTimeout: "1h"   # 1 hour (default)
-idleTimeout: "30m"  # 30 minutes
+# NOT YET IMPLEMENTED - these settings are ignored
+idleTimeout: "1h"   # 1 hour (planned default)
+idleTimeout: "30m"  # 30 minutes (planned)
 ```
 
-> **Note:** Idle timeout detection is not yet implemented. See [issue #8](https://github.com/telekom/k8s-breakglass/issues/8).
+See [issue #8](https://github.com/telekom/k8s-breakglass/issues/8) for implementation status.
 
 #### retainFor
 

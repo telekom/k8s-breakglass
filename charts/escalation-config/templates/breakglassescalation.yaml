@@ -15,10 +15,7 @@ spec:
     groups:
 {{ toYaml $esc.allowed.groups | indent 6 }}
     {{- end }}
-    {{- if $esc.allowed.users }}
-    users:
-{{ toYaml $esc.allowed.users | indent 6 }}
-    {{- end }}
+    {{- /* Note: allowed.users field does not exist in BreakglassEscalation CRD */ -}}
   escalatedGroup: {{ $esc.escalatedGroup }}
   {{- if $esc.approvers }}
   approvers:
