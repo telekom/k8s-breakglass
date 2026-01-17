@@ -64,7 +64,8 @@ npm test           # Vitest
    - Use `http.MethodGet`, `http.MethodPost`, etc. instead of string literals like `"GET"`, `"POST"`
    - Remove unnecessary type conversions (e.g., `string(x) == string(y)` when types are compatible)
    - CI will reject PRs with lint failures
-   - For frontend changes: Run `cd frontend && npm run lint` and fix errors
+    - For frontend changes: Run `cd frontend && npm run lint` and fix errors
+    - For frontend changes: Run `cd frontend && npm run typecheck` (or `npm run build`) to catch missing imports/TS errors
 
 8. **Documentation (MANDATORY)**: Documentation MUST be updated with every code change:
    - API changes → Update `docs/api-reference.md` with endpoint signatures, request/response formats
@@ -92,7 +93,8 @@ npm test           # Vitest
    - Controllers/reconcilers → Test reconciliation logic, status updates, error handling
    - Webhooks → Test validation, mutation, rejection scenarios
    - Frontend → Add/update tests in `frontend/tests/` (Vitest), test components, composables, stores
-   - Run `make test` for Go, `cd frontend && npm test` for frontend before committing
+    - Run `make test` for Go, `cd frontend && npm test` for frontend before committing
+    - For frontend changes touching Vue/TS templates: also run `cd frontend && npm run typecheck`
    - Critical paths require table-driven tests with multiple scenarios
 
 11. **Helm Chart Updates (MANDATORY)**: When adding/modifying CRD fields or configuration:
