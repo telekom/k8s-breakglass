@@ -54,7 +54,10 @@ func Start(ctx context.Context, wg *sync.WaitGroup, leaderElectedCh *chan struct
 		Name:          "breakglass-controller",
 	})
 	if err != nil {
-		log.Fatalf("Failed to create LeaderElector: %v", err)
+		log.Errorw("Failed to create LeaderElector", "error", err)
+		// Don't call Fatalf in library code - let the caller decide how to handle
+		// In cmd/main.go, the failure is already handled by error checking
+		return
 	}
 
 	log.Infow("Starting leader election", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
