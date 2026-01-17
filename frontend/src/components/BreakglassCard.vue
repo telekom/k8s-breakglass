@@ -61,7 +61,6 @@ watch(
   },
 );
 
-
 const reasonCharLimit = 1024;
 const reasonCharCount = computed(() => requestReason.value.length);
 
@@ -552,8 +551,8 @@ function drop() {
         @scaleChange="handleDurationChange"
       ></scale-text-field>
       <p class="helper">
-        Max allowed: {{ humanizeDurationShort(breakglass.duration * 1000) }}. Minimum: 1 minute. Enter a
-        shorter duration if needed.
+        Max allowed: {{ humanizeDurationShort(breakglass.duration * 1000) }}. Minimum: 1 minute. Enter a shorter
+        duration if needed.
       </p>
       <p v-if="durationInput" class="helper">
         Your requested duration: {{ formatDurationSeconds(parseDurationInput(durationInput) || 0) }}

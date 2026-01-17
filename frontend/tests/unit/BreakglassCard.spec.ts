@@ -1,9 +1,4 @@
-import {
-  formatDurationSeconds,
-  parseDurationInput,
-  sanitizeReason,
-  validateDuration,
-} from "@/utils/breakglassSession";
+import { formatDurationSeconds, parseDurationInput, sanitizeReason, validateDuration } from "@/utils/breakglassSession";
 
 /**
  * Tests for BreakglassCard component duration parsing, reason sanitization,
