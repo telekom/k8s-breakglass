@@ -347,11 +347,21 @@ func extractZip(archivePath, destDir string) (string, error) {
 	}()
 	for _, file := range reader.File {
 		// Sanitize archive entry name to prevent Zip Slip attacks
+		// First reject entries whose original name contains path traversal patterns
+		if file.Name == "" ||
+			strings.Contains(file.Name, "..") ||
+			strings.Contains(file.Name, "/") ||
+			strings.Contains(file.Name, "\\") {
+			continue
+		}
+		// Extract base name and validate it doesn't contain traversal patterns
 		safeName := filepath.Base(file.Name)
 		if safeName == "" || safeName == "." || safeName == ".." ||
+			strings.Contains(safeName, "..") ||
 			strings.Contains(safeName, "/") || strings.Contains(safeName, "\\") {
 			continue
 		}
+		// Only extract the expected binary files
 		if safeName != "bgctl.exe" && safeName != "bgctl" {
 			continue
 		}
