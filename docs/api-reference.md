@@ -214,6 +214,11 @@ Authorization: Bearer <token>
 }
 ```
 
+**Request validation:**
+
+- `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
+- `reason` must be at most 1024 characters after trimming.
+
 **Status Code:** `201 Created`
 
 **Response:** Complete `BreakglassSession` resource (as Kubernetes object):
