@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation incorrectly referenced `idleTimeout` as functional; now marked as NOT IMPLEMENTED
 - Helm chart template no longer renders non-existent `allowed.users` field
 - Breakglass request modal state reset now avoids duplicate updates
+- Technical debt documentation now references the correct PR for webhook validation fix
 
 ### Security
 
