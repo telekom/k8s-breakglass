@@ -13,9 +13,7 @@ describe("AuthService mock mode guard", () => {
 
     const { default: AuthService } = await import("@/services/auth");
 
-    expect(() => new AuthService(baseConfig, { mock: true })).toThrow(
-      /Mock authentication cannot be enabled in production builds/,
-    );
+    expect(() => new AuthService(baseConfig, { mock: true })).toThrow(/Mock authentication cannot be enabled in production builds/);
 
     process.env.NODE_ENV = originalEnv;
   });
