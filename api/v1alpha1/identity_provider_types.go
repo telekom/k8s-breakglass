@@ -273,10 +273,7 @@ func (idp *IdentityProvider) GetCondition(condType string) *metav1.Condition {
 
 // SetupWebhookWithManager registers webhooks for IdentityProvider
 func (idp *IdentityProvider) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	webhookClient = mgr.GetClient()
-	if c := mgr.GetCache(); c != nil {
-		webhookCache = c
-	}
+	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(idp).
 		WithValidator(idp).

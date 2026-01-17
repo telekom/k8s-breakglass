@@ -292,10 +292,7 @@ func (bs *BreakglassSession) GetCondition(condType string) *metav1.Condition {
 
 // SetupWebhookWithManager registers the webhooks with the controller manager
 func (bs *BreakglassSession) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	webhookClient = mgr.GetClient()
-	if c := mgr.GetCache(); c != nil {
-		webhookCache = c
-	}
+	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(bs).
 		WithValidator(bs).

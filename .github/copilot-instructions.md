@@ -72,9 +72,21 @@ npm test           # Vitest
    - New features → Add to `docs/advanced-features.md` or create new doc, update `docs/README.md` index
    - Configuration changes → Update `docs/configuration-reference.md` and `docs/cli-flags-reference.md`
    - Helm chart changes → Update `charts/escalation-config/README.md` and inline `values.yaml` comments
-   - Breaking changes → Add migration notes to `CHANGELOG.md` (create if needed)
+   - **CHANGELOG updates** → Update `CHANGELOG.md` for every user-facing change (see below)
 
-9. **Unit Tests (MANDATORY)**: Every code change MUST include unit tests:
+9. **CHANGELOG Updates (MANDATORY)**: Every PR with user-facing changes MUST update `CHANGELOG.md`:
+   - Add entries under `## [Unreleased]` section in the appropriate category
+   - Categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
+   - Format: `- Brief description of change (PR #123)` - include PR number when available
+   - New features → `Added`
+   - Breaking changes → `Changed` with migration notes
+   - Bug fixes → `Fixed`
+   - Security patches → `Security`
+   - Dependency updates → Generally skip unless security-related or breaking
+   - When releasing: Move `Unreleased` content to new version section with date
+   - Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format
+
+10. **Unit Tests (MANDATORY)**: Every code change MUST include unit tests:
    - Go code → Add/update `*_test.go` files colocated with source (min 70% coverage for new code)
    - API endpoints → Test success cases, error cases, validation, authorization
    - Controllers/reconcilers → Test reconciliation logic, status updates, error handling
@@ -83,7 +95,7 @@ npm test           # Vitest
    - Run `make test` for Go, `cd frontend && npm test` for frontend before committing
    - Critical paths require table-driven tests with multiple scenarios
 
-10. **Helm Chart Updates (MANDATORY)**: When adding/modifying CRD fields or configuration:
+11. **Helm Chart Updates (MANDATORY)**: When adding/modifying CRD fields or configuration:
     - Update `charts/escalation-config/templates/*.yaml` to expose new fields
     - Add examples to `charts/escalation-config/values.yaml` with inline comments
     - Use conditional rendering (`{{- if .Values.field }}`) for optional fields

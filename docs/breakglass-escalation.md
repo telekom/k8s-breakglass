@@ -67,10 +67,11 @@ Defines who can request this escalation and for which clusters:
 allowed:
   clusters: ["prod-cluster", "staging-cluster"]  # ClusterConfig names (supports glob patterns)
   groups: ["developers", "sre"]                  # User groups who can request
-  users: ["emergency@example.com"]               # Individual users who can request
 ```
 
-**Note**: At least one of `groups` or `users` must be specified.
+**Note**: The `groups` field is required and specifies which groups can request this escalation.
+
+> **Note**: There is no `allowed.users` field in BreakglassEscalation. User-level control is achieved through group membership in your identity provider.
 
 **Glob patterns**: The `clusters` field supports glob patterns like `*` (all clusters), `prod-*` (clusters starting with "prod-"), etc. See [Glob Pattern Matching](#glob-pattern-matching) for details.
 

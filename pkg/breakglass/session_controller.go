@@ -343,9 +343,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		}
 	}
 
+	// Note: individual approvers not logged to reduce PII exposure
 	reqLog.Infow("Completed approver resolution from escalations",
 		"totalApproversCollected", len(allApprovers),
-		"approversList", allApprovers,
 		"approverGroupsCount", len(approversByGroup),
 		"requestedGroup", request.GroupName)
 

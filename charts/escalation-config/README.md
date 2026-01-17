@@ -133,7 +133,6 @@ escalations:
 | `name` | Unique escalation name | Required |
 | `allowed.clusters` | Clusters this escalation applies to | - |
 | `allowed.groups` | Groups allowed to request | Required |
-| `allowed.users` | Individual users allowed to request | - |
 | `escalatedGroup` | Target group for elevated privileges | Required |
 | `approvers.groups` | Groups that can approve requests | - |
 | `approvers.users` | Individual users that can approve | - |
