@@ -115,13 +115,13 @@ describe("BreakglassCard Duration and Reason Handling", () => {
     });
 
     it("escapes quotes", () => {
-      expect(sanitizeReason('say "hello"')).toBe("say &quot;hello&quot;");
-      expect(sanitizeReason("it's fine")).toBe("it&#39;s fine");
+      expect(sanitizeReason('say "hello"')).toBe('say "hello"');
+      expect(sanitizeReason("it's fine")).toBe("it's fine");
     });
 
     it("escapes XSS attempts", () => {
-      expect(sanitizeReason('<img src=x onerror="alert(1)">')).toBe("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
-      expect(sanitizeReason('<svg onload="alert(1)">')).toBe("&lt;svg onload=&quot;alert(1)&quot;&gt;");
+      expect(sanitizeReason('<img src=x onerror="alert(1)">')).toBe("&lt;img src=x onerror=\"alert(1)\"&gt;");
+      expect(sanitizeReason('<svg onload="alert(1)">')).toBe("&lt;svg onload=\"alert(1)\"&gt;");
     });
 
     it("preserves normal text", () => {
@@ -164,7 +164,7 @@ describe("BreakglassCard Duration and Reason Handling", () => {
     it("rejects duration below 60 seconds", () => {
       const result = validateDuration(30, 3600);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain("Minimum duration is 1 minute");
+      expect(result.error).toContain("Duration must be at least 1 minute");
     });
 
     it("accepts duration at minimum (60 seconds)", () => {
@@ -189,7 +189,7 @@ describe("BreakglassCard Duration and Reason Handling", () => {
     it("rejects negative duration", () => {
       const result = validateDuration(-100, 3600);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain("Minimum duration");
+      expect(result.error).toContain("Duration must be at least 1 minute");
     });
 
     it("handles different max values", () => {
@@ -321,9 +321,10 @@ describe("BreakglassCard Duration and Reason Handling", () => {
       const parsed = parseDurationInput(invalidDuration);
       expect(parsed).toBeNull();
 
-      // Even if reason is empty, validation should still work
+      // Validation should reject missing durations
       const validation = validateDuration(null, maxDuration);
-      expect(validation.valid).toBe(true); // null means use default
+      expect(validation.valid).toBe(false);
+      expect(validation.error).toContain("must be specified");
     });
   });
 

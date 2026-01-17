@@ -20,7 +20,7 @@ export function parseDurationInput(input: string): number | null {
   const trimmed = input.toLowerCase().trim();
   const directNum = parseFloat(trimmed);
   if (!isNaN(directNum) && trimmed.match(/^\d+(\.\d+)?$/)) {
-    return directNum;
+    return directNum > 0 ? directNum : null;
   }
 
   let totalSeconds = 0;
