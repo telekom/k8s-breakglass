@@ -29,6 +29,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
@@ -54,8 +55,18 @@ func NewKubectlDebugHandler(client ctrlclient.Client, ccProvider ClientProviderI
 // FindActiveSession finds an active debug session for the user/cluster
 func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*v1alpha1.DebugSession, error) {
 	var list v1alpha1.DebugSessionList
-	// TODO: Add field selector for performance in future - NOT IMPLEMENTED (requires indexer setup)
-	if err := h.client.List(ctx, &list); err != nil {
+	listOpts := make([]ctrlclient.ListOption, 0, 3)
+	if cluster != "" && indexer.IsIndexRegistered("DebugSession", "spec.cluster") {
+		listOpts = append(listOpts, ctrlclient.MatchingFields{"spec.cluster": cluster})
+	}
+	if indexer.IsIndexRegistered("DebugSession", "status.state") {
+		listOpts = append(listOpts, ctrlclient.MatchingFields{"status.state": string(v1alpha1.DebugSessionStateActive)})
+	}
+	if user != "" && indexer.IsIndexRegistered("DebugSession", "status.participants.user") {
+		listOpts = append(listOpts, ctrlclient.MatchingFields{"status.participants.user": user})
+	}
+
+	if err := h.client.List(ctx, &list, listOpts...); err != nil {
 		return nil, err
 	}
 

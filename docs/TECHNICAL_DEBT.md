@@ -27,28 +27,6 @@ TMux terminal sharing tests are disabled because test container images don't inc
 
 ---
 
-### 2. Field Selector Performance for Debug Sessions
-
-**Status:** 🔮 Future Enhancement  
-**Impact:** Low - Current implementation works, optimization for scale  
-**File:** `pkg/breakglass/debug_session_kubectl.go:57`
-
-**Description:**
-```go
-// TODO: Add field selector for performance in future - NOT IMPLEMENTED (requires indexer setup)
-```
-
-Currently lists all DebugSessions without filtering. For clusters with many debug sessions, this could be optimized with field selectors.
-
-**Action Items:**
-1. Set up controller-runtime field indexers for DebugSession lookups
-2. Add field selector support for common query patterns (user, cluster, status)
-3. Benchmark performance improvement
-
-**Tracking Issue:** [Create GitHub issue]
-
----
-
 ## Medium Priority
 
 ### 3. Migrate to NewClientset for Event Recorder Tests
@@ -93,6 +71,17 @@ None - test code usage is acceptable. Production code usage has been fixed.
 ---
 
 ## Recently Fixed
+
+### ✅ Field Selector Performance for Debug Sessions
+
+**Status:** ✅ Fixed (indexed lookups)  
+**Impact:** Low - Optimization for scale  
+**Files:**
+- `pkg/breakglass/debug_session_kubectl.go`
+- `pkg/indexer/indexer.go`
+
+**Fix:**
+Added controller-runtime field indexers for DebugSession cluster, state, and participant user fields, and updated DebugSession lookups to use `MatchingFields` when indexes are available.
 
 ### ✅ Context.TODO() in Webhook Validation (CRITICAL)
 
@@ -149,10 +138,10 @@ When adding TODO/FIXME comments in code:
 
 | Priority | Count | Status |
 |----------|-------|--------|
-| High     | 2     | 1 Blocked, 1 Future |
+| High     | 1     | 1 Blocked |
 | Medium   | 1     | Refactoring |
 | Low      | 1     | Acceptable |
-| **Total Active** | **4** | - |
-| Fixed    | 1     | ✅ Complete |
+| **Total Active** | **3** | - |
+| Fixed    | 2     | ✅ Complete |
 
 Last Updated: 2026-01-17

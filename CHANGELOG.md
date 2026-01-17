@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standardized error wrapping to use `fmt.Errorf("...: %w", err)` pattern
 - Centralized frontend duration parsing and reason sanitization utilities for consistent validation
 - Enforced server-side 1024-character limit for session request reasons
+- DebugSession lookups now use indexed field selectors for cluster, state, and participant filters
 
 ### Fixed
 
