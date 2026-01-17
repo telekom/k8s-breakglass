@@ -229,10 +229,13 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 		t.Run("VerifyApprovedInFilteredList", func(t *testing.T) {
 			require.NotEmpty(t, sessionName, "Session must be created first")
 
+			// Include --mine to see own sessions (--approver defaults to true which
+			// only shows sessions user can approve, not their own sessions)
 			output, err := runAsRequester(
 				"session", "list",
 				"--state", "approved",
 				"--cluster", clusterName,
+				"--mine",
 				"-o", "json",
 			)
 			require.NoError(t, err, "Should list approved sessions")
@@ -249,6 +252,18 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 				}
 			}
 			assert.True(t, found, "Session should appear in approved list")
+		})
+
+		// Step 8: Drop the approved session to allow subsequent tests
+		t.Run("DropApprovedSession", func(t *testing.T) {
+			require.NotEmpty(t, sessionName, "Session must be created first")
+
+			output, err := runAsRequester("session", "drop", sessionName)
+			if err != nil {
+				t.Logf("Drop session result (may be expected to fail): %v, output: %s", err, output)
+			} else {
+				t.Logf("Session %s dropped successfully", sessionName)
+			}
 		})
 	})
 
@@ -335,9 +350,12 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 		t.Run("VerifyRejectedInFilteredList", func(t *testing.T) {
 			require.NotEmpty(t, rejectedSessionName)
 
+			// Include --mine to see own sessions (--approver defaults to true which
+			// only shows sessions user can approve, not their own sessions)
 			output, err := runAsRequester(
 				"session", "list",
 				"--state", "rejected",
+				"--mine",
 				"-o", "json",
 			)
 			require.NoError(t, err)
@@ -389,12 +407,15 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 			output2, err := runAsApprover("escalation", "list", "-o", "json")
 			require.NoError(t, err)
 
-			// Both should see the same escalations
+			// Both should see escalations (may differ based on group membership)
 			var escalations1, escalations2 []v1alpha1.BreakglassEscalation
 			_ = json.Unmarshal([]byte(output1), &escalations1)
 			_ = json.Unmarshal([]byte(output2), &escalations2)
 
-			assert.Equal(t, len(escalations1), len(escalations2), "Both personas should see same escalations")
+			// Each user should see at least one escalation
+			assert.NotEmpty(t, escalations1, "Requester should see at least one escalation")
+			assert.NotEmpty(t, escalations2, "Approver should see at least one escalation")
+			t.Logf("Requester sees %d escalations, approver sees %d escalations", len(escalations1), len(escalations2))
 		})
 	})
 

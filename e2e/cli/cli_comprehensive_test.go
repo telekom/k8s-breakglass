@@ -101,6 +101,37 @@ func (c *cliTestContext) runCommandWithToken(args ...string) (string, error) {
 // Auth Command Tests
 // =============================================================================
 
+// TestCLIAuthWithTokenOverride tests authentication commands using the --token flag.
+// Note: Testing the actual `auth login` command requires browser/device-code flow
+// which cannot be automated. This test uses --token override to simulate authenticated state.
+func TestCLIAuthWithTokenOverride(t *testing.T) {
+	tc := newCLITestContext(t)
+
+	// Test auth status with token override shows authenticated
+	t.Run("StatusWithToken", func(t *testing.T) {
+		output, err := tc.runCommandWithToken("auth", "status")
+		require.NoError(t, err)
+		assert.Contains(t, strings.ToLower(output), "authenticated", "should show authenticated status with token")
+	})
+
+	// Test that commands work with token override
+	t.Run("EscalationListWithToken", func(t *testing.T) {
+		output, err := tc.runCommandWithToken("escalation", "list", "-o", "json")
+		require.NoError(t, err, "Should list escalations with token override")
+
+		var escalations []v1alpha1.BreakglassEscalation
+		err = json.Unmarshal([]byte(output), &escalations)
+		require.NoError(t, err, "Should parse escalation list")
+		t.Logf("Listed %d escalations with token override", len(escalations))
+	})
+
+	t.Run("SessionListWithToken", func(t *testing.T) {
+		output, err := tc.runCommandWithToken("session", "list", "-o", "json")
+		require.NoError(t, err, "Should list sessions with token override")
+		assert.True(t, json.Valid([]byte(output)), "Should return valid JSON")
+	})
+}
+
 func TestCLIAuthStatus(t *testing.T) {
 	tc := newCLITestContext(t)
 
@@ -485,6 +516,18 @@ func TestCLISessionFullLifecycle(t *testing.T) {
 		err = root.Execute()
 		if err != nil {
 			t.Logf("Approve error (may be expected): %v", err)
+		}
+
+		// Drop the session to avoid blocking subsequent tests that use the same group
+		buf.Reset()
+		root = bgctlcmd.NewRootCommand(bgctlcmd.Config{
+			ConfigPath:   tc.configPath,
+			OutputWriter: buf,
+		})
+		root.SetArgs([]string{"--token", tc.token, "session", "drop", session.Name})
+		err = root.Execute()
+		if err != nil {
+			t.Logf("Drop error (may be expected): %v", err)
 		}
 	})
 }
@@ -1241,11 +1284,13 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 	t.Run("Step7_VerifyApprovedSessionFilters", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session must be created first")
 
-		// List approved sessions for this cluster
+		// List approved sessions for this cluster (include --mine to see own sessions,
+		// since --approver defaults to true which only shows sessions user can approve)
 		output, err := runWithToken(requesterToken,
 			"session", "list",
 			"--state", "approved",
 			"--cluster", mcConfig.HubClusterName,
+			"--mine",
 			"-o", "json",
 		)
 		require.NoError(t, err, "Should list approved sessions")
@@ -1265,15 +1310,18 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 		require.True(t, found, "Session %s should appear in approved session list", sessionName)
 	})
 
-	// Step 8: Requester withdraws the session (cleanup - session is already approved so use withdraw)
+	// Step 8: Requester drops the session (cleanup to allow subsequent tests)
 	t.Run("Step8_WithdrawSession", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session must be created first")
 
-		// Note: For approved sessions, we would normally let them expire or use a cancel/drop.
-		// Since the API may not support drop for approved sessions, we verify the session
-		// was successfully approved which completes the positive flow.
-		t.Logf("Session %s is in Approved state - positive flow verified", sessionName)
-		t.Logf("Skipping drop/withdraw for approved session (cleanup will happen via expiry)")
+		// Drop the approved session to allow subsequent tests to create new sessions
+		output, err := runWithToken(requesterToken, "session", "drop", sessionName)
+		if err != nil {
+			// Drop might fail if session expired or other reasons - log but don't fail
+			t.Logf("Drop session result (may be expected to fail): %v, output: %s", err, output)
+		} else {
+			t.Logf("Session %s dropped successfully", sessionName)
+		}
 	})
 
 	// Step 9: Final verification - session lifecycle completed successfully

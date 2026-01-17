@@ -3,6 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -91,6 +94,12 @@ func newDebugSessionListCommand() *cobra.Command {
 					_, _ = fmt.Fprintln(rt.Writer(), info)
 				}
 				return nil
+			case output.FormatWide:
+				output.WriteDebugSessionTableWide(rt.Writer(), paged)
+				if info != "" && !allPages {
+					_, _ = fmt.Fprintln(rt.Writer(), info)
+				}
+				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", format)
 			}
@@ -123,13 +132,22 @@ func newDebugSessionWatchCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			apiClient, err := buildClient(context.Background(), rt)
+
+			// Set up signal handling for graceful exit
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			apiClient, err := buildClient(ctx, rt)
 			if err != nil {
 				return err
 			}
 			seen := map[string]string{}
-			for {
-				resp, err := apiClient.DebugSessions().List(context.Background(), client.DebugSessionListOptions{
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			// Run first iteration immediately
+			runWatch := func() error {
+				resp, err := apiClient.DebugSessions().List(ctx, client.DebugSessionListOptions{
 					Cluster: cluster,
 					State:   state,
 					User:    user,
@@ -150,7 +168,25 @@ func newDebugSessionWatchCommand() *cobra.Command {
 						}
 					}
 				}
-				time.Sleep(interval)
+				return nil
+			}
+
+			// First iteration
+			if err := runWatch(); err != nil {
+				return err
+			}
+
+			// Watch loop with graceful exit
+			for {
+				select {
+				case <-ctx.Done():
+					_, _ = fmt.Fprintln(rt.Writer(), "\nWatch stopped.")
+					return nil
+				case <-ticker.C:
+					if err := runWatch(); err != nil {
+						return err
+					}
+				}
 			}
 		},
 	}

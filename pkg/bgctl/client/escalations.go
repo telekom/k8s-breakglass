@@ -37,3 +37,22 @@ func (e *EscalationService) Get(ctx context.Context, name string) (*v1alpha1.Bre
 	}
 	return nil, fmt.Errorf("escalation not found: %s", name)
 }
+
+// ListClusters returns unique cluster names from all escalation policies.
+func (e *EscalationService) ListClusters(ctx context.Context) ([]string, error) {
+	escs, err := e.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	clusterSet := make(map[string]struct{})
+	for _, esc := range escs {
+		for _, cluster := range esc.Spec.Allowed.Clusters {
+			clusterSet[cluster] = struct{}{}
+		}
+	}
+	clusters := make([]string, 0, len(clusterSet))
+	for c := range clusterSet {
+		clusters = append(clusters, c)
+	}
+	return clusters, nil
+}
