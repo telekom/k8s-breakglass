@@ -106,3 +106,4 @@ Complete documentation for the breakglass privilege escalation system.
 - Real-time webhook-based authorization
 - Complete audit trail for compliance
 - Multi-cluster support
+- Request modals reset to a clean state when closed for consistent UX
