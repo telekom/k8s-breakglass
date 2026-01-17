@@ -81,7 +81,8 @@ const commonStubs = {
     props: ["expiresAt"],
   },
   SessionSummaryCard: {
-    template: '<div class="session-summary-card"><slot /><slot name="status" /><slot name="chips" /><slot name="meta" /><slot name="body" /><slot name="footer" /></div>',
+    template:
+      '<div class="session-summary-card"><slot /><slot name="status" /><slot name="chips" /><slot name="meta" /><slot name="body" /><slot name="footer" /></div>',
     props: ["eyebrow", "title", "subtitle", "statusTone"],
   },
   SessionMetaGrid: {
@@ -106,9 +107,7 @@ describe("MyPendingRequests", () => {
   beforeEach(() => {
     router = createRouter({
       history: createMemoryHistory(),
-      routes: [
-        { path: "/my-requests", name: "my-requests", component: MyPendingRequests },
-      ],
+      routes: [{ path: "/my-requests", name: "my-requests", component: MyPendingRequests }],
     });
   });
 
