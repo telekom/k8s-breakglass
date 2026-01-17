@@ -461,9 +461,22 @@ func main() {
 		log.Errorf("reconciler manager failed, shutting down: %s", err.Error())
 	}
 
-	// Shutdown mail service with timeout
+	// Create shutdown context with timeout for graceful shutdown of all components
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
+
+	// Gracefully shutdown HTTP server first to stop accepting new requests
+	// and allow in-flight API/webhook calls to complete
+	if shouldEnableHTTPServer {
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Warnw("HTTP server graceful shutdown error", "error", err)
+		}
+	}
+
+	// Close rate limiters and other server resources
+	server.Close()
+
+	// Shutdown mail service
 	if mailService != nil {
 		if err := mailService.Stop(shutdownCtx); err != nil {
 			log.Warnw("Mail service shutdown error", "error", err)
