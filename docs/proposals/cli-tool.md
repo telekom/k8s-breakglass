@@ -55,11 +55,30 @@ mv bgctl ~/.local/bin/
 # Ensure ~/.local/bin is in your PATH
 ```
 
-### Verification
+### Verification & Initial Setup
+
+Verify the installation and set up your first configuration:
 
 ```bash
+# 1. Check version
 bgctl version
 # bgctl v1.0.0 (commit: abc123, built: 2026-01-15T10:00:00Z)
+
+# 2. Verify help system works
+bgctl --help
+bgctl session --help
+
+# 3. Initialize configuration interactively
+bgctl config init
+# This will walk you through setting up your first context
+
+# 4. Test connection (requires config setup)
+bgctl auth login
+bgctl cluster list
+
+# 5. Install shell completion (optional)
+bgctl completion bash > /etc/bash_completion.d/bgctl  # or ~/.bash_completion
+source ~/.bashrc
 ```
 
 ### Built-in Updater
@@ -92,9 +111,29 @@ bgctl update --dry-run
 The updater:
 - Downloads binaries from `github.com/telekom/k8s-breakglass/releases`
 - Verifies SHA256 checksums before replacing the binary
+- Does not use GPG signatures in v1 (SHA256 only)
 - Preserves file permissions
-- Supports rollback if the new version fails basic health checks
+- Renames current binary to `bgctl.old` before replacing
+- Supports manual rollback to previous version
 - Can be disabled in enterprise environments via `BGCTL_DISABLE_UPDATE=true`
+
+### Rollback Command
+
+```bash
+# Rollback to previous version (bgctl.old)
+bgctl update rollback
+# Rolling back from v1.2.0 to v1.1.0...
+# ✓ Rollback complete
+
+# Rollback to specific version (downloads from GitHub)
+bgctl update rollback --version v1.0.5
+# Downloading bgctl v1.0.5...
+# ✓ Rollback to v1.0.5 complete
+
+# Show rollback candidate
+bgctl update rollback --dry-run
+# Would rollback to: v1.1.0 (bgctl.old)
+```
 
 ---
 
@@ -130,6 +169,11 @@ oidc-providers:
   - name: corporate-keycloak
     authority: https://keycloak.corp.example.com/realms/platform
     client-id: bgctl
+    # Optional: Client credentials flow for non-interactive usage
+    # Prefer environment variables or files for secrets
+    client-secret-env: BGCTL_OIDC_CORP_SECRET
+    # client-secret-file: /etc/bgctl/corp-client-secret
+    grant-type: authorization-code  # authorization-code | device-code | client-credentials
     # Optional: Custom CA for self-signed certificates
     ca-file: /etc/ssl/certs/corp-ca.pem
     # Optional: Additional scopes beyond openid
@@ -144,12 +188,14 @@ oidc-providers:
   - name: dev-keycloak
     authority: https://keycloak.dev.example.com/realms/dev
     client-id: bgctl-dev
+    grant-type: device-code
     device-code-flow: true  # Dev often accessed via SSH
 
   # External IDP (e.g., contractor access)
   - name: contractor-idp
     authority: https://contractor-idp.example.com/realms/external
     client-id: bgctl-contractors
+    grant-type: authorization-code
 
 # ============================================================================
 # Contexts - Define Breakglass instances (like kubectl contexts)
@@ -210,7 +256,27 @@ bgctl config init
 bgctl config add-oidc-provider corporate-keycloak \
   --authority https://keycloak.corp.example.com/realms/platform \
   --client-id bgctl \
-  --ca-file /etc/ssl/certs/corp-ca.pem
+  --ca-file /etc/ssl/certs/corp-ca.pem \
+  --grant-type authorization-code
+
+# Non-interactive client-credentials provider with env var (validates existence)
+bgctl config add-oidc-provider ci-keycloak \
+  --authority https://keycloak.corp.example.com/realms/platform \
+  --client-id bgctl-ci \
+  --client-secret-env BGCTL_OIDC_CI_SECRET \
+  --grant-type client-credentials
+# Warning: BGCTL_OIDC_CI_SECRET not set in environment
+# Provider will fail to authenticate until variable is set
+
+# Inline client secret (NOT RECOMMENDED for production)
+bgctl config add-oidc-provider test-keycloak \
+  --authority https://keycloak.test.local/realms/test \
+  --client-id bgctl-test \
+  --client-secret "my-secret-value" \
+  --grant-type client-credentials
+# ⚠ WARNING: Storing secrets inline is insecure!
+# ⚠ Prefer --client-secret-env or --client-secret-file for production use
+# ⚠ Config file permissions: 0600
 
 # Add a new context referencing an existing OIDC provider
 bgctl config add-context production \
@@ -238,7 +304,8 @@ bgctl config get-oidc-providers
 # dev-keycloak         https://keycloak.dev.example.com/realms/dev         bgctl-dev
 
 # Switch default context (persistent)
-bgctl config use-context staging
+bgctl config set-context staging
+# Alias: bgctl config use-context staging
 
 # View current context
 bgctl config current-context
@@ -378,6 +445,24 @@ bgctl auth login --device-code
 # ✓ Authenticated as user@example.com
 ```
 
+### Client Credentials Flow (Non-Interactive)
+
+For automation or service accounts, use client credentials. The provider must define
+`grant-type: client-credentials` and a client secret source.
+
+```bash
+# Login using client credentials (no browser)
+bgctl auth login --oidc-provider corporate-keycloak --client-credentials
+
+# Use current context provider (if configured for client-credentials)
+bgctl auth login --client-credentials
+```
+
+Notes:
+- Client secrets must be provided via `client-secret-env` or `client-secret-file`.
+- Tokens are cached per OIDC provider.
+- `--token` bypasses OIDC entirely for one-off commands.
+
 ### Token Management
 
 ```bash
@@ -387,11 +472,16 @@ bgctl auth token-info
 # Export token for use with curl (advanced)
 bgctl auth token --raw
 
-# Refresh token if close to expiry
+# Refresh token if close to expiry (refreshes current context's provider)
 bgctl auth refresh
+# ✓ Refreshed token for provider: corporate-keycloak
+# ✓ Token valid for contexts: production, staging
 
 # Refresh tokens for all OIDC providers
 bgctl auth refresh --all
+# ✓ Refreshed corporate-keycloak (contexts: production, staging)
+# ✓ Refreshed dev-keycloak (contexts: development)
+# ✗ Failed to refresh contractor-idp (not authenticated)
 ```
 
 ---
@@ -444,12 +534,11 @@ bgctl
 │   │   ├── list                  # List debug sessions
 │   │   ├── get                   # Get debug session details
 │   │   ├── create                # Create debug session
-│   │   ├── join                  # Join debug session
-│   │   ├── leave                 # Leave debug session
 │   │   ├── renew                 # Extend debug session
 │   │   ├── terminate             # Terminate debug session
 │   │   ├── approve               # Approve debug session
 │   │   └── reject                # Reject debug session
+│   │   # Note: join/leave deferred until terminal sharing (tmux) is implemented
 │   │
 │   ├── template
 │   │   ├── list                  # List debug session templates
@@ -486,10 +575,16 @@ These flags are available on all commands (similar to kubectl):
 |------|-------|--------------|-------------|
 | `--context` | `-c` | `BGCTL_CONTEXT` | Override the current-context for this command |
 | `--config` | | `BGCTL_CONFIG` | Path to config file (default: `~/.config/bgctl/config.yaml`) |
+| `--server` | | `BGCTL_SERVER` | Override server URL (bypasses context server) |
+| `--token` | | `BGCTL_TOKEN` | Use bearer token (bypasses OIDC and context auth) |
 | `--output` | `-o` | `BGCTL_OUTPUT` | Output format: `table`, `json`, `yaml` (default: `table`) |
 | `--no-color` | | `NO_COLOR` | Disable colored output |
 | `--verbose` | `-v` | `BGCTL_VERBOSE` | Enable verbose output (can be repeated: `-vv`, `-vvv`) |
 | `--quiet` | `-q` | | Suppress non-essential output |
+| `--page` | | | Page number for paginated output (default: 1) |
+| `--page-size` | | `BGCTL_PAGE_SIZE` | Items per page (overrides config, default: 50) |
+| `--all` | | | Disable pagination, show all results |
+| `--non-interactive` | | `BGCTL_NON_INTERACTIVE` | Fail instead of prompting (for CI/CD) |
 | `--help` | `-h` | | Show help for command |
 
 ### Examples
@@ -550,8 +645,15 @@ bgctl session list -o json
 # Output as YAML
 bgctl session list -o yaml
 
-# Wide output with more columns
+# Wide output with more columns (approver, scheduled start, idle timeout)
 bgctl session list -o wide
+
+# Pagination (default page size from config: 50)
+bgctl session list --page 2
+# Output: Showing page 2 of 5 (237 total items)
+
+# Show all results (disable pagination)
+bgctl session list --all
 ```
 
 **Example Output (table):**
@@ -609,6 +711,12 @@ bgctl session request \
   --group cluster-admin \
   --reason "Debugging performance issue" \
   --duration 2h
+
+# Request access to multiple clusters atomically (all-or-nothing approval)
+bgctl session request \
+  --cluster prod-1,prod-2,staging-* \
+  --group cluster-admin \
+  --reason "Multi-cluster deployment for incident INC-12345"
 
 # Schedule for future time
 bgctl session request \
@@ -673,15 +781,23 @@ bgctl session cancel session-abc123 --reason "Session no longer needed"
 #### Watch Session
 
 ```bash
-# Watch for state changes
+# Watch for state changes (polling-based, 2s interval by default)
 bgctl session watch session-abc123
 
 # Watch all pending sessions
 bgctl session watch --state pending
 
+# Show full object instead of diffs
+bgctl session watch session-abc123 --show-full
+
+# Custom polling interval
+bgctl session watch session-abc123 --interval 5s
+
 # Output events as JSON (for scripting)
 bgctl session watch --state pending -o json
 ```
+
+**Note**: Watch uses polling with configurable interval (default 2s). WebSocket support planned for future release.
 
 ---
 
@@ -781,17 +897,11 @@ bgctl debug session create \
   --reason "Debugging node-specific issue"
 ```
 
-#### Join Debug Session
-
-```bash
-# Join as viewer (default)
-bgctl debug session join my-debug-session
-
-# Join as participant
-bgctl debug session join my-debug-session --role participant
-```
-
 #### Renew Debug Session
+
+**Note**: `join` and `leave` commands are not implemented in v1. These will be added when terminal sharing via tmux is fully implemented.
+
+
 
 ```bash
 # Extend session by 1 hour
@@ -823,13 +933,16 @@ kubectl-debug    Kubectl Debug Mode     kubectl   -              Yes
 
 ### Debug Kubectl Commands
 
+**Prerequisite**: Debug session must be in "Active" state. The API enforces this requirement and will return an error if the session is Pending, Expired, or Terminated.
+
 ```bash
-# Inject ephemeral container
+# Inject ephemeral container (requires active session)
 bgctl debug kubectl inject my-debug-session \
   --namespace default \
   --pod my-app-pod-xyz \
   --image busybox:latest \
   --container-name debug
+# Error: Session my-debug-session is not active (current state: Pending)
 
 # Create pod copy
 bgctl debug kubectl copy-pod my-debug-session \
@@ -882,6 +995,32 @@ bgctl completion fish > ~/.config/fish/completions/bgctl.fish
 bgctl completion powershell > bgctl.ps1
 ```
 
+#### Context-Aware Completion
+
+Shell completion supports context-aware suggestions using local caching:
+
+```bash
+# Complete context names from config
+bgctl --context <TAB>
+# production  staging  development
+
+# Complete pending session names (from cache)
+bgctl session approve <TAB>
+# session-abc123  session-def456
+# (cached 2m ago)
+
+# Complete cluster names (from cache)
+bgctl session request --cluster <TAB>
+# prod-cluster-1  prod-cluster-2  staging-01
+# (cached 5m ago, run 'bgctl completion refresh-cache' to update)
+```
+
+**Caching behavior**:
+- Completions are cached locally in `~/.config/bgctl/completion-cache/`
+- Cache refreshed automatically on miss or when stale (>5 minutes)
+- Manual refresh: `bgctl completion refresh-cache`
+- Warning shown if cache is stale during completion
+
 ---
 
 ## Global Flags
@@ -901,21 +1040,36 @@ All commands support these global flags:
 -h, --help            Show help for command
 ```
 
+Notes:
+- `--server` overrides the context server and does not require a configured context.
+- `--token` bypasses OIDC and uses the provided bearer token for this command only.
+
 ---
 
 ## Exit Codes
+
+Follows Unix standard exit codes where applicable:
 
 | Code | Meaning |
 |------|---------|
 | 0    | Success |
 | 1    | General error |
-| 2    | Invalid arguments/usage |
+| 2    | Invalid arguments/usage (misuse of shell command) |
 | 3    | Authentication required/failed |
-| 4    | Authorization denied |
+| 4    | Authorization denied (permission error) |
 | 5    | Resource not found |
 | 6    | Conflict (e.g., session already exists) |
-| 7    | Server error |
+| 7    | Server error (remote service failure) |
 | 8    | Timeout |
+| 9    | Configuration error (invalid config file) |
+| 64   | Command line usage error (EX_USAGE, invalid flags) |
+| 130  | Interrupted by Ctrl+C (128 + SIGINT) |
+
+**Note on precedence**: Flag > Environment Variable > Config File
+```bash
+# Example: Flag takes precedence
+BGCTL_CONTEXT=prod bgctl --context staging session list  # Uses 'staging'
+```
 
 ---
 
@@ -1312,16 +1466,43 @@ cfg.SetDefault("oidc.client-id", "myorg-cli")             // Different client
 
 ### Token Storage
 
-Tokens are stored securely:
+Tokens are stored securely using OS-native keyrings when available:
 
 - **macOS**: Keychain via `github.com/zalando/go-keyring`
 - **Linux**: Secret Service API (GNOME Keyring, KWallet) or encrypted file fallback
 - **Windows**: Windows Credential Manager
 
+Tokens are cached per OIDC provider (shared across contexts that reference the same provider).
+
+#### Encrypted File Fallback (Linux without keyring)
+
+If no keyring is available, tokens are stored in an encrypted file:
+
 ```
-~/.config/bgctl/tokens/         # Encrypted token cache (fallback)
-~/.config/bgctl/tokens.enc      # AES-256 encrypted, key from OS keyring
+~/.config/bgctl/tokens.enc      # AES-256 encrypted tokens
 ```
+
+**Key derivation**: On first use, `bgctl` prompts for a password:
+```bash
+bgctl auth login
+# No keyring detected. Token storage requires encryption.
+# Enter password for token encryption: ********
+# Confirm password: ********
+# ✓ Password stored securely
+```
+
+**Password storage**: The password itself is stored in `~/.config/bgctl/.keyring` (0600 permissions) hashed with bcrypt.
+
+**Migration to keyring**: If a keyring becomes available later (e.g., after installing GNOME Keyring):
+```bash
+bgctl auth migrate-to-keyring
+# Detected available keyring: GNOME Keyring
+# Enter current encryption password: ********
+# ✓ Migrating 3 tokens to keyring...
+# ✓ Migration complete. Encrypted file backup: ~/.config/bgctl/tokens.enc.backup
+```
+
+**File permissions**: All config and token files use 0600 permissions (user read/write only).
 
 ---
 
@@ -1834,18 +2015,20 @@ jobs:
 
 ### Golden File Testing
 
-For output format verification, we use golden files:
+For output format verification, we use golden files with regex matching and templating
+to handle non-deterministic values:
 
 ```go
 // e2e/cli/golden_test.go
 func TestGoldenFiles(t *testing.T) {
     tests := []struct {
-        name string
-        args []string
+        name     string
+        args     []string
+        useRegex bool  // Use regex matching for timestamps/IDs
     }{
-        {"escalation-list-table", []string{"escalation", "list", "-o", "table"}},
-        {"session-list-empty", []string{"session", "list", "--mine", "-o", "table"}},
-        {"config-view", []string{"config", "view"}},
+        {"escalation-list-table", []string{"escalation", "list", "-o", "table"}, false},
+        {"session-list-with-timestamps", []string{"session", "list", "--mine", "-o", "table"}, true},
+        {"config-view", []string{"config", "view"}, false},
     }
     
     for _, tt := range tests {
@@ -1854,16 +2037,56 @@ func TestGoldenFiles(t *testing.T) {
             
             goldenPath := filepath.Join("testdata", tt.name+".golden")
             if *update {
-                os.WriteFile(goldenPath, []byte(output), 0644)
+                // Sanitize output before saving (replace timestamps/IDs with placeholders)
+                sanitized := sanitizeOutput(output)
+                os.WriteFile(goldenPath, []byte(sanitized), 0644)
                 return
             }
             
             expected, err := os.ReadFile(goldenPath)
             require.NoError(t, err)
-            assert.Equal(t, string(expected), output)
+            
+            if tt.useRegex {
+                // Use regex matching for dynamic content
+                assertRegexMatch(t, string(expected), output)
+            } else {
+                assert.Equal(t, string(expected), output)
+            }
         })
     }
 }
+
+// sanitizeOutput replaces dynamic values with placeholders
+func sanitizeOutput(s string) string {
+    // Replace timestamps: 2026-01-15 10:30:00 → {{TIMESTAMP}}
+    s = regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`).ReplaceAllString(s, "{{TIMESTAMP}}")
+    // Replace session IDs: session-abc123 → session-{{ID}}
+    s = regexp.MustCompile(`session-[a-z0-9]+`).ReplaceAllString(s, "session-{{ID}}")
+    // Replace token expiry: expires in 1h30m → expires in {{DURATION}}
+    s = regexp.MustCompile(`expires in \d+[hms]+`).ReplaceAllString(s, "expires in {{DURATION}}")
+    return s
+}
+
+// assertRegexMatch treats {{PLACEHOLDER}} as .+ regex patterns
+func assertRegexMatch(t *testing.T, pattern, actual string) {
+    t.Helper()
+    // Convert {{PLACEHOLDER}} to regex: {{TIMESTAMP}} → \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}
+    regexPattern := pattern
+    regexPattern = strings.ReplaceAll(regexPattern, "{{TIMESTAMP}}", `\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`)
+    regexPattern = strings.ReplaceAll(regexPattern, "{{ID}}", `[a-z0-9]+`)
+    regexPattern = strings.ReplaceAll(regexPattern, "{{DURATION}}", `\d+[hms]+`)
+    
+    matched, err := regexp.MatchString(regexPattern, actual)
+    require.NoError(t, err)
+    assert.True(t, matched, "Output does not match expected pattern")
+}
+```
+
+**Golden file example** (`testdata/session-list-with-timestamps.golden`):
+```
+NAME              CLUSTER         USER              STATE     CREATED               EXPIRES
+session-{{ID}}    prod-cluster-1  user@example.com  Pending   {{TIMESTAMP}}         -
+session-{{ID}}    staging-01      user@example.com  Approved  {{TIMESTAMP}}         {{TIMESTAMP}}
 ```
 
 ### Makefile Targets
@@ -1907,32 +2130,133 @@ test-cli-golden-update:
 - Table and JSON output
 - Basic E2E tests in CI
 
+**v0.x Stability Warning**: Pre-1.0 releases may include breaking changes following semantic versioning.
+Each release will include prominent warnings about API stability:
+```bash
+bgctl version
+# bgctl v0.2.0 (commit: abc123, built: 2026-02-15T10:00:00Z)
+# ⚠ WARNING: Pre-1.0 version - API may change between releases
+# ⚠ See CHANGELOG.md for breaking changes before upgrading
+```
+
 ### v0.2.0
 - Debug session support
 - Device code authentication
-- Shell completion
-- Watch command
-- Self-update functionality
+- Shell completion with caching
+- Watch command (polling-based)
+- Self-update functionality with rollback
+- Token migration to keyring
 - Expanded E2E test coverage
 
-### v1.0.0
+### v1.0.0 (Stable Release)
 - Full feature parity with UI
 - Kubectl debug operations
 - Comprehensive documentation
-- Stable API
+- **Stable API with backward compatibility guarantees**
 - Full E2E test suite with golden files
+- Multi-session atomic requests
+- Context-aware shell completion
 
 ---
 
-## Open Questions
+## Decisions
 
-1. **Name**: `bgctl`, `breakglass`, `bg`? (Proposed: `bgctl`)
-2. **Config Format**: YAML vs TOML vs JSON? (Proposed: YAML for consistency with K8s)
-3. **Keyring Fallback**: What encryption for systems without keyring? (Proposed: AES-256 with password prompt)
-4. **Multi-Session Workflows**: Should we support requesting multiple sessions atomically?
-5. **Go Module Path**: Should the library be a separate module (`github.com/telekom/bgctl`) or stay within the main repo (`github.com/telekom/k8s-breakglass/pkg/bgctl`)? (Proposed: stay in main repo for versioning alignment)
-6. **Updater Checksum Verification**: Should we also support GPG signatures in addition to SHA256 checksums?
-7. **Token Storage Location**: Should OIDC tokens be stored per-provider or per-context in the token cache?
+### Core Design
+1. **Name**: `bgctl`
+2. **Config Format**: YAML
+3. **Go Module Path**: `pkg/bgctl` within this repo
+4. **Updater Verification**: SHA256 only (no GPG for v1)
+5. **Token Cache Scope**: per OIDC provider
+6. **Auth Flows**: browser OIDC + device code + client-credentials
+7. **Global Overrides**: `--server` and `--token` may bypass config defaults
+
+### Authentication & Security
+8. **Keyring Fallback**: AES-256 with password prompt, supports migration to keyring when available
+9. **Token Refresh**: Refreshing a shared OIDC provider refreshes tokens for all contexts using it
+10. **Secrets Validation**: Config commands validate that referenced env vars exist
+11. **Inline Secrets**: Supported with security warnings (not recommended for production)
+12. **Vault Integration**: Not planned for v1
+
+### Multi-Session Workflows
+13. **Atomic Multi-Session Requests**: Supported - request access to multiple clusters in one command
+    ```bash
+    # Request access to multiple clusters atomically
+    bgctl session request --cluster prod-1,prod-2,staging-* --group admin --reason "Multi-cluster deployment"
+    
+    # All sessions must be approved (all-or-nothing for approval workflow)
+    # Partial approvals not supported - approvers approve the entire multi-session request
+    ```
+
+### Output & Pagination
+14. **Wide Output**: All `list` commands support `-o wide` for additional columns
+15. **Pagination**: Use `--page N` for paging, `--all` to disable pagination
+    - Default page size from config (`page-size: 50`)
+    - Output shows: `Showing page 1 of 5 (250 total items)`
+16. **List Streaming**: Not planned for v1
+
+### Watch Command
+17. **Watch Implementation**: Polling-based (interval configurable, default 2s)
+    - WebSocket support deferred to future version
+    - Can watch single session or all matching a filter
+    - Output shows diffs (what changed) by default, `--show-full` for full object
+
+### Exit Codes (Unix Standard)
+18. **Standard Exit Codes**:
+    - 0: Success
+    - 1: General error
+    - 2: Invalid arguments/usage (misuse of shell command)
+    - 3: Authentication required/failed
+    - 4: Authorization denied (permission error)
+    - 5: Resource not found
+    - 6: Conflict (e.g., session already exists)
+    - 7: Server error (remote service failure)
+    - 8: Timeout
+    - 9: Configuration error (invalid config file)
+    - 64: Command line usage error (EX_USAGE)
+    - 130: Interrupted by Ctrl+C (128 + SIGINT)
+
+### Context Management
+19. **Context Switching Commands**:
+    - `bgctl config set-context <name>` - persistent default change (alias: `use-context`)
+    - `bgctl --context <name>` - temporary override for single command
+
+### CI/CD & Automation
+20. **Non-Interactive Mode**: `--non-interactive` flag fails instead of prompting (also via `BGCTL_NON_INTERACTIVE=true`)
+21. **Service Account Approvals**: Not implemented in v1 - service accounts follow normal approval workflows
+
+### Shell Completion
+22. **Context-Aware Completion**: Supported with local caching
+    - `bgctl session approve <TAB>` lists pending sessions (from cache if available)
+    - Cache refresh on miss or explicit `bgctl completion refresh-cache`
+    - Warning shown if cache is stale: `(cached 5m ago, run 'bgctl completion refresh-cache')`
+
+### Flag/Env/Config Precedence
+23. **Configuration Precedence**: Flag > Environment Variable > Config File
+    ```bash
+    # Flag wins over env
+    BGCTL_CONTEXT=prod bgctl --context staging session list  # Uses 'staging'
+    ```
+
+### Update & Rollback
+24. **Update Rollback**: Manual rollback supported
+    ```bash
+    bgctl update rollback         # Rollback to previous version
+    bgctl update rollback --version v1.0.5  # Rollback to specific version
+    ```
+    - Previous binary renamed to `bgctl.old` during update
+    - All versions available in GitHub Releases for manual download
+
+### Debug Sessions
+25. **Debug Session Join**: Command removed from v1 - will be added when terminal sharing (tmux) is implemented
+26. **Kubectl Debug State**: Session must be in "Active" state, API enforces this requirement
+
+### Testing
+27. **Golden Files**: Use regex matching for timestamps/IDs, templating for structured data
+28. **E2E Coverage**: Full workflow tests with deterministic fixtures
+
+### Versioning
+29. **v0.x Breaking Changes**: Allowed (follows semver) - prominent warnings in release notes and `--version` output
+30. **API Compatibility**: Version negotiation not planned for v1 - assume current API version
 
 ---
 

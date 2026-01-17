@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CLI Tool (`bgctl`)**: Command-line interface for Breakglass API with session management, debug sessions, escalation queries, and kubectl-debug operations
+  - OIDC authentication flows (browser-based, device code, client credentials)
+  - Multi-context configuration with reusable OIDC providers
+  - Session lifecycle management (list, request, approve, reject, withdraw, drop, cancel)
+  - Debug session support (create, join, leave, renew, terminate, approve, reject)
+  - Kubectl-debug operations (inject ephemeral containers, copy pods, node debugging)
+  - Multiple output formats (table, JSON, YAML, wide) with pagination
+  - Shell completion (bash, zsh, fish, powershell)
+  - Self-update mechanism with SHA256 verification and rollback support
+  - Token caching with automatic refresh
+  - Watch mode for real-time session monitoring (polling-based)
+  - **Version command works without configuration** - `bgctl version` now functions without config file
+  - **Dev builds show commit ID and dirty flag** - Build process injects git metadata into version info
+  - **Comprehensive multi-cluster E2E tests** - Full test coverage for multi-cluster scenarios
 - Graceful HTTP server shutdown with configurable timeouts
 - Index registration assertions for escalation queries with metrics for fallback scans
 - End-to-end example documentation for complete production setup

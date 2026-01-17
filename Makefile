@@ -90,6 +90,27 @@ e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deplo
 	# e2e/kind-setup-single-hub-kubeconfig.yaml (repo-local) and exposes services for local use.
 	bash e2e/kind-setup-single.sh
 
+.PHONY: build-bgctl
+build-bgctl: ## Build the bgctl CLI binary
+	@GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"); \
+	GIT_DIRTY=$$(git diff --quiet 2>/dev/null || echo "-dirty"); \
+	BUILD_DATE=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
+	VERSION=$${VERSION:-dev}; \
+	echo "Building bgctl $$VERSION (commit: $$GIT_COMMIT$$GIT_DIRTY, built: $$BUILD_DATE)"; \
+	CGO_ENABLED=0 go build \
+		-ldflags "-X github.com/telekom/k8s-breakglass/pkg/version.Version=$$VERSION \
+		-X github.com/telekom/k8s-breakglass/pkg/version.GitCommit=$$GIT_COMMIT$$GIT_DIRTY \
+		-X github.com/telekom/k8s-breakglass/pkg/version.BuildDate=$$BUILD_DATE" \
+		-o bin/bgctl ./cmd/bgctl
+
+.PHONY: test-cli
+test-cli: ## Run bgctl unit tests
+	go test -v ./pkg/bgctl/...
+
+.PHONY: test-cli-e2e
+test-cli-e2e: ## Run bgctl CLI e2e tests (mocked)
+	go test -v ./e2e/cli/...
+
 # Version and build metadata
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
