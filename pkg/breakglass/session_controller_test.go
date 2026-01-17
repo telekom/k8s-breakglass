@@ -2017,11 +2017,11 @@ func TestLongReasonStored(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
-	if res.StatusCode != http.StatusCreated {
-		t.Fatalf("expected 201 for long reason, got %d", res.StatusCode)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for long reason, got %d", res.StatusCode)
 	}
 
-	// fetch and assert stored
+	// fetch and assert no session was created
 	req, _ = http.NewRequest(http.MethodGet, "/breakglassSessions", nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
@@ -2033,11 +2033,8 @@ func TestLongReasonStored(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session, got %d", len(sessions))
-	}
-	if sessions[0].Spec.RequestReason != long {
-		t.Fatalf("long reason not stored correctly")
+	if len(sessions) != 0 {
+		t.Fatalf("expected 0 sessions, got %d", len(sessions))
 	}
 }
 

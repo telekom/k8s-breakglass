@@ -86,10 +86,11 @@ func TestBreakglassSessionRequest_SanitizeReason(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "reason exceeding max length (1025 chars) - accepted",
+			name:    "reason exceeding max length (1025 chars) - rejected",
 			input:   strings.Repeat("a", 1025),
-			want:    strings.Repeat("a", 1025),
-			wantErr: false,
+			want:    "",
+			wantErr: true,
+			errMsg:  "at most",
 		},
 		{
 			name:    "HTML entity attempt (stripped as dangerous)",
@@ -245,11 +246,11 @@ func TestBreakglassSessionRequest_CombinedValidation(t *testing.T) {
 			wantDurationErr: false,
 		},
 		{
-			name:            "long reason (accepted), valid duration",
+			name:            "long reason (rejected), valid duration",
 			reason:          strings.Repeat("a", 2000),
 			duration:        1800,
 			maxAllowed:      3600,
-			wantReasonErr:   false,
+			wantReasonErr:   true,
 			wantDurationErr: false,
 		},
 		{
@@ -273,7 +274,7 @@ func TestBreakglassSessionRequest_CombinedValidation(t *testing.T) {
 			reason:          strings.Repeat("a", 2000),
 			duration:        -100,
 			maxAllowed:      3600,
-			wantReasonErr:   false,
+			wantReasonErr:   true,
 			wantDurationErr: true,
 		},
 	}
