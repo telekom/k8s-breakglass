@@ -68,20 +68,20 @@ func WriteDebugSessionTable(w io.Writer, sessions []client.DebugSessionSummary) 
 	_ = tw.Flush()
 }
 
-func WriteDebugTemplateTable(w io.Writer, templates []v1alpha1.DebugSessionTemplate) {
+func WriteDebugTemplateTable(w io.Writer, templates []client.DebugSessionTemplateSummary) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tMODE\tTARGET_NAMESPACE\tAGE")
+	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tMODE\tTARGET_NAMESPACE\tREQUIRES_APPROVAL")
 	for _, t := range templates {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", t.Name, t.Spec.DisplayName, t.Spec.Mode, t.Spec.TargetNamespace, formatTime(t.CreationTimestamp.Time))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%v\n", t.Name, t.DisplayName, t.Mode, t.TargetNamespace, t.RequiresApproval)
 	}
 	_ = tw.Flush()
 }
 
-func WriteDebugPodTemplateTable(w io.Writer, templates []v1alpha1.DebugPodTemplate) {
+func WriteDebugPodTemplateTable(w io.Writer, templates []client.DebugPodTemplateSummary) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tAGE")
+	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tDESCRIPTION\tCONTAINERS")
 	for _, t := range templates {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", t.Name, t.Spec.DisplayName, formatTime(t.CreationTimestamp.Time))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", t.Name, t.DisplayName, t.Description, t.Containers)
 	}
 	_ = tw.Flush()
 }

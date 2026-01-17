@@ -314,7 +314,13 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 		if header.Typeflag != tar.TypeReg {
 			continue
 		}
-		if filepath.Base(header.Name) == "bgctl" {
+		// Sanitize archive entry name to prevent path traversal attacks
+		safeName := filepath.Base(header.Name)
+		if safeName == "" || safeName == "." || safeName == ".." ||
+			strings.Contains(safeName, "/") || strings.Contains(safeName, "\\") {
+			continue
+		}
+		if safeName == "bgctl" {
 			outPath := filepath.Join(destDir, "bgctl")
 			outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
 			if err != nil {
@@ -340,7 +346,13 @@ func extractZip(archivePath, destDir string) (string, error) {
 		_ = reader.Close()
 	}()
 	for _, file := range reader.File {
-		if filepath.Base(file.Name) != "bgctl.exe" && filepath.Base(file.Name) != "bgctl" {
+		// Sanitize archive entry name to prevent Zip Slip attacks
+		safeName := filepath.Base(file.Name)
+		if safeName == "" || safeName == "." || safeName == ".." ||
+			strings.Contains(safeName, "/") || strings.Contains(safeName, "\\") {
+			continue
+		}
+		if safeName != "bgctl.exe" && safeName != "bgctl" {
 			continue
 		}
 		rc, err := file.Open()
@@ -350,7 +362,7 @@ func extractZip(archivePath, destDir string) (string, error) {
 		defer func() {
 			_ = rc.Close()
 		}()
-		outPath := filepath.Join(destDir, filepath.Base(file.Name))
+		outPath := filepath.Join(destDir, safeName)
 		outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
 		if err != nil {
 			return "", err

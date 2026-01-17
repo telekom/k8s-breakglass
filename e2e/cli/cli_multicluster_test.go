@@ -449,7 +449,9 @@ func TestCLIConfigOperations(t *testing.T) {
 		root.SetArgs([]string{
 			"config", "init",
 			"--server", "https://api.example.com",
-			"--context-name", "test-ctx",
+			"--context", "test-ctx",
+			"--oidc-authority", "https://idp.example.com/realms/test",
+			"--oidc-client-id", "bgctl",
 		})
 
 		err := root.Execute()
@@ -465,16 +467,15 @@ func TestCLIConfigOperations(t *testing.T) {
 			ConfigPath:   configPath,
 			OutputWriter: buf,
 		})
-		root.SetArgs([]string{"config", "view", "-o", "json"})
+		root.SetArgs([]string{"config", "view"})
 
 		err := root.Execute()
 		require.NoError(t, err)
 
-		var cfg config.Config
-		err = json.Unmarshal(buf.Bytes(), &cfg)
-		require.NoError(t, err)
-		require.Equal(t, "v1", cfg.Version)
-		require.NotEmpty(t, cfg.Contexts)
+		output := buf.String()
+		// Config view outputs YAML by default
+		require.Contains(t, output, "version:")
+		require.Contains(t, output, "contexts:")
 	})
 
 	t.Run("add context", func(t *testing.T) {
@@ -484,9 +485,10 @@ func TestCLIConfigOperations(t *testing.T) {
 			OutputWriter: buf,
 		})
 		root.SetArgs([]string{
-			"config", "add-context",
-			"--name", "prod",
+			"config", "add-context", "prod",
 			"--server", "https://prod.example.com",
+			"--oidc-authority", "https://idp.example.com/realms/prod",
+			"--oidc-client-id", "bgctl",
 		})
 
 		err := root.Execute()

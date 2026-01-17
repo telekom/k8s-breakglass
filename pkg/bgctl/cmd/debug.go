@@ -431,16 +431,16 @@ func newDebugTemplateListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			templates, err := apiClient.DebugTemplates().List(context.Background())
+			resp, err := apiClient.DebugTemplates().List(context.Background())
 			if err != nil {
 				return err
 			}
 			format := output.Format(rt.OutputFormat())
 			switch format {
 			case output.FormatJSON, output.FormatYAML:
-				return output.WriteObject(rt.Writer(), format, templates)
+				return output.WriteObject(rt.Writer(), format, resp.Templates)
 			case output.FormatTable:
-				output.WriteDebugTemplateTable(rt.Writer(), templates)
+				output.WriteDebugTemplateTable(rt.Writer(), resp.Templates)
 				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", format)
@@ -496,16 +496,16 @@ func newDebugPodTemplateListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			templates, err := apiClient.DebugPodTemplates().List(context.Background())
+			resp, err := apiClient.DebugPodTemplates().List(context.Background())
 			if err != nil {
 				return err
 			}
 			format := output.Format(rt.OutputFormat())
 			switch format {
 			case output.FormatJSON, output.FormatYAML:
-				return output.WriteObject(rt.Writer(), format, templates)
+				return output.WriteObject(rt.Writer(), format, resp.Templates)
 			case output.FormatTable:
-				output.WriteDebugPodTemplateTable(rt.Writer(), templates)
+				output.WriteDebugPodTemplateTable(rt.Writer(), resp.Templates)
 				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", format)
