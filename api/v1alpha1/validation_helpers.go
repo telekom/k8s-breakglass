@@ -109,11 +109,13 @@ func ensureClusterWideUniqueIssuer(
 		return nil
 	}
 
-	// Use provided context, or TODO context if nil (explicit workaround marker)
-	// This indicates validation is being called outside proper request context
+	// Use provided context with timeout boundary for webhook operations
+	// Webhooks must respond within 10 seconds per Kubernetes admission webhook requirements
 	if ctx == nil {
-		zap.S().Warnw("ensureClusterWideUniqueIssuer called with nil context, using context.TODO() - this may indicate missing request context propagation")
-		ctx = context.TODO()
+		zap.S().Errorw("CRITICAL: ensureClusterWideUniqueIssuer called without context - creating timeout-bounded fallback")
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 	}
 
 	// List all IdentityProviders and check for issuer conflicts

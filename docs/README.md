@@ -60,6 +60,10 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Pod Security Evaluation](./deny-policy.md#podsecurityrules)** - Risk-based exec/attach/portforward controls
 - **[BreakglassEscalation - Security Overrides](./breakglass-escalation.md#podsecurityoverrides)** - Per-escalation pod security exemptions
 
+## Development & Maintenance
+
+- **[Technical Debt](./TECHNICAL_DEBT.md)** - Known TODOs, future enhancements, and maintenance tracking
+
 ## Architecture
 
 ```text
@@ -107,3 +111,4 @@ Complete documentation for the breakglass privilege escalation system.
 - Real-time webhook-based authorization
 - Complete audit trail for compliance
 - Multi-cluster support
+- Request modals reset to a clean state when closed for consistent UX

@@ -21,12 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Approver logging now uses counts instead of identities to reduce PII exposure
 - Standardized error wrapping to use `fmt.Errorf("...: %w", err)` pattern
 - Centralized frontend duration parsing and reason sanitization utilities for consistent validation
+- Enforced server-side 1024-character limit for session request reasons
 
 ### Fixed
 
 - Documentation incorrectly referenced `allowed.users` field which doesn't exist in BreakglassEscalation CRD
 - Documentation incorrectly referenced `idleTimeout` as functional; now marked as NOT IMPLEMENTED
 - Helm chart template no longer renders non-existent `allowed.users` field
+- Breakglass request modal state reset now avoids duplicate updates
 
 ### Security
 

@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pkg/errors"
 )
@@ -31,13 +32,17 @@ type BreakglassSessionRequest struct {
 	ScheduledStartTime string `json:"scheduledStartTime,omitempty"`
 }
 
+const MaxReasonLength = 1024
+
 // SanitizeReason sanitizes the reason field to prevent injection attacks.
 // Trims whitespace and removes dangerous HTML/JS/TS patterns while preserving safe content.
-// Does not enforce a hard length limit - frontend handles length validation.
 func (r *BreakglassSessionRequest) SanitizeReason() error {
 	sanitized, err := SanitizeReasonText(r.Reason)
 	if err != nil {
 		return err
+	}
+	if utf8.RuneCountInString(sanitized) > MaxReasonLength {
+		return errors.Errorf("reason must be at most %d characters", MaxReasonLength)
 	}
 	r.Reason = sanitized
 	return nil

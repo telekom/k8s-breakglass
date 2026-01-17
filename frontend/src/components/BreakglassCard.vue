@@ -43,7 +43,6 @@ function closeRequestModal() {
   scheduleDateTimeLocal.value = "";
   showAllRequesterGroups.value = false;
   showAllApprovalGroups.value = false;
-  showAllApprovalGroups.value = false;
 }
 
 watch(
