@@ -22,15 +22,15 @@ import (
 // setupTestJWKSServer creates a test JWKS server and returns the server, key, and kid
 func setupTestJWKSServer(t *testing.T) (*httptest.Server, *rsa.PrivateKey, string) {
 	t.Helper()
-	
+
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	
+
 	kid := "test-kid-" + t.Name()
 	nB64 := base64.RawURLEncoding.EncodeToString(priv.N.Bytes())
 	eBytes := big.NewInt(int64(priv.E)).Bytes()
 	eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
-	
+
 	jwksObj := map[string]interface{}{
 		"keys": []interface{}{
 			map[string]interface{}{
@@ -45,18 +45,18 @@ func setupTestJWKSServer(t *testing.T) (*httptest.Server, *rsa.PrivateKey, strin
 	}
 	jwksBytes, err := json.Marshal(jwksObj)
 	require.NoError(t, err)
-	
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(jwksBytes)
 	}))
-	
+
 	return srv, priv, kid
 }
 
 func TestAuthMiddleware_ExtendedNegativeJWTCases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	srv, priv, kid := setupTestJWKSServer(t)
 	defer srv.Close()
 
@@ -273,7 +273,7 @@ func TestAuthMiddleware_ExtendedNegativeJWTCases(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			require.Equal(t, tt.expectedStatus, w.Code, tt.description)
 		})
 	}
@@ -281,7 +281,7 @@ func TestAuthMiddleware_ExtendedNegativeJWTCases(t *testing.T) {
 
 func TestAuthMiddleware_TokenClaimsEdgeCases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	srv, priv, kid := setupTestJWKSServer(t)
 	defer srv.Close()
 
@@ -413,13 +413,13 @@ func TestAuthMiddleware_TokenClaimsEdgeCases(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+tokStr)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			require.Equal(t, http.StatusOK, w.Code)
-			
+
 			var resp map[string]interface{}
 			err = json.Unmarshal(w.Body.Bytes(), &resp)
 			require.NoError(t, err)
-			
+
 			tt.validate(t, resp)
 		})
 	}
@@ -427,7 +427,7 @@ func TestAuthMiddleware_TokenClaimsEdgeCases(t *testing.T) {
 
 func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	srv, priv, kid := setupTestJWKSServer(t)
 	defer srv.Close()
 
@@ -510,7 +510,7 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+tokStr)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			require.Equal(t, tt.expectedStatus, w.Code)
 		})
 	}

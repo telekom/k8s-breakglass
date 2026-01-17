@@ -215,7 +215,7 @@ func TestServer_GracefulShutdownPattern(t *testing.T) {
 	// Simulate running requests
 	handler := server.Handler()
 	var wg sync.WaitGroup
-	
+
 	// Start some concurrent requests
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
