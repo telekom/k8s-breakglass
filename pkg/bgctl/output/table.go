@@ -53,6 +53,20 @@ func WriteEscalationTable(w io.Writer, escs []v1alpha1.BreakglassEscalation) {
 
 func WriteDebugSessionTable(w io.Writer, sessions []client.DebugSessionSummary) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTER\tREQUESTED_BY\tSTATE\tEXPIRES")
+	for _, s := range sessions {
+		expires := "-"
+		if s.ExpiresAt != nil {
+			expires = formatTime(s.ExpiresAt.Time)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.RequestedBy, string(s.State), expires)
+	}
+	_ = tw.Flush()
+}
+
+// WriteDebugSessionTableWide outputs debug sessions in wide table format with all available fields.
+func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSummary) {
+	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tTEMPLATE\tCLUSTER\tREQUESTED_BY\tSTATE\tSTARTS\tEXPIRES\tPARTICIPANTS\tALLOWED_PODS")
 	for _, s := range sessions {
 		starts := "-"
