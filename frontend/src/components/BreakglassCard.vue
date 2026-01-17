@@ -4,6 +4,7 @@ import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
 import {
   formatDurationSeconds,
+  humanizeDurationShort,
   parseDurationInput,
   sanitizeReason,
   validateDuration,
@@ -344,17 +345,17 @@ const stateChipVariant = computed<TagVariant>(() => {
 const expiryHumanized = computed(() => {
   if (sessionActive.value && sessionActive.value.expiry) {
     const duration = sessionActive.value.expiry * 1000 - props.time;
-    return humanizeDuration(duration > 0 ? duration : 0, humanizeConfig);
+    return humanizeDurationShort(duration);
   }
   return "";
 });
 
-const durationHumanized = computed(() => humanizeDuration(props.breakglass.duration * 1000, humanizeConfig));
+const durationHumanized = computed(() => humanizeDurationShort(props.breakglass.duration * 1000));
 
 const timeoutHumanized = computed(() => {
   if (sessionPending.value && sessionPending.value.status?.timeoutAt) {
     const t = new Date(sessionPending.value.status.timeoutAt).getTime() - props.time;
-    return humanizeDuration(t > 0 ? t : 0, humanizeConfig);
+    return humanizeDurationShort(t);
   }
   return "";
 });
@@ -547,11 +548,11 @@ function drop() {
         label="Duration"
         type="text"
         :value="durationInput"
-        :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDuration(breakglass.duration * 1000, humanizeConfig)}`"
+        :placeholder="`e.g., '1h', '30m', '2h 30m', or '3600' (seconds) - defaults to ${humanizeDurationShort(breakglass.duration * 1000)}`"
         @scaleChange="handleDurationChange"
       ></scale-text-field>
       <p class="helper">
-        Max allowed: {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }}. Minimum: 1 minute. Enter a
+        Max allowed: {{ humanizeDurationShort(breakglass.duration * 1000) }}. Minimum: 1 minute. Enter a
         shorter duration if needed.
       </p>
       <p v-if="durationInput" class="helper">
@@ -568,7 +569,7 @@ function drop() {
       <div v-if="showDurationHints" class="hint-box">
         <p>
           Examples: 30m, 1h, 2h, 4h (all less than max
-          {{ humanizeDuration(breakglass.duration * 1000, humanizeConfig) }})
+          {{ humanizeDurationShort(breakglass.duration * 1000) }})
         </p>
       </div>
     </div>

@@ -2,6 +2,11 @@ import humanizeDuration from "humanize-duration";
 
 const humanizeConfig = { round: true, largest: 2 };
 
+export function humanizeDurationShort(milliseconds: number): string {
+  const safeMs = milliseconds > 0 ? milliseconds : 0;
+  return humanizeDuration(safeMs, humanizeConfig);
+}
+
 export function sanitizeReason(text: string): string {
   if (!text) return "";
   const div = document.createElement("div");
