@@ -108,7 +108,7 @@ test-cli: ## Run bgctl unit tests
 	go test -v ./pkg/bgctl/...
 
 .PHONY: test-cli-e2e
-test-cli-e2e: ## Run bgctl CLI e2e tests (mocked)
+test-cli-e2e: ## Run bgctl CLI tests (basic tests only - full E2E requires E2E_TEST=true with kind cluster)
 	go test -v ./e2e/cli/...
 
 # Version and build metadata
