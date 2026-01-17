@@ -8,6 +8,7 @@ set -euo pipefail
 
 # --- Script directory and common library ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export E2E_DIR="$SCRIPT_DIR"
 E2E_LOG_PREFIX="[multi-e2e]"
 
 # Source common library (provides shared functions)
@@ -483,12 +484,14 @@ create_clusters() {
 # This ensures debug session tests and other pods don't have image pull delays
 preload_images_all_clusters() {
   log "Preloading images to all clusters..."
+  ensure_tmux_debug_image
   
   local clusters=("$HUB_CLUSTER" "$SPOKE_A_CLUSTER" "$SPOKE_B_CLUSTER")
   local images=(
     "$IMAGE"
     "nicolaka/netshoot"
     "busybox:latest"
+    "$TMUX_DEBUG_IMAGE"
   )
   
   for cluster in "${clusters[@]}"; do

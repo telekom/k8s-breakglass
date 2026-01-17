@@ -43,6 +43,11 @@ func GetTestNamespace() string {
 	return getEnvOrDefault("E2E_NAMESPACE", "default")
 }
 
+// GetTmuxDebugImage returns the image used for tmux-enabled terminal sharing tests.
+func GetTmuxDebugImage() string {
+	return getEnvOrDefault("TMUX_DEBUG_IMAGE", "breakglass-tmux-debug:latest")
+}
+
 // GetAPIBaseURL returns the base URL for the breakglass API
 // Defaults to localhost:8080 which works with port-forwarding to the breakglass service
 func GetAPIBaseURL() string {

@@ -155,7 +155,7 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:  "debug",
-							Image: "busybox:latest",
+							Image: helpers.GetTmuxDebugImage(),
 						},
 					},
 				},
@@ -244,9 +244,8 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 				Description:    "Session template with terminal sharing enabled",
 				PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
 				TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
-					Enabled: true,
-					// TODO: Re-enable tmux after fixing - requires image with tmux installed
-					// Provider:        "tmux",
+					Enabled:         true,
+					Provider:        "tmux",
 					MaxParticipants: 5,
 				},
 			},

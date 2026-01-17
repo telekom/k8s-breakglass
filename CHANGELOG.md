@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Additional unit tests for `pkg/reconciler` and `pkg/leaderelection`
 - ARM64 builds re-enabled for release workflow
 - CI log and artifact retrieval guidance in docs/ci-logs.md
+- Tmux-enabled debug image for terminal sharing E2E coverage
 
 ### Changed
 
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation incorrectly referenced `idleTimeout` as functional; now marked as NOT IMPLEMENTED
 - Helm chart template no longer renders non-existent `allowed.users` field
 - Breakglass request modal state reset now avoids duplicate updates
+- Re-enabled tmux terminal sharing E2E assertions and templates
 - Escaped cluster names in webhook deny reason URLs
 - Technical debt documentation now references the correct PR for webhook validation fix
 

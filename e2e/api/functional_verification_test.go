@@ -533,7 +533,7 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
-							Image:   "busybox:latest",
+							Image:   helpers.GetTmuxDebugImage(),
 							Command: []string{"/bin/sh", "-c", "sleep 3600"},
 						},
 					},
@@ -554,11 +554,11 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 			DisplayName:     "Collaborative Session",
 			PodTemplateRef:  &telekomv1alpha1.DebugPodTemplateReference{Name: podTemplate.Name},
 			TargetNamespace: "breakglass-debug",
-			// TODO: Re-enable tmux terminal sharing after fixing image to include tmux
-			// TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
-			// 	Enabled:         true,
-			// 	MaxParticipants: 5,
-			// },
+			TerminalSharing: &telekomv1alpha1.TerminalSharingConfig{
+				Enabled:         true,
+				Provider:        "tmux",
+				MaxParticipants: 5,
+			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
 				Clusters: []string{clusterName, "*"},
 				Groups:   helpers.TestUsers.Requester.Groups,

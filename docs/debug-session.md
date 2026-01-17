@@ -379,6 +379,12 @@ When enabled, participants can attach to shared terminals:
 - When terminal sharing is enabled, the controller wraps the container command with `tmux new-session` or `screen` 
 - The attach command is populated in `status.terminalSharing.attachCommand`
 - Participants can exec into the debug pod and run the attach command to join the session
+- The debug image must include the selected terminal sharing binary (`tmux` or `screen`)
+
+**Tmux image for E2E:**
+- The repository provides a tmux-enabled image at [e2e/images/tmux-debug/Dockerfile](../e2e/images/tmux-debug/Dockerfile)
+- E2E setup scripts build it as `breakglass-tmux-debug:latest` and load it into kind
+- Override the image name via `TMUX_DEBUG_IMAGE` if needed
 
 ## Approval Workflow
 
@@ -861,7 +867,7 @@ The following Vue components are available for debug session management:
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Terminal sharing (tmux) | CRD fields exist | Implementation deferred - Phase 5 |
+| Terminal sharing (tmux) | ✅ Implemented | Requires tmux-enabled debug image |
 | Audit sidecar | CRD fields exist | Implementation deferred - Phase 5 |
 | DenyPolicy integration | Planned | Block debug sessions based on policies |
 | Tetragon/Falco integration | Documented only | Optional security monitoring |

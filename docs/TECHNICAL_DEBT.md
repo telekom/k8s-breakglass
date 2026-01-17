@@ -4,24 +4,7 @@ This document tracks known technical debt, TODOs, and future improvements identi
 
 ## High Priority
 
-### 1. TMux Terminal Sharing Support (E2E Tests Disabled)
-
-**Status:** ⏸️ Blocked - Requires container image updates  
-**Impact:** Medium - Feature works but E2E tests are disabled  
-**Files:**
-- `e2e/kubectl_debug_test.go:162`
-- `e2e/kubectl_debug_test.go:217`
-- `e2e/debug_session_e2e_test.go:1321`
-- `e2e/api/functional_verification_test.go:557`
-- `e2e/api/debug_session_advanced_test.go:248`
-
-**Description:**
-TMux terminal sharing tests are disabled because test container images don't include tmux binary.
-
-**Action Items:**
-1. Create or update debug container image with tmux installed
-2. Re-enable the 5 disabled test cases
-3. Document tmux requirement in debug session docs
+*No high priority technical debt items currently.*
 
 **Tracking Issue:** [Create GitHub issue]
 
@@ -29,7 +12,7 @@ TMux terminal sharing tests are disabled because test container images don't inc
 
 ## Medium Priority
 
-### 3. Migrate to NewClientset for Event Recorder Tests
+### 2. Migrate to NewClientset for Event Recorder Tests
 
 **Status:** 🔄 Refactoring  
 **Impact:** Low - Technical debt from deprecated API  
@@ -55,7 +38,7 @@ Using deprecated `NewSimpleClientset()` - should migrate when non-deprecated alt
 
 ## Low Priority / Documentation
 
-### 4. Context.TODO() in Test Code
+### 3. Context.TODO() in Test Code
 
 **Status:** ✅ Acceptable - Test code only  
 **Impact:** None - Test-specific usage  
@@ -82,6 +65,22 @@ None - test code usage is acceptable. Production code usage has been fixed.
 
 **Fix:**
 Added controller-runtime field indexers for DebugSession cluster, state, and participant user fields, and updated DebugSession lookups to use `MatchingFields` when indexes are available.
+
+### ✅ TMux Terminal Sharing Support (E2E Tests)
+
+**Status:** ✅ Fixed (tmux image + tests enabled)  
+**Impact:** Medium - Terminal sharing tests now run with tmux-enabled image  
+**Files:**
+- `e2e/images/tmux-debug/Dockerfile`
+- `e2e/kind-setup-single.sh`
+- `e2e/kind-setup-multi.sh`
+- `e2e/kubectl_debug_test.go`
+- `e2e/debug_session_e2e_test.go`
+- `e2e/api/functional_verification_test.go`
+- `e2e/api/debug_session_advanced_test.go`
+
+**Fix:**
+Added a tmux-enabled debug image and updated E2E templates/tests to set the tmux provider and assert terminal sharing behavior.
 
 ### ✅ Context.TODO() in Webhook Validation (CRITICAL)
 
@@ -138,10 +137,10 @@ When adding TODO/FIXME comments in code:
 
 | Priority | Count | Status |
 |----------|-------|--------|
-| High     | 1     | 1 Blocked |
+| High     | 0     | - |
 | Medium   | 1     | Refactoring |
 | Low      | 1     | Acceptable |
-| **Total Active** | **3** | - |
-| Fixed    | 2     | ✅ Complete |
+| **Total Active** | **2** | - |
+| Fixed    | 3     | ✅ Complete |
 
 Last Updated: 2026-01-17
