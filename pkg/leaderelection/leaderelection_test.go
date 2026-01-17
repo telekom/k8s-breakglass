@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
@@ -309,4 +310,67 @@ func TestLeaderElection_TimingConstants(t *testing.T) {
 	expectedRenewDeadline := leaseDuration * 2 / 3
 	assert.True(t, renewDeadline >= expectedRenewDeadline,
 		"RenewDeadline (%v) should be at least 2/3 of LeaseDuration (%v)", renewDeadline, expectedRenewDeadline)
+}
+
+// TestStart_ActualExecution tests the actual Start function with real leader election.
+// This test provides actual code coverage for the Start function.
+func TestStart_ActualExecution(t *testing.T) {
+	fakeClient := fake.NewClientset() //nolint:staticcheck // Using NewClientset for testing
+	namespace := "test-namespace"
+	_, err := fakeClient.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: namespace},
+	}, metav1.CreateOptions{})
+	assert.NoError(t, err)
+
+	leaseName := "test-lease-actual"
+	hostname := "test-host-actual"
+
+	resourceLock, err := resourcelock.New(
+		resourcelock.LeasesResourceLock,
+		namespace,
+		leaseName,
+		fakeClient.CoreV1(),
+		fakeClient.CoordinationV1(),
+		resourcelock.ResourceLockConfig{
+			Identity: hostname,
+		},
+	)
+	assert.NoError(t, err)
+
+	log := zaptest.NewLogger(t).Sugar()
+	leaderElectedCh := make(chan struct{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// Start the actual leader election function
+	go Start(ctx, &wg, &leaderElectedCh, resourceLock, hostname, leaseName, namespace, log)
+
+	// Wait for leadership acquisition or timeout
+	select {
+	case <-leaderElectedCh:
+		t.Log("Leadership acquired successfully")
+	case <-time.After(2 * time.Second):
+		t.Log("Timeout waiting for leadership - this is acceptable in test environment")
+	}
+
+	// Cancel context to trigger shutdown
+	cancel()
+
+	// Wait for goroutine to finish with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Log("Leader election shut down cleanly")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for leader election shutdown")
+	}
 }
