@@ -3,7 +3,10 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -53,12 +56,21 @@ func newSessionWatchCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			apiClient, err := buildClient(context.Background(), rt)
+
+			// Set up signal handling for graceful exit
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			apiClient, err := buildClient(ctx, rt)
 			if err != nil {
 				return err
 			}
 			seen := map[string]string{}
-			for {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			// Run first iteration immediately
+			runWatch := func() error {
 				opts := client.SessionListOptions{
 					Cluster:    cluster,
 					User:       user,
@@ -70,7 +82,7 @@ func newSessionWatchCommand() *cobra.Command {
 				if state != "" {
 					opts.State = strings.Split(state, ",")
 				}
-				sessions, err := apiClient.Sessions().List(context.Background(), opts)
+				sessions, err := apiClient.Sessions().List(ctx, opts)
 				if err != nil {
 					return err
 				}
@@ -86,7 +98,25 @@ func newSessionWatchCommand() *cobra.Command {
 						}
 					}
 				}
-				time.Sleep(interval)
+				return nil
+			}
+
+			// First iteration
+			if err := runWatch(); err != nil {
+				return err
+			}
+
+			// Watch loop with graceful exit
+			for {
+				select {
+				case <-ctx.Done():
+					_, _ = fmt.Fprintln(rt.Writer(), "\nWatch stopped.")
+					return nil
+				case <-ticker.C:
+					if err := runWatch(); err != nil {
+						return err
+					}
+				}
 			}
 		},
 	}

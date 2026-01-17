@@ -139,11 +139,7 @@ docker-build-telekom: ## Build Telekom branded UI image
 		--build-arg UI_FLAVOUR=telekom \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
-		--build-arg \
-		--build-arg VERSION=$(VERSION) \
-		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		BUILD_DATE=$(BUILD_DATE) \
 		-t ${IMG:-breakglass:telekom} .
 
 .PHONY: docker-build-dev
@@ -184,7 +180,7 @@ undeploy_dev: kustomize ## Undeploy controller from the K8s cluster specified in
 	$(KUSTOMIZE) build config/dev | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: build_frontend
-build_frontent:
+build_frontend:
 	cd frontend && npm i && npm run build
 
 .PHONY: samples
