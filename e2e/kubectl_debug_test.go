@@ -158,9 +158,8 @@ func TestTerminalSharingMode(t *testing.T) {
 				Name: "netshoot-base",
 			},
 			TerminalSharing: &v1alpha1.TerminalSharingConfig{
-				Enabled: true,
-				// TODO: Re-enable tmux after fixing - requires image with tmux installed
-				// Provider:        "tmux",
+				Enabled:         true,
+				Provider:        "tmux",
 				MaxParticipants: 5,
 			},
 		},
@@ -179,7 +178,7 @@ func TestTerminalSharingMode(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
-							Image:   "nicolaka/netshoot:latest",
+							Image:   helpers.GetTmuxDebugImage(),
 							Command: []string{"sleep", "infinity"},
 						},
 					},
@@ -214,8 +213,7 @@ func TestTerminalSharingMode(t *testing.T) {
 	err = cli.Get(ctx, client.ObjectKey{Name: session.Name, Namespace: session.Namespace}, &activeSession)
 	require.NoError(t, err)
 	require.NotNil(t, activeSession.Status.TerminalSharing, "Terminal sharing status should be set")
-	// TODO: Re-enable after tmux is properly supported - requires image with tmux installed
-	// require.Equal(t, "tmux", activeSession.Status.TerminalSharing.Provider)
+	require.Equal(t, "tmux", activeSession.Status.TerminalSharing.Provider)
 	require.NotEmpty(t, activeSession.Status.TerminalSharing.AttachCommand)
 
 	t.Logf("Terminal sharing configured with attach command: %s", activeSession.Status.TerminalSharing.AttachCommand)

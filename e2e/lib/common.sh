@@ -46,6 +46,8 @@ KUBECTL=${KUBECTL:-kubectl}
 KUSTOMIZE=${KUSTOMIZE:-kustomize}
 DOCKER=${DOCKER:-docker}
 OPENSSL=${OPENSSL:-openssl}
+TMUX_DEBUG_IMAGE=${TMUX_DEBUG_IMAGE:-breakglass-tmux-debug:latest}
+TMUX_DEBUG_IMAGE_DIR=${TMUX_DEBUG_IMAGE_DIR:-${E2E_DIR:-}/images/tmux-debug}
 
 # Check if required tools are available
 check_required_tools() {
@@ -212,6 +214,20 @@ ensure_image_exists() {
   return 0
 }
 
+# Build tmux-enabled debug image when needed (used by terminal-sharing tests)
+ensure_tmux_debug_image() {
+  local image="$TMUX_DEBUG_IMAGE"
+  if $DOCKER image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -z "$TMUX_DEBUG_IMAGE_DIR" ] || [ ! -f "$TMUX_DEBUG_IMAGE_DIR/Dockerfile" ]; then
+    log_error "TMUX debug image Dockerfile not found at $TMUX_DEBUG_IMAGE_DIR/Dockerfile"
+    return 1
+  fi
+  log "Building tmux debug image $image from $TMUX_DEBUG_IMAGE_DIR"
+  $DOCKER build -t "$image" -f "$TMUX_DEBUG_IMAGE_DIR/Dockerfile" "$TMUX_DEBUG_IMAGE_DIR"
+}
+
 # Load image into Kind cluster
 # Uses docker save + kind load image-archive to avoid "failed to detect containerd snapshotter" issues
 e2e_load_image_into_kind() {
@@ -251,6 +267,8 @@ e2e_load_standard_images() {
   e2e_load_image_into_kind "$cluster_name" "nicolaka/netshoot"
   e2e_load_image_into_kind "$cluster_name" "apache/kafka:3.7.0"
   e2e_load_image_into_kind "$cluster_name" "python:3.11-slim"
+  ensure_tmux_debug_image
+  e2e_load_image_into_kind "$cluster_name" "$TMUX_DEBUG_IMAGE"
   
   log "Standard images loaded into cluster $cluster_name"
 }

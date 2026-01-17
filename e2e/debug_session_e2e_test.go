@@ -1262,7 +1262,7 @@ func TestDebugSession_E2E_TerminalSharing(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:    "debug",
-							Image:   "busybox:latest",
+							Image:   helpers.GetTmuxDebugImage(),
 							Command: []string{"sleep", "infinity"},
 						},
 					},
@@ -1318,9 +1318,8 @@ func TestDebugSession_E2E_TerminalSharing(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, fetched.Spec.TerminalSharing)
 	assert.True(t, fetched.Spec.TerminalSharing.Enabled)
-	// TODO: Re-enable after tmux is properly supported
-	// assert.Equal(t, "tmux", fetched.Spec.TerminalSharing.Provider)
-	t.Logf("Terminal sharing enabled (tmux temporarily disabled)")
+	assert.Equal(t, "tmux", fetched.Spec.TerminalSharing.Provider)
+	t.Logf("Terminal sharing enabled (tmux)")
 }
 
 // D-019: DebugSession auto-approve by group

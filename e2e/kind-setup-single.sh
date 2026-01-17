@@ -7,6 +7,7 @@ set -euo pipefail
 # --- Script directory and common library ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_LOG_PREFIX="[single-e2e]"
+export E2E_DIR="$SCRIPT_DIR"
 
 # Source common library (provides shared functions for logging, TLS, network, etc.)
 if [ -f "${SCRIPT_DIR}/lib/common.sh" ]; then
@@ -897,6 +898,9 @@ else
   docker build --load --build-arg UI_FLAVOUR="$UI_FLAVOUR" -t "$IMAGE" . >/dev/null
 fi
 
+# Build tmux debug image used by terminal sharing tests
+ensure_tmux_debug_image
+
 # load built images into kind node using helper
 load_image_into_kind "$IMAGE"
 load_image_into_kind "$KEYCLOAK_IMAGE"
@@ -905,6 +909,8 @@ load_image_into_kind "mailhog/mailhog:v1.0.1"
 load_image_into_kind "curlimages/curl:8.4.0"
 # Preload netshoot so we can create a persistent debug pod without image pull delays
 load_image_into_kind "nicolaka/netshoot"
+# Preload tmux debug image for terminal sharing tests
+load_image_into_kind "$TMUX_DEBUG_IMAGE"
 # Preload busybox for debug session tests (used by test-basic-debug template)
 load_image_into_kind "busybox:latest"
 # Load Kafka image for audit sink testing
