@@ -331,6 +331,8 @@ const groupsDisplay = computed(() => {
   color: var(--telekom-color-text-and-icon-standard);
   word-break: break-all;
   flex: 1;
+  max-height: 100px;
+  overflow-y: auto;
 }
 
 .debug-item .value.groups-list {
@@ -365,9 +367,30 @@ const groupsDisplay = computed(() => {
   background-color: var(--telekom-color-ui-background-surface);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-sm);
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 300px;
   font-size: 0.85rem;
   color: var(--telekom-color-text-and-icon-standard);
+}
+
+/* Scrollbar styling for token details pre */
+.token-details pre::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.token-details pre::-webkit-scrollbar-track {
+  background: var(--telekom-color-ui-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.token-details pre::-webkit-scrollbar-thumb {
+  background: var(--telekom-color-primary-standard);
+  border-radius: var(--radius-sm);
+}
+
+.token-details pre::-webkit-scrollbar-thumb:hover {
+  background: var(--telekom-color-primary-hover);
 }
 
 .debug-section.error {

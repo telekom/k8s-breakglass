@@ -25,12 +25,16 @@ API_URL="${BREAKGLASS_API_URL:-http://localhost:8080}"
 OIDC_URL="${OIDC_URL:-http://localhost:9090/realms/breakglass}"
 CLUSTER_NAME="${CLUSTER_NAME:-kind-breakglass}"
 GROUP_NAME="${GROUP_NAME:-breakglass-create-all}"
+# Use a different group for rejection test to avoid "already approved" conflicts
+# This should be a group the test user has access to via escalations
+GROUP_NAME_REJECT="${GROUP_NAME_REJECT:-breakglass-pods-admin}"
 
 # Test users - these should match your Keycloak setup
-REQUESTER_USER="${REQUESTER_USER:-requester}"
-REQUESTER_PASS="${REQUESTER_PASS:-requester}"
-APPROVER_USER="${APPROVER_USER:-approver}"
-APPROVER_PASS="${APPROVER_PASS:-approver}"
+# Default values align with e2e/helpers/users.go TestUsers
+REQUESTER_USER="${REQUESTER_USER:-test-user}"
+REQUESTER_PASS="${REQUESTER_PASS:-test-password}"
+APPROVER_USER="${APPROVER_USER:-approver-user}"
+APPROVER_PASS="${APPROVER_PASS:-approver-password}"
 
 # Temp directory for configs
 TEST_DIR=$(mktemp -d)
@@ -42,6 +46,32 @@ APPROVER_TOKEN_FILE="$TEST_DIR/approver-token"
 # Cleanup on exit
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${NC}"
+    
+    # Drop any sessions we created (if token file exists)
+    if [[ -f "$REQUESTER_TOKEN_FILE" ]]; then
+        # Drop regular breakglass sessions
+        if [[ -f "$TEST_DIR/sessions_to_cleanup" ]]; then
+            log_info "Dropping breakglass sessions created during test..."
+            while IFS= read -r session || [[ -n "$session" ]]; do
+                if [[ -n "$session" ]]; then
+                    log_info "  Dropping session: $session"
+                    run_as_requester session drop "$session" 2>/dev/null || true
+                fi
+            done < "$TEST_DIR/sessions_to_cleanup"
+        fi
+        
+        # Drop debug sessions
+        if [[ -f "$TEST_DIR/debug_sessions_to_cleanup" ]]; then
+            log_info "Dropping debug sessions created during test..."
+            while IFS= read -r session || [[ -n "$session" ]]; do
+                if [[ -n "$session" ]]; then
+                    log_info "  Dropping debug session: $session"
+                    run_as_requester debug session terminate "$session" 2>/dev/null || true
+                fi
+            done < "$TEST_DIR/debug_sessions_to_cleanup"
+        fi
+    fi
+    
     rm -rf "$TEST_DIR"
     echo -e "${GREEN}Cleanup complete${NC}"
 }
@@ -102,15 +132,30 @@ get_oidc_token() {
     
     log_info "Getting OIDC token for user: $username"
     
+    # Use configurable client ID (default to breakglass-cli for backward compatibility)
+    local client_id="${KEYCLOAK_CLIENT_ID:-breakglass-cli}"
+    
+    # Build curl command with optional Host header override.
+    # When port-forwarding to Keycloak, we need to set the Host header to match
+    # what the IdentityProvider expects (the in-cluster hostname) so that
+    # Keycloak issues tokens with the correct issuer claim.
+    local curl_args=(-sf -k -X POST "$OIDC_URL/protocol/openid-connect/token"
+        -H "Content-Type: application/x-www-form-urlencoded"
+        -d "grant_type=password"
+        -d "client_id=$client_id"
+        -d "username=$username"
+        -d "password=$password"
+        -d "scope=openid email profile"
+    )
+    
+    # Add Host header if KEYCLOAK_ISSUER_HOST is set
+    if [[ -n "${KEYCLOAK_ISSUER_HOST:-}" ]]; then
+        curl_args+=(-H "Host: $KEYCLOAK_ISSUER_HOST")
+    fi
+    
     # Try to get token from Keycloak
     local token
-    token=$(curl -sf -X POST "$OIDC_URL/protocol/openid-connect/token" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "grant_type=password" \
-        -d "client_id=breakglass-cli" \
-        -d "username=$username" \
-        -d "password=$password" \
-        -d "scope=openid email profile" 2>/dev/null | jq -r '.access_token') || true
+    token=$(curl "${curl_args[@]}" 2>/dev/null | jq -r '.access_token') || true
     
     if [[ -z "$token" || "$token" == "null" ]]; then
         log_error "Failed to get OIDC token for $username"
@@ -129,10 +174,15 @@ create_config() {
     
     log_info "Creating CLI config for $persona_name at $config_file"
     
+    # Create a proper bgctl config with contexts array and current-context
     cat > "$config_file" << EOF
-server: $API_URL
-cluster: $CLUSTER_NAME
-output: table
+version: v1
+current-context: default
+contexts:
+  - name: default
+    server: $API_URL
+settings:
+  output-format: table
 EOF
     
     log_success "Config created for $persona_name"
@@ -245,6 +295,25 @@ test_list_escalations() {
 test_session_approval_flow() {
     log_step "Test 3: Session Approval Flow"
     
+    # First, check for any existing approved sessions for this cluster/group and drop them
+    # Session names follow the pattern: cluster-group-xxxxx, so we look for sessions
+    # that match our cluster+group combination
+    log_info "Checking for existing approved sessions..."
+    local existing_sessions
+    # Get all sessions with --mine flag and filter by state=Approved and name pattern
+    local name_pattern="${CLUSTER_NAME}-${GROUP_NAME}"
+    existing_sessions=$(run_as_requester session list --mine -o json 2>/dev/null | \
+        jq -r --arg pattern "$name_pattern" '.[]? | select(.status.state == "Approved" and (.metadata.name | startswith($pattern))) | .metadata.name' 2>/dev/null) || true
+    
+    if [[ -n "$existing_sessions" ]]; then
+        for session in $existing_sessions; do
+            log_info "Dropping existing approved session: $session"
+            run_as_requester session drop "$session" 2>/dev/null || true
+        done
+        # Give some time for cleanup
+        sleep 2
+    fi
+    
     # Step 3.1: Requester creates a session
     log_info "Requester creating a new session..."
     local create_output
@@ -317,12 +386,28 @@ test_session_approval_flow() {
 test_session_rejection_flow() {
     log_step "Test 4: Session Rejection Flow"
     
-    # Step 4.1: Requester creates a session
+    # First, check for any existing approved sessions for this cluster/group and drop them
+    log_info "Checking for existing approved sessions..."
+    local existing_sessions
+    local name_pattern="${CLUSTER_NAME}-${GROUP_NAME_REJECT}"
+    existing_sessions=$(run_as_requester session list --mine -o json 2>/dev/null | \
+        jq -r --arg pattern "$name_pattern" '.[]? | select(.status.state == "Approved" and (.metadata.name | startswith($pattern))) | .metadata.name' 2>/dev/null) || true
+    
+    if [[ -n "$existing_sessions" ]]; then
+        for session in $existing_sessions; do
+            log_info "Dropping existing approved session: $session"
+            run_as_requester session drop "$session" 2>/dev/null || true
+        done
+        # Give some time for cleanup
+        sleep 2
+    fi
+    
+    # Step 4.1: Requester creates a session (using different group to avoid "already approved" conflict)
     log_info "Requester creating a new session for rejection test..."
     local create_output
     create_output=$(run_as_requester session request \
         --cluster "$CLUSTER_NAME" \
-        --group "$GROUP_NAME" \
+        --group "$GROUP_NAME_REJECT" \
         --reason "Shell E2E test - rejection flow" \
         -o json 2>&1) || {
         log_error "Failed to create session: $create_output"
@@ -466,34 +551,70 @@ test_debug_session_flow() {
     # List debug templates
     log_info "Listing debug session templates..."
     local templates_output
-    templates_output=$(run_as_requester debug template list -o json 2>&1) || true
+    templates_output=$(run_as_requester debug template list -o json 2>&1)
+    local templates_exit_code=$?
     
-    if ! echo "$templates_output" | jq -e 'type == "array" and length > 0' > /dev/null 2>&1; then
-        log_info "No debug templates available, skipping debug session test"
-        return 0
+    log_info "Debug template list exit code: $templates_exit_code"
+    log_info "Debug template list raw output:"
+    echo "$templates_output" | head -50
+    
+    if [[ $templates_exit_code -ne 0 ]]; then
+        log_error "Failed to list debug templates: $templates_output"
+        return 1
+    fi
+    
+    # Check if we got a valid array
+    local template_count
+    template_count=$(echo "$templates_output" | jq -r 'if type == "array" then length else 0 end' 2>/dev/null) || template_count=0
+    log_info "Template count: $template_count"
+    
+    if [[ "$template_count" -eq 0 ]]; then
+        log_error "No debug templates available - expected at least one template"
+        log_info "Full output: $templates_output"
+        return 1
     fi
     
     local template_name
-    template_name=$(echo "$templates_output" | jq -r '.[0].metadata.name') || true
+    # Template list returns objects with 'name' at top level, not 'metadata.name'
+    template_name=$(echo "$templates_output" | jq -r '.[0].name') || true
+    log_info "Extracted template name: '$template_name'"
+    
+    # Also show all field names in the first template for debugging
+    log_info "First template fields: $(echo "$templates_output" | jq -r '.[0] | keys | join(", ")' 2>/dev/null || echo 'parse error')"
+    
+    if [[ -z "$template_name" || "$template_name" == "null" ]]; then
+        log_error "Could not extract template name from list"
+        log_info "First template object: $(echo "$templates_output" | jq '.[0]' 2>/dev/null || echo 'parse error')"
+        return 1
+    fi
     log_success "Found debug template: $template_name"
     
-    # Create debug session
+    # Create debug session using 'debug session create' command
     log_info "Requester creating debug session..."
     local create_output
-    create_output=$(run_as_requester debug request \
+    create_output=$(run_as_requester debug session create \
         --template "$template_name" \
         --cluster "$CLUSTER_NAME" \
         --reason "Shell E2E test - debug session" \
-        -o json 2>&1) || {
-        log_info "Failed to create debug session (may need additional parameters): $create_output"
-        return 0
-    }
+        -o json 2>&1)
+    local create_exit_code=$?
+    
+    log_info "Debug session create exit code: $create_exit_code"
+    log_info "Debug session create output: $create_output"
+    
+    if [[ $create_exit_code -ne 0 ]]; then
+        log_error "Failed to create debug session: $create_output"
+        return 1
+    fi
     
     local session_name
     session_name=$(echo "$create_output" | jq -r '.metadata.name') || true
+    log_info "Extracted session name: '$session_name'"
+    
     if [[ -z "$session_name" || "$session_name" == "null" ]]; then
-        log_info "Could not extract debug session name, skipping"
-        return 0
+        log_error "Could not extract debug session name"
+        log_info "Create output fields: $(echo "$create_output" | jq 'keys' 2>/dev/null || echo 'parse error')"
+        return 1
     fi
     log_success "Debug session created: $session_name"
     
@@ -501,13 +622,13 @@ test_debug_session_flow() {
     log_info "Waiting for debug session to reach pending state..."
     sleep 3
     
-    # Try to approve
+    # Try to approve using 'debug session approve' command
     log_info "Approver approving debug session..."
-    run_as_approver debug approve "$session_name" 2>&1 || log_info "Approval may have auto-completed"
+    run_as_approver debug session approve "$session_name" 2>&1 || log_info "Approval may have auto-completed"
     
-    # Check final state
+    # Check final state using 'debug session get' command
     local state
-    state=$(run_as_requester debug get "$session_name" -o json 2>/dev/null | jq -r '.status.state') || true
+    state=$(run_as_requester debug session get "$session_name" -o json 2>/dev/null | jq -r '.status.state') || true
     log_success "Debug session final state: $state"
     
     echo "$session_name" >> "$TEST_DIR/debug_sessions_to_cleanup"

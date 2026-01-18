@@ -19,20 +19,30 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 )
+
+// maxKafkaReadErrors is the maximum number of consecutive Kafka read errors before giving up.
+// This prevents infinite loops when Kafka is unavailable or misconfigured.
+// Set to 60 to allow up to 60 seconds of waiting (with 1s MaxWait per read).
+const maxKafkaReadErrors = 60
 
 // AuditEvent represents the structure of the audit event JSON (matches pkg/audit/types.go Event)
 type AuditEvent struct {
@@ -59,6 +69,11 @@ type AuditTarget struct {
 }
 
 func TestAuditLogging(t *testing.T) {
+	// Skip if KAFKA_TEST is not set - Kafka tests require special infrastructure
+	if os.Getenv("KAFKA_TEST") != "true" {
+		t.Skip("Skipping Kafka audit test: KAFKA_TEST != true")
+	}
+
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -77,36 +92,68 @@ func TestAuditLogging(t *testing.T) {
 	conn, err := net.DialTimeout("tcp", "localhost:9094", 1*time.Second)
 	if err == nil {
 		conn.Close()
-		t.Log("Kafka already accessible on localhost:9094")
+		t.Log("Kafka TCP port accessible on localhost:9094")
 	} else {
 		t.Log("Starting port-forward for Kafka on localhost:9094")
 		// Try to start port forward
 		// Note: This might fail if port is taken but not responding, or if we don't have permissions
 		_, stopPF := helpers.StartPortForward(t, ctx, "breakglass-system", "breakglass-kafka", 9094, 9094)
 		defer stopPF()
+
+		// Wait for port-forward to be ready
+		time.Sleep(2 * time.Second)
 	}
+
+	// Validate Kafka is actually responding at the protocol level
+	// TCP connection works doesn't mean Kafka is working - verify with actual Kafka API call
+	t.Log("Validating Kafka connectivity at protocol level...")
+	kafkaConn, err := kafka.DialContext(ctx, "tcp", "localhost:9094")
+	if err != nil {
+		t.Fatalf("Failed to connect to Kafka at localhost:9094: %v (port-forward may not be working)", err)
+	}
+
+	// Fetch cluster metadata to verify Kafka is responding
+	brokers, err := kafkaConn.Brokers()
+	if err != nil {
+		kafkaConn.Close()
+		t.Fatalf("Failed to fetch Kafka brokers: %v (Kafka may not be ready)", err)
+	}
+	t.Logf("✓ Kafka connectivity verified, brokers: %v", brokers)
+
+	// Also verify we can read topic metadata
+	partitions, err := kafkaConn.ReadPartitions("breakglass-audit-events")
+	if err != nil {
+		// Topic might not exist yet - this is OK, it will be auto-created
+		t.Logf("Note: Could not read partitions for topic (may be auto-created): %v", err)
+	} else {
+		t.Logf("✓ Topic 'breakglass-audit-events' has %d partitions", len(partitions))
+	}
+	kafkaConn.Close()
 
 	// Connect to Kafka
 	// The topic "breakglass-audit-events" is defined in config/dev/resources/crs/audit-config-test.yaml
-	// IMPORTANT: Use FirstOffset to read ALL messages from the beginning of the topic,
-	// not just new ones. This ensures we don't miss events that were written before
-	// the consumer connected.
+	// IMPORTANT: Use a UNIQUE consumer group per test run to avoid stale offset issues.
+	// Consumer groups remember their last committed offset, so reusing the same group name
+	// across test runs would cause the consumer to skip old messages.
+	consumerGroupID := fmt.Sprintf("e2e-audit-test-%d", time.Now().UnixNano())
+	t.Logf("Using Kafka consumer group: %s", consumerGroupID)
+
 	kafkaReader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:   []string{"localhost:9094"},
-		Topic:     "breakglass-audit-events",
-		Partition: 0,
-		MinBytes:  1,    // Read even small messages immediately
-		MaxBytes:  10e6, // 10MB
-		MaxWait:   500 * time.Millisecond,
-		// CRITICAL: Start from the BEGINNING to read all messages
+		Brokers:  []string{"localhost:9094"},
+		Topic:    "breakglass-audit-events",
+		GroupID:  consumerGroupID, // Unique group per test run reads from all partitions
+		MinBytes: 1,               // Read even small messages immediately
+		MaxBytes: 10e6,            // 10MB
+		MaxWait:  1 * time.Second, // Wait up to 1 second for new messages
+		// With a fresh GroupID, StartOffset=FirstOffset will read from beginning
 		StartOffset: kafka.FirstOffset,
 	})
 	defer kafkaReader.Close()
 
-	// Log the current offset info
-	t.Logf("Connected to Kafka, will read from beginning of topic")
+	// Log connection info
+	t.Logf("Connected to Kafka with consumer group, will read from all partitions")
 
-	// Give Kafka reader a moment to connect/seek
+	// Give Kafka reader a moment to connect and join the consumer group
 	time.Sleep(2 * time.Second)
 
 	// CRITICAL: Wait for AuditConfig to be Ready BEFORE creating sessions.
@@ -121,6 +168,15 @@ func TestAuditLogging(t *testing.T) {
 	auditCfg := helpers.WaitForAuditConfigReady(t, ctx, cli, auditConfigName, helpers.WaitForConditionTimeout)
 	t.Logf("AuditConfig %s is Ready with sinks: %v", auditConfigName, auditCfg.Status.ActiveSinks)
 
+	// Additional wait for audit service to connect to Kafka
+	// The AuditConfig being Ready means the controller has validated the config,
+	// but the audit service inside the controller needs time to:
+	// 1. Receive the config reload signal
+	// 2. Build and start the Kafka producer
+	// 3. Establish connection to Kafka broker
+	t.Log("Waiting additional 5s for audit service to connect to Kafka...")
+	time.Sleep(5 * time.Second)
+
 	// 1. Create a Breakglass Session
 	// Use unique name to avoid collisions and for filtering audit logs
 	sessionName := helpers.GenerateUniqueName("audit-test")
@@ -129,6 +185,24 @@ func TestAuditLogging(t *testing.T) {
 	tc := helpers.NewTestContext(t, ctx)
 	requesterClient := tc.RequesterClient()
 	approverClient := tc.ApproverClient()
+
+	// Pre-cleanup: Delete any existing sessions for the audit-test-group to avoid 409 "already approved" errors.
+	// This handles stale sessions from previous test runs that haven't expired yet.
+	existingSessions := &telekomv1alpha1.BreakglassSessionList{}
+	if err := cli.List(ctx, existingSessions, client.InNamespace("breakglass-system"),
+		client.MatchingLabels{"breakglass.t-caas.telekom.com/group": "audit-test-group"}); err == nil {
+		for i := range existingSessions.Items {
+			s := &existingSessions.Items[i]
+			t.Logf("Deleting stale audit-test-group session: %s/%s (state: %s)", s.Namespace, s.Name, s.Status.State)
+			if delErr := cli.Delete(ctx, s); delErr != nil && !apierrors.IsNotFound(delErr) {
+				t.Logf("Warning: failed to delete stale session %s: %v", s.Name, delErr)
+			}
+		}
+		// Wait a moment for deletion to propagate
+		if len(existingSessions.Items) > 0 {
+			time.Sleep(1 * time.Second)
+		}
+	}
 
 	// Create via API
 	session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
@@ -172,19 +246,37 @@ func TestAuditLogging(t *testing.T) {
 
 	foundCount := 0
 	totalMessages := 0
+	consecutiveErrors := 0
 	allEvents := make([]string, 0) // For diagnostics
 
 	for foundCount < len(expectedEvents) {
 		m, err := kafkaReader.ReadMessage(readCtx)
 		if err != nil {
-			if err == context.DeadlineExceeded {
-				t.Logf("Timeout reading from Kafka after %d messages", totalMessages)
+			// Check for context deadline using multiple methods since kafka-go wraps errors
+			if errors.Is(err, context.DeadlineExceeded) ||
+				errors.Is(readCtx.Err(), context.DeadlineExceeded) ||
+				strings.Contains(err.Error(), "context deadline exceeded") {
+				consecutiveErrors++
+				if consecutiveErrors >= maxKafkaReadErrors {
+					t.Logf("Reached max consecutive Kafka read errors (%d), stopping read loop after %d messages",
+						maxKafkaReadErrors, totalMessages)
+					break
+				}
+				t.Logf("Error reading kafka message (%d/%d): %v", consecutiveErrors, maxKafkaReadErrors, err)
+				continue
+			}
+			// Other errors - also count towards limit but log differently
+			consecutiveErrors++
+			if consecutiveErrors >= maxKafkaReadErrors {
+				t.Logf("Reached max consecutive Kafka errors (%d), stopping: %v", maxKafkaReadErrors, err)
 				break
 			}
-			t.Logf("Error reading kafka message: %v", err)
+			t.Logf("Error reading kafka message (%d/%d): %v", consecutiveErrors, maxKafkaReadErrors, err)
 			continue
 		}
 
+		// Reset consecutive error counter on successful read
+		consecutiveErrors = 0
 		totalMessages++
 
 		var event AuditEvent

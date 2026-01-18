@@ -131,3 +131,35 @@ spec:
       - senior-ops
   maxValidFor: 3h
   retainFor: 48h
+---
+# Escalation for audit logging tests
+# Allows the test requester to create sessions for audit logging tests
+# Matches the groups defined in e2e/helpers/users.go for TestUsers.Requester
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: test-audit-escalation
+  labels:
+    breakglass.dev/test-resource: "true"
+    e2e-test: "true"
+spec:
+  escalatedGroup: audit-test-group
+  maxValidFor: "1h"
+  approvalTimeout: "30m"
+  allowed:
+    clusters:
+      - tenant-a
+      - breakglass-hub
+    groups:
+      # These groups match TestUsers.Requester.Groups in e2e/helpers/users.go
+      - dev
+      - audit-functional-test-group
+  approvers:
+    users:
+      # Must match TestUsers.Approver.Email in e2e/helpers/users.go
+      - approver@example.org
+    groups:
+      - senior-ops
+  requestReason:
+    mandatory: true
+    description: "Please provide a reason for audit test"

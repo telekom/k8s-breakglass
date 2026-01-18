@@ -378,6 +378,66 @@ assign_keycloak_service_account_roles() {
   return 0
 }
 
+# apply_cr_with_retry applies a CR file with retry logic for transient webhook failures
+# Args: $1 = cr_file path, $2 = max retries (default 5), $3 = retry delay in seconds (default 5)
+apply_cr_with_retry() {
+  local cr_file="$1"
+  local max_retries="${2:-5}"
+  local retry_delay="${3:-5}"
+  local attempt=1
+  
+  while [ $attempt -le $max_retries ]; do
+    log "Applying $cr_file (attempt $attempt/$max_retries)"
+    # Apply directly with kubectl, transforming namespace and name prefix using sed
+    # This avoids kustomize's restriction on absolute paths
+    # Also transform podTemplateRef.name to match the prefixed DebugPodTemplate names
+    if sed -e 's/namespace: default/namespace: breakglass-system/g' \
+           -e 's/namespace: breakglass$/namespace: breakglass-system/g' \
+           -e '/^  name:/s/name: /name: breakglass-/g' \
+           -e '/podTemplateRef:/,/^[^ ]/{s/name: /name: breakglass-/}' \
+           "$cr_file" | \
+       KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -n breakglass-system -f - 2>&1; then
+      return 0
+    fi
+    
+    if [ $attempt -lt $max_retries ]; then
+      log "Apply failed, retrying in ${retry_delay}s..."
+      sleep "$retry_delay"
+    fi
+    attempt=$((attempt + 1))
+  done
+  
+  log "Warning: failed to apply $cr_file after $max_retries attempts (continuing)"
+  return 1
+}
+
+# apply_stdin_with_retry applies YAML from stdin with retry logic for transient webhook failures
+# Args: $1 = max retries (default 5), $2 = retry delay in seconds (default 5)
+# Usage: cat <<YAML | apply_stdin_with_retry 5 5
+apply_stdin_with_retry() {
+  local max_retries="${1:-5}"
+  local retry_delay="${2:-5}"
+  local attempt=1
+  local yaml_content
+  yaml_content=$(cat)  # Read stdin once
+  
+  while [ $attempt -le $max_retries ]; do
+    log "Applying YAML from stdin (attempt $attempt/$max_retries)"
+    if echo "$yaml_content" | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - 2>&1; then
+      return 0
+    fi
+    
+    if [ $attempt -lt $max_retries ]; then
+      log "Apply failed, retrying in ${retry_delay}s..."
+      sleep "$retry_delay"
+    fi
+    attempt=$((attempt + 1))
+  done
+  
+  log "Warning: failed to apply YAML after $max_retries attempts (continuing)"
+  return 1
+}
+
 apply_e2e_test_crs() {
   # Apply e2e test CRs that require webhook validation
   # These are excluded from config/dev/kustomization.yaml to avoid race conditions
@@ -401,14 +461,7 @@ apply_e2e_test_crs() {
   
   for cr_file in "${cr_files[@]}"; do
     if [ -f "$cr_file" ]; then
-      log "Applying $cr_file"
-      # Apply directly with kubectl, transforming namespace and name prefix using sed
-      # This avoids kustomize's restriction on absolute paths
-      sed -e 's/namespace: default/namespace: breakglass-system/g' \
-          -e 's/namespace: breakglass$/namespace: breakglass-system/g' \
-          -e '/^  name:/s/name: /name: breakglass-/g' \
-          "$cr_file" | \
-      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -n breakglass-system -f - || log "Warning: failed to apply $cr_file (continuing)"
+      apply_cr_with_retry "$cr_file" 5 5
     else
       log "Warning: CR file not found: $cr_file"
     fi
@@ -1615,7 +1668,7 @@ create_tenant() {
   local secret_name="${tenant}-admin"
 
   log "Applying ClusterConfig for tenant: $tenant"
-  cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
+  cat <<YAML | apply_stdin_with_retry 5 5
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
@@ -1653,7 +1706,7 @@ export KEYCLOAK_GROUP_SYNC_CLIENT_SECRET="breakglass-group-sync-secret"
 # Frontend will need DNS resolution to make this hostname work via port-forward
 KEYCLOAK_SERVICE_HOSTNAME="breakglass-keycloak.breakglass-system.svc.cluster.local"
 
-cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
+cat <<YAML | apply_stdin_with_retry 5 5
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
@@ -1817,7 +1870,7 @@ fi
 # - Carol (carol@example.com): groups = ["approvers", "security-team"]
 log 'Creating BreakglassEscalation resources for UI E2E tests...'
 
-cat <<YAML | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || true
+cat <<YAML | apply_stdin_with_retry 5 5
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:

@@ -121,6 +121,14 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	// Security headers middleware
 	// Adds essential security headers to all responses
+	// Create Server early so the CSP middleware can access s.buildCSP()
+	s := &Server{
+		log:    log,
+		config: cfg,
+		auth:   auth,
+		gin:    engine,
+	}
+
 	engine.Use(func(c *gin.Context) {
 		// Prevent MIME type sniffing
 		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
@@ -132,9 +140,25 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		// Restrict browser features
 		c.Writer.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+		// HTTP Strict Transport Security (HSTS)
+		// Set when:
+		// 1. Direct TLS connection (c.Request.TLS != nil), or
+		// 2. Behind TLS-terminating proxy with X-Forwarded-Proto: https
+		// This ensures HSTS works correctly behind ingress controllers
+		isHTTPS := c.Request.TLS != nil ||
+			c.GetHeader("X-Forwarded-Proto") == "https" ||
+			c.GetHeader("X-Forwarded-Ssl") == "on"
+		if isHTTPS {
+			// max-age=31536000 (1 year), includeSubDomains for comprehensive protection
+			c.Writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+
 		// Content Security Policy - allow same-origin and configured OIDC endpoints
 		// Note: 'unsafe-inline' for styles is required for many UI frameworks
-		c.Writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+		// Dynamically include OIDC authority if configured
+		csp := s.buildCSP()
+		c.Writer.Header().Set("Content-Security-Policy", csp)
 		c.Next()
 	})
 
@@ -284,6 +308,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	if auth == nil {
 		auth = NewAuth(log.Sugar(), cfg)
+		s.auth = auth
 	}
 
 	// Create authenticated rate limiter for public endpoints
@@ -291,14 +316,9 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Unauthenticated: 10 req/s per IP, Authenticated: 50 req/s per user
 	publicAuthRateLimiter := ratelimit.NewAuthenticated(ratelimit.DefaultAuthenticatedAPIConfig())
 
-	s := &Server{
-		gin:                   engine,
-		config:                cfg,
-		auth:                  auth,
-		log:                   log,
-		publicRateLimiter:     publicRateLimiter,
-		publicAuthRateLimiter: publicAuthRateLimiter,
-	}
+	// Update the server with rate limiters
+	s.publicRateLimiter = publicRateLimiter
+	s.publicAuthRateLimiter = publicAuthRateLimiter
 
 	// Note: oidcAuthority is set dynamically when IdentityProvider is loaded via SetIdentityProvider()
 
@@ -331,6 +351,38 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	})
 
 	return s
+}
+
+// buildCSP generates a Content-Security-Policy header value.
+// It includes 'self' for all directives and dynamically adds the OIDC authority
+// to connect-src so the browser can make direct token exchange requests to Keycloak.
+func (s *Server) buildCSP() string {
+	// Base CSP with 'self' for all directives
+	connectSrc := "'self'"
+
+	// Add OIDC authority if configured (needed for token exchange)
+	s.idpMutex.RLock()
+	if s.oidcAuthority != nil {
+		// Include both the scheme://host and the scheme://host:port forms
+		authority := s.oidcAuthority.Scheme + "://" + s.oidcAuthority.Host
+		connectSrc += " " + authority
+	}
+	s.idpMutex.RUnlock()
+
+	// Script hashes for Vite's @vitejs/plugin-legacy inline scripts
+	// These are required for legacy browser detection and Safari 10.1 module support
+	// The hashes are stable across builds as they're from the plugin's fixed inline code
+	// 1. Modern browser detection: import.meta.url;import("_")...
+	// 2. Legacy loader: !function(){if(window.__vite_is_modern_browser)...
+	// 3. Safari 10.1 nomodule fix: !function(){var e=document...
+	// 4. Legacy entry System.import: System.import(document.getElementById...)
+	legacyScriptHashes := "'sha256-ZxAi3a7m9Mzbc+Z1LGuCCK5Xee6reDkEPRas66H9KSo=' 'sha256-+5XkZFazzJo8n0iOP4ti/cLCMUudTf//Mzkb7xNPXIc=' 'sha256-MS6/3FCg4WjP9gwgaBGwLpRCY6fZBgwmhVCdrPrNf3E=' 'sha256-tQjf8gvb2ROOMapIxFvFAYBeUJ0v1HCbOcSmDNXGtDo='"
+
+	return fmt.Sprintf(
+		"default-src 'self'; script-src 'self' %s; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src %s; frame-ancestors 'none'",
+		legacyScriptHashes,
+		connectSrc,
+	)
 }
 
 // SetIdentityProvider sets the loaded IdentityProvider configuration on the server.

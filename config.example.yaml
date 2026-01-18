@@ -5,6 +5,16 @@ server:
   allowedOrigins:
     - https://breakglass.example.com
     - https://admin.example.net
+  # trustedProxies configures which IPs/CIDRs are trusted for X-Forwarded-* headers.
+  # Required when running behind an ingress controller or load balancer.
+  # When configured, the server will:
+  # - Use X-Forwarded-For for client IP in rate limiting and logging
+  # - Use X-Forwarded-Proto for HSTS header decisions
+  # Leave empty if not behind a reverse proxy.
+  # trustedProxies:
+  #   - 10.0.0.0/8        # Kubernetes pod network
+  #   - 172.16.0.0/12     # Private networks
+  #   - 192.168.0.0/16    # Private networks
 frontend:
   baseURL: http://localhost:5173
   # Optional: brandingName controls the product name shown in the UI header and

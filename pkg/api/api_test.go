@@ -821,3 +821,80 @@ func TestSecurityHeaders(t *testing.T) {
 	assert.Contains(t, csp, "default-src 'self'")
 	assert.Contains(t, csp, "frame-ancestors 'none'")
 }
+
+func TestHSTSHeaderBehindProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+
+	cfg := config.Config{
+		Server: config.Server{
+			ListenAddress: ":8080",
+		},
+	}
+
+	server := NewServer(logger, cfg, true, &AuthHandler{})
+	require.NotNil(t, server)
+
+	tests := []struct {
+		name           string
+		headers        map[string]string
+		expectHSTS     bool
+		expectedHeader string
+	}{
+		{
+			name:       "no proxy headers - no HSTS",
+			headers:    nil,
+			expectHSTS: false,
+		},
+		{
+			name: "X-Forwarded-Proto https - HSTS enabled",
+			headers: map[string]string{
+				"X-Forwarded-Proto": "https",
+			},
+			expectHSTS:     true,
+			expectedHeader: "max-age=31536000; includeSubDomains",
+		},
+		{
+			name: "X-Forwarded-Proto http - no HSTS",
+			headers: map[string]string{
+				"X-Forwarded-Proto": "http",
+			},
+			expectHSTS: false,
+		},
+		{
+			name: "X-Forwarded-Ssl on - HSTS enabled",
+			headers: map[string]string{
+				"X-Forwarded-Ssl": "on",
+			},
+			expectHSTS:     true,
+			expectedHeader: "max-age=31536000; includeSubDomains",
+		},
+		{
+			name: "X-Forwarded-Ssl off - no HSTS",
+			headers: map[string]string{
+				"X-Forwarded-Ssl": "off",
+			},
+			expectHSTS: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			server.gin.ServeHTTP(w, req)
+
+			hstsHeader := w.Header().Get("Strict-Transport-Security")
+			if tt.expectHSTS {
+				assert.Equal(t, tt.expectedHeader, hstsHeader,
+					"HSTS header should be set correctly when behind HTTPS proxy")
+			} else {
+				assert.Empty(t, hstsHeader,
+					"HSTS header should not be set for non-HTTPS requests")
+			}
+		})
+	}
+}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -276,20 +277,34 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, ds), "Failed to create debug session")
 
 		// Set initial active state with expired timestamp
-		err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, ds)
-		require.NoError(t, err)
-		ds.Status.State = telekomv1alpha1.DebugSessionStateActive
-		ds.Status.ExpiresAt = &expiresAt
-		ds.Status.AllowedPods = []telekomv1alpha1.AllowedPodRef{
-			{Name: "test-pod", Namespace: "default"},
+		// Use retry loop to handle potential conflicts from controller reconciliation
+		var updateErr error
+		for retry := 0; retry < 3; retry++ {
+			err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, ds)
+			require.NoError(t, err)
+			ds.Status.State = telekomv1alpha1.DebugSessionStateActive
+			ds.Status.ExpiresAt = &expiresAt
+			ds.Status.AllowedPods = []telekomv1alpha1.AllowedPodRef{
+				{Name: "test-pod", Namespace: "default"},
+			}
+			updateErr = cli.Status().Update(ctx, ds)
+			if updateErr == nil {
+				break
+			}
+			if apierrors.IsConflict(updateErr) {
+				t.Logf("Retry %d: status update conflict, retrying...", retry+1)
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			break
 		}
-		require.NoError(t, cli.Status().Update(ctx, ds), "Failed to update debug session status")
+		require.NoError(t, updateErr, "Failed to update debug session status")
 
 		t.Logf("Created debug session with state=%s, expiresAt=%v", ds.Status.State, ds.Status.ExpiresAt)
 
 		// The cleanup routine should mark this as expired
 		// Wait up to 2 minutes for cleanup to run (default interval is 5m, may be shorter in e2e)
-		err = helpers.WaitForConditionSimple(ctx, func() bool {
+		err := helpers.WaitForConditionSimple(ctx, func() bool {
 			var fetched telekomv1alpha1.DebugSession
 			if err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, &fetched); err != nil {
 				return false

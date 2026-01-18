@@ -448,6 +448,25 @@ jobs:
         run: |
           echo "=== Setting up port-forwards for E2E tests ==="
           
+          # Start port-forward for Kafka (port 9094) - needed for audit tests
+          echo "Starting Kafka port-forward..."
+          kubectl -n breakglass-system port-forward svc/breakglass-kafka 9094:9094 > /tmp/kafka-pf.log 2>&1 &
+          echo $! > /tmp/kafka-pf.pid
+          
+          # Wait for Kafka to be accessible
+          for i in {1..30}; do
+            if nc -z localhost 9094 2>/dev/null; then
+              echo "✓ Kafka port-forward ready"
+              break
+            fi
+            sleep 1
+          done
+          
+          if ! nc -z localhost 9094 2>/dev/null; then
+            echo "Warning: Kafka not accessible on port 9094 (audit tests may fail)"
+            cat /tmp/kafka-pf.log || true
+          fi
+          
           # Start port-forward for audit webhook receiver (port 8090)
           echo "Starting audit webhook receiver port-forward..."
           kubectl -n breakglass-system port-forward svc/breakglass-audit-webhook-receiver 8090:80 > /tmp/audit-webhook-pf.log 2>&1 &
@@ -522,6 +541,14 @@ jobs:
           # Enable shell tests that use bgctl binary
           RUN_SHELL_TESTS: "true"
           BGCTL_BIN: "./bin/bgctl"
+          # Keycloak configuration for CLI OIDC authentication
+          KEYCLOAK_HOST: "https://localhost:8443"
+          KEYCLOAK_REALM: "breakglass-e2e"
+          KEYCLOAK_CLIENT_ID: "breakglass-ui"
+          # The issuer host must match the IdentityProvider's issuer claim (in-cluster hostname)
+          KEYCLOAK_ISSUER_HOST: "breakglass-keycloak.breakglass-system.svc.cluster.local:8443"
+          # API URL for bgctl to connect to
+          BREAKGLASS_API_URL: "http://localhost:8080"
 
       - name: Collect comprehensive diagnostics
         if: always()
@@ -864,40 +891,27 @@ jobs:
             exit 1
           fi
           
-          # Start frontend dev server in background with the correct API port
-          # VITE_USE_MOCK_AUTH=false disables mock authentication so real Keycloak OIDC is used
-          # VITE_UI_FLAVOUR=telekom enables Telekom-branded UI components
-          cd frontend
-          echo "Starting frontend dev server with API proxy to localhost:$MOCK_API_PORT..."
-          echo "Mock auth disabled (VITE_USE_MOCK_AUTH=false) - using real Keycloak OIDC"
-          echo "UI flavour: telekom"
-          VITE_USE_MOCK_AUTH=false VITE_UI_FLAVOUR=telekom npm run dev > ../frontend-dev.log 2>&1 &
-          FRONTEND_PID=$!
-          echo $FRONTEND_PID > /tmp/frontend-pid.txt
-          cd ..
+          # No need to start a separate frontend dev server - the controller serves the UI on port 8080
+          # The breakglass-manager deployment includes the built frontend and serves it via Gin
+          echo "Using controller-served UI on port 8080 (no separate Vite dev server needed)"
+          echo "Verifying controller is serving the UI..."
           
-          echo "Frontend dev server started with PID: $FRONTEND_PID"
-          echo "Waiting for frontend to initialize..."
-          
-          # Wait actively for frontend (max 15 seconds)
-          FRONTEND_READY=false
+          # Wait for controller UI to be ready (max 15 seconds)
+          UI_READY=false
           for i in {1..15}; do
-            if curl -sf http://localhost:5173 > /dev/null 2>&1; then
-              FRONTEND_READY=true
-              echo "Frontend ready after ${i} seconds"
+            if curl -sf http://localhost:8080 > /dev/null 2>&1; then
+              UI_READY=true
+              echo "Controller UI ready after ${i} seconds"
               break
             fi
             sleep 1
           done
           
-          if [ "$FRONTEND_READY" = "false" ]; then
-            echo "ERROR: Frontend failed to start within 15 seconds"
-            if ps -p $FRONTEND_PID > /dev/null; then
-              echo "Process is running but not responding"
-            else
-              echo "Process died"
-            fi
-            tail -50 frontend-dev.log || cat frontend-dev.log || echo "No log file"
+          if [ "$UI_READY" = "false" ]; then
+            echo "ERROR: Controller UI not responding on port 8080 within 15 seconds"
+            echo "Checking controller pod status..."
+            kubectl get pods -n breakglass-system -l app=breakglass-manager || true
+            kubectl logs -n breakglass-system -l app=breakglass-manager --tail=50 || true
             exit 1
           fi
 
@@ -925,12 +939,11 @@ jobs:
             fi
           }
           
-          # Test frontend (already verified in previous step, just double-check)
-          test_service "Frontend" "http://localhost:5173" 15 "-s" || {
-            echo "Frontend failed health check - checking logs"
-            tail -30 frontend-dev.log 2>/dev/null || echo "No frontend log found"
-            ps aux | grep vite || true
-            netstat -tlnp 2>/dev/null | grep 5173 || ss -tlnp 2>/dev/null | grep 5173 || true
+          # Test controller UI (already verified in previous step, just double-check)
+          test_service "Controller UI" "http://localhost:8080" 15 "-s" || {
+            echo "Controller UI failed health check - checking controller status"
+            kubectl get pods -n breakglass-system -l app=breakglass-manager || true
+            kubectl logs -n breakglass-system -l app=breakglass-manager --tail=50 || true
           }
           
           # Test MailHog
@@ -968,6 +981,12 @@ jobs:
 
       - name: Run UI E2E Tests
         working-directory: frontend
+        env:
+          # Both frontend and API are served by the controller on port 8080
+          # This prevents rewriteToFrontendUrl from changing 8080 to 5173
+          BREAKGLASS_UI_URL: "http://localhost:8080"
+          BREAKGLASS_API_URL: "http://localhost:8080"
+          MAILHOG_URL: "http://localhost:8025"
         run: |
           # Source environment to get correct Keycloak and API configuration
           source ../e2e/kind-setup-single-tdir/e2e-env.sh
@@ -976,8 +995,8 @@ jobs:
           KEYCLOAK_E2E_URL="https://${KEYCLOAK_SERVICE_HOSTNAME}:8443"
           
           echo "=== Pre-test health checks ==="
-          echo "Testing frontend at http://localhost:5173"
-          curl -sf "http://localhost:5173" > /dev/null || { echo "ERROR: Frontend not reachable"; exit 1; }
+          echo "Testing frontend at http://localhost:8080 (controller-served UI)"
+          curl -sf "http://localhost:8080" > /dev/null || { echo "ERROR: Frontend not reachable on port 8080"; exit 1; }
           
           echo "Testing Keycloak at $KEYCLOAK_E2E_URL/realms/master"
           curl -skf "$KEYCLOAK_E2E_URL/realms/master" > /dev/null || { 
@@ -995,8 +1014,8 @@ jobs:
           echo "=== All pre-test checks passed ==="
           echo "=== Configuration ==="
           echo "Keycloak: $KEYCLOAK_E2E_URL (via $KEYCLOAK_SERVICE_HOSTNAME)"
-          echo "Frontend: http://localhost:5173"
-          echo "API Port: $MOCK_API_PORT"
+          echo "Frontend: http://localhost:8080 (controller-served)"
+          echo "API Port: 8080"
           echo "Realm: $KEYCLOAK_REALM"
           echo ""
           echo "=== Running Playwright E2E tests ==="
@@ -1023,8 +1042,8 @@ jobs:
           # ===========================================
           echo "--- Testing service connectivity ---"
           {
-            echo "=== Frontend (localhost:5173) ==="
-            curl -v http://localhost:5173 2>&1 | head -30 || echo "Frontend not accessible"
+            echo "=== Controller UI (localhost:8080) ==="
+            curl -v http://localhost:8080 2>&1 | head -30 || echo "Controller UI not accessible"
             
             echo -e "\n=== Keycloak HTTPS (localhost:8443) ==="
             curl -skv https://localhost:8443/realms/master 2>&1 | head -30 || echo "Keycloak HTTPS not accessible"
@@ -1196,7 +1215,7 @@ jobs:
           env | grep -E "KEYCLOAK|BREAKGLASS|MAILHOG|PLAYWRIGHT|VITE" > "$DIAG_DIR/frontend/test-environment.txt" 2>&1 || true
           
           # Homepage check
-          curl -s http://localhost:5173 > "$DIAG_DIR/frontend/homepage.html" 2>&1 || echo "Frontend not responding" > "$DIAG_DIR/frontend/homepage.html"
+          curl -s http://localhost:8080 > "$DIAG_DIR/frontend/homepage.html" 2>&1 || echo "Controller UI not responding" > "$DIAG_DIR/frontend/homepage.html"
           
           # ===========================================
           # PLAYWRIGHT TEST RESULTS

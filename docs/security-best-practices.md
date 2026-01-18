@@ -190,6 +190,23 @@ For the complete RBAC setup, see [RBAC Requirements for OIDC Authentication](clu
 
 ## Network Security
 
+### Ingress and Reverse Proxy
+
+When deploying behind an ingress controller, configure trusted proxies to ensure:
+
+- Correct client IP identification for rate limiting
+- HSTS header is set based on `X-Forwarded-Proto`
+- Accurate logging of client addresses
+
+```yaml
+server:
+  trustedProxies:
+    - 10.0.0.0/8      # Kubernetes pod network
+    - 172.16.0.0/12   # Private networks
+```
+
+**See [Ingress Configuration](ingress-configuration.md) for complete ingress setup.**
+
 ### TLS Configuration
 
 ```yaml

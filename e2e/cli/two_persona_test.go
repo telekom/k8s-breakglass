@@ -44,9 +44,24 @@ func TestTwoPersonaShellFlow(t *testing.T) {
 		"BGCTL_BIN="+getBgctlBinary(t),
 	)
 
-	// Add OIDC URL if configured
-	if oidcURL := os.Getenv("OIDC_URL"); oidcURL != "" {
+	// Construct OIDC URL from KEYCLOAK_HOST and KEYCLOAK_REALM if not already set
+	oidcURL := os.Getenv("OIDC_URL")
+	if oidcURL == "" {
+		keycloakHost := os.Getenv("KEYCLOAK_HOST")
+		keycloakRealm := os.Getenv("KEYCLOAK_REALM")
+		if keycloakHost != "" && keycloakRealm != "" {
+			oidcURL = keycloakHost + "/realms/" + keycloakRealm
+		}
+	}
+	if oidcURL != "" {
 		env = append(env, "OIDC_URL="+oidcURL)
+	}
+
+	// Pass KEYCLOAK_ISSUER_HOST so the shell script can set the Host header
+	// This makes Keycloak issue tokens with the correct issuer claim
+	keycloakIssuerHost := os.Getenv("KEYCLOAK_ISSUER_HOST")
+	if keycloakIssuerHost != "" {
+		env = append(env, "KEYCLOAK_ISSUER_HOST="+keycloakIssuerHost)
 	}
 
 	// Run the shell script
@@ -75,6 +90,12 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 	if !helpers.IsE2EEnabled() {
 		t.Skip("E2E tests disabled. Set E2E_TEST=true")
 	}
+
+	// Delay to allow the API server to settle after shell test's cleanup.
+	// The shell test creates sessions with ~9 approvers, generating many notification
+	// emails that queue up. This gives the mail queue time to drain and prevents
+	// transient timeouts when the server is under load.
+	time.Sleep(5 * time.Second)
 
 	ctx := context.Background()
 	mcConfig := helpers.GetMultiClusterConfig()
@@ -125,6 +146,50 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 		return runAs(approverToken, args...)
 	}
 
+	// Helper to drop any existing approved sessions for the given group/cluster.
+	// This is necessary because Breakglass only allows one approved session per user/group/cluster.
+	dropExistingApprovedSessions := func(t *testing.T, group, cluster string) {
+		t.Helper()
+
+		// Use --mine flag to list sessions owned by the requester user
+		// Without --mine, the API defaults to approver view which won't show requester's sessions
+		output, err := runAsRequester("session", "list", "--mine", "-o", "json")
+		if err != nil {
+			t.Logf("Warning: Failed to list sessions for cleanup: %v", err)
+			return
+		}
+
+		var sessions []v1alpha1.BreakglassSession
+		if err := json.Unmarshal([]byte(output), &sessions); err != nil {
+			t.Logf("Warning: Failed to parse sessions for cleanup: %v", err)
+			return
+		}
+
+		t.Logf("Cleanup: Found %d sessions, looking for group=%s cluster=%s", len(sessions), group, cluster)
+		for _, s := range sessions {
+			t.Logf("  Session: %s state=%s group=%s cluster=%s user=%s",
+				s.Name, s.Status.State, s.Spec.GrantedGroup, s.Spec.Cluster, s.Spec.User)
+
+			// Only match on group and cluster - let the user be whatever the requester's identity is
+			if s.Spec.GrantedGroup == group && s.Spec.Cluster == cluster {
+				switch s.Status.State {
+				case v1alpha1.SessionStateApproved:
+					t.Logf("Dropping existing approved session: %s", s.Name)
+					if _, err := runAsRequester("session", "drop", s.Name); err != nil {
+						t.Logf("Warning: Failed to drop session %s: %v", s.Name, err)
+					}
+				case v1alpha1.SessionStatePending:
+					t.Logf("Withdrawing existing pending session: %s", s.Name)
+					if _, err := runAsRequester("session", "withdraw", s.Name); err != nil {
+						t.Logf("Warning: Failed to withdraw session %s: %v", s.Name, err)
+					}
+				default:
+					t.Logf("Skipping session %s in state %s", s.Name, s.Status.State)
+				}
+			}
+		}
+	}
+
 	var sessionName string
 
 	// Flow 1: Complete Approval Workflow
@@ -138,13 +203,28 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 
 		// Step 2: Requester creates a session
 		t.Run("RequesterCreatesSession", func(t *testing.T) {
-			output, err := runAsRequester(
-				"session", "request",
-				"--cluster", clusterName,
-				"--group", "breakglass-create-all",
-				"--reason", "Two persona Go test - approval flow",
-				"-o", "json",
-			)
+			// Drop any existing approved sessions for this group/cluster first
+			dropExistingApprovedSessions(t, "breakglass-create-all", clusterName)
+
+			// Retry session creation with backoff to handle transient timeouts
+			var output string
+			var err error
+			for attempt := 1; attempt <= 3; attempt++ {
+				output, err = runAsRequester(
+					"session", "request",
+					"--cluster", clusterName,
+					"--group", "breakglass-create-all",
+					"--reason", "Two persona Go test - approval flow",
+					"-o", "json",
+				)
+				if err == nil {
+					break
+				}
+				t.Logf("Session creation attempt %d failed: %v", attempt, err)
+				if attempt < 3 {
+					time.Sleep(time.Duration(attempt*2) * time.Second)
+				}
+			}
 			require.NoError(t, err, "Requester should create session")
 
 			var session v1alpha1.BreakglassSession
@@ -273,13 +353,28 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 
 		// Step 1: Requester creates another session
 		t.Run("RequesterCreatesSession", func(t *testing.T) {
-			output, err := runAsRequester(
-				"session", "request",
-				"--cluster", clusterName,
-				"--group", "breakglass-create-all",
-				"--reason", "Two persona Go test - rejection flow",
-				"-o", "json",
-			)
+			// Drop any existing approved sessions for this group/cluster first
+			dropExistingApprovedSessions(t, "breakglass-create-all", clusterName)
+
+			// Retry session creation with backoff to handle transient timeouts
+			var output string
+			var err error
+			for attempt := 1; attempt <= 3; attempt++ {
+				output, err = runAsRequester(
+					"session", "request",
+					"--cluster", clusterName,
+					"--group", "breakglass-create-all",
+					"--reason", "Two persona Go test - rejection flow",
+					"-o", "json",
+				)
+				if err == nil {
+					break
+				}
+				t.Logf("Session creation attempt %d failed: %v", attempt, err)
+				if attempt < 3 {
+					time.Sleep(time.Duration(attempt*2) * time.Second)
+				}
+			}
 			require.NoError(t, err, "Requester should create session")
 
 			var session v1alpha1.BreakglassSession

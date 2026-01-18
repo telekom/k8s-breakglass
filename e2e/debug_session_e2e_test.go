@@ -243,9 +243,8 @@ func TestDebugSession_E2E_DebugSessionTemplateCreation(t *testing.T) {
 	_ = cli.Delete(ctx, podTemplate)
 	err := cli.Create(ctx, podTemplate)
 	require.NoError(t, err, "Failed to create DebugPodTemplate")
-	defer func() {
-		_ = cli.Delete(ctx, podTemplate)
-	}()
+	// Note: We don't delete this pod template because e2e-test-session-template references it
+	// and other tests depend on that session template.
 
 	// Create session template
 	replicas := int32(1)
@@ -778,9 +777,10 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 	err = approverAPI.RejectDebugSession(ctx, t, session.Name, "Insufficient justification provided")
 	require.NoError(t, err, "Failed to reject session via API")
 
-	// Verify rejection - the reject API sets state to Failed
-	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.DebugSessionStateFailed, defaultTimeout)
-	assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, session.Status.State)
+	// Verify rejection - the reject API sets state to Terminated (not Failed)
+	// When a session is rejected, it immediately goes to Terminated state with the rejection reason
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace, telekomv1alpha1.DebugSessionStateTerminated, defaultTimeout)
+	assert.Equal(t, telekomv1alpha1.DebugSessionStateTerminated, session.Status.State)
 	assert.NotNil(t, session.Status.Approval)
 }
 

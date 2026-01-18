@@ -389,3 +389,154 @@ func TestRuntimeState_ResolveContextName(t *testing.T) {
 		assert.Equal(t, "", rt.ResolveContextName())
 	})
 }
+
+// TestServerTokenBypassConfig verifies that --server and --token flags bypass config file requirement
+func TestServerTokenBypassConfig(t *testing.T) {
+	t.Run("help works without config", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		rootCmd := NewRootCommand(Config{
+			ConfigPath:   "/nonexistent/path/to/config.yaml",
+			OutputWriter: buf,
+		})
+		rootCmd.SetOut(buf)
+		rootCmd.SetErr(buf)
+
+		rootCmd.SetArgs([]string{"--help"})
+		err := rootCmd.Execute()
+
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "Breakglass CLI")
+	})
+
+	t.Run("session list with server and token should not require config file", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		rootCmd := NewRootCommand(Config{
+			ConfigPath:   "/nonexistent/path/to/config.yaml",
+			OutputWriter: buf,
+		})
+		rootCmd.SetOut(buf)
+		rootCmd.SetErr(buf)
+
+		// This should NOT fail with "no such file or directory" error for config
+		// It will fail with connection error which is expected, but the error should
+		// NOT be about missing config file
+		rootCmd.SetArgs([]string{
+			"--server", "https://test.example.com",
+			"--token", "test-token-123",
+			"session", "list",
+		})
+		err := rootCmd.Execute()
+
+		// We expect an error, but it should be a connection error, not a config file error
+		if err != nil {
+			// Should NOT contain config file errors
+			assert.NotContains(t, err.Error(), "no such file or directory")
+			assert.NotContains(t, err.Error(), "config path is required")
+		}
+	})
+
+	t.Run("escalation list with server and token should not require config file", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		rootCmd := NewRootCommand(Config{
+			ConfigPath:   "/nonexistent/path/to/config.yaml",
+			OutputWriter: buf,
+		})
+		rootCmd.SetOut(buf)
+		rootCmd.SetErr(buf)
+
+		rootCmd.SetArgs([]string{
+			"--server", "https://test.example.com",
+			"--token", "test-token-123",
+			"escalation", "list",
+		})
+		err := rootCmd.Execute()
+
+		// We expect an error, but it should be a connection error, not a config file error
+		if err != nil {
+			// Should NOT contain config file errors
+			assert.NotContains(t, err.Error(), "no such file or directory")
+			assert.NotContains(t, err.Error(), "config path is required")
+		}
+	})
+
+	t.Run("debug session list with server and token should not require config file", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		rootCmd := NewRootCommand(Config{
+			ConfigPath:   "/nonexistent/path/to/config.yaml",
+			OutputWriter: buf,
+		})
+		rootCmd.SetOut(buf)
+		rootCmd.SetErr(buf)
+
+		rootCmd.SetArgs([]string{
+			"--server", "https://test.example.com",
+			"--token", "test-token-123",
+			"debug", "session", "list",
+		})
+		err := rootCmd.Execute()
+
+		// We expect an error, but it should be a connection error, not a config file error
+		if err != nil {
+			// Should NOT contain config file errors
+			assert.NotContains(t, err.Error(), "no such file or directory")
+			assert.NotContains(t, err.Error(), "config path is required")
+		}
+	})
+
+	t.Run("without server or token, config file is required", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		rootCmd := NewRootCommand(Config{
+			ConfigPath:   "/nonexistent/path/to/config.yaml",
+			OutputWriter: buf,
+		})
+		rootCmd.SetOut(buf)
+		rootCmd.SetErr(buf)
+
+		rootCmd.SetArgs([]string{"session", "list"})
+		err := rootCmd.Execute()
+
+		// Without --server and --token, config file error is expected
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no such file or directory")
+	})
+
+	t.Run("server without token still requires config file", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		rootCmd := NewRootCommand(Config{
+			ConfigPath:   "/nonexistent/path/to/config.yaml",
+			OutputWriter: buf,
+		})
+		rootCmd.SetOut(buf)
+		rootCmd.SetErr(buf)
+
+		rootCmd.SetArgs([]string{
+			"--server", "https://test.example.com",
+			"session", "list",
+		})
+		err := rootCmd.Execute()
+
+		// Without --token, config file error is expected (need token from config)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no such file or directory")
+	})
+
+	t.Run("token without server still requires config file", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		rootCmd := NewRootCommand(Config{
+			ConfigPath:   "/nonexistent/path/to/config.yaml",
+			OutputWriter: buf,
+		})
+		rootCmd.SetOut(buf)
+		rootCmd.SetErr(buf)
+
+		rootCmd.SetArgs([]string{
+			"--token", "test-token-123",
+			"session", "list",
+		})
+		err := rootCmd.Execute()
+
+		// Without --server, config file error is expected (need server from config)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no such file or directory")
+	})
+}
