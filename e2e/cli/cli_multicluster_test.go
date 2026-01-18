@@ -234,13 +234,12 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 	})
 
 	t.Run("request debug session on spoke-a", func(t *testing.T) {
-		// First, ensure we have a debug template
-		// For this test, we'll skip if no templates are available
+		// Ensure we have a debug template - fixtures must be loaded in E2E setup
 		hubClient := helpers.GetClientForCluster(t, mcConfig.HubKubeconfig)
 		var templates v1alpha1.DebugSessionTemplateList
-		if err := hubClient.List(ctx, &templates, client.InNamespace(helpers.GetTestNamespace())); err != nil || len(templates.Items) == 0 {
-			t.Skip("No debug session templates available")
-		}
+		err := hubClient.List(ctx, &templates, client.InNamespace(helpers.GetTestNamespace()))
+		require.NoError(t, err, "Should list debug templates")
+		require.NotEmpty(t, templates.Items, "DebugSessionTemplates must exist in E2E environment - check that fixtures are loaded")
 
 		templateName := templates.Items[0].Name
 
@@ -258,7 +257,7 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 			"-o", "json",
 		})
 
-		err := root.Execute()
+		err = root.Execute()
 		require.NoError(t, err)
 
 		var session v1alpha1.DebugSession

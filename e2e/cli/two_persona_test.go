@@ -446,6 +446,6 @@ func getBgctlBinary(t *testing.T) string {
 		return path
 	}
 
-	t.Skip("bgctl binary not found")
+	require.Fail(t, "bgctl binary not found - run 'make bgctl' to build it")
 	return ""
 }

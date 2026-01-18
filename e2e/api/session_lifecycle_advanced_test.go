@@ -54,17 +54,13 @@ func TestSessionActualStartTimeTracking(t *testing.T) {
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Test actual start time tracking",
 		})
-		if err != nil {
-			t.Skipf("Could not create session via API: %v", err)
-		}
+		require.NoError(t, err, "Session creation should succeed in E2E environment")
 		s.Cleanup.Add(&telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
 
 		err = approverClient.ApproveSessionViaAPI(s.Ctx, t, session.Name, session.Namespace)
-		if err != nil {
-			t.Skipf("Could not approve session via API: %v", err)
-		}
+		require.NoError(t, err, "Session approval should succeed in E2E environment")
 
 		helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace,
 			telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)

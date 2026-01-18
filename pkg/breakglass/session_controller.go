@@ -778,8 +778,13 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	}
 	// Sanitize approver reason to prevent injection attacks
 	if approverPayload.Reason != "" {
-		sanitized, _ := SanitizeReasonText(approverPayload.Reason)
-		approverPayload.Reason = sanitized
+		sanitized, err := SanitizeReasonText(approverPayload.Reason)
+		if err != nil {
+			reqLog.Warnw("Failed to sanitize approver reason, using empty string", "error", err)
+			approverPayload.Reason = "" // Use empty string as safe fallback
+		} else {
+			approverPayload.Reason = sanitized
+		}
 	}
 
 	var lastCondition metav1.Condition

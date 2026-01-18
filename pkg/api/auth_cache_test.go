@@ -1,9 +1,9 @@
 package api
 
 import (
+	"container/list"
 	"testing"
 
-	"github.com/MicahParks/keyfunc"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
 )
@@ -18,22 +18,24 @@ func TestJWKSCacheConfig(t *testing.T) {
 		logger := zaptest.NewLogger(t)
 
 		auth := &AuthHandler{
-			jwksCache: make(map[string]*keyfunc.JWKS),
-			log:       logger.Sugar(),
+			jwksCache:   make(map[string]*list.Element),
+			jwksLRUList: list.New(),
+			log:         logger.Sugar(),
 		}
 
 		assert.Empty(t, auth.jwksCache)
+		assert.Equal(t, 0, auth.jwksLRUList.Len())
 	})
 }
 
 // Note: Full JWKS cache eviction testing would require mocking the keyfunc library
-// and setting up real JWKS endpoints. The implementation follows the pattern of
-// evicting half the cache when full to prevent thrashing.
+// and setting up real JWKS endpoints. The implementation uses LRU eviction to
+// remove the least recently used entries when cache reaches capacity.
 //
 // The key behaviors to verify:
-// 1. Cache stores JWKS by issuer URL
-// 2. When cache reaches maxJWKSCacheSize, eviction happens
-// 3. Eviction removes roughly half the entries
+// 1. Cache stores JWKS by issuer URL with LRU ordering
+// 2. When cache reaches maxJWKSCacheSize, LRU eviction removes oldest entries
+// 3. Cache hits move entries to front of LRU list (most recently used)
 // 4. Eviction calls EndBackground() on removed JWKS to stop refresh goroutines
 //
 // Integration tests in e2e/ verify the full multi-IDP authentication flow.

@@ -42,9 +42,10 @@ const (
 )
 
 var (
-	k8sClient     client.Client
-	apiClient     *helpers.APIClient
-	testNamespace = "breakglass"
+	k8sClient      client.Client
+	apiClient      *helpers.APIClient
+	approverClient *helpers.APIClient
+	testNamespace  = "breakglass"
 )
 
 func init() {
@@ -77,8 +78,95 @@ func setupAPIClient(t *testing.T) *helpers.APIClient {
 	if apiClient != nil {
 		return apiClient
 	}
-	apiClient = helpers.NewAPIClient()
+	// Use TestContext to get an authenticated client
+	ctx := context.Background()
+	tc := helpers.NewTestContext(t, ctx)
+	apiClient = tc.RequesterClient()
 	return apiClient
+}
+
+func setupApproverClient(t *testing.T) *helpers.APIClient {
+	if approverClient != nil {
+		return approverClient
+	}
+	// Use TestContext to get an authenticated approver client
+	ctx := context.Background()
+	tc := helpers.NewTestContext(t, ctx)
+	approverClient = tc.ApproverClient()
+	return approverClient
+}
+
+// ensureTestSessionTemplate ensures that the e2e-test-session-template exists.
+// It creates the template if it doesn't exist, along with its required pod template.
+// This allows multiple tests to share the same template without worrying about deletion order.
+func ensureTestSessionTemplate(t *testing.T, cli client.Client, ctx context.Context) {
+	// Check if template already exists
+	var existing telekomv1alpha1.DebugSessionTemplate
+	err := cli.Get(ctx, types.NamespacedName{Name: "e2e-test-session-template"}, &existing)
+	if err == nil {
+		return // Template already exists
+	}
+
+	// Create pod template first
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-shared-pod-template",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Shared Pod Template",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+	// Delete first to handle any stale state
+	_ = cli.Delete(ctx, podTemplate)
+	err = cli.Create(ctx, podTemplate)
+	if err != nil {
+		t.Logf("Note: pod template creation returned: %v (may already exist)", err)
+	}
+
+	// Create session template with auto-approval
+	replicas := int32(1)
+	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-test-session-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Test Session Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:        &replicas,
+			TargetNamespace: "breakglass-debug",
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+				AllowRenewal:    ptrBool(true),
+				MaxRenewals:     ptrInt32(3),
+			},
+		},
+	}
+	err = cli.Create(ctx, sessionTemplate)
+	require.NoError(t, err, "Failed to create shared e2e-test-session-template")
 }
 
 func TestDebugSession_E2E_DebugPodTemplateCreation(t *testing.T) {
@@ -192,9 +280,8 @@ func TestDebugSession_E2E_DebugSessionTemplateCreation(t *testing.T) {
 	}
 
 	_ = cli.Delete(ctx, sessionTemplate)
-	defer func() {
-		_ = cli.Delete(ctx, sessionTemplate)
-	}()
+	// Note: We don't delete the template after this test, as other tests may depend on it.
+	// The ensureTestSessionTemplate helper will recreate it if needed.
 
 	err = cli.Create(ctx, sessionTemplate)
 	require.NoError(t, err, "Failed to create DebugSessionTemplate")
@@ -212,6 +299,9 @@ func TestDebugSession_E2E_SessionCreation(t *testing.T) {
 	cli := setupClient(t)
 	api := setupAPIClient(t)
 	ctx := context.Background()
+
+	// Ensure shared test template exists
+	ensureTestSessionTemplate(t, cli, ctx)
 
 	// Ensure namespace exists
 	ns := &corev1.Namespace{
@@ -245,6 +335,9 @@ func TestDebugSession_E2E_SessionStateTransitions(t *testing.T) {
 	api := setupAPIClient(t)
 	ctx := context.Background()
 
+	// Ensure shared test template exists
+	ensureTestSessionTemplate(t, cli, ctx)
+
 	// Create session via API (preferred method)
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
 		Cluster:           "tenant-a",
@@ -275,6 +368,9 @@ func TestDebugSession_E2E_SessionTermination(t *testing.T) {
 	cli := setupClient(t)
 	api := setupAPIClient(t)
 	ctx := context.Background()
+
+	// Ensure shared test template exists
+	ensureTestSessionTemplate(t, cli, ctx)
 
 	// Create session via API
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
@@ -307,6 +403,9 @@ func TestDebugSession_E2E_SessionCleanup(t *testing.T) {
 	api := setupAPIClient(t)
 	ctx := context.Background()
 
+	// Ensure shared test template exists
+	ensureTestSessionTemplate(t, cli, ctx)
+
 	// Create session via API
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
 		Cluster:           "tenant-a",
@@ -331,6 +430,9 @@ func TestDebugSession_E2E_MultipleParticipants(t *testing.T) {
 	cli := setupClient(t)
 	api := setupAPIClient(t)
 	ctx := context.Background()
+
+	// Ensure shared test template exists
+	ensureTestSessionTemplate(t, cli, ctx)
 
 	// Create session via API with invited participants
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
@@ -504,6 +606,7 @@ func TestDebugSession_E2E_ManualApprovalWorkflow(t *testing.T) {
 
 	cli := setupClient(t)
 	api := setupAPIClient(t)
+	approverAPI := setupApproverClient(t)
 	ctx := context.Background()
 
 	// Create pod template first
@@ -550,8 +653,9 @@ func TestDebugSession_E2E_ManualApprovalWorkflow(t *testing.T) {
 				Groups: []string{"*"},
 			},
 			// Note: No autoApproveFor, so approval is required
+			// Use senior-ops group which TestUsers.Approver has
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
-				Groups: []string{"sre-team"},
+				Groups: []string{"senior-ops"},
 			},
 			Constraints: &telekomv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
@@ -578,9 +682,9 @@ func TestDebugSession_E2E_ManualApprovalWorkflow(t *testing.T) {
 	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
 	t.Logf("Session state: %s", session.Status.State)
 
-	// Approve session via API if pending approval
+	// Approve session via API if pending approval - must use approver client
 	if session.Status.State == telekomv1alpha1.DebugSessionStatePendingApproval {
-		err = api.ApproveDebugSession(ctx, t, session.Name, "Approved by E2E test")
+		err = approverAPI.ApproveDebugSession(ctx, t, session.Name, "Approved by E2E test")
 		require.NoError(t, err, "Failed to approve session via API")
 
 		// Verify approval
@@ -596,12 +700,71 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 
 	cli := setupClient(t)
 	api := setupAPIClient(t)
+	approverAPI := setupApproverClient(t)
 	ctx := context.Background()
+
+	// Create pod template first
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-rejection-pod-template",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Rejection Pod Template",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create template requiring manual approval
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-rejection-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Rejection Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:        &replicas,
+			TargetNamespace: "breakglass-debug",
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			// Use senior-ops group which TestUsers.Approver has
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				Groups: []string{"senior-ops"},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+			},
+		},
+	}
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, template) }()
 
 	// Create session via API
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
 		Cluster:           "tenant-a",
-		TemplateRef:       "e2e-manual-approval-template",
+		TemplateRef:       template.Name,
 		RequestedDuration: "1h",
 		Namespace:         testNamespace,
 		Reason:            "Testing rejection workflow",
@@ -611,8 +774,8 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 	// Wait for session to have a state
 	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
 
-	// Reject the session via API
-	err := api.RejectDebugSession(ctx, t, session.Name, "Insufficient justification provided")
+	// Reject the session via API - must use approver client
+	err = approverAPI.RejectDebugSession(ctx, t, session.Name, "Insufficient justification provided")
 	require.NoError(t, err, "Failed to reject session via API")
 
 	// Verify rejection - the reject API sets state to Failed
@@ -628,6 +791,9 @@ func TestDebugSession_E2E_SessionRenewal(t *testing.T) {
 	cli := setupClient(t)
 	api := setupAPIClient(t)
 	ctx := context.Background()
+
+	// Ensure shared test template exists
+	ensureTestSessionTemplate(t, cli, ctx)
 
 	// Create session via API
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
@@ -668,6 +834,9 @@ func TestDebugSession_E2E_SessionExpiration(t *testing.T) {
 	cli := setupClient(t)
 	api := setupAPIClient(t)
 	ctx := context.Background()
+
+	// Ensure shared test template exists
+	ensureTestSessionTemplate(t, cli, ctx)
 
 	// Create session via API
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
@@ -864,6 +1033,9 @@ func TestDebugSession_E2E_WorkloadDeployment(t *testing.T) {
 	cli := setupClient(t)
 	api := setupAPIClient(t)
 	ctx := context.Background()
+
+	// Ensure shared test template exists
+	ensureTestSessionTemplate(t, cli, ctx)
 
 	// Create session via API
 	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{

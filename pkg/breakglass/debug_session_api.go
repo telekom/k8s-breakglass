@@ -337,8 +337,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	// Sanitize reason to prevent injection attacks
 	if req.Reason != "" {
-		sanitized, _ := SanitizeReasonText(req.Reason)
-		req.Reason = sanitized
+		sanitized, err := SanitizeReasonText(req.Reason)
+		if err != nil {
+			reqLog.Warnw("Failed to sanitize reason, using empty string", "error", err)
+			req.Reason = "" // Use empty string as safe fallback
+		} else {
+			req.Reason = sanitized
+		}
 	}
 
 	// Validate template exists
@@ -766,8 +771,13 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	session.Status.Approval.ApprovedAt = &now
 	// Sanitize approval reason to prevent injection attacks
 	if req.Reason != "" {
-		sanitized, _ := SanitizeReasonText(req.Reason)
-		session.Status.Approval.Reason = sanitized
+		sanitized, err := SanitizeReasonText(req.Reason)
+		if err != nil {
+			reqLog.Warnw("Failed to sanitize approval reason, using empty string", "error", err)
+			session.Status.Approval.Reason = "" // Use empty string as safe fallback
+		} else {
+			session.Status.Approval.Reason = sanitized
+		}
 	} else {
 		session.Status.Approval.Reason = req.Reason
 	}
@@ -843,7 +853,12 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	// Sanitize rejection reason to prevent injection attacks
 	sanitizedReason := req.Reason
 	if req.Reason != "" {
-		sanitizedReason, _ = SanitizeReasonText(req.Reason)
+		var err error
+		sanitizedReason, err = SanitizeReasonText(req.Reason)
+		if err != nil {
+			reqLog.Warnw("Failed to sanitize rejection reason, using empty string", "error", err)
+			sanitizedReason = "" // Use empty string as safe fallback
+		}
 	}
 	session.Status.Approval.Reason = sanitizedReason
 

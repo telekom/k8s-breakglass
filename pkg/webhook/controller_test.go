@@ -814,6 +814,47 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 	}
 }
 
+// TestIsRequestFromAllowedIDP_FailClosed tests that the function denies requests when IDP list fails to load
+// This is a critical security test to ensure we fail-closed when there are API errors
+func TestIsRequestFromAllowedIDP_FailClosed(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	// Create a fake client that returns an error on List
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+
+	// Wrap the client with an interceptor that forces List to fail
+	errorClient := &listErrorClient{Client: cli}
+	escalMgr := &breakglass.EscalationManager{Client: errorClient}
+
+	wc := &WebhookController{
+		log:          logger.Sugar(),
+		escalManager: escalMgr,
+	}
+
+	esc := &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForRequests: []string{"keycloak-idp"},
+		},
+	}
+
+	// When List fails, the function should return false (fail-closed)
+	result := wc.isRequestFromAllowedIDP(context.Background(), "https://keycloak.example.com/", esc, logger.Sugar())
+
+	if result {
+		t.Error("expected false (fail-closed) when List fails, got true")
+	}
+}
+
+// listErrorClient wraps a client and forces List to return an error
+type listErrorClient struct {
+	client.Client
+}
+
+func (c *listErrorClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	return fmt.Errorf("simulated API error")
+}
+
 // TestCheckDebugSessionAccess tests the checkDebugSessionAccess helper function
 func TestCheckDebugSessionAccess(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
