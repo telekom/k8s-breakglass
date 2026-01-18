@@ -1327,3 +1327,112 @@ func TestManager_BatchProcessingError(t *testing.T) {
 
 	// Should not panic, errors are logged (bug fixed to include both metric labels)
 }
+
+func TestManager_DebugSessionEvents(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	var events []*Event
+	var mu sync.Mutex
+
+	sink := &testSink{
+		name: "test",
+		writeFunc: func(event *Event) {
+			mu.Lock()
+			events = append(events, event)
+			mu.Unlock()
+		},
+	}
+
+	manager := NewManager(sink, DefaultManagerConfig(), logger)
+	ctx := context.Background()
+
+	// Test DebugSessionFailed
+	manager.DebugSessionFailed(ctx, "ds-failed", "ns1", "cluster1", "pod failed to start", map[string]interface{}{
+		"extra": "data",
+	})
+	// Test with nil details
+	manager.DebugSessionFailed(ctx, "ds-failed-2", "ns1", "cluster1", "unknown error", nil)
+
+	// Test DebugSessionExpired
+	manager.DebugSessionExpired(ctx, "ds-expired", "ns1", "cluster1")
+
+	// Test DebugSessionApprovalTimeout
+	manager.DebugSessionApprovalTimeout(ctx, "ds-timeout", "ns1", "cluster1")
+
+	// Test DebugSessionPodFailed
+	manager.DebugSessionPodFailed(ctx, "ds1", "ns1", "pod1", "pod-ns1", "CrashLoopBackOff", "container exited with error")
+
+	// Test DebugSessionPodRestarted
+	manager.DebugSessionPodRestarted(ctx, "ds2", "ns1", "pod2", "pod-ns2", 3, "OOMKilled")
+
+	// Test DebugSessionResourceDeployed
+	manager.DebugSessionResourceDeployed(ctx, "ds3", "ns1", "cluster1", "Pod", "debug-pod", "debug-ns")
+	manager.DebugSessionResourceDeployed(ctx, "ds3", "ns1", "cluster1", "ServiceAccount", "debug-sa", "debug-ns")
+
+	// Test DebugSessionResourceCleanup
+	manager.DebugSessionResourceCleanup(ctx, "ds4", "ns1", "cluster1", "Pod", "debug-pod", "debug-ns")
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	require.Len(t, events, 9)
+
+	// Create a map to find events by type (since they may be processed in any order)
+	eventsByType := make(map[EventType][]*Event)
+	for _, e := range events {
+		eventsByType[e.Type] = append(eventsByType[e.Type], e)
+	}
+
+	// Verify DebugSessionFailed events
+	failedEvents := eventsByType[EventDebugSessionFailed]
+	require.Len(t, failedEvents, 2)
+	for _, e := range failedEvents {
+		assert.Equal(t, SeverityCritical, e.Severity)
+		assert.Equal(t, "DebugSession", e.Target.Kind)
+		assert.NotNil(t, e.Details["reason"])
+	}
+
+	// Verify DebugSessionExpired event
+	expiredEvents := eventsByType[EventDebugSessionExpired]
+	require.Len(t, expiredEvents, 1)
+	assert.Equal(t, SeverityWarning, expiredEvents[0].Severity)
+	assert.Equal(t, "ds-expired", expiredEvents[0].Target.Name)
+	assert.Equal(t, "cluster1", expiredEvents[0].Details["cluster"])
+
+	// Verify DebugSessionApprovalTimeout event
+	timeoutEvents := eventsByType[EventDebugSessionApprovalTimeout]
+	require.Len(t, timeoutEvents, 1)
+	assert.Equal(t, SeverityWarning, timeoutEvents[0].Severity)
+	assert.Equal(t, "ds-timeout", timeoutEvents[0].Target.Name)
+
+	// Verify DebugSessionPodFailed event
+	podFailedEvents := eventsByType[EventDebugSessionPodFailed]
+	require.Len(t, podFailedEvents, 1)
+	assert.Equal(t, SeverityCritical, podFailedEvents[0].Severity)
+	assert.Equal(t, "pod1", podFailedEvents[0].Target.Name)
+	assert.Equal(t, "CrashLoopBackOff", podFailedEvents[0].Details["failure_reason"])
+
+	// Verify DebugSessionPodRestarted event
+	podRestartedEvents := eventsByType[EventDebugSessionPodRestarted]
+	require.Len(t, podRestartedEvents, 1)
+	assert.Equal(t, SeverityWarning, podRestartedEvents[0].Severity)
+	assert.Equal(t, int32(3), podRestartedEvents[0].Details["restart_count"])
+	assert.Equal(t, "OOMKilled", podRestartedEvents[0].Details["last_termination_reason"])
+
+	// Verify DebugSessionResourceDeployed events
+	deployedEvents := eventsByType[EventDebugSessionResourceDeploy]
+	require.Len(t, deployedEvents, 2)
+	for _, e := range deployedEvents {
+		assert.Equal(t, SeverityInfo, e.Severity)
+		assert.Contains(t, []string{"Pod", "ServiceAccount"}, e.Target.Kind)
+	}
+
+	// Verify DebugSessionResourceCleanup event
+	cleanupEvents := eventsByType[EventDebugSessionResourceCleanup]
+	require.Len(t, cleanupEvents, 1)
+	assert.Equal(t, SeverityInfo, cleanupEvents[0].Severity)
+	assert.Equal(t, "Pod", cleanupEvents[0].Target.Kind)
+
+	_ = manager.Close()
+}

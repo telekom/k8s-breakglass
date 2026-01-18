@@ -150,7 +150,7 @@ spec:
   approvers:
     groups: ["security-team"]
   maxValidFor: "2h"
-  idleTimeout: "1h"
+  # idleTimeout: "1h"  # NOT YET IMPLEMENTED - reserved for future use
 ```
 
 Deploy:

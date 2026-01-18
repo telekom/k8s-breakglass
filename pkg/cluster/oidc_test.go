@@ -916,3 +916,95 @@ func TestOIDCTokenProvider_PerformTOFU_UsesVerifyPeerCertificate(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to connect to API server for TOFU")
 	})
 }
+
+func TestOIDCTokenProvider_Invalidate(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	// Add a token to the cache
+	provider.mu.Lock()
+	provider.tokens["cluster1"] = &cachedToken{accessToken: "test-token"}
+	provider.tokens["cluster2"] = &cachedToken{accessToken: "test-token-2"}
+	provider.mu.Unlock()
+
+	// Verify token exists
+	provider.mu.RLock()
+	assert.NotNil(t, provider.tokens["cluster1"])
+	assert.NotNil(t, provider.tokens["cluster2"])
+	provider.mu.RUnlock()
+
+	// Invalidate one cluster
+	provider.Invalidate("cluster1")
+
+	// Verify cluster1 is gone but cluster2 remains
+	provider.mu.RLock()
+	assert.Nil(t, provider.tokens["cluster1"])
+	assert.NotNil(t, provider.tokens["cluster2"])
+	provider.mu.RUnlock()
+}
+
+func TestOIDCTokenProvider_InvalidateAll(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	// Add multiple tokens to the cache
+	provider.mu.Lock()
+	provider.tokens["cluster1"] = &cachedToken{accessToken: "test-token-1"}
+	provider.tokens["cluster2"] = &cachedToken{accessToken: "test-token-2"}
+	provider.tokens["cluster3"] = &cachedToken{accessToken: "test-token-3"}
+	provider.mu.Unlock()
+
+	// Verify tokens exist
+	provider.mu.RLock()
+	assert.Len(t, provider.tokens, 3)
+	provider.mu.RUnlock()
+
+	// Invalidate all
+	provider.InvalidateAll()
+
+	// Verify all tokens are gone
+	provider.mu.RLock()
+	assert.Len(t, provider.tokens, 0)
+	provider.mu.RUnlock()
+}
+
+func TestOIDCTokenProvider_InvalidateTOFU(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	// Add TOFU CAs to the cache
+	provider.tofuMu.Lock()
+	provider.tofuCAs["https://api.cluster1.example.com:6443"] = []byte("ca-1")
+	provider.tofuCAs["https://api.cluster2.example.com:6443"] = []byte("ca-2")
+	provider.tofuMu.Unlock()
+
+	// Verify TOFU CAs exist
+	provider.tofuMu.RLock()
+	assert.NotNil(t, provider.tofuCAs["https://api.cluster1.example.com:6443"])
+	assert.NotNil(t, provider.tofuCAs["https://api.cluster2.example.com:6443"])
+	provider.tofuMu.RUnlock()
+
+	// Invalidate one cluster
+	provider.InvalidateTOFU("https://api.cluster1.example.com:6443")
+
+	// Verify cluster1 TOFU is gone but cluster2 remains
+	provider.tofuMu.RLock()
+	assert.Nil(t, provider.tofuCAs["https://api.cluster1.example.com:6443"])
+	assert.NotNil(t, provider.tofuCAs["https://api.cluster2.example.com:6443"])
+	provider.tofuMu.RUnlock()
+}

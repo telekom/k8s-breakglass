@@ -2030,3 +2030,70 @@ func TestHandleAuthorize_DenyPolicyWithNamespaceLabels(t *testing.T) {
 		}
 	})
 }
+
+// TestDedupeStrings tests the dedupeStrings helper function
+func TestDedupeStrings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{
+			name:     "empty slice",
+			input:    []string{},
+			expected: []string{},
+		},
+		{
+			name:     "no duplicates",
+			input:    []string{"a", "b", "c"},
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "with duplicates",
+			input:    []string{"a", "b", "a", "c", "b"},
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "all same",
+			input:    []string{"x", "x", "x"},
+			expected: []string{"x"},
+		},
+		{
+			name:     "preserves order",
+			input:    []string{"z", "a", "z", "m"},
+			expected: []string{"z", "a", "m"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := dedupeStrings(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, result)
+				return
+			}
+			for i := range result {
+				if result[i] != tt.expected[i] {
+					t.Errorf("expected %v, got %v", tt.expected, result)
+					return
+				}
+			}
+		})
+	}
+}
+
+func TestWebhookController_WithAuditService(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, nil, nil, nil, nil)
+
+	// Initially nil
+	if wc.auditService != nil {
+		t.Error("expected auditService to be nil initially")
+	}
+
+	// Should return itself for chaining
+	result := wc.WithAuditService(nil)
+	if result != wc {
+		t.Error("expected WithAuditService to return the controller for chaining")
+	}
+}

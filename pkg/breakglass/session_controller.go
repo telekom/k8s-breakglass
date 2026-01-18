@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
@@ -206,7 +207,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		userGroups, gerr = wc.getUserGroupsFn(ctx, cug)
 		if gerr != nil {
 			reqLog.With("error", gerr).Error("Failed to retrieve user groups for escalation determination")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract user groups: %v", gerr)})
+			apiresponses.RespondInternalError(c, "extract user groups", gerr, reqLog)
 			return
 		}
 	}
@@ -218,7 +219,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	escalations, err := wc.escalationManager.GetClusterGroupBreakglassEscalations(ctx, cug.Clustername, userGroups)
 	if err != nil {
 		reqLog.Errorw("Error getting breakglass escalations", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract cluster breakglass escalation information: %v", err)})
+		apiresponses.RespondInternalError(c, "extract cluster breakglass escalation information", err, reqLog)
 		return
 	}
 	// We already filtered by cluster & user groups; treat these as possible escalations.
@@ -303,8 +304,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 				}
 			} else {
 				// Legacy mode: resolve from single IDP
-				if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
-					members, err = wc.escalationManager.Resolver.Members(ctx, group)
+				if wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
+					members, err = wc.escalationManager.GetResolver().Members(ctx, group)
 					if err != nil {
 						reqLog.Warnw("Failed to resolve approver group members", "group", group, "error", err)
 						// Continue with other groups even if one fails
@@ -367,7 +368,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
 			reqLog.Errorw("Error getting breakglass sessions", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract breakglass session information: %v", err)})
+			apiresponses.RespondInternalError(c, "extract breakglass session information", err, reqLog)
 			return
 		}
 	} else {
@@ -396,7 +397,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	useremail, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		reqLog.Errorw("Error getting user identity email", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract email from token: %v", err)})
+		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
 		return
 	}
 	username := wc.identityProvider.GetUsername(c)
@@ -438,7 +439,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		reqLog.Errorw("Error getting user identifier from token",
 			"error", err,
 			"userIdentifierClaim", userIdentifierClaim)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract user identifier (%s) from token: %v", userIdentifierClaim, err)})
+		apiresponses.RespondInternalError(c, fmt.Sprintf("extract user identifier (%s) from token", userIdentifierClaim), err, reqLog)
 		return
 	}
 	reqLog.Debugw("Resolved user identifier for session",
@@ -504,7 +505,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			d, err := time.ParseDuration(matchedEsc.Spec.MaxValidFor)
 			if err != nil {
 				reqLog.Warnw("Failed to parse MaxValidFor duration", "error", err, "value", matchedEsc.Spec.MaxValidFor)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("invalid escalation duration configuration: %v", err)})
+				apiresponses.RespondInternalError(c, "parse escalation duration configuration", err, reqLog)
 				return
 			}
 			maxAllowed := int64(d.Seconds())
@@ -599,15 +600,15 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		reason := "internal_error"
 		if apierrors.IsInvalid(err) {
 			reason = "invalid"
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
 		} else if apierrors.IsForbidden(err) {
 			reason = "forbidden"
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			apiresponses.RespondForbidden(c, err.Error())
 		} else if apierrors.IsBadRequest(err) {
 			reason = "bad_request"
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			apiresponses.RespondBadRequest(c, err.Error())
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create session: %v", err)})
+			apiresponses.RespondInternalError(c, "create session", err, reqLog)
 		}
 		metrics.SessionCreateFailed.WithLabelValues(request.Clustername, reason).Inc()
 		return
@@ -640,7 +641,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(ctx, bs); err != nil {
 		reqLog.Errorw("error while updating breakglass session", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+		apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		return
 	}
 
@@ -673,7 +674,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 				"requestorUsername", username)
 		} else {
 			// Trigger a group sync before sending email (but still send based on current status)
-			if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
+			if wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
 				// Capture the request-scoped logger (which contains cid) so background logs
 				// emitted during group sync include the same correlation id.
 				goroutineLog := reqLog.With("cluster", bs.Spec.Cluster)
@@ -703,7 +704,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 					log.Debugw("Syncing approver groups", "cluster", bs.Spec.Cluster, "groupCount", len(groupsToSync))
 					for g := range groupsToSync {
-						members, merr := wc.escalationManager.Resolver.Members(ctx, g)
+						members, merr := wc.escalationManager.GetResolver().Members(ctx, g)
 						if merr != nil {
 							log.Warnw("Group member resolution failed during sync", "group", g, "error", merr)
 							continue
@@ -760,9 +761,9 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	if err != nil {
 		reqLog.Error("error while getting breakglass session", zap.Error(err))
 		if apierrors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			apiresponses.RespondNotFoundSimple(c, "session not found")
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get session: %v", err)})
+			apiresponses.RespondInternalError(c, "get session", err, reqLog)
 		}
 		return
 	}
@@ -788,7 +789,15 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 
 	// If the session already has the same last condition, return conflict to avoid repeated transitions.
 	if lastCondition.Type == string(sesCondition) {
-		c.JSON(http.StatusConflict, gin.H{"error": "session already in requested state", "session": bs})
+		c.JSON(http.StatusConflict, struct {
+			Error   string                     `json:"error"`
+			Code    string                     `json:"code"`
+			Session v1alpha1.BreakglassSession `json:"session"`
+		}{
+			Error:   "session already in requested state",
+			Code:    "CONFLICT",
+			Session: bs,
+		})
 		return
 	}
 
@@ -800,12 +809,28 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	currState := bs.Status.State
 	if sesCondition == v1alpha1.SessionConditionTypeApproved || sesCondition == v1alpha1.SessionConditionTypeRejected {
 		if currState != v1alpha1.SessionStatePending {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session must be pending to perform %s; current state: %s", sesCondition, currState), "session": bs})
+			c.JSON(http.StatusBadRequest, struct {
+				Error   string                     `json:"error"`
+				Code    string                     `json:"code"`
+				Session v1alpha1.BreakglassSession `json:"session"`
+			}{
+				Error:   fmt.Sprintf("session must be pending to perform %s; current state: %s", sesCondition, currState),
+				Code:    "BAD_REQUEST",
+				Session: bs,
+			})
 			return
 		}
 	} else {
 		if currState == v1alpha1.SessionStateRejected || currState == v1alpha1.SessionStateWithdrawn || currState == v1alpha1.SessionStateExpired || currState == v1alpha1.SessionStateTimeout {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is in terminal state %s and cannot be modified", currState), "session": bs})
+			c.JSON(http.StatusBadRequest, struct {
+				Error   string                     `json:"error"`
+				Code    string                     `json:"code"`
+				Session v1alpha1.BreakglassSession `json:"session"`
+			}{
+				Error:   fmt.Sprintf("session is in terminal state %s and cannot be modified", currState),
+				Code:    "BAD_REQUEST",
+				Session: bs,
+			})
 			return
 		}
 	}
@@ -905,11 +930,11 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		}
 	case v1alpha1.SessionConditionTypeIdle:
 		reqLog.Error("error setting session status to idle which should be only initial state")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot set session status to idle (initial state only)"})
+		apiresponses.RespondBadRequest(c, "cannot set session status to idle (initial state only)")
 		return
 	default:
 		reqLog.Error("unknown session condition type", zap.String("type", string(sesCondition)))
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown session condition type: %s", sesCondition)})
+		apiresponses.RespondBadRequest(c, fmt.Sprintf("unknown session condition type: %s", sesCondition))
 		return
 	}
 
@@ -925,11 +950,11 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		reqLog.Error("error while updating breakglass session", zap.Error(err))
 		if apierrors.IsConflict(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "session update conflict, please retry"})
+			apiresponses.RespondConflict(c, "session update conflict, please retry")
 		} else if apierrors.IsInvalid(err) {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+			apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		}
 		return
 	}
@@ -1052,7 +1077,9 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		ses, err := wc.sessionManager.GetBreakglassSessionByName(ctx, token)
 		if err != nil {
 			reqLog.Debugw("Token validation: session not found", "token", token, "error", err)
-			c.JSON(http.StatusNotFound, gin.H{"valid": false})
+			c.JSON(http.StatusNotFound, struct {
+				Valid bool `json:"valid"`
+			}{Valid: false})
 			return
 		}
 		canApprove := wc.isSessionApprover(c, ses)
@@ -1087,7 +1114,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	}
 	if err != nil {
 		reqLog.Error("Error getting breakglass sessions", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to list sessions: %v", err)})
+		apiresponses.RespondInternalError(c, "list sessions", err, reqLog)
 		return
 	}
 
@@ -1104,7 +1131,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		userEmail, err = wc.identityProvider.GetEmail(c)
 		if err != nil {
 			reqLog.Error("Error getting user identity email", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract email from token: %v", err)})
+			apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
 			return
 		}
 	}
@@ -1261,9 +1288,14 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.C
 	ses, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
 		reqLog.Warnw("Session not found", "session", sessionName, "error", err)
-		c.JSON(http.StatusNotFound, gin.H{
-			"error":   "session not found",
-			"session": sessionName,
+		c.JSON(http.StatusNotFound, struct {
+			Error   string `json:"error"`
+			Code    string `json:"code"`
+			Session string `json:"session"`
+		}{
+			Error:   "session not found",
+			Code:    "NOT_FOUND",
+			Session: sessionName,
 		})
 		return
 	}
@@ -1296,9 +1328,9 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	if err != nil {
 		reqLog.Error("error while getting breakglass session", zap.Error(err))
 		if apierrors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			apiresponses.RespondNotFoundSimple(c, "session not found")
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get session: %v", err)})
+			apiresponses.RespondInternalError(c, "get session", err, reqLog)
 		}
 		return
 	}
@@ -1307,7 +1339,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	requesterEmail, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		reqLog.Error("error getting user identity email", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract email from token: %v", err)})
+		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
 		return
 	}
 	if bs.Spec.User != requesterEmail {
@@ -1347,11 +1379,11 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		reqLog.Error("error while updating breakglass session", zap.Error(err))
 		if apierrors.IsConflict(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "session update conflict, please retry"})
+			apiresponses.RespondConflict(c, "session update conflict, please retry")
 		} else if apierrors.IsInvalid(err) {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+			apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		}
 		return
 	}
@@ -1373,9 +1405,9 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	if err != nil {
 		reqLog.Error("error while getting breakglass session", zap.Error(err))
 		if apierrors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			apiresponses.RespondNotFoundSimple(c, "session not found")
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get session: %v", err)})
+			apiresponses.RespondInternalError(c, "get session", err, reqLog)
 		}
 		return
 	}
@@ -1384,7 +1416,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	requesterEmail, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		reqLog.Error("error getting user identity email", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract email from token: %v", err)})
+		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
 		return
 	}
 	if bs.Spec.User != requesterEmail {
@@ -1436,11 +1468,11 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		reqLog.Error("error while updating breakglass session", zap.Error(err))
 		if apierrors.IsConflict(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "session update conflict, please retry"})
+			apiresponses.RespondConflict(c, "session update conflict, please retry")
 		} else if apierrors.IsInvalid(err) {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+			apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		}
 		return
 	}
@@ -1462,9 +1494,9 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	if err != nil {
 		reqLog.Error("error while getting breakglass session", zap.Error(err))
 		if apierrors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			apiresponses.RespondNotFoundSimple(c, "session not found")
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get session: %v", err)})
+			apiresponses.RespondInternalError(c, "get session", err, reqLog)
 		}
 		return
 	}
@@ -1510,11 +1542,11 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	if err := wc.sessionManager.UpdateBreakglassSessionStatus(c.Request.Context(), bs); err != nil {
 		reqLog.Error("error while updating breakglass session", zap.Error(err))
 		if apierrors.IsConflict(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "session update conflict, please retry"})
+			apiresponses.RespondConflict(c, "session update conflict, please retry")
 		} else if apierrors.IsInvalid(err) {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update session status: %v", err)})
+			apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		}
 		return
 	}
@@ -1954,7 +1986,7 @@ func (wc BreakglassSessionController) filterExcludedNotificationRecipients(
 
 	// Get members of excluded groups
 	excludedGroupMembers := make(map[string]bool)
-	if len(exclusions.Groups) > 0 && wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
+	if len(exclusions.Groups) > 0 && wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
 		// Use a timeout context to prevent hanging on slow group resolution
 		ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
 		defer cancel()
@@ -1964,7 +1996,7 @@ func (wc BreakglassSessionController) filterExcludedNotificationRecipients(
 		for _, group := range exclusions.Groups {
 			log.Debugw("Attempting to resolve excluded group members",
 				"group", group)
-			members, err := wc.escalationManager.Resolver.Members(ctx, group)
+			members, err := wc.escalationManager.GetResolver().Members(ctx, group)
 			if err != nil {
 				log.Warnw("Failed to resolve members of excluded group",
 					"group", group,
@@ -1993,7 +2025,7 @@ func (wc BreakglassSessionController) filterExcludedNotificationRecipients(
 			"uniqueExcludedGroupMembers", len(excludedGroupMembers),
 			"excludedGroupMemberList", excludedGroupMembersList)
 	} else {
-		resolverNil := wc.escalationManager != nil && wc.escalationManager.Resolver == nil
+		resolverNil := wc.escalationManager != nil && wc.escalationManager.GetResolver() == nil
 		log.Debugw("Cannot resolve excluded group members",
 			"groupCount", len(exclusions.Groups),
 			"escalationManagerNil", wc.escalationManager == nil,
@@ -2064,7 +2096,7 @@ func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
 
 	// Get members of hidden groups
 	hiddenGroupMembers := make(map[string]bool)
-	if wc.escalationManager != nil && wc.escalationManager.Resolver != nil {
+	if wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
 		// Use a timeout context to prevent hanging on slow group resolution
 		ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
 		defer cancel()
@@ -2074,7 +2106,7 @@ func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
 		for _, group := range escalation.Spec.Approvers.HiddenFromUI {
 			log.Debugw("Attempting to resolve hidden item as group",
 				"item", group)
-			members, err := wc.escalationManager.Resolver.Members(ctx, group)
+			members, err := wc.escalationManager.GetResolver().Members(ctx, group)
 			if err != nil {
 				// This might be a user, not a group - just continue
 				log.Debugw("Failed to resolve members of hidden item (treating as individual user)",
@@ -2108,7 +2140,7 @@ func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
 	} else {
 		log.Warnw("Cannot resolve hidden group members - resolver not available",
 			"escalationManagerNil", wc.escalationManager == nil,
-			"resolverNil", wc.escalationManager != nil && wc.escalationManager.Resolver == nil)
+			"resolverNil", wc.escalationManager != nil && wc.escalationManager.GetResolver() == nil)
 	}
 
 	// Filter approvers - only include those not in hidden lists
@@ -2149,7 +2181,7 @@ func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 	sessions, err := wc.sessionManager.GetAllBreakglassSessions(ctx)
 	if err != nil {
 		reqLog.Error("Error getting access reviews", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to extract cluster group access information: %v", err)})
+		apiresponses.RespondInternalError(c, "extract cluster group access information", err, reqLog)
 		return
 	}
 

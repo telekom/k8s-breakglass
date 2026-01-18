@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -678,7 +679,7 @@ func TestAuditConfig_ValidateCreate_ValidConfig(t *testing.T) {
 		},
 	}
 
-	warnings, err := ac.ValidateCreate(nil, ac)
+	warnings, err := ac.ValidateCreate(context.Background(), ac)
 	assert.NoError(t, err)
 	assert.Empty(t, warnings)
 }
@@ -694,7 +695,7 @@ func TestAuditConfig_ValidateCreate_InvalidConfig(t *testing.T) {
 		},
 	}
 
-	_, err := ac.ValidateCreate(nil, ac)
+	_, err := ac.ValidateCreate(context.Background(), ac)
 	assert.Error(t, err)
 }
 
@@ -702,7 +703,7 @@ func TestAuditConfig_ValidateCreate_WrongType(t *testing.T) {
 	ac := &AuditConfig{}
 	wrongType := &BreakglassSession{} // Wrong type
 
-	_, err := ac.ValidateCreate(nil, wrongType)
+	_, err := ac.ValidateCreate(context.Background(), wrongType)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expected an AuditConfig")
 }
@@ -740,7 +741,7 @@ func TestAuditConfig_ValidateUpdate_ValidConfig(t *testing.T) {
 		},
 	}
 
-	warnings, err := newAC.ValidateUpdate(nil, oldAC, newAC)
+	warnings, err := newAC.ValidateUpdate(context.Background(), oldAC, newAC)
 	assert.NoError(t, err)
 	assert.Empty(t, warnings)
 }
@@ -750,7 +751,7 @@ func TestAuditConfig_ValidateUpdate_WrongType(t *testing.T) {
 	oldObj := &AuditConfig{}
 	wrongType := &BreakglassSession{} // Wrong type
 
-	_, err := ac.ValidateUpdate(nil, oldObj, wrongType)
+	_, err := ac.ValidateUpdate(context.Background(), oldObj, wrongType)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expected an AuditConfig")
 }
@@ -782,7 +783,7 @@ func TestAuditConfig_ValidateUpdate_InvalidConfig(t *testing.T) {
 		},
 	}
 
-	_, err := newAC.ValidateUpdate(nil, oldAC, newAC)
+	_, err := newAC.ValidateUpdate(context.Background(), oldAC, newAC)
 	assert.Error(t, err)
 }
 
@@ -799,7 +800,7 @@ func TestAuditConfig_ValidateDelete(t *testing.T) {
 		},
 	}
 
-	warnings, err := ac.ValidateDelete(nil, ac)
+	warnings, err := ac.ValidateDelete(context.Background(), ac)
 	assert.NoError(t, err)
 	assert.Nil(t, warnings)
 }

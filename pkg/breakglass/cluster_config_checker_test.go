@@ -627,3 +627,414 @@ func TestNewStatusUpdateHelper(t *testing.T) {
 		})
 	}
 }
+
+// ====================================================================
+// Tests for validateOIDCFromIdentityProvider function
+// ====================================================================
+
+// TestValidateOIDCFromIdentityProvider_MissingRequiredFields tests that
+// validateOIDCFromIdentityProvider fails when name or server is missing
+func TestValidateOIDCFromIdentityProvider_MissingRequiredFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		ref     *telekomv1alpha1.OIDCFromIdentityProviderConfig
+		wantMsg string
+	}{
+		{
+			name: "missing name",
+			ref: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "",
+				Server: "https://api.example.com:6443",
+			},
+			wantMsg: "Required value",
+		},
+		{
+			name: "missing server",
+			ref: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "my-idp",
+				Server: "",
+			},
+			wantMsg: "Required value",
+		},
+		{
+			name: "both missing",
+			ref: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "",
+				Server: "",
+			},
+			wantMsg: "Required value",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cc := &telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "oidc-from-idp-cluster", Namespace: "default"},
+				Spec: telekomv1alpha1.ClusterConfigSpec{
+					AuthType:                 telekomv1alpha1.ClusterAuthTypeOIDC,
+					OIDCFromIdentityProvider: tt.ref,
+				},
+			}
+			cl := newTestFakeClient(cc)
+			fakeRecorder := record.NewFakeRecorder(10)
+			checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+			checker.runOnce(context.Background(), checker.Log)
+
+			got := &telekomv1alpha1.ClusterConfig{}
+			require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+			readyCondition := getCondition(got, "Ready")
+			require.NotNil(t, readyCondition)
+			require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+			require.Contains(t, readyCondition.Message, tt.wantMsg)
+		})
+	}
+}
+
+// TestValidateOIDCFromIdentityProvider_IdentityProviderNotFound tests that
+// validateOIDCFromIdentityProvider fails when the referenced IdentityProvider doesn't exist
+func TestValidateOIDCFromIdentityProvider_IdentityProviderNotFound(t *testing.T) {
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-from-idp-notfound", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "nonexistent-idp",
+				Server: "https://api.example.com:6443",
+			},
+		},
+	}
+	cl := newTestFakeClient(cc) // No IdentityProvider created
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "not found")
+}
+
+// TestValidateOIDCFromIdentityProvider_IdentityProviderDisabled tests that
+// validateOIDCFromIdentityProvider fails when the referenced IdentityProvider is disabled
+func TestValidateOIDCFromIdentityProvider_IdentityProviderDisabled(t *testing.T) {
+	idp := &telekomv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
+		Spec: telekomv1alpha1.IdentityProviderSpec{
+			Disabled: true, // IDP is disabled
+			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				BaseURL: "https://keycloak.example.com", ClientID: "client",
+				Realm: "test-realm",
+				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					Name:      "keycloak-secret",
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+			},
+		},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-from-disabled-idp", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "disabled-idp",
+				Server: "https://api.example.com:6443",
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, idp)
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "disabled")
+}
+
+// TestValidateOIDCFromIdentityProvider_NoClientSecretRef tests that
+// validateOIDCFromIdentityProvider fails when neither the OIDCFromIdentityProvider
+// nor the IdentityProvider has a client secret configured
+func TestValidateOIDCFromIdentityProvider_NoClientSecretRef(t *testing.T) {
+	// IDP without Keycloak config (so no implicit client secret)
+	idp := &telekomv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-no-keycloak"},
+		Spec: telekomv1alpha1.IdentityProviderSpec{
+			Disabled: false,
+			// No Keycloak config
+		},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-no-secret", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "idp-no-keycloak",
+				Server: "https://api.example.com:6443",
+				// No ClientSecretRef
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, idp)
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "clientSecretRef")
+}
+
+// TestValidateOIDCFromIdentityProvider_ClientSecretMissing tests that
+// validateOIDCFromIdentityProvider fails when the client secret reference exists but secret is missing
+func TestValidateOIDCFromIdentityProvider_ClientSecretMissing(t *testing.T) {
+	idp := &telekomv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-with-keycloak"},
+		Spec: telekomv1alpha1.IdentityProviderSpec{
+			Disabled: false,
+			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				BaseURL: "https://keycloak.example.com", ClientID: "client",
+				Realm: "test-realm",
+				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					Name:      "missing-keycloak-secret",
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+			},
+		},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-secret-missing", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "idp-with-keycloak",
+				Server: "https://api.example.com:6443",
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, idp) // Secret not created
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "secret")
+}
+
+// TestValidateOIDCFromIdentityProvider_ClientSecretKeyMissing tests that
+// validateOIDCFromIdentityProvider fails when the secret exists but doesn't have the required key
+func TestValidateOIDCFromIdentityProvider_ClientSecretKeyMissing(t *testing.T) {
+	idp := &telekomv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-key-missing"},
+		Spec: telekomv1alpha1.IdentityProviderSpec{
+			Disabled: false,
+			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				BaseURL: "https://keycloak.example.com", ClientID: "client",
+				Realm: "test-realm",
+				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					Name:      "keycloak-secret-wrong-key",
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+			},
+		},
+	}
+	// Secret with wrong key
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret-wrong-key", Namespace: "default"},
+		Data:       map[string][]byte{"wrong-key": []byte("secret-value")},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-key-missing", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "idp-key-missing",
+				Server: "https://api.example.com:6443",
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, idp, secret)
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "missing key")
+}
+
+// TestValidateOIDCFromIdentityProvider_CASecretMissing tests that
+// validateOIDCFromIdentityProvider fails when caSecretRef points to a missing secret
+func TestValidateOIDCFromIdentityProvider_CASecretMissing(t *testing.T) {
+	idp := &telekomv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-ca-test"},
+		Spec: telekomv1alpha1.IdentityProviderSpec{
+			Disabled: false,
+			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				BaseURL: "https://keycloak.example.com", ClientID: "client",
+				Realm: "test-realm",
+				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					Name:      "keycloak-client-secret",
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+			},
+		},
+	}
+	clientSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-client-secret", Namespace: "default"},
+		Data:       map[string][]byte{"client-secret": []byte("secret-value")},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-ca-missing", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "idp-ca-test",
+				Server: "https://api.example.com:6443",
+				CASecretRef: &telekomv1alpha1.SecretKeyReference{
+					Name:      "missing-ca-secret",
+					Namespace: "default",
+					Key:       "ca.crt",
+				},
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, idp, clientSecret) // No CA secret
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.Contains(t, readyCondition.Message, "CA secret")
+}
+
+// TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret tests that
+// when OIDCFromIdentityProvider has its own ClientSecretRef, it uses that instead of IDP's
+func TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret(t *testing.T) {
+	idp := &telekomv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-explicit-secret"},
+		Spec: telekomv1alpha1.IdentityProviderSpec{
+			Disabled: false,
+			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				BaseURL: "https://keycloak.example.com", ClientID: "client",
+				Realm: "test-realm",
+				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					Name:      "idp-keycloak-secret", // This should NOT be used
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+			},
+		},
+	}
+	// Create the explicit secret (referenced by OIDCFromIdentityProvider)
+	explicitSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "explicit-client-secret", Namespace: "default"},
+		Data:       map[string][]byte{"my-key": []byte("explicit-secret-value")},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-explicit-secret", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "idp-explicit-secret",
+				Server: "https://api.example.com:6443",
+				ClientSecretRef: &telekomv1alpha1.SecretKeyReference{
+					Name:      "explicit-client-secret",
+					Namespace: "default",
+					Key:       "my-key",
+				},
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, idp, explicitSecret) // Only explicit secret, not IDP's secret
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	// Should pass secret validation but fail on OIDC discovery (which is expected)
+	// The key test is that it doesn't fail looking for "idp-keycloak-secret"
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.NotContains(t, readyCondition.Message, "idp-keycloak-secret")
+}
+
+// TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey tests that
+// when no key is specified, "client-secret" is used as the default
+func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
+	idp := &telekomv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-default-key"},
+		Spec: telekomv1alpha1.IdentityProviderSpec{
+			Disabled: false,
+			Keycloak: &telekomv1alpha1.KeycloakGroupSync{
+				BaseURL: "https://keycloak.example.com", ClientID: "client",
+				Realm: "test-realm",
+				ClientSecretRef: telekomv1alpha1.SecretKeyReference{
+					Name:      "keycloak-secret-default",
+					Namespace: "default",
+					// Key is empty - should default to "client-secret"
+				},
+			},
+		},
+	}
+	// Secret with default key
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret-default", Namespace: "default"},
+		Data:       map[string][]byte{"client-secret": []byte("secret-value")},
+	}
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-default-key", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			AuthType: telekomv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &telekomv1alpha1.OIDCFromIdentityProviderConfig{
+				Name:   "idp-default-key",
+				Server: "https://api.example.com:6443",
+			},
+		},
+	}
+	cl := newTestFakeClient(cc, idp, secret)
+	fakeRecorder := record.NewFakeRecorder(10)
+	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
+
+	checker.runOnce(context.Background(), checker.Log)
+
+	got := &telekomv1alpha1.ClusterConfig{}
+	require.NoError(t, cl.Get(context.Background(), clientKey(cc), got))
+	readyCondition := getCondition(got, "Ready")
+	require.NotNil(t, readyCondition)
+	// Should pass secret key check (using default "client-secret") but fail on OIDC discovery
+	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	require.NotContains(t, readyCondition.Message, "missing key")
+}

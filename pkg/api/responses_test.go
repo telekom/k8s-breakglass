@@ -264,3 +264,75 @@ func TestRespondNoContent(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.Empty(t, w.Body.Bytes())
 }
+
+func TestRespondUnauthorizedWithMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		message  string
+		expected string
+	}{
+		{
+			name:     "with custom message",
+			message:  "invalid token",
+			expected: "invalid token",
+		},
+		{
+			name:     "with empty message uses default",
+			message:  "",
+			expected: "user not authenticated",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			RespondUnauthorizedWithMessage(c, tt.message)
+
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+			var resp APIError
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, resp.Error)
+			assert.Equal(t, "UNAUTHORIZED", resp.Code)
+		})
+	}
+}
+
+func TestRespondBadGateway(t *testing.T) {
+	tests := []struct {
+		name     string
+		message  string
+		expected string
+	}{
+		{
+			name:     "with custom message",
+			message:  "upstream server error",
+			expected: "upstream server error",
+		},
+		{
+			name:     "with empty message uses default",
+			message:  "",
+			expected: "bad gateway",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			RespondBadGateway(c, tt.message)
+
+			assert.Equal(t, http.StatusBadGateway, w.Code)
+
+			var resp APIError
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, resp.Error)
+			assert.Equal(t, "BAD_GATEWAY", resp.Code)
+		})
+	}
+}

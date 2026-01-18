@@ -359,3 +359,64 @@ func (s *mockBatchSink) WriteBatch(ctx context.Context, events []*Event) error {
 	}
 	return nil
 }
+
+func TestCircuitBreakerSink_Stats(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockSink := &mockSink{}
+
+	cfg := DefaultCircuitBreakerConfig()
+	cbSink := NewCircuitBreakerSink(mockSink, cfg, logger)
+
+	// Write a successful event
+	err := cbSink.Write(context.Background(), &Event{ID: "1", Type: "test.event"})
+	assert.NoError(t, err)
+
+	// Get stats from CircuitBreakerSink
+	stats := cbSink.Stats()
+	assert.Equal(t, int64(1), stats.TotalRequests)
+	assert.Equal(t, int64(1), stats.TotalSuccesses)
+	assert.Equal(t, int64(0), stats.TotalFailures)
+	assert.Equal(t, CircuitClosed, stats.State)
+}
+
+func TestCircuitBreakerSink_IsHealthy(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockSink := &mockSink{failNext: true}
+
+	cfg := CircuitBreakerConfig{
+		FailureThreshold: 1,
+		OpenTimeout:      1 * time.Second,
+	}
+	cbSink := NewCircuitBreakerSink(mockSink, cfg, logger)
+
+	// Initially healthy
+	assert.True(t, cbSink.IsHealthy())
+
+	// Cause a failure to trip the circuit
+	_ = cbSink.Write(context.Background(), &Event{ID: "1", Type: "test.event"})
+
+	// Should now be unhealthy
+	assert.False(t, cbSink.IsHealthy())
+}
+
+func TestCircuitBreakerSink_Name(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockSink := &mockSink{}
+
+	cfg := DefaultCircuitBreakerConfig()
+	cbSink := NewCircuitBreakerSink(mockSink, cfg, logger)
+
+	assert.Equal(t, "mock", cbSink.Name())
+}
+
+func TestCircuitBreakerSink_Close(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockSink := &mockSink{}
+
+	cfg := DefaultCircuitBreakerConfig()
+	cbSink := NewCircuitBreakerSink(mockSink, cfg, logger)
+
+	err := cbSink.Close()
+	assert.NoError(t, err)
+	assert.True(t, mockSink.closed)
+}

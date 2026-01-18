@@ -783,3 +783,41 @@ func TestBuildAllowedOrigins(t *testing.T) {
 		require.ElementsMatch(t, defaultAllowedOrigins, defaults)
 	})
 }
+
+func TestSecurityHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+
+	cfg := config.Config{
+		Server: config.Server{
+			ListenAddress: ":8080",
+		},
+	}
+
+	server := NewServer(logger, cfg, true, &AuthHandler{})
+	require.NotNil(t, server)
+
+	// Make a request to check security headers are present
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	server.gin.ServeHTTP(w, req)
+
+	// Verify security headers are set
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"),
+		"X-Content-Type-Options header should be set to 'nosniff'")
+	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"),
+		"X-Frame-Options header should be set to 'DENY'")
+	assert.Equal(t, "1; mode=block", w.Header().Get("X-XSS-Protection"),
+		"X-XSS-Protection header should be set")
+	assert.Equal(t, "strict-origin-when-cross-origin", w.Header().Get("Referrer-Policy"),
+		"Referrer-Policy header should be set")
+	assert.NotEmpty(t, w.Header().Get("Permissions-Policy"),
+		"Permissions-Policy header should be set")
+	assert.NotEmpty(t, w.Header().Get("Content-Security-Policy"),
+		"Content-Security-Policy header should be set")
+
+	// Verify CSP contains expected directives
+	csp := w.Header().Get("Content-Security-Policy")
+	assert.Contains(t, csp, "default-src 'self'")
+	assert.Contains(t, csp, "frame-ancestors 'none'")
+}

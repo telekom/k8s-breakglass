@@ -119,6 +119,25 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		c.Next()
 	})
 
+	// Security headers middleware
+	// Adds essential security headers to all responses
+	engine.Use(func(c *gin.Context) {
+		// Prevent MIME type sniffing
+		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
+		// Prevent clickjacking attacks
+		c.Writer.Header().Set("X-Frame-Options", "DENY")
+		// Enable XSS filter in older browsers
+		c.Writer.Header().Set("X-XSS-Protection", "1; mode=block")
+		// Control referrer information
+		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// Restrict browser features
+		c.Writer.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		// Content Security Policy - allow same-origin and configured OIDC endpoints
+		// Note: 'unsafe-inline' for styles is required for many UI frameworks
+		c.Writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+		c.Next()
+	})
+
 	// Basic per-IP rate limiter for public/unauthenticated endpoints
 	// This applies to all requests before authentication (e.g., /api/config, /api/identity-provider)
 	// Uses a moderate limit: 20 req/s per IP, burst of 50

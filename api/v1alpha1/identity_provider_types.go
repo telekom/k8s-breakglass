@@ -229,10 +229,19 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Obj
 	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique - requires k8s client)
 	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, identityProvider.Spec.Issuer, identityProvider.Name, field.NewPath("spec").Child("issuer"))...)
 
-	if len(allErrs) == 0 {
-		return nil, nil
+	// Collect warnings for insecure settings
+	var warnings admission.Warnings
+	if identityProvider.Spec.OIDC.InsecureSkipVerify {
+		warnings = append(warnings, "OIDC insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "IdentityProvider"}, identityProvider.Name, allErrs)
+	if identityProvider.Spec.Keycloak != nil && identityProvider.Spec.Keycloak.InsecureSkipVerify {
+		warnings = append(warnings, "Keycloak insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
+	}
+
+	if len(allErrs) == 0 {
+		return warnings, nil
+	}
+	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "IdentityProvider"}, identityProvider.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type

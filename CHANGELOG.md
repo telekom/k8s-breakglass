@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Technical debt documentation now references the correct PR for webhook validation fix
 - **CLI completion** now writes to configured output writer instead of hardcoded stdout
 - **CLI E2E tests** fixed to use correct flag names (`--context` instead of `--context-name`)
+- BreakglassSession webhooks now reject invalid status transitions
+- DenyPolicy validation now rejects negative precedence values
+- Breakglass session list reads now use a fresh API reader for consistent filtering results
+- Multi-cluster e2e setup now applies debug session templates
+- Documentation now covers full CRD set, validating webhook scope, and email optionality
 
 ### Security
 

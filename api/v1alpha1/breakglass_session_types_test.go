@@ -80,6 +80,53 @@ func TestValidateUpdate_ImmutableSpec(t *testing.T) {
 	}
 }
 
+func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
+	base := &BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "s3"},
+		Spec: BreakglassSessionSpec{
+			Cluster:      "cluster1",
+			User:         "user@example.com",
+			GrantedGroup: "group-a",
+		},
+	}
+
+	cases := []struct {
+		name    string
+		from    BreakglassSessionState
+		to      BreakglassSessionState
+		wantErr bool
+	}{
+		{name: "empty to pending", from: "", to: SessionStatePending, wantErr: false},
+		{name: "pending to approved", from: SessionStatePending, to: SessionStateApproved, wantErr: false},
+		{name: "pending to waiting", from: SessionStatePending, to: SessionStateWaitingForScheduledTime, wantErr: false},
+		{name: "waiting to approved", from: SessionStateWaitingForScheduledTime, to: SessionStateApproved, wantErr: false},
+		{name: "waiting to withdrawn", from: SessionStateWaitingForScheduledTime, to: SessionStateWithdrawn, wantErr: false},
+		{name: "approved to expired", from: SessionStateApproved, to: SessionStateExpired, wantErr: false},
+		{name: "approved to pending", from: SessionStateApproved, to: SessionStatePending, wantErr: true},
+		{name: "rejected to approved", from: SessionStateRejected, to: SessionStateApproved, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			old := base.DeepCopy()
+			old.Status.State = tc.from
+			updated := base.DeepCopy()
+			updated.Status.State = tc.to
+
+			_, err := updated.ValidateUpdate(context.Background(), old, updated)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for transition %q -> %q", tc.from, tc.to)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for transition %q -> %q: %v", tc.from, tc.to, err)
+			}
+		})
+	}
+}
+
 func TestBreakglassSessionSetCondition(t *testing.T) {
 	bs := &BreakglassSession{}
 	cond := metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue}

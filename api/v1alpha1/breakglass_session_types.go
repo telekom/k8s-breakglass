@@ -266,12 +266,41 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 		if !reflect.DeepEqual(bs.Spec, oldBs.Spec) {
 			allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), bs.Spec, "spec is immutable"))
 		}
+		if !isValidBreakglassSessionStateTransition(oldBs.Status.State, bs.Status.State) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("state"), bs.Status.State,
+				fmt.Sprintf("invalid state transition from %q to %q", oldBs.Status.State, bs.Status.State)))
+		}
 	}
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, bs.Namespace, bs.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, bs.Name, allErrs)
+}
+
+func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bool {
+	if from == to {
+		return true
+	}
+	if from == "" {
+		return to == SessionStatePending
+	}
+	switch from {
+	case SessionStatePending:
+		return to == SessionStateApproved ||
+			to == SessionStateWaitingForScheduledTime ||
+			to == SessionStateRejected ||
+			to == SessionStateWithdrawn ||
+			to == SessionStateTimeout
+	case SessionStateWaitingForScheduledTime:
+		return to == SessionStateApproved || to == SessionStateWithdrawn
+	case SessionStateApproved:
+		return to == SessionStateExpired
+	case SessionStateRejected, SessionStateWithdrawn, SessionStateExpired, SessionStateTimeout:
+		return false
+	default:
+		return false
+	}
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type

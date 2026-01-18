@@ -3278,7 +3278,7 @@ func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
 			"flm-on-duty":   {"flm-manager@example.com"},
 		},
 	}
-	ctrl.escalationManager.Resolver = mockResolver
+	ctrl.escalationManager.SetResolver(mockResolver)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil
@@ -3457,7 +3457,7 @@ func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 			"security-team": {"security@example.com"},
 		},
 	}
-	ctrl.escalationManager.Resolver = mockResolver
+	ctrl.escalationManager.SetResolver(mockResolver)
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		return []string{"system:authenticated"}, nil

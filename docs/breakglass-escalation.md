@@ -35,7 +35,7 @@ spec:
   
   # Optional: Session duration settings
   maxValidFor: "1h"      # Max time active after approval (default: 1h)
-  idleTimeout: "1h"      # Max idle time before revocation (default: 1h)
+  # idleTimeout: "1h"    # NOT YET IMPLEMENTED - reserved for future use
   retainFor: "720h"      # Time to retain expired sessions (default: 720h)
   
   # Optional: Alternative cluster specification (supports glob patterns)
@@ -753,7 +753,7 @@ spec:
   approvers:
     users: ["manager@example.com"]
   maxValidFor: "2h"
-  idleTimeout: "1h"
+  # idleTimeout: "1h"  # NOT YET IMPLEMENTED
 ```
 
 ### External Contractor Access
