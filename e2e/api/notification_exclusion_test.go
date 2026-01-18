@@ -89,14 +89,18 @@ func TestMailProviderCRUD(t *testing.T) {
 				t.Logf("Temporarily unset default on existing MailProvider: %s", originalDefault.Name)
 
 				// Wait for the webhook cache to sync the update
-				// The webhook uses a cached reader which may take a moment to see the change
+				// The webhook uses a cached reader with its own sync cycle (typically ~1s)
+				// We need to wait long enough for the informer to pick up the change
 				require.Eventually(t, func() bool {
 					var refreshed telekomv1alpha1.MailProvider
 					if err := cli.Get(ctx, types.NamespacedName{Name: originalDefault.Name, Namespace: originalDefault.Namespace}, &refreshed); err != nil {
 						return false
 					}
 					return !refreshed.Spec.Default
-				}, 5*time.Second, 100*time.Millisecond, "Waiting for MailProvider update to propagate")
+				}, 10*time.Second, 200*time.Millisecond, "Waiting for MailProvider update to propagate")
+
+				// Additional delay to ensure webhook cache sync (informer resync period)
+				time.Sleep(2 * time.Second)
 
 				break
 			}

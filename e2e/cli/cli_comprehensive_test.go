@@ -563,9 +563,7 @@ func TestCLIEscalationCommands(t *testing.T) {
 		err = json.Unmarshal([]byte(output), &escalations)
 		require.NoError(t, err)
 
-		if len(escalations) == 0 {
-			t.Skip("No escalations available to test get")
-		}
+		require.NotEmpty(t, escalations, "Escalations must exist in E2E environment - check that fixtures are loaded")
 
 		escName := escalations[0].Name
 		output, err = tc.runCommandWithToken("escalation", "get", escName, "-o", "json")
@@ -607,9 +605,7 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		err = json.Unmarshal([]byte(output), &templates)
 		require.NoError(t, err)
 
-		if len(templates) == 0 {
-			t.Skip("No debug templates available")
-		}
+		require.NotEmpty(t, templates, "DebugSessionTemplates must exist in E2E environment - check that fixtures are loaded")
 
 		tmplName := templates[0].Name
 		output, err = tc.runCommandWithToken("debug", "template", "get", tmplName, "-o", "json")
@@ -649,9 +645,7 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		err = json.Unmarshal([]byte(output), &templates)
 		require.NoError(t, err)
 
-		if len(templates) == 0 {
-			t.Skip("No debug templates available for session creation")
-		}
+		require.NotEmpty(t, templates, "DebugSessionTemplates must exist in E2E environment - check that fixtures are loaded")
 
 		tmplName := templates[0].Name
 
@@ -663,10 +657,7 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 			"--reason", "CLI E2E debug test",
 			"-o", "json",
 		)
-		if err != nil {
-			t.Logf("Debug session create error (may be expected if not supported): %v", err)
-			t.Skip("Debug session creation not supported in current environment")
-		}
+		require.NoError(t, err, "Debug session creation should succeed when templates are available")
 
 		var session v1alpha1.DebugSession
 		err = json.Unmarshal([]byte(output), &session)
@@ -1408,9 +1399,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		require.NoError(t, err, "Should parse template list")
 		t.Logf("Found %d debug templates", len(templates))
 
-		if len(templates) == 0 {
-			t.Skip("No debug templates available for testing")
-		}
+		require.NotEmpty(t, templates, "DebugSessionTemplates must exist in E2E environment - check that fixtures are loaded")
 
 		templateName = templates[0].Name
 		t.Logf("Using template: %s", templateName)
@@ -1418,9 +1407,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 
 	// Step 2: Create debug session
 	t.Run("Step2_CreateDebugSession", func(t *testing.T) {
-		if templateName == "" {
-			t.Skip("No template available")
-		}
+		require.NotEmpty(t, templateName, "Template should have been found in previous step")
 
 		output, err := runWithToken(requesterToken,
 			"debug", "session", "create",
@@ -1429,10 +1416,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 			"--reason", "Full chain debug E2E test",
 			"-o", "json",
 		)
-		if err != nil {
-			t.Logf("Debug session create error (may be expected): %v", err)
-			t.Skip("Debug session creation not supported in current environment")
-		}
+		require.NoError(t, err, "Debug session creation should succeed when templates are available")
 
 		var session v1alpha1.DebugSession
 		err = json.Unmarshal([]byte(output), &session)
@@ -1445,9 +1429,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 
 	// Step 3: Wait for pending state
 	t.Run("Step3_WaitForPendingState", func(t *testing.T) {
-		if sessionName == "" {
-			t.Skip("No session created")
-		}
+		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		deadline := time.Now().Add(30 * time.Second)
 		var lastState v1alpha1.DebugSessionState
@@ -1473,9 +1455,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 
 	// Step 4: Approver approves the debug session
 	t.Run("Step4_ApproveDebugSession", func(t *testing.T) {
-		if sessionName == "" {
-			t.Skip("No session created")
-		}
+		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		output, err := runWithToken(approverToken, "debug", "session", "approve", sessionName)
 		require.NoError(t, err, "Approver should be able to approve debug session")
@@ -1484,9 +1464,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 
 	// Step 5: Verify approved state
 	t.Run("Step5_VerifyApprovedState", func(t *testing.T) {
-		if sessionName == "" {
-			t.Skip("No session created")
-		}
+		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		deadline := time.Now().Add(30 * time.Second)
 		var lastState v1alpha1.DebugSessionState
@@ -1512,9 +1490,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 
 	// Step 6: Terminate the debug session
 	t.Run("Step6_TerminateDebugSession", func(t *testing.T) {
-		if sessionName == "" {
-			t.Skip("No session created")
-		}
+		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		output, err := runWithToken(requesterToken, "debug", "session", "terminate", sessionName)
 		if err != nil {
@@ -1526,9 +1502,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 
 	// Step 7: Verify terminated state
 	t.Run("Step7_VerifyTerminatedState", func(t *testing.T) {
-		if sessionName == "" {
-			t.Skip("No session created")
-		}
+		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		deadline := time.Now().Add(30 * time.Second)
 		var lastState v1alpha1.DebugSessionState

@@ -11,7 +11,6 @@ import {
   waitForScaleToast,
   findEscalationCardByName,
   cleanupPendingSessions,
-  config,
 } from "./helpers";
 
 // This test file uses ui-e2e-approve-email-user (isolated user with group "ui-e2e-approve-email-requester")
@@ -179,73 +178,60 @@ test.describe.serial("Approve Session via Email Link", () => {
       const approvalLink = mailhog.extractApprovalLink(email.Content.Body);
       expect(approvalLink).toBeTruthy();
 
-      // Open new context (not logged in)
+      // Open new context (not logged in) - Keycloak hostname resolution works via /etc/hosts
       const newContext = await browser.newContext({ ignoreHTTPSErrors: true });
       const newPage = await newContext.newPage();
 
-      // Intercept requests to internal Kubernetes DNS and redirect to configured Keycloak URL
-      // This handles the case where Keycloak issuer URL uses cluster-internal DNS
-      const keycloakOrigin = new URL(config.keycloakUrl).origin;
-      await newPage.route("**/*.svc.cluster.local*/**", (route) => {
-        const url = route.request().url();
-        // Replace cluster-internal DNS with configured Keycloak URL
-        const fixedUrl = url.replace(/https?:\/\/[^\/]+\.svc\.cluster\.local:\d+/, keycloakOrigin);
-        console.log(`DEBUG: Intercepting ${url} -> ${fixedUrl}`);
-        route.continue({ url: fixedUrl });
-      });
-
       try {
         // Navigate to approval link without being logged in
-        await newPage.goto(approvalLink!);
+        // Rewrite to frontend URL to match the OIDC redirect_uri origin
+        const frontendApprovalLink = mailhog.rewriteToFrontendUrl(approvalLink!);
+        console.log("Navigating to approval link (unauthenticated):", frontendApprovalLink);
+        await newPage.goto(frontendApprovalLink);
         await newPage.waitForLoadState("networkidle");
 
-        // Check if there's a login button (frontend login page)
-        const loginButton = newPage.locator('scale-button:has-text("Log In"), button:has-text("Log In")').first();
-        const hasLoginButton = await loginButton.isVisible({ timeout: 2000 }).catch(() => false);
+        // The approval page should automatically redirect to Keycloak for unauthenticated users
+        // Wait for redirect to Keycloak login page (SessionApprovalView triggers auth.login())
+        await newPage.waitForURL(/keycloak|\/realms\//, { timeout: 20000 });
+        await newPage.waitForLoadState("networkidle");
+        console.log("Redirected to Keycloak:", newPage.url());
 
-        if (hasLoginButton) {
-          // Frontend login page - click login button which redirects to Keycloak
-          await loginButton.click();
-          // Wait for navigation to Keycloak
-          await newPage.waitForURL(/keycloak|auth/, { timeout: 10000 }).catch(() => {
-            // Already on auth page or direct redirect
-          });
-          await newPage.waitForLoadState("networkidle");
-        }
+        // Login via Keycloak
+        await newPage.fill("#username", TEST_USERS.uiE2eApprover.username);
+        await newPage.fill("#password", TEST_USERS.uiE2eApprover.password);
+        await newPage.click("#kc-login");
 
-        // Login via Keycloak if we're on the Keycloak page
-        const currentUrl = newPage.url();
-        if (/keycloak|auth/.test(currentUrl) && !currentUrl.includes("/auth/callback")) {
-          await newPage.fill("#username", TEST_USERS.uiE2eApprover.username);
-          await newPage.fill("#password", TEST_USERS.uiE2eApprover.password);
-          await newPage.click("#kc-login");
-          // Wait for redirect back to the app (use config.backendUrl for origin check)
-          const backendOrigin = new URL(config.backendUrl).origin;
-          await newPage.waitForURL((url) => url.href.includes(backendOrigin) && !url.href.includes("keycloak"), {
-            timeout: 30000,
-          });
-        }
+        // Wait for redirect back to the app after Keycloak login
+        // The OIDC callback should redirect to the original approval page path
+        await newPage.waitForURL(/localhost:\d+/, { timeout: 30000 });
+        console.log("Redirected back to app:", newPage.url());
 
-        // If on callback page, wait for redirect to approval page
+        // Wait for callback processing and redirect to approval page
+        // The callback handler in main.ts reads state.path and redirects
+        await newPage.waitForLoadState("networkidle");
+
+        // If still on callback page, wait for redirect to complete
         if (newPage.url().includes("/auth/callback")) {
-          await newPage.waitForURL(/session\/.*\/approve/, { timeout: 15000 }).catch(async () => {
-            // If redirect doesn't happen (possible auth bug), manually navigate to approval link
-            await newPage.goto(approvalLink!);
+          console.log("Still on callback page, waiting for redirect...");
+          await newPage.waitForURL(/session\/.*\/approve/, { timeout: 20000 }).catch(() => {
+            console.log("Callback redirect timed out, current URL:", newPage.url());
           });
         }
 
-        // Ensure we're on the approval page
-        const currentPageUrl = newPage.url();
-        if (!currentPageUrl.includes("/session/")) {
-          // Auth completed but didn't redirect to approval page - navigate manually
-          await newPage.goto(approvalLink!);
-        }
+        // If not on session page, something went wrong with the callback
+        // This is a test failure condition - log details for debugging
+        const finalUrl = newPage.url();
+        console.log("Final URL after auth flow:", finalUrl);
 
-        // Wait for full page load and session data to load
-        await newPage.waitForLoadState("networkidle");
+        if (!finalUrl.includes("/session/")) {
+          // Take a screenshot for debugging
+          await newPage.screenshot({ path: "test-results/callback-redirect-failure.png" });
+          console.log("ERROR: Expected to be on session approval page but got:", finalUrl);
+        }
 
         // Wait for the session review content to appear on the dedicated approval page
-        // Look for specific content elements rather than wrapper div
+        // Look for specific content elements
+        await newPage.waitForLoadState("networkidle");
         await expect(
           newPage
             .locator('[data-testid="requester"], [data-testid="approve-button"], [data-testid="error-title"]')

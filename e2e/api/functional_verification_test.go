@@ -165,10 +165,7 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 		// Check that Kafka deployment is running
 		kafkaPod := &corev1.PodList{}
 		err := cli.List(ctx, kafkaPod, client.MatchingLabels{"app": "kafka"})
-		if err != nil {
-			t.Logf("Could not list Kafka pods: %v", err)
-			t.Skip("Kafka pods not accessible")
-		}
+		require.NoError(t, err, "Kafka pods should be accessible in E2E environment with KAFKA_TEST enabled")
 
 		var runningPods int
 		for _, pod := range kafkaPod.Items {

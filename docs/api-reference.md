@@ -634,6 +634,98 @@ GET /api/config
 }
 ```
 
+### Get Identity Provider
+
+Retrieve the primary (or default) identity provider configuration. This endpoint returns only non-sensitive metadata suitable for frontend authentication setup.
+
+```http
+GET /api/identity-provider
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "type": "keycloak",
+  "authority": "https://keycloak.example.com/realms/master",
+  "clientID": "breakglass-ui",
+  "keycloakMetadata": {
+    "baseURL": "https://keycloak.example.com",
+    "realm": "master"
+  }
+}
+```
+
+**Error Responses:**
+
+- `404 Not Found` - No identity provider configured
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Identity provider type (e.g., "keycloak", "oidc") |
+| `authority` | string | OIDC authority URL for token validation |
+| `clientID` | string | OIDC client ID for frontend authentication |
+| `keycloakMetadata` | object | Optional Keycloak-specific metadata (only present for Keycloak IDPs) |
+| `keycloakMetadata.baseURL` | string | Keycloak server base URL |
+| `keycloakMetadata.realm` | string | Keycloak realm name |
+
+**Security Note:** This endpoint never exposes secrets (client secrets, service account tokens, etc.).
+
+### Get Multi-IDP Configuration
+
+Retrieve all configured identity providers for multi-IDP deployments. Used by the frontend to display an IDP selector and show which IDPs are allowed for each escalation.
+
+```http
+GET /api/config/idps
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "identityProviders": [
+    {
+      "name": "keycloak-prod",
+      "displayName": "Production Keycloak",
+      "issuer": "https://keycloak.example.com/realms/master",
+      "enabled": true,
+      "oidcAuthority": "https://keycloak.example.com/realms/master",
+      "oidcClientID": "breakglass-ui"
+    },
+    {
+      "name": "azure-ad",
+      "displayName": "Azure Active Directory",
+      "issuer": "https://login.microsoftonline.com/tenant-id/v2.0",
+      "enabled": true,
+      "oidcAuthority": "https://login.microsoftonline.com/tenant-id/v2.0",
+      "oidcClientID": "breakglass-azure-client"
+    }
+  ],
+  "escalationIDPMapping": {
+    "production-admin": ["keycloak-prod"],
+    "emergency-access": ["keycloak-prod", "azure-ad"],
+    "dev-cluster-access": []
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `identityProviders` | array | List of enabled identity providers |
+| `identityProviders[].name` | string | IDP resource name (used in escalation references) |
+| `identityProviders[].displayName` | string | Human-readable name for UI display |
+| `identityProviders[].issuer` | string | JWT issuer claim URL |
+| `identityProviders[].enabled` | boolean | Whether the IDP is currently enabled |
+| `identityProviders[].oidcAuthority` | string | OIDC authority URL |
+| `identityProviders[].oidcClientID` | string | OIDC client ID |
+| `escalationIDPMapping` | object | Map of escalation names to allowed IDP names |
+
+**Usage Notes:**
+
+- If `escalationIDPMapping[escalationName]` is empty or missing, the escalation allows any IDP
+- Frontend uses this to pre-populate IDP selection based on escalation choice
+- Data is cached by the reconciler to prevent API server overload
+
 ### OIDC Authority Proxy
 
 Proxy for OIDC discovery and JWKS endpoints to avoid browser CORS issues with external OIDC providers.

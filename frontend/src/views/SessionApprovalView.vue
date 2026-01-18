@@ -199,9 +199,18 @@ onMounted(async () => {
 
   // Check authentication before attempting to load session
   if (!authenticated.value) {
-    error.value = "You must be logged in to approve sessions. Redirecting to home...";
-    loading.value = false;
-    setTimeout(() => router.push("/"), 2000);
+    console.log("[SessionApprovalView] User not authenticated, initiating login with redirect back");
+    // Initiate login with the current approval path stored in state
+    // After OIDC callback, user will be redirected back to this approval page
+    if (auth) {
+      const currentPath = route.fullPath;
+      console.log("[SessionApprovalView] Storing path for post-login redirect:", currentPath);
+      await auth.login({ path: currentPath });
+    } else {
+      // Fallback if auth is not available
+      error.value = "Authentication service not available";
+      loading.value = false;
+    }
     return;
   }
 

@@ -105,7 +105,7 @@ users:
 func TestCrossClusterSARAuthorization(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
-		t.Skip("Webhook tests disabled. Set WEBHOOK_TEST=true and ensure API is accessible.")
+		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -258,7 +258,7 @@ func TestEscalationClusterConfigRefs(t *testing.T) {
 func TestWebhookEndpointAvailability(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 	if !helpers.IsWebhookTestEnabled() {
-		t.Skip("Webhook tests disabled. Set WEBHOOK_TEST=true and ensure API is accessible.")
+		t.Skip("Webhook tests disabled via E2E_SKIP_WEBHOOK_TESTS=true")
 	}
 
 	t.Run("WebhookHealthEndpoint", func(t *testing.T) {

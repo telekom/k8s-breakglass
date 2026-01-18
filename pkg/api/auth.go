@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container/list"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -26,10 +27,17 @@ const (
 	maxJWKSCacheSize = 100
 )
 
+// jwksCacheEntry holds the JWKS and its position in the LRU list
+type jwksCacheEntry struct {
+	issuer string
+	jwks   *keyfunc.JWKS
+}
+
 type AuthHandler struct {
-	// Multi-IDP support: map issuer URL to JWKS
-	jwksCache map[string]*keyfunc.JWKS
-	jwksMutex sync.RWMutex
+	// Multi-IDP support: LRU cache for JWKS by issuer URL
+	jwksCache   map[string]*list.Element // issuer -> list element
+	jwksLRUList *list.List               // list of *jwksCacheEntry (front = most recent)
+	jwksMutex   sync.RWMutex
 
 	// Single-IDP fallback (for backward compatibility)
 	jwks *keyfunc.JWKS
@@ -44,8 +52,9 @@ func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
 	// JWKS loading happens dynamically via WithIdentityProviderLoader()
 	// using IdentityProvider CRDs configured in the cluster
 	return &AuthHandler{
-		jwksCache: make(map[string]*keyfunc.JWKS),
-		log:       log,
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		log:         log,
 	}
 }
 
@@ -57,19 +66,23 @@ func (a *AuthHandler) WithIdentityProviderLoader(loader *config.IdentityProvider
 
 // getJWKSForIssuer returns the JWKS for a given issuer URL, loading it if necessary
 // For single-IDP mode (no idpLoader), returns the default JWKS
+// Uses LRU eviction to prevent memory exhaustion when cache is full.
 func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*keyfunc.JWKS, error) {
 	// Single-IDP mode: use default JWKS
 	if a.idpLoader == nil {
 		return a.jwks, nil
 	}
 
-	// Multi-IDP mode: load JWKS for specific issuer
-	a.jwksMutex.RLock()
-	cachedJwks, exists := a.jwksCache[issuer]
-	a.jwksMutex.RUnlock()
-	if exists {
-		return cachedJwks, nil
+	// Multi-IDP mode: check LRU cache for specific issuer
+	a.jwksMutex.Lock()
+	if elem, exists := a.jwksCache[issuer]; exists {
+		// Move to front of LRU list (mark as recently used)
+		a.jwksLRUList.MoveToFront(elem)
+		entry := elem.Value.(*jwksCacheEntry)
+		a.jwksMutex.Unlock()
+		return entry.jwks, nil
 	}
+	a.jwksMutex.Unlock()
 
 	// Load IDP config by issuer
 	idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
@@ -128,7 +141,9 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		// Use the configured client (or default) to fetch discovery
 		client := options.Client
 		if client == nil {
-			client = http.DefaultClient
+			// Create client with explicit timeout to prevent goroutine hangs
+			// when OIDC provider is slow or unresponsive
+			client = &http.Client{Timeout: 10 * time.Second}
 		}
 
 		// Try discovery
@@ -163,29 +178,42 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		return nil, fmt.Errorf("failed to load JWKS for IDP %s (%s): %w", idpCfg.Name, issuer, err)
 	}
 
-	// Cache it with size limit to prevent memory exhaustion
+	// Cache with LRU eviction to prevent memory exhaustion
 	a.jwksMutex.Lock()
-	// If cache is full, evict oldest entries (simple eviction: clear half the cache)
-	if len(a.jwksCache) >= maxJWKSCacheSize {
-		a.log.Warnw("JWKS cache full, evicting oldest entries",
+	defer a.jwksMutex.Unlock()
+
+	// Check again in case another goroutine loaded it while we were fetching
+	if elem, exists := a.jwksCache[issuer]; exists {
+		// Another goroutine beat us to it - use theirs, discard ours
+		jwks.EndBackground()
+		a.jwksLRUList.MoveToFront(elem)
+		return elem.Value.(*jwksCacheEntry).jwks, nil
+	}
+
+	// LRU eviction: remove least recently used entries if cache is full
+	for len(a.jwksCache) >= maxJWKSCacheSize {
+		// Evict the back element (least recently used)
+		oldest := a.jwksLRUList.Back()
+		if oldest == nil {
+			break
+		}
+		entry := oldest.Value.(*jwksCacheEntry)
+		a.log.Debugw("JWKS cache LRU eviction",
+			"evictedIssuer", entry.issuer,
 			"currentSize", len(a.jwksCache),
 			"maxSize", maxJWKSCacheSize)
-		// Simple eviction: remove half the entries to avoid thrashing
-		evictCount := len(a.jwksCache) / 2
-		for k := range a.jwksCache {
-			if evictCount <= 0 {
-				break
-			}
-			// EndBackground stops the JWKS refresh goroutine
-			if oldJwks := a.jwksCache[k]; oldJwks != nil {
-				oldJwks.EndBackground()
-			}
-			delete(a.jwksCache, k)
-			evictCount--
+		// Stop the background refresh goroutine
+		if entry.jwks != nil {
+			entry.jwks.EndBackground()
 		}
+		delete(a.jwksCache, entry.issuer)
+		a.jwksLRUList.Remove(oldest)
 	}
-	a.jwksCache[issuer] = jwks
-	a.jwksMutex.Unlock()
+
+	// Add new entry at front (most recently used)
+	entry := &jwksCacheEntry{issuer: issuer, jwks: jwks}
+	elem := a.jwksLRUList.PushFront(entry)
+	a.jwksCache[issuer] = elem
 
 	a.log.Debugw("loaded JWKS for issuer", "issuer", issuer, "idp_name", idpCfg.Name)
 	return jwks, nil
@@ -240,9 +268,10 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 
 		if a.idpLoader != nil && issuer != "" {
 			// Multi-IDP mode: load JWKS for specific issuer
-			// Record cache check
+			// Record cache check (using RLock for read-only check)
 			a.jwksMutex.RLock()
-			_, cacheHit := a.jwksCache[issuer]
+			elem, cacheHit := a.jwksCache[issuer]
+			_ = elem // silence unused variable warning
 			a.jwksMutex.RUnlock()
 
 			if cacheHit {

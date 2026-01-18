@@ -134,6 +134,7 @@ func TestAuditLogging(t *testing.T) {
 	session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
 		User:    helpers.TestUsers.Requester.Email,
+		Group:   "audit-test-group", // Must match test-audit-escalation's escalatedGroup in e2e/fixtures/escalations/audit-test.yaml
 		Reason:  "Audit logging test",
 	})
 	require.NoError(t, err)

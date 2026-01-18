@@ -1,10 +1,10 @@
 package api
 
 import (
+	"container/list"
 	"sync"
 	"testing"
 
-	"github.com/MicahParks/keyfunc"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
 
@@ -24,9 +24,10 @@ func TestAuthHandlerWithIdentityProviderLoader(t *testing.T) {
 
 	// Create a basic auth handler without loader
 	auth := &AuthHandler{
-		jwksCache: make(map[string]*keyfunc.JWKS),
-		jwksMutex: sync.RWMutex{},
-		log:       log,
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		jwksMutex:   sync.RWMutex{},
+		log:         log,
 		// idpLoader is not set initially
 	}
 
@@ -60,9 +61,10 @@ func TestAuthHandlerLoaderChaining(t *testing.T) {
 
 	// Create auth handler and call WithIdentityProviderLoader to verify chaining works
 	auth := &AuthHandler{
-		jwksCache: make(map[string]*keyfunc.JWKS),
-		jwksMutex: sync.RWMutex{},
-		log:       log,
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		jwksMutex:   sync.RWMutex{},
+		log:         log,
 	}
 
 	// Call the method - in production this would pass an actual *config.IdentityProviderLoader
@@ -86,9 +88,10 @@ func TestAuthHandlerInitializationWithoutLoader(t *testing.T) {
 
 	// Create auth handler without any loader (single-IDP mode)
 	auth := &AuthHandler{
-		jwksCache: make(map[string]*keyfunc.JWKS),
-		jwksMutex: sync.RWMutex{},
-		log:       log,
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		jwksMutex:   sync.RWMutex{},
+		log:         log,
 		// idpLoader is NOT set (nil)
 	}
 
@@ -118,10 +121,11 @@ func TestAuthHandlerMultiIDPFallback(t *testing.T) {
 
 	// Create auth handler with explicitly nil loader (fallback mode)
 	auth := &AuthHandler{
-		jwksCache: make(map[string]*keyfunc.JWKS),
-		jwksMutex: sync.RWMutex{},
-		log:       log,
-		idpLoader: nil, // No loader = single-IDP fallback mode
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		jwksMutex:   sync.RWMutex{},
+		log:         log,
+		idpLoader:   nil, // No loader = single-IDP fallback mode
 	}
 
 	// Verify the handler is properly initialized for single-IDP mode
@@ -142,9 +146,10 @@ func TestAuthHandlerLoaderReplacement(t *testing.T) {
 	log := zaptest.NewLogger(t).Sugar()
 
 	auth := &AuthHandler{
-		jwksCache: make(map[string]*keyfunc.JWKS),
-		jwksMutex: sync.RWMutex{},
-		log:       log,
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		jwksMutex:   sync.RWMutex{},
+		log:         log,
 	}
 
 	// Initially no loader

@@ -191,11 +191,7 @@ func TestErrorHandlingAPIEndpoints(t *testing.T) {
 		require.NoError(t, err)
 
 		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Request failed (API may not be accessible): %v", err)
-			t.Skip("API not accessible")
-			return
-		}
+		require.NoError(t, err, "API should be accessible in E2E environment")
 		defer resp.Body.Close()
 
 		t.Logf("Non-existent endpoint: status=%d", resp.StatusCode)
@@ -212,11 +208,7 @@ func TestErrorHandlingAPIEndpoints(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Request failed: %v", err)
-			t.Skip("API not accessible")
-			return
-		}
+		require.NoError(t, err, "API should be accessible in E2E environment")
 		defer resp.Body.Close()
 
 		body, _ := io.ReadAll(resp.Body)
@@ -233,11 +225,7 @@ func TestErrorHandlingAPIEndpoints(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Request failed: %v", err)
-			t.Skip("API not accessible")
-			return
-		}
+		require.NoError(t, err, "API should be accessible in E2E environment")
 		defer resp.Body.Close()
 
 		body, _ := io.ReadAll(resp.Body)
@@ -431,11 +419,7 @@ func TestErrorHandlingWebhookErrors(t *testing.T) {
 		req.Header.Set("Content-Type", "text/plain")
 
 		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Request failed: %v", err)
-			t.Skip("Webhook not accessible")
-			return
-		}
+		require.NoError(t, err, "Webhook should be accessible in E2E environment")
 		defer resp.Body.Close()
 
 		body, _ := io.ReadAll(resp.Body)
@@ -453,11 +437,7 @@ func TestErrorHandlingWebhookErrors(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Request failed: %v", err)
-			t.Skip("Webhook not accessible")
-			return
-		}
+		require.NoError(t, err, "Webhook should be accessible in E2E environment")
 		defer resp.Body.Close()
 
 		body, _ := io.ReadAll(resp.Body)
@@ -474,11 +454,7 @@ func TestErrorHandlingWebhookErrors(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Request failed: %v", err)
-			t.Skip("Webhook not accessible")
-			return
-		}
+		require.NoError(t, err, "Webhook should be accessible in E2E environment")
 		defer resp.Body.Close()
 
 		body, _ := io.ReadAll(resp.Body)

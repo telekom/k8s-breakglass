@@ -285,10 +285,7 @@ func TestSecurityApprovalRequired(t *testing.T) {
 			Group:   "pending-auth-test-group",
 			Reason:  "Testing pending session not authorized",
 		})
-		if err != nil {
-			t.Logf("SEC-009: Could not create session (may require group membership): %v", err)
-			t.Skip("Skipping - session creation failed")
-		}
+		require.NoError(t, err, "SEC-009: Session creation should succeed in E2E environment")
 		cleanup.Add(&telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
@@ -654,10 +651,7 @@ func TestSecuritySessionCannotSelfApprove(t *testing.T) {
 			Group:   "self-approve-test-group",
 			Reason:  "Testing self-approval prevention",
 		})
-		if err != nil {
-			t.Logf("SEC-012: Could not create session: %v", err)
-			t.Skip("Skipping - session creation failed")
-		}
+		require.NoError(t, err, "SEC-012: Session creation should succeed in E2E environment")
 		cleanup.Add(&telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
@@ -1120,10 +1114,7 @@ func TestSecurityAllowedApproverDomains(t *testing.T) {
 			Group:   "domain-restricted-access",
 			Reason:  "Testing domain restriction",
 		})
-		if err != nil {
-			t.Logf("SEC-022: Session creation failed (expected if user not in required group): %v", err)
-			t.Skip("Skipping - session creation requires specific group membership")
-		}
+		require.NoError(t, err, "SEC-022: Session creation should succeed in E2E environment")
 		cleanup.Add(&telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
@@ -1169,10 +1160,7 @@ func TestSecuritySessionRejectionWorkflow(t *testing.T) {
 			Group:   "rejection-test-group",
 			Reason:  "Testing rejection workflow",
 		})
-		if err != nil {
-			t.Logf("SEC-023: Could not create session: %v", err)
-			t.Skip("Skipping - session creation failed")
-		}
+		require.NoError(t, err, "SEC-023: Session creation should succeed in E2E environment")
 		cleanup.Add(&telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
@@ -1239,10 +1227,7 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 			Group:   "withdrawal-test-group",
 			Reason:  "Testing withdrawal workflow",
 		})
-		if err != nil {
-			t.Logf("SEC-025: Could not create session: %v", err)
-			t.Skip("Skipping - session creation failed")
-		}
+		require.NoError(t, err, "SEC-025: Session creation should succeed in E2E environment")
 		cleanup.Add(&telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})
@@ -1285,9 +1270,7 @@ func TestSecuritySessionWithdrawal(t *testing.T) {
 			Group:   "withdrawal-deny-test-group",
 			Reason:  "Testing withdrawal denial",
 		})
-		if err != nil {
-			t.Skip("Skipping - session creation failed")
-		}
+		require.NoError(t, err, "SEC-026: Session creation should succeed in E2E environment")
 		cleanup.Add(&telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
 		})

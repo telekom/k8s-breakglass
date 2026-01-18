@@ -715,10 +715,7 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 		require.NoError(t, err, "Failed to create DELETE request")
 
 		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf("Warning: Could not clear webhook receiver (may not be running): %v", err)
-			t.Skip("Webhook receiver not accessible - skipping functional test")
-		}
+		require.NoError(t, err, "Webhook receiver should be accessible in E2E environment")
 		defer func() { _ = resp.Body.Close() }()
 
 		require.Equal(t, http.StatusOK, resp.StatusCode, "Failed to clear events")

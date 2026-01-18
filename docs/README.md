@@ -12,8 +12,10 @@ Complete documentation for the breakglass privilege escalation system.
 - **[CLI Tool (bgctl)](./cli.md)** - Command-line interface for terminal access and automation
 - **[Troubleshooting](./troubleshooting.md)** - Common issues and solutions
 
-## Configuration & Operations
+## Deployment & Operations
 
+- **[Production Deployment Checklist](./production-deployment-checklist.md)** - Pre-production readiness verification
+- **[Upgrade Guide](./upgrade-guide.md)** - Version upgrades, migration, and rollback procedures
 - **[Configuration Reference](./configuration-reference.md)** - config.yaml settings and examples
 - **[CLI Flags Reference](./cli-flags-reference.md)** - All controller flags and environment variables
 - **[Scaling and Leader Election](./scaling-and-leader-election.md)** - Multi-replica deployments with leader election
@@ -21,7 +23,6 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
 - **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
-- **[Installation](./installation.md)** - Deployment patterns and component enable flags
 
 ## Identity & Authentication
 
