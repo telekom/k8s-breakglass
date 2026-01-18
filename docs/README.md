@@ -18,6 +18,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Upgrade Guide](./upgrade-guide.md)** - Version upgrades, migration, and rollback procedures
 - **[Configuration Reference](./configuration-reference.md)** - config.yaml settings and examples
 - **[CLI Flags Reference](./cli-flags-reference.md)** - All controller flags and environment variables
+- **[Ingress Configuration](./ingress-configuration.md)** - CORS, security headers, and reverse proxy setup
 - **[Scaling and Leader Election](./scaling-and-leader-election.md)** - Multi-replica deployments with leader election
 - **[Webhook Setup](./webhook-setup.md)** - Configure authorization webhooks
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring

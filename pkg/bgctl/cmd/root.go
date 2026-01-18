@@ -73,6 +73,16 @@ func NewRootCommand(cfg Config) *cobra.Command {
 			if cmd.Name() == "version" || cmd.Name() == "completion" {
 				return nil
 			}
+			// Skip config loading if server and token are both provided via flags or env vars.
+			// This allows users to run commands without a config file when they provide
+			// all necessary connection info on the command line.
+			if rt.serverOverride != "" && rt.tokenOverride != "" {
+				// Create a minimal config with an empty context that will be overridden
+				rt.cfg = &config.Config{
+					Version: config.VersionV1,
+				}
+				return nil
+			}
 
 			cfg, err := config.Load(rt.configPath)
 			if err != nil {

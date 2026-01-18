@@ -239,19 +239,15 @@ onMounted(async () => {
 
       <h2 class="error-title" data-testid="error-title">{{ error }}</h2>
 
-      <scale-notification variant="danger" opened>
-        <div class="error-content" data-testid="error-details">
-          <p class="error-message">{{ errorDetails }}</p>
-
-          <!-- Show additional context based on approval metadata -->
-          <div v-if="approvalMeta" class="error-meta">
-            <p v-if="approvalMeta.isRequester" class="meta-info">
-              <strong>Note:</strong> You are the requester of this session.
-            </p>
-            <p v-if="approvalMeta.sessionState && approvalMeta.sessionState !== 'pending'" class="meta-info">
-              <strong>Session State:</strong> {{ approvalMeta.sessionState }}
-            </p>
-          </div>
+      <scale-notification variant="danger" :heading="errorDetails" opened data-testid="error-details">
+        <!-- Show additional context based on approval metadata -->
+        <div v-if="approvalMeta" class="error-meta">
+          <p v-if="approvalMeta.isRequester" class="meta-info">
+            <strong>Note:</strong> You are the requester of this session.
+          </p>
+          <p v-if="approvalMeta.sessionState && approvalMeta.sessionState !== 'pending'" class="meta-info">
+            <strong>Session State:</strong> {{ approvalMeta.sessionState }}
+          </p>
         </div>
       </scale-notification>
 

@@ -90,6 +90,9 @@ e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deplo
 	# e2e/kind-setup-single-hub-kubeconfig.yaml (repo-local) and exposes services for local use.
 	bash e2e/kind-setup-single.sh
 
+.PHONY: bgctl
+bgctl: build-bgctl ## Alias for build-bgctl
+
 .PHONY: build-bgctl
 build-bgctl: ## Build the bgctl CLI binary
 	@GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"); \

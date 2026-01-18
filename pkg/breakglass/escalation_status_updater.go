@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -855,7 +856,7 @@ func equalIDPHierarchy(a, b map[string]map[string][]string) bool {
 }
 
 // deduplicateMembersFromHierarchy extracts and deduplicates members from IDP hierarchy for a specific group
-// Returns the deduplicated list of members for that group from all IDPs
+// Returns the deduplicated list of members for that group from all IDPs, sorted for deterministic output
 func deduplicateMembersFromHierarchy(hierarchy map[string]map[string][]string, group string) []string {
 	seen := make(map[string]struct{})
 	var result []string
@@ -876,6 +877,9 @@ func deduplicateMembersFromHierarchy(hierarchy map[string]map[string][]string, g
 			}
 		}
 	}
+
+	// Sort for deterministic output (map iteration order is non-deterministic)
+	sort.Strings(result)
 
 	return result
 }

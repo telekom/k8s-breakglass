@@ -36,8 +36,8 @@ export default defineConfig({
   reporter: [["html", { outputFolder: "playwright-report-e2e" }], ["list"]],
 
   use: {
-    // Real backend URL (not mock)
-    baseURL: process.env.BREAKGLASS_UI_URL || "http://localhost:5173",
+    // Real backend URL - use controller-served UI on port 8080 (not Vite dev server)
+    baseURL: process.env.BREAKGLASS_UI_URL || "http://localhost:8080",
 
     // Capture traces and screenshots on failure
     trace: "retain-on-failure",

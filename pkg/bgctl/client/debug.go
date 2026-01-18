@@ -42,8 +42,11 @@ type DebugSessionListResponse struct {
 	Total    int                   `json:"total"`
 }
 
+// DebugSessionDetailResponse represents the detailed debug session response.
+// The DebugSession is embedded to match the server API which returns the session
+// at the root level (not wrapped in a "debugSession" field).
 type DebugSessionDetailResponse struct {
-	DebugSession v1alpha1.DebugSession `json:"debugSession"`
+	v1alpha1.DebugSession
 }
 
 type CreateDebugSessionRequest struct {

@@ -12,6 +12,25 @@ import (
 )
 
 func buildClient(cmdCtx context.Context, rt *runtimeState) (*client.Client, error) {
+	// If both server and token are provided via flags/env vars, we can bypass
+	// config and context resolution entirely
+	if rt.serverOverride != "" && rt.tokenOverride != "" {
+		options := []client.Option{
+			client.WithServer(rt.serverOverride),
+			client.WithToken(rt.tokenOverride),
+			client.WithUserAgent("bgctl"),
+		}
+		// Apply timeout from config if specified
+		if rt.cfg != nil && rt.cfg.Settings.Timeout != "" {
+			if timeout, parseErr := time.ParseDuration(rt.cfg.Settings.Timeout); parseErr == nil {
+				options = append(options, client.WithTimeout(timeout))
+			}
+		}
+		// No TLS config when bypassing - user is responsible for providing valid server URL
+		options = append(options, client.WithTLSConfig("", false))
+		return client.New(options...)
+	}
+
 	if err := rt.EnsureConfigLoaded(); err != nil {
 		return nil, err
 	}

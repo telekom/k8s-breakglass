@@ -580,6 +580,12 @@ func TestCLIEscalationCommands(t *testing.T) {
 // Debug Session Command Tests
 // =============================================================================
 
+// debugTemplateSummary mirrors the API response structure for debug templates
+type debugTemplateSummary struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+}
+
 func TestCLIDebugSessionCommands(t *testing.T) {
 	tc := newCLITestContext(t)
 
@@ -587,7 +593,7 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		output, err := tc.runCommandWithToken("debug", "template", "list", "-o", "json")
 		require.NoError(t, err)
 
-		var templates []v1alpha1.DebugSessionTemplate
+		var templates []debugTemplateSummary
 		err = json.Unmarshal([]byte(output), &templates)
 		require.NoError(t, err)
 		t.Logf("Found %d debug templates", len(templates))
@@ -601,7 +607,7 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		output, err := tc.runCommandWithToken("debug", "template", "list", "-o", "json")
 		require.NoError(t, err)
 
-		var templates []v1alpha1.DebugSessionTemplate
+		var templates []debugTemplateSummary
 		err = json.Unmarshal([]byte(output), &templates)
 		require.NoError(t, err)
 
@@ -641,13 +647,14 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		output, err := tc.runCommandWithToken("debug", "template", "list", "-o", "json")
 		require.NoError(t, err)
 
-		var templates []v1alpha1.DebugSessionTemplate
+		var templates []debugTemplateSummary
 		err = json.Unmarshal([]byte(output), &templates)
 		require.NoError(t, err)
 
 		require.NotEmpty(t, templates, "DebugSessionTemplates must exist in E2E environment - check that fixtures are loaded")
 
 		tmplName := templates[0].Name
+		require.NotEmpty(t, tmplName, "Template name should not be empty")
 
 		// Create debug session
 		output, err = tc.runCommandWithToken(
@@ -1394,7 +1401,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		output, err := runWithToken(requesterToken, "debug", "template", "list", "-o", "json")
 		require.NoError(t, err, "Should list debug templates")
 
-		var templates []v1alpha1.DebugSessionTemplate
+		var templates []debugTemplateSummary
 		err = json.Unmarshal([]byte(output), &templates)
 		require.NoError(t, err, "Should parse template list")
 		t.Logf("Found %d debug templates", len(templates))
@@ -1402,6 +1409,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		require.NotEmpty(t, templates, "DebugSessionTemplates must exist in E2E environment - check that fixtures are loaded")
 
 		templateName = templates[0].Name
+		require.NotEmpty(t, templateName, "Template name should not be empty")
 		t.Logf("Using template: %s", templateName)
 	})
 
@@ -1413,7 +1421,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 			"debug", "session", "create",
 			"--cluster", mcConfig.HubClusterName,
 			"--template", templateName,
-			"--reason", "Full chain debug E2E test",
+			"--reason", fmt.Sprintf("Full chain debug E2E test %d", time.Now().UnixNano()),
 			"-o", "json",
 		)
 		require.NoError(t, err, "Debug session creation should succeed when templates are available")
@@ -1427,8 +1435,11 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		t.Logf("Created debug session: %s (state: %s)", sessionName, session.Status.State)
 	})
 
-	// Step 3: Wait for pending state
-	t.Run("Step3_WaitForPendingState", func(t *testing.T) {
+	// Track if session was auto-approved (to skip manual approval step)
+	var wasAutoApproved bool
+
+	// Step 3: Wait for pending or approved state (template may have auto-approve enabled)
+	t.Run("Step3_WaitForPendingOrApprovedState", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
 		deadline := time.Now().Add(30 * time.Second)
@@ -1444,18 +1455,28 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 
 			lastState = session.Status.State
 			if lastState == v1alpha1.DebugSessionStatePending {
-				t.Logf("Debug session %s reached Pending state", sessionName)
+				t.Logf("Debug session %s reached Pending state (will require approval)", sessionName)
 				return
 			}
-			t.Logf("Debug session state: %s, waiting for Pending...", lastState)
+			// Auto-approved - session went directly to Active or already past Pending
+			if lastState == v1alpha1.DebugSessionStateActive {
+				t.Logf("Debug session %s was auto-approved, now in %s state", sessionName, lastState)
+				wasAutoApproved = true
+				return
+			}
+			t.Logf("Debug session state: %s, waiting for Pending or Approved...", lastState)
 			time.Sleep(1 * time.Second)
 		}
-		t.Fatalf("Debug session %s did not reach Pending state in time, last state: %s", sessionName, lastState)
+		t.Fatalf("Debug session %s did not reach Pending or Approved state in time, last state: %s", sessionName, lastState)
 	})
 
-	// Step 4: Approver approves the debug session
+	// Step 4: Approver approves the debug session (skip if auto-approved)
 	t.Run("Step4_ApproveDebugSession", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
+
+		if wasAutoApproved {
+			t.Skip("Session was auto-approved, skipping manual approval step")
+		}
 
 		output, err := runWithToken(approverToken, "debug", "session", "approve", sessionName)
 		require.NoError(t, err, "Approver should be able to approve debug session")
