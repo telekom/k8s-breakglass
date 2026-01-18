@@ -533,6 +533,15 @@ func TestValidateDenyPolicy(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "resources")
 	})
 
+	t.Run("negative precedence", func(t *testing.T) {
+		dp := validDP()
+		precedence := int32(-1)
+		dp.Spec.Precedence = &precedence
+		result := ValidateDenyPolicy(dp)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "precedence")
+	})
+
 	t.Run("empty denyPolicy is valid", func(t *testing.T) {
 		dp := &DenyPolicy{
 			ObjectMeta: metav1.ObjectMeta{

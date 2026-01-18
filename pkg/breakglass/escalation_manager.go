@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"sync"
 
 	"github.com/pkg/errors"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -20,13 +21,21 @@ import (
 
 type EscalationManager struct {
 	client.Client
-	Resolver     GroupMemberResolver
+	resolver     GroupMemberResolver  // Protected by resolverMu - use GetResolver/SetResolver
+	resolverMu   sync.RWMutex         // Protects concurrent access to resolver field
 	log          *zap.SugaredLogger   // Injected logger (falls back to global if nil)
 	configLoader *cfgpkg.CachedLoader // Cached config loader to avoid disk reads per request
 }
 
+// GetResolver returns the current GroupMemberResolver in a thread-safe manner.
+func (em *EscalationManager) GetResolver() GroupMemberResolver {
+	em.resolverMu.RLock()
+	defer em.resolverMu.RUnlock()
+	return em.resolver
+}
+
 // getLogger returns the injected logger or falls back to the global logger.
-func (em EscalationManager) getLogger() *zap.SugaredLogger {
+func (em *EscalationManager) getLogger() *zap.SugaredLogger {
 	if em.log != nil {
 		return em.log
 	}
@@ -35,7 +44,7 @@ func (em EscalationManager) getLogger() *zap.SugaredLogger {
 
 // getConfig returns config from the cached loader or falls back to disk read.
 // Logs a warning when falling back to avoid per-request disk I/O.
-func (em EscalationManager) getConfig() (cfgpkg.Config, error) {
+func (em *EscalationManager) getConfig() (cfgpkg.Config, error) {
 	if em.configLoader != nil {
 		return em.configLoader.Get()
 	}
@@ -45,7 +54,7 @@ func (em EscalationManager) getConfig() (cfgpkg.Config, error) {
 }
 
 // Get all stored BreakglassEscalations
-func (em EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([]telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
 	log.Debug("Fetching all BreakglassEscalations")
 	metrics.APIEndpointRequests.WithLabelValues("GetAllBreakglassEscalations").Inc()
@@ -58,7 +67,7 @@ func (em EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([]
 	return escal.Items, nil
 }
 
-func (em EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Context,
+func (em *EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Context,
 	filter func(telekomv1alpha1.BreakglassEscalation) bool,
 ) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
@@ -87,7 +96,7 @@ func (em EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Conte
 }
 
 // GetBreakglassEscalationsWithSelector with custom field selector.
-func (em EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Context,
+func (em *EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Context,
 	fs fields.Selector,
 ) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
@@ -106,7 +115,7 @@ func (em EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Con
 
 // GetBreakglassEscalation retrieves a single BreakglassEscalation by namespace/name using the cached controller-runtime client.
 // Prefer this over filter-based scans when the owner reference is known to minimize cache iterations.
-func (em EscalationManager) GetBreakglassEscalation(ctx context.Context, namespace, name string) (*telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetBreakglassEscalation(ctx context.Context, namespace, name string) (*telekomv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
 	log.Debugw("Fetching BreakglassEscalation by name", "namespace", namespace, "name", name)
 	metrics.APIEndpointRequests.WithLabelValues("GetBreakglassEscalation").Inc()
@@ -123,7 +132,7 @@ func (em EscalationManager) GetBreakglassEscalation(ctx context.Context, namespa
 }
 
 // GetGroupBreakglassEscalations returns escalations available to users in the specified groups
-func (em EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
+func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	groups []string,
 ) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	log := em.getLogger()
@@ -179,7 +188,7 @@ func (em EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	})
 }
 
-func (em EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster BreakglassEscalations", "cluster", cluster)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterBreakglassEscalations").Inc()
 	// Try index-based lookup for exact cluster match and global "*" pattern
@@ -233,7 +242,7 @@ func clusterMatchesPatterns(cluster string, patterns []string) bool {
 }
 
 // GetClusterGroupBreakglassEscalations returns escalations for specific cluster and user groups
-func (em EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Context, cluster string, groups []string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groups", groups)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupBreakglassEscalations").Inc()
 
@@ -293,7 +302,7 @@ func (em EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Con
 }
 
 // GetClusterGroupTargetBreakglassEscalation returns escalations for specific cluster, user groups, and target group
-func (em EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]telekomv1alpha1.BreakglassEscalation, error) {
+func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroups", userGroups, "targetGroup", targetGroup)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupTargetBreakglassEscalation").Inc()
 	// Try index-based lookup by escalatedGroup first
@@ -358,7 +367,7 @@ func NewEscalationManager(contextName string, resolver GroupMemberResolver) (Esc
 	}
 
 	log.Info("EscalationManager initialized successfully")
-	return EscalationManager{Client: c, Resolver: resolver, log: log}, nil
+	return EscalationManager{Client: c, resolver: resolver, log: log}, nil
 }
 
 // NewEscalationManagerWithClient constructs an EscalationManager backed by the provided controller-runtime client.
@@ -366,8 +375,8 @@ func NewEscalationManager(contextName string, resolver GroupMemberResolver) (Esc
 // Optional variadic arguments:
 //   - log *zap.SugaredLogger: custom logger (falls back to global zap.S() if not provided)
 //   - configLoader *cfgpkg.CachedLoader: config loader (falls back to cfgpkg.Load() if not provided)
-func NewEscalationManagerWithClient(c client.Client, resolver GroupMemberResolver, opts ...any) EscalationManager {
-	em := EscalationManager{Client: c, Resolver: resolver}
+func NewEscalationManagerWithClient(c client.Client, resolver GroupMemberResolver, opts ...any) *EscalationManager {
+	em := &EscalationManager{Client: c, resolver: resolver}
 	for _, opt := range opts {
 		switch v := opt.(type) {
 		case *zap.SugaredLogger:
@@ -382,15 +391,16 @@ func NewEscalationManagerWithClient(c client.Client, resolver GroupMemberResolve
 // SetResolver updates the GroupMemberResolver used for resolving group members.
 // This should be called when the IdentityProvider configuration changes to ensure
 // the EscalationManager uses the latest Keycloak group sync configuration.
-// Thread-safe: Updates the Resolver field; callers using the EscalationManager
-// will automatically use the new resolver on their next call.
+// Thread-safe: Uses mutex to protect concurrent access to the resolver field.
 func (em *EscalationManager) SetResolver(resolver GroupMemberResolver) {
-	em.Resolver = resolver
+	em.resolverMu.Lock()
+	defer em.resolverMu.Unlock()
+	em.resolver = resolver
 	em.getLogger().Infow("EscalationManager resolver updated")
 }
 
 // UpdateBreakglassEscalationStatus updates the given escalation resource status
-func (em EscalationManager) UpdateBreakglassEscalationStatus(ctx context.Context, esc telekomv1alpha1.BreakglassEscalation) error {
+func (em *EscalationManager) UpdateBreakglassEscalationStatus(ctx context.Context, esc telekomv1alpha1.BreakglassEscalation) error {
 	log := em.getLogger()
 	log.Infow("Updating BreakglassEscalation status", "name", esc.Name)
 	if err := em.Status().Update(ctx, &esc); err != nil {

@@ -277,3 +277,62 @@ frontend:
 		t.Errorf("Concurrent access error: %v", err)
 	}
 }
+
+func TestGetUserIdentifierClaim(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   config.Config
+		expected string // as string for comparison
+	}{
+		{
+			name:     "default when empty",
+			config:   config.Config{},
+			expected: "email",
+		},
+		{
+			name: "explicit email claim",
+			config: config.Config{
+				Kubernetes: config.Kubernetes{
+					UserIdentifierClaim: "email",
+				},
+			},
+			expected: "email",
+		},
+		{
+			name: "preferred_username claim",
+			config: config.Config{
+				Kubernetes: config.Kubernetes{
+					UserIdentifierClaim: "preferred_username",
+				},
+			},
+			expected: "preferred_username",
+		},
+		{
+			name: "sub claim",
+			config: config.Config{
+				Kubernetes: config.Kubernetes{
+					UserIdentifierClaim: "sub",
+				},
+			},
+			expected: "sub",
+		},
+		{
+			name: "invalid claim defaults to email",
+			config: config.Config{
+				Kubernetes: config.Kubernetes{
+					UserIdentifierClaim: "invalid_claim",
+				},
+			},
+			expected: "email",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.config.GetUserIdentifierClaim()
+			if string(result) != tt.expected {
+				t.Errorf("GetUserIdentifierClaim() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}

@@ -3,11 +3,14 @@ package api
 import (
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -874,4 +877,232 @@ func testCertificatePEM(t *testing.T) string {
 	server.Close()
 	block := &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}
 	return string(pem.EncodeToMemory(block))
+}
+
+func TestHandleOIDCProxyPathError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+
+	tests := []struct {
+		name           string
+		err            error
+		expectedStatus int
+		expectedError  string
+	}{
+		{
+			name:           "path not allowed error",
+			err:            errProxyPathNotAllowed,
+			expectedStatus: http.StatusForbidden,
+			expectedError:  errProxyPathNotAllowed.Error(),
+		},
+		{
+			name:           "suspicious pattern error",
+			err:            errProxyPathSuspicious,
+			expectedStatus: http.StatusForbidden,
+			expectedError:  errProxyPathSuspicious.Error(),
+		},
+		{
+			name:           "malformed path error",
+			err:            errProxyPathMalformed,
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  errProxyPathMalformed.Error(),
+		},
+		{
+			name:           "authority missing error",
+			err:            errProxyAuthorityMissing,
+			expectedStatus: http.StatusInternalServerError,
+			expectedError:  errProxyAuthorityMissing.Error(),
+		},
+		{
+			name:           "absolute path error",
+			err:            errProxyPathAbsolute,
+			expectedStatus: http.StatusForbidden,
+			expectedError:  errProxyPathAbsolute.Error(),
+		},
+		{
+			name:           "URL resolution attack error",
+			err:            errURLResolutionAttack,
+			expectedStatus: http.StatusForbidden,
+			expectedError:  errURLResolutionAttack.Error(),
+		},
+		{
+			name:           "unknown error falls through to default",
+			err:            fmt.Errorf("some random error"),
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "invalid proxy path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &Server{
+				log: logger,
+			}
+
+			router := gin.New()
+			router.GET("/test", func(c *gin.Context) {
+				server.handleOIDCProxyPathError(c, "/some/path", "/normalized/path", tt.err, time.Now())
+			})
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			assert.Contains(t, w.Body.String(), tt.expectedError)
+		})
+	}
+}
+
+func TestHandleOIDCProxyAuthorityError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := zaptest.NewLogger(t)
+
+	tests := []struct {
+		name           string
+		err            error
+		expectedStatus int
+		expectedError  string
+	}{
+		{
+			name:           "invalid authority header",
+			err:            errInvalidAuthorityHeader,
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  errInvalidAuthorityHeader.Error(),
+		},
+		{
+			name:           "unknown OIDC authority",
+			err:            errUnknownOIDCAuthority,
+			expectedStatus: http.StatusForbidden,
+			expectedError:  errUnknownOIDCAuthority.Error(),
+		},
+		{
+			name:           "unknown error falls through to default",
+			err:            fmt.Errorf("some random error"),
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "invalid authority header",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &Server{
+				log: logger,
+			}
+
+			router := gin.New()
+			router.GET("/test", func(c *gin.Context) {
+				server.handleOIDCProxyAuthorityError(c, "https://example.com", tt.err, time.Now())
+			})
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			assert.Contains(t, w.Body.String(), tt.expectedError)
+		})
+	}
+}
+
+func TestIsKnownIDPAuthority(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+
+	t.Run("returns true for matching default authority", func(t *testing.T) {
+		authority, _ := url.Parse("https://keycloak.example.com")
+		server := &Server{
+			log:           logger,
+			oidcAuthority: authority,
+		}
+
+		assert.True(t, server.isKnownIDPAuthority("https://keycloak.example.com"))
+	})
+
+	t.Run("returns false for non-matching authority without IDP reconciler", func(t *testing.T) {
+		authority, _ := url.Parse("https://keycloak.example.com")
+		server := &Server{
+			log:           logger,
+			oidcAuthority: authority,
+		}
+
+		assert.False(t, server.isKnownIDPAuthority("https://other.example.com"))
+	})
+
+	t.Run("returns false when oidcAuthority is nil", func(t *testing.T) {
+		server := &Server{
+			log: logger,
+		}
+
+		assert.False(t, server.isKnownIDPAuthority("https://keycloak.example.com"))
+	})
+}
+
+func TestBuildOIDCProxyHTTPRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("creates GET request with Accept header", func(t *testing.T) {
+		router := gin.New()
+		var req *http.Request
+		var err error
+		router.GET("/test", func(c *gin.Context) {
+			req, err = buildOIDCProxyHTTPRequest(c, "https://target.example.com/path")
+			c.String(http.StatusOK, "OK")
+		})
+
+		w := httptest.NewRecorder()
+		httpReq, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		httpReq.Header.Set("Accept", "application/json")
+		router.ServeHTTP(w, httpReq)
+
+		require.NoError(t, err)
+		require.NotNil(t, req)
+		assert.Equal(t, http.MethodGet, req.Method)
+		assert.Equal(t, "https://target.example.com/path", req.URL.String())
+		assert.Equal(t, "application/json", req.Header.Get("Accept"))
+	})
+
+	t.Run("creates POST request with body and Content-Type", func(t *testing.T) {
+		router := gin.New()
+		var req *http.Request
+		var err error
+		router.POST("/test", func(c *gin.Context) {
+			req, err = buildOIDCProxyHTTPRequest(c, "https://target.example.com/token")
+			c.String(http.StatusOK, "OK")
+		})
+
+		w := httptest.NewRecorder()
+		body := "grant_type=authorization_code&code=abc123"
+		httpReq, _ := http.NewRequest(http.MethodPost, "/test", http.NoBody)
+		httpReq.Body = io.NopCloser(strings.NewReader(body))
+		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		router.ServeHTTP(w, httpReq)
+
+		require.NoError(t, err)
+		require.NotNil(t, req)
+		assert.Equal(t, http.MethodPost, req.Method)
+		assert.Equal(t, "application/x-www-form-urlencoded", req.Header.Get("Content-Type"))
+
+		// Read the body to verify it was copied
+		reqBody, _ := io.ReadAll(req.Body)
+		assert.Equal(t, body, string(reqBody))
+	})
+
+	t.Run("handles GET request without optional headers", func(t *testing.T) {
+		router := gin.New()
+		var req *http.Request
+		var err error
+		router.GET("/test", func(c *gin.Context) {
+			req, err = buildOIDCProxyHTTPRequest(c, "https://target.example.com/path")
+			c.String(http.StatusOK, "OK")
+		})
+
+		w := httptest.NewRecorder()
+		httpReq, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		router.ServeHTTP(w, httpReq)
+
+		require.NoError(t, err)
+		require.NotNil(t, req)
+		assert.Equal(t, http.MethodGet, req.Method)
+		assert.Empty(t, req.Header.Get("Accept"))
+	})
 }

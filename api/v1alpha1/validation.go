@@ -407,6 +407,10 @@ func ValidateDenyPolicy(dp *DenyPolicy) *ValidationResult {
 		}
 	}
 
+	if dp.Spec.Precedence != nil && *dp.Spec.Precedence < 0 {
+		result.Errors = append(result.Errors, field.Invalid(specPath.Child("precedence"), *dp.Spec.Precedence, "precedence must be non-negative"))
+	}
+
 	// Validate podSecurityRules thresholds if specified
 	if dp.Spec.PodSecurityRules != nil {
 		for i, threshold := range dp.Spec.PodSecurityRules.Thresholds {

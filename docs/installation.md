@@ -475,7 +475,7 @@ spec:
   approvers:
     groups: [security-team]
   maxValidFor: 2h
-  idleTimeout: 1h
+  # idleTimeout: 1h  # NOT YET IMPLEMENTED
 ```
 
 Deploy:
@@ -666,6 +666,14 @@ breakglass-controller \
   --enable-api=true \
   --enable-cleanup=false \
   --enable-webhooks=false
+```
+
+**Email Notifications (Optional)**:
+
+Mail notifications require a `MailProvider` CR. If you do not need email notifications, disable them explicitly:
+
+```bash
+breakglass-controller --disable-email=true
 ```
 
 For complete flag documentation, see [CLI Flags Reference](./cli-flags-reference.md).

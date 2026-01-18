@@ -2,16 +2,33 @@ package breakglass
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
+
+type stubReader struct {
+	listFn func(list client.ObjectList) error
+}
+
+func (s stubReader) Get(_ context.Context, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+	return nil
+}
+
+func (s stubReader) List(_ context.Context, list client.ObjectList, _ ...client.ListOption) error {
+	if s.listFn != nil {
+		return s.listFn(list)
+	}
+	return nil
+}
 
 func TestSessionManager_Simple(t *testing.T) {
 	// TestSessionManager_Simple
@@ -61,7 +78,7 @@ func TestSessionManager_Simple(t *testing.T) {
 		WithObjects(session1, session2).
 		Build()
 
-	manager := SessionManager{Client: fakeClient}
+	manager := NewSessionManagerWithClient(fakeClient)
 
 	t.Run("GetAllBreakglassSessions", func(t *testing.T) {
 		sessions, err := manager.GetAllBreakglassSessions(context.Background())
@@ -146,6 +163,33 @@ func TestSessionManager_Simple(t *testing.T) {
 		// This should fail because the session doesn't exist
 		err := manager.UpdateBreakglassSession(context.Background(), session)
 		assert.Error(t, err, "Should fail for non-existent session")
+	})
+
+	t.Run("GetAllBreakglassSessions uses reader", func(t *testing.T) {
+		readerSession := telekomv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "reader-session"},
+			Spec: telekomv1alpha1.BreakglassSessionSpec{
+				User:         "reader@example.com",
+				Cluster:      "reader-cluster",
+				GrantedGroup: "reader-group",
+			},
+		}
+
+		reader := stubReader{
+			listFn: func(list client.ObjectList) error {
+				bsl, ok := list.(*telekomv1alpha1.BreakglassSessionList)
+				if !ok {
+					return fmt.Errorf("unexpected list type %T", list)
+				}
+				bsl.Items = []telekomv1alpha1.BreakglassSession{readerSession}
+				return nil
+			},
+		}
+		mgr := NewSessionManagerWithClientAndReader(fakeClient, reader)
+		sessions, err := mgr.GetAllBreakglassSessions(context.Background())
+		assert.NoError(t, err)
+		assert.Len(t, sessions, 1)
+		assert.Equal(t, "reader-session", sessions[0].Name)
 	})
 }
 

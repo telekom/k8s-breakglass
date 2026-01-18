@@ -1176,6 +1176,17 @@ EOF
     sleep 1
   done
 
+  # Apply debug templates for CLI debug session tests
+  local debug_templates_file="config/dev/resources/crs/debug-templates-test.yaml"
+  if [ -f "$debug_templates_file" ]; then
+    log "Applying debug session templates for e2e tests..."
+    sed -e '/^  name:/s/name: /name: breakglass-/g' \
+      "$debug_templates_file" | \
+    KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f - || log "Warning: failed to apply debug templates"
+  else
+    log "Warning: debug templates file not found: $debug_templates_file"
+  fi
+
   # Apply Escalations
   log "Creating BreakglassEscalation resources..."
   cat <<EOF | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f -

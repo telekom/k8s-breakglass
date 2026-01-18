@@ -107,10 +107,8 @@ escalations: []
   #     groups:
   #       - dev
   #       - senior-ops
-  #     # Optional: individual users allowed to request (in addition to groups)
-  #     users:
-  #       - emergency@example.com
-  #       - oncall@example.com
+  #     # Note: 'allowed.users' is NOT a valid field - only 'allowed.groups' and 'allowed.clusters' are supported.
+  #     # Users are authorized based on group membership only.
   #   escalatedGroup: breakglass-create-all
   #   approvers:
   #     groups:

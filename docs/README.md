@@ -21,6 +21,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
 - **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
+- **[Installation](./installation.md)** - Deployment patterns and component enable flags
 
 ## Identity & Authentication
 
@@ -113,4 +114,19 @@ Complete documentation for the breakglass privilege escalation system.
 - Real-time webhook-based authorization
 - Complete audit trail for compliance
 - Multi-cluster support
+- Scheduled sessions with deferred activation
+- Debug sessions and debug pod templates
+- Multi-IDP support with optional group sync
+- CLI automation via `bgctl`
 - Request modals reset to a clean state when closed for consistent UX
+
+## Deployment Modes
+
+Breakglass supports multiple deployment patterns via component enable flags. See the
+[Installation](./installation.md) and [CLI Flags Reference](./cli-flags-reference.md) for full examples.
+
+- **Monolithic (default)**: frontend + API + SAR webhook + cleanup + validating webhooks
+- **Webhook-only**: validating webhooks only (CRD validation)
+- **API-only**: frontend + API + SAR webhook (no validating webhooks)
+- **Frontend-only**: web UI only
+- **Cleanup-only**: background cleanup routine only

@@ -220,7 +220,7 @@ func main() {
 	// This allows the backend to verify tokens from any configured IDP, not just the default one
 	auth.WithIdentityProviderLoader(idpLoader)
 
-	sessionManager := breakglass.NewSessionManagerWithClient(reconcilerMgr.GetClient())
+	sessionManager := breakglass.NewSessionManagerWithClientAndReader(reconcilerMgr.GetClient(), reconcilerMgr.GetAPIReader())
 
 	// Create authenticated rate limiter for API endpoints
 	// Authenticated users get 50 req/s (per user), unauthenticated get 10 req/s (per IP)
@@ -228,7 +228,7 @@ func main() {
 
 	// Setup session controller with all dependencies
 	// Uses combined auth + rate limiting middleware
-	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, &escalationManager,
+	sessionController := breakglass.NewBreakglassSessionController(log, cfg, &sessionManager, escalationManager,
 		auth.MiddlewareWithRateLimiting(apiRateLimiter), cliConfig.ConfigPath, ccProvider, escalationManager.Client, cliConfig.DisableEmail).WithMailService(mailService).WithAuditService(auditService)
 
 	// Setup debug session API controller with mail and audit services
@@ -239,7 +239,7 @@ func main() {
 		WithDisableEmail(cliConfig.DisableEmail)
 
 	// Register API controllers based on component flags
-	apiControllers := api.Setup(sessionController, &escalationManager, &sessionManager, cliConfig.EnableFrontend,
+	apiControllers := api.Setup(sessionController, escalationManager, &sessionManager, cliConfig.EnableFrontend,
 		cliConfig.EnableAPI, cliConfig.ConfigPath, auth, ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, auditService)
 
 	// Make IdentityProvider available to API server for frontend configuration
@@ -312,7 +312,7 @@ func main() {
 		breakglass.EscalationStatusUpdater{
 			Log:           log,
 			K8sClient:     escalationManager.Client,
-			Resolver:      escalationManager.Resolver,
+			Resolver:      escalationManager.GetResolver(),
 			EventRecorder: eventRecorder,
 			IDPLoader:     idpLoader,
 			Interval:      cli.ParseEscalationStatusUpdateInterval(cliConfig.EscalationStatusUpdateInt, log),
@@ -412,7 +412,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, auditService, mailService, &escalationManager, log); err != nil {
+		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, auditService, mailService, escalationManager, log); err != nil {
 			recMgrErr <- err
 		}
 	}()

@@ -14,11 +14,13 @@
 - **Real-time Authorization Webhook** - Integrated with Kubernetes' authorization system for immediate enforcement
 - **Time-Bounded Access** - Sessions expire automatically after configured duration
 - **Audit Trail** - Full history of requests, approvals, and access events
+- **Audit Sinks** - Kafka/webhook/log/Kubernetes audit outputs via `AuditConfig`
 - **Flexible Authorization** - Define escalations, approvers, and access restrictions using Kubernetes CRDs
 - **Multi-Cluster Support** - Centralized hub manages access across multiple spoke clusters
 - **OIDC/JWT Authentication** - Integrates with identity providers like Keycloak and Azure AD
 - **Web UI, CLI & REST API** - User-friendly web interface, `bgctl` command-line tool, and programmatic access
 - **Command-Line Interface (`bgctl`)** - Terminal-based access for automation and scripting
+- **Debug Sessions** - Time-bounded debug pods and kubectl-debug workflows
 - **Automatic Cluster Cache Invalidation** - Watches ClusterConfig and kubeconfig Secret changes to refresh connectivity instantly
 - **Rich Prometheus Signals** - API endpoints expose dedicated request/error/duration metrics for fine-grained SLOs
 
@@ -34,6 +36,12 @@
   - `BreakglassSession` - Track active sessions
   - `ClusterConfig` - Configure managed clusters
   - `DenyPolicy` - Restrict access by policy
+  - `AuditConfig` - Configure audit sinks (Kafka, webhook, log, Kubernetes)
+  - `IdentityProvider` - OIDC provider configuration and group sync
+  - `MailProvider` - Email notification configuration
+  - `DebugSession` - Debug session lifecycle
+  - `DebugSessionTemplate` - Debug session templates
+  - `DebugPodTemplate` - Debug pod templates
 
 **Design:** Hub-and-spoke topology where a central breakglass service manages temporary access for multiple Kubernetes clusters.
 
@@ -54,6 +62,9 @@ Complete documentation is available in the [docs/](./docs/) directory:
 - **[BreakglassSession](./docs/breakglass-session.md)** - Session lifecycle and state management
 - **[ClusterConfig](./docs/cluster-config.md)** - Configure managed clusters
 - **[DenyPolicy](./docs/deny-policy.md)** - Create access restrictions and policies
+- **[AuditConfig](./docs/audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
+- **[MailProvider](./docs/mail-provider.md)** - Email notification configuration
+- **[Debug Session](./docs/debug-session.md)** - Debug sessions and templates
 
 **Integration & Advanced Topics:**
 
@@ -96,6 +107,7 @@ kubernetes:
 
 - **OIDC/IDP authentication** is managed via **IdentityProvider CRDs**. See [Identity Provider documentation](docs/identity-provider.md) for details.
 - **Email notifications** are managed via **MailProvider CRDs**. See [Mail Provider documentation](docs/mail-provider.md) for details.
+- Email notifications can be disabled with `--disable-email` when MailProvider is not configured.
 
 ### OIDC Group Prefix Handling
 

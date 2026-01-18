@@ -397,10 +397,19 @@ func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object)
 	// Validate mail provider reference exists (requires k8s client)
 	allErrs = append(allErrs, validateMailProviderReference(ctx, clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
-	if len(allErrs) == 0 {
-		return nil, nil
+	// Collect warnings for insecure settings
+	var warnings admission.Warnings
+	if clusterConfig.Spec.OIDCAuth != nil && clusterConfig.Spec.OIDCAuth.InsecureSkipTLSVerify {
+		warnings = append(warnings, "OIDCAuth insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, clusterConfig.Name, allErrs)
+	if clusterConfig.Spec.OIDCFromIdentityProvider != nil && clusterConfig.Spec.OIDCFromIdentityProvider.InsecureSkipTLSVerify {
+		warnings = append(warnings, "OIDCFromIdentityProvider insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
+	}
+
+	if len(allErrs) == 0 {
+		return warnings, nil
+	}
+	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, clusterConfig.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
@@ -431,10 +440,19 @@ func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runt
 	// Validate mail provider reference exists (requires k8s client)
 	allErrs = append(allErrs, validateMailProviderReference(ctx, clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
-	if len(allErrs) == 0 {
-		return nil, nil
+	// Collect warnings for insecure settings
+	var warnings admission.Warnings
+	if clusterConfig.Spec.OIDCAuth != nil && clusterConfig.Spec.OIDCAuth.InsecureSkipTLSVerify {
+		warnings = append(warnings, "OIDCAuth insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, clusterConfig.Name, allErrs)
+	if clusterConfig.Spec.OIDCFromIdentityProvider != nil && clusterConfig.Spec.OIDCFromIdentityProvider.InsecureSkipTLSVerify {
+		warnings = append(warnings, "OIDCFromIdentityProvider insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
+	}
+
+	if len(allErrs) == 0 {
+		return warnings, nil
+	}
+	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, clusterConfig.Name, allErrs)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type

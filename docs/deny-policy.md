@@ -140,6 +140,8 @@ If not specified, policy is global.
 
 Rule evaluation order (lower wins):
 
+- `precedence` must be a non-negative integer.
+
 ```yaml
 precedence: 50   # Evaluated first
 precedence: 100  # Default

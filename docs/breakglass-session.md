@@ -22,6 +22,8 @@ The breakglass controller implements a **state-first validation architecture** w
 2. **Timestamps are immutable records** - Timestamps are never cleared, only added or updated to preserve audit history
 3. **Terminal states are never valid** - Rejected, Withdrawn, Expired, and ApprovalTimeout sessions can never be reactivated
 
+Admission webhooks enforce valid state transitions and reject invalid updates (for example, preventing terminal states from reverting to active states).
+
 ### Session States
 
 | State | Meaning | Valid for Access? | When It Happens | Timestamp |

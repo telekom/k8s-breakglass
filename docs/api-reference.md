@@ -544,7 +544,7 @@ Authorization: Bearer <token>
       "description": "Temporary cluster admin access for incident response",
       "targetGroups": ["cluster-admin"],
       "maxValidFor": "2h",
-      "idleTimeout": "30m",
+      // "idleTimeout": "30m",  // NOT YET IMPLEMENTED
       "approvers": ["admin@example.com"],
       "approverGroups": ["admins"],
       "requestReason": "required",

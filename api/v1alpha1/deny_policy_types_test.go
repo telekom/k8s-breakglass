@@ -892,6 +892,29 @@ func TestDenyPolicy_ValidateCreate_EmptyResourcesTwo(t *testing.T) {
 	}
 }
 
+func TestDenyPolicy_ValidateCreate_NegativePrecedence(t *testing.T) {
+	ctx := context.Background()
+	precedence := int32(-5)
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "negative-precedence"},
+		Spec: DenyPolicySpec{
+			Precedence: &precedence,
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"delete"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+
+	_, err := policy.ValidateCreate(ctx, policy)
+	if err == nil {
+		t.Error("expected error for negative precedence")
+	}
+}
+
 func TestDenyPolicy_ValidateCreate_NegativeMaxScoreTwo(t *testing.T) {
 	ctx := context.Background()
 	policy := &DenyPolicy{

@@ -18,6 +18,7 @@ import (
 // SessionManager is kubernetes client based object for managing CRUD operation on BreakglassSession custom resource.
 type SessionManager struct {
 	client.Client
+	reader client.Reader
 }
 
 var ErrAccessNotFound = errors.New("access not found")
@@ -38,14 +39,30 @@ func NewSessionManager(contextName string) (SessionManager, error) {
 	}
 
 	zap.S().Infow("SessionManager initialized", "context", contextName)
-	return SessionManager{c}, nil
+	return SessionManager{Client: c, reader: c}, nil
 }
 
 // NewSessionManagerWithClient allows embedding an existing controller-runtime client (e.g., from a shared manager)
 // to avoid creating redundant rest.Config instances or duplicate caches. The provided client must already be
 // configured with the Breakglass scheme.
 func NewSessionManagerWithClient(c client.Client) SessionManager {
-	return SessionManager{Client: c}
+	return NewSessionManagerWithClientAndReader(c, c)
+}
+
+// NewSessionManagerWithClientAndReader allows using a cached client for writes and an optional reader
+// (e.g., APIReader) for consistent reads when required.
+func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader) SessionManager {
+	if reader == nil {
+		reader = c
+	}
+	return SessionManager{Client: c, reader: reader}
+}
+
+func (c SessionManager) list(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if c.reader != nil {
+		return c.reader.List(ctx, list, opts...)
+	}
+	return c.Client.List(ctx, list, opts...)
 }
 
 func SessionSelector(name, username, cluster, group string) string {
@@ -72,7 +89,7 @@ func SessionSelector(name, username, cluster, group string) string {
 func (c SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]v1alpha1.BreakglassSession, error) {
 	zap.S().Debug("Fetching all BreakglassSessions")
 	cgal := v1alpha1.BreakglassSessionList{}
-	if err := c.List(ctx, &cgal); err != nil {
+	if err := c.list(ctx, &cgal); err != nil {
 		zap.S().Errorw("Failed to get BreakglassSessionList", "error", err.Error())
 		return nil, errors.Wrap(err, "failed to get BreakglassSessionList")
 	}
@@ -128,7 +145,7 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 	}
 
 	bsl := v1alpha1.BreakglassSessionList{}
-	if err := c.List(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
+	if err := c.list(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
 		zap.S().Errorw("Failed to list BreakglassSessionList for fallback lookup", "selector", selector, "error", err.Error())
 		return bs, errors.Wrap(err, "failed to list BreakglassSessionList for fallback lookup")
 	}
@@ -187,7 +204,7 @@ func (c SessionManager) GetBreakglassSessionsWithSelectorString(ctx context.Cont
 		return nil, fmt.Errorf("failed to create field selector %q : %w", selectorString, err)
 	}
 
-	if err := c.List(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
+	if err := c.list(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
 		zap.S().Errorw("Failed to list BreakglassSessionList with string selector", "selector", selectorString, "error", err.Error())
 		return nil, errors.Wrapf(err, "failed to list BreakglassSessionList with string selector")
 	}
@@ -202,7 +219,7 @@ func (c SessionManager) GetBreakglassSessionsWithSelector(ctx context.Context,
 	zap.S().Debugw("Fetching BreakglassSessions with selector", "selector", fs.String())
 	bsl := v1alpha1.BreakglassSessionList{}
 
-	if err := c.List(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
+	if err := c.list(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
 		zap.S().Errorw("Failed to list BreakglassSessionList with selector", "selector", fs.String(), "error", err.Error())
 		return nil, errors.Wrapf(err, "failed to list BreakglassSessionList with selector")
 	}

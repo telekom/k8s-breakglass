@@ -477,6 +477,13 @@ This flag controls which validating webhooks are registered:
 - BreakglassEscalation validation
 - ClusterConfig validation
 - IdentityProvider validation
+- MailProvider validation
+- DenyPolicy validation
+- DebugSession validation
+- DebugSessionTemplate validation
+- DebugPodTemplate validation
+- AuditConfig validation
+- Ephemeral container validation
 
 ---
 
