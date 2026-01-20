@@ -211,16 +211,22 @@ jobs:
           echo "Tagging $FIRST_TAG as breakglass:e2e for E2E tests"
           docker tag "$FIRST_TAG" breakglass:e2e
           docker images | grep breakglass
-      - name: Save Docker image for E2E tests
+      - name: Build tmux-debug image for E2E tests
+        run: |
+          # Build the tmux debug image used by terminal sharing/debug session tests
+          docker build -t breakglass-tmux-debug:latest -f e2e/images/tmux-debug/Dockerfile e2e/images/tmux-debug/
+          docker images | grep tmux-debug
+      - name: Save Docker images for E2E tests
         run: |
           mkdir -p /tmp/image-artifacts
           docker save breakglass:e2e -o /tmp/image-artifacts/breakglass-e2e.tar
+          docker save breakglass-tmux-debug:latest -o /tmp/image-artifacts/breakglass-tmux-debug.tar
           ls -lh /tmp/image-artifacts/
       - name: Upload Docker image artifact for E2E
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: breakglass-e2e-image
-          path: /tmp/image-artifacts/breakglass-e2e.tar
+          path: /tmp/image-artifacts/
           retention-days: 1
           compression-level: 0
       - name: Move cache
@@ -322,7 +328,8 @@ jobs:
       - name: Load Docker image
         run: |
           docker load -i /tmp/image-artifacts/breakglass-e2e.tar
-          docker images | grep breakglass
+          docker load -i /tmp/image-artifacts/breakglass-tmux-debug.tar
+          docker images | grep -E 'breakglass|tmux'
 
       - name: Set up Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
@@ -736,7 +743,8 @@ jobs:
       - name: Load Docker image
         run: |
           docker load -i /tmp/image-artifacts/breakglass-e2e.tar
-          docker images | grep breakglass
+          docker load -i /tmp/image-artifacts/breakglass-tmux-debug.tar
+          docker images | grep -E 'breakglass|tmux'
 
       - name: Set up Node.js
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
@@ -1308,9 +1316,10 @@ jobs:
       - name: Load Docker image
         run: |
           docker load -i /tmp/image-artifacts/breakglass-e2e.tar
+          docker load -i /tmp/image-artifacts/breakglass-tmux-debug.tar
           # Tag as breakglass:dev for compatibility with multi-cluster setup
           docker tag breakglass:e2e breakglass:dev
-          docker images | grep breakglass
+          docker images | grep -E 'breakglass|tmux'
 
       - name: Set up Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0

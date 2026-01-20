@@ -42,6 +42,17 @@ const loading = ref(false);
 const refreshing = ref(false);
 const error = ref("");
 
+// Renewal duration dialog state
+const renewDialogOpen = ref(false);
+const renewDuration = ref("1h");
+const sessionToRenew = ref<DebugSessionSummary | null>(null);
+const renewDurationOptions = [
+  { value: "30m", label: "30 minutes" },
+  { value: "1h", label: "1 hour" },
+  { value: "2h", label: "2 hours" },
+  { value: "4h", label: "4 hours" },
+];
+
 const stateOptions = [
   { value: "Active", label: "Active" },
   { value: "Pending", label: "Pending" },
@@ -138,10 +149,20 @@ async function handleTerminate(session: DebugSessionSummary) {
   }
 }
 
-async function handleRenew(session: DebugSessionSummary) {
+function handleRenew(session: DebugSessionSummary) {
+  sessionToRenew.value = session;
+  renewDuration.value = "1h";
+  renewDialogOpen.value = true;
+}
+
+async function confirmRenew() {
+  if (!sessionToRenew.value) return;
+  const session = sessionToRenew.value;
   try {
-    await debugSessionService.renewSession(session.name, { extendBy: "1h" });
-    pushSuccess(`Renewed debug session ${session.name}`);
+    await debugSessionService.renewSession(session.name, { extendBy: renewDuration.value });
+    pushSuccess(`Renewed debug session ${session.name} by ${renewDuration.value}`);
+    renewDialogOpen.value = false;
+    sessionToRenew.value = null;
     await refresh();
   } catch (e: any) {
     pushError(e?.message || "Failed to renew session");
@@ -195,6 +216,13 @@ function toggleState(state: string) {
     filters.states.push(state);
   }
 }
+
+function handleStateKeydown(event: KeyboardEvent, state: string) {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    toggleState(state);
+  }
+}
 </script>
 
 <template>
@@ -243,8 +271,8 @@ function toggleState(state: string) {
       </div>
     </div>
 
-    <div class="state-filters" data-testid="state-filters">
-      <span class="filter-label">Filter by state:</span>
+    <div class="state-filters" data-testid="state-filters" role="group" aria-label="State filters">
+      <span id="state-filter-label" class="filter-label">Filter by state:</span>
       <scale-tag
         v-for="opt in stateOptions"
         :key="opt.value"
@@ -253,7 +281,12 @@ function toggleState(state: string) {
         size="small"
         dismissible
         :class="{ 'tag-active': filters.states.includes(opt.value) }"
+        :tabindex="0"
+        role="checkbox"
+        :aria-checked="filters.states.includes(opt.value)"
+        :aria-label="`${opt.label} ${filters.states.includes(opt.value) ? 'selected' : 'not selected'}`"
         @click="toggleState(opt.value)"
+        @keydown="(e: KeyboardEvent) => handleStateKeydown(e, opt.value)"
       >
         {{ opt.label }}
       </scale-tag>
@@ -280,16 +313,33 @@ function toggleState(state: string) {
 
     <EmptyState
       v-else
-      icon="🔧"
-      message="No debug sessions found matching your filters."
+      variant="search"
+      title="No debug sessions found matching your filters."
+      description="Try adjusting your filters or create a new session."
       data-testid="debug-sessions-empty-state"
     >
-      <scale-button variant="primary" @click="navigateToCreate"> Create Debug Session </scale-button>
+      <template #actions>
+        <scale-button variant="primary" @click="navigateToCreate"> Create Debug Session </scale-button>
+      </template>
     </EmptyState>
 
     <div v-if="!loading" class="results-info">
       Showing {{ filteredSessions.length }} of {{ sessions.length }} sessions
     </div>
+
+    <!-- Renew Duration Dialog -->
+    <scale-modal :opened="renewDialogOpen" heading="Renew Session" size="small" @scaleClose="renewDialogOpen = false">
+      <p>Select how long to extend the session:</p>
+      <scale-dropdown-select v-model="renewDuration" label="Duration" data-testid="renew-duration-select">
+        <scale-dropdown-select-item v-for="opt in renewDurationOptions" :key="opt.value" :value="opt.value">
+          {{ opt.label }}
+        </scale-dropdown-select-item>
+      </scale-dropdown-select>
+      <div slot="action" class="dialog-actions">
+        <scale-button variant="secondary" @click="renewDialogOpen = false">Cancel</scale-button>
+        <scale-button variant="primary" @click="confirmRenew">Renew</scale-button>
+      </div>
+    </scale-modal>
   </main>
 </template>
 
@@ -365,5 +415,12 @@ function toggleState(state: string) {
   text-align: center;
   color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.875rem;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: flex-end;
+  margin-top: var(--space-lg);
 }
 </style>

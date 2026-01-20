@@ -83,7 +83,7 @@ func (s *Service) Reload(ctx context.Context) error {
 		"port", defaultProvider.Port)
 
 	// Create new sender and queue
-	mailSender := NewSenderFromMailProvider(defaultProvider, s.brandingName)
+	mailSender := NewSenderFromMailProvider(defaultProvider, s.brandingName, s.logger)
 	s.queue = NewQueue(mailSender, s.logger, defaultProvider.RetryCount, defaultProvider.RetryBackoffMs, defaultProvider.QueueSize)
 	s.queue.Start()
 

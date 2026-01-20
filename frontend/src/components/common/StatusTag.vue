@@ -27,16 +27,17 @@ const props = withDefaults(
   },
 );
 
+// Scale icon names for status states (without 'scale-icon-' prefix)
 const statusIcons: Record<string, string> = {
-  approved: "✓",
-  active: "●",
-  pending: "◐",
-  rejected: "✕",
-  withdrawn: "↩",
-  expired: "⏱",
-  timeout: "⏰",
-  scheduled: "📅",
-  waitingforscheduledtime: "📅",
+  approved: "action-success",
+  active: "action-success",
+  pending: "content-hour-glass",
+  rejected: "action-circle-close",
+  withdrawn: "action-circle-close",
+  expired: "content-clock",
+  timeout: "content-clock",
+  scheduled: "content-calendar",
+  waitingforscheduledtime: "content-calendar",
 };
 
 const computedTone = computed(() => {
@@ -82,7 +83,13 @@ const tagVariant = computed(() => {
 
 <template>
   <scale-tag class="status-tag" :class="[`status-tag--${size}`, `status-tag--${computedTone}`]" :variant="tagVariant">
-    <span v-if="icon" class="status-tag__icon" aria-hidden="true">{{ icon }}</span>
+    <span v-if="icon" class="status-tag__icon" aria-hidden="true">
+      <scale-icon-action-success v-if="icon === 'action-success'" size="14" decorative />
+      <scale-icon-content-hour-glass v-else-if="icon === 'content-hour-glass'" size="14" decorative />
+      <scale-icon-action-circle-close v-else-if="icon === 'action-circle-close'" size="14" decorative />
+      <scale-icon-content-clock v-else-if="icon === 'content-clock'" size="14" decorative />
+      <scale-icon-content-calendar v-else-if="icon === 'content-calendar'" size="14" decorative />
+    </span>
     <span class="status-tag__label">{{ displayLabel }}</span>
   </scale-tag>
 </template>

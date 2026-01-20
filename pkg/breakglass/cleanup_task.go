@@ -54,6 +54,21 @@ func getDebugSessionRetentionPeriod() time.Duration {
 	return defaultRetention
 }
 
+// DebugSessionApprovalTimeout defines how long a debug session can wait in pending approval
+// state before being automatically failed. This can be configured via environment variable
+// DEBUG_SESSION_APPROVAL_TIMEOUT (default: 24h)
+var DebugSessionApprovalTimeout = getDebugSessionApprovalTimeout()
+
+func getDebugSessionApprovalTimeout() time.Duration {
+	const defaultTimeout = 24 * time.Hour
+	if env := os.Getenv("DEBUG_SESSION_APPROVAL_TIMEOUT"); env != "" {
+		if d, err := time.ParseDuration(env); err == nil {
+			return d
+		}
+	}
+	return defaultTimeout
+}
+
 func (cr CleanupRoutine) CleanupRoutine(ctx context.Context) {
 	// Wait for leadership signal if provided (enables multi-replica scaling with leader election)
 	if cr.LeaderElected != nil {
@@ -257,19 +272,19 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 
 		// Check pending approval sessions that have timed out
 		if ds.Status.State == telekomv1alpha1.DebugSessionStatePendingApproval {
-			// If approval times out (e.g., 24 hours), mark as failed
-			if ds.Status.Approval != nil && ds.CreationTimestamp.Add(24*time.Hour).Before(now) {
+			// If approval times out, mark as failed
+			if ds.Status.Approval != nil && ds.CreationTimestamp.Add(DebugSessionApprovalTimeout).Before(now) {
 				routine.Log.Infow("Debug session approval timed out, marking as Failed",
 					append(system.NamespacedFields(ds.Name, ds.Namespace),
 						"cluster", ds.Spec.Cluster,
 						"template", ds.Spec.TemplateRef,
 						"requestedBy", ds.Spec.RequestedBy,
 						"createdAt", ds.CreationTimestamp,
-						"waitedHours", 24,
+						"approvalTimeout", DebugSessionApprovalTimeout.String(),
 					)...)
 
 				ds.Status.State = telekomv1alpha1.DebugSessionStateFailed
-				ds.Status.Message = "Approval timed out after 24 hours"
+				ds.Status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
 
 				if err := routine.Manager.Status().Update(ctx, &ds); err != nil {
 					routine.Log.Errorw("error updating timed-out debug session status",

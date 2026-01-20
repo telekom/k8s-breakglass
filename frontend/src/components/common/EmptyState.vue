@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * EmptyState - Displays a consistent empty state with optional icon, title, and description
+ * Uses Scale Design System icons for visual consistency.
  */
 import { computed, useSlots } from "vue";
 
@@ -14,7 +15,7 @@ const props = withDefaults(
     description?: string;
     /** Visual variant */
     variant?: EmptyStateVariant;
-    /** Custom icon (emoji or text) */
+    /** Custom icon - Scale icon name (without prefix) */
     icon?: string;
     /** Make the component compact */
     compact?: boolean;
@@ -31,14 +32,21 @@ const props = withDefaults(
 const slots = useSlots();
 const hasActions = computed(() => Boolean(slots.actions));
 
-const defaultIcons: Record<EmptyStateVariant, string> = {
-  default: "📭",
-  search: "🔍",
-  error: "⚠️",
-  success: "✅",
+// Scale icon names for each variant (without 'scale-icon-' prefix)
+// Icons verified against @telekom/scale-components package
+const defaultScaleIcons: Record<EmptyStateVariant, string> = {
+  default: "communication-inbox",
+  search: "action-search",
+  error: "alert-error",
+  success: "action-success",
 };
 
-const displayIcon = computed(() => props.icon || defaultIcons[props.variant]);
+const scaleIconName = computed(() => {
+  if (props.icon) {
+    return props.icon;
+  }
+  return defaultScaleIcons[props.variant];
+});
 </script>
 
 <template>
@@ -48,7 +56,18 @@ const displayIcon = computed(() => props.icon || defaultIcons[props.variant]);
     :data-variant="variant"
     data-testid="empty-state"
   >
-    <span v-if="displayIcon" class="empty-state__icon" aria-hidden="true">{{ displayIcon }}</span>
+    <div class="empty-state__icon empty-state__icon--scale" aria-hidden="true">
+      <scale-icon-communication-inbox
+        v-if="scaleIconName === 'communication-inbox'"
+        size="48"
+      ></scale-icon-communication-inbox>
+      <scale-icon-action-search v-else-if="scaleIconName === 'action-search'" size="48"></scale-icon-action-search>
+      <scale-icon-alert-error v-else-if="scaleIconName === 'alert-error'" size="48"></scale-icon-alert-error>
+      <scale-icon-action-success v-else-if="scaleIconName === 'action-success'" size="48"></scale-icon-action-success>
+      <scale-icon-content-lock v-else-if="scaleIconName === 'content-lock'" size="48"></scale-icon-content-lock>
+      <scale-icon-alert-warning v-else-if="scaleIconName === 'alert-warning'" size="48"></scale-icon-alert-warning>
+      <scale-icon-communication-inbox v-else size="48"></scale-icon-communication-inbox>
+    </div>
     <p class="empty-state__title">{{ title }}</p>
     <p v-if="description" class="empty-state__description">{{ description }}</p>
     <slot name="description"></slot>

@@ -54,7 +54,7 @@
           ? 'There are no access requests waiting for your approval.'
           : 'No requests match the selected filters. Try adjusting your criteria.'
       "
-      :icon="pendingSessions.length === 0 ? '✅' : '🔍'"
+      :icon="pendingSessions.length === 0 ? 'action-success' : 'action-search'"
     />
 
     <div v-else class="masonry-layout" data-testid="pending-sessions-list">
@@ -92,7 +92,12 @@
               :class="`tone-chip--${session.urgency}`"
               :aria-label="getUrgencyLabel(session.urgency).ariaLabel"
             >
-              <span aria-hidden="true">{{ getUrgencyLabel(session.urgency).icon }}</span>
+              <scale-icon-alert-warning
+                v-if="getUrgencyLabel(session.urgency).icon === 'alert-warning'"
+                size="14"
+                decorative
+              />
+              <scale-icon-content-clock v-else size="14" decorative />
               {{ getUrgencyLabel(session.urgency).text }}
             </span>
             <StatusTag :status="getSessionState(session)" />
@@ -103,8 +108,14 @@
           <scale-tag v-if="session.metadata?.name" variant="neutral" class="mono-tag">
             {{ session.metadata.name }}
           </scale-tag>
-          <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">📅 Scheduled</scale-tag>
-          <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">✍️ Note required</scale-tag>
+          <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">
+            <scale-icon-content-calendar size="14" decorative style="margin-right: 4px; vertical-align: middle" />
+            Scheduled
+          </scale-tag>
+          <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">
+            <scale-icon-action-edit size="14" decorative style="margin-right: 4px; vertical-align: middle" />
+            Note required
+          </scale-tag>
         </template>
 
         <template #meta>

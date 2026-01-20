@@ -226,7 +226,7 @@ escalations: []
 #
 # Example multi-IDP CRs (create separately, not through this chart):
 #
-#   apiVersion: breakglass.telekom.de/v1alpha1
+#   apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 #   kind: IdentityProvider
 #   metadata:
 #     name: corporate-oidc
@@ -238,7 +238,7 @@ escalations: []
 #         name: corporate-oidc-secret
 #     disabled: false
 #
-#   apiVersion: breakglass.telekom.de/v1alpha1
+#   apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 #   kind: IdentityProvider
 #   metadata:
 #     name: external-keycloak

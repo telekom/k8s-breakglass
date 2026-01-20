@@ -30,7 +30,7 @@ function formatValue(value?: string | number | null) {
             <span class="meta-label__text">{{ item.label }}</span>
             <scale-tooltip v-if="item.hint" :label="item.hint" position="top">
               <button type="button" class="meta-label__hint" :aria-label="`More info about ${item.label}`">
-                <scale-icon-action-info aria-hidden="true"></scale-icon-action-info>
+                <scale-icon-action-info decorative></scale-icon-action-info>
               </button>
             </scale-tooltip>
           </div>

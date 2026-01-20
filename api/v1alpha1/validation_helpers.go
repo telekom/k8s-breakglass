@@ -40,6 +40,7 @@ func ensureClusterWideUniqueName(
 	}
 
 	if ctx == nil {
+		zap.S().Warnw("ensureClusterWideUniqueName called without context, using fallback")
 		ctx = context.Background()
 	}
 
@@ -175,6 +176,7 @@ func validateIdentityProviderRefs(
 	}
 
 	if ctx == nil {
+		zap.S().Warnw("validateIdentityProviderRefs called without context, using fallback")
 		ctx = context.Background()
 	}
 
@@ -235,6 +237,7 @@ func validateMailProviderReference(ctx context.Context, mailProvider string, pat
 	}
 
 	if ctx == nil {
+		zap.S().Warnw("validateMailProviderReference called without context, using fallback")
 		ctx = context.Background()
 	}
 
@@ -326,6 +329,7 @@ func validateIdentityProviderFields(
 	}
 
 	if ctx == nil {
+		zap.S().Warnw("validateIdentityProviderFields called without context, using fallback")
 		ctx = context.Background()
 	}
 
@@ -443,6 +447,7 @@ func validateSessionIdentityProviderAuthorization(
 	}
 
 	if ctx == nil {
+		zap.S().Warnw("validateSessionIdentityProviderAuthorization called without context, using fallback")
 		ctx = context.Background()
 	}
 

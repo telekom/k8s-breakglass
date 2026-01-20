@@ -385,7 +385,7 @@ watch(
 
           <scale-telekom-nav-item class="mobile-nav-item">
             <button type="button" class="mobile-nav-trigger" aria-label="Open navigation menu">
-              <scale-icon-action-menu aria-hidden="true"></scale-icon-action-menu>
+              <scale-icon-action-menu decorative></scale-icon-action-menu>
               <span class="sr-only">Open navigation menu</span>
             </button>
             <scale-telekom-nav-flyout ref="mobileNavFlyoutRef" variant="mobile">

@@ -461,9 +461,10 @@ onMounted(() => {
       </div>
 
       <div class="filters-actions" data-testid="filter-actions">
-        <scale-button data-testid="apply-filters-button" :disabled="loading" variant="primary" @click="fetchSessions"
-          >Apply filters</scale-button
-        >
+        <scale-button data-testid="apply-filters-button" :disabled="loading" variant="primary" @click="fetchSessions">
+          <scale-loading-spinner v-if="loading" size="small" class="button-spinner"></scale-loading-spinner>
+          <span v-else>Apply filters</span>
+        </scale-button>
         <scale-button data-testid="reset-filters-button" variant="secondary" @click="resetFilters">Reset</scale-button>
       </div>
 
@@ -486,9 +487,9 @@ onMounted(() => {
       <EmptyState
         v-if="!loading && !error && !visibleSessions.length"
         data-testid="empty-state"
-        icon="🔍"
-        message="No sessions matched the current filters."
-        :action-label="undefined"
+        variant="search"
+        title="No sessions matched the current filters."
+        description="Try adjusting your filters or creating a new session."
       />
 
       <div v-if="visibleSessions.length" class="sessions-list" data-testid="session-list">
@@ -822,5 +823,9 @@ header p {
 
 .error {
   color: var(--telekom-color-text-error);
+}
+
+.button-spinner {
+  --scale-loading-spinner-size: 16px;
 }
 </style>

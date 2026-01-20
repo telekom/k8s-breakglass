@@ -150,16 +150,16 @@ const groupsDisplay = computed(() => {
       data-testid="debug-toggle-button"
       @click="showDebug = !showDebug"
     >
-      🔧
+      <scale-icon-service-settings size="20" decorative />
     </scale-button>
 
     <div v-if="showDebug" class="debug-panel-wrapper" data-testid="debug-panel">
       <scale-card class="debug-panel">
         <div class="debug-header">
           <h3>Debug Information</h3>
-          <scale-button variant="ghost" size="small" data-testid="debug-close-button" @click="showDebug = false"
-            >✕</scale-button
-          >
+          <scale-button variant="ghost" size="small" data-testid="debug-close-button" @click="showDebug = false">
+            <scale-icon-action-circle-close size="16" decorative />
+          </scale-button>
         </div>
 
         <div class="debug-content">
@@ -167,7 +167,24 @@ const groupsDisplay = computed(() => {
             <h4>Authentication Status</h4>
             <div class="debug-item">
               <span class="label">Authenticated:</span>
-              <span class="value">{{ user && !user.expired ? "✓ Yes" : "✗ No" }}</span>
+              <span class="value">
+                <template v-if="user && !user.expired">
+                  <scale-icon-action-success
+                    size="16"
+                    decorative
+                    style="color: var(--telekom-color-functional-success-standard); vertical-align: middle"
+                  />
+                  Yes
+                </template>
+                <template v-else>
+                  <scale-icon-action-circle-close
+                    size="16"
+                    decorative
+                    style="color: var(--telekom-color-functional-danger-standard); vertical-align: middle"
+                  />
+                  No
+                </template>
+              </span>
             </div>
             <div v-if="user" class="debug-item">
               <span class="label">Email:</span>
