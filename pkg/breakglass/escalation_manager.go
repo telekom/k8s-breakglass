@@ -188,6 +188,8 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	})
 }
 
+// GetClusterBreakglassEscalations returns escalations that apply to a specific cluster.
+// Supports glob patterns in both Allowed.Clusters and ClusterConfigRefs fields.
 func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster BreakglassEscalations", "cluster", cluster)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterBreakglassEscalations").Inc()
@@ -202,12 +204,11 @@ func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context
 		collected = append(collected, globalList.Items...)
 	}
 
-	// If index returned results, filter and return
+	// If index returned results, filter using shared helper and return
 	if len(collected) > 0 {
 		out := make([]telekomv1alpha1.BreakglassEscalation, 0)
 		for _, be := range collected {
-			// Check both allowed.clusters and clusterConfigRefs with glob support
-			if clusterMatchesPatterns(cluster, be.Spec.Allowed.Clusters) || clusterMatchesPatterns(cluster, be.Spec.ClusterConfigRefs) {
+			if escalationMatchesCluster(be, cluster) {
 				out = append(out, be)
 			}
 		}
@@ -218,8 +219,7 @@ func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context
 
 	// Fallback to filter-based scan for glob patterns
 	return em.GetBreakglassEscalationsWithFilter(ctx, func(be telekomv1alpha1.BreakglassEscalation) bool {
-		// Check both allowed.clusters and clusterConfigRefs with glob support
-		return clusterMatchesPatterns(cluster, be.Spec.Allowed.Clusters) || clusterMatchesPatterns(cluster, be.Spec.ClusterConfigRefs)
+		return escalationMatchesCluster(be, cluster)
 	})
 }
 
@@ -235,6 +235,39 @@ func matchesGlobPattern(pattern, value string) bool {
 func clusterMatchesPatterns(cluster string, patterns []string) bool {
 	for _, pattern := range patterns {
 		if pattern == cluster || matchesGlobPattern(pattern, cluster) {
+			return true
+		}
+	}
+	return false
+}
+
+// escalationMatchesCluster checks if an escalation applies to a given cluster.
+// Both Allowed.Clusters and ClusterConfigRefs are checked with glob pattern support.
+// Empty values in both fields means the escalation applies to no clusters (use "*" for global).
+func escalationMatchesCluster(be telekomv1alpha1.BreakglassEscalation, cluster string) bool {
+	return clusterMatchesPatterns(cluster, be.Spec.Allowed.Clusters) ||
+		clusterMatchesPatterns(cluster, be.Spec.ClusterConfigRefs)
+}
+
+// getOIDCPrefixes retrieves OIDC prefixes from config, returning nil on error.
+// This is a convenience helper that handles config loading errors gracefully.
+func (em *EscalationManager) getOIDCPrefixes() []string {
+	cfg, err := em.getConfig()
+	if err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
+		return cfg.Kubernetes.OIDCPrefixes
+	}
+	return nil
+}
+
+// normalizeAndMatchGroups checks if any of the user's groups match the escalation's allowed groups.
+// Handles OIDC prefix stripping when configured.
+func groupsMatch(userGroups, allowedGroups, oidcPrefixes []string) bool {
+	normalized := allowedGroups
+	if len(oidcPrefixes) > 0 {
+		normalized = stripOIDCPrefixes(allowedGroups, oidcPrefixes)
+	}
+	for _, g := range userGroups {
+		if slices.Contains(normalized, g) {
 			return true
 		}
 	}
@@ -268,33 +301,14 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 		collected = all
 	}
 
-	// Filter collected by cluster matching and groups
-	var oidcPrefixes []string
-	if cfg, err := em.getConfig(); err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
-		oidcPrefixes = cfg.Kubernetes.OIDCPrefixes
-	}
+	// Filter collected by cluster matching and groups using shared helpers
+	oidcPrefixes := em.getOIDCPrefixes()
 	out := make([]telekomv1alpha1.BreakglassEscalation, 0)
 	for _, be := range collected {
-		// Ensure escalation applies to the requested cluster.
-		// Escalations must have explicit cluster configuration - empty ClusterConfigRefs
-		// AND empty Allowed.Clusters means the escalation is not valid for any cluster.
-		// Use glob pattern "*" in either field for global escalations.
-		// Both allowed.clusters and clusterConfigRefs support glob patterns.
-		if !clusterMatchesPatterns(cluster, be.Spec.Allowed.Clusters) && !clusterMatchesPatterns(cluster, be.Spec.ClusterConfigRefs) {
+		if !escalationMatchesCluster(be, cluster) {
 			continue
 		}
-		allowedGroups := be.Spec.Allowed.Groups
-		if len(oidcPrefixes) > 0 {
-			allowedGroups = stripOIDCPrefixes(allowedGroups, oidcPrefixes)
-		}
-		matched := false
-		for _, g := range groups {
-			if slices.Contains(allowedGroups, g) {
-				matched = true
-				break
-			}
-		}
-		if matched {
+		if groupsMatch(groups, be.Spec.Allowed.Groups, oidcPrefixes) {
 			out = append(out, be)
 		}
 	}
@@ -320,30 +334,18 @@ func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx conte
 		collected = append(collected, all...)
 	}
 
-	// Filter collected by cluster and allowed groups
-	var oidcPrefixes []string
-	if cfg, err := em.getConfig(); err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
-		oidcPrefixes = cfg.Kubernetes.OIDCPrefixes
-	}
+	// Filter collected by cluster and allowed groups using shared helpers
+	oidcPrefixes := em.getOIDCPrefixes()
 	out := make([]telekomv1alpha1.BreakglassEscalation, 0)
 	for _, be := range collected {
 		if be.Spec.EscalatedGroup != targetGroup {
 			continue
 		}
-		// Check cluster match with glob support - empty ClusterConfigRefs/Allowed.Clusters is NOT global
-		// Both allowed.clusters and clusterConfigRefs support glob patterns.
-		if !clusterMatchesPatterns(cluster, be.Spec.Allowed.Clusters) && !clusterMatchesPatterns(cluster, be.Spec.ClusterConfigRefs) {
+		if !escalationMatchesCluster(be, cluster) {
 			continue
 		}
-		allowedGroups := be.Spec.Allowed.Groups
-		if len(oidcPrefixes) > 0 {
-			allowedGroups = stripOIDCPrefixes(allowedGroups, oidcPrefixes)
-		}
-		for _, g := range userGroups {
-			if slices.Contains(allowedGroups, g) {
-				out = append(out, be)
-				break
-			}
+		if groupsMatch(userGroups, be.Spec.Allowed.Groups, oidcPrefixes) {
+			out = append(out, be)
 		}
 	}
 	return out, nil

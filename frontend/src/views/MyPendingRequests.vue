@@ -17,7 +17,7 @@
         data-testid="empty-state"
         title="No pending requests"
         description="You don't have any access requests waiting for approval."
-        icon="📭"
+        icon="communication-inbox"
       />
 
       <div v-else class="requests-list" data-testid="requests-list">

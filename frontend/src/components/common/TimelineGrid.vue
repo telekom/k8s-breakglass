@@ -47,7 +47,7 @@ const timelineItems = computed((): TimelineItem[] => {
       id: "scheduled",
       label: "Scheduled",
       value: props.scheduledStart,
-      icon: "📅",
+      icon: "content-calendar",
       highlight: isFuture(props.scheduledStart),
     });
   }
@@ -57,7 +57,7 @@ const timelineItems = computed((): TimelineItem[] => {
       id: "started",
       label: "Started",
       value: props.actualStart,
-      icon: "▶️",
+      icon: "action-success",
     });
   }
 
@@ -66,14 +66,14 @@ const timelineItems = computed((): TimelineItem[] => {
       id: "ended",
       label: "Ended",
       value: props.ended,
-      icon: "⏹️",
+      icon: "action-circle-close",
     });
   } else if (props.expiresAt) {
     items.push({
       id: "expires",
       label: "Expires",
       value: props.expiresAt,
-      icon: "⏱️",
+      icon: "content-clock",
       highlight: isFuture(props.expiresAt),
     });
   }
@@ -96,7 +96,12 @@ function formatValue(value: string | Date | number | null | undefined): string {
       class="timeline-item"
       :class="{ 'timeline-item--highlight': item.highlight }"
     >
-      <span v-if="item.icon" class="timeline-item__icon" aria-hidden="true">{{ item.icon }}</span>
+      <span v-if="item.icon" class="timeline-item__icon" aria-hidden="true">
+        <scale-icon-content-calendar v-if="item.icon === 'content-calendar'" size="16" decorative />
+        <scale-icon-action-success v-else-if="item.icon === 'action-success'" size="16" decorative />
+        <scale-icon-action-circle-close v-else-if="item.icon === 'action-circle-close'" size="16" decorative />
+        <scale-icon-content-clock v-else-if="item.icon === 'content-clock'" size="16" decorative />
+      </span>
       <span class="timeline-item__label">{{ item.label }}</span>
       <span class="timeline-item__value">{{ formatValue(item.value) }}</span>
     </div>

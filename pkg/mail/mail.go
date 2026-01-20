@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
 	"math"
 	"net"
 	"net/smtp"
@@ -35,6 +34,7 @@ type sender struct {
 	port           int
 	username       string
 	password       string
+	log            *zap.SugaredLogger
 }
 
 // sanitizeHeaderValue removes all ASCII control characters from header values
@@ -64,15 +64,26 @@ func sanitizeBodyValue(s string) string {
 	return s
 }
 
-// NewSenderFromMailProvider creates a mail sender from MailProvider configuration
-func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName string) Sender {
-	log.Printf("[mail] Initializing mail sender from MailProvider: %s (host: %s, port: %d, disableTLS: %v)",
-		mpConfig.Name, mpConfig.Host, mpConfig.Port, mpConfig.DisableTLS)
+// NewSenderFromMailProvider creates a mail sender from MailProvider configuration.
+// The optional logger parameter allows structured logging; if nil, a default logger is used.
+func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName string, logger ...*zap.SugaredLogger) Sender {
+	var log *zap.SugaredLogger
+	if len(logger) > 0 && logger[0] != nil {
+		log = logger[0].Named("mail")
+	} else {
+		log = zap.S().Named("mail")
+	}
+
+	log.Infow("Initializing mail sender from MailProvider",
+		"provider", mpConfig.Name,
+		"host", mpConfig.Host,
+		"port", mpConfig.Port,
+		"disableTLS", mpConfig.DisableTLS)
 
 	d := gomail.NewDialer(mpConfig.Host, mpConfig.Port, mpConfig.Username, mpConfig.Password)
 
 	if mpConfig.InsecureSkipVerify {
-		log.Printf("[mail] InsecureSkipVerify is enabled for mail TLS connection")
+		log.Warnw("InsecureSkipVerify is enabled for mail TLS connection - not recommended for production")
 		d.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
@@ -100,7 +111,9 @@ func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName
 		retryBackoffMs = 100
 	}
 
-	log.Printf("[mail] Retry configuration: count=%d, initialBackoffMs=%d", retryCount, retryBackoffMs)
+	log.Debugw("Retry configuration",
+		"retryCount", retryCount,
+		"initialBackoffMs", retryBackoffMs)
 
 	return &sender{
 		dialer:         d,
@@ -113,13 +126,15 @@ func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName
 		port:           mpConfig.Port,
 		username:       mpConfig.Username,
 		password:       mpConfig.Password,
+		log:            log,
 	}
 }
 
 func (s *sender) Send(receivers []string, subject, body string) error {
 	// Validate receivers
 	if len(receivers) == 0 {
-		log.Printf("[mail] ERROR: Send called with no receivers. Subject: %s", subject)
+		s.log.Errorw("Send called with no receivers",
+			"subjectLength", len(subject)) // Don't log raw subject for privacy
 		return fmt.Errorf("cannot send email with no receivers")
 	}
 
@@ -131,7 +146,9 @@ func (s *sender) Send(receivers []string, subject, body string) error {
 	// This removes bare CR characters that could break email parsing
 	safeBody := sanitizeBodyValue(body)
 
-	log.Printf("[mail] Preparing to send mail to %d receivers. Subject: %s", len(receivers), safeSubject)
+	s.log.Debugw("Preparing to send mail",
+		"recipientCount", len(receivers),
+		"subjectLength", len(safeSubject)) // Don't log raw subject/addresses for privacy
 
 	var lastErr error
 	backoffMs := s.retryBackoffMs
@@ -152,19 +169,26 @@ func (s *sender) Send(receivers []string, subject, body string) error {
 		}
 
 		if err == nil {
-			log.Printf("[mail] Mail sent successfully to %d receivers on attempt %d", len(receivers), attempt+1)
+			s.log.Infow("Mail sent successfully",
+				"recipientCount", len(receivers),
+				"attempt", attempt+1)
 			metrics.MailSendSuccess.WithLabelValues(s.GetHost()).Inc()
 			return nil
 		}
 
 		lastErr = err
 		if attempt < s.retryCount {
-			log.Printf("[mail] Send attempt %d failed: %v. Retrying in %dms...", attempt+1, err, backoffMs)
+			s.log.Warnw("Send attempt failed, retrying",
+				"attempt", attempt+1,
+				"error", err,
+				"retryInMs", backoffMs)
 			time.Sleep(time.Duration(backoffMs) * time.Millisecond)
 			// Exponential backoff: backoff = backoff * 2^attempt (capped at reasonable values)
 			backoffMs = int(math.Min(float64(backoffMs)*2, 32000)) // Cap at ~32 seconds
 		} else {
-			log.Printf("[mail] Failed to send mail after %d attempts: %v", s.retryCount+1, err)
+			s.log.Errorw("Failed to send mail after all attempts",
+				"attempts", s.retryCount+1,
+				"error", err)
 		}
 	}
 
@@ -295,7 +319,7 @@ func Setup(ctx context.Context, kubeClient client.Client, brandingName string, l
 			"provider", defaultProvider.Name,
 			"host", defaultProvider.Host,
 			"port", defaultProvider.Port)
-		mailSender := NewSenderFromMailProvider(defaultProvider, brandingName)
+		mailSender := NewSenderFromMailProvider(defaultProvider, brandingName, log)
 		mailQueue = NewQueue(mailSender, log, defaultProvider.RetryCount, defaultProvider.RetryBackoffMs, defaultProvider.QueueSize)
 		mailQueue.Start()
 		log.Infow("Mail queue initialized and started",

@@ -309,7 +309,7 @@ async function onDrop(bg: any) {
     </div>
     <EmptyState
       v-else
-      icon="🔒"
+      icon="content-lock"
       message="No requestable breakglass groups found for your current identity provider or group membership."
     />
   </main>

@@ -66,7 +66,8 @@ jobs:
               (cd dist && shasum -a 256 "bgctl_${os}_${arch}.tar.gz" > "bgctl_${os}_${arch}.tar.gz.sha256")
             fi
           done
-          (cd dist && shasum -a 256 bgctl_* > bgctl_${VERSION}_checksums.txt)
+          # Generate combined checksums file (only archive files, not directories)
+          (cd dist && shasum -a 256 *.tar.gz *.zip > "bgctl_${VERSION}_checksums.txt")
       - name: Login to GHCR
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:

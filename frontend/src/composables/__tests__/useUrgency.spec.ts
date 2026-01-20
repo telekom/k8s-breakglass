@@ -92,26 +92,26 @@ describe("useUrgency", () => {
   describe("getUrgencyLabel", () => {
     it("returns structured label objects with icon, text, and ariaLabel", () => {
       expect(getUrgencyLabel("critical")).toEqual({
-        icon: "⚠️",
+        icon: "alert-warning",
         text: "Critical",
         ariaLabel: "Critical urgency",
       });
       expect(getUrgencyLabel("high")).toEqual({
-        icon: "⏱️",
+        icon: "content-clock",
         text: "High",
         ariaLabel: "High urgency",
       });
       expect(getUrgencyLabel("normal")).toEqual({
-        icon: "🕓",
+        icon: "content-clock",
         text: "Normal",
         ariaLabel: "Normal urgency",
       });
     });
 
     it("provides backwards compatible string via getUrgencyLabelString", () => {
-      expect(getUrgencyLabelString("critical")).toBe("⚠️ Critical");
-      expect(getUrgencyLabelString("high")).toBe("⏱️ High");
-      expect(getUrgencyLabelString("normal")).toBe("🕓 Normal");
+      expect(getUrgencyLabelString("critical")).toBe("alert-warning Critical");
+      expect(getUrgencyLabelString("high")).toBe("content-clock High");
+      expect(getUrgencyLabelString("normal")).toBe("content-clock Normal");
     });
   });
 

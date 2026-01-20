@@ -60,11 +60,11 @@ export type UrgencyLabel = {
 export function getUrgencyLabel(level: UrgencyLevel): UrgencyLabel {
   switch (level) {
     case "critical":
-      return { icon: "⚠️", text: "Critical", ariaLabel: "Critical urgency" };
+      return { icon: "alert-warning", text: "Critical", ariaLabel: "Critical urgency" };
     case "high":
-      return { icon: "⏱️", text: "High", ariaLabel: "High urgency" };
+      return { icon: "content-clock", text: "High", ariaLabel: "High urgency" };
     default:
-      return { icon: "🕓", text: "Normal", ariaLabel: "Normal urgency" };
+      return { icon: "content-clock", text: "Normal", ariaLabel: "Normal urgency" };
   }
 }
 

@@ -202,8 +202,9 @@ Used for:
 - OIDC redirect URIs
 - Links in email notifications
 - Frontend JavaScript API calls
+- **Webhook authorization messages** - When access is denied, the webhook response includes a link to this URL so users can request access via the UI
 
-**Important**: This URL must be resolvable by users' browsers.
+**Important**: This URL must be resolvable by users' browsers. In production deployments, always set this to the externally accessible URL of your breakglass frontend. Using `localhost` URLs in production will result in confusing error messages for users.
 
 #### `brandingName` (Optional)
 

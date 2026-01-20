@@ -226,7 +226,7 @@ Defines available privilege escalations for users. Specifies target groups, appr
 
 - **Example:** "Allow developers to request temporary cluster-admin access for 2 hours"
 - **Approvers:** Can be individuals or groups
-- **Constraints:** Max duration, idle timeout, request reasons, self-approval policy
+- **Constraints:** Max duration, request reasons, self-approval policy
 
 See [BreakglassEscalation Documentation](./docs/breakglass-escalation.md) for details.
 

@@ -43,12 +43,12 @@
   padding: var(--space-sm) var(--space-lg);
   border-radius: 999px;
   background: var(--accent-telekom);
-  color: #fff;
+  color: var(--telekom-color-text-and-icon-white-standard, #fff);
   font-weight: 600;
   text-decoration: none;
 }
 
 .not-found__cta:hover {
-  background: var(--accent-telekom-hover);
+  background: var(--telekom-color-primary-hovered);
 }
 </style>

@@ -62,7 +62,7 @@ function handleClick(event: Event) {
     :disabled="isDisabled"
     @click="handleClick"
   >
-    <span v-if="loading" class="action-button__spinner" aria-hidden="true"></span>
+    <scale-loading-spinner v-if="loading" variant="white" size="small" class="action-button__spinner" />
     <span v-else-if="icon" class="action-button__icon" aria-hidden="true">{{ icon }}</span>
     <span class="action-button__label">{{ displayLabel }}</span>
   </scale-button>
@@ -85,23 +85,10 @@ function handleClick(event: Event) {
 }
 
 .action-button__spinner {
-  display: inline-block;
-  width: 1em;
-  height: 1em;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
   margin-right: var(--space-xs);
 }
 
 .action-button__icon {
   margin-right: var(--space-2xs);
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>

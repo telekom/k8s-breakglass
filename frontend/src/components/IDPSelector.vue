@@ -196,7 +196,12 @@ function handleIDPButtonClick(idpName: string) {
                   <span class="idp-button-label">{{ idp.displayName }}</span>
                   <span v-if="!idp.enabled" class="idp-button-status">(disabled)</span>
                 </span>
-                <span v-if="selectedIDPName === idp.name" class="idp-button-check" aria-hidden="true"> ✓ </span>
+                <scale-icon-action-success
+                  v-if="selectedIDPName === idp.name"
+                  class="idp-button-check"
+                  size="16"
+                  decorative
+                />
               </span>
             </scale-button>
           </div>

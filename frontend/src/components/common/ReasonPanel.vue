@@ -28,10 +28,11 @@ const props = withDefaults(
   },
 );
 
+// Scale icon names for reason variants (without 'scale-icon-' prefix)
 const variantIcons: Record<ReasonVariant, string> = {
-  request: "📝",
-  approval: "✅",
-  rejection: "❌",
+  request: "action-edit",
+  approval: "action-success",
+  rejection: "action-circle-close",
   default: "",
 };
 
@@ -42,7 +43,11 @@ const hasReason = computed(() => Boolean(props.reason?.trim()));
 <template>
   <div v-if="hasReason" class="reason-panel" :class="[`reason-panel--${variant}`]" role="region" :aria-label="label">
     <span class="reason-panel__label">
-      <span v-if="displayIcon" class="reason-panel__icon" aria-hidden="true">{{ displayIcon }}</span>
+      <span v-if="displayIcon" class="reason-panel__icon" aria-hidden="true">
+        <scale-icon-action-edit v-if="displayIcon === 'action-edit'" size="16" decorative />
+        <scale-icon-action-success v-else-if="displayIcon === 'action-success'" size="16" decorative />
+        <scale-icon-action-circle-close v-else-if="displayIcon === 'action-circle-close'" size="16" decorative />
+      </span>
       {{ label }}
     </span>
     <p class="reason-panel__text">{{ reason }}</p>

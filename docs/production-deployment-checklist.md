@@ -82,8 +82,10 @@ This checklist helps ensure a secure and reliable production deployment of the b
 --leader-elect=true                    # Enable leader election for HA
 --metrics-bind-address=:8443           # Prometheus metrics endpoint
 --health-probe-bind-address=:8081      # Health/readiness probes
---frontend-base-url=https://breakglass.example.com  # External URL
+--frontend-base-url=https://breakglass.example.com  # External URL (used in emails, webhook deny messages, redirects)
 ```
+
+**⚠️ Important:** The `--frontend-base-url` value is embedded in webhook authorization denial messages shown to users (e.g., "To request temporary access, visit https://..."). Always use your externally accessible URL; using localhost will confuse users in production.
 
 ### Recommended Flags
 

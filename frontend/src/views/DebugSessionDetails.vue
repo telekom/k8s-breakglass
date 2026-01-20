@@ -44,6 +44,20 @@ const nodeDebugForm = ref({
 });
 const kubectlDebugLoading = ref(false);
 
+// Renewal dialog state
+const renewDialogOpen = ref(false);
+const renewDuration = ref("1h");
+const renewDurationOptions = [
+  { value: "30m", label: "30 minutes" },
+  { value: "1h", label: "1 hour" },
+  { value: "2h", label: "2 hours" },
+  { value: "4h", label: "4 hours" },
+];
+
+// Rejection dialog state
+const rejectDialogOpen = ref(false);
+const rejectReason = ref("");
+
 async function fetchSession() {
   loading.value = true;
   error.value = "";
@@ -133,10 +147,16 @@ async function handleTerminate() {
   }
 }
 
-async function handleRenew() {
+function openRenewDialog() {
+  renewDuration.value = "1h";
+  renewDialogOpen.value = true;
+}
+
+async function confirmRenew() {
   try {
-    await debugSessionService.renewSession(sessionName.value, { extendBy: "1h" });
-    pushSuccess("Session renewed for 1 hour");
+    await debugSessionService.renewSession(sessionName.value, { extendBy: renewDuration.value });
+    pushSuccess(`Session renewed by ${renewDuration.value}`);
+    renewDialogOpen.value = false;
     await fetchSession();
   } catch (e: any) {
     pushError(e?.message || "Failed to renew session");
@@ -153,10 +173,17 @@ async function handleApprove() {
   }
 }
 
-async function handleReject() {
+function openRejectDialog() {
+  rejectReason.value = "";
+  rejectDialogOpen.value = true;
+}
+
+async function confirmReject() {
   try {
-    await debugSessionService.rejectSession(sessionName.value, { reason: "Rejected by approver" });
+    const reason = rejectReason.value.trim() || "Rejected by approver";
+    await debugSessionService.rejectSession(sessionName.value, { reason });
     pushSuccess("Session rejected");
+    rejectDialogOpen.value = false;
     await fetchSession();
   } catch (e: any) {
     pushError(e?.message || "Failed to reject session");
@@ -273,7 +300,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
 
     <LoadingState v-if="loading" message="Loading session details..." />
 
-    <EmptyState v-else-if="error" icon="❌" :message="error">
+    <EmptyState v-else-if="error" icon="alert-error" :message="error">
       <scale-button variant="primary" @click="goBack"> Back to Sessions </scale-button>
     </EmptyState>
 
@@ -330,8 +357,13 @@ function podStatusVariant(pod: DebugPodInfo): string {
             <scale-button v-if="canJoin" variant="primary" data-testid="join-session-button" @click="handleJoin">
               Join Session
             </scale-button>
-            <scale-button v-if="canRenew" variant="secondary" data-testid="renew-session-button" @click="handleRenew">
-              Renew (+1h)
+            <scale-button
+              v-if="canRenew"
+              variant="secondary"
+              data-testid="renew-session-button"
+              @click="openRenewDialog"
+            >
+              Renew
             </scale-button>
             <scale-button
               v-if="canTerminate"
@@ -353,7 +385,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
               v-if="canReject"
               variant="secondary"
               data-testid="reject-session-button"
-              @click="handleReject"
+              @click="openRejectDialog"
             >
               Reject
             </scale-button>
@@ -589,6 +621,40 @@ function podStatusVariant(pod: DebugPodInfo): string {
         </div>
       </div>
     </template>
+
+    <!-- Renew Duration Dialog -->
+    <scale-modal :opened="renewDialogOpen" heading="Renew Session" size="small" @scaleClose="renewDialogOpen = false">
+      <p>Select how long to extend the session:</p>
+      <scale-dropdown-select v-model="renewDuration" label="Duration" data-testid="renew-duration-select">
+        <scale-dropdown-select-item v-for="opt in renewDurationOptions" :key="opt.value" :value="opt.value">
+          {{ opt.label }}
+        </scale-dropdown-select-item>
+      </scale-dropdown-select>
+      <div slot="action" class="dialog-actions">
+        <scale-button variant="secondary" @click="renewDialogOpen = false">Cancel</scale-button>
+        <scale-button variant="primary" @click="confirmRenew">Renew</scale-button>
+      </div>
+    </scale-modal>
+
+    <!-- Rejection Reason Dialog -->
+    <scale-modal
+      :opened="rejectDialogOpen"
+      heading="Reject Session"
+      size="small"
+      @scaleClose="rejectDialogOpen = false"
+    >
+      <p>Provide a reason for rejecting this session (optional):</p>
+      <scale-text-field
+        v-model="rejectReason"
+        label="Rejection Reason"
+        placeholder="Enter reason..."
+        data-testid="reject-reason-input"
+      ></scale-text-field>
+      <div slot="action" class="dialog-actions">
+        <scale-button variant="secondary" @click="rejectDialogOpen = false">Cancel</scale-button>
+        <scale-button variant="primary" @click="confirmReject">Reject</scale-button>
+      </div>
+    </scale-modal>
   </main>
 </template>
 
@@ -818,5 +884,12 @@ function podStatusVariant(pod: DebugPodInfo): string {
   margin-top: var(--space-md);
   padding-top: var(--space-md);
   border-top: 1px solid var(--telekom-color-ui-border-subtle);
+}
+
+.dialog-actions {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: flex-end;
+  margin-top: var(--space-lg);
 }
 </style>
