@@ -54,3 +54,42 @@ func TestGetClusterConfigByName(t *testing.T) {
 		require.Contains(t, err.Error(), "namespace2")
 	})
 }
+
+func TestClusterConfigManager_GetClusterConfigInNamespace(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("found in specified namespace", func(t *testing.T) {
+		cc := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "test-ns"},
+		}
+		cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc).Build()
+		mgr := NewClusterConfigManager(cli)
+
+		got, err := mgr.GetClusterConfigInNamespace(ctx, "test-ns", "my-cluster")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, "my-cluster", got.Name)
+		require.Equal(t, "test-ns", got.Namespace)
+	})
+
+	t.Run("not found in different namespace", func(t *testing.T) {
+		cc := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "other-ns"},
+		}
+		cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cc).Build()
+		mgr := NewClusterConfigManager(cli)
+
+		got, err := mgr.GetClusterConfigInNamespace(ctx, "test-ns", "my-cluster")
+		require.Error(t, err)
+		require.Nil(t, got)
+	})
+
+	t.Run("not found when no cluster configs exist", func(t *testing.T) {
+		cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+		mgr := NewClusterConfigManager(cli)
+
+		got, err := mgr.GetClusterConfigInNamespace(ctx, "test-ns", "missing")
+		require.Error(t, err)
+		require.Nil(t, got)
+	})
+}

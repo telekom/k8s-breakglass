@@ -250,3 +250,52 @@ func TestParseDurationWithNilLogger(t *testing.T) {
 	result2 := ParseMaxValidFor(spec2, nil)
 	assert.Equal(t, time.Hour, result2)
 }
+
+func TestParseEscalationRetainFor(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	tests := []struct {
+		name     string
+		value    string
+		expected time.Duration
+	}{
+		{
+			name:     "empty string returns default",
+			value:    "",
+			expected: DefaultRetainForDuration,
+		},
+		{
+			name:     "valid duration 24h",
+			value:    "24h",
+			expected: 24 * time.Hour,
+		},
+		{
+			name:     "valid duration 168h",
+			value:    "168h",
+			expected: 168 * time.Hour,
+		},
+		{
+			name:     "invalid format returns default",
+			value:    "bad-value",
+			expected: DefaultRetainForDuration,
+		},
+		{
+			name:     "zero duration returns default",
+			value:    "0h",
+			expected: DefaultRetainForDuration,
+		},
+		{
+			name:     "negative duration returns default",
+			value:    "-24h",
+			expected: DefaultRetainForDuration,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := v1alpha1.BreakglassEscalationSpec{RetainFor: tt.value}
+			result := ParseEscalationRetainFor(spec, log)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

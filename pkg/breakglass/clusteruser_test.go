@@ -303,3 +303,169 @@ func TestBreakglassSessionRequest_CombinedValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeReasonText(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "simple text",
+			input:    "Need elevated access for debugging",
+			expected: "Need elevated access for debugging",
+		},
+		{
+			name:     "text with leading and trailing whitespace",
+			input:    "  Need access  ",
+			expected: "Need access",
+		},
+		{
+			name:     "text with script tag",
+			input:    "Normal text<script>alert('xss')</script>",
+			expected: "Normal text",
+		},
+		{
+			name:     "text with uppercase script tag",
+			input:    "Normal text<SCRIPT>alert('xss')</SCRIPT>",
+			expected: "Normal text",
+		},
+		{
+			name:     "text with mixed case script tag",
+			input:    "Normal text<ScRiPt>alert('xss')</ScRiPt>",
+			expected: "Normal text",
+		},
+		{
+			name:     "text with javascript: protocol",
+			input:    "Click here: javascript:alert(1)",
+			expected: "Click here:",
+		},
+		{
+			name:     "text with on event handler",
+			input:    "Image onerror=alert(1)",
+			expected: "Image",
+		},
+		{
+			name:     "text with onclick",
+			input:    "Button onclick=doEvil()",
+			expected: "Button",
+		},
+		{
+			name:     "text with onload",
+			input:    "Body onload=steal()",
+			expected: "Body",
+		},
+		{
+			name:     "text with nested patterns",
+			input:    "Clean <script> text",
+			expected: "Clean",
+		},
+		{
+			name:     "text with only whitespace after removal",
+			input:    "  <script>bad",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := SanitizeReasonText(tt.input)
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestIndexCaseInsensitive(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		pattern  string
+		expected int
+	}{
+		{
+			name:     "empty pattern returns 0",
+			s:        "hello",
+			pattern:  "",
+			expected: 0,
+		},
+		{
+			name:     "pattern longer than string",
+			s:        "hi",
+			pattern:  "hello",
+			expected: -1,
+		},
+		{
+			name:     "exact match at start",
+			s:        "hello world",
+			pattern:  "hello",
+			expected: 0,
+		},
+		{
+			name:     "match in middle",
+			s:        "say hello world",
+			pattern:  "hello",
+			expected: 4,
+		},
+		{
+			name:     "case insensitive match",
+			s:        "Hello World",
+			pattern:  "hello",
+			expected: 0,
+		},
+		{
+			name:     "case insensitive match uppercase pattern",
+			s:        "hello world",
+			pattern:  "HELLO",
+			expected: 0,
+		},
+		{
+			name:     "mixed case match",
+			s:        "HeLLo World",
+			pattern:  "hElLo",
+			expected: 0,
+		},
+		{
+			name:     "no match",
+			s:        "hello world",
+			pattern:  "foo",
+			expected: -1,
+		},
+		{
+			name:     "script tag lowercase",
+			s:        "text<script>code",
+			pattern:  "<script>",
+			expected: 4,
+		},
+		{
+			name:     "script tag uppercase",
+			s:        "text<SCRIPT>code",
+			pattern:  "<script>",
+			expected: 4,
+		},
+		{
+			name:     "equal length",
+			s:        "hello",
+			pattern:  "HELLO",
+			expected: 0,
+		},
+		{
+			name:     "empty string no match",
+			s:        "",
+			pattern:  "hello",
+			expected: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := indexCaseInsensitive(tt.s, tt.pattern)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}

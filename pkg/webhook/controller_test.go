@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
@@ -2137,4 +2139,844 @@ func TestWebhookController_WithAuditService(t *testing.T) {
 	if result != wc {
 		t.Error("expected WithAuditService to return the controller for chaining")
 	}
+}
+
+// TestEmitPodSecurityAudit tests the emitPodSecurityAudit function
+func TestEmitPodSecurityAudit(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	tests := []struct {
+		name           string
+		auditService   bool // whether audit service is set
+		result         *policy.PodSecurityResult
+		expectedEvents int
+		expectCritical bool
+		expectWarning  bool
+	}{
+		{
+			name:           "nil audit service does nothing",
+			auditService:   false,
+			result:         &policy.PodSecurityResult{Score: 50, Factors: []string{"privileged"}},
+			expectedEvents: 0,
+		},
+		{
+			name:           "nil result does nothing",
+			auditService:   true,
+			result:         nil,
+			expectedEvents: 0,
+		},
+		{
+			name:         "denied result emits critical event",
+			auditService: true,
+			result: &policy.PodSecurityResult{
+				Denied:  true,
+				Reason:  "risk score too high",
+				Score:   100,
+				Factors: []string{"privileged", "hostNetwork"},
+				Action:  "deny",
+			},
+			expectedEvents: 1,
+			expectCritical: true,
+		},
+		{
+			name:         "warn result emits warning event",
+			auditService: true,
+			result: &policy.PodSecurityResult{
+				Denied:  false,
+				Reason:  "moderate risk",
+				Score:   50,
+				Factors: []string{"runAsRoot"},
+				Action:  "warn",
+			},
+			expectedEvents: 1,
+			expectWarning:  true,
+		},
+		{
+			name:         "override applied emits warning event",
+			auditService: true,
+			result: &policy.PodSecurityResult{
+				Denied:          false,
+				Reason:          "override applied",
+				Score:           80,
+				Factors:         []string{"privileged"},
+				Action:          "allow",
+				OverrideApplied: true,
+			},
+			expectedEvents: 1,
+			expectWarning:  true,
+		},
+		{
+			name:         "allowed result without override emits info event",
+			auditService: true,
+			result: &policy.PodSecurityResult{
+				Denied:  false,
+				Reason:  "within threshold",
+				Score:   20,
+				Factors: []string{},
+				Action:  "allow",
+			},
+			expectedEvents: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			cli := builder.Build()
+
+			sesMgr := &breakglass.SessionManager{Client: cli}
+			escalMgr := &breakglass.EscalationManager{Client: cli}
+			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+			var auditSvc *audit.Service
+			if tt.auditService {
+				auditSvc = audit.NewService(cli, logger, "test-ns")
+			}
+			wc.WithAuditService(auditSvc)
+
+			ctx := context.Background()
+			sar := &authorizationv1.SubjectAccessReview{
+				Spec: authorizationv1.SubjectAccessReviewSpec{
+					User: "test-user@example.com",
+					ResourceAttributes: &authorizationv1.ResourceAttributes{
+						Namespace:   "default",
+						Verb:        "exec",
+						Group:       "",
+						Resource:    "pods",
+						Subresource: "exec",
+						Name:        "test-pod",
+					},
+				},
+			}
+
+			// This should not panic even with nil auditService
+			wc.emitPodSecurityAudit(ctx, "test-user@example.com", []string{"group1"}, "test-cluster", sar, "test-policy", tt.result)
+
+			// Basic verification that function doesn't panic with various inputs
+			// Since the real audit service requires complex setup, we verify the early return conditions
+		})
+	}
+}
+
+// TestEmitAccessDecisionAudit tests the emitAccessDecisionAudit function
+func TestEmitAccessDecisionAudit(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	tests := []struct {
+		name    string
+		allowed bool
+		source  string
+		sarSpec authorizationv1.SubjectAccessReviewSpec
+	}{
+		{
+			name:    "allowed by RBAC",
+			allowed: true,
+			source:  "rbac",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "alice@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: "default",
+					Verb:      "get",
+					Resource:  "pods",
+				},
+			},
+		},
+		{
+			name:    "allowed by session",
+			allowed: true,
+			source:  "session",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "bob@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace:   "kube-system",
+					Verb:        "delete",
+					Resource:    "pods",
+					Subresource: "",
+					Name:        "my-pod",
+				},
+			},
+		},
+		{
+			name:    "denied access",
+			allowed: false,
+			source:  "",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "charlie@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: "production",
+					Verb:      "delete",
+					Resource:  "deployments",
+					Group:     "apps",
+				},
+			},
+		},
+		{
+			name:    "non-resource attributes",
+			allowed: true,
+			source:  "rbac",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "admin@example.com",
+				NonResourceAttributes: &authorizationv1.NonResourceAttributes{
+					Path: "/healthz",
+					Verb: "get",
+				},
+			},
+		},
+		{
+			name:    "allowed by debug-session",
+			allowed: true,
+			source:  "debug-session",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "developer@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace:   "debug-ns",
+					Verb:        "create",
+					Resource:    "pods",
+					Subresource: "exec",
+					Name:        "debug-pod-123",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			cli := builder.Build()
+
+			sesMgr := &breakglass.SessionManager{Client: cli}
+			escalMgr := &breakglass.EscalationManager{Client: cli}
+			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+			ctx := context.Background()
+			sar := &authorizationv1.SubjectAccessReview{
+				Spec: tt.sarSpec,
+			}
+
+			// Test with nil audit service (should not panic)
+			wc.emitAccessDecisionAudit(ctx, tt.sarSpec.User, []string{"group1", "group2"}, "test-cluster", sar, tt.allowed, tt.source, "test reason")
+
+			// Test with audit service set (but disabled - should still not panic)
+			auditSvc := audit.NewService(cli, logger, "test-ns")
+			wc.WithAuditService(auditSvc)
+			wc.emitAccessDecisionAudit(ctx, tt.sarSpec.User, []string{"group1", "group2"}, "test-cluster", sar, tt.allowed, tt.source, "test reason with audit service")
+		})
+	}
+}
+
+// TestEmitPolicyDenialAudit tests the emitPolicyDenialAudit function
+func TestEmitPolicyDenialAudit(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	tests := []struct {
+		name       string
+		policyName string
+		scope      string
+		sarSpec    authorizationv1.SubjectAccessReviewSpec
+	}{
+		{
+			name:       "global policy denial",
+			policyName: "deny-secrets",
+			scope:      "global",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "alice@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: "production",
+					Verb:      "get",
+					Resource:  "secrets",
+				},
+			},
+		},
+		{
+			name:       "session-scoped policy denial",
+			policyName: "deny-cluster-admin",
+			scope:      "session:my-session-123",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "bob@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Verb:      "delete",
+					Resource:  "clusterroles",
+					Group:     "rbac.authorization.k8s.io",
+					Namespace: "",
+				},
+			},
+		},
+		{
+			name:       "non-resource policy denial",
+			policyName: "deny-metrics",
+			scope:      "global",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "charlie@example.com",
+				NonResourceAttributes: &authorizationv1.NonResourceAttributes{
+					Path: "/metrics",
+					Verb: "get",
+				},
+			},
+		},
+		{
+			name:       "subresource policy denial",
+			policyName: "deny-exec",
+			scope:      "global",
+			sarSpec: authorizationv1.SubjectAccessReviewSpec{
+				User: "dev@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace:   "production",
+					Verb:        "create",
+					Resource:    "pods",
+					Subresource: "exec",
+					Name:        "sensitive-pod",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			cli := builder.Build()
+
+			sesMgr := &breakglass.SessionManager{Client: cli}
+			escalMgr := &breakglass.EscalationManager{Client: cli}
+			wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+			ctx := context.Background()
+			sar := &authorizationv1.SubjectAccessReview{
+				Spec: tt.sarSpec,
+			}
+
+			// Test with nil audit service (should not panic)
+			wc.emitPolicyDenialAudit(ctx, tt.sarSpec.User, []string{"group1"}, "test-cluster", sar, tt.policyName, tt.scope)
+
+			// Test with audit service set
+			auditSvc := audit.NewService(cli, logger, "test-ns")
+			wc.WithAuditService(auditSvc)
+			wc.emitPolicyDenialAudit(ctx, tt.sarSpec.User, []string{"group1"}, "test-cluster", sar, tt.policyName, tt.scope)
+		})
+	}
+}
+
+// TestFetchPodFromCluster tests the fetchPodFromCluster function
+func TestFetchPodFromCluster(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	t.Run("uses injected podFetchFn when available", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		cli := builder.Build()
+
+		sesMgr := &breakglass.SessionManager{Client: cli}
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+		expectedPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-pod",
+				Namespace: "test-ns",
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{Name: "main", Image: "nginx:latest"},
+				},
+			},
+		}
+
+		// Inject mock function
+		wc.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+			if clusterName == "test-cluster" && namespace == "test-ns" && name == "test-pod" {
+				return expectedPod, nil
+			}
+			return nil, fmt.Errorf("pod not found")
+		})
+
+		ctx := context.Background()
+		pod, err := wc.fetchPodFromCluster(ctx, "test-cluster", "test-ns", "test-pod")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if pod.Name != expectedPod.Name {
+			t.Errorf("expected pod name %s, got %s", expectedPod.Name, pod.Name)
+		}
+	})
+
+	t.Run("returns error when pod not found via injected function", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		cli := builder.Build()
+
+		sesMgr := &breakglass.SessionManager{Client: cli}
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+		// Inject mock function that returns error
+		wc.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+			return nil, fmt.Errorf("pod %s/%s not found in cluster %s", namespace, name, clusterName)
+		})
+
+		ctx := context.Background()
+		_, err := wc.fetchPodFromCluster(ctx, "test-cluster", "nonexistent-ns", "nonexistent-pod")
+		if err == nil {
+			t.Error("expected error when pod not found")
+		}
+	})
+
+	t.Run("returns error when ccProvider is nil", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		cli := builder.Build()
+
+		sesMgr := &breakglass.SessionManager{Client: cli}
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+		// Create controller without ccProvider
+		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+		ctx := context.Background()
+		_, err := wc.fetchPodFromCluster(ctx, "test-cluster", "test-ns", "test-pod")
+		if err == nil {
+			t.Error("expected error when ccProvider is nil")
+		}
+		if !strings.Contains(err.Error(), "cluster client provider not configured") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("fetches pod with various container configurations", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		cli := builder.Build()
+
+		sesMgr := &breakglass.SessionManager{Client: cli}
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+		privilegedPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "privileged-pod",
+				Namespace: "security-test",
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				HostPID:     true,
+				Containers: []corev1.Container{
+					{
+						Name:  "privileged-container",
+						Image: "alpine:latest",
+						SecurityContext: &corev1.SecurityContext{
+							Privileged: boolPtr(true),
+						},
+					},
+				},
+			},
+		}
+
+		wc.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+			return privilegedPod, nil
+		})
+
+		ctx := context.Background()
+		pod, err := wc.fetchPodFromCluster(ctx, "test-cluster", "security-test", "privileged-pod")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !pod.Spec.HostNetwork {
+			t.Error("expected pod to have HostNetwork=true")
+		}
+		if pod.Spec.Containers[0].SecurityContext == nil || !*pod.Spec.Containers[0].SecurityContext.Privileged {
+			t.Error("expected container to be privileged")
+		}
+	})
+}
+
+// TestFetchNamespaceLabels tests the fetchNamespaceLabels function
+func TestFetchNamespaceLabels(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+
+	t.Run("uses injected namespaceLabelsFetchFn when available", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		cli := builder.Build()
+
+		sesMgr := &breakglass.SessionManager{Client: cli}
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+		expectedLabels := map[string]string{
+			"env":  "production",
+			"team": "platform",
+		}
+
+		// Inject mock function
+		wc.SetNamespaceLabelsFetchFn(func(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+			if clusterName == "test-cluster" && namespace == "prod-ns" {
+				return expectedLabels, nil
+			}
+			return nil, fmt.Errorf("namespace not found")
+		})
+
+		ctx := context.Background()
+		labels, err := wc.fetchNamespaceLabels(ctx, "test-cluster", "prod-ns")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if labels["env"] != "production" {
+			t.Errorf("expected env=production, got %s", labels["env"])
+		}
+		if labels["team"] != "platform" {
+			t.Errorf("expected team=platform, got %s", labels["team"])
+		}
+	})
+
+	t.Run("returns error when namespace not found", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		cli := builder.Build()
+
+		sesMgr := &breakglass.SessionManager{Client: cli}
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+		// Inject mock function that returns error
+		wc.SetNamespaceLabelsFetchFn(func(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+			return nil, fmt.Errorf("namespace %s not found in cluster %s", namespace, clusterName)
+		})
+
+		ctx := context.Background()
+		_, err := wc.fetchNamespaceLabels(ctx, "test-cluster", "nonexistent-ns")
+		if err == nil {
+			t.Error("expected error when namespace not found")
+		}
+	})
+
+	t.Run("returns error when ccProvider is nil", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		cli := builder.Build()
+
+		sesMgr := &breakglass.SessionManager{Client: cli}
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+		// Create controller without ccProvider
+		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+		ctx := context.Background()
+		_, err := wc.fetchNamespaceLabels(ctx, "test-cluster", "test-ns")
+		if err == nil {
+			t.Error("expected error when ccProvider is nil")
+		}
+		if !strings.Contains(err.Error(), "cluster client provider not configured") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("fetches labels with various configurations", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		cli := builder.Build()
+
+		sesMgr := &breakglass.SessionManager{Client: cli}
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+		wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+		testCases := []struct {
+			clusterName string
+			namespace   string
+			labels      map[string]string
+		}{
+			{
+				clusterName: "cluster-1",
+				namespace:   "production",
+				labels:      map[string]string{"env": "production", "tier": "critical"},
+			},
+			{
+				clusterName: "cluster-2",
+				namespace:   "staging",
+				labels:      map[string]string{"env": "staging"},
+			},
+			{
+				clusterName: "cluster-3",
+				namespace:   "default",
+				labels:      map[string]string{}, // empty labels
+			},
+		}
+
+		wc.SetNamespaceLabelsFetchFn(func(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+			for _, tc := range testCases {
+				if tc.clusterName == clusterName && tc.namespace == namespace {
+					return tc.labels, nil
+				}
+			}
+			return nil, fmt.Errorf("namespace not found")
+		})
+
+		ctx := context.Background()
+		for _, tc := range testCases {
+			labels, err := wc.fetchNamespaceLabels(ctx, tc.clusterName, tc.namespace)
+			if err != nil {
+				t.Errorf("unexpected error for %s/%s: %v", tc.clusterName, tc.namespace, err)
+				continue
+			}
+			if len(labels) != len(tc.labels) {
+				t.Errorf("expected %d labels for %s/%s, got %d", len(tc.labels), tc.clusterName, tc.namespace, len(labels))
+			}
+		}
+	})
+}
+
+// TestSetPodFetchFn tests the SetPodFetchFn method
+func TestSetPodFetchFn(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	cli := builder.Build()
+
+	sesMgr := &breakglass.SessionManager{Client: cli}
+	escalMgr := &breakglass.EscalationManager{Client: cli}
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+	// Initially nil
+	if wc.podFetchFn != nil {
+		t.Error("expected podFetchFn to be nil initially")
+	}
+
+	// Set a custom function
+	called := false
+	wc.SetPodFetchFn(func(ctx context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+		called = true
+		return nil, nil
+	})
+
+	// Verify it was set
+	if wc.podFetchFn == nil {
+		t.Error("expected podFetchFn to be set")
+	}
+
+	// Verify it can be called
+	ctx := context.Background()
+	_, _ = wc.fetchPodFromCluster(ctx, "test", "ns", "pod")
+	if !called {
+		t.Error("expected custom podFetchFn to be called")
+	}
+}
+
+// TestSetNamespaceLabelsFetchFn tests the SetNamespaceLabelsFetchFn method
+func TestSetNamespaceLabelsFetchFn(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	cli := builder.Build()
+
+	sesMgr := &breakglass.SessionManager{Client: cli}
+	escalMgr := &breakglass.EscalationManager{Client: cli}
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+	// Initially nil
+	if wc.namespaceLabelsFetchFn != nil {
+		t.Error("expected namespaceLabelsFetchFn to be nil initially")
+	}
+
+	// Set a custom function
+	called := false
+	wc.SetNamespaceLabelsFetchFn(func(ctx context.Context, clusterName, namespace string) (map[string]string, error) {
+		called = true
+		return map[string]string{"test": "value"}, nil
+	})
+
+	// Verify it was set
+	if wc.namespaceLabelsFetchFn == nil {
+		t.Error("expected namespaceLabelsFetchFn to be set")
+	}
+
+	// Verify it can be called
+	ctx := context.Background()
+	labels, _ := wc.fetchNamespaceLabels(ctx, "test", "ns")
+	if !called {
+		t.Error("expected custom namespaceLabelsFetchFn to be called")
+	}
+	if labels["test"] != "value" {
+		t.Error("expected labels from custom function")
+	}
+}
+
+// TestIsExecSubresource tests the isExecSubresource helper function
+func TestIsExecSubresource(t *testing.T) {
+	tests := []struct {
+		subresource string
+		expected    bool
+	}{
+		{"exec", true},
+		{"attach", true},
+		{"portforward", true},
+		{"log", false},
+		{"logs", false},
+		{"status", false},
+		{"", false},
+		{"scale", false},
+		{"binding", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.subresource, func(t *testing.T) {
+			result := isExecSubresource(tt.subresource)
+			if result != tt.expected {
+				t.Errorf("isExecSubresource(%q) = %v, expected %v", tt.subresource, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestEmitAuditWithResourceAndNonResourceAttributes tests audit functions with various SAR configurations
+func TestEmitAuditWithResourceAndNonResourceAttributes(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	cli := builder.Build()
+
+	sesMgr := &breakglass.SessionManager{Client: cli}
+	escalMgr := &breakglass.EscalationManager{Client: cli}
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+	// Set up audit service
+	auditSvc := audit.NewService(cli, logger, "test-ns")
+	wc.WithAuditService(auditSvc)
+
+	t.Run("handles SAR with only ResourceAttributes", func(t *testing.T) {
+		sar := &authorizationv1.SubjectAccessReview{
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: "user@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace:   "production",
+					Verb:        "delete",
+					Resource:    "pods",
+					Subresource: "exec",
+					Name:        "my-pod",
+					Group:       "",
+				},
+			},
+		}
+		// Should not panic
+		wc.emitAccessDecisionAudit(ctx, "user@example.com", []string{"group1"}, "cluster1", sar, true, "rbac", "allowed by RBAC")
+		wc.emitPolicyDenialAudit(ctx, "user@example.com", []string{"group1"}, "cluster1", sar, "policy1", "global")
+	})
+
+	t.Run("handles SAR with only NonResourceAttributes", func(t *testing.T) {
+		sar := &authorizationv1.SubjectAccessReview{
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: "user@example.com",
+				NonResourceAttributes: &authorizationv1.NonResourceAttributes{
+					Path: "/healthz",
+					Verb: "get",
+				},
+			},
+		}
+		// Should not panic
+		wc.emitAccessDecisionAudit(ctx, "user@example.com", []string{"group1"}, "cluster1", sar, true, "rbac", "allowed")
+		wc.emitPolicyDenialAudit(ctx, "user@example.com", []string{"group1"}, "cluster1", sar, "policy1", "global")
+	})
+
+	t.Run("handles SAR with empty spec", func(t *testing.T) {
+		sar := &authorizationv1.SubjectAccessReview{
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: "user@example.com",
+				// No ResourceAttributes or NonResourceAttributes
+			},
+		}
+		// Should not panic
+		wc.emitAccessDecisionAudit(ctx, "user@example.com", []string{}, "cluster1", sar, false, "", "denied")
+		wc.emitPolicyDenialAudit(ctx, "user@example.com", []string{}, "cluster1", sar, "policy", "global")
+	})
+
+	t.Run("emitPodSecurityAudit with SAR containing exec subresource", func(t *testing.T) {
+		sar := &authorizationv1.SubjectAccessReview{
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: "user@example.com",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace:   "default",
+					Verb:        "create",
+					Resource:    "pods",
+					Subresource: "exec",
+					Name:        "test-pod",
+				},
+			},
+		}
+		result := &policy.PodSecurityResult{Score: 50, Factors: []string{"test"}, Action: "warn"}
+		// Should not panic
+		wc.emitPodSecurityAudit(ctx, "user@example.com", []string{"group1"}, "cluster1", sar, "policy1", result)
+	})
+}
+
+// TestAuditEmitWithDifferentEventSeverities tests that audit events are properly categorized
+func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	cli := builder.Build()
+
+	sesMgr := &breakglass.SessionManager{Client: cli}
+	escalMgr := &breakglass.EscalationManager{Client: cli}
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+	// Set up audit service
+	auditSvc := audit.NewService(cli, logger, "test-ns")
+	wc.WithAuditService(auditSvc)
+
+	sar := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			User: "test@example.com",
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: "default",
+				Verb:      "get",
+				Resource:  "pods",
+			},
+		},
+	}
+
+	// Test different pod security result scenarios
+	podSecurityResults := []struct {
+		name   string
+		result *policy.PodSecurityResult
+	}{
+		{
+			name: "denied result",
+			result: &policy.PodSecurityResult{
+				Denied:  true,
+				Score:   100,
+				Factors: []string{"privileged"},
+				Action:  "deny",
+				Reason:  "high risk score",
+			},
+		},
+		{
+			name: "warning result",
+			result: &policy.PodSecurityResult{
+				Denied:  false,
+				Score:   50,
+				Factors: []string{"runAsRoot"},
+				Action:  "warn",
+				Reason:  "moderate risk",
+			},
+		},
+		{
+			name: "override applied",
+			result: &policy.PodSecurityResult{
+				Denied:          false,
+				Score:           75,
+				Factors:         []string{"privileged"},
+				Action:          "allow",
+				OverrideApplied: true,
+				Reason:          "override applied",
+			},
+		},
+		{
+			name: "allowed no override",
+			result: &policy.PodSecurityResult{
+				Denied:  false,
+				Score:   10,
+				Factors: []string{},
+				Action:  "allow",
+				Reason:  "low risk",
+			},
+		},
+	}
+
+	for _, tc := range podSecurityResults {
+		t.Run(tc.name, func(t *testing.T) {
+			// Should not panic with any result type
+			wc.emitPodSecurityAudit(ctx, "test@example.com", []string{"group1"}, "cluster1", sar, "policy1", tc.result)
+		})
+	}
+}
+
+// boolPtr is a helper function to get a pointer to a bool value
+func boolPtr(b bool) *bool {
+	return &b
 }

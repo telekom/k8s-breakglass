@@ -735,3 +735,382 @@ func TestAuditConfigReconciler_Reconcile_MixedValidInvalid(t *testing.T) {
 	require.Len(t, receivedConfigs, 1)
 	assert.Equal(t, "valid-config", receivedConfigs[0].Name)
 }
+
+func TestAuditConfigReconciler_SetSinkHealthProvider(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	// Initially no health provider
+	assert.Nil(t, r.getSinkHealth)
+
+	// Set health provider
+	healthProvider := func() []SinkHealthInfo {
+		return []SinkHealthInfo{
+			{Name: "sink-1", Ready: true, CircuitState: "closed"},
+			{Name: "sink-2", Ready: false, CircuitState: "open", LastError: "connection failed"},
+		}
+	}
+	r.SetSinkHealthProvider(healthProvider)
+
+	// Verify it was set
+	assert.NotNil(t, r.getSinkHealth)
+
+	// Verify the provider returns expected data
+	healthInfos := r.getSinkHealth()
+	require.Len(t, healthInfos, 2)
+	assert.Equal(t, "sink-1", healthInfos[0].Name)
+	assert.True(t, healthInfos[0].Ready)
+	assert.Equal(t, "sink-2", healthInfos[1].Name)
+	assert.False(t, healthInfos[1].Ready)
+	assert.Equal(t, "connection failed", healthInfos[1].LastError)
+}
+
+func TestAuditConfigReconciler_UpdateStatus_Valid(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-status-valid",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+				{
+					Name: "webhook-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+					Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+						URL: "https://example.com/webhook",
+					},
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+
+	// Update status with no validation errors
+	err := r.updateStatus(context.Background(), config, nil)
+	require.NoError(t, err)
+
+	// Verify status was updated
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-status-valid"}, updatedConfig)
+	require.NoError(t, err)
+
+	// Check Ready condition
+	readyCondition := findCondition(updatedConfig.Status.Conditions, "Ready")
+	require.NotNil(t, readyCondition)
+	assert.Equal(t, metav1.ConditionTrue, readyCondition.Status)
+	assert.Equal(t, "ConfigurationValid", readyCondition.Reason)
+
+	// Check active sinks
+	assert.ElementsMatch(t, []string{"log-sink", "webhook-sink"}, updatedConfig.Status.ActiveSinks)
+}
+
+func TestAuditConfigReconciler_UpdateStatus_ValidationErrors(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-status-errors",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "broken-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeKafka,
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+
+	// Update status with validation errors
+	validationErrors := []string{"kafka config required for type=kafka", "at least one broker required"}
+	err := r.updateStatus(context.Background(), config, validationErrors)
+	require.NoError(t, err)
+
+	// Verify status was updated
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-status-errors"}, updatedConfig)
+	require.NoError(t, err)
+
+	// Check Ready condition shows failure
+	readyCondition := findCondition(updatedConfig.Status.Conditions, "Ready")
+	require.NotNil(t, readyCondition)
+	assert.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	assert.Equal(t, "ValidationFailed", readyCondition.Reason)
+	assert.Contains(t, readyCondition.Message, "kafka config required")
+}
+
+func TestAuditConfigReconciler_UpdateStatus_WithSinkHealth_AllHealthy(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-status-healthy",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+
+	// Set up sink health provider that returns all healthy sinks
+	r.SetSinkHealthProvider(func() []SinkHealthInfo {
+		return []SinkHealthInfo{
+			{Name: "log-sink", Ready: true, CircuitState: "closed"},
+		}
+	})
+
+	// Update status
+	err := r.updateStatus(context.Background(), config, nil)
+	require.NoError(t, err)
+
+	// Verify status
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-status-healthy"}, updatedConfig)
+	require.NoError(t, err)
+
+	// Check SinksHealthy condition
+	healthyCondition := findCondition(updatedConfig.Status.Conditions, "SinksHealthy")
+	require.NotNil(t, healthyCondition)
+	assert.Equal(t, metav1.ConditionTrue, healthyCondition.Status)
+	assert.Equal(t, "AllSinksOperational", healthyCondition.Reason)
+
+	// Check SinkStatuses
+	require.Len(t, updatedConfig.Status.SinkStatuses, 1)
+	assert.Equal(t, "log-sink", updatedConfig.Status.SinkStatuses[0].Name)
+	assert.True(t, updatedConfig.Status.SinkStatuses[0].Ready)
+}
+
+func TestAuditConfigReconciler_UpdateStatus_WithSinkHealth_SomeUnhealthy(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-status-unhealthy",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "healthy-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+				{
+					Name: "unhealthy-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+					Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+						URL: "https://down.example.com/webhook",
+					},
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+
+	// Set up sink health provider with one unhealthy sink
+	r.SetSinkHealthProvider(func() []SinkHealthInfo {
+		return []SinkHealthInfo{
+			{Name: "healthy-sink", Ready: true, CircuitState: "closed"},
+			{Name: "unhealthy-sink", Ready: false, CircuitState: "open", LastError: "connection timeout"},
+		}
+	})
+
+	// Update status
+	err := r.updateStatus(context.Background(), config, nil)
+	require.NoError(t, err)
+
+	// Verify status
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-status-unhealthy"}, updatedConfig)
+	require.NoError(t, err)
+
+	// Check SinksHealthy condition shows unhealthy
+	healthyCondition := findCondition(updatedConfig.Status.Conditions, "SinksHealthy")
+	require.NotNil(t, healthyCondition)
+	assert.Equal(t, metav1.ConditionFalse, healthyCondition.Status)
+	assert.Equal(t, "SinksUnhealthy", healthyCondition.Reason)
+	assert.Contains(t, healthyCondition.Message, "unhealthy-sink")
+
+	// Check SinkStatuses
+	require.Len(t, updatedConfig.Status.SinkStatuses, 2)
+
+	// Find unhealthy sink status
+	var unhealthySinkStatus *breakglassv1alpha1.AuditSinkStatus
+	for i := range updatedConfig.Status.SinkStatuses {
+		if updatedConfig.Status.SinkStatuses[i].Name == "unhealthy-sink" {
+			unhealthySinkStatus = &updatedConfig.Status.SinkStatuses[i]
+			break
+		}
+	}
+	require.NotNil(t, unhealthySinkStatus)
+	assert.False(t, unhealthySinkStatus.Ready)
+	assert.Equal(t, "connection timeout", unhealthySinkStatus.LastError)
+}
+
+func TestAuditConfigReconciler_UpdateStatus_NoHealthProvider(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-status-no-health",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+	// Don't set health provider - it should be nil
+
+	// Update status
+	err := r.updateStatus(context.Background(), config, nil)
+	require.NoError(t, err)
+
+	// Verify status
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-status-no-health"}, updatedConfig)
+	require.NoError(t, err)
+
+	// Ready should be set
+	readyCondition := findCondition(updatedConfig.Status.Conditions, "Ready")
+	require.NotNil(t, readyCondition)
+	assert.Equal(t, metav1.ConditionTrue, readyCondition.Status)
+
+	// SinksHealthy should NOT be set when no health provider
+	healthyCondition := findCondition(updatedConfig.Status.Conditions, "SinksHealthy")
+	assert.Nil(t, healthyCondition)
+
+	// SinkStatuses should be empty
+	assert.Empty(t, updatedConfig.Status.SinkStatuses)
+}
+
+// Helper function to find a condition by type
+func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
+func TestAuditConfigReconciler_ReconcileWithSinkHealth(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-reconcile-health",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+
+	// Set up sink health provider
+	r.SetSinkHealthProvider(func() []SinkHealthInfo {
+		return []SinkHealthInfo{
+			{Name: "log-sink", Ready: true, CircuitState: "closed", ConsecutiveFailures: 0},
+		}
+	})
+
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+		return nil
+	}
+
+	result, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "test-reconcile-health"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, result.RequeueAfter)
+
+	// Verify sink health was included in status
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-reconcile-health"}, updatedConfig)
+	require.NoError(t, err)
+
+	healthyCondition := findCondition(updatedConfig.Status.Conditions, "SinksHealthy")
+	require.NotNil(t, healthyCondition)
+	assert.Equal(t, metav1.ConditionTrue, healthyCondition.Status)
+}
+
+func TestAuditConfigReconciler_IsConfigInList(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	configs := []*breakglassv1alpha1.AuditConfig{
+		{ObjectMeta: metav1.ObjectMeta{Name: "config-a"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "config-b"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "config-c"}},
+	}
+
+	assert.True(t, r.isConfigInList("config-a", configs))
+	assert.True(t, r.isConfigInList("config-b", configs))
+	assert.True(t, r.isConfigInList("config-c", configs))
+	assert.False(t, r.isConfigInList("config-d", configs))
+	assert.False(t, r.isConfigInList("", configs))
+	assert.False(t, r.isConfigInList("config-a", nil))
+	assert.False(t, r.isConfigInList("config-a", []*breakglassv1alpha1.AuditConfig{}))
+}
+
+func TestAuditConfigReconciler_GetActiveConfigs_Empty(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	configs := r.GetActiveConfigs()
+	assert.Empty(t, configs)
+	assert.NotNil(t, configs) // Should return empty slice, not nil
+}
+
+func TestAuditConfigReconciler_GetActiveConfigs_ReturnsDeepCopy(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-deep-copy",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{Name: "sink-1", Type: breakglassv1alpha1.AuditSinkTypeLog},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+		return nil
+	}
+
+	// Reconcile to populate activeConfigs
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "test-deep-copy"},
+	})
+	require.NoError(t, err)
+
+	// Get configs twice
+	configs1 := r.GetActiveConfigs()
+	configs2 := r.GetActiveConfigs()
+
+	require.Len(t, configs1, 1)
+	require.Len(t, configs2, 1)
+
+	// Modify one - the other should not be affected (deep copy)
+	configs1[0].Spec.Enabled = false
+
+	assert.True(t, configs2[0].Spec.Enabled, "GetActiveConfigs should return deep copies")
+}

@@ -32,6 +32,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI log and artifact retrieval guidance in docs/ci-logs.md
 - Tmux-enabled debug image for terminal sharing E2E coverage
 - Unit tests for `pkg/bgctl/output` package
+- Unit tests for `pkg/apiresponses` and webhook manager helpers
+- Unit tests for `pkg/bgctl/cmd` update helpers
+- Unit tests for `pkg/bgctl/cmd` auth/client helpers
+- Unit tests for `pkg/bgctl/cmd` config commands
+- Contributing guide with test policy, coding standards, and review requirements
+- Release process documentation covering artifact signing and provenance
+- Additional unit tests for `pkg/bgctl/auth` token cache
+- Additional unit tests for `pkg/bgctl/cmd` client building
+- Additional unit tests for `pkg/bgctl/cmd` config commands
+- Additional unit tests for `pkg/bgctl/cmd` runtime helpers
+- Unit tests for `cmd/bgctl` entrypoint
+- Additional unit tests for `pkg/config` IdentityProvider reconciler
+- Additional unit tests for `pkg/bgctl/cmd` config commands
+- Additional unit tests for `pkg/bgctl/cmd` session commands
+- Additional unit tests for `pkg/bgctl/cmd` update helpers
+- Additional unit tests for `pkg/bgctl/cmd` update helpers (archive edge cases)
+- Additional unit tests for `pkg/bgctl/cmd` client building
 
 ### Changed
 

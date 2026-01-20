@@ -42,88 +42,17 @@ func Setup(
 ) error {
 	log.Debugw("Starting webhook server setup")
 
-	// Parse webhook bind address to extract host and port
-	// webhookBindAddr should be in format "host:port" (e.g., "0.0.0.0:9443")
-	webhookHost := "0.0.0.0"
-	webhookPort := 9443
-	if parts := strings.Split(wc.BindAddr, ":"); len(parts) == 2 {
-		webhookHost = parts[0]
-		if port, err := strconv.Atoi(parts[1]); err == nil {
-			webhookPort = port
-			log.Debugw("Parsed webhook bind address", "bindAddress", wc.BindAddr, "host", webhookHost, "port", webhookPort)
-		} else {
-			log.Warnw("Failed to parse webhook port from bind address; using default", "bindAddress", wc.BindAddr, "defaultPort", 9443, "error", err)
-		}
-	}
+	webhookHost, webhookPort := parseWebhookBindAddress(wc.BindAddr, log)
 
-	// Webhook server configuration
-	webhookServerOptions := webhookserver.Options{
-		Host: webhookHost,
-		Port: webhookPort,
-	}
-	if !enableCertGeneration && wc.CertPath != "" {
-		webhookServerOptions.CertDir = wc.CertPath
-		webhookServerOptions.CertName = wc.CertName
-		webhookServerOptions.KeyName = wc.CertKey
-		log.Infow("Initializing webhook certificate watcher using provided certificates",
-			"webhook-cert-path", wc.CertPath, "webhook-cert-name", wc.CertName,
-			"webhook-cert-key", wc.CertKey)
-	} else if !enableCertGeneration {
-		return fmt.Errorf("no webhook certificate path provided and cert generation is disabled; no webhooks will be configured")
-	} else if wc.CertPath != "" {
-		webhookServerOptions.CertDir = wc.CertPath
-		log.Infof("Cert-controller will generate certs in %q", webhookServerOptions.CertDir)
-	} else {
-		webhookServerOptions.CertDir = cert.DefaultWebhookPath
-		log.Infof("No webhook certificate path provided - cert-controller will generate certs in default directory %q", webhookServerOptions.CertDir)
+	webhookServerOptions, err := buildWebhookServerOptions(wc, enableCertGeneration, webhookHost, webhookPort, log)
+	if err != nil {
+		return err
 	}
 	webhookServer := webhookserver.NewServer(webhookServerOptions)
 
-	// Configure separate metrics server for webhooks (if specified)
-	// This allows running webhook-only instances with their own metrics endpoint
-	var metricsServerOptions metricsserver.Options
-	if wc.MetricsAddr != "" {
-		log.Infow("Configuring separate metrics server for webhooks",
-			"address", wc.MetricsAddr, "secure", wc.MetricsSecure)
-
-		tlsOpts := []func(*tls.Config){}
-		if !enableHTTP2 {
-			tlsOpts = append(tlsOpts, cli.DisableHTTP2)
-		}
-
-		metricsServerOptions = metricsserver.Options{
-			BindAddress:   wc.MetricsAddr,
-			SecureServing: wc.MetricsSecure,
-			TLSOpts:       tlsOpts,
-		}
-
-		if wc.MetricsSecure {
-			if wc.MetricsCertPath != "" {
-				log.Infow("Initializing webhook metrics certificate watcher using provided certificates",
-					"webhooks-metrics-cert-path", wc.MetricsCertPath, "webhooks-metrics-cert-name", wc.MetricsCertName,
-					"webhooks-metrics-cert-key", wc.MetricsCertKey)
-				metricsServerOptions.CertDir = wc.MetricsCertPath
-				metricsServerOptions.CertName = wc.MetricsCertName
-				metricsServerOptions.KeyName = wc.MetricsCertKey
-			} else {
-				if enableCertGeneration {
-					log.Infow("Initializing webhook metrics certificate watcher using generated certificates",
-						"path", webhookServerOptions.CertDir, "webhooks-metrics-cert-name", wc.MetricsCertName,
-						"webhooks-metrics-cert-key", wc.MetricsCertKey)
-					metricsServerOptions.CertDir = webhookServerOptions.CertDir
-					metricsServerOptions.CertName = wc.MetricsCertName
-					metricsServerOptions.KeyName = wc.MetricsCertKey
-				} else if wc.MetricsSecure {
-					return fmt.Errorf("unable to configure webhook metrics server - webhooks-metrics-cert-path: %s, secure: %t, cert-generation: %t",
-						wc.MetricsCertPath, wc.MetricsSecure, enableCertGeneration)
-				}
-			}
-		}
-	} else {
-		log.Infow("Webhook metrics will use default metrics endpoint; to use separate metrics, set --webhooks-metrics-bind-address")
-		metricsServerOptions = metricsserver.Options{
-			BindAddress: "0",
-		}
+	metricsServerOptions, err := buildWebhookMetricsOptions(wc, enableHTTP2, enableCertGeneration, webhookServerOptions, log)
+	if err != nil {
+		return err
 	}
 
 	// Create a manager for webhooks (separate from reconciler manager)
@@ -227,4 +156,113 @@ func Setup(
 
 	log.Infow("webhook server exited normally (this should not happen during normal operation)")
 	return nil
+}
+
+func parseWebhookBindAddress(bindAddr string, log *zap.SugaredLogger) (string, int) {
+	// webhookBindAddr should be in format "host:port" (e.g., "0.0.0.0:9443")
+	webhookHost := "0.0.0.0"
+	webhookPort := 9443
+	if parts := strings.Split(bindAddr, ":"); len(parts) == 2 {
+		webhookHost = parts[0]
+		if port, err := strconv.Atoi(parts[1]); err == nil {
+			webhookPort = port
+			if log != nil {
+				log.Debugw("Parsed webhook bind address", "bindAddress", bindAddr, "host", webhookHost, "port", webhookPort)
+			}
+		} else if log != nil {
+			log.Warnw("Failed to parse webhook port from bind address; using default", "bindAddress", bindAddr, "defaultPort", 9443, "error", err)
+		}
+	}
+
+	return webhookHost, webhookPort
+}
+
+func buildWebhookServerOptions(wc *cli.WebhookConfig, enableCertGeneration bool, webhookHost string, webhookPort int, log *zap.SugaredLogger) (webhookserver.Options, error) {
+	webhookServerOptions := webhookserver.Options{
+		Host: webhookHost,
+		Port: webhookPort,
+	}
+	if !enableCertGeneration && wc.CertPath != "" {
+		webhookServerOptions.CertDir = wc.CertPath
+		webhookServerOptions.CertName = wc.CertName
+		webhookServerOptions.KeyName = wc.CertKey
+		if log != nil {
+			log.Infow("Initializing webhook certificate watcher using provided certificates",
+				"webhook-cert-path", wc.CertPath, "webhook-cert-name", wc.CertName,
+				"webhook-cert-key", wc.CertKey)
+		}
+	} else if !enableCertGeneration {
+		return webhookserver.Options{}, fmt.Errorf("no webhook certificate path provided and cert generation is disabled; no webhooks will be configured")
+	} else if wc.CertPath != "" {
+		webhookServerOptions.CertDir = wc.CertPath
+		if log != nil {
+			log.Infof("Cert-controller will generate certs in %q", webhookServerOptions.CertDir)
+		}
+	} else {
+		webhookServerOptions.CertDir = cert.DefaultWebhookPath
+		if log != nil {
+			log.Infof("No webhook certificate path provided - cert-controller will generate certs in default directory %q", webhookServerOptions.CertDir)
+		}
+	}
+
+	return webhookServerOptions, nil
+}
+
+func buildWebhookMetricsOptions(wc *cli.WebhookConfig, enableHTTP2 bool, enableCertGeneration bool, webhookServerOptions webhookserver.Options, log *zap.SugaredLogger) (metricsserver.Options, error) {
+	// Configure separate metrics server for webhooks (if specified)
+	// This allows running webhook-only instances with their own metrics endpoint
+	var metricsServerOptions metricsserver.Options
+	if wc.MetricsAddr != "" {
+		if log != nil {
+			log.Infow("Configuring separate metrics server for webhooks",
+				"address", wc.MetricsAddr, "secure", wc.MetricsSecure)
+		}
+
+		tlsOpts := []func(*tls.Config){}
+		if !enableHTTP2 {
+			tlsOpts = append(tlsOpts, cli.DisableHTTP2)
+		}
+
+		metricsServerOptions = metricsserver.Options{
+			BindAddress:   wc.MetricsAddr,
+			SecureServing: wc.MetricsSecure,
+			TLSOpts:       tlsOpts,
+		}
+
+		if wc.MetricsSecure {
+			if wc.MetricsCertPath != "" {
+				if log != nil {
+					log.Infow("Initializing webhook metrics certificate watcher using provided certificates",
+						"webhooks-metrics-cert-path", wc.MetricsCertPath, "webhooks-metrics-cert-name", wc.MetricsCertName,
+						"webhooks-metrics-cert-key", wc.MetricsCertKey)
+				}
+				metricsServerOptions.CertDir = wc.MetricsCertPath
+				metricsServerOptions.CertName = wc.MetricsCertName
+				metricsServerOptions.KeyName = wc.MetricsCertKey
+			} else {
+				if enableCertGeneration {
+					if log != nil {
+						log.Infow("Initializing webhook metrics certificate watcher using generated certificates",
+							"path", webhookServerOptions.CertDir, "webhooks-metrics-cert-name", wc.MetricsCertName,
+							"webhooks-metrics-cert-key", wc.MetricsCertKey)
+					}
+					metricsServerOptions.CertDir = webhookServerOptions.CertDir
+					metricsServerOptions.CertName = wc.MetricsCertName
+					metricsServerOptions.KeyName = wc.MetricsCertKey
+				} else if wc.MetricsSecure {
+					return metricsserver.Options{}, fmt.Errorf("unable to configure webhook metrics server - webhooks-metrics-cert-path: %s, secure: %t, cert-generation: %t",
+						wc.MetricsCertPath, wc.MetricsSecure, enableCertGeneration)
+				}
+			}
+		}
+	} else {
+		if log != nil {
+			log.Infow("Webhook metrics will use default metrics endpoint; to use separate metrics, set --webhooks-metrics-bind-address")
+		}
+		metricsServerOptions = metricsserver.Options{
+			BindAddress: "0",
+		}
+	}
+
+	return metricsServerOptions, nil
 }
