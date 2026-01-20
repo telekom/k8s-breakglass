@@ -68,6 +68,186 @@ jobs:
           name: npm-audit
           path: npm-audit.json
 
+  manifest-validation:
+    name: Manifest Validation & Comparison
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0  # Full history for tag access
+      - name: Set up Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install tools
+        run: make controller-gen kustomize
+      - name: Generate manifests
+        run: make manifests
+      - name: Build all kustomize targets
+        run: |
+          mkdir -p manifests-current
+          # Note: 'dev' target is excluded because it requires generated TLS certificates
+          # that are created by e2e/kind-setup-single.sh and not checked into git
+          for target in base debug; do
+            echo "Building config/$target..."
+            ./bin/kustomize build config/$target > manifests-current/$target.yaml
+            echo "✅ config/$target built successfully"
+          done
+          # Also build CRDs only
+          ./bin/kustomize build config/crd > manifests-current/crds.yaml
+          echo "✅ config/crd built successfully"
+      - name: Get latest release tag
+        id: get_release
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No previous release found, skipping comparison"
+            echo "has_previous_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "Latest release: $LATEST_TAG"
+            echo "has_previous_release=true" >> $GITHUB_OUTPUT
+            echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          fi
+      - name: Build manifests from previous release
+        if: steps.get_release.outputs.has_previous_release == 'true'
+        run: |
+          LATEST_TAG=${{ steps.get_release.outputs.tag }}
+          mkdir -p manifests-previous
+          
+          # Checkout previous release in a temporary directory
+          git worktree add /tmp/prev-release $LATEST_TAG
+          cd /tmp/prev-release
+          
+          # Install tools for previous release
+          make controller-gen kustomize 2>/dev/null || true
+          make manifests 2>/dev/null || true
+          
+          # Build targets that exist in previous release
+          # Note: 'dev' target excluded (requires generated TLS certs not in git)
+          for target in base debug default with-webhooks; do
+            if [ -d "config/$target" ]; then
+              echo "Building previous config/$target..."
+              ./bin/kustomize build config/$target > $GITHUB_WORKSPACE/manifests-previous/$target.yaml 2>/dev/null || echo "# Build failed for $target" > $GITHUB_WORKSPACE/manifests-previous/$target.yaml
+            fi
+          done
+          
+          # Build CRDs
+          ./bin/kustomize build config/crd > $GITHUB_WORKSPACE/manifests-previous/crds.yaml 2>/dev/null || echo "# Build failed" > $GITHUB_WORKSPACE/manifests-previous/crds.yaml
+          
+          cd $GITHUB_WORKSPACE
+          git worktree remove /tmp/prev-release --force
+      - name: Compare manifests
+        id: compare
+        if: steps.get_release.outputs.has_previous_release == 'true'
+        run: |
+          echo "## Manifest Changes vs ${{ steps.get_release.outputs.tag }}" > manifest-diff.md
+          echo "" >> manifest-diff.md
+          
+          CHANGES_FOUND=false
+          
+          # Note: 'dev' target is excluded (requires generated TLS certs not in git)
+          for target in base debug crds; do
+            CURRENT="manifests-current/$target.yaml"
+            PREVIOUS="manifests-previous/$target.yaml"
+            
+            if [ ! -f "$CURRENT" ]; then
+              echo "### $target: New target (not in previous release)" >> manifest-diff.md
+              continue
+            fi
+            
+            if [ ! -f "$PREVIOUS" ]; then
+              # Check if old naming exists
+              if [ "$target" = "base" ] && [ -f "manifests-previous/default.yaml" ]; then
+                PREVIOUS="manifests-previous/default.yaml"
+                echo "### $target (comparing to default)" >> manifest-diff.md
+              else
+                echo "### $target: New target (not in previous release)" >> manifest-diff.md
+                continue
+              fi
+            else
+              echo "### $target" >> manifest-diff.md
+            fi
+            
+            # Compare and capture diff
+            if diff -u "$PREVIOUS" "$CURRENT" > /tmp/diff-$target.txt 2>&1; then
+              echo "✅ No changes" >> manifest-diff.md
+            else
+              CHANGES_FOUND=true
+              LINES=$(wc -l < /tmp/diff-$target.txt)
+              echo "⚠️ Changes detected ($LINES diff lines)" >> manifest-diff.md
+              echo "" >> manifest-diff.md
+              echo "<details><summary>Show diff</summary>" >> manifest-diff.md
+              echo "" >> manifest-diff.md
+              echo '```diff' >> manifest-diff.md
+              head -500 /tmp/diff-$target.txt >> manifest-diff.md
+              if [ "$LINES" -gt 500 ]; then
+                echo "... (truncated, $LINES total lines)" >> manifest-diff.md
+              fi
+              echo '```' >> manifest-diff.md
+              echo "</details>" >> manifest-diff.md
+            fi
+            echo "" >> manifest-diff.md
+          done
+          
+          if [ "$CHANGES_FOUND" = "true" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Log to CI output
+          echo "=== Manifest Comparison Summary ==="
+          cat manifest-diff.md
+      - name: Comment on PR with manifest changes
+        if: github.event_name == 'pull_request' && steps.get_release.outputs.has_previous_release == 'true'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const diffContent = fs.readFileSync('manifest-diff.md', 'utf8');
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(c => 
+              c.user.type === 'Bot' && 
+              c.body.includes('## Manifest Changes vs')
+            );
+            
+            const body = `<!-- manifest-comparison-comment -->\n${diffContent}`;
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+      - name: Upload manifest artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: manifests
+          path: |
+            manifests-current/
+            manifest-diff.md
+          retention-days: 30
+
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest

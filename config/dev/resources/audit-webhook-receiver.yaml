@@ -228,7 +228,7 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: audit-webhook-receiver
+  name: breakglass-audit-webhook-receiver
   labels:
     app: audit-webhook-receiver
 spec:
@@ -282,7 +282,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: audit-webhook-receiver
+  name: breakglass-audit-webhook-receiver
   labels:
     app: audit-webhook-receiver
 spec:

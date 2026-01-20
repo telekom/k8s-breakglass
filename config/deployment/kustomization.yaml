@@ -1,14 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
 resources:
 - app.yaml
 - service.yaml
 - ingress.yaml
 - namespace.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+
+# Image configuration - use GHCR registry
+# Tag is set via kustomize edit during release/deploy
 images:
 - name: breakglass
-  newName: harbor.das-schiff.telekom.de/schiff-dev/breakglass-2
-  newTag: latest
-- name: controller
-  newName: harbor.das-schiff.telekom.de/schiff-dev/breakglass-2
+  newName: ghcr.io/telekom/k8s-breakglass
   newTag: latest

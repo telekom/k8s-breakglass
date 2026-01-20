@@ -31,7 +31,29 @@ jobs:
       - name: Generate manifests
         run: |
           make manifests
-          tar -czf manifests-${{ github.ref_name }}.tgz config/crd/bases
+          
+          # Set the correct image tag for this release
+          VERSION=${{ github.ref_name }}
+          cd config/deployment
+          ../../bin/kustomize edit set image breakglass=ghcr.io/telekom/k8s-breakglass:${VERSION}
+          cd ../..
+          
+          # Build complete deployment manifests for each target
+          ./bin/kustomize build config/base > manifests-base.yaml
+          ./bin/kustomize build config/debug > manifests-debug.yaml
+          # Create CRDs-only manifest
+          ./bin/kustomize build config/crd > manifests-crds.yaml
+          
+          # Verify image tag is correct in output
+          echo "Verifying image tags in manifests..."
+          grep -o "ghcr.io/telekom/k8s-breakglass:${VERSION}" manifests-base.yaml || { echo "ERROR: Image tag not set correctly"; exit 1; }
+          
+          # Package everything
+          tar -czf manifests-${{ github.ref_name }}.tgz \
+            config/crd/bases \
+            manifests-base.yaml \
+            manifests-debug.yaml \
+            manifests-crds.yaml
       - name: Upload manifests artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
@@ -160,6 +182,9 @@ jobs:
         with:
           files: |
             manifests-${{ github.ref_name }}.tgz
+            manifests-base.yaml
+            manifests-debug.yaml
+            manifests-crds.yaml
             dist/bgctl_*.tar.gz
             dist/bgctl_*.zip
             dist/bgctl_*.sha256

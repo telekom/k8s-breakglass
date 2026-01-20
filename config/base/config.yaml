@@ -1,0 +1,16 @@
+server:
+  listenAddress: 0.0.0.0:8080
+authorizationServer:
+  url: http://127.0.0.1:8080
+  jwksEndpoint: "realms/master/protocol/openid-connect/certs" # sample for keycloak
+frontend:
+  oidcAuthority: http://127.0.0.1:8080/realms/master
+  oidcClientID: breakglass-ui
+  baseURL: http://localhost:5173
+# NOTE: Mail configuration moved to MailProvider CRD - see config/samples/breakglass_v1alpha1_mailprovider.yaml
+kubernetes:
+  context: ""
+  oidcPrefixes: 
+  - "oidc:"
+  # Interval for periodic ClusterConfig validation. Example: "10m"
+  clusterConfigCheckInterval: "10m"

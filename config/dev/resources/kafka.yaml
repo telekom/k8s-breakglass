@@ -52,7 +52,7 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kafka
+  name: breakglass-kafka
   labels:
     app: kafka
 spec:
@@ -133,7 +133,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: kafka
+  name: breakglass-kafka
   labels:
     app: kafka
 spec:

@@ -157,26 +157,55 @@ get_cluster_api_server() {
 
 # Get the Keycloak CA certificate for OIDC issuer TLS verification
 # Checks multiple sources in order:
-# 1. ConfigMap breakglass-breakglass-certs (Helm chart installation)
-# 2. ConfigMap breakglass-certs (manual installation)
-# 3. KEYCLOAK_CA_FILE environment variable (CI/Docker environment)
+# 1. KEYCLOAK_CA_FILE environment variable (CI/Docker environment - most reliable)
+# 2. ConfigMap keycloak-ca (multi-cluster E2E setup)
+# 3. ConfigMap breakglass-breakglass-certs (Helm chart installation)
+# 4. ConfigMap breakglass-certs (manual installation)
 get_keycloak_ca() {
   local keycloak_ca=""
   
-  # Try ConfigMaps first (in-cluster deployments)
-  if $KUBECTL get configmap breakglass-breakglass-certs -n "$NAMESPACE" &>/dev/null; then
-    keycloak_ca=$($KUBECTL get configmap breakglass-breakglass-certs -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)
-  elif $KUBECTL get configmap breakglass-certs -n "$NAMESPACE" &>/dev/null; then
-    keycloak_ca=$($KUBECTL get configmap breakglass-certs -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)
-  fi
-  
-  # Fall back to KEYCLOAK_CA_FILE environment variable (CI environment)
-  if [ -z "$keycloak_ca" ] && [ -n "${KEYCLOAK_CA_FILE:-}" ] && [ -f "$KEYCLOAK_CA_FILE" ]; then
+  # Try KEYCLOAK_CA_FILE first (CI environment - most reliable source)
+  if [ -n "${KEYCLOAK_CA_FILE:-}" ] && [ -f "$KEYCLOAK_CA_FILE" ]; then
     log "Using Keycloak CA from KEYCLOAK_CA_FILE: $KEYCLOAK_CA_FILE"
     keycloak_ca=$(cat "$KEYCLOAK_CA_FILE")
+    echo "$keycloak_ca"
+    return
   fi
   
-  echo "$keycloak_ca"
+  # Try ConfigMaps (in-cluster deployments)
+  # Check keycloak-ca first (multi-cluster E2E setup)
+  if $KUBECTL get configmap keycloak-ca -n "$NAMESPACE" &>/dev/null; then
+    keycloak_ca=$($KUBECTL get configmap keycloak-ca -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)
+    if [ -n "$keycloak_ca" ]; then
+      log "Using Keycloak CA from ConfigMap keycloak-ca"
+      echo "$keycloak_ca"
+      return
+    fi
+  fi
+  
+  # Check breakglass-breakglass-certs (Helm chart installation)
+  if $KUBECTL get configmap breakglass-breakglass-certs -n "$NAMESPACE" &>/dev/null; then
+    keycloak_ca=$($KUBECTL get configmap breakglass-breakglass-certs -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)
+    if [ -n "$keycloak_ca" ]; then
+      log "Using Keycloak CA from ConfigMap breakglass-breakglass-certs"
+      echo "$keycloak_ca"
+      return
+    fi
+  fi
+  
+  # Check breakglass-certs (manual installation)
+  if $KUBECTL get configmap breakglass-certs -n "$NAMESPACE" &>/dev/null; then
+    keycloak_ca=$($KUBECTL get configmap breakglass-certs -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}' 2>/dev/null)
+    if [ -n "$keycloak_ca" ]; then
+      log "Using Keycloak CA from ConfigMap breakglass-certs"
+      echo "$keycloak_ca"
+      return
+    fi
+  fi
+  
+  # No CA found
+  log "Warning: No Keycloak CA certificate found in any expected location"
+  echo ""
 }
 
 # ============================================================================

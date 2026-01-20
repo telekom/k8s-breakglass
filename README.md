@@ -151,14 +151,14 @@ For production deployment, see the [Installation Guide](./docs/installation.md).
 
 ```bash
 # Edit configuration
-cp config.example.yaml config/default/config.yaml
+cp config.example.yaml config/base/config.yaml
 # ... customize settings ...
 
 # Deploy CRDs, RBAC, and application
 make deploy
 ```
 
-See [Installation Guide](./docs/installation.md) for detailed setup steps.
+See [Installation Guide](./docs/installation.md) and [Deployment Targets](./docs/deployment-targets.md) for detailed setup steps.
 
 ### Building from Source
 

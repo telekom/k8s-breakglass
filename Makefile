@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= harbor.das-schiff.telekom.de/schiff-dev/breakglass-2:latest
+IMG ?= ghcr.io/telekom/k8s-breakglass:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -165,17 +165,26 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy # manifests
 deploy: kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/deployment && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
+	cd config/deployment && $(KUSTOMIZE) edit set image breakglass=${IMG}
+	$(KUSTOMIZE) build config/base | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+	$(KUSTOMIZE) build config/base | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
+.PHONY: deploy_debug # deploy with debug logging enabled
+deploy_debug: kustomize ## Deploy controller with debug logging to the K8s cluster specified in ~/.kube/config.
+	cd config/deployment && $(KUSTOMIZE) edit set image breakglass=${IMG}
+	$(KUSTOMIZE) build config/debug | $(KUBECTL) apply -f -
+
+.PHONY: undeploy_debug
+undeploy_debug: kustomize ## Undeploy debug controller from the K8s cluster.
+	$(KUSTOMIZE) build config/debug | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy_dev # deploy dev environment with predefined config, service and dev keycloak
 deploy_dev: kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/dev && ./generate-certs.sh && cd ../..
-	cd config/deployment && $(KUSTOMIZE) edit set image controller=${IMG}
+	cd config/deployment && $(KUSTOMIZE) edit set image breakglass=${IMG}
 	$(KUSTOMIZE) build config/dev | $(KUBECTL) apply -f -
 
 .PHONY: undeploy_dev

@@ -14,6 +14,7 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Deployment & Operations
 
+- **[Deployment Targets](./deployment-targets.md)** - Kustomize targets (base, debug, dev) and manifest generation
 - **[Production Deployment Checklist](./production-deployment-checklist.md)** - Pre-production readiness verification
 - **[Upgrade Guide](./upgrade-guide.md)** - Version upgrades, migration, and rollback procedures
 - **[Configuration Reference](./configuration-reference.md)** - config.yaml settings and examples
