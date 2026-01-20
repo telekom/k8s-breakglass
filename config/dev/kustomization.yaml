@@ -1,24 +1,13 @@
-# Adds namespace to all resources.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Ensure all resources (including generated ones) get the correct namespace
 namespace: breakglass-system
 
-# Value of this field is prepended to the
-# names of all resources, e.g. a deployment named
-# "wordpress" becomes "alices-wordpress".
-# Note that it should also match with the prefix (text before '-') of the namespace
-# field above.
-namePrefix: breakglass-
-
-# Labels to add to all resources and selectors.
-#labels:
-#- includeSelectors: true
-#  pairs:
-#    someName: someValue
-
+# Build on top of the base kustomization (includes crd, rbac, deployment, webhook)
 resources:
-- ../crd
-- ../rbac
-- ../deployment
-- ../webhook
+- ../base
+# Dev-specific resources
 - ./resources/keycloak.yaml
 - ./resources/mailhog.yaml
 - ./resources/kafka.yaml
@@ -55,7 +44,8 @@ patches:
     name: manager
   path: ./resources/cert_volumes_patch.yaml
 
-# JSON patches for deployment modifications
+# JSON patches for dev-specific deployment modifications
+# NOTE: Webhook configuration comes from ../base, only dev-specific patches here
 - target:
     group: apps
     version: v1
@@ -75,36 +65,6 @@ patches:
     - op: add
       path: /spec/template/spec/containers/0/args/-
       value: --debug
-    # Webhook configuration
-    - op: add
-      path: /spec/template/spec/containers/0/args/-
-      value: --enable-validating-webhooks=true
-    - op: add
-      path: /spec/template/spec/containers/0/args/-
-      value: --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
-    - op: add
-      path: /spec/template/spec/containers/0/args/-
-      value: --webhook-bind-address=0.0.0.0:9443
-    - op: add
-      path: /spec/template/spec/containers/0/ports/-
-      value:
-        name: webhook
-        containerPort: 9443
-        protocol: TCP
-    # Mount webhook serving certs
-    - op: add
-      path: /spec/template/spec/containers/0/volumeMounts/-
-      value:
-        mountPath: /tmp/k8s-webhook-server/serving-certs
-        name: webhook-certs
-        readOnly: true
-    - op: add
-      path: /spec/template/spec/volumes/-
-      value:
-        name: webhook-certs
-        secret:
-          defaultMode: 420
-          secretName: webhook-server-cert
     # Set faster cleanup interval for E2E tests (10 seconds instead of 5 minutes)
     - op: add
       path: /spec/template/spec/containers/0/env/-
@@ -131,56 +91,24 @@ patches:
     - op: replace
       path: /spec/template/spec/containers/0/resources/requests/memory
       value: "1Gi"
-# [CERT-CONTROLLER] this target should be enabled if automated webhook certificate generation is to be used 
-# - target:
-#     group: apps
-#     version: v1
-#     kind: Deployment
-#     name: manager
-#   patch: |- 
-#     - op: add
-#       path: /spec/template/spec/containers/0/args/-
-#       value: --webhook-cert-generation=true
-#     - op: add
-#       path: /spec/template/spec/containers/0/args/-
-#       value: --webhook-service-name=breakglass-webhook-service
-
-
-
-  #     - op: add
-  #       path: /spec/template/spec/containers/0/args/-
-  #       value: --webhook-validating-config-name=breakglass-validating-webhook-configuration
-  #     - op: add
-  #       path: /spec/template/spec/containers/0/args/-
-  #       value: --breakglass-namespace=$(POD_NAMESPACE)
-  #     - op: add
-  #       path: /spec/template/spec/containers/0/args/-
-  #       value: --webhooks-metrics-secure=true
-  #     - op: add
-  #       path: /spec/template/spec/containers/0/volumeMounts/-
-  #       value:
-  #         mountPath: /tmp/k8s-webhook-server/serving-certs
-  #         name: webhook-cert
-  #         readOnly: true
-  #     - op: add
-  #       path: /spec/template/spec/volumes/-
-  #       value:
-  #         name: webhook-cert
-  #         secret:
-  #           defaultMode: 420
-  #           secretName: breakglass-webhook-service
 
 configMapGenerator:
 - name: config
+  behavior: replace
   files:
   - ./config.yaml
+  options:
+    disableNameSuffixHash: true
 - name: keycloak-realm
   files:
   - breakglass-e2e.json=./resources/breakglass-e2e-realm.json
+  options:
+    disableNameSuffixHash: true
 - name: breakglass-certs
   files:
   - certs/kind-setup-single-tls/ca.crt
-
+  options:
+    disableNameSuffixHash: true
 
 secretGenerator:
 - name: keycloak-tls
@@ -188,140 +116,10 @@ secretGenerator:
   - tls.crt=certs/kind-setup-single-tls/server.crt
   - tls.key=certs/kind-setup-single-tls/server.key
   type: "kubernetes.io/tls"
+  options:
+    disableNameSuffixHash: true
 # Secret for Keycloak group sync service account (enables group-based approver notifications)
 - name: breakglass-group-sync-secret
   literals:
   - client-secret=breakglass-group-sync-secret
   type: "Opaque"
-
-        
-# [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
-# Uncomment the following replacements to add the cert-manager CA injection annotations
-#replacements:
-# - source: # Uncomment the following block if you have a ValidatingWebhook (--programmatic-validation)
-#     kind: Certificate
-#     group: cert-manager.io
-#     version: v1
-#     name: serving-cert # This name should match the one in certificate.yaml
-#     fieldPath: .metadata.namespace # Namespace of the certificate CR
-#   targets:
-#     - select:
-#         kind: ValidatingWebhookConfiguration
-#       fieldPaths:
-#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-#       options:
-#         delimiter: '/'
-#         index: 0
-#         create: true
-# - source:
-#     kind: Certificate
-#     group: cert-manager.io
-#     version: v1
-#     name: serving-cert # This name should match the one in certificate.yaml
-#     fieldPath: .metadata.name
-#   targets:
-#     - select:
-#         kind: ValidatingWebhookConfiguration
-#       fieldPaths:
-#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-#       options:
-#         delimiter: '/'
-#         index: 1
-#         create: true
-#
-# - source: # Uncomment the following block if you have a DefaultingWebhook (--defaulting )
-#     kind: Certificate
-#     group: cert-manager.io
-#     version: v1
-#     name: serving-cert # This name should match the one in certificate.yaml
-#     fieldPath: .metadata.namespace # Namespace of the certificate CR
-#   targets:
-#     - select:
-#         kind: MutatingWebhookConfiguration
-#       fieldPaths:
-#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-#       options:
-#         delimiter: '/'
-#         index: 0
-#         create: true
-# - source:
-#     kind: Certificate
-#     group: cert-manager.io
-#     version: v1
-#     name: serving-cert # This name should match the one in certificate.yaml
-#     fieldPath: .metadata.name
-#   targets:
-#     - select:
-#         kind: MutatingWebhookConfiguration
-#       fieldPaths:
-#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-#       options:
-#         delimiter: '/'
-#         index: 1
-#         create: true
-#
-# - source: # Uncomment the following block if you have a ConversionWebhook (--conversion)
-#     kind: Certificate
-#     group: cert-manager.io
-#     version: v1
-#     name: serving-cert # This name should match the one in certificate.yaml
-#     fieldPath: .metadata.namespace # Namespace of the certificate CR
-#   targets:
-#     - select:
-#         kind: CustomResourceDefinition
-#       fieldPaths:
-#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-#       options:
-#         delimiter: '/'
-#         index: 0
-#         create: true
-# - source:
-#     kind: Certificate
-#     group: cert-manager.io
-#     version: v1
-#     name: serving-cert # This name should match the one in certificate.yaml
-#     fieldPath: .metadata.name
-#   targets:
-#     - select:
-#         kind: CustomResourceDefinition
-#       fieldPaths:
-#         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-#       options:
-#         delimiter: '/'
-#         index: 1
-#         create: true
-#
-# - source: # Uncomment the following block if you enable cert-manager
-#     kind: Service
-#     version: v1
-#     name: webhook-service
-#     fieldPath: .metadata.name # Name of the service
-#   targets:
-#     - select:
-#         kind: Certificate
-#         group: cert-manager.io
-#         version: v1
-#       fieldPaths:
-#         - .spec.dnsNames.0
-#         - .spec.dnsNames.1
-#       options:
-#         delimiter: '.'
-#         index: 0
-#         create: true
-# - source:
-#     kind: Service
-#     version: v1
-#     name: webhook-service
-#     fieldPath: .metadata.namespace # Namespace of the service
-#   targets:
-#     - select:
-#         kind: Certificate
-#         group: cert-manager.io
-#         version: v1
-#       fieldPaths:
-#         - .spec.dnsNames.0
-#         - .spec.dnsNames.1
-#       options:
-#         delimiter: '.'
-#         index: 1
-#         create: true

@@ -1,0 +1,53 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Adds namespace to all resources.
+namespace: breakglass-system
+
+# Value of this field is prepended to the names of all resources.
+# Note that it should also match with the prefix (text before '-') of the namespace.
+namePrefix: breakglass-
+
+# Core resources for a complete breakglass deployment (with webhooks)
+resources:
+- ../crd
+- ../rbac
+- ../deployment
+- ../webhook
+
+# Application configuration
+configMapGenerator:
+- name: config
+  files:
+  - ./config.yaml
+  options:
+    disableNameSuffixHash: true
+
+# Patch the Deployment to add webhook port and cert volume mounts
+# NOTE: --enable-validating-webhooks and other flags are already in config/deployment/app.yaml
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: manager
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/ports/-
+        value:
+          name: webhook
+          containerPort: 9443
+          protocol: TCP
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: webhook-certs
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: webhook-certs
+          secret:
+            secretName: webhook-server-cert
+

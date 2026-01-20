@@ -63,10 +63,12 @@ make validate-samples
 |------|-------------|
 | `debug_session_templates.yaml` | DebugSessionTemplate examples (workload, kubectl-debug, hybrid modes) |
 | `debug_session_template_namespace_selectors.yaml` | Templates with namespace filtering |
+| `debug-session-template-comprehensive.yaml` | **Comprehensive collection** of session templates for all use-cases |
 | `debug_pod_templates.yaml` | DebugPodTemplate examples |
 | `debug-pod-template-minimal.yaml` | Minimal debug pod |
 | `debug-pod-template-network.yaml` | Network debugging tools |
 | `debug-pod-template-log-inspector.yaml` | Log inspection tools |
+| `debug-pod-template-comprehensive.yaml` | **Comprehensive collection** of pod templates for all use-cases |
 | `debug_sessions.yaml` | DebugSession examples |
 
 ## Feature Coverage
@@ -115,6 +117,38 @@ These samples demonstrate the following key features:
 - Hybrid mode
 - Auto-approval configuration
 - Namespace restrictions
+
+### DebugPodTemplate & DebugSessionTemplate (Comprehensive)
+
+The comprehensive sample files cover these use-cases:
+
+**DebugPodTemplates** (`debug-pod-template-comprehensive.yaml`):
+- **General purpose**: Alpine minimal, Ubuntu tools, Tmux collaborative
+- **Network debugging**: Netshoot standard/host-network, TCPdump, DNS debug
+- **Storage/filesystem**: Host filesystem read-only, PVC tester
+- **JVM/Java**: JVM profiling (jcmd, jmap, jstack)
+- **Database clients**: PostgreSQL, MySQL, Redis, MongoDB
+- **Message queues**: Kafka, RabbitMQ
+- **Performance**: Linux perf tools (strace, ltrace, sysstat)
+- **Security**: Security scanner
+- **Kubernetes**: kubectl debug with API access
+- **Node-level**: Privileged node access, nsenter
+- **API testing**: curl + jq
+
+**DebugSessionTemplates** (`debug-session-template-comprehensive.yaml`):
+- **Developer access**: Basic and network debugging with auto-approval for dev clusters
+- **SRE/Operations**: Standard and production access with approval workflows
+- **Network troubleshooting**: Host network, packet capture, DNS debugging
+- **Kubectl-debug mode**: Basic, advanced, and node debugging via ephemeral containers
+- **Hybrid mode**: Combined workload + kubectl-debug capabilities
+- **Emergency access**: Privileged node access for incident response
+- **Database debugging**: PostgreSQL, MySQL, Redis clients
+- **Performance profiling**: JVM and Linux performance tools
+- **Log analysis**: Host log inspection
+- **Message queues**: Kafka debugging
+- **Automation/M2M**: Automated debugging for CI/CD pipelines
+- **Collaborative**: Tmux terminal sharing for pair debugging
+- **Security analysis**: Security scanning sessions
 
 ### BreakglassSession
 - Basic session requests

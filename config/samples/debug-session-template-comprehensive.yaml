@@ -1,0 +1,1416 @@
+# Comprehensive DebugSessionTemplate Samples
+# These templates cover documented use-cases and common operator scenarios.
+#
+# Categories covered:
+# - Development debugging (low-privilege)
+# - SRE/Operations debugging
+# - Network troubleshooting
+# - Node-level debugging
+# - Ephemeral container debugging (kubectl-debug mode)
+# - Hybrid debugging
+# - Emergency access
+# - Automated/M2M access
+# - Database debugging
+# - Performance profiling
+# - Log analysis
+# - Collaborative debugging
+
+---
+# =============================================================================
+# DEVELOPMENT DEBUGGING (Low-privilege, auto-approve for dev clusters)
+# =============================================================================
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: developer-basic
+spec:
+  displayName: "Developer Basic Debug"
+  description: "Basic debug access for developers on dev/staging clusters with auto-approval"
+  mode: workload
+  podTemplateRef:
+    name: alpine-minimal
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - developers
+      - engineers
+    clusters:
+      - "dev-*"
+      - "staging-*"
+      - "test-*"
+  
+  approvers:
+    groups:
+      - team-leads
+    autoApproveFor:
+      groups:
+        - developers
+      clusters:
+        - "dev-*"
+        - "test-*"
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 3
+    maxConcurrentSessions: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: false
+
+---
+# Developer network debugging
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: developer-network
+spec:
+  displayName: "Developer Network Debug"
+  description: "Network tools for developers to test connectivity and debug API calls"
+  mode: workload
+  podTemplateRef:
+    name: netshoot-standard
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - developers
+      - backend-engineers
+    clusters:
+      - "dev-*"
+      - "staging-*"
+  
+  approvers:
+    groups:
+      - team-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 3
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# =============================================================================
+# SRE/OPERATIONS DEBUGGING
+# =============================================================================
+
+# Standard SRE debug session
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: sre-standard
+spec:
+  displayName: "SRE Standard Debug"
+  description: "Standard debug access for SRE team on all clusters"
+  mode: workload
+  podTemplateRef:
+    name: netshoot-standard
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - sre-team
+      - platform-engineering
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - sre-leads
+    autoApproveFor:
+      groups:
+        - sre-leads
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  additionalTolerations:
+    - operator: Exists
+      effect: NoSchedule
+  
+  constraints:
+    maxDuration: "8h"
+    defaultDuration: "2h"
+    allowRenewal: true
+    maxRenewals: 3
+    maxConcurrentSessions: 2
+  
+  terminalSharing:
+    enabled: true
+    provider: tmux
+    maxParticipants: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "180d"
+    destinations:
+      - type: breakglass
+      - type: kubernetes
+
+---
+# Production SRE access (requires approval)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: sre-production
+spec:
+  displayName: "SRE Production Debug"
+  description: "Debug access for production clusters - requires explicit approval"
+  mode: workload
+  podTemplateRef:
+    name: netshoot-standard
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - sre-team
+      - incident-responders
+    clusters:
+      - "prod-*"
+      - "production-*"
+  
+  approvers:
+    groups:
+      - sre-leads
+      - incident-commanders
+    # No autoApproveFor - all production access requires approval
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 2
+  
+  terminalSharing:
+    enabled: true
+    provider: tmux
+    maxParticipants: 3
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "365d"
+    destinations:
+      - type: breakglass
+      - type: kubernetes
+      - type: webhook
+        url: https://audit.example.com/debug-sessions
+
+---
+# =============================================================================
+# NETWORK TROUBLESHOOTING
+# =============================================================================
+
+# Network team - host network access
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: network-host-debug
+spec:
+  displayName: "Network Host Debug"
+  description: "Host network debugging with NET_ADMIN capabilities for network team"
+  mode: workload
+  podTemplateRef:
+    name: netshoot-host-network
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - network-team
+      - sre-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - network-leads
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+  
+  additionalTolerations:
+    - operator: Exists
+      effect: NoSchedule
+    - operator: Exists
+      effect: NoExecute
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 1
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "90d"
+
+---
+# Packet capture session
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: network-tcpdump
+spec:
+  displayName: "Network Packet Capture"
+  description: "TCPdump session for packet capture analysis - requires security approval"
+  mode: workload
+  podTemplateRef:
+    name: tcpdump-capture
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - network-team
+      - security-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - security-team
+      - network-leads
+    # Always require approval for packet capture
+  
+  additionalTolerations:
+    - operator: Exists
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+    allowRenewal: false
+    maxRenewals: 0
+    maxConcurrentSessions: 1
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "365d"
+
+---
+# DNS troubleshooting
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: dns-debug
+spec:
+  displayName: "DNS Debug"
+  description: "DNS troubleshooting session with dig, nslookup, drill"
+  mode: workload
+  podTemplateRef:
+    name: dns-debug
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - developers
+      - sre-team
+      - network-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - team-leads
+    autoApproveFor:
+      groups:
+        - sre-team
+        - network-team
+      clusters:
+        - "*"
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+    allowRenewal: true
+    maxRenewals: 3
+    maxConcurrentSessions: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# =============================================================================
+# KUBECTL-DEBUG MODE (Ephemeral Containers)
+# =============================================================================
+
+# Basic ephemeral container debugging
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: kubectl-debug-basic
+spec:
+  displayName: "Kubectl Debug Basic"
+  description: "Inject debug containers into running pods for live debugging"
+  mode: kubectl-debug
+  targetNamespace: breakglass-debug
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: true
+      allowedNamespaces:
+        patterns:
+          - "default"
+          - "app-*"
+          - "service-*"
+      deniedNamespaces:
+        patterns:
+          - "kube-system"
+          - "kube-public"
+          - "kube-node-lease"
+          - "breakglass"
+          - "security-*"
+      allowedImages:
+        - "busybox:*"
+        - "alpine:*"
+        - "nicolaka/netshoot:*"
+      requireImageDigest: false
+      allowPrivileged: false
+      requireNonRoot: true
+      maxCapabilities:
+        - NET_RAW
+    nodeDebug:
+      enabled: false
+    podCopy:
+      enabled: false
+  
+  allowed:
+    groups:
+      - developers
+      - sre-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - team-leads
+    autoApproveFor:
+      groups:
+        - sre-team
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+    allowRenewal: true
+    maxRenewals: 3
+    maxConcurrentSessions: 10
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# Advanced kubectl-debug with pod copy
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: kubectl-debug-advanced
+spec:
+  displayName: "Kubectl Debug Advanced"
+  description: "Full kubectl-debug capabilities including ephemeral containers and pod copy"
+  mode: kubectl-debug
+  targetNamespace: breakglass-debug
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: true
+      allowedNamespaces:
+        patterns:
+          - "*"
+      deniedNamespaces:
+        patterns:
+          - "kube-system"
+          - "kube-public"
+      allowedImages:
+        - "busybox:*"
+        - "alpine:*"
+        - "nicolaka/netshoot:*"
+        - "curlimages/curl:*"
+      requireImageDigest: false
+      allowPrivileged: false
+      requireNonRoot: false
+      maxCapabilities:
+        - NET_RAW
+        - NET_ADMIN
+        - SYS_PTRACE
+    nodeDebug:
+      enabled: false
+    podCopy:
+      enabled: true
+      targetNamespace: debug-copies
+      labels:
+        debug-copy: "true"
+        managed-by: breakglass
+      ttl: "1h"
+  
+  allowed:
+    groups:
+      - sre-team
+      - platform-engineering
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "90d"
+
+---
+# Node debugging via kubectl-debug
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: kubectl-debug-node
+spec:
+  displayName: "Kubectl Node Debug"
+  description: "Debug nodes using kubectl debug node - requires approval"
+  mode: kubectl-debug
+  targetNamespace: breakglass-debug
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: false
+    nodeDebug:
+      enabled: true
+      allowedImages:
+        - "alpine:*"
+        - "nicolaka/netshoot:*"
+        - "busybox:*"
+      hostNamespaces:
+        hostNetwork: true
+        hostPID: true
+        hostIPC: false
+    podCopy:
+      enabled: false
+  
+  allowed:
+    groups:
+      - sre-team
+      - node-admins
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - sre-leads
+      - security-team
+    # No auto-approve for node debugging
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+    allowRenewal: true
+    maxRenewals: 1
+    maxConcurrentSessions: 2
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "365d"
+
+---
+# =============================================================================
+# HYBRID MODE (Workload + kubectl-debug)
+# =============================================================================
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: hybrid-full
+spec:
+  displayName: "Hybrid Full Debug"
+  description: "Combined workload + kubectl-debug for maximum flexibility"
+  mode: hybrid
+  podTemplateRef:
+    name: netshoot-standard
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: true
+      allowedNamespaces:
+        patterns:
+          - "*"
+      deniedNamespaces:
+        patterns:
+          - "kube-system"
+      allowedImages:
+        - "busybox:*"
+        - "alpine:*"
+        - "nicolaka/netshoot:*"
+      allowPrivileged: false
+      requireNonRoot: true
+    nodeDebug:
+      enabled: true
+      allowedImages:
+        - "nicolaka/netshoot:*"
+      hostNamespaces:
+        hostNetwork: true
+        hostPID: true
+    podCopy:
+      enabled: true
+      ttl: "1h"
+  
+  allowed:
+    groups:
+      - sre-team
+      - platform-engineering
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+  
+  additionalTolerations:
+    - operator: Exists
+      effect: NoSchedule
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 2
+  
+  terminalSharing:
+    enabled: true
+    provider: tmux
+    maxParticipants: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "180d"
+
+---
+# =============================================================================
+# EMERGENCY ACCESS
+# =============================================================================
+
+# Emergency node access - privileged
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: emergency-node-access
+spec:
+  displayName: "Emergency Node Access"
+  description: "EMERGENCY ONLY: Full privileged node access - requires security team approval"
+  mode: workload
+  podTemplateRef:
+    name: node-privileged
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  podOverrides:
+    spec:
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+  
+  allowed:
+    groups:
+      - incident-commanders
+      - sre-leads
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - security-team
+      - platform-leads
+    # No auto-approve - always requires explicit approval
+  
+  additionalTolerations:
+    - operator: Exists
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "1h"
+    allowRenewal: false
+    maxRenewals: 0
+    maxConcurrentSessions: 1
+  
+  terminalSharing:
+    enabled: true
+    provider: tmux
+    maxParticipants: 10
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "365d"
+    destinations:
+      - type: breakglass
+      - type: kubernetes
+      - type: webhook
+        url: https://security-audit.example.com/emergency-access
+
+---
+# Incident response session
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: incident-response
+spec:
+  displayName: "Incident Response"
+  description: "Debug session for active incidents with collaborative access"
+  mode: hybrid
+  podTemplateRef:
+    name: netshoot-host-network
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: true
+      allowedNamespaces:
+        patterns:
+          - "*"
+      allowedImages:
+        - "*"
+      allowPrivileged: true
+      requireNonRoot: false
+    nodeDebug:
+      enabled: true
+      allowedImages:
+        - "*"
+      hostNamespaces:
+        hostNetwork: true
+        hostPID: true
+        hostIPC: true
+    podCopy:
+      enabled: true
+      ttl: "2h"
+  
+  allowed:
+    groups:
+      - incident-responders
+      - sre-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - incident-commanders
+    autoApproveFor:
+      groups:
+        - incident-commanders
+  
+  additionalTolerations:
+    - operator: Exists
+  
+  constraints:
+    maxDuration: "8h"
+    defaultDuration: "2h"
+    allowRenewal: true
+    maxRenewals: 5
+    maxConcurrentSessions: 3
+  
+  terminalSharing:
+    enabled: true
+    provider: tmux
+    maxParticipants: 20
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "365d"
+
+---
+# =============================================================================
+# DATABASE DEBUGGING
+# =============================================================================
+
+# PostgreSQL debugging
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: database-postgres
+spec:
+  displayName: "PostgreSQL Debug"
+  description: "PostgreSQL client for database connectivity testing"
+  mode: workload
+  podTemplateRef:
+    name: postgres-client
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - dba-team
+      - backend-engineers
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - dba-leads
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 3
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# MySQL debugging
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: database-mysql
+spec:
+  displayName: "MySQL Debug"
+  description: "MySQL/MariaDB client for database connectivity testing"
+  mode: workload
+  podTemplateRef:
+    name: mysql-client
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - dba-team
+      - backend-engineers
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - dba-leads
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 3
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# Redis debugging
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: cache-redis
+spec:
+  displayName: "Redis Debug"
+  description: "Redis CLI for cache debugging"
+  mode: workload
+  podTemplateRef:
+    name: redis-client
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - developers
+      - sre-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - team-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+    allowRenewal: true
+    maxRenewals: 3
+    maxConcurrentSessions: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# =============================================================================
+# PERFORMANCE PROFILING
+# =============================================================================
+
+# JVM profiling
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: jvm-profiling
+spec:
+  displayName: "JVM Profiling"
+  description: "Java/JVM debugging with jcmd, jmap, jstack"
+  mode: workload
+  podTemplateRef:
+    name: jvm-debug
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - java-developers
+      - sre-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - team-leads
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  additionalTolerations:
+    - operator: Exists
+      effect: NoSchedule
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 2
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "90d"
+
+---
+# Linux performance tools
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: performance-analysis
+spec:
+  displayName: "Performance Analysis"
+  description: "Linux perf, strace, ltrace for performance profiling - requires approval"
+  mode: workload
+  podTemplateRef:
+    name: perf-tools
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - sre-team
+      - performance-engineers
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - sre-leads
+      - security-team
+    # Privileged access - always require approval
+  
+  additionalTolerations:
+    - operator: Exists
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+    allowRenewal: true
+    maxRenewals: 1
+    maxConcurrentSessions: 1
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "180d"
+
+---
+# =============================================================================
+# LOG ANALYSIS
+# =============================================================================
+
+# Host log inspection
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: log-inspector
+spec:
+  displayName: "Log Inspector"
+  description: "Read-only access to host logs at /var/log"
+  mode: workload
+  podTemplateRef:
+    name: host-filesystem-readonly
+  workloadType: DaemonSet
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - developers
+      - sre-team
+      - support-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - team-leads
+    autoApproveFor:
+      groups:
+        - sre-team
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  additionalTolerations:
+    - operator: Exists
+      effect: NoSchedule
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 3
+    maxConcurrentSessions: 5
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# =============================================================================
+# MESSAGE QUEUE DEBUGGING
+# =============================================================================
+
+# Kafka debugging
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: messaging-kafka
+spec:
+  displayName: "Kafka Debug"
+  description: "Kafka CLI for topic inspection and message debugging"
+  mode: workload
+  podTemplateRef:
+    name: kafka-client
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - kafka-team
+      - data-engineers
+      - sre-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - data-leads
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 3
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# =============================================================================
+# AUTOMATED/M2M ACCESS
+# =============================================================================
+
+# Automation service account access
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: automation-debug
+spec:
+  displayName: "Automation Debug"
+  description: "Automated debugging sessions for CI/CD pipelines and scheduled jobs"
+  mode: workload
+  podTemplateRef:
+    name: alpine-minimal
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    users:
+      - automation-bot@example.com
+      - ci-cd-service@example.com
+    groups:
+      - automation-services
+    clusters:
+      - "*"
+  
+  approvers:
+    users:
+      - automation-bot@example.com
+    groups:
+      - automation-services
+    autoApproveFor:
+      groups:
+        - automation-services
+  
+  constraints:
+    maxDuration: "336h"  # 14 days
+    defaultDuration: "24h"
+    allowRenewal: true
+    maxRenewals: 10
+    maxConcurrentSessions: 5
+  
+  # Minimal audit for automation
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: false
+
+---
+# =============================================================================
+# API TESTING
+# =============================================================================
+
+# Lightweight API testing
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: api-testing
+spec:
+  displayName: "API Testing"
+  description: "Lightweight curl+jq for API testing and connectivity checks"
+  mode: workload
+  podTemplateRef:
+    name: curl-jq
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - developers
+      - qa-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - team-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "staging-*"
+        - "test-*"
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 5
+    maxConcurrentSessions: 10
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# =============================================================================
+# COLLABORATIVE DEBUGGING
+# =============================================================================
+
+# Pair debugging with tmux
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: collaborative-debug
+spec:
+  displayName: "Collaborative Debug"
+  description: "Tmux-enabled session for pair/mob debugging with terminal sharing"
+  mode: workload
+  podTemplateRef:
+    name: tmux-collaborative
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - developers
+      - sre-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - team-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+        - "staging-*"
+  
+  constraints:
+    maxDuration: "8h"
+    defaultDuration: "2h"
+    allowRenewal: true
+    maxRenewals: 3
+    maxConcurrentSessions: 5
+  
+  terminalSharing:
+    enabled: true
+    provider: tmux
+    maxParticipants: 10
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "30d"
+
+---
+# =============================================================================
+# KUBERNETES API DEBUGGING (USE WITH CAUTION)
+# =============================================================================
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: kubectl-api-debug
+spec:
+  displayName: "Kubectl API Debug"
+  description: "Debug with kubectl access to cluster API - requires dedicated ServiceAccount"
+  mode: workload
+  podTemplateRef:
+    name: kubectl-debug
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - platform-engineering
+      - cluster-admins
+    clusters:
+      - "dev-*"
+      - "staging-*"
+  
+  approvers:
+    groups:
+      - platform-leads
+      - security-team
+    # Always require approval for API access
+  
+  constraints:
+    maxDuration: "2h"
+    defaultDuration: "30m"
+    allowRenewal: true
+    maxRenewals: 1
+    maxConcurrentSessions: 2
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "365d"
+
+---
+# =============================================================================
+# STORAGE DEBUGGING
+# =============================================================================
+
+# PVC testing
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: storage-pvc-test
+spec:
+  displayName: "PVC Testing"
+  description: "Debug container for persistent volume testing and performance analysis"
+  mode: workload
+  podTemplateRef:
+    name: pvc-tester
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - storage-team
+      - sre-team
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - storage-leads
+      - sre-leads
+    autoApproveFor:
+      clusters:
+        - "dev-*"
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 3
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+
+---
+# =============================================================================
+# SECURITY ANALYSIS
+# =============================================================================
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: security-analysis
+spec:
+  displayName: "Security Analysis"
+  description: "Security scanning and vulnerability analysis tools"
+  mode: workload
+  podTemplateRef:
+    name: security-scanner
+  workloadType: Deployment
+  replicas: 1
+  targetNamespace: breakglass-debug
+  failMode: closed
+  
+  allowed:
+    groups:
+      - security-team
+      - sre-leads
+    clusters:
+      - "*"
+  
+  approvers:
+    groups:
+      - security-leads
+    # Always require security team approval
+  
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    allowRenewal: true
+    maxRenewals: 2
+    maxConcurrentSessions: 2
+  
+  audit:
+    enabled: true
+    enableShellHistory: true
+    enableTerminalRecording: true
+    recordingRetention: "365d"

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Kustomize deployment targets restructuring**: New shared base configuration for all deployment targets
+  - `config/base`: New canonical production deployment target with webhooks enabled
+  - `config/debug`: Production deployment with debug logging
+  - `config/dev`: Development/E2E environment with keycloak, mailhog, kafka
+  - `config/default`: Now deprecated alias to `config/base` for backward compatibility
+  - New `make deploy_debug` and `make undeploy_debug` targets
+- **CI manifest validation and comparison**: New CI job that builds all kustomize targets and compares against previous release
+  - Posts manifest diff as PR comment highlighting changes
+  - Uploads manifest artifacts for each build
+- **Deployment documentation**: New `docs/deployment-targets.md` with comprehensive guide for all kustomize targets
+- **Release manifest artifacts**: Releases now include pre-built `manifests-base.yaml`, `manifests-debug.yaml`, and `manifests-crds.yaml`
 - **CLI Tool (`bgctl`)**: Command-line interface for Breakglass API with session management, debug sessions, escalation queries, and kubectl-debug operations
   - OIDC authentication flows (browser-based, device code, client credentials)
   - Multi-context configuration with reusable OIDC providers
@@ -75,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Breakglass session list reads now use a fresh API reader for consistent filtering results
 - Multi-cluster e2e setup now applies debug session templates
 - Documentation now covers full CRD set, validating webhook scope, and email optionality
+- **Dev kustomize overlay**: Disabled hash suffix for `keycloak-realm`, `keycloak-tls`, and `breakglass-certs` to fix volume mount failures in E2E tests
+- **Dev kustomize overlay**: Renamed dev services/deployments to use `breakglass-` prefix (`breakglass-keycloak`, `breakglass-mailhog`, `breakglass-kafka`, `breakglass-audit-webhook-receiver`) to match FQDN references in config files and e2e helpers
 
 ### Security
 

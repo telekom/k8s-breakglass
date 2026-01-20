@@ -1,0 +1,1044 @@
+# Comprehensive DebugPodTemplate Samples
+# These templates cover common operator use-cases and can be used as a base
+# for customizing debug sessions in your environment.
+#
+# Categories covered:
+# - General purpose debugging
+# - Network troubleshooting
+# - Storage/filesystem debugging
+# - Java/JVM profiling
+# - Database client debugging
+# - DNS troubleshooting
+# - Performance analysis
+# - Security analysis
+# - Kubernetes API debugging
+
+---
+# =============================================================================
+# GENERAL PURPOSE DEBUG PODS
+# =============================================================================
+
+# Alpine-based minimal debug pod - smallest footprint
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: alpine-minimal
+spec:
+  displayName: "Alpine Minimal"
+  description: "Ultra-lightweight Alpine container for basic debugging (shell, wget, busybox utils)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: general
+        breakglass.t-caas.telekom.com/security-profile: restricted
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: debug
+        image: alpine:3.19
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "100m"
+            memory: "64Mi"
+          requests:
+            cpu: "10m"
+            memory: "16Mi"
+
+---
+# Ubuntu-based debug pod - comprehensive tooling
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: ubuntu-tools
+spec:
+  displayName: "Ubuntu Tools"
+  description: "Ubuntu-based container with apt for installing additional tools on-demand"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: general
+        breakglass.t-caas.telekom.com/security-profile: baseline
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: debug
+        image: ubuntu:22.04
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+
+---
+# Tmux-enabled debug pod for terminal sharing
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: tmux-collaborative
+spec:
+  displayName: "Tmux Collaborative"
+  description: "Debug container with tmux for collaborative terminal sharing sessions"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: collaborative
+        breakglass.t-caas.telekom.com/terminal-sharing: "true"
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: debug
+        # Use alpine with tmux installed, or a custom image with tmux
+        image: alpine:3.19
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "apk add --no-cache tmux && trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "300m"
+            memory: "256Mi"
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+
+---
+# =============================================================================
+# NETWORK DEBUGGING
+# =============================================================================
+
+# Netshoot - comprehensive network troubleshooting
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: netshoot-standard
+spec:
+  displayName: "Netshoot Standard"
+  description: "nicolaka/netshoot with common network tools (curl, netcat, dig, nslookup, tcpdump)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: network
+      annotations:
+        breakglass.t-caas.telekom.com/tools: "curl,wget,netcat,dig,nslookup,ping,traceroute,mtr,iperf,tcpdump"
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: netdebug
+        image: nicolaka/netshoot:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_ADMIN", "NET_RAW"]
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+
+---
+# Network debug with host networking - for node-level troubleshooting
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: netshoot-host-network
+spec:
+  displayName: "Netshoot Host Network"
+  description: "Network debugging with host network namespace for node-level troubleshooting"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: network
+        breakglass.t-caas.telekom.com/security-profile: privileged
+    spec:
+      hostNetwork: true
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: netdebug
+        image: nicolaka/netshoot:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"]
+        resources:
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+          requests:
+            cpu: "200m"
+            memory: "128Mi"
+
+---
+# tcpdump packet capture pod
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: tcpdump-capture
+spec:
+  displayName: "TCPDump Capture"
+  description: "Packet capture with tcpdump for traffic analysis"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: network
+        breakglass.t-caas.telekom.com/purpose: packet-capture
+    spec:
+      hostNetwork: true
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: tcpdump
+        image: nicolaka/netshoot:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_ADMIN", "NET_RAW"]
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+        volumeMounts:
+        - name: capture-storage
+          mountPath: /captures
+      volumes:
+      - name: capture-storage
+        emptyDir:
+          sizeLimit: 5Gi
+
+---
+# =============================================================================
+# DNS TROUBLESHOOTING
+# =============================================================================
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: dns-debug
+spec:
+  displayName: "DNS Debug"
+  description: "DNS troubleshooting tools (dig, nslookup, host, drill)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: dns
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      dnsPolicy: ClusterFirst
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: dns-debug
+        image: alpine:3.19
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "apk add --no-cache bind-tools drill && trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "100m"
+            memory: "64Mi"
+          requests:
+            cpu: "10m"
+            memory: "16Mi"
+
+---
+# =============================================================================
+# STORAGE / FILESYSTEM DEBUGGING
+# =============================================================================
+
+# Read-only host filesystem inspection
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: host-filesystem-readonly
+spec:
+  displayName: "Host Filesystem (Read-Only)"
+  description: "Read-only access to host filesystem for log inspection and filesystem analysis"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: storage
+        breakglass.t-caas.telekom.com/access-mode: readonly
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      hostPID: false
+      hostNetwork: false
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: fs-debug
+        image: busybox:1.36
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+          requests:
+            cpu: "50m"
+            memory: "32Mi"
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+          readOnly: true
+        - name: host-var-log
+          mountPath: /host/var/log
+          readOnly: true
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+          type: Directory
+      - name: host-var-log
+        hostPath:
+          path: /var/log
+          type: Directory
+
+---
+# PVC mount tester - for debugging persistent volumes
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: pvc-tester
+spec:
+  displayName: "PVC Tester"
+  description: "Debug container for testing persistent volume claims and storage performance"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: storage
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: pvc-test
+        image: alpine:3.19
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "apk add --no-cache fio hdparm && trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+        # Note: PVC mounts should be added via podOverrides in DebugSessionTemplate
+
+---
+# =============================================================================
+# JAVA/JVM DEBUGGING
+# =============================================================================
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: jvm-debug
+spec:
+  displayName: "JVM Debug"
+  description: "Java debugging tools (jcmd, jmap, jstack, jps, async-profiler)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: jvm
+      annotations:
+        breakglass.t-caas.telekom.com/tools: "jcmd,jmap,jstack,jps,jinfo,jstat"
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      hostPID: true  # Required for attaching to JVM processes
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: jvm-debug
+        # Eclipse Temurin with debugging tools
+        image: eclipse-temurin:21-jdk-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["SYS_PTRACE"]
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+        volumeMounts:
+        - name: proc
+          mountPath: /proc
+        - name: heap-dumps
+          mountPath: /heapdumps
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: heap-dumps
+        emptyDir:
+          sizeLimit: 10Gi
+
+---
+# =============================================================================
+# DATABASE CLIENT DEBUGGING
+# =============================================================================
+
+# PostgreSQL client
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: postgres-client
+spec:
+  displayName: "PostgreSQL Client"
+  description: "PostgreSQL client (psql) for database connectivity testing"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: database
+        breakglass.t-caas.telekom.com/database: postgresql
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: psql
+        image: postgres:16-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 70
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+          requests:
+            cpu: "50m"
+            memory: "32Mi"
+
+---
+# MySQL/MariaDB client
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: mysql-client
+spec:
+  displayName: "MySQL Client"
+  description: "MySQL/MariaDB client for database connectivity testing"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: database
+        breakglass.t-caas.telekom.com/database: mysql
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 999
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+          requests:
+            cpu: "50m"
+            memory: "32Mi"
+
+---
+# Redis client
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: redis-client
+spec:
+  displayName: "Redis Client"
+  description: "Redis CLI for cache debugging and connectivity testing"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: database
+        breakglass.t-caas.telekom.com/database: redis
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 999
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "100m"
+            memory: "64Mi"
+          requests:
+            cpu: "20m"
+            memory: "16Mi"
+
+---
+# MongoDB client
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: mongodb-client
+spec:
+  displayName: "MongoDB Client"
+  description: "MongoDB shell (mongosh) for database debugging"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: database
+        breakglass.t-caas.telekom.com/database: mongodb
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: mongosh
+        image: mongo:7
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 999
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+
+---
+# =============================================================================
+# PERFORMANCE PROFILING
+# =============================================================================
+
+# Linux performance tools
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: perf-tools
+spec:
+  displayName: "Performance Tools"
+  description: "Linux performance analysis tools (perf, strace, ltrace, sysstat)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: performance
+        breakglass.t-caas.telekom.com/security-profile: privileged
+    spec:
+      hostPID: true
+      hostNetwork: false
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: perf
+        image: ubuntu:22.04
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "apt-get update && apt-get install -y linux-tools-generic strace ltrace sysstat procps && trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: true
+          readOnlyRootFilesystem: false
+          runAsNonRoot: false
+          privileged: true
+          capabilities:
+            add: ["SYS_PTRACE", "SYS_ADMIN"]
+        resources:
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+        volumeMounts:
+        - name: proc
+          mountPath: /proc
+        - name: sys
+          mountPath: /sys
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: sys
+        hostPath:
+          path: /sys
+          type: Directory
+
+---
+# =============================================================================
+# SECURITY ANALYSIS
+# =============================================================================
+
+# Security scanning and analysis
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: security-scanner
+spec:
+  displayName: "Security Scanner"
+  description: "Security tools for vulnerability scanning and analysis (trivy, grype)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: security
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: scanner
+        image: alpine:3.19
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "apk add --no-cache curl jq && trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+
+---
+# =============================================================================
+# KUBERNETES API DEBUGGING
+# =============================================================================
+
+# kubectl debug pod with cluster access
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: kubectl-debug
+spec:
+  displayName: "Kubectl Debug"
+  description: "Debug pod with kubectl for Kubernetes API troubleshooting (SA token required)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: kubernetes
+      annotations:
+        breakglass.t-caas.telekom.com/warning: "This template mounts service account token - use with caution"
+    spec:
+      automountServiceAccountToken: true  # Required for kubectl access
+      serviceAccountName: breakglass-debug  # Use a dedicated SA with limited permissions
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: kubectl
+        image: bitnami/kubectl:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+
+---
+# =============================================================================
+# NODE-LEVEL PRIVILEGED ACCESS (EMERGENCY USE)
+# =============================================================================
+
+# Full node access - privileged pod
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: node-privileged
+spec:
+  displayName: "Node Privileged"
+  description: "EMERGENCY ONLY: Full privileged access to node with all host namespaces"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: node
+        breakglass.t-caas.telekom.com/security-profile: privileged
+        breakglass.t-caas.telekom.com/emergency: "true"
+      annotations:
+        breakglass.t-caas.telekom.com/warning: "Full node access - use only in emergencies with proper approval"
+    spec:
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: debug
+        image: nicolaka/netshoot:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        resources:
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+          type: Directory
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+
+---
+# nsenter node access - chroot into host
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: node-nsenter
+spec:
+  displayName: "Node nsenter"
+  description: "EMERGENCY ONLY: Use nsenter to enter node namespaces (requires privileged)"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: node
+        breakglass.t-caas.telekom.com/security-profile: privileged
+    spec:
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: nsenter
+        image: alpine:3.19
+        imagePullPolicy: IfNotPresent
+        # nsenter into PID 1 to access host shell
+        command: ["/bin/sh", "-c", "apk add --no-cache util-linux && trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+
+---
+# =============================================================================
+# MESSAGE QUEUE CLIENTS
+# =============================================================================
+
+# Kafka client
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: kafka-client
+spec:
+  displayName: "Kafka Client"
+  description: "Kafka CLI tools for topic inspection and message debugging"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: messaging
+        breakglass.t-caas.telekom.com/messaging: kafka
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: kafka
+        image: bitnami/kafka:3.6
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1001
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+
+---
+# RabbitMQ client
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: rabbitmq-client
+spec:
+  displayName: "RabbitMQ Client"
+  description: "RabbitMQ CLI tools for queue inspection and debugging"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: messaging
+        breakglass.t-caas.telekom.com/messaging: rabbitmq
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: rabbitmq
+        image: rabbitmq:3.12-management-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 999
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "300m"
+            memory: "256Mi"
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+
+---
+# =============================================================================
+# CURL/API TESTING
+# =============================================================================
+
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: curl-jq
+spec:
+  displayName: "Curl + jq"
+  description: "Lightweight pod with curl and jq for API testing"
+  template:
+    metadata:
+      labels:
+        breakglass.t-caas.telekom.com/debug-type: api
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: curl
+        image: curlimages/curl:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: "100m"
+            memory: "64Mi"
+          requests:
+            cpu: "10m"
+            memory: "16Mi"
