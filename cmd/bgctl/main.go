@@ -7,8 +7,14 @@ import (
 )
 
 func main() {
+	os.Exit(run(os.Args[1:]))
+}
+
+func run(args []string) int {
 	root := bgctlcmd.NewRootCommand(bgctlcmd.DefaultConfig())
+	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

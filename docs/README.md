@@ -68,6 +68,11 @@ Complete documentation for the breakglass privilege escalation system.
 ## Development & Maintenance
 
 - **[Technical Debt](./TECHNICAL_DEBT.md)** - Known TODOs, future enhancements, and maintenance tracking
+- **[Release Process](./release-process.md)** - Release signing, provenance, and checklist
+
+## Contributing
+
+- **[Contributing Guide](../CONTRIBUTING.md)** - Contribution requirements, test policy, and review process
 
 ## Architecture
 

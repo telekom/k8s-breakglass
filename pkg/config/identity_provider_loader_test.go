@@ -770,3 +770,310 @@ func contains(str, substr string) bool {
 	}
 	return false
 }
+
+// TestLoadAllIdentityProviders_MultipleProviders tests loading multiple enabled IDPs
+func TestLoadAllIdentityProviders_MultipleProviders(t *testing.T) {
+	idp1 := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-alpha"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://alpha.example.com",
+				ClientID:  "alpha-client",
+			},
+			Issuer:   "https://alpha.example.com",
+			Disabled: false,
+		},
+	}
+
+	idp2 := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-beta"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://beta.example.com",
+				ClientID:  "beta-client",
+			},
+			Issuer:   "https://beta.example.com",
+			Disabled: false,
+		},
+	}
+
+	idp3 := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-gamma"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://gamma.example.com",
+				ClientID:  "gamma-client",
+			},
+			Issuer:   "https://gamma.example.com",
+			Disabled: false,
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder = builder.WithObjects(&idp1, &idp2, &idp3)
+	fakeClient := builder.Build()
+
+	loader := NewIdentityProviderLoader(fakeClient)
+	result, err := loader.LoadAllIdentityProviders(context.Background())
+
+	if err != nil {
+		t.Fatalf("LoadAllIdentityProviders() unexpected error: %v", err)
+	}
+
+	if len(result) != 3 {
+		t.Errorf("Expected 3 providers, got %d", len(result))
+	}
+
+	// Verify all providers are present
+	if _, ok := result["idp-alpha"]; !ok {
+		t.Error("Expected idp-alpha to be present")
+	}
+	if _, ok := result["idp-beta"]; !ok {
+		t.Error("Expected idp-beta to be present")
+	}
+	if _, ok := result["idp-gamma"]; !ok {
+		t.Error("Expected idp-gamma to be present")
+	}
+}
+
+// TestLoadAllIdentityProviders_WithDisabledProvider tests that disabled providers are excluded
+func TestLoadAllIdentityProviders_WithDisabledProvider(t *testing.T) {
+	enabledIDP := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "enabled-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://enabled.example.com",
+				ClientID:  "enabled",
+			},
+			Issuer:   "https://enabled.example.com",
+			Disabled: false,
+		},
+	}
+
+	disabledIDP := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://disabled.example.com",
+				ClientID:  "disabled",
+			},
+			Issuer:   "https://disabled.example.com",
+			Disabled: true,
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder = builder.WithObjects(&enabledIDP, &disabledIDP)
+	fakeClient := builder.Build()
+
+	loader := NewIdentityProviderLoader(fakeClient)
+	result, err := loader.LoadAllIdentityProviders(context.Background())
+
+	if err != nil {
+		t.Fatalf("LoadAllIdentityProviders() unexpected error: %v", err)
+	}
+
+	if len(result) != 1 {
+		t.Errorf("Expected 1 provider (disabled excluded), got %d", len(result))
+	}
+
+	if _, ok := result["enabled-idp"]; !ok {
+		t.Error("Expected enabled-idp to be present")
+	}
+
+	if _, ok := result["disabled-idp"]; ok {
+		t.Error("Did not expect disabled-idp to be present")
+	}
+}
+
+// TestLoadAllIdentityProviders_WithConversionError tests behavior when some IDPs fail to convert
+func TestLoadAllIdentityProviders_WithConversionError(t *testing.T) {
+	// Valid provider
+	validIDP := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://valid.example.com",
+				ClientID:  "valid",
+			},
+			Issuer:   "https://valid.example.com",
+			Disabled: false,
+		},
+	}
+
+	// Provider with Keycloak group sync that will fail due to missing secret
+	brokenIDP := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "broken-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://broken.example.com",
+				ClientID:  "broken",
+			},
+			Issuer:            "https://broken.example.com",
+			Disabled:          false,
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+				BaseURL:  "https://keycloak.example.com",
+				Realm:    "master",
+				ClientID: "admin",
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+					Name:      "nonexistent-secret",
+					Namespace: "default",
+					Key:       "secret",
+				},
+			},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder = builder.WithStatusSubresource(&breakglassv1alpha1.IdentityProvider{})
+	builder = builder.WithObjects(&validIDP, &brokenIDP)
+	fakeClient := builder.Build()
+
+	loader := NewIdentityProviderLoader(fakeClient).
+		WithLogger(zap.NewNop().Sugar())
+
+	result, err := loader.LoadAllIdentityProviders(context.Background())
+
+	// Should not return an error - only log/skip broken ones
+	if err != nil {
+		t.Fatalf("LoadAllIdentityProviders() unexpected error: %v", err)
+	}
+
+	// Should only have the valid IDP
+	if len(result) != 1 {
+		t.Errorf("Expected 1 provider (broken skipped), got %d", len(result))
+	}
+
+	if _, ok := result["valid-idp"]; !ok {
+		t.Error("Expected valid-idp to be present")
+	}
+
+	if _, ok := result["broken-idp"]; ok {
+		t.Error("Did not expect broken-idp to be present")
+	}
+}
+
+// TestLoadAllIdentityProviders_EmptyResult tests when no IDPs exist
+func TestLoadAllIdentityProviders_EmptyResult(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	fakeClient := builder.Build()
+
+	loader := NewIdentityProviderLoader(fakeClient)
+	result, err := loader.LoadAllIdentityProviders(context.Background())
+
+	if err != nil {
+		t.Fatalf("LoadAllIdentityProviders() unexpected error: %v", err)
+	}
+
+	if len(result) != 0 {
+		t.Errorf("Expected 0 providers, got %d", len(result))
+	}
+}
+
+// TestLoadAllIdentityProviders_AllDisabled tests when all IDPs are disabled
+func TestLoadAllIdentityProviders_AllDisabled(t *testing.T) {
+	disabledIDP1 := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "disabled-1"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://disabled1.example.com",
+				ClientID:  "disabled1",
+			},
+			Disabled: true,
+		},
+	}
+
+	disabledIDP2 := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "disabled-2"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://disabled2.example.com",
+				ClientID:  "disabled2",
+			},
+			Disabled: true,
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder = builder.WithObjects(&disabledIDP1, &disabledIDP2)
+	fakeClient := builder.Build()
+
+	loader := NewIdentityProviderLoader(fakeClient)
+	result, err := loader.LoadAllIdentityProviders(context.Background())
+
+	if err != nil {
+		t.Fatalf("LoadAllIdentityProviders() unexpected error: %v", err)
+	}
+
+	if len(result) != 0 {
+		t.Errorf("Expected 0 providers (all disabled), got %d", len(result))
+	}
+}
+
+// TestLoadAllIdentityProviders_ListError tests behavior when list operation fails
+func TestLoadAllIdentityProviders_ListError(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	wrappedClient := &listErrorClient{
+		Client:  fakeClient,
+		listErr: fmt.Errorf("simulated list error"),
+	}
+
+	loader := NewIdentityProviderLoader(wrappedClient)
+	result, err := loader.LoadAllIdentityProviders(context.Background())
+
+	if err == nil {
+		t.Error("Expected error when list fails, got nil")
+	}
+
+	if result != nil {
+		t.Error("Expected nil result when list fails")
+	}
+}
+
+// TestLoadAllIdentityProviders_MetricsRecorder tests that conversion errors trigger metrics
+func TestLoadAllIdentityProviders_MetricsRecorder(t *testing.T) {
+	// Provider with Keycloak that will fail due to missing secret
+	brokenIDP := breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "broken-idp-metrics"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority: "https://broken.example.com",
+				ClientID:  "broken",
+			},
+			Disabled:          false,
+			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+				BaseURL:  "https://keycloak.example.com",
+				Realm:    "master",
+				ClientID: "admin",
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+					Name:      "missing-secret",
+					Namespace: "default",
+					Key:       "secret",
+				},
+			},
+		},
+	}
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder = builder.WithStatusSubresource(&breakglassv1alpha1.IdentityProvider{})
+	builder = builder.WithObjects(&brokenIDP)
+	fakeClient := builder.Build()
+
+	metricsRecorded := false
+	loader := NewIdentityProviderLoader(fakeClient).
+		WithLogger(zap.NewNop().Sugar()).
+		WithMetricsRecorder(func(idpName, failureReason string) {
+			metricsRecorded = true
+			if idpName != "broken-idp-metrics" {
+				t.Errorf("Expected idpName 'broken-idp-metrics', got %q", idpName)
+			}
+		})
+
+	_, _ = loader.LoadAllIdentityProviders(context.Background())
+
+	if !metricsRecorded {
+		t.Error("Expected metrics to be recorded for conversion failure")
+	}
+}

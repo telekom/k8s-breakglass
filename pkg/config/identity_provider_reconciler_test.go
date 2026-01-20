@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -23,6 +24,8 @@ func newTestScheme(t *testing.T) *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	err := v1alpha1.AddToScheme(scheme)
 	require.NoError(t, err, "failed to add v1alpha1 to scheme")
+	err = corev1.AddToScheme(scheme)
+	require.NoError(t, err, "failed to add corev1 to scheme")
 	return scheme
 }
 
@@ -250,6 +253,211 @@ func TestIdentityProviderReconciler_ReconcileWithMultipleIDPs(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, reloadCalls)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_NoProvider(t *testing.T) {
+	reconciler := NewIdentityProviderReconciler(ctrltest.NewFakeClient(), zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+
+	idp := &v1alpha1.IdentityProvider{}
+	idp.SetCondition(metav1.Condition{Type: string(v1alpha1.IdentityProviderConditionGroupSyncHealthy)})
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+
+	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	assert.Nil(t, condition)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_UnknownProvider(t *testing.T) {
+	reconciler := NewIdentityProviderReconciler(ctrltest.NewFakeClient(), zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+
+	idp := &v1alpha1.IdentityProvider{
+		Spec: v1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: "unknown",
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "UnknownProvider", condition.Reason)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_KeycloakMissing(t *testing.T) {
+	reconciler := NewIdentityProviderReconciler(ctrltest.NewFakeClient(), zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+
+	idp := &v1alpha1.IdentityProvider{
+		Spec: v1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "KeycloakMissing", condition.Reason)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_KeycloakIncomplete(t *testing.T) {
+	reconciler := NewIdentityProviderReconciler(ctrltest.NewFakeClient(), zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+
+	idp := &v1alpha1.IdentityProvider{
+		Spec: v1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &v1alpha1.KeycloakGroupSync{
+				BaseURL:  "",
+				Realm:    "realm",
+				ClientID: "client",
+			},
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "KeycloakIncomplete", condition.Reason)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_ClientSecretRefMissing(t *testing.T) {
+	reconciler := NewIdentityProviderReconciler(ctrltest.NewFakeClient(), zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+
+	idp := &v1alpha1.IdentityProvider{
+		Spec: v1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &v1alpha1.KeycloakGroupSync{
+				BaseURL:  "https://kc.example.com",
+				Realm:    "realm",
+				ClientID: "client",
+			},
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "ClientSecretRefInvalid", condition.Reason)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_SecretNotFound(t *testing.T) {
+	scheme := newTestScheme(t)
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).Build()
+
+	reconciler := NewIdentityProviderReconciler(client, zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+
+	idp := &v1alpha1.IdentityProvider{
+		Spec: v1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &v1alpha1.KeycloakGroupSync{
+				BaseURL:  "https://kc.example.com",
+				Realm:    "realm",
+				ClientID: "client",
+				ClientSecretRef: v1alpha1.SecretKeyReference{
+					Name:      "missing-secret",
+					Namespace: "default",
+				},
+			},
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "SecretNotFound", condition.Reason)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_SecretKeyMissing(t *testing.T) {
+	scheme := newTestScheme(t)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kc-secret", Namespace: "default"},
+		Data:       map[string][]byte{"other": []byte("value")},
+	}
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	reconciler := NewIdentityProviderReconciler(client, zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+
+	idp := &v1alpha1.IdentityProvider{
+		Spec: v1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &v1alpha1.KeycloakGroupSync{
+				BaseURL:  "https://kc.example.com",
+				Realm:    "realm",
+				ClientID: "client",
+				ClientSecretRef: v1alpha1.SecretKeyReference{
+					Name:      "kc-secret",
+					Namespace: "default",
+					Key:       "value",
+				},
+			},
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "SecretKeyNotFound", condition.Reason)
+}
+
+func TestIdentityProviderReconciler_UpdateGroupSyncHealth_Healthy(t *testing.T) {
+	scheme := newTestScheme(t)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kc-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": []byte("secret")},
+	}
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	reconciler := NewIdentityProviderReconciler(client, zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+
+	idp := &v1alpha1.IdentityProvider{
+		Spec: v1alpha1.IdentityProviderSpec{
+			GroupSyncProvider: v1alpha1.GroupSyncProviderKeycloak,
+			Keycloak: &v1alpha1.KeycloakGroupSync{
+				BaseURL:  "https://kc.example.com",
+				Realm:    "realm",
+				ClientID: "client",
+				ClientSecretRef: v1alpha1.SecretKeyReference{
+					Name:      "kc-secret",
+					Namespace: "default",
+					Key:       "value",
+				},
+			},
+		},
+	}
+
+	reconciler.updateGroupSyncHealth(context.Background(), idp)
+	condition := findConditionByType(idp.Status.Conditions, string(v1alpha1.IdentityProviderConditionGroupSyncHealthy))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionTrue, condition.Status)
+	assert.Equal(t, "GroupSyncOperational", condition.Reason)
+}
+
+func findConditionByType(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }
 
 // TestIdentityProviderReconciler_NilLogger tests handling of nil logger

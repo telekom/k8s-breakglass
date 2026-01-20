@@ -75,6 +75,10 @@ Complete documentation is available in the [docs/](./docs/) directory:
 - **[Advanced Features](./docs/advanced-features.md)** - Request reasons, approval reasons, self-approval prevention, domain restrictions
 - **[Troubleshooting](./docs/troubleshooting.md)** - Common issues and solutions
 
+## 🤝 Contributing
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements, testing policy, and review expectations.
+
 ## 📦 Example Assets
 
 - **[DenyPolicy examples](./config/deny-policy-examples.yaml)** - Ready-to-use templates covering exfiltration, operational safety, and compliance controls

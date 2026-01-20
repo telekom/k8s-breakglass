@@ -278,6 +278,292 @@ frontend:
 	}
 }
 
+func TestCachedLoaderFileNotExists(t *testing.T) {
+	// Create a loader pointing to a non-existent file
+	loader := config.NewCachedLoader("/nonexistent/path/config.yaml", 5*time.Millisecond)
+
+	// First Get should fail because file doesn't exist and no cached value
+	_, err := loader.Get()
+	if err == nil {
+		t.Error("Expected error when file doesn't exist, got nil")
+	}
+}
+
+func TestCachedLoaderFileDeletedAfterLoad(t *testing.T) {
+	// Create a temp config file
+	tmpFile, err := os.CreateTemp("", "config-delete-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpPath := tmpFile.Name()
+
+	content := `
+frontend:
+  baseURL: "http://test.example.com"
+`
+	if _, err := tmpFile.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close()
+
+	// Create loader and do initial load
+	loader := config.NewCachedLoader(tmpPath, 5*time.Millisecond)
+	cfg1, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Initial Get() failed: %v", err)
+	}
+	if cfg1.Frontend.BaseURL != "http://test.example.com" {
+		t.Errorf("Expected baseURL 'http://test.example.com', got %q", cfg1.Frontend.BaseURL)
+	}
+
+	// Delete the file
+	if err := os.Remove(tmpPath); err != nil {
+		t.Fatalf("Failed to delete temp file: %v", err)
+	}
+
+	// Wait for check interval
+	time.Sleep(10 * time.Millisecond)
+
+	// Should return cached value when file no longer exists
+	cfg2, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Get() after file deletion failed: %v", err)
+	}
+	if cfg2.Frontend.BaseURL != "http://test.example.com" {
+		t.Errorf("Expected cached baseURL, got %q", cfg2.Frontend.BaseURL)
+	}
+}
+
+func TestCachedLoaderReloadOnModification(t *testing.T) {
+	// Create a temp config file
+	tmpFile, err := os.CreateTemp("", "config-reload-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := `
+frontend:
+  baseURL: "http://v1.example.com"
+`
+	if _, err := tmpFile.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close()
+
+	// Create loader with very short check interval
+	loader := config.NewCachedLoader(tmpFile.Name(), 5*time.Millisecond)
+
+	// Load initial config
+	cfg1, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Initial Get() failed: %v", err)
+	}
+	if cfg1.Frontend.BaseURL != "http://v1.example.com" {
+		t.Errorf("Expected baseURL 'http://v1.example.com', got %q", cfg1.Frontend.BaseURL)
+	}
+
+	// Immediate second call should return cached (not trigger reload)
+	cfg2, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Second Get() failed: %v", err)
+	}
+	if cfg2.Frontend.BaseURL != "http://v1.example.com" {
+		t.Errorf("Expected cached baseURL, got %q", cfg2.Frontend.BaseURL)
+	}
+
+	// Wait for check interval
+	time.Sleep(10 * time.Millisecond)
+
+	// Update file - ensure mod time changes
+	time.Sleep(time.Millisecond) // Ensure filesystem time granularity
+	updatedContent := `
+frontend:
+  baseURL: "http://v2.example.com"
+`
+	if err := os.WriteFile(tmpFile.Name(), []byte(updatedContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for check interval
+	time.Sleep(10 * time.Millisecond)
+
+	// Should detect the change and return new value
+	cfg3, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Third Get() failed: %v", err)
+	}
+	if cfg3.Frontend.BaseURL != "http://v2.example.com" {
+		t.Errorf("Expected updated baseURL 'http://v2.example.com', got %q", cfg3.Frontend.BaseURL)
+	}
+}
+
+func TestCachedLoaderFileNotModified(t *testing.T) {
+	// Create a temp config file
+	tmpFile, err := os.CreateTemp("", "config-notmod-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := `
+frontend:
+  baseURL: "http://stable.example.com"
+`
+	if _, err := tmpFile.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close()
+
+	loader := config.NewCachedLoader(tmpFile.Name(), 5*time.Millisecond)
+
+	// Load initial config
+	cfg1, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Initial Get() failed: %v", err)
+	}
+
+	// Wait for check interval
+	time.Sleep(10 * time.Millisecond)
+
+	// Second call should re-stat but return cached since file not modified
+	cfg2, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Second Get() failed: %v", err)
+	}
+
+	if cfg1.Frontend.BaseURL != cfg2.Frontend.BaseURL {
+		t.Error("Expected same value when file not modified")
+	}
+}
+
+func TestCachedLoaderInvalidYAMLOnReload(t *testing.T) {
+	// Create a temp config file
+	tmpFile, err := os.CreateTemp("", "config-invalid-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := `
+frontend:
+  baseURL: "http://valid.example.com"
+`
+	if _, err := tmpFile.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close()
+
+	loader := config.NewCachedLoader(tmpFile.Name(), 5*time.Millisecond)
+
+	// Load initial config
+	cfg1, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Initial Get() failed: %v", err)
+	}
+	if cfg1.Frontend.BaseURL != "http://valid.example.com" {
+		t.Errorf("Expected baseURL 'http://valid.example.com', got %q", cfg1.Frontend.BaseURL)
+	}
+
+	// Wait for check interval
+	time.Sleep(10 * time.Millisecond)
+
+	// Write invalid YAML
+	time.Sleep(time.Millisecond)
+	invalidContent := `invalid: yaml: content [`
+	if err := os.WriteFile(tmpFile.Name(), []byte(invalidContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for check interval
+	time.Sleep(10 * time.Millisecond)
+
+	// Should return cached value when reload fails
+	cfg2, err := loader.Get()
+	if err != nil {
+		t.Fatalf("Get() after invalid reload should succeed with cached value: %v", err)
+	}
+	if cfg2.Frontend.BaseURL != "http://valid.example.com" {
+		t.Errorf("Expected cached baseURL when reload fails, got %q", cfg2.Frontend.BaseURL)
+	}
+}
+
+func TestCachedLoaderDefaultCheckInterval(t *testing.T) {
+	// Create loader with zero interval - should default to 5s
+	loader := config.NewCachedLoader("/some/path", 0)
+	_ = loader // Just verify it doesn't panic
+}
+
+func TestCachedLoaderNegativeCheckInterval(t *testing.T) {
+	// Create loader with negative interval - should default to 5s
+	loader := config.NewCachedLoader("/some/path", -1*time.Second)
+	_ = loader // Just verify it doesn't panic
+}
+
+func TestCachedLoaderConcurrentUpdates(t *testing.T) {
+	// Create a temp config file
+	tmpFile, err := os.CreateTemp("", "config-concupd-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := `
+frontend:
+  baseURL: "http://concurrent.example.com"
+`
+	if err := os.WriteFile(tmpFile.Name(), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := config.NewCachedLoader(tmpFile.Name(), 1*time.Millisecond)
+
+	// Run concurrent reads while the file is being updated
+	var wg sync.WaitGroup
+	errChan := make(chan error, 200)
+
+	// Readers
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				cfg, err := loader.Get()
+				if err != nil {
+					errChan <- err
+					return
+				}
+				// Should always get a valid baseURL
+				if cfg.Frontend.BaseURL == "" {
+					errChan <- fmt.Errorf("got empty baseURL")
+				}
+				time.Sleep(time.Microsecond)
+			}
+		}()
+	}
+
+	// Writer - update file a few times during concurrent reads
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for k := 0; k < 5; k++ {
+			content := fmt.Sprintf(`
+frontend:
+  baseURL: "http://update%d.example.com"
+`, k)
+			_ = os.WriteFile(tmpFile.Name(), []byte(content), 0644)
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		t.Errorf("Concurrent access error: %v", err)
+	}
+}
+
 func TestGetUserIdentifierClaim(t *testing.T) {
 	tests := []struct {
 		name     string
