@@ -14,20 +14,26 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // MailProviderReconciler reconciles a MailProvider object
 type MailProviderReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Log    *zap.SugaredLogger
-	Loader *MailProviderLoader
+	Scheme   *runtime.Scheme
+	Log      *zap.SugaredLogger
+	Loader   *MailProviderLoader
+	Recorder record.EventRecorder
+
+	// StatusCoordinator helps avoid redundant status updates across controller replicas
+	StatusCoordinator *utils.StatusCoordinator
 
 	// Callbacks for notifying other components of changes
 	OnMailProviderChange func(providerName string)
@@ -253,13 +259,44 @@ func (r *MailProviderReconciler) performHealthCheckSync(ctx context.Context, mp 
 
 // updateStatusHealthy updates the status to indicate the provider is healthy
 func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *breakglassv1alpha1.MailProvider) (ctrl.Result, error) {
+	// Re-fetch the object to get the latest resource version
+	var latest breakglassv1alpha1.MailProvider
+	if err := r.Get(ctx, client.ObjectKeyFromObject(mp), &latest); err != nil {
+		if apierrors.IsNotFound(err) {
+			return reconcile.Result{}, nil
+		}
+		r.Log.Errorw("Failed to re-fetch MailProvider for status update", "mailprovider", mp.Name, "error", err)
+		return reconcile.Result{}, err
+	}
+
+	// Use StatusCoordinator to check if we should skip the status update
+	coordinator := r.getStatusCoordinator()
+	skipInfo := coordinator.ShouldSkipStatusUpdateDetailed(
+		latest.Status.Conditions,
+		string(breakglassv1alpha1.MailProviderConditionHealthy),
+		metav1.ConditionTrue,
+		"HealthCheckPassed",
+	)
+	if skipInfo.Skipped {
+		r.Log.Debugw("MailProvider status recently updated, skipping",
+			"mailprovider", mp.Name,
+			"skipReason", skipInfo.Reason,
+			"lastUpdateAge", skipInfo.LastUpdateAge,
+		)
+		if r.Recorder != nil {
+			r.Recorder.Event(&latest, corev1.EventTypeNormal, "StatusUpdateSkipped",
+				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+		}
+		return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
+	}
+
 	now := metav1.Now()
 
-	mp.Status.LastHealthCheck = &now
-	mp.Status.LastSendError = ""
+	latest.Status.LastHealthCheck = &now
+	latest.Status.LastSendError = ""
 
 	// Update conditions
-	mp.Status.Conditions = r.updateCondition(mp.Status.Conditions,
+	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 		metav1.Condition{
 			Type:               string(breakglassv1alpha1.MailProviderConditionReady),
 			Status:             metav1.ConditionTrue,
@@ -268,7 +305,7 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 			LastTransitionTime: metav1.Now(),
 		})
 
-	mp.Status.Conditions = r.updateCondition(mp.Status.Conditions,
+	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 		metav1.Condition{
 			Type:               string(breakglassv1alpha1.MailProviderConditionHealthy),
 			Status:             metav1.ConditionTrue,
@@ -278,7 +315,7 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 		})
 
 	if mp.Spec.SMTP.PasswordRef != nil {
-		mp.Status.Conditions = r.updateCondition(mp.Status.Conditions,
+		latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 			metav1.Condition{
 				Type:               string(breakglassv1alpha1.MailProviderConditionPasswordLoaded),
 				Status:             metav1.ConditionTrue,
@@ -288,7 +325,12 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 			})
 	}
 
-	if err := r.Status().Update(ctx, mp); err != nil {
+	if err := r.Status().Update(ctx, &latest); err != nil {
+		if apierrors.IsConflict(err) {
+			// Another controller likely updated it - this is fine, skip retry
+			r.Log.Debugw("Conflict updating status, another controller likely handled it", "mailprovider", mp.Name)
+			return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
+		}
 		r.Log.Errorw("Failed to update status", "mailprovider", mp.Name, "error", err)
 		return reconcile.Result{}, err
 	}
@@ -299,9 +341,40 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 
 // updateStatusUnhealthy updates the status to indicate the provider is unhealthy
 func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *breakglassv1alpha1.MailProvider, healthErr error) (ctrl.Result, error) {
-	mp.Status.LastSendError = healthErr.Error()
+	// Re-fetch the object to get the latest resource version
+	var latest breakglassv1alpha1.MailProvider
+	if err := r.Get(ctx, client.ObjectKeyFromObject(mp), &latest); err != nil {
+		if apierrors.IsNotFound(err) {
+			return reconcile.Result{}, nil
+		}
+		r.Log.Errorw("Failed to re-fetch MailProvider for status update", "mailprovider", mp.Name, "error", err)
+		return reconcile.Result{}, err
+	}
 
-	mp.Status.Conditions = r.updateCondition(mp.Status.Conditions,
+	// Use StatusCoordinator to check if we should skip the status update
+	coordinator := r.getStatusCoordinator()
+	skipInfo := coordinator.ShouldSkipStatusUpdateDetailed(
+		latest.Status.Conditions,
+		string(breakglassv1alpha1.MailProviderConditionHealthy),
+		metav1.ConditionFalse,
+		"Unhealthy",
+	)
+	if skipInfo.Skipped {
+		r.Log.Debugw("MailProvider status recently updated, skipping",
+			"mailprovider", mp.Name,
+			"skipReason", skipInfo.Reason,
+			"lastUpdateAge", skipInfo.LastUpdateAge,
+		)
+		if r.Recorder != nil {
+			r.Recorder.Event(&latest, corev1.EventTypeNormal, "StatusUpdateSkipped",
+				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+		}
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	latest.Status.LastSendError = healthErr.Error()
+
+	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 		metav1.Condition{
 			Type:               string(breakglassv1alpha1.MailProviderConditionReady),
 			Status:             metav1.ConditionFalse,
@@ -310,7 +383,7 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 			LastTransitionTime: metav1.Now(),
 		})
 
-	mp.Status.Conditions = r.updateCondition(mp.Status.Conditions,
+	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 		metav1.Condition{
 			Type:               string(breakglassv1alpha1.MailProviderConditionHealthy),
 			Status:             metav1.ConditionFalse,
@@ -319,7 +392,12 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 			LastTransitionTime: metav1.Now(),
 		})
 
-	if err := r.Status().Update(ctx, mp); err != nil {
+	if err := r.Status().Update(ctx, &latest); err != nil {
+		if apierrors.IsConflict(err) {
+			// Another controller likely updated it - this is fine, skip retry
+			r.Log.Debugw("Conflict updating status, another controller likely handled it", "mailprovider", mp.Name)
+			return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+		}
 		r.Log.Errorw("Failed to update status", "mailprovider", mp.Name, "error", err)
 		return reconcile.Result{}, err
 	}
@@ -330,7 +408,38 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 
 // updateStatusDisabled updates the status to indicate the provider is disabled
 func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *breakglassv1alpha1.MailProvider) (ctrl.Result, error) {
-	mp.Status.Conditions = r.updateCondition(mp.Status.Conditions,
+	// Re-fetch the object to get the latest resource version
+	var latest breakglassv1alpha1.MailProvider
+	if err := r.Get(ctx, client.ObjectKeyFromObject(mp), &latest); err != nil {
+		if apierrors.IsNotFound(err) {
+			return reconcile.Result{}, nil
+		}
+		r.Log.Errorw("Failed to re-fetch MailProvider for status update", "mailprovider", mp.Name, "error", err)
+		return reconcile.Result{}, err
+	}
+
+	// Use StatusCoordinator to check if we should skip the status update
+	coordinator := r.getStatusCoordinator()
+	skipInfo := coordinator.ShouldSkipStatusUpdateDetailed(
+		latest.Status.Conditions,
+		string(breakglassv1alpha1.MailProviderConditionReady),
+		metav1.ConditionFalse,
+		"Disabled",
+	)
+	if skipInfo.Skipped {
+		r.Log.Debugw("MailProvider status recently updated, skipping",
+			"mailprovider", mp.Name,
+			"skipReason", skipInfo.Reason,
+			"lastUpdateAge", skipInfo.LastUpdateAge,
+		)
+		if r.Recorder != nil {
+			r.Recorder.Event(&latest, corev1.EventTypeNormal, "StatusUpdateSkipped",
+				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+		}
+		return reconcile.Result{}, nil
+	}
+
+	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 		metav1.Condition{
 			Type:               string(breakglassv1alpha1.MailProviderConditionReady),
 			Status:             metav1.ConditionFalse,
@@ -339,13 +448,26 @@ func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *b
 			LastTransitionTime: metav1.Now(),
 		})
 
-	if err := r.Status().Update(ctx, mp); err != nil {
+	if err := r.Status().Update(ctx, &latest); err != nil {
+		if apierrors.IsConflict(err) {
+			// Another controller likely updated it - this is fine
+			r.Log.Debugw("Conflict updating status, another controller likely handled it", "mailprovider", mp.Name)
+			return reconcile.Result{}, nil
+		}
 		r.Log.Errorw("Failed to update status", "mailprovider", mp.Name, "error", err)
 		return reconcile.Result{}, err
 	}
 
 	// No need to requeue disabled providers
 	return reconcile.Result{}, nil
+}
+
+// getStatusCoordinator returns the StatusCoordinator, creating a default one if not set
+func (r *MailProviderReconciler) getStatusCoordinator() *utils.StatusCoordinator {
+	if r.StatusCoordinator != nil {
+		return r.StatusCoordinator
+	}
+	return utils.NewStatusCoordinator()
 }
 
 // updateCondition updates or adds a condition to the conditions list.

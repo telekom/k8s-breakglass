@@ -207,15 +207,17 @@ type DebugSessionListResponse struct {
 
 // DebugSessionSummary represents a summarized debug session for list responses
 type DebugSessionSummary struct {
-	Name         string                     `json:"name"`
-	TemplateRef  string                     `json:"templateRef"`
-	Cluster      string                     `json:"cluster"`
-	RequestedBy  string                     `json:"requestedBy"`
-	State        v1alpha1.DebugSessionState `json:"state"`
-	StartsAt     *metav1.Time               `json:"startsAt,omitempty"`
-	ExpiresAt    *metav1.Time               `json:"expiresAt,omitempty"`
-	Participants int                        `json:"participants"`
-	AllowedPods  int                        `json:"allowedPods"`
+	Name                   string                     `json:"name"`
+	TemplateRef            string                     `json:"templateRef"`
+	Cluster                string                     `json:"cluster"`
+	RequestedBy            string                     `json:"requestedBy"`
+	RequestedByDisplayName string                     `json:"requestedByDisplayName,omitempty"`
+	State                  v1alpha1.DebugSessionState `json:"state"`
+	StatusMessage          string                     `json:"statusMessage,omitempty"`
+	StartsAt               *metav1.Time               `json:"startsAt,omitempty"`
+	ExpiresAt              *metav1.Time               `json:"expiresAt,omitempty"`
+	Participants           int                        `json:"participants"`
+	AllowedPods            int                        `json:"allowedPods"`
 }
 
 // DebugSessionDetailResponse represents the detailed debug session response
@@ -280,15 +282,17 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	summaries := make([]DebugSessionSummary, 0, len(filtered))
 	for _, s := range filtered {
 		summaries = append(summaries, DebugSessionSummary{
-			Name:         s.Name,
-			TemplateRef:  s.Spec.TemplateRef,
-			Cluster:      s.Spec.Cluster,
-			RequestedBy:  s.Spec.RequestedBy,
-			State:        s.Status.State,
-			StartsAt:     s.Status.StartsAt,
-			ExpiresAt:    s.Status.ExpiresAt,
-			Participants: len(s.Status.Participants),
-			AllowedPods:  len(s.Status.AllowedPods),
+			Name:                   s.Name,
+			TemplateRef:            s.Spec.TemplateRef,
+			Cluster:                s.Spec.Cluster,
+			RequestedBy:            s.Spec.RequestedBy,
+			RequestedByDisplayName: s.Spec.RequestedByDisplayName,
+			State:                  s.Status.State,
+			StatusMessage:          s.Status.Message,
+			StartsAt:               s.Status.StartsAt,
+			ExpiresAt:              s.Status.ExpiresAt,
+			Participants:           len(s.Status.Participants),
+			AllowedPods:            len(s.Status.AllowedPods),
 		})
 	}
 
@@ -384,6 +388,22 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	// Get email from context (set by auth middleware from "email" claim)
+	userEmail := ""
+	if email, exists := ctx.Get("email"); exists && email != nil {
+		if emailStr, ok := email.(string); ok {
+			userEmail = emailStr
+		}
+	}
+
+	// Get display name from context (set by auth middleware from "name" claim)
+	displayName := ""
+	if dn, exists := ctx.Get("displayName"); exists && dn != nil {
+		if dnStr, ok := dn.(string); ok {
+			displayName = dnStr
+		}
+	}
+
 	// Get user groups from context for auto-approval logic
 	var userGroups []string
 	if groups, exists := ctx.Get("groups"); exists && groups != nil {
@@ -426,14 +446,16 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			},
 		},
 		Spec: v1alpha1.DebugSessionSpec{
-			TemplateRef:         req.TemplateRef,
-			Cluster:             req.Cluster,
-			RequestedBy:         currentUser.(string),
-			UserGroups:          userGroups,
-			RequestedDuration:   req.RequestedDuration,
-			NodeSelector:        req.NodeSelector,
-			Reason:              req.Reason,
-			InvitedParticipants: req.InvitedParticipants,
+			TemplateRef:            req.TemplateRef,
+			Cluster:                req.Cluster,
+			RequestedBy:            currentUser.(string),
+			RequestedByEmail:       userEmail,
+			RequestedByDisplayName: displayName,
+			UserGroups:             userGroups,
+			RequestedDuration:      req.RequestedDuration,
+			NodeSelector:           req.NodeSelector,
+			Reason:                 req.Reason,
+			InvitedParticipants:    req.InvitedParticipants,
 		},
 	}
 
@@ -449,6 +471,9 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	// Send request email to approvers
 	c.sendDebugSessionRequestEmail(apiCtx, session, template)
+
+	// Send confirmation email to requester
+	c.sendDebugSessionCreatedEmail(session, template)
 
 	// Emit audit event for session creation
 	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionCreated, session, currentUser.(string), "Debug session created")
@@ -531,12 +556,30 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		role = v1alpha1.ParticipantRoleParticipant
 	}
 
+	// Get display name from context (set by auth middleware from "name" claim)
+	displayName := ""
+	if dn, exists := ctx.Get("displayName"); exists && dn != nil {
+		if dnStr, ok := dn.(string); ok {
+			displayName = dnStr
+		}
+	}
+
+	// Get email from context (set by auth middleware from "email" claim)
+	userEmail := ""
+	if email, exists := ctx.Get("email"); exists && email != nil {
+		if emailStr, ok := email.(string); ok {
+			userEmail = emailStr
+		}
+	}
+
 	// Add participant
 	now := metav1.Now()
 	session.Status.Participants = append(session.Status.Participants, v1alpha1.DebugSessionParticipant{
-		User:     username,
-		Role:     role,
-		JoinedAt: now,
+		User:        username,
+		Email:       userEmail,
+		DisplayName: displayName,
+		Role:        role,
+		JoinedAt:    now,
 	})
 
 	if err := c.client.Status().Update(apiCtx, session); err != nil {
@@ -1281,9 +1324,21 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 		return
 	}
 
+	// Use display name if available, fallback to username
+	requesterName := session.Spec.RequestedByDisplayName
+	if requesterName == "" {
+		requesterName = session.Spec.RequestedBy
+	}
+
+	// Use email if available, fallback to username
+	requesterEmail := session.Spec.RequestedByEmail
+	if requesterEmail == "" {
+		requesterEmail = session.Spec.RequestedBy
+	}
+
 	params := mail.DebugSessionRequestMailParams{
-		RequesterName:     session.Spec.RequestedBy,
-		RequesterEmail:    session.Spec.RequestedBy, // Use username as email if not available
+		RequesterName:     requesterName,
+		RequesterEmail:    requesterEmail,
 		RequestedAt:       session.CreationTimestamp.Format(time.RFC3339),
 		SessionID:         session.Name,
 		Cluster:           session.Spec.Cluster,
@@ -1301,7 +1356,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 		return
 	}
 
-	subject := fmt.Sprintf("[%s] Debug Session Request: %s on %s", c.brandingName, session.Spec.RequestedBy, session.Spec.Cluster)
+	subject := fmt.Sprintf("[%s] Debug Session Request: %s on %s", c.brandingName, requesterName, session.Spec.Cluster)
 	if err := c.mailService.Enqueue(session.Name, approverEmails, subject, body); err != nil {
 		c.log.Errorw("Failed to enqueue debug session request email", "session", session.Name, "error", err)
 	} else {
@@ -1315,8 +1370,17 @@ func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(session *v1alp
 		return
 	}
 
-	// Send to the requester
-	recipients := []string{session.Spec.RequestedBy}
+	// Send to the requester - use email field if available, fallback to requestedBy
+	recipientEmail := session.Spec.RequestedByEmail
+	if recipientEmail == "" {
+		recipientEmail = session.Spec.RequestedBy
+	}
+	// Skip if no valid email (must contain @)
+	if !strings.Contains(recipientEmail, "@") {
+		c.log.Warnw("Skipping approval email - no valid email address", "session", session.Name, "recipient", recipientEmail)
+		return
+	}
+	recipients := []string{recipientEmail}
 
 	approvedAt := ""
 	expiresAt := ""
@@ -1333,9 +1397,15 @@ func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(session *v1alp
 		expiresAt = session.Status.ExpiresAt.Format(time.RFC3339)
 	}
 
+	// Use display name if available, fallback to username
+	requesterName := session.Spec.RequestedByDisplayName
+	if requesterName == "" {
+		requesterName = session.Spec.RequestedBy
+	}
+
 	params := mail.DebugSessionApprovedMailParams{
-		RequesterName:  session.Spec.RequestedBy,
-		RequesterEmail: session.Spec.RequestedBy,
+		RequesterName:  requesterName,
+		RequesterEmail: recipientEmail,
 		SessionID:      session.Name,
 		Cluster:        session.Spec.Cluster,
 		TemplateName:   session.Spec.TemplateRef,
@@ -1369,8 +1439,17 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(session *v1al
 		return
 	}
 
-	// Send to the requester
-	recipients := []string{session.Spec.RequestedBy}
+	// Send to the requester - use email field if available, fallback to requestedBy
+	recipientEmail := session.Spec.RequestedByEmail
+	if recipientEmail == "" {
+		recipientEmail = session.Spec.RequestedBy
+	}
+	// Skip if no valid email (must contain @)
+	if !strings.Contains(recipientEmail, "@") {
+		c.log.Warnw("Skipping rejection email - no valid email address", "session", session.Name, "recipient", recipientEmail)
+		return
+	}
+	recipients := []string{recipientEmail}
 
 	rejectedAt := ""
 	rejectorName := ""
@@ -1383,9 +1462,15 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(session *v1al
 		rejectionReason = session.Status.Approval.Reason
 	}
 
+	// Use display name if available, fallback to username
+	requesterName := session.Spec.RequestedByDisplayName
+	if requesterName == "" {
+		requesterName = session.Spec.RequestedBy
+	}
+
 	params := mail.DebugSessionRejectedMailParams{
-		RequesterName:   session.Spec.RequestedBy,
-		RequesterEmail:  session.Spec.RequestedBy,
+		RequesterName:   requesterName,
+		RequesterEmail:  recipientEmail,
 		SessionID:       session.Name,
 		Cluster:         session.Spec.Cluster,
 		TemplateName:    session.Spec.TemplateRef,
@@ -1408,6 +1493,59 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(session *v1al
 		c.log.Errorw("Failed to enqueue debug session rejection email", "session", session.Name, "error", err)
 	} else {
 		c.log.Infow("Debug session rejection email queued", "session", session.Name)
+	}
+}
+
+// sendDebugSessionCreatedEmail sends email confirmation to requester when a debug session is created
+func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(session *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) {
+	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	// Send to the requester - use email field if available, fallback to requestedBy
+	recipientEmail := session.Spec.RequestedByEmail
+	if recipientEmail == "" {
+		recipientEmail = session.Spec.RequestedBy
+	}
+	// Skip if no valid email (must contain @)
+	if !strings.Contains(recipientEmail, "@") {
+		c.log.Warnw("Skipping session created email - no valid email address", "session", session.Name, "recipient", recipientEmail)
+		return
+	}
+	recipients := []string{recipientEmail}
+
+	// Use display name if available, fallback to username
+	requesterName := session.Spec.RequestedByDisplayName
+	if requesterName == "" {
+		requesterName = session.Spec.RequestedBy
+	}
+
+	params := mail.DebugSessionCreatedMailParams{
+		RequesterName:     requesterName,
+		RequesterEmail:    recipientEmail,
+		SessionID:         session.Name,
+		Cluster:           session.Spec.Cluster,
+		TemplateName:      session.Spec.TemplateRef,
+		Namespace:         session.Namespace,
+		RequestedDuration: session.Spec.RequestedDuration,
+		Reason:            session.Spec.Reason,
+		RequestedAt:       session.CreationTimestamp.Format(time.RFC3339),
+		RequiresApproval:  template.Spec.Approvers != nil && len(template.Spec.Approvers.Users) > 0,
+		URL:               fmt.Sprintf("%s/debug-sessions/%s", c.baseURL, session.Name),
+		BrandingName:      c.brandingName,
+	}
+
+	body, err := mail.RenderDebugSessionCreated(params)
+	if err != nil {
+		c.log.Errorw("Failed to render debug session created email", "session", session.Name, "error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Debug Session Created: %s", c.brandingName, session.Name)
+	if err := c.mailService.Enqueue(session.Name, recipients, subject, body); err != nil {
+		c.log.Errorw("Failed to enqueue debug session created email", "session", session.Name, "error", err)
+	} else {
+		c.log.Infow("Debug session created email queued", "session", session.Name, "requester", session.Spec.RequestedBy)
 	}
 }
 

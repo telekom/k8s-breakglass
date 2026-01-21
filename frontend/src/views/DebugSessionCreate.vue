@@ -47,6 +47,7 @@ watch(
 );
 
 const selectedTemplate = computed(() => {
+  if (!templates.value || templates.value.length === 0) return undefined;
   return templates.value.find((t) => t.name === form.templateRef);
 });
 
@@ -62,8 +63,13 @@ const durationOptions = [
   { value: "4h", label: "4 hours" },
 ];
 
+const hasTemplates = computed(() => {
+  return templates.value && templates.value.length > 0;
+});
+
 const isValid = computed(() => {
   return (
+    hasTemplates.value &&
     Boolean(form.templateRef) &&
     Boolean(form.cluster) &&
     Boolean(form.requestedDuration) &&
@@ -75,7 +81,8 @@ async function fetchTemplates() {
   loading.value = true;
   try {
     const result = await debugSessionService.listTemplates();
-    templates.value = result.templates;
+    // Handle null templates from API (when no templates exist)
+    templates.value = result.templates ?? [];
 
     // Auto-select first template if available
     const firstTemplate = templates.value[0];
@@ -153,6 +160,16 @@ function handleDurationChange(ev: Event) {
     />
 
     <LoadingState v-if="loading" message="Loading templates..." />
+
+    <div v-else-if="!hasTemplates" class="no-templates-message" data-testid="no-templates-message">
+      <scale-icon-alert-error size="48" color="var(--scl-color-text-disabled)"></scale-icon-alert-error>
+      <h3>No Debug Session Templates Available</h3>
+      <p>
+        There are no debug session templates configured in this environment. Please contact your administrator to create
+        a DebugSessionTemplate resource.
+      </p>
+      <scale-button variant="secondary" @click="handleCancel">Go Back</scale-button>
+    </div>
 
     <div v-else class="create-form">
       <div class="form-section">
@@ -346,5 +363,32 @@ function handleDurationChange(ev: Event) {
   gap: var(--space-md);
   padding-top: var(--space-md);
   border-top: 1px solid var(--telekom-color-ui-border-subtle);
+}
+
+.no-templates-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-2xl);
+  text-align: center;
+  background: var(--telekom-color-background-surface);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+  border-radius: var(--radius-md);
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+.no-templates-message h3 {
+  margin: 0;
+  color: var(--telekom-color-text-and-icon-standard);
+}
+
+.no-templates-message p {
+  margin: 0;
+  color: var(--telekom-color-text-and-icon-additional);
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
 </style>

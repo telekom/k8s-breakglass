@@ -208,19 +208,13 @@ function updateMineFilter(ev: Event) {
   refresh();
 }
 
-function toggleState(state: string) {
+function onStateToggle(state: string, event: Event) {
+  const checked = (event.target as HTMLInputElement)?.checked;
   const idx = filters.states.indexOf(state);
-  if (idx >= 0) {
-    filters.states.splice(idx, 1);
-  } else {
+  if (checked && idx < 0) {
     filters.states.push(state);
-  }
-}
-
-function handleStateKeydown(event: KeyboardEvent, state: string) {
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    toggleState(state);
+  } else if (!checked && idx >= 0) {
+    filters.states.splice(idx, 1);
   }
 }
 </script>
@@ -273,23 +267,17 @@ function handleStateKeydown(event: KeyboardEvent, state: string) {
 
     <div class="state-filters" data-testid="state-filters" role="group" aria-label="State filters">
       <span id="state-filter-label" class="filter-label">Filter by state:</span>
-      <scale-tag
-        v-for="opt in stateOptions"
-        :key="opt.value"
-        :data-testid="`state-filter-${opt.value}`"
-        :variant="filters.states.includes(opt.value) ? 'standard' : 'strong'"
-        size="small"
-        dismissible
-        :class="{ 'tag-active': filters.states.includes(opt.value) }"
-        :tabindex="0"
-        role="checkbox"
-        :aria-checked="filters.states.includes(opt.value)"
-        :aria-label="`${opt.label} ${filters.states.includes(opt.value) ? 'selected' : 'not selected'}`"
-        @click="toggleState(opt.value)"
-        @keydown="(e: KeyboardEvent) => handleStateKeydown(e, opt.value)"
-      >
-        {{ opt.label }}
-      </scale-tag>
+      <div class="state-checkbox-group">
+        <scale-checkbox
+          v-for="opt in stateOptions"
+          :key="opt.value"
+          :data-testid="`state-filter-${opt.value}`"
+          :checked="filters.states.includes(opt.value)"
+          @scaleChange="(event: any) => onStateToggle(opt.value, event)"
+        >
+          {{ opt.label }}
+        </scale-checkbox>
+      </div>
     </div>
 
     <LoadingState v-if="loading" message="Loading debug sessions..." />
@@ -395,13 +383,10 @@ function handleStateKeydown(event: KeyboardEvent, state: string) {
   margin-right: var(--space-xs);
 }
 
-.state-filters scale-tag {
-  cursor: pointer;
-  transition: opacity 0.2s ease;
-}
-
-.state-filters scale-tag:not(.tag-active) {
-  opacity: 0.5;
+.state-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
 }
 
 .sessions-grid {

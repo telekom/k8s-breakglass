@@ -89,6 +89,16 @@ function handleRenew() {
     </div>
 
     <div class="card-body">
+      <!-- Show status message for failed/rejected sessions -->
+      <div
+        v-if="session.statusMessage && (session.state === 'Failed' || session.state === 'Rejected')"
+        class="status-message error"
+        data-testid="status-message"
+      >
+        <scale-icon-alert-error size="16"></scale-icon-alert-error>
+        <span>{{ session.statusMessage }}</span>
+      </div>
+
       <div class="info-grid">
         <div class="info-item">
           <span class="label">Template</span>
@@ -96,7 +106,7 @@ function handleRenew() {
         </div>
         <div class="info-item">
           <span class="label">Requested By</span>
-          <span class="value">{{ session.requestedBy }}</span>
+          <span class="value">{{ session.requestedByDisplayName || session.requestedBy }}</span>
         </div>
         <div v-if="session.startsAt" class="info-item">
           <span class="label">Started</span>
@@ -281,6 +291,25 @@ function handleRenew() {
 
 .card-body {
   padding: var(--space-md);
+}
+
+.status-message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  margin-bottom: var(--space-md);
+}
+
+.status-message.error {
+  background: var(--telekom-color-functional-danger-subtle);
+  color: var(--telekom-color-functional-danger-standard);
+}
+
+.status-message span {
+  word-break: break-word;
 }
 
 .info-grid {

@@ -26,10 +26,46 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
 )
+
+// cacheControlWriter wraps http.ResponseWriter to set Cache-Control headers
+// based on the request path before writing the response.
+type cacheControlWriter struct {
+	http.ResponseWriter
+	path        string
+	wroteHeader bool
+}
+
+func (w *cacheControlWriter) WriteHeader(statusCode int) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+		// Set cache headers based on file type
+		// Vite builds produce hashed filenames for JS/CSS, so they can be cached long-term
+		// index.html and other non-hashed files should not be cached
+		if strings.HasPrefix(w.path, "/assets/") {
+			// Hashed assets in /assets/ can be cached for 1 year (immutable)
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else if strings.HasSuffix(w.path, ".html") || w.path == "/" {
+			// HTML files should always be revalidated to get latest app version
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		} else {
+			// Other static files (fonts, images without hashes) - cache with revalidation
+			w.Header().Set("Cache-Control", "public, max-age=3600, must-revalidate")
+		}
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *cacheControlWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
 
 func ServeSPA(urlPrefix, spaDirectory string) gin.HandlerFunc {
 	directory := static.LocalFile(spaDirectory, true)
@@ -38,12 +74,17 @@ func ServeSPA(urlPrefix, spaDirectory string) gin.HandlerFunc {
 		fileserver = http.StripPrefix(urlPrefix, fileserver)
 	}
 	return func(c *gin.Context) {
-		if directory.Exists(urlPrefix, c.Request.URL.Path) {
-			fileserver.ServeHTTP(c.Writer, c.Request)
+		path := c.Request.URL.Path
+		if directory.Exists(urlPrefix, path) {
+			// Wrap the response writer to set cache headers
+			ccWriter := &cacheControlWriter{ResponseWriter: c.Writer, path: path}
+			fileserver.ServeHTTP(ccWriter, c.Request)
 			c.Abort()
 		} else {
+			// SPA fallback to index.html - always revalidate
 			c.Request.URL.Path = "/"
-			fileserver.ServeHTTP(c.Writer, c.Request)
+			ccWriter := &cacheControlWriter{ResponseWriter: c.Writer, path: "/"}
+			fileserver.ServeHTTP(ccWriter, c.Request)
 			c.Abort()
 		}
 	}

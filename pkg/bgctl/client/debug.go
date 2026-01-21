@@ -26,15 +26,16 @@ type DebugSessionListOptions struct {
 }
 
 type DebugSessionSummary struct {
-	Name         string                     `json:"name"`
-	TemplateRef  string                     `json:"templateRef"`
-	Cluster      string                     `json:"cluster"`
-	RequestedBy  string                     `json:"requestedBy"`
-	State        v1alpha1.DebugSessionState `json:"state"`
-	StartsAt     *metav1.Time               `json:"startsAt,omitempty"`
-	ExpiresAt    *metav1.Time               `json:"expiresAt,omitempty"`
-	Participants int                        `json:"participants"`
-	AllowedPods  int                        `json:"allowedPods"`
+	Name          string                     `json:"name"`
+	TemplateRef   string                     `json:"templateRef"`
+	Cluster       string                     `json:"cluster"`
+	RequestedBy   string                     `json:"requestedBy"`
+	State         v1alpha1.DebugSessionState `json:"state"`
+	StatusMessage string                     `json:"statusMessage,omitempty"`
+	StartsAt      *metav1.Time               `json:"startsAt,omitempty"`
+	ExpiresAt     *metav1.Time               `json:"expiresAt,omitempty"`
+	Participants  int                        `json:"participants"`
+	AllowedPods   int                        `json:"allowedPods"`
 }
 
 type DebugSessionListResponse struct {

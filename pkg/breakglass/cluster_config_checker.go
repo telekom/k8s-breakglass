@@ -10,8 +10,10 @@ import (
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/discovery"
@@ -500,10 +502,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 }
 
 func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
-	// update status with conditions
-	now := metav1.Now()
-
-	// Determine condition type based on phase
+	// Determine condition status and reason first for skip check
 	isSuccess := phase == "Ready"
 	failureType := ""
 	if !isSuccess {
@@ -555,21 +554,60 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 		}
 	}
 
+	// Re-fetch the object to get the latest version and check if we should skip
+	var latest telekomv1alpha1.ClusterConfig
+	if err := ccc.Client.Get(ctx, client.ObjectKeyFromObject(cc), &latest); err != nil {
+		if apierrors.IsNotFound(err) {
+			lg.Debugw("ClusterConfig deleted before status update, skipping", "cluster", cc.Name)
+			return nil
+		}
+		lg.Warnw("Failed to re-fetch ClusterConfig for status update", "cluster", cc.Name, "error", err)
+		return err
+	}
+
+	// Use StatusCoordinator to check if we should skip the status update
+	coordinator := utils.NewStatusCoordinator()
+	skipInfo := coordinator.ShouldSkipStatusUpdateDetailed(
+		latest.Status.Conditions,
+		string(telekomv1alpha1.ClusterConfigConditionReady),
+		conditionStatus,
+		string(conditionReason),
+	)
+	if skipInfo.Skipped {
+		lg.Debugw("ClusterConfig status recently updated, skipping",
+			"cluster", cc.Name,
+			"skipReason", skipInfo.Reason,
+			"lastUpdateAge", skipInfo.LastUpdateAge,
+		)
+		if ccc.Recorder != nil {
+			ccc.Recorder.Event(&latest, corev1.EventTypeNormal, "StatusUpdateSkipped",
+				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+		}
+		return nil
+	}
+
+	// update status with conditions
+	now := metav1.Now()
+
 	// Update condition with typed constant
 	condition := metav1.Condition{
 		Type:               string(telekomv1alpha1.ClusterConfigConditionReady),
 		Status:             conditionStatus,
-		ObservedGeneration: cc.Generation,
+		ObservedGeneration: latest.Generation,
 		Reason:             string(conditionReason),
 		Message:            message,
 		LastTransitionTime: now,
 	}
-	apimeta.SetStatusCondition(&cc.Status.Conditions, condition)
-	cc.Status.ObservedGeneration = cc.Generation
+	apimeta.SetStatusCondition(&latest.Status.Conditions, condition)
+	latest.Status.ObservedGeneration = latest.Generation
 
 	// Persist status using Status().Update() since ClusterConfig has status subresource enabled.
 	// When the status subresource is enabled, the main Update() endpoint ignores status changes.
-	if err := ccc.Client.Status().Update(ctx, cc); err != nil {
+	if err := ccc.Client.Status().Update(ctx, &latest); err != nil {
+		if apierrors.IsConflict(err) {
+			lg.Debugw("Conflict updating ClusterConfig status, another controller likely handled it", "cluster", cc.Name)
+			return nil
+		}
 		lg.Warnw("failed to update ClusterConfig status", "cluster", cc.Name, "error", err)
 		return err
 	}
@@ -583,7 +621,7 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 		} else {
 			lg.Debugw("Emitting Warning event for ClusterConfig", "cluster", cc.Name, "message", message)
 		}
-		ccc.Recorder.Event(cc, eventType, eventReason, message)
+		ccc.Recorder.Event(&latest, eventType, eventReason, message)
 	} else {
 		lg.Warnw("No Event recorder configured; skipping Kubernetes Event emission", "cluster", cc.Name)
 	}

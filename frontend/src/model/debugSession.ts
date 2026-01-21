@@ -24,6 +24,8 @@ export type ParticipantRole = "owner" | "participant" | "viewer";
 // Participant status
 export interface DebugSessionParticipant {
   user: string;
+  displayName?: string;
+  email?: string;
   role: ParticipantRole;
   joinedAt?: string;
   leftAt?: string;
@@ -66,7 +68,9 @@ export interface DebugSessionSummary {
   templateRef: string;
   cluster: string;
   requestedBy: string;
+  requestedByDisplayName?: string;
   state: DebugSessionState;
+  statusMessage?: string;
   startsAt?: string;
   expiresAt?: string;
   participants: number;
@@ -107,6 +111,8 @@ export interface DebugSession {
     templateRef: string;
     cluster: string;
     requestedBy: string;
+    requestedByDisplayName?: string;
+    requestedByEmail?: string;
     requestedDuration?: string;
     reason?: string;
     nodeSelector?: Record<string, string>;

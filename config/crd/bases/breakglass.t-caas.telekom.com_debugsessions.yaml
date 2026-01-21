@@ -89,6 +89,15 @@ spec:
                 description: requestedBy is the email/identifier of the user who requested
                   the session.
                 type: string
+              requestedByDisplayName:
+                description: requestedByDisplayName is the human-readable name of
+                  the requester (from OIDC "name" claim).
+                type: string
+              requestedByEmail:
+                description: |-
+                  requestedByEmail is the email address of the requester (from OIDC "email" claim).
+                  Used for sending email notifications.
+                type: string
               requestedDuration:
                 description: |-
                   requestedDuration is the desired session duration (e.g., "2h").
@@ -332,6 +341,15 @@ spec:
                 items:
                   description: DebugSessionParticipant represents a user in the session.
                   properties:
+                    displayName:
+                      description: displayName is the human-readable name of the participant
+                        (from OIDC "name" claim).
+                      type: string
+                    email:
+                      description: |-
+                        email is the email address of the participant (from OIDC "email" claim).
+                        Used for sending email notifications.
+                      type: string
                     joinedAt:
                       description: joinedAt is when the user joined the session.
                       format: date-time
@@ -349,7 +367,7 @@ spec:
                       - viewer
                       type: string
                     user:
-                      description: user is the email/identifier of the participant.
+                      description: user is the username/identifier of the participant.
                       type: string
                   required:
                   - joinedAt

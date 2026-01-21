@@ -88,6 +88,15 @@ type DebugSessionSpec struct {
 	// +required
 	RequestedBy string `json:"requestedBy"`
 
+	// requestedByEmail is the email address of the requester (from OIDC "email" claim).
+	// Used for sending email notifications.
+	// +optional
+	RequestedByEmail string `json:"requestedByEmail,omitempty"`
+
+	// requestedByDisplayName is the human-readable name of the requester (from OIDC "name" claim).
+	// +optional
+	RequestedByDisplayName string `json:"requestedByDisplayName,omitempty"`
+
 	// userGroups contains the groups the requesting user belongs to.
 	// This is populated at session creation time from the authentication token
 	// and used for auto-approval group matching.
@@ -199,9 +208,18 @@ type DebugSessionApproval struct {
 
 // DebugSessionParticipant represents a user in the session.
 type DebugSessionParticipant struct {
-	// user is the email/identifier of the participant.
+	// user is the username/identifier of the participant.
 	// +required
 	User string `json:"user"`
+
+	// email is the email address of the participant (from OIDC "email" claim).
+	// Used for sending email notifications.
+	// +optional
+	Email string `json:"email,omitempty"`
+
+	// displayName is the human-readable name of the participant (from OIDC "name" claim).
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
 
 	// role is the participant's role (owner or participant).
 	// +required
