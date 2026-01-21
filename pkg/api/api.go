@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -354,20 +355,61 @@ func NewServer(log *zap.Logger, cfg config.Config,
 }
 
 // buildCSP generates a Content-Security-Policy header value.
-// It includes 'self' for all directives and dynamically adds the OIDC authority
-// to connect-src so the browser can make direct token exchange requests to Keycloak.
+// It includes 'self' for all directives and dynamically adds all configured OIDC authorities
+// to connect-src (for API calls) and frame-src (for silent token refresh via iframe).
+// Supports multiple identity providers when using the IDP reconciler.
 func (s *Server) buildCSP() string {
 	// Base CSP with 'self' for all directives
 	connectSrc := "'self'"
+	frameSrc := "'none'" // Default to none, will be updated if OIDC is configured
 
-	// Add OIDC authority if configured (needed for token exchange)
+	// Collect unique authority URLs from all sources
+	authorities := make(map[string]struct{})
+
+	// First, check single IDP config (legacy mode or fallback)
 	s.idpMutex.RLock()
 	if s.oidcAuthority != nil {
-		// Include both the scheme://host and the scheme://host:port forms
 		authority := s.oidcAuthority.Scheme + "://" + s.oidcAuthority.Host
-		connectSrc += " " + authority
+		authorities[authority] = struct{}{}
 	}
 	s.idpMutex.RUnlock()
+
+	// Second, check multi-IDP reconciler for all enabled identity providers
+	if s.idpReconciler != nil {
+		for _, idp := range s.idpReconciler.GetCachedIdentityProviders() {
+			if idp.Spec.Disabled {
+				continue
+			}
+			// Determine the authority URL for this IDP
+			var authorityURL string
+			if idp.Spec.Keycloak != nil && idp.Spec.Keycloak.BaseURL != "" {
+				// For Keycloak, use the base URL (realm path is included in auth requests)
+				authorityURL = idp.Spec.Keycloak.BaseURL
+			} else if idp.Spec.OIDC.Authority != "" {
+				// OIDC config is embedded (not a pointer), so just check the Authority field
+				authorityURL = idp.Spec.OIDC.Authority
+			}
+			if authorityURL != "" {
+				if u, err := url.Parse(authorityURL); err == nil {
+					authority := u.Scheme + "://" + u.Host
+					authorities[authority] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// Build the CSP directives from collected authorities
+	if len(authorities) > 0 {
+		var authorityList []string
+		for authority := range authorities {
+			authorityList = append(authorityList, authority)
+		}
+		// Sort for consistent ordering
+		sort.Strings(authorityList)
+		authoritiesStr := strings.Join(authorityList, " ")
+		connectSrc += " " + authoritiesStr
+		frameSrc = authoritiesStr
+	}
 
 	// Script hashes for Vite's @vitejs/plugin-legacy inline scripts
 	// These are required for legacy browser detection and Safari 10.1 module support
@@ -379,9 +421,10 @@ func (s *Server) buildCSP() string {
 	legacyScriptHashes := "'sha256-ZxAi3a7m9Mzbc+Z1LGuCCK5Xee6reDkEPRas66H9KSo=' 'sha256-+5XkZFazzJo8n0iOP4ti/cLCMUudTf//Mzkb7xNPXIc=' 'sha256-MS6/3FCg4WjP9gwgaBGwLpRCY6fZBgwmhVCdrPrNf3E=' 'sha256-tQjf8gvb2ROOMapIxFvFAYBeUJ0v1HCbOcSmDNXGtDo='"
 
 	return fmt.Sprintf(
-		"default-src 'self'; script-src 'self' %s; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src %s; frame-ancestors 'none'",
+		"default-src 'self'; script-src 'self' %s; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src %s; frame-src %s; frame-ancestors 'none'",
 		legacyScriptHashes,
 		connectSrc,
+		frameSrc,
 	)
 }
 

@@ -108,36 +108,56 @@ function handleCancel() {
   router.push({ name: "debugSessionBrowser" });
 }
 
+/**
+ * Extracts the value from a Scale component event.
+ * Scale components emit CustomEvents with detail containing the value,
+ * or standard DOM events where value is on target.
+ */
+function extractScaleValue(ev: Event): string {
+  const target = ev.target as HTMLInputElement | HTMLTextAreaElement | null;
+  if (target && typeof target.value === "string") {
+    return target.value;
+  }
+  const detail = (ev as CustomEvent<{ value?: string }>).detail;
+  if (detail && typeof detail.value === "string") {
+    return detail.value;
+  }
+  return "";
+}
+
 function handleTemplateChange(ev: Event) {
-  const value = (ev.target as HTMLSelectElement)?.value || (ev as CustomEvent)?.detail?.value;
-  form.templateRef = value || "";
-  // Reset cluster when template changes
-  form.cluster = "";
+  const value = extractScaleValue(ev);
+  if (value && value !== form.templateRef) {
+    form.templateRef = value;
+    // Reset cluster when template changes
+    form.cluster = "";
+  }
 }
 
 function handleClusterChange(ev: Event) {
-  const value = (ev.target as HTMLSelectElement)?.value || (ev as CustomEvent)?.detail?.value;
-  form.cluster = value || "";
+  const value = extractScaleValue(ev);
+  form.cluster = value;
 }
 
 function handleDurationChange(ev: Event) {
-  const value = (ev.target as HTMLSelectElement)?.value || (ev as CustomEvent)?.detail?.value;
+  const value = extractScaleValue(ev);
   form.requestedDuration = value || "1h";
 }
 
 function handleReasonChange(ev: Event) {
-  const value = (ev.target as HTMLInputElement)?.value || (ev as CustomEvent)?.detail?.value;
-  form.reason = value || "";
+  const value = extractScaleValue(ev);
+  form.reason = value;
 }
 
 function handleScheduleToggle(ev: Event) {
-  const checked = (ev.target as HTMLInputElement)?.checked;
-  form.useScheduledStart = checked ?? false;
+  const target = ev.target as HTMLInputElement | null;
+  const checked = target?.checked ?? (ev as CustomEvent<{ checked?: boolean }>).detail?.checked ?? false;
+  form.useScheduledStart = checked;
 }
 
 function handleScheduleTimeChange(ev: Event) {
-  const value = (ev.target as HTMLInputElement)?.value;
-  form.scheduledStartTime = value || "";
+  const value = extractScaleValue(ev);
+  form.scheduledStartTime = value;
 }
 </script>
 

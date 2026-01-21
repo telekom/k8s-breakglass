@@ -421,6 +421,63 @@ func TestMatchPattern(t *testing.T) {
 }
 
 // ============================================================================
+// Tests for resolveClusterPatterns
+// ============================================================================
+
+func TestResolveClusterPatterns(t *testing.T) {
+	allClusters := []string{"prod-east", "prod-west", "staging-east", "dev-local", "ship-lab-1", "ship-lab-2"}
+
+	tests := []struct {
+		name     string
+		patterns []string
+		expected []string
+	}{
+		{
+			name:     "wildcard matches all",
+			patterns: []string{"*"},
+			expected: []string{"dev-local", "prod-east", "prod-west", "ship-lab-1", "ship-lab-2", "staging-east"},
+		},
+		{
+			name:     "prefix pattern",
+			patterns: []string{"prod-*"},
+			expected: []string{"prod-east", "prod-west"},
+		},
+		{
+			name:     "suffix pattern",
+			patterns: []string{"*-east"},
+			expected: []string{"prod-east", "staging-east"},
+		},
+		{
+			name:     "exact match",
+			patterns: []string{"dev-local"},
+			expected: []string{"dev-local"},
+		},
+		{
+			name:     "multiple patterns",
+			patterns: []string{"prod-*", "ship-lab-*"},
+			expected: []string{"prod-east", "prod-west", "ship-lab-1", "ship-lab-2"},
+		},
+		{
+			name:     "empty patterns",
+			patterns: []string{},
+			expected: nil,
+		},
+		{
+			name:     "no matches",
+			patterns: []string{"unknown-*"},
+			expected: []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := resolveClusterPatterns(tc.patterns, allClusters)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+// ============================================================================
 // Tests for isUserParticipant
 // ============================================================================
 

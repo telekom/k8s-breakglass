@@ -720,6 +720,41 @@ func TestSetIdentityProvider_NilKeycloak(t *testing.T) {
 	assert.Equal(t, "https://auth.example.com", server.oidcAuthority.String())
 }
 
+func TestBuildCSP_WithoutOIDC(t *testing.T) {
+	server := &Server{}
+
+	csp := server.buildCSP()
+
+	// Should have frame-src 'none' when no OIDC configured
+	assert.Contains(t, csp, "frame-src 'none'")
+	assert.Contains(t, csp, "default-src 'self'")
+	assert.Contains(t, csp, "connect-src 'self'")
+	assert.Contains(t, csp, "frame-ancestors 'none'")
+}
+
+func TestBuildCSP_WithOIDC(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	server := &Server{
+		log: logger,
+	}
+
+	// Set an OIDC provider
+	idpConfig := &config.IdentityProviderConfig{
+		Type:      "OIDC",
+		Authority: "https://keycloak.example.com/realms/test",
+		ClientID:  "test-client",
+	}
+	server.SetIdentityProvider(idpConfig)
+
+	csp := server.buildCSP()
+
+	// Should include the OIDC authority in frame-src for silent refresh
+	assert.Contains(t, csp, "frame-src https://keycloak.example.com")
+	assert.Contains(t, csp, "connect-src 'self' https://keycloak.example.com")
+	// Should still have frame-ancestors 'none' to prevent us being embedded
+	assert.Contains(t, csp, "frame-ancestors 'none'")
+}
+
 func TestNormalizeOrigin(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -820,6 +855,7 @@ func TestSecurityHeaders(t *testing.T) {
 	csp := w.Header().Get("Content-Security-Policy")
 	assert.Contains(t, csp, "default-src 'self'")
 	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Contains(t, csp, "frame-src")
 }
 
 func TestHSTSHeaderBehindProxy(t *testing.T) {

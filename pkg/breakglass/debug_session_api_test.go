@@ -1860,6 +1860,152 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		// Should include all 3 templates since user is in admins group
 		assert.Equal(t, 3, response.Total)
 	})
+
+	t.Run("list templates resolves cluster patterns to actual cluster names", func(t *testing.T) {
+		// Create ClusterConfigs that will be used for pattern resolution
+		clusterConfigs := []client.Object{
+			&telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+			},
+			&telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "prod-west"},
+			},
+			&telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "staging-east"},
+			},
+			&telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "ship-lab-1"},
+			},
+			&telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "ship-lab-2"},
+			},
+		}
+
+		// Template with wildcard pattern
+		wildcardTemplate := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "all-clusters"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"*"},
+				},
+			},
+		}
+
+		// Template with prefix pattern
+		prefixTemplate := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-only"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"prod-*"},
+				},
+			},
+		}
+
+		// Template with specific clusters
+		specificTemplate := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "ship-labs"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"ship-lab-*"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(append(clusterConfigs, &wildcardTemplate, &prefixTemplate, &specificTemplate)...).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 3, response.Total)
+
+		// Find each template and verify clusters are resolved
+		for _, tmpl := range response.Templates {
+			switch tmpl.Name {
+			case "all-clusters":
+				// Wildcard should match all 5 clusters
+				assert.Len(t, tmpl.AllowedClusters, 5, "wildcard should resolve to all clusters")
+				assert.Contains(t, tmpl.AllowedClusters, "prod-east")
+				assert.Contains(t, tmpl.AllowedClusters, "prod-west")
+				assert.Contains(t, tmpl.AllowedClusters, "staging-east")
+				assert.Contains(t, tmpl.AllowedClusters, "ship-lab-1")
+				assert.Contains(t, tmpl.AllowedClusters, "ship-lab-2")
+			case "prod-only":
+				// prod-* should match 2 clusters
+				assert.Len(t, tmpl.AllowedClusters, 2, "prod-* should match prod-east and prod-west")
+				assert.Contains(t, tmpl.AllowedClusters, "prod-east")
+				assert.Contains(t, tmpl.AllowedClusters, "prod-west")
+			case "ship-labs":
+				// ship-lab-* should match 2 clusters
+				assert.Len(t, tmpl.AllowedClusters, 2, "ship-lab-* should match ship-lab-1 and ship-lab-2")
+				assert.Contains(t, tmpl.AllowedClusters, "ship-lab-1")
+				assert.Contains(t, tmpl.AllowedClusters, "ship-lab-2")
+			}
+		}
+	})
+
+	t.Run("list templates with no cluster configs returns empty clusters", func(t *testing.T) {
+		// Template with pattern but no ClusterConfigs exist
+		templateWithPattern := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "orphan-template"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"prod-*"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithPattern).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+
+		// Pattern should resolve to empty list when no ClusterConfigs exist
+		assert.Len(t, response.Templates[0].AllowedClusters, 0, "pattern should resolve to empty when no clusters exist")
+	})
 }
 
 // TestDebugSessionAPIController_HandleGetTemplate tests the handleGetTemplate handler

@@ -1,0 +1,18 @@
+# Example: Simple stdout audit configuration
+# This is the simplest possible audit setup - outputs all audit events to stdout/logs
+# Great for development, debugging, or quick testing
+# NOTE: AuditConfig is cluster-scoped (no namespace in metadata)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-stdout-simple
+spec:
+  enabled: true
+  
+  sinks:
+    # Output to controller stdout/logs
+    - name: stdout-logs
+      type: log
+      log:
+        format: json    # or "text" for human-readable output
+        level: info     # info, debug, warn, error

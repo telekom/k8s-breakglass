@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -990,6 +991,17 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		return
 	}
 
+	// Fetch all ClusterConfigs for pattern resolution
+	clusterConfigList := &v1alpha1.ClusterConfigList{}
+	if err := c.client.List(apiCtx, clusterConfigList); err != nil {
+		reqLog.Warnw("Failed to list cluster configs for pattern resolution", "error", err)
+		// Continue without pattern resolution - clusters will be empty
+	}
+	allClusterNames := make([]string, 0, len(clusterConfigList.Items))
+	for _, cc := range clusterConfigList.Items {
+		allClusterNames = append(allClusterNames, cc.Name)
+	}
+
 	// Get user's groups for filtering
 	userGroups, _ := ctx.Get("groups")
 	groups := []string{}
@@ -1040,7 +1052,8 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			resp.PodTemplateRef = t.Spec.PodTemplateRef.Name
 		}
 		if t.Spec.Allowed != nil {
-			resp.AllowedClusters = t.Spec.Allowed.Clusters
+			// Resolve cluster patterns to actual cluster names
+			resp.AllowedClusters = resolveClusterPatterns(t.Spec.Allowed.Clusters, allClusterNames)
 			resp.AllowedGroups = t.Spec.Allowed.Groups
 		}
 
@@ -1217,6 +1230,38 @@ func matchPattern(pattern, value string) bool {
 		return strings.HasSuffix(value, suffix)
 	}
 	return pattern == value
+}
+
+// resolveClusterPatterns expands cluster patterns (e.g., "*", "prod-*") to actual cluster names.
+// Returns empty slice if no clusters are available for resolution.
+func resolveClusterPatterns(patterns []string, allClusters []string) []string {
+	if len(patterns) == 0 {
+		return nil
+	}
+	if len(allClusters) == 0 {
+		// No clusters to resolve against - return empty instead of patterns
+		// This ensures the frontend shows "no clusters available" instead of pattern strings
+		return nil
+	}
+
+	// Use a map to deduplicate
+	resolved := make(map[string]struct{})
+	for _, pattern := range patterns {
+		for _, cluster := range allClusters {
+			if matchPattern(pattern, cluster) {
+				resolved[cluster] = struct{}{}
+			}
+		}
+	}
+
+	// Convert map to sorted slice for consistent output
+	result := make([]string, 0, len(resolved))
+	for cluster := range resolved {
+		result = append(result, cluster)
+	}
+	// Sort for consistent ordering
+	sort.Strings(result)
+	return result
 }
 
 // sendDebugSessionRequestEmail sends email notification to approvers when a debug session is created
