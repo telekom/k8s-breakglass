@@ -115,7 +115,8 @@ const mockDebugSessionTemplates = [
         maxRenewals: 3,
         renewalDuration: "1h",
       },
-      allowedClusters: ["production-*", "staging-*", "t-sec-1st.dtmd11"],
+      // Resolved cluster names (no globs)
+      allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu", "global-platform-us", "global-platform-apac"],
       allowedGroups: ["sre-team", "platform-oncall", "dtcaas-platform_emergency"],
       requiresApproval: true,
       approverGroups: ["platform-oncall", "security-leads"],
@@ -143,7 +144,16 @@ const mockDebugSessionTemplates = [
         allowRenewal: true,
         maxRenewals: 2,
       },
-      allowedClusters: ["*"],
+      // Wildcard resolved to all clusters
+      allowedClusters: [
+        "t-sec-1st.dtmd11",
+        "lab-cluster",
+        "global-platform-eu",
+        "global-platform-us",
+        "global-platform-apac",
+        "edge-hub",
+        "ops-lab",
+      ],
       allowedGroups: ["developers", "sre-team"],
       requiresApproval: false,
     },
@@ -171,7 +181,8 @@ const mockDebugSessionTemplates = [
         allowRenewal: false,
         maxRenewals: 0,
       },
-      allowedClusters: ["staging-*"],
+      // Only production clusters
+      allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu"],
       allowedGroups: ["sre-team"],
       requiresApproval: true,
       approverGroups: ["security-leads"],
@@ -195,7 +206,8 @@ const mockDebugSessionTemplates = [
         allowRenewal: true,
         maxRenewals: 5,
       },
-      allowedClusters: ["lab-*", "dev-*"],
+      // Lab and dev clusters
+      allowedClusters: ["lab-cluster", "ops-lab", "edge-hub"],
       allowedGroups: ["developers", "qa-team"],
       requiresApproval: false,
     },

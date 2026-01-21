@@ -699,6 +699,157 @@ select:focus {
 }
 
 /* ============================================
+ * DEV DEBUG PANELS (native <details> elements)
+ * Reusable debug/troubleshooting panels for forms
+ * ============================================ */
+.dev-debug-panel {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: var(--telekom-color-background-surface-subtle, #1a1a1a);
+  border: 1px dashed var(--telekom-color-ui-border-standard, #444);
+  border-radius: var(--radius-sm, 4px);
+  font-size: 0.8125rem;
+  max-height: 400px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dev-debug-panel[open] {
+  overflow-y: auto;
+}
+
+.dev-debug-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--telekom-color-text-and-icon-additional, #888);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  user-select: none;
+}
+
+/* Remove default browser disclosure icon */
+.dev-debug-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.dev-debug-panel summary::marker {
+  display: none;
+  content: "";
+}
+
+/* Custom arrow indicator */
+.dev-debug-panel summary::before {
+  content: "▶";
+  font-size: 0.625rem;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.dev-debug-panel[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.dev-debug-panel .debug-content {
+  margin-top: var(--space-md);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.dev-debug-panel .debug-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.dev-debug-panel .debug-table th,
+.dev-debug-panel .debug-table td {
+  padding: var(--space-xs) var(--space-sm);
+  text-align: left;
+  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+}
+
+.dev-debug-panel .debug-table th {
+  font-weight: 600;
+  color: var(--telekom-color-text-and-icon-additional);
+}
+
+.dev-debug-panel .debug-table code {
+  background: var(--telekom-color-background-canvas);
+  padding: 0.125em 0.25em;
+  border-radius: 2px;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.dev-debug-panel .debug-invalid {
+  background: rgba(255, 0, 0, 0.1);
+}
+
+.dev-debug-panel .debug-summary {
+  margin: var(--space-md) 0 0;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+}
+
+/* Event Log Styles */
+.dev-debug-panel .debug-hint {
+  margin: 0 0 var(--space-sm);
+  font-size: 0.75rem;
+  color: var(--telekom-color-text-and-icon-additional);
+  font-style: italic;
+}
+
+.dev-debug-panel .debug-event-log {
+  font-size: 0.7rem;
+  font-family: monospace;
+  background: var(--telekom-color-background-canvas, #0a0a0a);
+  border-radius: 4px;
+  padding: var(--space-sm);
+  border: 1px solid var(--telekom-color-ui-border-subtle, #333);
+}
+
+.dev-debug-panel .debug-no-events {
+  color: var(--telekom-color-text-and-icon-additional);
+  font-style: italic;
+}
+
+.dev-debug-panel .debug-event {
+  display: flex;
+  gap: var(--space-sm);
+  padding: 2px 0;
+  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  flex-wrap: wrap;
+}
+
+.dev-debug-panel .debug-event-warning {
+  background: rgba(255, 165, 0, 0.2);
+  padding: 2px 4px;
+  border-radius: 2px;
+}
+
+.dev-debug-panel .debug-event-time {
+  color: var(--telekom-color-text-and-icon-additional);
+  flex-shrink: 0;
+}
+
+.dev-debug-panel .debug-event-name {
+  font-weight: 600;
+  color: var(--telekom-color-text-and-icon-functional-informational);
+  flex-shrink: 0;
+  min-width: 140px;
+}
+
+.dev-debug-panel .debug-event-details {
+  color: var(--telekom-color-text-and-icon-standard);
+  word-break: break-all;
+  flex: 1;
+}
+
+/* ============================================
  * HIGH CONTRAST / FORCED COLORS
  * ============================================ */
 @media (forced-colors: active) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, reactive, ref } from "vue";
+import { computed, inject, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import DebugSessionService from "@/services/debugSession";
@@ -35,6 +35,17 @@ const form = reactive<{
   useScheduledStart: false,
 });
 
+// Reset cluster when template changes
+watch(
+  () => form.templateRef,
+  (newVal, oldVal) => {
+    console.debug("[DebugSessionCreate] TEMPLATE_CHANGED:", { from: oldVal, to: newVal });
+    if (oldVal && newVal !== oldVal) {
+      form.cluster = "";
+    }
+  },
+);
+
 const selectedTemplate = computed(() => {
   return templates.value.find((t) => t.name === form.templateRef);
 });
@@ -52,7 +63,12 @@ const durationOptions = [
 ];
 
 const isValid = computed(() => {
-  return form.templateRef && form.cluster && form.requestedDuration && form.reason.trim().length > 0;
+  return (
+    Boolean(form.templateRef) &&
+    Boolean(form.cluster) &&
+    Boolean(form.requestedDuration) &&
+    form.reason.trim().length > 0
+  );
 });
 
 async function fetchTemplates() {
@@ -108,56 +124,24 @@ function handleCancel() {
   router.push({ name: "debugSessionBrowser" });
 }
 
-/**
- * Extracts the value from a Scale component event.
- * Scale components emit CustomEvents with detail containing the value,
- * or standard DOM events where value is on target.
- */
-function extractScaleValue(ev: Event): string {
-  const target = ev.target as HTMLInputElement | HTMLTextAreaElement | null;
-  if (target && typeof target.value === "string") {
-    return target.value;
-  }
-  const detail = (ev as CustomEvent<{ value?: string }>).detail;
-  if (detail && typeof detail.value === "string") {
-    return detail.value;
-  }
-  return "";
-}
-
 function handleTemplateChange(ev: Event) {
-  const value = extractScaleValue(ev);
-  if (value && value !== form.templateRef) {
+  const target = ev.target as HTMLSelectElement | null;
+  const value = target?.value || "";
+  if (value) {
     form.templateRef = value;
-    // Reset cluster when template changes
-    form.cluster = "";
   }
 }
 
 function handleClusterChange(ev: Event) {
-  const value = extractScaleValue(ev);
+  const target = ev.target as HTMLSelectElement | null;
+  const value = target?.value || "";
   form.cluster = value;
 }
 
 function handleDurationChange(ev: Event) {
-  const value = extractScaleValue(ev);
-  form.requestedDuration = value || "1h";
-}
-
-function handleReasonChange(ev: Event) {
-  const value = extractScaleValue(ev);
-  form.reason = value;
-}
-
-function handleScheduleToggle(ev: Event) {
-  const target = ev.target as HTMLInputElement | null;
-  const checked = target?.checked ?? (ev as CustomEvent<{ checked?: boolean }>).detail?.checked ?? false;
-  form.useScheduledStart = checked;
-}
-
-function handleScheduleTimeChange(ev: Event) {
-  const value = extractScaleValue(ev);
-  form.scheduledStartTime = value;
+  const target = ev.target as HTMLSelectElement | null;
+  const value = target?.value || "1h";
+  form.requestedDuration = value;
 }
 </script>
 
@@ -178,11 +162,11 @@ function handleScheduleTimeChange(ev: Event) {
         </p>
 
         <scale-dropdown-select
-          label="Template"
           :value="form.templateRef"
+          label="Template"
           required
           data-testid="template-select"
-          @scaleChange="handleTemplateChange"
+          @scale-change="handleTemplateChange"
         >
           <scale-dropdown-select-item v-for="template in templates" :key="template.name" :value="template.name">
             {{ template.displayName || template.name }}
@@ -211,12 +195,12 @@ function handleScheduleTimeChange(ev: Event) {
         <p class="section-description">Select the cluster where you need debug access.</p>
 
         <scale-dropdown-select
+          :value="form.cluster"
           label="Cluster"
           data-testid="cluster-select"
-          :value="form.cluster"
           :disabled="!form.templateRef || availableClusters.length === 0"
           required
-          @scaleChange="handleClusterChange"
+          @scale-change="handleClusterChange"
         >
           <scale-dropdown-select-item v-for="cluster in availableClusters" :key="cluster" :value="cluster">
             {{ cluster }}
@@ -232,10 +216,10 @@ function handleScheduleTimeChange(ev: Event) {
         <h3>Session Details</h3>
 
         <scale-dropdown-select
-          label="Duration"
           :value="form.requestedDuration"
+          label="Duration"
           data-testid="duration-select"
-          @scaleChange="handleDurationChange"
+          @scale-change="handleDurationChange"
         >
           <scale-dropdown-select-item v-for="opt in durationOptions" :key="opt.value" :value="opt.value">
             {{ opt.label }}
@@ -243,30 +227,28 @@ function handleScheduleTimeChange(ev: Event) {
         </scale-dropdown-select>
 
         <scale-textarea
+          :value="form.reason"
           label="Reason"
           data-testid="reason-input"
-          :value="form.reason"
           placeholder="Explain why you need debug access..."
           rows="3"
           required
-          @scaleChange="handleReasonChange"
+          @scale-change="form.reason = ($event.target as HTMLTextAreaElement).value"
         ></scale-textarea>
 
         <div class="schedule-section">
           <scale-checkbox
-            :checked="form.useScheduledStart"
+            v-model="form.useScheduledStart"
             label="Schedule for later"
             data-testid="schedule-checkbox"
-            @scaleChange="handleScheduleToggle"
           ></scale-checkbox>
 
           <scale-text-field
             v-if="form.useScheduledStart"
+            v-model="form.scheduledStartTime"
             type="datetime-local"
             label="Scheduled Start Time"
             data-testid="schedule-time-input"
-            :value="form.scheduledStartTime"
-            @scaleChange="handleScheduleTimeChange"
           ></scale-text-field>
         </div>
       </div>
