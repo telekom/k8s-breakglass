@@ -406,7 +406,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
             </div>
             <div class="info-item">
               <dt>Requested By</dt>
-              <dd>{{ session.spec.requestedBy }}</dd>
+              <dd>{{ session.spec.requestedByDisplayName || session.spec.requestedBy }}</dd>
             </div>
             <div class="info-item">
               <dt>Requested Duration</dt>
@@ -430,7 +430,7 @@ function podStatusVariant(pod: DebugPodInfo): string {
           <ul v-else class="participant-list" data-testid="participant-list">
             <li v-for="participant in participants" :key="participant.user" class="participant-item">
               <div class="participant-info">
-                <span class="participant-user">{{ participant.user }}</span>
+                <span class="participant-user">{{ participant.displayName || participant.user }}</span>
                 <scale-tag size="small" :variant="participant.role === 'owner' ? 'standard' : 'strong'">
                   {{ roleLabel(participant.role) }}
                 </scale-tag>

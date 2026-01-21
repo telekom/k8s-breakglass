@@ -748,8 +748,9 @@ func TestBuildCSP_WithOIDC(t *testing.T) {
 
 	csp := server.buildCSP()
 
-	// Should include the OIDC authority in frame-src for silent refresh
-	assert.Contains(t, csp, "frame-src https://keycloak.example.com")
+	// Should include 'self' and the OIDC authority in frame-src for silent refresh
+	// 'self' is needed because the silent renew callback (/auth/silent-renew) is on the same origin
+	assert.Contains(t, csp, "frame-src 'self' https://keycloak.example.com")
 	assert.Contains(t, csp, "connect-src 'self' https://keycloak.example.com")
 	// Should still have frame-ancestors 'none' to prevent us being embedded
 	assert.Contains(t, csp, "frame-ancestors 'none'")

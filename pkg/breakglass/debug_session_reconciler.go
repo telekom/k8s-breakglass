@@ -38,6 +38,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
+	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -61,6 +62,10 @@ type DebugSessionController struct {
 	client       ctrlclient.Client
 	ccProvider   *cluster.ClientProvider
 	auditManager *audit.Manager
+	mailService  MailEnqueuer
+	brandingName string
+	baseURL      string
+	disableEmail bool
 }
 
 // NewDebugSessionController creates a new DebugSessionController
@@ -75,6 +80,15 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 // WithAuditManager sets the audit manager for the controller
 func (c *DebugSessionController) WithAuditManager(am *audit.Manager) *DebugSessionController {
 	c.auditManager = am
+	return c
+}
+
+// WithMailService sets the mail service for sending failure notifications
+func (c *DebugSessionController) WithMailService(mailService MailEnqueuer, brandingName, baseURL string, disableEmail bool) *DebugSessionController {
+	c.mailService = mailService
+	c.brandingName = brandingName
+	c.baseURL = baseURL
+	c.disableEmail = disableEmail
 	return c
 }
 
@@ -285,9 +299,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 
 	// Add the requesting user as owner participant
 	ds.Status.Participants = []v1alpha1.DebugSessionParticipant{{
-		User:     ds.Spec.RequestedBy,
-		Role:     v1alpha1.ParticipantRoleOwner,
-		JoinedAt: now,
+		User:        ds.Spec.RequestedBy,
+		Email:       ds.Spec.RequestedByEmail,
+		DisplayName: ds.Spec.RequestedByDisplayName,
+		Role:        v1alpha1.ParticipantRoleOwner,
+		JoinedAt:    now,
 	}}
 
 	// Setup terminal sharing if enabled
@@ -342,10 +358,48 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.D
 	ds.Status.State = v1alpha1.DebugSessionStateFailed
 	ds.Status.Message = reason
 
+	// Send failure notification email to requester
+	c.sendDebugSessionFailedEmail(ds, reason)
+
 	// Increment failure metric
 	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 
 	return ctrl.Result{}, c.client.Status().Update(ctx, ds)
+}
+
+// sendDebugSessionFailedEmail sends email notification to requester when a debug session fails
+func (c *DebugSessionController) sendDebugSessionFailedEmail(ds *v1alpha1.DebugSession, reason string) {
+	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	recipients := []string{ds.Spec.RequestedBy}
+
+	params := mail.DebugSessionFailedMailParams{
+		RequesterName:  ds.Spec.RequestedBy,
+		RequesterEmail: ds.Spec.RequestedBy,
+		SessionID:      ds.Name,
+		Cluster:        ds.Spec.Cluster,
+		TemplateName:   ds.Spec.TemplateRef,
+		Namespace:      ds.Namespace,
+		FailedAt:       time.Now().Format(time.RFC3339),
+		FailureReason:  reason,
+		URL:            fmt.Sprintf("%s/debug-sessions", c.baseURL),
+		BrandingName:   c.brandingName,
+	}
+
+	body, err := mail.RenderDebugSessionFailed(params)
+	if err != nil {
+		c.log.Errorw("Failed to render debug session failed email", "session", ds.Name, "error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Debug Session Failed: %s", c.brandingName, ds.Name)
+	if err := c.mailService.Enqueue(ds.Name, recipients, subject, body); err != nil {
+		c.log.Errorw("Failed to enqueue debug session failed email", "session", ds.Name, "error", err)
+	} else {
+		c.log.Infow("Debug session failed email queued", "session", ds.Name, "requester", ds.Spec.RequestedBy)
+	}
 }
 
 // shouldEmitAudit checks if audit events should be emitted for this session

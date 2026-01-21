@@ -441,6 +441,10 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 		c.Set("user_id", user_id)
 		c.Set("email", email)
 		c.Set("username", username)
+		// Extract display name from "name" claim (standard OIDC claim for full name)
+		if displayName, ok := claims["name"]; ok {
+			c.Set("displayName", displayName)
+		}
 		if len(groups) > 0 {
 			c.Set("groups", groups)
 		}

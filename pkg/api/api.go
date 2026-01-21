@@ -408,7 +408,9 @@ func (s *Server) buildCSP() string {
 		sort.Strings(authorityList)
 		authoritiesStr := strings.Join(authorityList, " ")
 		connectSrc += " " + authoritiesStr
-		frameSrc = authoritiesStr
+		// Include 'self' in frame-src for the silent renew callback (/auth/silent-renew)
+		// which is loaded in an iframe on the same origin
+		frameSrc = "'self' " + authoritiesStr
 	}
 
 	// Script hashes for Vite's @vitejs/plugin-legacy inline scripts

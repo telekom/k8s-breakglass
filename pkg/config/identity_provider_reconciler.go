@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // IdentityProviderReconciler implements controller-runtime's Reconciler interface
@@ -198,6 +199,10 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		return reconcile.Result{}, nil
 	}
 
+	// Note: We no longer skip based on recent status updates because each controller replica
+	// needs to reload its own local config (onReload updates in-memory state).
+	// Status update skipping is handled separately after the work is done.
+
 	// Reload configuration when IdentityProvider changes
 	if err := r.onReload(ctx); err != nil {
 		r.logger.Errorw("failed to reload identity provider", "error", err, "name", req.Name)
@@ -309,35 +314,88 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	// Check group sync provider health if configured
 	r.updateGroupSyncHealth(ctx, idp)
 
+	// Re-fetch to get the latest status before checking if we should skip
+	var latest breakglassv1alpha1.IdentityProvider
+	if err := r.client.Get(ctx, req.NamespacedName, &latest); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.logger.Debugw("IdentityProvider deleted before status update, skipping", "name", req.Name)
+			return reconcile.Result{}, nil
+		}
+		r.logger.Errorw("Failed to re-fetch IdentityProvider for status update", "name", req.Name, "error", err)
+		return reconcile.Result{}, err
+	}
+
+	// Use StatusCoordinator to check if we should skip the status update
+	// This prevents multiple controller replicas from fighting over status updates
+	coordinator := utils.NewStatusCoordinator()
+	skipInfo := coordinator.ShouldSkipStatusUpdateDetailed(
+		latest.Status.Conditions,
+		string(breakglassv1alpha1.IdentityProviderConditionReady),
+		metav1.ConditionTrue,
+		"ConfigReloadSuccess",
+	)
+	if skipInfo.Skipped {
+		r.logger.Debugw("IdentityProvider status recently updated, skipping status update",
+			"name", req.Name,
+			"skipReason", skipInfo.Reason,
+			"lastUpdateAge", skipInfo.LastUpdateAge,
+		)
+		if r.recorder != nil {
+			eventIdp := latest.DeepCopy()
+			eventIdp.SetNamespace("")
+			r.recorder.Event(eventIdp, corev1.EventTypeNormal, "StatusUpdateSkipped",
+				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+		}
+		return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
+	}
+
+	// Merge our prepared conditions onto the latest version
+	// This preserves any updates from other controllers while applying our changes
+	for _, condition := range idp.Status.Conditions {
+		latest.SetCondition(condition)
+	}
+	latest.Status.ObservedGeneration = idp.Status.ObservedGeneration
+
 	// Persist status to API server
-	if err := r.client.Status().Update(ctx, idp); err != nil {
+	if err := r.client.Status().Update(ctx, &latest); err != nil {
 		// If the IdentityProvider was deleted, skip status update and event emission
 		if apierrors.IsNotFound(err) {
 			r.logger.Debugw("IdentityProvider deleted before status update, skipping", "name", req.Name)
 			return reconcile.Result{}, nil
+		}
+		// Handle conflict - another controller likely updated it recently
+		if apierrors.IsConflict(err) {
+			r.logger.Debugw("Conflict updating IdentityProvider status, another controller likely handled it", "name", req.Name)
+			// Requeue after a short delay to avoid tight loops
+			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 		// Status update failed - mark as error via condition since status persistence is critical
 		r.logger.Errorw("failed to update IdentityProvider status after successful reload (will retry)", "error", err, "name", req.Name)
 		errorCondition := metav1.Condition{
 			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
 			Status:             metav1.ConditionFalse,
-			ObservedGeneration: idp.Generation,
+			ObservedGeneration: latest.Generation,
 			LastTransitionTime: metav1.Now(),
 			Reason:             "StatusUpdateFailed",
 			Message:            fmt.Sprintf("Failed to persist status: %v", err),
 		}
-		idp.SetCondition(errorCondition)
+		latest.SetCondition(errorCondition)
 
-		if statusErr := r.client.Status().Update(ctx, idp); statusErr != nil {
+		if statusErr := r.client.Status().Update(ctx, &latest); statusErr != nil {
 			// If deleted during retry, skip silently
 			if apierrors.IsNotFound(statusErr) {
 				return reconcile.Result{}, nil
+			}
+			// If conflict on retry, another controller handled it
+			if apierrors.IsConflict(statusErr) {
+				r.logger.Debugw("Conflict on status update retry, another controller likely handled it", "name", req.Name)
+				return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 			r.logger.Errorw("failed to update error status on IdentityProvider (will retry via exponential backoff)", "error", statusErr, "name", req.Name)
 		}
 		// Emit warning event about status update failure
 		if r.recorder != nil {
-			eventIdp := idp.DeepCopy()
+			eventIdp := latest.DeepCopy()
 			eventIdp.SetNamespace("")
 			r.recorder.Event(eventIdp, "Warning", "StatusUpdateFailed",
 				fmt.Sprintf("Failed to persist status after successful reload: %v", err))
@@ -349,7 +407,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	// Emit event on the IdentityProvider CR
 	// Note: Empty namespace for cluster-scoped resources to prevent event reconciliation issues
 	if r.recorder != nil {
-		eventIdp := idp.DeepCopy()
+		eventIdp := latest.DeepCopy()
 		eventIdp.SetNamespace("")
 		r.recorder.Event(eventIdp, "Normal", "ConfigReloadSuccess",
 			"Configuration reloaded successfully and cached")

@@ -147,6 +147,36 @@ type DebugSessionExpiredMailParams struct {
 	BrandingName   string
 }
 
+// DebugSessionCreatedMailParams contains parameters for debug session creation confirmation emails
+type DebugSessionCreatedMailParams struct {
+	RequesterName     string
+	RequesterEmail    string
+	SessionID         string
+	Cluster           string
+	TemplateName      string
+	Namespace         string
+	RequestedDuration string
+	Reason            string
+	RequestedAt       string
+	RequiresApproval  bool
+	URL               string
+	BrandingName      string
+}
+
+// DebugSessionFailedMailParams contains parameters for debug session failure notification emails
+type DebugSessionFailedMailParams struct {
+	RequesterName  string
+	RequesterEmail string
+	SessionID      string
+	Cluster        string
+	TemplateName   string
+	Namespace      string
+	FailedAt       string
+	FailureReason  string
+	URL            string
+	BrandingName   string
+}
+
 type RequestBreakglassSessionMailParams struct {
 	SubjectEmail       string
 	SubjectFullName    string
@@ -201,6 +231,8 @@ var (
 	sessionExpiredTemplate         *template.Template
 	sessionActivatedTemplate       *template.Template
 	debugSessionExpiredTemplate    *template.Template
+	debugSessionCreatedTemplate    *template.Template
+	debugSessionFailedTemplate     *template.Template
 
 	//go:embed templates/request.html
 	requestTemplateRaw string
@@ -224,6 +256,10 @@ var (
 	sessionActivatedTemplateRaw string
 	//go:embed templates/debug_session_expired.html
 	debugSessionExpiredTemplateRaw string
+	//go:embed templates/debug_session_created.html
+	debugSessionCreatedTemplateRaw string
+	//go:embed templates/debug_session_failed.html
+	debugSessionFailedTemplateRaw string
 )
 
 func init() {
@@ -242,6 +278,8 @@ func init() {
 	sessionExpiredTemplate = MustParseTemplate("sessionExpired", sessionExpiredTemplateRaw)
 	sessionActivatedTemplate = MustParseTemplate("sessionActivated", sessionActivatedTemplateRaw)
 	debugSessionExpiredTemplate = MustParseTemplate("debugSessionExpired", debugSessionExpiredTemplateRaw)
+	debugSessionCreatedTemplate = MustParseTemplate("debugSessionCreated", debugSessionCreatedTemplateRaw)
+	debugSessionFailedTemplate = MustParseTemplate("debugSessionFailed", debugSessionFailedTemplateRaw)
 }
 
 func render(t *template.Template, p any) (string, error) {
@@ -298,4 +336,14 @@ func RenderSessionActivated(p SessionActivatedMailParams) (string, error) {
 // RenderDebugSessionExpired renders the debug session expiration email template
 func RenderDebugSessionExpired(p DebugSessionExpiredMailParams) (string, error) {
 	return render(debugSessionExpiredTemplate, p)
+}
+
+// RenderDebugSessionCreated renders the debug session creation confirmation email template
+func RenderDebugSessionCreated(p DebugSessionCreatedMailParams) (string, error) {
+	return render(debugSessionCreatedTemplate, p)
+}
+
+// RenderDebugSessionFailed renders the debug session failure notification email template
+func RenderDebugSessionFailed(p DebugSessionFailedMailParams) (string, error) {
+	return render(debugSessionFailedTemplate, p)
 }
