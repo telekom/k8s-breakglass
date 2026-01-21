@@ -143,15 +143,15 @@ const groupsDisplay = computed(() => {
 
 <template>
   <div class="debug-panel-container" data-testid="debug-panel-container">
-    <scale-button
-      variant="secondary"
+    <button
+      type="button"
       class="debug-toggle"
       title="Toggle debug panel"
       data-testid="debug-toggle-button"
       @click="showDebug = !showDebug"
     >
       <scale-icon-service-settings size="20" decorative />
-    </scale-button>
+    </button>
 
     <div v-if="showDebug" class="debug-panel-wrapper" data-testid="debug-panel">
       <scale-card class="debug-panel">
@@ -260,20 +260,35 @@ const groupsDisplay = computed(() => {
 }
 
 .debug-toggle {
-  border-radius: 50%;
-  box-shadow: var(--shadow-card);
-  background-color: var(--surface-card);
-  border: 1px solid var(--telekom-color-ui-border-standard);
+  /* Native button styled as circular toggle */
   width: 48px;
   height: 48px;
+  padding: 0;
+  margin: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--telekom-color-ui-border-standard, #555);
+  background-color: var(--surface-card, #1a1a1a);
+  box-shadow: var(--shadow-card, 0 4px 12px rgba(0, 0, 0, 0.3));
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease;
 }
 
 .debug-toggle:hover {
-  background-color: var(--telekom-color-ui-subtle);
+  background-color: var(--telekom-color-ui-subtle, #2a2a2a);
+}
+
+.debug-toggle:active {
+  transform: scale(0.95);
+}
+
+.debug-toggle:focus-visible {
+  outline: 2px solid var(--focus-outline, #2238df);
+  outline-offset: 2px;
 }
 
 .debug-panel-wrapper {
@@ -281,7 +296,7 @@ const groupsDisplay = computed(() => {
   bottom: 60px;
   right: 0;
   width: 500px;
-  max-height: 80vh;
+  max-height: calc(100vh - 120px);
   display: flex;
   flex-direction: column;
 }
@@ -289,7 +304,7 @@ const groupsDisplay = computed(() => {
 .debug-panel {
   display: flex;
   flex-direction: column;
-  max-height: 80vh;
+  max-height: calc(100vh - 120px);
   overflow: hidden;
   --telekom-card-padding: var(--space-md);
 }
@@ -297,6 +312,8 @@ const groupsDisplay = computed(() => {
 .debug-content {
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
+  max-height: calc(100vh - 280px);
   padding-right: var(--space-xs);
 }
 
@@ -370,8 +387,34 @@ const groupsDisplay = computed(() => {
 .token-details summary {
   padding: var(--space-xs) var(--space-sm);
   background-color: var(--telekom-color-ui-background-surface);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-xs, 4px);
   user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 4px);
+}
+
+/* Remove default browser disclosure icon */
+.token-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.token-details summary::marker {
+  display: none;
+  content: "";
+}
+
+/* Custom arrow indicator */
+.token-details summary::before {
+  content: "▶";
+  font-size: 0.625rem;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.token-details[open] summary::before {
+  transform: rotate(90deg);
 }
 
 .token-details summary:hover {
@@ -429,6 +472,7 @@ const groupsDisplay = computed(() => {
   margin-top: var(--space-md);
   border-top: 1px solid var(--telekom-color-ui-border-standard);
   padding-top: var(--space-md);
+  flex-shrink: 0;
 }
 
 .debug-actions > * {
