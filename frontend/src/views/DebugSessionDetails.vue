@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import DebugSessionService from "@/services/debugSession";
@@ -23,6 +23,10 @@ const sessionName = computed(() => route.params.name as string);
 const session = ref<DebugSession | null>(null);
 const loading = ref(true);
 const error = ref("");
+
+// Polling interval for refreshing session/pod state (10 seconds for active sessions)
+const POLL_INTERVAL_MS = 10000;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 // Kubectl-debug form state
 const showKubectlDebugForm = ref(false);
@@ -71,8 +75,37 @@ async function fetchSession() {
   }
 }
 
+// Silently refresh session data without showing loading state
+async function refreshSession() {
+  try {
+    session.value = await debugSessionService.getSession(sessionName.value);
+  } catch {
+    // Ignore errors during background refresh
+  }
+}
+
+function startPolling() {
+  stopPolling();
+  // Only poll for active/pending sessions
+  const state = session.value?.status?.state;
+  if (state === "Active" || state === "PendingApproval" || state === "Pending") {
+    pollTimer = setInterval(refreshSession, POLL_INTERVAL_MS);
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
 onMounted(() => {
-  fetchSession();
+  fetchSession().then(() => startPolling());
+});
+
+onUnmounted(() => {
+  stopPolling();
 });
 
 const stateVariant = computed(() => {
@@ -283,9 +316,49 @@ function roleLabel(role: string): string {
 }
 
 function podStatusVariant(pod: DebugPodInfo): string {
-  if (pod.ready && pod.phase === "Running") return "success";
-  if (pod.phase === "Pending") return "warning";
+  // Check for problematic container states first
+  const waitingReason = pod.containerStatus?.waitingReason;
+  if (
+    waitingReason === "CrashLoopBackOff" ||
+    waitingReason === "ImagePullBackOff" ||
+    waitingReason === "ErrImagePull" ||
+    waitingReason === "CreateContainerConfigError" ||
+    waitingReason === "CreateContainerError"
+  ) {
+    return "danger";
+  }
+
+  // Check pod phase
+  if (pod.phase === "Running") return "success";
+  if (pod.phase === "Pending" || pod.phase === "ContainerCreating" || waitingReason === "ContainerCreating")
+    return "warning";
+  if (pod.phase === "Succeeded") return "success";
   return "danger";
+}
+
+// Get a human-readable status label for the pod
+function podStatusLabel(pod: DebugPodInfo): string {
+  // If there's a specific waiting reason, show it
+  const waitingReason = pod.containerStatus?.waitingReason;
+  if (waitingReason) {
+    return waitingReason;
+  }
+  // Otherwise show the phase
+  return pod.phase || "Unknown";
+}
+
+// Check if pod has container issues that should be highlighted
+function hasPodIssues(pod: DebugPodInfo): boolean {
+  const cs = pod.containerStatus;
+  if (!cs) return false;
+  return !!(
+    cs.waitingReason === "CrashLoopBackOff" ||
+    cs.waitingReason === "ImagePullBackOff" ||
+    cs.waitingReason === "ErrImagePull" ||
+    cs.waitingReason === "CreateContainerConfigError" ||
+    cs.waitingReason === "CreateContainerError" ||
+    (cs.restartCount && cs.restartCount > 0)
+  );
 }
 </script>
 
@@ -450,18 +523,41 @@ function podStatusVariant(pod: DebugPodInfo): string {
           <h3>Debug Pods ({{ allowedPods.length }})</h3>
           <div v-if="allowedPods.length === 0" class="empty-section">No debug pods deployed yet.</div>
           <ul v-else class="pod-list" data-testid="pod-list">
-            <li v-for="pod in allowedPods" :key="pod.name" class="pod-item">
+            <li
+              v-for="pod in allowedPods"
+              :key="pod.name"
+              class="pod-item"
+              :class="{ 'pod-has-issues': hasPodIssues(pod) }"
+            >
               <div class="pod-header">
                 <span class="pod-name">{{ pod.name }}</span>
-                <scale-tag size="small" :variant="podStatusVariant(pod)">
-                  {{ pod.phase }}
+                <scale-tag size="small" :variant="podStatusVariant(pod)" :title="pod.containerStatus?.waitingMessage">
+                  {{ podStatusLabel(pod) }}
                 </scale-tag>
               </div>
               <div class="pod-meta">
                 <span><strong>Namespace:</strong> {{ pod.namespace }}</span>
                 <span><strong>Node:</strong> {{ pod.nodeName }}</span>
               </div>
-              <div v-if="pod.ready && pod.phase === 'Running'" class="pod-actions">
+              <!-- Container status details for problematic pods -->
+              <div v-if="hasPodIssues(pod)" class="pod-issues" data-testid="pod-issues">
+                <div v-if="pod.containerStatus?.waitingReason" class="issue-detail">
+                  <strong>Status:</strong> {{ pod.containerStatus.waitingReason }}
+                  <span v-if="pod.containerStatus.waitingMessage" class="issue-message">
+                    — {{ pod.containerStatus.waitingMessage }}
+                  </span>
+                </div>
+                <div
+                  v-if="pod.containerStatus?.restartCount && pod.containerStatus.restartCount > 0"
+                  class="issue-detail"
+                >
+                  <strong>Restarts:</strong> {{ pod.containerStatus.restartCount }}
+                  <span v-if="pod.containerStatus.lastTerminationReason" class="issue-reason">
+                    ({{ pod.containerStatus.lastTerminationReason }})
+                  </span>
+                </div>
+              </div>
+              <div v-if="pod.phase === 'Running'" class="pod-actions">
                 <code class="exec-command">kubectl exec -it {{ pod.name }} -n {{ pod.namespace }} -- /bin/sh</code>
               </div>
             </li>
@@ -822,6 +918,37 @@ function podStatusVariant(pod: DebugPodInfo): string {
   font-size: 0.75rem;
   color: var(--telekom-color-text-and-icon-additional);
   margin-top: 4px;
+}
+
+.pod-item.pod-has-issues {
+  border-left: 3px solid var(--telekom-color-functional-danger-standard);
+  padding-left: var(--space-sm);
+  margin-left: calc(-1 * var(--space-sm));
+}
+
+.pod-issues {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--telekom-color-functional-danger-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+}
+
+.issue-detail {
+  color: var(--telekom-color-text-and-icon-functional-danger);
+}
+
+.issue-detail + .issue-detail {
+  margin-top: 4px;
+}
+
+.issue-message {
+  color: var(--telekom-color-text-and-icon-additional);
+  font-style: italic;
+}
+
+.issue-reason {
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .pod-actions {

@@ -131,6 +131,29 @@ spec:
                   description: AllowedPodRef references a pod that users can exec
                     into.
                   properties:
+                    containerStatus:
+                      description: |-
+                        containerStatus provides detailed container state information.
+                        Includes waiting reasons like CrashLoopBackOff, ImagePullBackOff, etc.
+                      properties:
+                        lastTerminationReason:
+                          description: lastTerminationReason is the reason the container
+                            last terminated.
+                          type: string
+                        restartCount:
+                          description: restartCount is the number of times the container
+                            has been restarted.
+                          format: int32
+                          type: integer
+                        waitingMessage:
+                          description: waitingMessage provides additional details
+                            about why the container is waiting.
+                          type: string
+                        waitingReason:
+                          description: waitingReason is the reason the container is
+                            waiting (e.g., CrashLoopBackOff, ImagePullBackOff).
+                          type: string
+                      type: object
                     name:
                       description: name is the pod's name.
                       type: string
@@ -139,6 +162,10 @@ spec:
                       type: string
                     nodeName:
                       description: nodeName is the node the pod is running on.
+                      type: string
+                    phase:
+                      description: phase is the pod's current phase (Pending, Running,
+                        Succeeded, Failed, Unknown).
                       type: string
                     ready:
                       description: ready indicates if the pod is ready for exec.

@@ -31,6 +31,14 @@ export interface DebugSessionParticipant {
   leftAt?: string;
 }
 
+// Container status details for debug pods
+export interface PodContainerStatus {
+  waitingReason?: string;
+  waitingMessage?: string;
+  restartCount?: number;
+  lastTerminationReason?: string;
+}
+
 // Debug pod info in status
 export interface DebugPodInfo {
   name: string;
@@ -38,6 +46,7 @@ export interface DebugPodInfo {
   nodeName: string;
   ready: boolean;
   phase: string;
+  containerStatus?: PodContainerStatus;
 }
 
 // Constraints from template

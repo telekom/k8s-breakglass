@@ -92,6 +92,16 @@ onMounted(() => {
   fetchSessions();
 });
 
+// State priority for sorting: Active first, then pending states, then terminal states
+const statePriority: Record<string, number> = {
+  Active: 0,
+  Pending: 1,
+  PendingApproval: 2,
+  Expired: 3,
+  Terminated: 4,
+  Failed: 5,
+};
+
 const filteredSessions = computed(() => {
   let result = sessions.value;
 
@@ -111,6 +121,19 @@ const filteredSessions = computed(() => {
         s.requestedBy.toLowerCase().includes(searchLower),
     );
   }
+
+  // Sort by state priority, then by startsAt (newest first)
+  result = [...result].sort((a, b) => {
+    const priorityA = statePriority[a.state] ?? 99;
+    const priorityB = statePriority[b.state] ?? 99;
+    if (priorityA !== priorityB) {
+      return priorityA - priorityB;
+    }
+    // Sort by startsAt descending (newest first)
+    const dateA = a.startsAt ? new Date(a.startsAt).getTime() : 0;
+    const dateB = b.startsAt ? new Date(b.startsAt).getTime() : 0;
+    return dateB - dateA;
+  });
 
   return result;
 });

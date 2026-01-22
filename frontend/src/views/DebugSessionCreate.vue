@@ -35,13 +35,15 @@ const form = reactive<{
   useScheduledStart: false,
 });
 
-// Reset cluster when template changes
+// Reset cluster and duration when template changes
 watch(
   () => form.templateRef,
   (newVal, oldVal) => {
     console.debug("[DebugSessionCreate] TEMPLATE_CHANGED:", { from: oldVal, to: newVal });
     if (oldVal && newVal !== oldVal) {
       form.cluster = "";
+      // Reset duration to default - will be validated against new template constraints
+      form.requestedDuration = "1h";
     }
   },
 );
@@ -56,12 +58,60 @@ const availableClusters = computed(() => {
   return selectedTemplate.value.allowedClusters || [];
 });
 
-const durationOptions = [
-  { value: "30m", label: "30 minutes" },
-  { value: "1h", label: "1 hour" },
-  { value: "2h", label: "2 hours" },
-  { value: "4h", label: "4 hours" },
+// Parse duration string (e.g., "30m", "1h", "2h", "4h", "1d") to minutes
+function parseDurationToMinutes(duration: string | undefined): number {
+  if (!duration) return 60; // default 1h
+  const match = duration.match(/^(\d+)(d|h|m|s)?$/);
+  if (!match || !match[1]) return 60; // default 1h
+  const value = parseInt(match[1], 10);
+  const unit = match[2] ?? "m";
+  switch (unit) {
+    case "d":
+      return value * 24 * 60;
+    case "h":
+      return value * 60;
+    case "m":
+      return value;
+    case "s":
+      return Math.ceil(value / 60);
+    default:
+      return value;
+  }
+}
+
+const allDurationOptions = [
+  { value: "30m", label: "30 minutes", minutes: 30 },
+  { value: "1h", label: "1 hour", minutes: 60 },
+  { value: "2h", label: "2 hours", minutes: 120 },
+  { value: "4h", label: "4 hours", minutes: 240 },
+  { value: "8h", label: "8 hours", minutes: 480 },
+  { value: "1d", label: "1 day", minutes: 1440 },
 ];
+
+// Filter duration options based on template's maxDuration constraint
+const durationOptions = computed(() => {
+  const maxDuration = selectedTemplate.value?.constraints?.maxDuration;
+  if (!maxDuration) {
+    // No constraint, return reasonable defaults (up to 4h)
+    return allDurationOptions.filter((opt) => opt.minutes <= 240);
+  }
+  const maxMinutes = parseDurationToMinutes(maxDuration);
+  return allDurationOptions.filter((opt) => opt.minutes <= maxMinutes);
+});
+
+// Ensure selected duration is valid for the current template
+watch(durationOptions, (options) => {
+  if (options.length > 0) {
+    const currentValid = options.some((opt) => opt.value === form.requestedDuration);
+    if (!currentValid) {
+      // Select the longest available duration as default
+      const lastOption = options[options.length - 1];
+      if (lastOption) {
+        form.requestedDuration = lastOption.value;
+      }
+    }
+  }
+});
 
 const hasTemplates = computed(() => {
   return templates.value && templates.value.length > 0;

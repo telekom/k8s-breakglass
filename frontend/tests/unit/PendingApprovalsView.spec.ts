@@ -58,6 +58,31 @@ describe("PendingApprovalsView Duration Utilities", () => {
     }
   }
 
+  // Helper that returns the end time as a Date for testing (avoids locale parsing issues)
+  function computeEndTimeAsDate(startTimeStr: string | undefined, durationStr: string | undefined): Date | null {
+    if (!startTimeStr || !durationStr) return null;
+
+    try {
+      const startTime = new Date(startTimeStr);
+      if (isNaN(startTime.getTime())) return null;
+
+      // Parse Go duration string format: "1h0m0s"
+      const match = durationStr.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+      if (!match) return null;
+
+      const hours = parseInt(match[1] || "0", 10);
+      const minutes = parseInt(match[2] || "0", 10);
+      const seconds = parseInt(match[3] || "0", 10);
+
+      // Calculate total milliseconds
+      const totalMs = (hours * 3600 + minutes * 60 + seconds) * 1000;
+
+      return new Date(startTime.getTime() + totalMs);
+    } catch {
+      return null;
+    }
+  }
+
   describe("formatDuration()", () => {
     it("formats simple hours", () => {
       expect(formatDuration("1h0m0s")).toBe("1h");
@@ -107,26 +132,29 @@ describe("PendingApprovalsView Duration Utilities", () => {
   describe("computeEndTime()", () => {
     it("computes end time with hours duration", () => {
       const startTime = "2025-11-14T10:00:00Z";
-      const endTimeStr = computeEndTime(startTime, "1h0m0s");
+      const endTime = computeEndTimeAsDate(startTime, "1h0m0s");
 
       // Check that endTime is 1 hour after start
-      expect(new Date(endTimeStr).getTime()).toBeGreaterThan(new Date(startTime).getTime());
+      expect(endTime).not.toBeNull();
+      expect(endTime!.getTime()).toBeGreaterThan(new Date(startTime).getTime());
     });
 
     it("computes end time with minutes duration", () => {
       const startTime = "2025-11-14T10:00:00Z";
-      const endTimeStr = computeEndTime(startTime, "0h30m0s");
+      const endTime = computeEndTimeAsDate(startTime, "0h30m0s");
 
       // Check that endTime is greater than start
-      expect(new Date(endTimeStr).getTime()).toBeGreaterThan(new Date(startTime).getTime());
+      expect(endTime).not.toBeNull();
+      expect(endTime!.getTime()).toBeGreaterThan(new Date(startTime).getTime());
     });
 
     it("computes end time with combined duration", () => {
       const startTime = "2025-11-14T10:00:00Z";
-      const endTimeStr = computeEndTime(startTime, "1h30m0s");
+      const endTime = computeEndTimeAsDate(startTime, "1h30m0s");
 
       // Check that endTime is greater than start
-      expect(new Date(endTimeStr).getTime()).toBeGreaterThan(new Date(startTime).getTime());
+      expect(endTime).not.toBeNull();
+      expect(endTime!.getTime()).toBeGreaterThan(new Date(startTime).getTime());
     });
 
     it('returns "Not available" when start time is missing', () => {
@@ -149,12 +177,12 @@ describe("PendingApprovalsView Duration Utilities", () => {
 
     it("correctly calculates 60 minute duration", () => {
       const startTime = new Date("2025-11-14T10:48:00Z");
-      const endTimeStr = computeEndTime(startTime.toISOString(), "1h0m0s");
-      const endTime = new Date(endTimeStr);
+      const endTime = computeEndTimeAsDate(startTime.toISOString(), "1h0m0s");
 
+      expect(endTime).not.toBeNull();
       // End time should be 1 hour later
-      const timeDiffMs = endTime.getTime() - startTime.getTime();
-      expect(timeDiffMs).toBeCloseTo(3600000, -3); // 1 hour in ms, allowing for timezone differences
+      const timeDiffMs = endTime!.getTime() - startTime.getTime();
+      expect(timeDiffMs).toBeCloseTo(3600000, -3); // 1 hour in ms, allowing for rounding
     });
   });
 

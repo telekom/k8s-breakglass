@@ -871,11 +871,16 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1al
 		// Monitor pod phase for failures
 		c.monitorPodHealth(ctx, ds, &pod, log)
 
+		// Build container status for detailed information
+		containerStatus := buildContainerStatus(&pod)
+
 		allowedPods = append(allowedPods, v1alpha1.AllowedPodRef{
-			Namespace: pod.Namespace,
-			Name:      pod.Name,
-			NodeName:  pod.Spec.NodeName,
-			Ready:     ready,
+			Namespace:       pod.Namespace,
+			Name:            pod.Name,
+			NodeName:        pod.Spec.NodeName,
+			Ready:           ready,
+			Phase:           string(pod.Status.Phase),
+			ContainerStatus: containerStatus,
 		})
 	}
 
@@ -982,6 +987,61 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *v1alp
 			}
 		}
 	}
+}
+
+// buildContainerStatus extracts detailed container state information from a pod
+func buildContainerStatus(pod *corev1.Pod) *v1alpha1.PodContainerStatus {
+	if len(pod.Status.ContainerStatuses) == 0 {
+		return nil
+	}
+
+	// Look for the most interesting container status (one with problems)
+	var status *v1alpha1.PodContainerStatus
+	for _, cs := range pod.Status.ContainerStatuses {
+		// Check for waiting state issues
+		if cs.State.Waiting != nil {
+			waitingReason := cs.State.Waiting.Reason
+			// Prioritize problematic waiting states
+			if waitingReason == "CrashLoopBackOff" ||
+				waitingReason == "ImagePullBackOff" ||
+				waitingReason == "ErrImagePull" ||
+				waitingReason == "CreateContainerConfigError" ||
+				waitingReason == "CreateContainerError" ||
+				waitingReason == "ContainerCreating" {
+				status = &v1alpha1.PodContainerStatus{
+					WaitingReason:  waitingReason,
+					WaitingMessage: cs.State.Waiting.Message,
+					RestartCount:   cs.RestartCount,
+				}
+				// Get last termination reason if available
+				if cs.LastTerminationState.Terminated != nil {
+					status.LastTerminationReason = cs.LastTerminationState.Terminated.Reason
+					if status.LastTerminationReason == "" {
+						status.LastTerminationReason = fmt.Sprintf("ExitCode=%d", cs.LastTerminationState.Terminated.ExitCode)
+					}
+				}
+				// CrashLoopBackOff is most important, return immediately
+				if waitingReason == "CrashLoopBackOff" {
+					return status
+				}
+			}
+		}
+
+		// Track restart counts even for running containers
+		if cs.RestartCount > 0 && status == nil {
+			status = &v1alpha1.PodContainerStatus{
+				RestartCount: cs.RestartCount,
+			}
+			if cs.LastTerminationState.Terminated != nil {
+				status.LastTerminationReason = cs.LastTerminationState.Terminated.Reason
+				if status.LastTerminationReason == "" {
+					status.LastTerminationReason = fmt.Sprintf("ExitCode=%d", cs.LastTerminationState.Terminated.ExitCode)
+				}
+			}
+		}
+	}
+
+	return status
 }
 
 // cleanupResources removes deployed resources from the target cluster

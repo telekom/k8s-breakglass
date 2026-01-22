@@ -285,6 +285,34 @@ type AllowedPodRef struct {
 	// ready indicates if the pod is ready for exec.
 	// +optional
 	Ready bool `json:"ready,omitempty"`
+
+	// phase is the pod's current phase (Pending, Running, Succeeded, Failed, Unknown).
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// containerStatus provides detailed container state information.
+	// Includes waiting reasons like CrashLoopBackOff, ImagePullBackOff, etc.
+	// +optional
+	ContainerStatus *PodContainerStatus `json:"containerStatus,omitempty"`
+}
+
+// PodContainerStatus provides detailed container state information.
+type PodContainerStatus struct {
+	// waitingReason is the reason the container is waiting (e.g., CrashLoopBackOff, ImagePullBackOff).
+	// +optional
+	WaitingReason string `json:"waitingReason,omitempty"`
+
+	// waitingMessage provides additional details about why the container is waiting.
+	// +optional
+	WaitingMessage string `json:"waitingMessage,omitempty"`
+
+	// restartCount is the number of times the container has been restarted.
+	// +optional
+	RestartCount int32 `json:"restartCount,omitempty"`
+
+	// lastTerminationReason is the reason the container last terminated.
+	// +optional
+	LastTerminationReason string `json:"lastTerminationReason,omitempty"`
 }
 
 // KubectlDebugStatus tracks kubectl debug operations.
