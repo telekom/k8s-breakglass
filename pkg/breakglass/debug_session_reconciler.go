@@ -1048,16 +1048,17 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	return c.client.Status().Update(ctx, ds)
 }
 
-// parseDuration parses the requested duration with template constraints
+// parseDuration parses the requested duration with template constraints.
+// Supports day units (e.g., "1d", "7d") in addition to standard Go duration units.
 func (c *DebugSessionController) parseDuration(requested string, constraints *v1alpha1.DebugSessionConstraints) time.Duration {
 	defaultDur := time.Hour
 	maxDur := 4 * time.Hour
 
 	if constraints != nil {
-		if d, err := time.ParseDuration(constraints.DefaultDuration); err == nil {
+		if d, err := v1alpha1.ParseDuration(constraints.DefaultDuration); err == nil {
 			defaultDur = d
 		}
-		if d, err := time.ParseDuration(constraints.MaxDuration); err == nil {
+		if d, err := v1alpha1.ParseDuration(constraints.MaxDuration); err == nil {
 			maxDur = d
 		}
 	}
@@ -1066,7 +1067,7 @@ func (c *DebugSessionController) parseDuration(requested string, constraints *v1
 		return defaultDur
 	}
 
-	dur, err := time.ParseDuration(requested)
+	dur, err := v1alpha1.ParseDuration(requested)
 	if err != nil {
 		return defaultDur
 	}
