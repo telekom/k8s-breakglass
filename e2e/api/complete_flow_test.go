@@ -148,6 +148,10 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
 		err = cli.Status().Update(ctx, &toExpire)
 		require.NoError(t, err, "Failed to expire session")
+
+		// Wait for informer cache to sync with the expired state
+		helpers.WaitForSessionState(t, ctx, cli, sessionName, namespace,
+			telekomv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
 		t.Logf("Step 4: Expired session")
 	})
 
