@@ -606,8 +606,8 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	// Parse extension duration
-	extendBy, err := time.ParseDuration(req.ExtendBy)
+	// Parse extension duration (supports day units like "1d")
+	extendBy, err := v1alpha1.ParseDuration(req.ExtendBy)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid duration format"})
 		return
@@ -660,7 +660,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 
 		// Check total duration would not exceed max
 		if constraints.MaxDuration != "" {
-			maxDur, err := time.ParseDuration(constraints.MaxDuration)
+			maxDur, err := v1alpha1.ParseDuration(constraints.MaxDuration)
 			if err == nil && session.Status.StartsAt != nil {
 				currentDuration := time.Since(session.Status.StartsAt.Time)
 				if currentDuration+extendBy > maxDur {

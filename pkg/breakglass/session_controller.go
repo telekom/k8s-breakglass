@@ -501,8 +501,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 		// Validate and apply custom duration if provided
 		if request.Duration > 0 {
-			// Parse max allowed duration from string (e.g., "1h", "3600s")
-			d, err := time.ParseDuration(matchedEsc.Spec.MaxValidFor)
+			// Parse max allowed duration from string (e.g., "1h", "3600s", "7d")
+			d, err := v1alpha1.ParseDuration(matchedEsc.Spec.MaxValidFor)
 			if err != nil {
 				reqLog.Warnw("Failed to parse MaxValidFor duration", "error", err, "value", matchedEsc.Spec.MaxValidFor)
 				apiresponses.RespondInternalError(c, "parse escalation duration configuration", err, reqLog)
@@ -1683,7 +1683,7 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		// Calculate expiry time from scheduled start time using spec.MaxValidFor
 		expiryTime := bs.Spec.ScheduledStartTime.Time
 		if bs.Spec.MaxValidFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+			if d, err := v1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				expiryTime = bs.Spec.ScheduledStartTime.Add(d)
 				formattedDurationStr = formatDuration(d)
 			}
@@ -1696,7 +1696,7 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 	} else {
 		// Immediate session: calculate duration from MaxValidFor
 		if bs.Spec.MaxValidFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+			if d, err := v1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				formattedDurationStr = formatDuration(d)
 				calculatedExpiresAtStr = time.Now().Add(d).Format("2006-01-02 15:04:05 MST")
 			}
@@ -1719,7 +1719,7 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 	if bs.Spec.ScheduledStartTime != nil {
 		expiryTime = bs.Spec.ScheduledStartTime.Time
 		if bs.Spec.MaxValidFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+			if d, err := v1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				expiryTime = bs.Spec.ScheduledStartTime.Add(d)
 			}
 		} else {
@@ -1729,7 +1729,7 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		// Immediate session
 		expiryTime = time.Now()
 		if bs.Spec.MaxValidFor != "" {
-			if d, err := time.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
+			if d, err := v1alpha1.ParseDuration(bs.Spec.MaxValidFor); err == nil && d > 0 {
 				expiryTime = time.Now().Add(d)
 			}
 		} else {

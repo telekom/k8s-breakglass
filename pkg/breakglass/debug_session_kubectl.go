@@ -330,12 +330,12 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		return nil, fmt.Errorf("failed to create pod copy: %w", err)
 	}
 
-	// Calculate expiry
+	// Calculate expiry (supports day units like "1d")
 	ttl := pc.TTL
 	if ttl == "" {
 		ttl = "2h"
 	}
-	ttlDuration, err := time.ParseDuration(ttl)
+	ttlDuration, err := v1alpha1.ParseDuration(ttl)
 	if err != nil {
 		ttlDuration = 2 * time.Hour
 	}

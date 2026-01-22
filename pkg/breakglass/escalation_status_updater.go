@@ -68,7 +68,7 @@ func (c *kcCache) set(k string, v []string) {
 
 func NewKeycloakGroupMemberResolver(log *zap.SugaredLogger, cfg cfgpkg.KeycloakRuntimeConfig) *KeycloakGroupMemberResolver {
 	ttl := 10 * time.Minute
-	if d, err := time.ParseDuration(cfg.CacheTTL); err == nil && d > 0 {
+	if d, err := telekomv1alpha1.ParseDuration(cfg.CacheTTL); err == nil && d > 0 {
 		ttl = d
 	}
 	gc := gocloak.NewClient(cfg.BaseURL)

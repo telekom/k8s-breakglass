@@ -63,12 +63,13 @@ func ParseApprovalTimeout(spec v1alpha1.BreakglassEscalationSpec, log *zap.Sugar
 // If the value is empty, returns defaultValue without logging.
 // If the value is present but invalid, logs a warning and returns defaultValue.
 // If the value is valid but <= 0, logs a warning and returns defaultValue.
+// Supports extended duration units including days (e.g., "7d", "90d").
 func parseDurationWithDefault(value string, defaultValue time.Duration, fieldName string, log *zap.SugaredLogger) time.Duration {
 	if value == "" {
 		return defaultValue
 	}
 
-	d, err := time.ParseDuration(value)
+	d, err := v1alpha1.ParseDuration(value)
 	if err != nil {
 		if log != nil {
 			log.Warnw("Invalid "+fieldName+" in spec; falling back to default",

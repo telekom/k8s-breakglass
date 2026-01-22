@@ -2,6 +2,7 @@ package utils
 
 import (
 	"testing"
+	"time"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -86,4 +87,51 @@ func TestCreateScheme(t *testing.T) {
 			t.Errorf("scheme does not recognize MailProvider")
 		}
 	})
+}
+
+func TestParseDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected time.Duration
+		wantErr  bool
+	}{
+		// Standard Go durations
+		{"empty string", "", 0, false},
+		{"seconds", "30s", 30 * time.Second, false},
+		{"minutes", "5m", 5 * time.Minute, false},
+		{"hours", "2h", 2 * time.Hour, false},
+		{"combined hms", "1h30m45s", time.Hour + 30*time.Minute + 45*time.Second, false},
+
+		// Day units
+		{"one day", "1d", 24 * time.Hour, false},
+		{"seven days", "7d", 7 * 24 * time.Hour, false},
+		{"ninety days", "90d", 90 * 24 * time.Hour, false},
+		{"days and hours", "1d12h", 36 * time.Hour, false},
+		{"days hours minutes", "2d6h30m", 2*24*time.Hour + 6*time.Hour + 30*time.Minute, false},
+
+		// Edge cases
+		{"zero days", "0d", 0, false},
+		{"zero hours", "0h", 0, false},
+
+		// Invalid durations
+		{"invalid format", "invalid", 0, true},
+		{"wrong units", "2days", 0, true},
+		{"negative", "-1d", 0, true},
+		{"invalid after days", "1dinvalid", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test the canonical ParseDuration in api/v1alpha1 package
+			got, err := v1alpha1.ParseDuration(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseDuration(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if got != tt.expected {
+				t.Errorf("ParseDuration(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
 }

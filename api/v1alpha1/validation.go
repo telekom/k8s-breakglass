@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -316,15 +315,15 @@ func ValidateIdentityProvider(idp *IdentityProvider) *ValidationResult {
 			if idp.Spec.Keycloak.ClientSecretRef.Namespace == "" {
 				result.Errors = append(result.Errors, field.Required(secretRefPath.Child("namespace"), "secret namespace is required"))
 			}
-			// Validate cacheTTL duration if provided
+			// Validate cacheTTL duration if provided (supports day units like "7d")
 			if idp.Spec.Keycloak.CacheTTL != "" {
-				if _, err := time.ParseDuration(idp.Spec.Keycloak.CacheTTL); err != nil {
+				if _, err := ParseDuration(idp.Spec.Keycloak.CacheTTL); err != nil {
 					result.Errors = append(result.Errors, field.Invalid(keycloakPath.Child("cacheTTL"), idp.Spec.Keycloak.CacheTTL, fmt.Sprintf("invalid duration: %v", err)))
 				}
 			}
-			// Validate requestTimeout duration if provided
+			// Validate requestTimeout duration if provided (supports day units like "7d")
 			if idp.Spec.Keycloak.RequestTimeout != "" {
-				if _, err := time.ParseDuration(idp.Spec.Keycloak.RequestTimeout); err != nil {
+				if _, err := ParseDuration(idp.Spec.Keycloak.RequestTimeout); err != nil {
 					result.Errors = append(result.Errors, field.Invalid(keycloakPath.Child("requestTimeout"), idp.Spec.Keycloak.RequestTimeout, fmt.Sprintf("invalid duration: %v", err)))
 				}
 			}

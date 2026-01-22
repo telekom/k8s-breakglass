@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +17,52 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// dayPattern matches duration strings with day units (e.g., "90d", "7d", "1d12h")
+var dayPattern = regexp.MustCompile(`^(\d+)d(.*)$`)
+
+// ParseDuration parses a duration string with extended support for day units.
+// Go's time.ParseDuration only supports up to hours (h), but this function
+// also accepts days (d) where 1d = 24h.
+//
+// Examples:
+//   - "90d" -> 90 days (2160 hours)
+//   - "7d" -> 7 days (168 hours)
+//   - "1d12h" -> 1 day and 12 hours (36 hours)
+//   - "2h30m" -> 2 hours and 30 minutes (standard Go duration)
+//
+// Returns an error if the duration string is invalid.
+func ParseDuration(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, nil
+	}
+
+	// Check if the duration contains day units
+	if matches := dayPattern.FindStringSubmatch(s); matches != nil {
+		days, err := strconv.Atoi(matches[1])
+		if err != nil {
+			return 0, fmt.Errorf("invalid day value: %w", err)
+		}
+
+		// Convert days to hours
+		daysDuration := time.Duration(days) * 24 * time.Hour
+
+		// Parse the remainder if present (e.g., "12h" in "1d12h")
+		remainder := matches[2]
+		if remainder != "" {
+			remainderDuration, err := time.ParseDuration(remainder)
+			if err != nil {
+				return 0, fmt.Errorf("invalid duration after days: %w", err)
+			}
+			return daysDuration + remainderDuration, nil
+		}
+
+		return daysDuration, nil
+	}
+
+	// No day units, use standard Go parsing
+	return time.ParseDuration(s)
+}
 
 // getWebhookReader returns the preferred client.Reader for webhook validations.
 // It prioritizes the shared cache when available to minimize API calls.
@@ -377,13 +425,13 @@ func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *fiel
 	maxValidFor := spec.MaxValidFor
 	approvalTimeout := spec.ApprovalTimeout
 
-	// Helper to parse and validate duration string
+	// Helper to parse and validate duration string (supports day units like "7d", "90d")
 	parseDuration := func(durationStr string, fieldName string, path *field.Path) (time.Duration, *field.Error) {
 		if durationStr == "" {
 			return 0, nil // Not set, return zero
 		}
 
-		duration, err := time.ParseDuration(durationStr)
+		duration, err := ParseDuration(durationStr)
 		if err != nil {
 			return 0, field.Invalid(path, durationStr, fmt.Sprintf("invalid duration format: %v", err))
 		}
@@ -731,13 +779,14 @@ func validateNonEmptyStringList(values []string, fieldPath *field.Path, minItems
 	return errs
 }
 
-// validateDurationFormat validates that a string is a valid Go duration format
+// validateDurationFormat validates that a string is a valid duration format.
+// Supports extended duration units including days (e.g., "7d", "90d", "1d12h").
 func validateDurationFormat(duration string, fieldPath *field.Path) field.ErrorList {
 	if duration == "" || fieldPath == nil {
 		return nil
 	}
 
-	if _, err := time.ParseDuration(duration); err != nil {
+	if _, err := ParseDuration(duration); err != nil {
 		return field.ErrorList{field.Invalid(fieldPath, duration, fmt.Sprintf("invalid duration format: %v", err))}
 	}
 
