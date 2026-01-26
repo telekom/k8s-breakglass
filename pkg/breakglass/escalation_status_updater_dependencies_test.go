@@ -8,7 +8,6 @@ import (
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
 )
 
 // TestEscalationStatusUpdaterWithEventRecorder verifies that EventRecorder is used when provided
@@ -25,7 +24,7 @@ func TestEscalationStatusUpdaterWithEventRecorder(t *testing.T) {
 	}
 
 	// Create a mock EventRecorder to capture events
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 
 	updater := &EscalationStatusUpdater{
 		Resolver:      resolver,
@@ -92,7 +91,7 @@ func TestEscalationStatusUpdaterInitialization(t *testing.T) {
 		errors: map[string]error{},
 	}
 
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 
 	updater := &EscalationStatusUpdater{
 		Resolver:      resolver,
@@ -109,7 +108,7 @@ func TestEscalationStatusUpdaterInitialization(t *testing.T) {
 // TestEventEmissionWithEventRecorder verifies events can be emitted when EventRecorder is available
 func TestEventEmissionWithEventRecorder(t *testing.T) {
 	// This test verifies the event emission flow is properly initialized
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{Events: make(chan string, 1)}
 
 	// Create an escalation resource
 	escalation := &telekomv1alpha1.BreakglassEscalation{
@@ -120,12 +119,12 @@ func TestEventEmissionWithEventRecorder(t *testing.T) {
 	}
 
 	// Emit a test event
-	fakeRecorder.Event(escalation, "Normal", "TestEvent", "Test message")
+	fakeRecorder.Eventf(escalation, nil, "Normal", "TestEvent", "TestEvent", "Test message")
 
 	// Verify event was recorded
 	select {
 	case event := <-fakeRecorder.Events:
-		// Event format is "Normal TestEvent Test message"
+		// Event format is "Normal TestEvent TestEvent Test message"
 		assert.Contains(t, event, "Normal")
 		assert.Contains(t, event, "TestEvent")
 		assert.Contains(t, event, "Test message")

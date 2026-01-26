@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -29,14 +30,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
-func newTestAuditConfigReconciler(t *testing.T, objs ...runtime.Object) (*AuditConfigReconciler, *record.FakeRecorder) {
+func newTestAuditConfigReconciler(t *testing.T, objs ...runtime.Object) (*AuditConfigReconciler, *auditFakeEventRecorder) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
@@ -47,7 +47,7 @@ func newTestAuditConfigReconciler(t *testing.T, objs ...runtime.Object) (*AuditC
 		WithStatusSubresource(&breakglassv1alpha1.AuditConfig{}).
 		Build()
 
-	recorder := record.NewFakeRecorder(10)
+	recorder := newAuditFakeEventRecorder(10)
 	logger := zaptest.NewLogger(t).Sugar()
 
 	reconciler := NewAuditConfigReconciler(
@@ -60,6 +60,24 @@ func newTestAuditConfigReconciler(t *testing.T, objs ...runtime.Object) (*AuditC
 	)
 
 	return reconciler, recorder
+}
+
+type auditFakeEventRecorder struct {
+	Events chan string
+}
+
+func newAuditFakeEventRecorder(buffer int) *auditFakeEventRecorder {
+	return &auditFakeEventRecorder{Events: make(chan string, buffer)}
+}
+
+func (f *auditFakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, eventtype, reason, action, note string, args ...interface{}) {
+	message := note
+	if len(args) > 0 {
+		message = fmt.Sprintf(note, args...)
+	}
+	if f.Events != nil {
+		f.Events <- fmt.Sprintf("%s %s %s %s", eventtype, reason, action, message)
+	}
 }
 
 func TestAuditConfigReconciler_Reconcile_NotFound(t *testing.T) {

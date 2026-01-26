@@ -26,7 +26,7 @@ import (
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 )
 
 // Sink defines the interface for audit event destinations.
@@ -303,13 +303,13 @@ func (s *WebhookSink) Name() string {
 
 // KubernetesEventSink creates Kubernetes Events for audit entries.
 type KubernetesEventSink struct {
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 	// Only emit events for these types (empty means all)
 	includeTypes map[EventType]bool
 }
 
 // NewKubernetesEventSink creates a new KubernetesEventSink.
-func NewKubernetesEventSink(recorder record.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
+func NewKubernetesEventSink(recorder events.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
 	typeMap := make(map[EventType]bool)
 	for _, t := range includeTypes {
 		typeMap[t] = true

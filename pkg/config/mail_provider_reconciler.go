@@ -14,7 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -30,7 +30,7 @@ type MailProviderReconciler struct {
 	Scheme   *runtime.Scheme
 	Log      *zap.SugaredLogger
 	Loader   *MailProviderLoader
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 
 	// StatusCoordinator helps avoid redundant status updates across controller replicas
 	StatusCoordinator *utils.StatusCoordinator
@@ -284,8 +284,8 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
 		if r.Recorder != nil {
-			r.Recorder.Event(&latest, corev1.EventTypeNormal, "StatusUpdateSkipped",
-				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
+				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
 		}
 		return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
@@ -366,8 +366,8 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
 		if r.Recorder != nil {
-			r.Recorder.Event(&latest, corev1.EventTypeNormal, "StatusUpdateSkipped",
-				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
+				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
 		}
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -433,8 +433,8 @@ func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *b
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
 		if r.Recorder != nil {
-			r.Recorder.Event(&latest, corev1.EventTypeNormal, "StatusUpdateSkipped",
-				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
+				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
 		}
 		return reconcile.Result{}, nil
 	}

@@ -8,28 +8,31 @@ import (
 	"go.uber.org/zap"
 
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/tools/reference"
 
 	"github.com/telekom/k8s-breakglass/pkg/system"
 )
 
-// K8sEventRecorder implements record.EventRecorder but writes Events via the provided clientset.
+// K8sEventRecorder implements events.EventRecorder and writes Events via the provided clientset.
 // Clientset is the kubernetes client to use for creating Events. Use the
 // kubernetes.Interface here so unit tests can inject the fake clientset.
 type K8sEventRecorder struct {
 	Clientset kubernetes.Interface
 	Source    corev1.EventSource
+	Scheme    *runtime.Scheme
 	// Namespace where events should be created (controller pod namespace)
 	Namespace string
 	// optional logger for reporting event creation problems
 	Logger *zap.SugaredLogger
 }
 
-func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, message string) {
-	metaObj, ok := object.(metav1.Object)
+func (r *K8sEventRecorder) Eventf(regarding runtime.Object, related runtime.Object, eventtype, reason, action, note string, args ...interface{}) {
+	metaObj, ok := regarding.(metav1.Object)
 	if !ok {
 		return
 	}
@@ -56,58 +59,65 @@ func (r *K8sEventRecorder) Event(object runtime.Object, eventtype, reason, messa
 		return
 	}
 
-	ev := &corev1.Event{
+	regardingRef := &corev1.ObjectReference{
+		Namespace: involvedNS,
+		Name:      metaObj.GetName(),
+		UID:       metaObj.GetUID(),
+	}
+	if r.Scheme != nil {
+		if ref, err := reference.GetReference(r.Scheme, regarding); err == nil {
+			regardingRef = ref
+		}
+	}
+
+	var relatedRef *corev1.ObjectReference
+	if related != nil {
+		if r.Scheme != nil {
+			if ref, err := reference.GetReference(r.Scheme, related); err == nil {
+				relatedRef = ref
+			}
+		}
+	}
+
+	noteMessage := note
+	if len(args) > 0 {
+		noteMessage = fmt.Sprintf(note, args...)
+	}
+
+	ev := &eventsv1.Event{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: metaObj.GetName() + "-",
 			Namespace:    ns,
 		},
-		InvolvedObject: corev1.ObjectReference{
-			Namespace: involvedNS,
-			Name:      metaObj.GetName(),
-			UID:       metaObj.GetUID(),
-		},
-		Reason:         reason,
-		Message:        message,
-		Source:         r.Source,
-		FirstTimestamp: metav1.NewTime(time.Now()),
-		LastTimestamp:  metav1.NewTime(time.Now()),
-		Count:          1,
-		Type:           eventtype,
+		Regarding:                *regardingRef,
+		Related:                  relatedRef,
+		Reason:                   reason,
+		Note:                     noteMessage,
+		Type:                     eventtype,
+		Action:                   action,
+		ReportingController:      r.Source.Component,
+		ReportingInstance:        r.Source.Host,
+		EventTime:                metav1.MicroTime{Time: time.Now()},
+		DeprecatedSource:         r.Source,
+		DeprecatedFirstTimestamp: metav1.NewTime(time.Now()),
+		DeprecatedLastTimestamp:  metav1.NewTime(time.Now()),
+		DeprecatedCount:          1,
 	}
 	// best-effort write; surface errors to optional logger so operators can diagnose
-	if created, err := r.Clientset.CoreV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{}); err != nil {
+	if created, err := r.Clientset.EventsV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{}); err != nil {
 		if r.Logger != nil {
 			// include namespace information for the involved object
 			fields := system.NamespacedFields(metaObj.GetName(), ns)
-			r.Logger.Warnw("failed to create kubernetes Event", append(fields, "reason", reason, "message", message, "error", err)...)
+			r.Logger.Warnw("failed to create kubernetes Event", append(fields, "reason", reason, "note", noteMessage, "error", err)...)
 		}
 	} else {
 		if r.Logger != nil {
 			// created is namespaced where Namespace == ns
 			fields := system.NamespacedFields(created.GetName(), created.GetNamespace())
-			r.Logger.Debugw("kubernetes Event created", append(fields, "reason", reason, "message", message)...)
+			r.Logger.Debugw("kubernetes Event created", append(fields, "reason", reason, "note", noteMessage)...)
 		}
 	}
 }
 
-func (r *K8sEventRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
-	// format message and delegate
-	msg := messageFmt
-	if len(args) > 0 {
-		msg = fmt.Sprintf(messageFmt, args...)
-	}
-	r.Event(object, eventtype, reason, msg)
-}
-
-func (r *K8sEventRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
-	// annotated events are not fully supported via clientset create path
-	// maintain existing behavior: format message and create an Event
-	msg := messageFmt
-	if len(args) > 0 {
-		msg = fmt.Sprintf(messageFmt, args...)
-	}
-	r.Event(object, eventtype, reason, msg)
-}
-
-// Ensure K8sEventRecorder satisfies record.EventRecorder
-var _ record.EventRecorder = &K8sEventRecorder{}
+// Ensure K8sEventRecorder satisfies events.EventRecorder
+var _ events.EventRecorder = &K8sEventRecorder{}

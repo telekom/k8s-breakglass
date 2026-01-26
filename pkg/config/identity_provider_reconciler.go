@@ -11,7 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -41,7 +41,7 @@ import (
 type IdentityProviderReconciler struct {
 	client   client.Client
 	logger   *zap.SugaredLogger
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 
 	// onReload is called when IdentityProvider changes are detected
 	onReload func(ctx context.Context) error
@@ -119,7 +119,7 @@ func (r *IdentityProviderReconciler) WithErrorHandler(fn func(ctx context.Contex
 }
 
 // WithEventRecorder sets the event recorder for emitting Kubernetes events
-func (r *IdentityProviderReconciler) WithEventRecorder(recorder record.EventRecorder) *IdentityProviderReconciler {
+func (r *IdentityProviderReconciler) WithEventRecorder(recorder events.EventRecorder) *IdentityProviderReconciler {
 	r.recorder = recorder
 	return r
 }
@@ -186,8 +186,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		if r.recorder != nil {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "ValidationFailed",
-				fmt.Sprintf("Resource validation failed: %s", validationResult.ErrorMessage()))
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "ValidationFailed", "ValidationFailed",
+				"Resource validation failed: %s", validationResult.ErrorMessage())
 		}
 
 		if r.onError != nil {
@@ -248,8 +248,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		if r.recorder != nil {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "ConfigReloadFailed",
-				fmt.Sprintf("Failed to reload configuration: %v", err))
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "ConfigReloadFailed", "ConfigReloadFailed",
+				"Failed to reload configuration: %v", err)
 		}
 
 		// Return error to trigger controller-runtime's exponential backoff
@@ -294,8 +294,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		if r.recorder != nil {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "CacheUpdateFailed",
-				fmt.Sprintf("Failed to update provider cache: %v", err))
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "CacheUpdateFailed", "CacheUpdateFailed",
+				"Failed to update provider cache: %v", err)
 		}
 	} else {
 		// Cache update successful - update condition
@@ -343,8 +343,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		if r.recorder != nil {
 			eventIdp := latest.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, corev1.EventTypeNormal, "StatusUpdateSkipped",
-				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
+				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
 		}
 		return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
 	}
@@ -397,8 +397,8 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		if r.recorder != nil {
 			eventIdp := latest.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "StatusUpdateFailed",
-				fmt.Sprintf("Failed to persist status after successful reload: %v", err))
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "StatusUpdateFailed", "StatusUpdateFailed",
+				"Failed to persist status after successful reload: %v", err)
 		}
 		// Return error to trigger controller-runtime's exponential backoff
 		return reconcile.Result{}, err
@@ -409,7 +409,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	if r.recorder != nil {
 		eventIdp := latest.DeepCopy()
 		eventIdp.SetNamespace("")
-		r.recorder.Event(eventIdp, "Normal", "ConfigReloadSuccess",
+		r.recorder.Eventf(eventIdp, nil, corev1.EventTypeNormal, "ConfigReloadSuccess", "ConfigReloadSuccess",
 			"Configuration reloaded successfully and cached")
 	}
 
@@ -452,8 +452,8 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "GroupSyncUnknownProvider",
-				fmt.Sprintf("Unknown group sync provider: %s", idp.Spec.GroupSyncProvider))
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "GroupSyncUnknownProvider", "GroupSyncUnknownProvider",
+				"Unknown group sync provider: %s", idp.Spec.GroupSyncProvider)
 		}
 		return
 	}
@@ -472,7 +472,7 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "GroupSyncKeycloakMissing",
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "GroupSyncKeycloakMissing", "GroupSyncKeycloakMissing",
 				"Keycloak configuration is required when groupSyncProvider is Keycloak")
 		}
 		return
@@ -492,7 +492,7 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "GroupSyncKeycloakConfigIncomplete",
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "GroupSyncKeycloakConfigIncomplete", "GroupSyncKeycloakConfigIncomplete",
 				"Keycloak configuration incomplete: missing baseURL, realm, or clientID")
 		}
 		return
@@ -512,7 +512,7 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "GroupSyncClientSecretRefMissing",
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "GroupSyncClientSecretRefMissing", "GroupSyncClientSecretRefMissing",
 				"Keycloak configuration incomplete: missing clientSecretRef name or namespace")
 		}
 		return
@@ -541,9 +541,9 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "GroupSyncSecretNotFound",
-				fmt.Sprintf("Failed to read Keycloak client secret '%s' in namespace '%s': %v",
-					secretRef.Name, secretRef.Namespace, err))
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "GroupSyncSecretNotFound", "GroupSyncSecretNotFound",
+				"Failed to read Keycloak client secret '%s' in namespace '%s': %v",
+				secretRef.Name, secretRef.Namespace, err)
 		}
 		return
 	}
@@ -568,9 +568,9 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 		if r.recorder != nil && (oldCondition == nil || oldCondition.Status == metav1.ConditionTrue) {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Warning", "GroupSyncSecretKeyMissing",
-				fmt.Sprintf("Keycloak client secret key '%s' not found in secret '%s'",
-					secretDataKey, secretRef.Name))
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "GroupSyncSecretKeyMissing", "GroupSyncSecretKeyMissing",
+				"Keycloak client secret key '%s' not found in secret '%s'",
+				secretDataKey, secretRef.Name)
 		}
 		return
 	}
@@ -590,7 +590,7 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 		if r.recorder != nil {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
-			r.recorder.Event(eventIdp, "Normal", "GroupSyncHealthy",
+			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeNormal, "GroupSyncHealthy", "GroupSyncHealthy",
 				"Group sync provider is now healthy and reachable")
 		}
 		r.logger.Infow("group sync provider recovered to healthy state",

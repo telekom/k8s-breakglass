@@ -26,7 +26,6 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
 )
 
 // ============================================================================
@@ -44,7 +43,7 @@ func TestValidateOIDCAuth_NeitherOIDCConfigured(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -99,7 +98,7 @@ func TestValidateOIDCAuth_DirectOIDCMissingFields(t *testing.T) {
 				},
 			}
 			cl := newTestFakeClient(cc)
-			fakeRecorder := record.NewFakeRecorder(10)
+			fakeRecorder := fakeEventRecorder{}
 			checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 			ctx := context.Background()
@@ -125,7 +124,7 @@ func TestValidateOIDCAuth_DirectOIDCMissingClientSecretRef(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -153,7 +152,7 @@ func TestValidateOIDCAuth_DirectOIDCClientSecretMissing(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -185,7 +184,7 @@ func TestValidateOIDCAuth_DirectOIDCClientSecretMissingKey(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, clientSecret)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -222,7 +221,7 @@ func TestValidateOIDCAuth_DirectOIDCCASecretMissing(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, clientSecret)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -248,7 +247,7 @@ func TestValidateOIDCFromIdentityProvider_MissingName(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -270,7 +269,7 @@ func TestValidateOIDCFromIdentityProvider_MissingServer(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -292,7 +291,7 @@ func TestValidateOIDCFromIdentityProvider_IDPNotFound(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -319,7 +318,7 @@ func TestValidateOIDCFromIdentityProvider_IDPDisabled(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, idp)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()
@@ -350,7 +349,7 @@ func TestValidateOIDCFromIDP_NoClientSecretRef_PlainProvider(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, idp)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	ctx := context.Background()

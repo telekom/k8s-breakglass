@@ -14,7 +14,7 @@ import (
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -452,7 +452,7 @@ type EscalationStatusUpdater struct {
 	Resolver      GroupMemberResolver
 	Interval      time.Duration
 	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
-	EventRecorder record.EventRecorder
+	EventRecorder events.EventRecorder
 	IDPLoader     *cfgpkg.IdentityProviderLoader // For multi-IDP group fetching
 }
 
@@ -606,7 +606,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
 				// Emit error event
 				if u.EventRecorder != nil {
-					u.EventRecorder.Eventf(updated, "Warning", "GroupMembersUpdateFailed",
+					u.EventRecorder.Eventf(updated, nil, "Warning", "GroupMembersUpdateFailed", "GroupMembersUpdateFailed",
 						"Failed to update group members: %v", err)
 				}
 			} else {
@@ -617,14 +617,14 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 						// Multi-IDP mode
 						eventMsg := fmt.Sprintf("Group members synced successfully from %d IDPs. Updated %d group(s) with approvers.",
 							len(idpsToUse), len(groups))
-						u.EventRecorder.Eventf(updated, "Normal", "GroupMembersSynced", eventMsg)
+						u.EventRecorder.Eventf(updated, nil, "Normal", "GroupMembersSynced", "GroupMembersSynced", "%s", eventMsg)
 					} else {
 						// Legacy single resolver mode
 						totalMembers := 0
 						for _, members := range updated.Status.ApproverGroupMembers {
 							totalMembers += len(members)
 						}
-						u.EventRecorder.Eventf(updated, "Normal", "GroupMembersSynced",
+						u.EventRecorder.Eventf(updated, nil, "Normal", "GroupMembersSynced", "GroupMembersSynced",
 							"Group members resolved successfully. Total approvers from %d group(s): %d members.",
 							len(groups), totalMembers)
 					}
@@ -686,7 +686,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 			if u.EventRecorder != nil {
 				idp := &telekomv1alpha1.IdentityProvider{}
 				idp.SetName(idpName)
-				u.EventRecorder.Eventf(idp, "Warning", "GroupSyncConfigLoadFailed",
+				u.EventRecorder.Eventf(idp, nil, "Warning", "GroupSyncConfigLoadFailed", "GroupSyncConfigLoadFailed",
 					"Failed to load IDP config for escalation %s/%s: %v",
 					escalation.Namespace, escalation.Name, err)
 			}
@@ -705,7 +705,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 			if u.EventRecorder != nil {
 				idp := &telekomv1alpha1.IdentityProvider{}
 				idp.SetName(idpName)
-				u.EventRecorder.Eventf(idp, "Warning", "GroupSyncResolverCreationFailed",
+				u.EventRecorder.Eventf(idp, nil, "Warning", "GroupSyncResolverCreationFailed", "GroupSyncResolverCreationFailed",
 					"Failed to create group sync resolver for escalation %s/%s",
 					escalation.Namespace, escalation.Name)
 			}
@@ -728,7 +728,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 				if u.EventRecorder != nil {
 					idp := &telekomv1alpha1.IdentityProvider{}
 					idp.SetName(idpName)
-					u.EventRecorder.Eventf(idp, "Warning", "GroupFetchFailed",
+					u.EventRecorder.Eventf(idp, nil, "Warning", "GroupFetchFailed", "GroupFetchFailed",
 						"Failed to fetch group %s for escalation %s/%s: %v",
 						g, escalation.Namespace, escalation.Name, err)
 				}
@@ -767,7 +767,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPs(
 
 	// Emit event on BreakglassEscalation if there were failures
 	if failureCount > 0 && u.EventRecorder != nil {
-		u.EventRecorder.Eventf(escalation, "Warning", "GroupSyncPartialFailure",
+		u.EventRecorder.Eventf(escalation, nil, "Warning", "GroupSyncPartialFailure", "GroupSyncPartialFailure",
 			"Multi-IDP group sync partially failed: %d IDPs succeeded, %d failed. See status.groupSyncErrors for details.",
 			successCount, failureCount)
 	}

@@ -587,19 +587,15 @@ func TestIdentityProviderReconciler_DisabledIDPsFilteredFromCache(t *testing.T) 
 	assert.Equal(t, "enabled-idp", cached[0].Name)
 }
 
-// fakeEventRecorder is a simple fake implementation of record.EventRecorder for testing
+// fakeEventRecorder is a simple fake implementation of events.EventRecorder for testing
 type fakeEventRecorder struct {
 	events []string
 }
 
-func (f *fakeEventRecorder) Event(object runtime.Object, eventtype, reason, message string) {
+func (f *fakeEventRecorder) Eventf(object runtime.Object, related runtime.Object, eventtype, reason, action, note string, args ...interface{}) {
+	message := note
+	if len(args) > 0 {
+		message = fmt.Sprintf(note, args...)
+	}
 	f.events = append(f.events, fmt.Sprintf("%s: %s - %s", eventtype, reason, message))
-}
-
-func (f *fakeEventRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
-	f.events = append(f.events, fmt.Sprintf("%s: %s - %s", eventtype, reason, fmt.Sprintf(messageFmt, args...)))
-}
-
-func (f *fakeEventRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
-	f.Event(object, eventtype, reason, fmt.Sprintf(messageFmt, args...))
 }

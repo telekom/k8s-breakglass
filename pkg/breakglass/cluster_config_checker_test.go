@@ -3,6 +3,7 @@ package breakglass
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,8 +12,8 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -35,7 +36,7 @@ func TestClusterConfigChecker_MissingSecret(t *testing.T) {
 		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "missing", Namespace: "default"}},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	// run once
 	checker.runOnce(context.Background(), checker.Log)
@@ -54,7 +55,7 @@ func TestClusterConfigChecker_MissingKey(t *testing.T) {
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "default"}, Data: map[string][]byte{"other": []byte("x")}}
 	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s1", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background(), checker.Log)
 	got := &telekomv1alpha1.ClusterConfig{}
@@ -71,7 +72,7 @@ func TestClusterConfigChecker_ParseFail(t *testing.T) {
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s2", Namespace: "default"}, Data: map[string][]byte{"value": []byte("not-a-kubeconfig")}}
 	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-c", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s2", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	// stub RestConfigFromKubeConfig to return error
 	old := RestConfigFromKubeConfig
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return nil, errors.New("parse error") }
@@ -92,7 +93,7 @@ func TestClusterConfigChecker_Unreachable(t *testing.T) {
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s3", Namespace: "default"}, Data: map[string][]byte{"value": []byte("fake-kubeconfig")}}
 	cc := &telekomv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-d", Namespace: "default"}, Spec: telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s3", Namespace: "default"}}}
 	cl := newTestFakeClient(cc, sec)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	// stub RestConfigFromKubeConfig to return non-nil config
 	old := RestConfigFromKubeConfig
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return &rest.Config{}, nil }
@@ -121,7 +122,7 @@ func TestClusterConfigChecker_SuccessfulValidation(t *testing.T) {
 		Spec:       telekomv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "valid-secret", Namespace: "default"}},
 	}
 	cl := newTestFakeClient(cc, sec)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	// stub RestConfigFromKubeConfig to return valid config
 	old := RestConfigFromKubeConfig
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return &rest.Config{}, nil }
@@ -167,7 +168,7 @@ func TestClusterConfigChecker_StatusUpdatePersisted(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, sec)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	// stub for successful validation
 	old := RestConfigFromKubeConfig
 	RestConfigFromKubeConfig = func(b []byte) (*rest.Config, error) { return &rest.Config{}, nil }
@@ -213,7 +214,7 @@ func TestClusterConfigChecker_TransitionFromFailToSuccess(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	// First check - secret still missing
@@ -267,7 +268,7 @@ func TestClusterConfigChecker_NoKubeconfigSecretRef(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 	checker.runOnce(context.Background(), checker.Log)
 	// Should log warning but not update status (no error to report, just warning)
@@ -281,7 +282,7 @@ func TestClusterConfigChecker_LeaderElectionWait(t *testing.T) {
 	}
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "sec", Namespace: "default"}, Data: map[string][]byte{"value": []byte("kubeconfig")}}
 	cl := newTestFakeClient(cc, sec)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 
 	// Create a leadership signal channel
 	leaderChan := make(chan struct{})
@@ -334,7 +335,7 @@ func TestClusterConfigChecker_OIDCAuthType_MissingOIDCConfig(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -367,7 +368,7 @@ func TestClusterConfigChecker_OIDCAuthType_MissingClientSecret(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -409,7 +410,7 @@ func TestClusterConfigChecker_OIDCAuthType_MissingCASecret(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, clientSecret)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -458,7 +459,7 @@ func TestClusterConfigChecker_OIDCAuthType_TOFUAllowsEmptyCAKey(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, clientSecret, caSecret)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -499,7 +500,7 @@ func TestClusterConfigChecker_OIDCAuthType_MissingRequiredFields(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, clientSecret)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -676,7 +677,7 @@ func TestValidateOIDCFromIdentityProvider_MissingRequiredFields(t *testing.T) {
 				},
 			}
 			cl := newTestFakeClient(cc)
-			fakeRecorder := record.NewFakeRecorder(10)
+			fakeRecorder := fakeEventRecorder{}
 			checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 			checker.runOnce(context.Background(), checker.Log)
@@ -705,7 +706,7 @@ func TestValidateOIDCFromIdentityProvider_IdentityProviderNotFound(t *testing.T)
 		},
 	}
 	cl := newTestFakeClient(cc) // No IdentityProvider created
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -747,7 +748,7 @@ func TestValidateOIDCFromIdentityProvider_IdentityProviderDisabled(t *testing.T)
 		},
 	}
 	cl := newTestFakeClient(cc, idp)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -784,7 +785,7 @@ func TestValidateOIDCFromIdentityProvider_NoClientSecretRef(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, idp)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -826,7 +827,7 @@ func TestValidateOIDCFromIdentityProvider_ClientSecretMissing(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, idp) // Secret not created
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -873,7 +874,7 @@ func TestValidateOIDCFromIdentityProvider_ClientSecretKeyMissing(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, idp, secret)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -924,7 +925,7 @@ func TestValidateOIDCFromIdentityProvider_CASecretMissing(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, idp, clientSecret) // No CA secret
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -976,7 +977,7 @@ func TestValidateOIDCFromIdentityProvider_UsesExplicitClientSecret(t *testing.T)
 		},
 	}
 	cl := newTestFakeClient(cc, idp, explicitSecret) // Only explicit secret, not IDP's secret
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -1025,7 +1026,7 @@ func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
 		},
 	}
 	cl := newTestFakeClient(cc, idp, secret)
-	fakeRecorder := record.NewFakeRecorder(10)
+	fakeRecorder := fakeEventRecorder{}
 	checker := ClusterConfigChecker{Log: zap.NewNop().Sugar(), Client: cl, Recorder: fakeRecorder, Interval: time.Minute}
 
 	checker.runOnce(context.Background(), checker.Log)
@@ -1037,4 +1038,19 @@ func TestValidateOIDCFromIdentityProvider_DefaultClientSecretKey(t *testing.T) {
 	// Should pass secret key check (using default "client-secret") but fail on OIDC discovery
 	require.Equal(t, metav1.ConditionFalse, readyCondition.Status)
 	require.NotContains(t, readyCondition.Message, "missing key")
+}
+
+type fakeEventRecorder struct {
+	Events chan string
+}
+
+func (f fakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, eventtype, reason, action, note string, args ...interface{}) {
+	if f.Events == nil {
+		return
+	}
+	message := note
+	if len(args) > 0 {
+		message = fmt.Sprintf(note, args...)
+	}
+	f.Events <- fmt.Sprintf("%s %s %s %s", eventtype, reason, action, message)
 }

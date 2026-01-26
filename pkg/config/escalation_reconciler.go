@@ -11,7 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -37,7 +37,7 @@ import (
 type EscalationReconciler struct {
 	client   client.Client
 	logger   *zap.SugaredLogger
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 
 	// onReload is called when BreakglassEscalation changes are detected
 	onReload func(ctx context.Context) error
@@ -55,7 +55,7 @@ type EscalationReconciler struct {
 func NewEscalationReconciler(
 	c client.Client,
 	logger *zap.SugaredLogger,
-	recorder record.EventRecorder,
+	recorder events.EventRecorder,
 	onReload func(ctx context.Context) error,
 	onError func(ctx context.Context, err error),
 	resyncPeriod time.Duration,
@@ -198,7 +198,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 			apimeta.SetStatusCondition(&escalation.Status.Conditions, condition)
 
 			if r.recorder != nil {
-				r.recorder.Event(escalation, "Warning", ve.reason, ve.message)
+				r.recorder.Eventf(escalation, nil, "Warning", ve.reason, ve.reason, "%s", ve.message)
 			}
 			r.logger.Warnw("Escalation validation failed",
 				"escalation", escalation.Name,
@@ -234,7 +234,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 	}
 
 	if r.recorder != nil {
-		r.recorder.Event(escalation, "Normal", "ValidationSucceeded", "All escalation validations passed successfully")
+		r.recorder.Eventf(escalation, nil, "Normal", "ValidationSucceeded", "ValidationSucceeded", "All escalation validations passed successfully")
 	}
 
 	if err := r.client.Status().Update(ctx, escalation); err != nil {

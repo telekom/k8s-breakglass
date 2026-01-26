@@ -19,7 +19,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -30,7 +30,7 @@ type ClusterConfigChecker struct {
 	Log           *zap.SugaredLogger
 	Client        client.Client
 	Interval      time.Duration
-	Recorder      record.EventRecorder
+	Recorder      events.EventRecorder
 	LeaderElected <-chan struct{} // Optional: signal when leadership acquired (nil = start immediately for backward compatibility)
 }
 
@@ -580,8 +580,8 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
 		if ccc.Recorder != nil {
-			ccc.Recorder.Event(&latest, corev1.EventTypeNormal, "StatusUpdateSkipped",
-				fmt.Sprintf("Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second)))
+			ccc.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
+				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
 		}
 		return nil
 	}
@@ -621,7 +621,7 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 		} else {
 			lg.Debugw("Emitting Warning event for ClusterConfig", "cluster", cc.Name, "message", message)
 		}
-		ccc.Recorder.Event(&latest, eventType, eventReason, message)
+		ccc.Recorder.Eventf(&latest, nil, eventType, eventReason, eventReason, "%s", message)
 	} else {
 		lg.Warnw("No Event recorder configured; skipping Kubernetes Event emission", "cluster", cc.Name)
 	}

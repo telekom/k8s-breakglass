@@ -300,8 +300,17 @@ func main() {
 	}
 
 	// Now create the leader election resourcelock using the kubeClientset
-	eventBroadcaster := record.NewBroadcaster()
-	eventRecorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-controller"})
+	legacyEventBroadcaster := record.NewBroadcaster()
+	legacyEventRecorder := legacyEventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-controller"})
+
+	// Events recorder for components using the events.k8s.io API
+	eventsRecorder := &breakglass.K8sEventRecorder{
+		Clientset: kubeClientset,
+		Source:    corev1.EventSource{Component: "breakglass-controller"},
+		Scheme:    scheme,
+		Namespace: cliConfig.PodNamespace,
+		Logger:    log,
+	}
 
 	// Start the escalation status updater with EventRecorder and IDPLoader so it can:
 	// - Emit events when IDP group sync fails (surfaced via kubectl describe identityprovider)
@@ -313,7 +322,7 @@ func main() {
 			Log:           log,
 			K8sClient:     escalationManager.Client,
 			Resolver:      escalationManager.GetResolver(),
-			EventRecorder: eventRecorder,
+			EventRecorder: eventsRecorder,
 			IDPLoader:     idpLoader,
 			Interval:      cli.ParseEscalationStatusUpdateInterval(cliConfig.EscalationStatusUpdateInt, log),
 			LeaderElected: leaderElectedCh,
@@ -349,7 +358,7 @@ func main() {
 		kubeClientset.CoordinationV1(),
 		resourcelock.ResourceLockConfig{
 			Identity:      hostname,
-			EventRecorder: eventRecorder,
+			EventRecorder: legacyEventRecorder,
 		},
 	)
 	if err != nil {
@@ -357,7 +366,7 @@ func main() {
 	}
 	log.Infow("Leader election resource lock created", "id", leaseName, "namespace", leaseNamespace, "identity", hostname)
 
-	recorder := &breakglass.K8sEventRecorder{Clientset: kubeClientset, Source: corev1.EventSource{Component: "breakglass-controller"}, Namespace: cliConfig.PodNamespace, Logger: log}
+	recorder := eventsRecorder
 
 	// Determine interval from CLI flag first, then config (fallback to 10m)
 	intervalStr := cliConfig.ClusterConfigCheckInterval

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -29,7 +29,7 @@ func TestNewEscalationReconciler(t *testing.T) {
 	scheme := newTestEscalationReconcilerScheme()
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	logger := zap.NewNop().Sugar()
-	recorder := record.NewFakeRecorder(10)
+	recorder := newEscalationFakeEventRecorder(10)
 
 	t.Run("creates reconciler with default resync period", func(t *testing.T) {
 		r := NewEscalationReconciler(fakeClient, logger, recorder, nil, nil, 0)
@@ -67,10 +67,28 @@ func TestNewEscalationReconciler(t *testing.T) {
 	})
 }
 
+type escalationFakeEventRecorder struct {
+	Events chan string
+}
+
+func newEscalationFakeEventRecorder(buffer int) *escalationFakeEventRecorder {
+	return &escalationFakeEventRecorder{Events: make(chan string, buffer)}
+}
+
+func (f *escalationFakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, eventtype, reason, action, note string, args ...interface{}) {
+	message := note
+	if len(args) > 0 {
+		message = fmt.Sprintf(note, args...)
+	}
+	if f.Events != nil {
+		f.Events <- fmt.Sprintf("%s %s %s %s", eventtype, reason, action, message)
+	}
+}
+
 func TestEscalationReconciler_Reconcile(t *testing.T) {
 	scheme := newTestEscalationReconcilerScheme()
 	logger := zap.NewNop().Sugar()
-	recorder := record.NewFakeRecorder(10)
+	recorder := newEscalationFakeEventRecorder(10)
 
 	t.Run("not found escalation returns no error", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()

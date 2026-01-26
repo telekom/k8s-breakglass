@@ -23,12 +23,12 @@ func TestEventRecorder_UsesObjectNamespace(t *testing.T) {
 	obj.SetNamespace("myns")
 	obj.SetUID("1111")
 
-	rec.Event(obj, "Normal", "ReasonTest", "message")
+	rec.Eventf(obj, nil, "Normal", "ReasonTest", "ReasonTest", "message")
 
 	// give the fake client a moment (not strictly necessary for fake client)
 	time.Sleep(10 * time.Millisecond)
 
-	evs, err := cs.CoreV1().Events("myns").List(context.Background(), metav1.ListOptions{})
+	evs, err := cs.EventsV1().Events("myns").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		t.Fatalf("failed to list events: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestEventRecorder_UsesObjectNamespace(t *testing.T) {
 	// verify involved object namespace is set to object's namespace
 	found := false
 	for _, e := range evs.Items {
-		if e.InvolvedObject.Namespace == "myns" {
+		if e.Regarding.Namespace == "myns" {
 			found = true
 			break
 		}
@@ -59,10 +59,10 @@ func TestEventRecorder_FallbackToPodNamespace(t *testing.T) {
 	obj.SetName("clusterobj")
 	obj.SetUID("2222")
 
-	rec.Event(obj, "Warning", "ReasonCluster", "cluster message")
+	rec.Eventf(obj, nil, "Warning", "ReasonCluster", "ReasonCluster", "cluster message")
 	time.Sleep(10 * time.Millisecond)
 
-	evs, err := cs.CoreV1().Events("podns").List(context.Background(), metav1.ListOptions{})
+	evs, err := cs.EventsV1().Events("podns").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		t.Fatalf("failed to list events: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestEventRecorder_FallbackToPodNamespace(t *testing.T) {
 	// ensure involved object namespace equals podns as set by the recorder
 	found := false
 	for _, e := range evs.Items {
-		if e.InvolvedObject.Namespace == "podns" {
+		if e.Regarding.Namespace == "podns" {
 			found = true
 			break
 		}

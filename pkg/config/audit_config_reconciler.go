@@ -27,7 +27,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -51,7 +51,7 @@ import (
 type AuditConfigReconciler struct {
 	client   client.Client
 	logger   *zap.SugaredLogger
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 
 	// onReloadMultiple is called when AuditConfig changes are detected
 	// It receives all valid AuditConfigs to aggregate their sinks
@@ -81,7 +81,7 @@ type SinkHealthInfo struct {
 func NewAuditConfigReconciler(
 	c client.Client,
 	logger *zap.SugaredLogger,
-	recorder record.EventRecorder,
+	recorder events.EventRecorder,
 	onReloadMultiple func(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig) error,
 	onError func(ctx context.Context, err error),
 	resyncPeriod time.Duration,
@@ -152,8 +152,8 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 			}
 
 			if r.recorder != nil {
-				r.recorder.Event(config, corev1.EventTypeWarning, "ValidationFailed",
-					fmt.Sprintf("Resource validation failed: %s", validationResult.ErrorMessage()))
+				r.recorder.Eventf(config, nil, corev1.EventTypeWarning, "ValidationFailed", "Validate",
+					"Resource validation failed: %s", validationResult.ErrorMessage())
 			}
 			continue
 		}
@@ -174,8 +174,8 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 				"name", config.Name,
 				"errors", validationErrors)
 			if r.recorder != nil {
-				r.recorder.Event(config, corev1.EventTypeWarning, "ValidationFailed",
-					fmt.Sprintf("AuditConfig validation failed: %v", validationErrors))
+				r.recorder.Eventf(config, nil, corev1.EventTypeWarning, "ValidationFailed", "Validate",
+					"AuditConfig validation failed: %v", validationErrors)
 			}
 			continue
 		}
@@ -210,8 +210,8 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 			for _, cfg := range allConfigs.Items {
 				if cfg.Spec.Enabled && r.isConfigInList(cfg.Name, validConfigs) {
 					if r.recorder != nil {
-						r.recorder.Event(&cfg, corev1.EventTypeWarning, "ReloadFailed",
-							fmt.Sprintf("Failed to reload audit configuration: %v", err))
+						r.recorder.Eventf(&cfg, nil, corev1.EventTypeWarning, "ReloadFailed", "Reload",
+							"Failed to reload audit configuration: %v", err)
 					}
 				}
 			}
@@ -237,8 +237,8 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 	for _, cfg := range allConfigs.Items {
 		if cfg.Spec.Enabled && r.isConfigInList(cfg.Name, validConfigs) {
 			if r.recorder != nil {
-				r.recorder.Event(&cfg, corev1.EventTypeNormal, "Reconciled",
-					fmt.Sprintf("AuditConfig %s reconciled successfully (aggregated with %d other configs)", cfg.Name, len(validConfigs)-1))
+				r.recorder.Eventf(&cfg, nil, corev1.EventTypeNormal, "Reconciled", "Reconciled",
+					"AuditConfig %s reconciled successfully (aggregated with %d other configs)", cfg.Name, len(validConfigs)-1)
 			}
 		}
 	}
