@@ -725,7 +725,15 @@ func TestDenyPolicy_ValidateCreate_InvalidSpec(t *testing.T) {
 	ctx := context.Background()
 	policy := &DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "policy"},
-		Spec:       DenyPolicySpec{},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+					// missing verbs
+				},
+			},
+		},
 	}
 
 	_, err := policy.ValidateCreate(ctx, policy)
@@ -753,7 +761,15 @@ func TestDenyPolicy_ValidateUpdate_InvalidSpec(t *testing.T) {
 
 	newPolicy := &DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "test"},
-		Spec:       DenyPolicySpec{},
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"get"},
+					Resources: []string{"pods"},
+					// missing apiGroups
+				},
+			},
+		},
 	}
 
 	_, err := policy.ValidateUpdate(ctx, oldPolicy, newPolicy)

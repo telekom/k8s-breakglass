@@ -19,10 +19,31 @@ import (
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
+
+type eventRecorderAdapter struct {
+	recorder events.EventRecorder
+}
+
+func newEventRecorderAdapter(recorder events.EventRecorder) eventRecorderAdapter {
+	return eventRecorderAdapter{recorder: recorder}
+}
+
+func (a eventRecorderAdapter) Event(object runtime.Object, eventtype, reason, message string) {
+	a.recorder.Eventf(object, nil, eventtype, reason, reason, message)
+}
+
+func (a eventRecorderAdapter) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+	a.recorder.Eventf(object, nil, eventtype, reason, reason, messageFmt, args...)
+}
+
+func (a eventRecorderAdapter) AnnotatedEventf(object runtime.Object, _ map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
+	a.recorder.Eventf(object, nil, eventtype, reason, reason, messageFmt, args...)
+}
 
 func NewManager(
 	restCfg *rest.Config,
@@ -138,7 +159,7 @@ func Setup(
 		log.Errorw("IdentityProvider reconciliation error", "error", err)
 		metrics.IdentityProviderLoadFailed.WithLabelValues("reconciler_error").Inc()
 	})
-	idpReconciler.WithEventRecorder(mgr.GetEventRecorderFor("breakglass-controller"))
+	idpReconciler.WithEventRecorder(newEventRecorderAdapter(mgr.GetEventRecorder("breakglass-controller")))
 	idpReconciler.WithResyncPeriod(10 * time.Minute)
 
 	// Set reconciler in API server so it can use the cached IDPs
@@ -176,7 +197,7 @@ func Setup(
 	escalationReconciler := config.NewEscalationReconciler(
 		mgr.GetClient(),
 		log,
-		mgr.GetEventRecorderFor("breakglass-escalation-controller"),
+		newEventRecorderAdapter(mgr.GetEventRecorder("breakglass-escalation-controller")),
 		nil, // no onReload callback needed for escalations
 		func(ctx context.Context, err error) {
 			log.Errorw("BreakglassEscalation reconciliation error", "error", err)
@@ -207,7 +228,7 @@ func Setup(
 	auditConfigReconciler := config.NewAuditConfigReconciler(
 		mgr.GetClient(),
 		log,
-		mgr.GetEventRecorderFor("breakglass-audit-controller"),
+		newEventRecorderAdapter(mgr.GetEventRecorder("breakglass-audit-controller")),
 		func(ctx context.Context, auditConfigs []*breakglassv1alpha1.AuditConfig) error {
 			// Reload audit service with aggregated configuration from all AuditConfigs
 			if auditService == nil {

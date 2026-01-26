@@ -196,10 +196,10 @@ func newFakeCtrlManager(t testing.TB) *fakeCtrlManager {
 	close(ch)
 
 	return &fakeCtrlManager{
-		webhookSrv: &fakeWebhookServer{},
-		logger:     logr.Discard(),
+		webhookSrv:        &fakeWebhookServer{},
+		logger:            logr.Discard(),
 		converterRegistry: conversion.NewRegistry(),
-		electedCh:  ch,
+		electedCh:         ch,
 	}
 }
 
@@ -294,7 +294,8 @@ func (f *fakeWebhookServer) WebhookMux() *http.ServeMux { return http.NewServeMu
 
 type fakeEventRecorder struct{}
 
-func (fakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, _, _, _, _ string, _ ...interface{}) {}
+func (fakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, _, _, _, _ string, _ ...interface{}) {
+}
 
 // TestEnsure_CertsReady tests the Ensure function when certificates become ready
 func TestEnsure_CertsReady(t *testing.T) {
