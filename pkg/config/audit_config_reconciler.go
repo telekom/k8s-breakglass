@@ -108,7 +108,7 @@ func (r *AuditConfigReconciler) SetSinkHealthProvider(fn func() []SinkHealthInfo
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=auditconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=auditconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile implements controller-runtime's Reconciler interface.
 // Called whenever an AuditConfig CR changes.

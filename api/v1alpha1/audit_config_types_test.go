@@ -699,13 +699,19 @@ func TestAuditConfig_ValidateCreate_InvalidConfig(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestAuditConfig_ValidateCreate_WrongType(t *testing.T) {
-	ac := &AuditConfig{}
-	wrongType := &BreakglassSession{} // Wrong type
+func TestAuditConfig_ValidateCreate_MissingSinkType(t *testing.T) {
+	ac := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "audit-missing-type"},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{Name: "sink-without-type"},
+			},
+		},
+	}
 
-	_, err := ac.ValidateCreate(context.Background(), wrongType)
+	_, err := ac.ValidateCreate(context.Background(), ac)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expected an AuditConfig")
 }
 
 func TestAuditConfig_ValidateUpdate_ValidConfig(t *testing.T) {
@@ -746,14 +752,35 @@ func TestAuditConfig_ValidateUpdate_ValidConfig(t *testing.T) {
 	assert.Empty(t, warnings)
 }
 
-func TestAuditConfig_ValidateUpdate_WrongType(t *testing.T) {
-	ac := &AuditConfig{}
-	oldObj := &AuditConfig{}
-	wrongType := &BreakglassSession{} // Wrong type
+func TestAuditConfig_ValidateUpdate_MissingSinkName(t *testing.T) {
+	oldObj := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "audit-old"},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: AuditSinkTypeLog,
+					Log:  &LogSinkSpec{Level: "info"},
+				},
+			},
+		},
+	}
+	newObj := &AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "audit-old"},
+		Spec: AuditConfigSpec{
+			Enabled: true,
+			Sinks: []AuditSinkConfig{
+				{
+					Type: AuditSinkTypeLog,
+					Log:  &LogSinkSpec{Level: "debug"},
+				},
+			},
+		},
+	}
 
-	_, err := ac.ValidateUpdate(context.Background(), oldObj, wrongType)
+	_, err := newObj.ValidateUpdate(context.Background(), oldObj, newObj)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expected an AuditConfig")
 }
 
 func TestAuditConfig_ValidateUpdate_InvalidConfig(t *testing.T) {

@@ -19,10 +19,8 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -202,8 +200,7 @@ func init() {
 // SetupWebhookWithManager registers webhooks for MailProvider
 func (mp *MailProvider) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(mp).
+	return ctrl.NewWebhookManagedBy(mgr, &MailProvider{}).
 		WithValidator(mp).
 		Complete()
 }
@@ -211,46 +208,31 @@ func (mp *MailProvider) SetupWebhookWithManager(mgr ctrl.Manager) error {
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-mailprovider,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=mailproviders,verbs=create;update,versions=v1alpha1,name=mailprovider.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // ValidateCreate implements webhook.CustomValidator
-func (mp *MailProvider) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	mailProvider, ok := obj.(*MailProvider)
-	if !ok {
-		return nil, fmt.Errorf("expected a MailProvider object but got %T", obj)
-	}
-
+func (mp *MailProvider) ValidateCreate(ctx context.Context, obj *MailProvider) (admission.Warnings, error) {
 	// Check for multiple default providers
-	if mailProvider.Spec.Default {
+	if obj.Spec.Default {
 		if err := mp.validateDefaultUniqueness(ctx, ""); err != nil {
 			return nil, err
 		}
 	}
 
-	return mailProvider.validate()
+	return obj.validate()
 }
 
 // ValidateUpdate implements webhook.CustomValidator
-func (mp *MailProvider) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	mailProvider, ok := newObj.(*MailProvider)
-	if !ok {
-		return nil, fmt.Errorf("expected a MailProvider object but got %T", newObj)
-	}
-
-	oldMailProvider, ok := oldObj.(*MailProvider)
-	if !ok {
-		return nil, fmt.Errorf("expected old object to be a MailProvider but got %T", oldObj)
-	}
-
+func (mp *MailProvider) ValidateUpdate(ctx context.Context, oldObj, newObj *MailProvider) (admission.Warnings, error) {
 	// Check for multiple default providers (excluding self if updating)
-	if mailProvider.Spec.Default && (!oldMailProvider.Spec.Default || mailProvider.Name != oldMailProvider.Name) {
-		if err := mp.validateDefaultUniqueness(ctx, mailProvider.Name); err != nil {
+	if newObj.Spec.Default && (!oldObj.Spec.Default || newObj.Name != oldObj.Name) {
+		if err := mp.validateDefaultUniqueness(ctx, newObj.Name); err != nil {
 			return nil, err
 		}
 	}
 
-	return mailProvider.validate()
+	return newObj.validate()
 }
 
 // ValidateDelete implements webhook.CustomValidator
-func (mp *MailProvider) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (mp *MailProvider) ValidateDelete(ctx context.Context, obj *MailProvider) (admission.Warnings, error) {
 	return nil, nil
 }
 

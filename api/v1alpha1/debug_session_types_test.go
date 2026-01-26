@@ -1468,14 +1468,16 @@ func TestDebugSession_ValidateDelete(t *testing.T) {
 	}
 }
 
-func TestDebugSession_ValidateCreate_WrongType(t *testing.T) {
+func TestDebugSession_ValidateCreate_InvalidSpec(t *testing.T) {
 	ctx := context.Background()
-	session := &DebugSession{}
+	session := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session"},
+		Spec:       DebugSessionSpec{},
+	}
 
-	wrongType := &DebugPodTemplate{}
-	_, err := session.ValidateCreate(ctx, wrongType)
+	_, err := session.ValidateCreate(ctx, session)
 	if err == nil {
-		t.Error("ValidateCreate() expected error for wrong type")
+		t.Error("ValidateCreate() expected error for missing required fields")
 	}
 }
 
@@ -1584,7 +1586,7 @@ func TestDebugSession_MultipleConditions(t *testing.T) {
 	}
 }
 
-func TestDebugSession_ValidateUpdate_WrongType(t *testing.T) {
+func TestDebugSession_ValidateUpdate_InvalidSpec(t *testing.T) {
 	ctx := context.Background()
 	session := &DebugSession{}
 
@@ -1597,11 +1599,14 @@ func TestDebugSession_ValidateUpdate_WrongType(t *testing.T) {
 		},
 	}
 
-	// Pass wrong type for newObj
-	wrongType := &DebugPodTemplate{}
-	_, err := session.ValidateUpdate(ctx, oldSession, wrongType)
+	newSession := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec:       DebugSessionSpec{},
+	}
+
+	_, err := session.ValidateUpdate(ctx, oldSession, newSession)
 	if err == nil {
-		t.Error("ValidateUpdate() expected error for wrong newObj type")
+		t.Error("ValidateUpdate() expected error for invalid new spec")
 	}
 }
 

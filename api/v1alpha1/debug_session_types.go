@@ -18,12 +18,9 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -418,45 +415,34 @@ func (ds *DebugSession) GetCondition(condType string) *metav1.Condition {
 }
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (ds *DebugSession) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	session, ok := obj.(*DebugSession)
-	if !ok {
-		return nil, fmt.Errorf("expected a DebugSession object but got %T", obj)
-	}
-
+func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDebugSession(session)
+	result := ValidateDebugSession(obj)
 	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, session.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, obj.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	session, ok := newObj.(*DebugSession)
-	if !ok {
-		return nil, fmt.Errorf("expected a DebugSession object but got %T", newObj)
-	}
-
+func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDebugSession(session)
+	result := ValidateDebugSession(newObj)
 	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, session.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (ds *DebugSession) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (ds *DebugSession) ValidateDelete(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	return nil, nil
 }
 
 // SetupWebhookWithManager registers webhooks for DebugSession
 func (ds *DebugSession) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(ds).
+	return ctrl.NewWebhookManagedBy(mgr, &DebugSession{}).
 		WithValidator(ds).
 		Complete()
 }

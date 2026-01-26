@@ -18,13 +18,11 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -508,45 +506,34 @@ func (dst *DebugSessionTemplate) GetCondition(condType string) *metav1.Condition
 }
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (dst *DebugSessionTemplate) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	template, ok := obj.(*DebugSessionTemplate)
-	if !ok {
-		return nil, fmt.Errorf("expected a DebugSessionTemplate object but got %T", obj)
-	}
-
+func (dst *DebugSessionTemplate) ValidateCreate(ctx context.Context, obj *DebugSessionTemplate) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDebugSessionTemplate(template)
+	result := ValidateDebugSessionTemplate(obj)
 	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, template.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, obj.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (dst *DebugSessionTemplate) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	template, ok := newObj.(*DebugSessionTemplate)
-	if !ok {
-		return nil, fmt.Errorf("expected a DebugSessionTemplate object but got %T", newObj)
-	}
-
+func (dst *DebugSessionTemplate) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSessionTemplate) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDebugSessionTemplate(template)
+	result := ValidateDebugSessionTemplate(newObj)
 	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, template.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, newObj.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (dst *DebugSessionTemplate) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (dst *DebugSessionTemplate) ValidateDelete(ctx context.Context, obj *DebugSessionTemplate) (admission.Warnings, error) {
 	return nil, nil
 }
 
 // SetupWebhookWithManager registers webhooks for DebugSessionTemplate
 func (dst *DebugSessionTemplate) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(dst).
+	return ctrl.NewWebhookManagedBy(mgr, &DebugSessionTemplate{}).
 		WithValidator(dst).
 		Complete()
 }

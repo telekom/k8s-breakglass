@@ -539,11 +539,13 @@ func TestIdentityProviderValidateUpdateValidSpec(t *testing.T) {
 	_ = warnings
 }
 
-func TestIdentityProviderValidateCreate_WrongType(t *testing.T) {
-	idp := &IdentityProvider{}
-	wrongType := &BreakglassSession{}
-	_, err := idp.ValidateCreate(context.Background(), wrongType)
-	require.Error(t, err, "expected error when object is wrong type")
+func TestIdentityProviderValidateCreate_MissingOIDCConfig(t *testing.T) {
+	idp := &IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-missing-oidc"},
+		Spec:       IdentityProviderSpec{},
+	}
+	_, err := idp.ValidateCreate(context.Background(), idp)
+	require.Error(t, err, "expected error when OIDC configuration is missing")
 }
 
 // TestIdentityProviderValidateDelete verifies delete validation
@@ -647,14 +649,6 @@ func TestIdentityProviderIntegration(t *testing.T) {
 	readyCondition := idp.GetCondition(string(IdentityProviderConditionReady))
 	require.NotNil(t, readyCondition)
 	assert.Equal(t, metav1.ConditionTrue, readyCondition.Status)
-}
-
-// TestIdentityProvider_ValidateCreate_WrongType verifies type check
-func TestIdentityProvider_ValidateCreate_WrongType(t *testing.T) {
-	idp := &IdentityProvider{}
-	wrongType := &BreakglassSession{}
-	_, err := idp.ValidateCreate(context.Background(), wrongType)
-	assert.Error(t, err, "expected error when obj is wrong type")
 }
 
 // TestIdentityProvider_ValidateCreate_MissingAuthority verifies required authority field

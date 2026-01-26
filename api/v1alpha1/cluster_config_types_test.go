@@ -173,25 +173,31 @@ func TestClusterConfigValidateDelete(t *testing.T) {
 	}
 }
 
-func TestClusterConfig_ValidateCreate_WrongType(t *testing.T) {
-	cc := &ClusterConfig{}
-	wrongType := &BreakglassSession{}
-	_, err := cc.ValidateCreate(context.Background(), wrongType)
+func TestClusterConfig_ValidateCreate_InvalidAuthConfig(t *testing.T) {
+	cc := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-invalid-auth"},
+		Spec:       ClusterConfigSpec{},
+	}
+	_, err := cc.ValidateCreate(context.Background(), cc)
 	if err == nil {
-		t.Fatal("expected error when obj is wrong type")
+		t.Fatal("expected error when auth configuration is missing")
 	}
 }
 
-func TestClusterConfig_ValidateUpdate_WrongNewType(t *testing.T) {
-	cc := &ClusterConfig{
+func TestClusterConfig_ValidateUpdate_InvalidAuthConfig(t *testing.T) {
+	old := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-valid"},
 		Spec: ClusterConfigSpec{
 			KubeconfigSecretRef: &SecretKeyReference{Name: "k", Namespace: "ns"},
 		},
 	}
-	wrongType := &BreakglassSession{}
-	_, err := cc.ValidateUpdate(context.Background(), cc, wrongType)
+	newObj := &ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cc-valid"},
+		Spec:       ClusterConfigSpec{},
+	}
+	_, err := old.ValidateUpdate(context.Background(), old, newObj)
 	if err == nil {
-		t.Fatal("expected error when new obj is wrong type")
+		t.Fatal("expected error when updated auth configuration is missing")
 	}
 }
 

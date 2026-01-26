@@ -134,7 +134,7 @@ func (r *IdentityProviderReconciler) WithResyncPeriod(period time.Duration) *Ide
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=identityproviders/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile implements the Reconciler interface
 // It reloads the IdentityProvider configuration when changes are detected

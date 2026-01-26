@@ -86,12 +86,14 @@ func TestBreakglassEscalationValidateDelete(t *testing.T) {
 	}
 }
 
-func TestBreakglassEscalationValidateCreate_WrongType(t *testing.T) {
-	esc := &BreakglassEscalation{}
-	wrongType := &BreakglassSession{}
-	_, err := esc.ValidateCreate(context.Background(), wrongType)
+func TestBreakglassEscalationValidateCreate_InvalidSpec(t *testing.T) {
+	esc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-invalid"},
+		Spec:       BreakglassEscalationSpec{},
+	}
+	_, err := esc.ValidateCreate(context.Background(), esc)
 	if err == nil {
-		t.Fatal("expected error when object is wrong type")
+		t.Fatal("expected error when escalation spec is invalid")
 	}
 }
 
@@ -287,8 +289,8 @@ func TestBreakglassEscalationMailProviderHappyPath(t *testing.T) {
 	}
 }
 
-func TestBreakglassEscalationValidateUpdate_WrongNewType(t *testing.T) {
-	esc := &BreakglassEscalation{
+func TestBreakglassEscalationValidateUpdate_InvalidApprovers(t *testing.T) {
+	old := &BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
 		Spec: BreakglassEscalationSpec{
 			EscalatedGroup: "ops",
@@ -297,11 +299,18 @@ func TestBreakglassEscalationValidateUpdate_WrongNewType(t *testing.T) {
 		},
 	}
 
-	// Pass wrong type as new object
-	wrongType := &BreakglassSession{}
-	_, err := esc.ValidateUpdate(context.Background(), esc, wrongType)
+	newObj := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "ops",
+			Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+			Approvers:      BreakglassEscalationApprovers{},
+		},
+	}
+
+	_, err := old.ValidateUpdate(context.Background(), old, newObj)
 	if err == nil {
-		t.Fatal("expected error when new object is wrong type")
+		t.Fatal("expected error when approvers are missing")
 	}
 }
 

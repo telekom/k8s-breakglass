@@ -721,18 +721,20 @@ func TestDenyPolicy_ValidateDelete(t *testing.T) {
 	}
 }
 
-func TestDenyPolicy_ValidateCreate_WrongType(t *testing.T) {
+func TestDenyPolicy_ValidateCreate_InvalidSpec(t *testing.T) {
 	ctx := context.Background()
-	policy := &DenyPolicy{}
+	policy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "policy"},
+		Spec:       DenyPolicySpec{},
+	}
 
-	wrongType := &DebugSession{}
-	_, err := policy.ValidateCreate(ctx, wrongType)
+	_, err := policy.ValidateCreate(ctx, policy)
 	if err == nil {
-		t.Error("ValidateCreate() expected error for wrong type")
+		t.Error("ValidateCreate() expected error for missing rules")
 	}
 }
 
-func TestDenyPolicy_ValidateUpdate_WrongType(t *testing.T) {
+func TestDenyPolicy_ValidateUpdate_InvalidSpec(t *testing.T) {
 	ctx := context.Background()
 	policy := &DenyPolicy{}
 
@@ -749,11 +751,14 @@ func TestDenyPolicy_ValidateUpdate_WrongType(t *testing.T) {
 		},
 	}
 
-	// Pass wrong type for newObj
-	wrongType := &DebugSession{}
-	_, err := policy.ValidateUpdate(ctx, oldPolicy, wrongType)
+	newPolicy := &DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec:       DenyPolicySpec{},
+	}
+
+	_, err := policy.ValidateUpdate(ctx, oldPolicy, newPolicy)
 	if err == nil {
-		t.Error("ValidateUpdate() expected error for wrong newObj type")
+		t.Error("ValidateUpdate() expected error for invalid new spec")
 	}
 }
 

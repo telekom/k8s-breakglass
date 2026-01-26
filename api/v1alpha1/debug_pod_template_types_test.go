@@ -702,15 +702,22 @@ func TestDebugPodTemplate_ValidateDelete(t *testing.T) {
 	}
 }
 
-func TestDebugPodTemplate_ValidateCreate_WrongType(t *testing.T) {
+func TestDebugPodTemplate_ValidateCreate_InvalidSpec(t *testing.T) {
 	ctx := context.Background()
-	template := &DebugPodTemplate{}
+	template := &DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template"},
+		Spec: DebugPodTemplateSpec{
+			Template: DebugPodSpec{
+				Spec: DebugPodSpecInner{
+					Containers: []corev1.Container{},
+				},
+			},
+		},
+	}
 
-	// Pass a wrong type
-	wrongType := &DebugSession{}
-	_, err := template.ValidateCreate(ctx, wrongType)
+	_, err := template.ValidateCreate(ctx, template)
 	if err == nil {
-		t.Error("ValidateCreate() expected error for wrong type")
+		t.Error("ValidateCreate() expected error for invalid spec")
 	}
 }
 
@@ -788,31 +795,6 @@ func TestDebugPodTemplate_GetCondition_NotFound(t *testing.T) {
 	condition := template.GetCondition("non-existent")
 	if condition != nil {
 		t.Error("Expected nil for non-existent condition")
-	}
-}
-
-func TestDebugPodTemplate_ValidateUpdate_WrongType(t *testing.T) {
-	ctx := context.Background()
-	template := &DebugPodTemplate{}
-
-	oldTemplate := &DebugPodTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "test"},
-		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
-				Spec: DebugPodSpecInner{
-					Containers: []corev1.Container{
-						{Name: "debug", Image: "busybox"},
-					},
-				},
-			},
-		},
-	}
-
-	// Pass wrong type for newObj
-	wrongType := &DebugSession{}
-	_, err := template.ValidateUpdate(ctx, oldTemplate, wrongType)
-	if err == nil {
-		t.Error("ValidateUpdate() expected error for wrong newObj type")
 	}
 }
 

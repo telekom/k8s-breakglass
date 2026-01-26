@@ -262,15 +262,6 @@ func TestBreakglassSessionDenyPolicyRefsValidationDeferred(t *testing.T) {
 	}
 }
 
-func TestBreakglassSession_ValidateCreate_WrongType(t *testing.T) {
-	session := &BreakglassSession{}
-	wrongType := &ClusterConfig{}
-	_, err := session.ValidateCreate(context.Background(), wrongType)
-	if err == nil {
-		t.Fatal("expected error when obj is wrong type")
-	}
-}
-
 func TestBreakglassSession_ValidateCreate_MissingCluster(t *testing.T) {
 	session := &BreakglassSession{
 		Spec: BreakglassSessionSpec{

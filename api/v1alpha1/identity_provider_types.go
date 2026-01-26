@@ -18,12 +18,9 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -215,43 +212,38 @@ type IdentityProvider struct {
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-identityprovider,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=identityproviders,verbs=create;update,versions=v1alpha1,name=identityprovider.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	identityProvider, ok := obj.(*IdentityProvider)
-	if !ok {
-		return nil, fmt.Errorf("expected an IdentityProvider object but got %T", obj)
-	}
-
+func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj *IdentityProvider) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateIdentityProvider(identityProvider)
+	result := ValidateIdentityProvider(obj)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, result.Errors...)
 
 	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique - requires k8s client)
-	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, identityProvider.Spec.Issuer, identityProvider.Name, field.NewPath("spec").Child("issuer"))...)
+	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, obj.Spec.Issuer, obj.Name, field.NewPath("spec").Child("issuer"))...)
 
 	// Collect warnings for insecure settings
 	var warnings admission.Warnings
-	if identityProvider.Spec.OIDC.InsecureSkipVerify {
+	if obj.Spec.OIDC.InsecureSkipVerify {
 		warnings = append(warnings, "OIDC insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
-	if identityProvider.Spec.Keycloak != nil && identityProvider.Spec.Keycloak.InsecureSkipVerify {
+	if obj.Spec.Keycloak != nil && obj.Spec.Keycloak.InsecureSkipVerify {
 		warnings = append(warnings, "Keycloak insecureSkipVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
 
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
-	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "IdentityProvider"}, identityProvider.Name, allErrs)
+	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "IdentityProvider"}, obj.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (idp *IdentityProvider) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+func (idp *IdentityProvider) ValidateUpdate(ctx context.Context, oldObj, newObj *IdentityProvider) (admission.Warnings, error) {
 	// For updates, perform same validations as create
 	return idp.ValidateCreate(ctx, newObj)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (idp *IdentityProvider) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (idp *IdentityProvider) ValidateDelete(ctx context.Context, obj *IdentityProvider) (admission.Warnings, error) {
 	// allow deletes
 	return nil, nil
 }
@@ -283,8 +275,7 @@ func (idp *IdentityProvider) GetCondition(condType string) *metav1.Condition {
 // SetupWebhookWithManager registers webhooks for IdentityProvider
 func (idp *IdentityProvider) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(idp).
+	return ctrl.NewWebhookManagedBy(mgr, &IdentityProvider{}).
 		WithValidator(idp).
 		Complete()
 }

@@ -69,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Centralized frontend duration parsing and reason sanitization utilities for consistent validation
 - Enforced server-side 1024-character limit for session request reasons
 - DebugSession lookups now use indexed field selectors for cluster, state, and participant filters
+- Bumped controller-runtime to v0.23.0 and adopted typed webhooks with `events.k8s.io` RBAC for event recording
 
 ### Fixed
 

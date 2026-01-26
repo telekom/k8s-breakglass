@@ -2,12 +2,9 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -223,45 +220,34 @@ func (dp *DenyPolicy) GetCondition(condType string) *metav1.Condition {
 }
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (dp *DenyPolicy) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	policy, ok := obj.(*DenyPolicy)
-	if !ok {
-		return nil, fmt.Errorf("expected a DenyPolicy object but got %T", obj)
-	}
-
+func (dp *DenyPolicy) ValidateCreate(ctx context.Context, obj *DenyPolicy) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDenyPolicy(policy)
+	result := ValidateDenyPolicy(obj)
 	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, policy.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, obj.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (dp *DenyPolicy) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	policy, ok := newObj.(*DenyPolicy)
-	if !ok {
-		return nil, fmt.Errorf("expected a DenyPolicy object but got %T", newObj)
-	}
-
+func (dp *DenyPolicy) ValidateUpdate(ctx context.Context, oldObj, newObj *DenyPolicy) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDenyPolicy(policy)
+	result := ValidateDenyPolicy(newObj)
 	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, policy.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DenyPolicy"}, newObj.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (dp *DenyPolicy) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (dp *DenyPolicy) ValidateDelete(ctx context.Context, obj *DenyPolicy) (admission.Warnings, error) {
 	return nil, nil
 }
 
 // SetupWebhookWithManager registers webhooks for DenyPolicy
 func (dp *DenyPolicy) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(dp).
+	return ctrl.NewWebhookManagedBy(mgr, &DenyPolicy{}).
 		WithValidator(dp).
 		Complete()
 }

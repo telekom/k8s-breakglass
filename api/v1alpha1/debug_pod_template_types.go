@@ -18,13 +18,11 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -194,45 +192,34 @@ func (dpt *DebugPodTemplate) GetCondition(condType string) *metav1.Condition {
 }
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (dpt *DebugPodTemplate) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	template, ok := obj.(*DebugPodTemplate)
-	if !ok {
-		return nil, fmt.Errorf("expected a DebugPodTemplate object but got %T", obj)
-	}
-
+func (dpt *DebugPodTemplate) ValidateCreate(ctx context.Context, obj *DebugPodTemplate) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDebugPodTemplate(template)
+	result := ValidateDebugPodTemplate(obj)
 	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugPodTemplate"}, template.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugPodTemplate"}, obj.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (dpt *DebugPodTemplate) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	template, ok := newObj.(*DebugPodTemplate)
-	if !ok {
-		return nil, fmt.Errorf("expected a DebugPodTemplate object but got %T", newObj)
-	}
-
+func (dpt *DebugPodTemplate) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugPodTemplate) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDebugPodTemplate(template)
+	result := ValidateDebugPodTemplate(newObj)
 	if result.IsValid() {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugPodTemplate"}, template.Name, result.Errors)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugPodTemplate"}, newObj.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (dpt *DebugPodTemplate) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (dpt *DebugPodTemplate) ValidateDelete(ctx context.Context, obj *DebugPodTemplate) (admission.Warnings, error) {
 	return nil, nil
 }
 
 // SetupWebhookWithManager registers webhooks for DebugPodTemplate
 func (dpt *DebugPodTemplate) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(dpt).
+	return ctrl.NewWebhookManagedBy(mgr, &DebugPodTemplate{}).
 		WithValidator(dpt).
 		Complete()
 }

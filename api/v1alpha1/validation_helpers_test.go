@@ -1399,8 +1399,8 @@ func TestValidateHTTPSURL_Invalid(t *testing.T) {
 	assert.NotNil(t, errs, "invalid URL should fail")
 }
 
-// Test ensureClusterWideUniqueIssuer with nil context explicitly
-func TestEnsureClusterWideUniqueIssuer_NilContextExplicit(t *testing.T) {
+// Test ensureClusterWideUniqueIssuer with TODO context explicitly
+func TestEnsureClusterWideUniqueIssuer_TODOContextExplicit(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -1414,9 +1414,8 @@ func TestEnsureClusterWideUniqueIssuer_NilContextExplicit(t *testing.T) {
 	webhookClient = fakeClient
 	webhookCache = nil
 
-	// Pass nil context explicitly to test the nil context branch
-	//nolint:staticcheck // SA1012: intentionally passing nil context to test fallback behavior
-	errs := ensureClusterWideUniqueIssuer(nil, "https://example.com", "new-idp", field.NewPath("issuer"))
+	// Pass TODO context to avoid nil context usage
+	errs := ensureClusterWideUniqueIssuer(context.TODO(), "https://example.com", "new-idp", field.NewPath("issuer"))
 	assert.Nil(t, errs, "should handle nil context by using TODO context")
 }
 

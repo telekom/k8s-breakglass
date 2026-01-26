@@ -25,7 +25,6 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -220,62 +219,55 @@ type BreakglassSession struct {
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglasssessions,verbs=create;update,versions=v1alpha1,name=breakglasssession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	session, ok := obj.(*BreakglassSession)
-	if !ok {
-		return nil, fmt.Errorf("expected a BreakglassSession object but got %T", obj)
-	}
-
+func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj *BreakglassSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateBreakglassSession(session)
+	result := ValidateBreakglassSession(obj)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, result.Errors...)
 
 	// Validate scheduledStartTime if provided (webhook-specific as it's time-sensitive)
-	if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
+	if obj.Spec.ScheduledStartTime != nil && !obj.Spec.ScheduledStartTime.IsZero() {
 		now := metav1.Now()
-		if session.Spec.ScheduledStartTime.Time.Before(now.Time) {
-			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), session.Spec.ScheduledStartTime.Time, "scheduledStartTime must be in the future"))
+		if obj.Spec.ScheduledStartTime.Time.Before(now.Time) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), obj.Spec.ScheduledStartTime.Time, "scheduledStartTime must be in the future"))
 		}
 		minLeadTime := now.Add(5 * 60 * 1e9) // 5 minutes
-		if session.Spec.ScheduledStartTime.Time.Before(minLeadTime) {
-			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), session.Spec.ScheduledStartTime.Time, "scheduledStartTime must be at least 5 minutes in the future"))
+		if obj.Spec.ScheduledStartTime.Time.Before(minLeadTime) {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("scheduledStartTime"), obj.Spec.ScheduledStartTime.Time, "scheduledStartTime must be at least 5 minutes in the future"))
 		}
 	}
 
 	// Multi-IDP: Validate IDP tracking fields if set (requires k8s client)
-	allErrs = append(allErrs, validateIdentityProviderFields(ctx, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, field.NewPath("spec").Child("identityProviderName"), field.NewPath("spec").Child("identityProviderIssuer"))...)
+	allErrs = append(allErrs, validateIdentityProviderFields(ctx, obj.Spec.IdentityProviderName, obj.Spec.IdentityProviderIssuer, field.NewPath("spec").Child("identityProviderName"), field.NewPath("spec").Child("identityProviderIssuer"))...)
 
 	// Session Authorization - Validate IDP is allowed by matching escalation (requires k8s client)
-	allErrs = append(allErrs, validateSessionIdentityProviderAuthorization(ctx, session.Spec.Cluster, session.Spec.GrantedGroup, session.Spec.IdentityProviderName, field.NewPath("spec").Child("identityProviderName"))...)
+	allErrs = append(allErrs, validateSessionIdentityProviderAuthorization(ctx, obj.Spec.Cluster, obj.Spec.GrantedGroup, obj.Spec.IdentityProviderName, field.NewPath("spec").Child("identityProviderName"))...)
 
 	// Uniqueness check (requires k8s client)
-	nameErrs := ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, bs.Namespace, bs.Name, field.NewPath("metadata").Child("name"))
+	nameErrs := ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, obj.Namespace, obj.Name, field.NewPath("metadata").Child("name"))
 	allErrs = append(allErrs, nameErrs...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, bs.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, obj.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj *BreakglassSession) (admission.Warnings, error) {
 	var allErrs field.ErrorList
 	// Enforce immutability of Spec (kubebuilder marker also exists), ensure spec == old.spec
-	if oldBs, ok := oldObj.(*BreakglassSession); ok {
-		if !reflect.DeepEqual(bs.Spec, oldBs.Spec) {
-			allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), bs.Spec, "spec is immutable"))
-		}
-		if !isValidBreakglassSessionStateTransition(oldBs.Status.State, bs.Status.State) {
-			allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("state"), bs.Status.State,
-				fmt.Sprintf("invalid state transition from %q to %q", oldBs.Status.State, bs.Status.State)))
-		}
+	if !reflect.DeepEqual(newObj.Spec, oldObj.Spec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), newObj.Spec, "spec is immutable"))
 	}
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, bs.Namespace, bs.Name, field.NewPath("metadata").Child("name"))...)
+	if !isValidBreakglassSessionStateTransition(oldObj.Status.State, newObj.Status.State) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("state"), newObj.Status.State,
+			fmt.Sprintf("invalid state transition from %q to %q", oldObj.Status.State, newObj.Status.State)))
+	}
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, newObj.Namespace, newObj.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, bs.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, newObj.Name, allErrs)
 }
 
 func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bool {
@@ -304,7 +296,7 @@ func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bo
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (bs *BreakglassSession) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (bs *BreakglassSession) ValidateDelete(ctx context.Context, obj *BreakglassSession) (admission.Warnings, error) {
 	// no-op; allow deletes
 	return nil, nil
 }
@@ -322,8 +314,7 @@ func (bs *BreakglassSession) GetCondition(condType string) *metav1.Condition {
 // SetupWebhookWithManager registers the webhooks with the controller manager
 func (bs *BreakglassSession) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(bs).
+	return ctrl.NewWebhookManagedBy(mgr, &BreakglassSession{}).
 		WithValidator(bs).
 		Complete()
 }

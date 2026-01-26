@@ -18,12 +18,10 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -316,47 +314,37 @@ func (be *BreakglassEscalation) GetCondition(condType string) *metav1.Condition 
 }
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	escalation, ok := obj.(*BreakglassEscalation)
-	if !ok {
-		return nil, fmt.Errorf("expected a BreakglassEscalation object but got %T", obj)
-	}
-
+func (be *BreakglassEscalation) ValidateCreate(ctx context.Context, obj *BreakglassEscalation) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateBreakglassEscalation(escalation)
+	result := ValidateBreakglassEscalation(obj)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, result.Errors...)
 
 	// Additional webhook-only validations (require client access)
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, obj.Namespace, obj.Name, field.NewPath("metadata").Child("name"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, escalation.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, obj.Name, allErrs)
 }
 
-func (be *BreakglassEscalation) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	escalation, ok := newObj.(*BreakglassEscalation)
-	if !ok {
-		return nil, fmt.Errorf("expected a BreakglassEscalation object but got %T", newObj)
-	}
-
+func (be *BreakglassEscalation) ValidateUpdate(ctx context.Context, oldObj, newObj *BreakglassEscalation) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateBreakglassEscalation(escalation)
+	result := ValidateBreakglassEscalation(newObj)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, result.Errors...)
 
 	// Additional webhook-only validations (require client access)
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, escalation.Namespace, escalation.Name, field.NewPath("metadata").Child("name"))...)
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassEscalationList{}, newObj.Namespace, newObj.Name, field.NewPath("metadata").Child("name"))...)
 
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, escalation.Name, allErrs)
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassEscalation"}, newObj.Name, allErrs)
 }
 
-func (be *BreakglassEscalation) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (be *BreakglassEscalation) ValidateDelete(ctx context.Context, obj *BreakglassEscalation) (admission.Warnings, error) {
 	return nil, nil
 }
 
@@ -403,8 +391,7 @@ func validateBreakglassEscalationAdditionalLists(spec *BreakglassEscalationSpec,
 
 func (be *BreakglassEscalation) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(be).
+	return ctrl.NewWebhookManagedBy(mgr, &BreakglassEscalation{}).
 		WithValidator(be).
 		Complete()
 }

@@ -2,12 +2,9 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -373,14 +370,9 @@ type ClusterConfig struct {
 //+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-clusterconfig,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=clusterconfigs,verbs=create;update,versions=v1alpha1,name=clusterconfig.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	clusterConfig, ok := obj.(*ClusterConfig)
-	if !ok {
-		return nil, fmt.Errorf("expected a ClusterConfig object but got %T", obj)
-	}
-
+func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj *ClusterConfig) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateClusterConfig(clusterConfig)
+	result := ValidateClusterConfig(obj)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, result.Errors...)
 
@@ -388,39 +380,34 @@ func (cc *ClusterConfig) ValidateCreate(ctx context.Context, obj runtime.Object)
 	specPath := field.NewPath("spec")
 
 	// Validate auth configuration - either kubeconfigSecretRef OR oidcAuth is required
-	allErrs = append(allErrs, validateClusterAuthConfig(clusterConfig.Spec, specPath)...)
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
+	allErrs = append(allErrs, validateClusterAuthConfig(obj.Spec, specPath)...)
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, obj.Namespace, obj.Name, field.NewPath("metadata").Child("name"))...)
 
 	// Multi-IDP: Validate IdentityProviderRefs existence (requires k8s client)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, obj.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
 
 	// Validate mail provider reference exists (requires k8s client)
-	allErrs = append(allErrs, validateMailProviderReference(ctx, clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
+	allErrs = append(allErrs, validateMailProviderReference(ctx, obj.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
 	// Collect warnings for insecure settings
 	var warnings admission.Warnings
-	if clusterConfig.Spec.OIDCAuth != nil && clusterConfig.Spec.OIDCAuth.InsecureSkipTLSVerify {
+	if obj.Spec.OIDCAuth != nil && obj.Spec.OIDCAuth.InsecureSkipTLSVerify {
 		warnings = append(warnings, "OIDCAuth insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
-	if clusterConfig.Spec.OIDCFromIdentityProvider != nil && clusterConfig.Spec.OIDCFromIdentityProvider.InsecureSkipTLSVerify {
+	if obj.Spec.OIDCFromIdentityProvider != nil && obj.Spec.OIDCFromIdentityProvider.InsecureSkipTLSVerify {
 		warnings = append(warnings, "OIDCFromIdentityProvider insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
 
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
-	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, clusterConfig.Name, allErrs)
+	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, obj.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	clusterConfig, ok := newObj.(*ClusterConfig)
-	if !ok {
-		return nil, fmt.Errorf("expected a ClusterConfig object but got %T", newObj)
-	}
-
+func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj *ClusterConfig) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateClusterConfig(clusterConfig)
+	result := ValidateClusterConfig(newObj)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, result.Errors...)
 
@@ -428,35 +415,35 @@ func (cc *ClusterConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runt
 	specPath := field.NewPath("spec")
 
 	// Validate auth configuration - either kubeconfigSecretRef OR oidcAuth is required
-	allErrs = append(allErrs, validateClusterAuthConfig(clusterConfig.Spec, specPath)...)
+	allErrs = append(allErrs, validateClusterAuthConfig(newObj.Spec, specPath)...)
 
 	// no immutability enforcement for ClusterConfig
 	// still ensure the name is unique across the cluster
-	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, clusterConfig.Namespace, clusterConfig.Name, field.NewPath("metadata").Child("name"))...)
+	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &ClusterConfigList{}, newObj.Namespace, newObj.Name, field.NewPath("metadata").Child("name"))...)
 
 	// Multi-IDP: Validate IdentityProviderRefs existence (requires k8s client)
-	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, clusterConfig.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
+	allErrs = append(allErrs, validateIdentityProviderRefs(ctx, newObj.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
 
 	// Validate mail provider reference exists (requires k8s client)
-	allErrs = append(allErrs, validateMailProviderReference(ctx, clusterConfig.Spec.MailProvider, specPath.Child("mailProvider"))...)
+	allErrs = append(allErrs, validateMailProviderReference(ctx, newObj.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
 	// Collect warnings for insecure settings
 	var warnings admission.Warnings
-	if clusterConfig.Spec.OIDCAuth != nil && clusterConfig.Spec.OIDCAuth.InsecureSkipTLSVerify {
+	if newObj.Spec.OIDCAuth != nil && newObj.Spec.OIDCAuth.InsecureSkipTLSVerify {
 		warnings = append(warnings, "OIDCAuth insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
-	if clusterConfig.Spec.OIDCFromIdentityProvider != nil && clusterConfig.Spec.OIDCFromIdentityProvider.InsecureSkipTLSVerify {
+	if newObj.Spec.OIDCFromIdentityProvider != nil && newObj.Spec.OIDCFromIdentityProvider.InsecureSkipTLSVerify {
 		warnings = append(warnings, "OIDCFromIdentityProvider insecureSkipTLSVerify is enabled - TLS certificate validation is disabled. This should only be used for testing and MUST NOT be used in production!")
 	}
 
 	if len(allErrs) == 0 {
 		return warnings, nil
 	}
-	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, clusterConfig.Name, allErrs)
+	return warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "ClusterConfig"}, newObj.Name, allErrs)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (cc *ClusterConfig) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (cc *ClusterConfig) ValidateDelete(ctx context.Context, obj *ClusterConfig) (admission.Warnings, error) {
 	// allow deletes
 	return nil, nil
 }
@@ -480,8 +467,7 @@ func (cc *ClusterConfig) GetUserIdentifierClaim() UserIdentifierClaimType {
 // SetupWebhookWithManager registers webhooks for ClusterConfig
 func (cc *ClusterConfig) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(cc).
+	return ctrl.NewWebhookManagedBy(mgr, &ClusterConfig{}).
 		WithValidator(cc).
 		Complete()
 }

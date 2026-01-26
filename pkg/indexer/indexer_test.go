@@ -101,13 +101,13 @@ func TestRegisterCommonFieldIndexes_NilIndexer(t *testing.T) {
 	assert.NoError(t, err, "Should handle nil indexer gracefully")
 }
 
-func TestRegisterCommonFieldIndexes_NilContext(t *testing.T) {
+func TestRegisterCommonFieldIndexes_TODOContext(t *testing.T) {
 	ResetRegisteredIndexes()
 	logger := zaptest.NewLogger(t).Sugar()
 	indexer := newMockFieldIndexer()
 
-	// Should use background context when nil is passed
-	err := RegisterCommonFieldIndexes(nil, indexer, logger)
+	// Should handle TODO context without error
+	err := RegisterCommonFieldIndexes(context.TODO(), indexer, logger)
 	require.NoError(t, err)
 }
 

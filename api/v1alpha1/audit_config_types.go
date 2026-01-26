@@ -18,11 +18,8 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -449,58 +446,47 @@ type AuditConfig struct {
 // SetupWebhookWithManager registers webhooks for AuditConfig
 func (ac *AuditConfig) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	InitWebhookClient(mgr.GetClient(), mgr.GetCache())
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(ac).
+	return ctrl.NewWebhookManagedBy(mgr, &AuditConfig{}).
 		WithValidator(ac).
 		Complete()
 }
 
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type
-func (ac *AuditConfig) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	auditConfig, ok := obj.(*AuditConfig)
-	if !ok {
-		return nil, fmt.Errorf("expected an AuditConfig object but got %T", obj)
-	}
-
+func (ac *AuditConfig) ValidateCreate(ctx context.Context, obj *AuditConfig) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateAuditConfig(auditConfig)
+	result := ValidateAuditConfig(obj)
 	if len(result.Errors) == 0 {
 		return result.Warnings, nil
 	}
 	return result.Warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "AuditConfig"},
-		auditConfig.Name,
+		obj.Name,
 		result.Errors,
 	)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (ac *AuditConfig) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	auditConfig, ok := newObj.(*AuditConfig)
-	if !ok {
-		return nil, fmt.Errorf("expected an AuditConfig object but got %T", newObj)
-	}
-
+func (ac *AuditConfig) ValidateUpdate(ctx context.Context, oldObj, newObj *AuditConfig) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateAuditConfig(auditConfig)
+	result := ValidateAuditConfig(newObj)
 	if len(result.Errors) == 0 {
 		return result.Warnings, nil
 	}
 	return result.Warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "AuditConfig"},
-		auditConfig.Name,
+		newObj.Name,
 		result.Errors,
 	)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
-func (ac *AuditConfig) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (ac *AuditConfig) ValidateDelete(ctx context.Context, obj *AuditConfig) (admission.Warnings, error) {
 	// No validation needed for delete
 	return nil, nil
 }
 
-// Ensure AuditConfig implements the CustomValidator interface
-var _ admission.CustomValidator = &AuditConfig{}
+// Ensure AuditConfig implements the Validator interface
+var _ admission.Validator[*AuditConfig] = &AuditConfig{}
 
 // +kubebuilder:object:root=true
 

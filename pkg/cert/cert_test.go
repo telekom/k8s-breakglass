@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
@@ -24,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 )
 
 func TestNewManagerAppliesDefaults(t *testing.T) {
@@ -196,6 +198,7 @@ func newFakeCtrlManager(t testing.TB) *fakeCtrlManager {
 	return &fakeCtrlManager{
 		webhookSrv: &fakeWebhookServer{},
 		logger:     logr.Discard(),
+		converterRegistry: conversion.NewRegistry(),
 		electedCh:  ch,
 	}
 }
@@ -217,6 +220,7 @@ type fakeCtrlManager struct {
 	recorder          record.EventRecorder
 	restMapper        meta.RESTMapper
 	apiReader         client.Reader
+	converterRegistry conversion.Registry
 	webhookSrv        webhook.Server
 	logger            logr.Logger
 	controllerOptions ctrlconfig.Controller
@@ -259,6 +263,10 @@ func (f *fakeCtrlManager) GetControllerOptions() ctrlconfig.Controller {
 	return f.controllerOptions
 }
 
+func (f *fakeCtrlManager) GetConverterRegistry() conversion.Registry {
+	return f.converterRegistry
+}
+
 func (f *fakeCtrlManager) GetHTTPClient() *http.Client { return f.httpClient }
 func (f *fakeCtrlManager) GetConfig() *rest.Config     { return f.cfg }
 func (f *fakeCtrlManager) GetCache() crcache.Cache     { return f.cache }
@@ -268,6 +276,7 @@ func (f *fakeCtrlManager) GetFieldIndexer() client.FieldIndexer {
 	return f.fieldIndexer
 }
 func (f *fakeCtrlManager) GetEventRecorderFor(string) record.EventRecorder { return f.recorder }
+func (f *fakeCtrlManager) GetEventRecorder(string) events.EventRecorder    { return fakeEventRecorder{} }
 func (f *fakeCtrlManager) GetRESTMapper() meta.RESTMapper                  { return f.restMapper }
 func (f *fakeCtrlManager) GetAPIReader() client.Reader                     { return f.apiReader }
 
@@ -282,6 +291,10 @@ func (f *fakeWebhookServer) StartedChecker() healthz.Checker {
 	return func(*http.Request) error { return nil }
 }
 func (f *fakeWebhookServer) WebhookMux() *http.ServeMux { return http.NewServeMux() }
+
+type fakeEventRecorder struct{}
+
+func (fakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, _, _, _, _ string, _ ...interface{}) {}
 
 // TestEnsure_CertsReady tests the Ensure function when certificates become ready
 func TestEnsure_CertsReady(t *testing.T) {

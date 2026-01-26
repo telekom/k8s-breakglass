@@ -1335,40 +1335,32 @@ func TestMailProviderRealWorldConfigurations(t *testing.T) {
 	}
 }
 
-func TestMailProviderValidateCreate_WrongType(t *testing.T) {
-	mp := &MailProvider{}
-	wrongType := &BreakglassSession{}
-	_, err := mp.ValidateCreate(context.Background(), wrongType)
+func TestMailProviderValidateCreate_InvalidSpec(t *testing.T) {
+	mp := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail-invalid"},
+		Spec:       MailProviderSpec{},
+	}
+	_, err := mp.ValidateCreate(context.Background(), mp)
 	if err == nil {
-		t.Fatal("expected error when obj is wrong type")
+		t.Fatal("expected error when mail provider spec is invalid")
 	}
 }
 
-func TestMailProviderValidateUpdate_WrongNewType(t *testing.T) {
-	mp := &MailProvider{
+func TestMailProviderValidateUpdate_InvalidSpec(t *testing.T) {
+	old := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail-valid"},
 		Spec: MailProviderSpec{
 			SMTP:   SMTPConfig{Host: "smtp.example.com", Port: 587},
 			Sender: SenderConfig{Address: "test@example.com"},
 		},
 	}
-	wrongType := &BreakglassSession{}
-	_, err := mp.ValidateUpdate(context.Background(), mp, wrongType)
-	if err == nil {
-		t.Fatal("expected error when new obj is wrong type")
+	newObj := &MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail-valid"},
+		Spec:       MailProviderSpec{},
 	}
-}
-
-func TestMailProviderValidateUpdate_WrongOldType(t *testing.T) {
-	mp := &MailProvider{
-		Spec: MailProviderSpec{
-			SMTP:   SMTPConfig{Host: "smtp.example.com", Port: 587},
-			Sender: SenderConfig{Address: "test@example.com"},
-		},
-	}
-	wrongType := &BreakglassSession{}
-	_, err := mp.ValidateUpdate(context.Background(), wrongType, mp)
+	_, err := newObj.ValidateUpdate(context.Background(), old, newObj)
 	if err == nil {
-		t.Fatal("expected error when old obj is wrong type")
+		t.Fatal("expected error when updated mail provider spec is invalid")
 	}
 }
 

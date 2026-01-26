@@ -11,6 +11,7 @@ This guide covers upgrading the breakglass controller between versions, includin
 3. **Test in Staging** - Always test upgrades in a non-production environment first
 4. **Schedule Maintenance Window** - Plan for brief service interruption during upgrade
 5. **Notify Users** - Inform users of planned maintenance
+6. **Verify RBAC for events** - Ensure controller RBAC includes `events.k8s.io` create/patch permissions for event recording
 
 ### Backup Commands
 

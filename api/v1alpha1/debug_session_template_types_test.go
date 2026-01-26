@@ -1064,14 +1064,16 @@ func TestDebugSessionTemplate_ValidateDelete(t *testing.T) {
 	}
 }
 
-func TestDebugSessionTemplate_ValidateCreate_WrongType(t *testing.T) {
+func TestDebugSessionTemplate_ValidateCreate_InvalidSpec(t *testing.T) {
 	ctx := context.Background()
-	template := &DebugSessionTemplate{}
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template"},
+		Spec:       DebugSessionTemplateSpec{},
+	}
 
-	wrongType := &DebugSession{}
-	_, err := template.ValidateCreate(ctx, wrongType)
+	_, err := template.ValidateCreate(ctx, template)
 	if err == nil {
-		t.Error("ValidateCreate() expected error for wrong type")
+		t.Error("ValidateCreate() expected error for missing required fields")
 	}
 }
 
@@ -1152,7 +1154,7 @@ func TestDebugSessionTemplate_GetCondition_NotFound(t *testing.T) {
 	}
 }
 
-func TestDebugSessionTemplate_ValidateUpdate_WrongType(t *testing.T) {
+func TestDebugSessionTemplate_ValidateUpdate_InvalidSpec(t *testing.T) {
 	ctx := context.Background()
 	template := &DebugSessionTemplate{}
 
@@ -1166,11 +1168,14 @@ func TestDebugSessionTemplate_ValidateUpdate_WrongType(t *testing.T) {
 		},
 	}
 
-	// Pass wrong type for newObj
-	wrongType := &DebugSession{}
-	_, err := template.ValidateUpdate(ctx, oldTemplate, wrongType)
+	newTemplate := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec:       DebugSessionTemplateSpec{},
+	}
+
+	_, err := template.ValidateUpdate(ctx, oldTemplate, newTemplate)
 	if err == nil {
-		t.Error("ValidateUpdate() expected error for wrong newObj type")
+		t.Error("ValidateUpdate() expected error for invalid new spec")
 	}
 }
 
