@@ -9,7 +9,7 @@ RUN set -eux; cd /workspace/frontend; \
 	npm run build
 
 # Build the manager binary
-FROM golang:1.25.5@sha256:6cc2338c038bc20f96ab32848da2b5c0641bb9bb5363f2c33e9b7c8838f9a208 AS builder
+FROM golang:1.25.6@sha256:ce63a16e0f7063787ebb4eb28e72d477b00b4726f79874b3205a965ffd797ab2 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
