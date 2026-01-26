@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -452,7 +453,7 @@ func (l *IdentityProviderLoader) updateConversionFailureStatus(ctx context.Conte
 	apimeta.SetStatusCondition(&idp.Status.Conditions, condition)
 
 	// Try to update the status in Kubernetes
-	if updateErr := l.kubeClient.Status().Update(ctx, idp); updateErr != nil {
+	if updateErr := l.applyStatus(ctx, idp); updateErr != nil {
 		l.logger.Warnw("Failed to update IdentityProvider status on conversion failure",
 			"name", idp.Name,
 			"conversionError", err,
@@ -466,6 +467,10 @@ func (l *IdentityProviderLoader) updateConversionFailureStatus(ctx context.Conte
 	// Emit metric to track conversion failures
 	// This enables alerting and monitoring of repeated conversion failures
 	l.recordConversionFailureMetric(idp.Name, failureReason)
+}
+
+func (l *IdentityProviderLoader) applyStatus(ctx context.Context, idp *breakglassv1alpha1.IdentityProvider) error {
+	return ssa.ApplyIdentityProviderStatus(ctx, l.kubeClient, idp)
 }
 
 // categorizeConversionError classifies the error type for metrics

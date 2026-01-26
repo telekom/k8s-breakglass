@@ -13,7 +13,9 @@ import (
 	"go.uber.org/zap"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
 
@@ -49,8 +51,11 @@ import (
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=denypolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=denypolicies/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
+// NOTE: Impersonate permissions (users, groups) and selfsubjectaccessreviews are in a separate
+// handwritten role (config/rbac/impersonate_role.yaml) because they may need different binding
+// patterns for hub vs spoke cluster deployments.
 
 func main() {
 	// DEPLOYMENT PATTERNS
@@ -171,7 +176,11 @@ func main() {
 		log.Fatalf("Error getting Kubernetes config: %v", err)
 	}
 
-	uncachedClient, err := client.New(restConfig, client.Options{Scheme: scheme})
+	uncachedClient, err := client.New(restConfig, client.Options{
+		Scheme:          scheme,
+		FieldOwner:      utils.FieldOwnerController,
+		FieldValidation: metav1.FieldValidationWarn,
+	})
 	if err != nil {
 		log.Fatalf("Failed to create uncached Kubernetes client: %v", err)
 	}
@@ -293,20 +302,24 @@ func main() {
 		log.Warnw("Failed to register cluster cache invalidation handlers", "error", err)
 	}
 
+	// Get hostname (typically the pod name in Kubernetes) for event source
+	hostname, err := os.Hostname()
+	if err != nil {
+		log.Warnw("Failed to get hostname for event source, using empty string", "error", err)
+		hostname = ""
+	}
+
 	// Event recorder for emitting Kubernetes events (persisted to API server)
 	kubeClientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		log.Fatalf("failed to create kubernetes clientset for event recorder: %v", err)
 	}
 
-	// Now create the leader election resourcelock using the kubeClientset
-	legacyEventBroadcaster := record.NewBroadcaster()
-	legacyEventRecorder := legacyEventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-controller"})
-
 	// Events recorder for components using the events.k8s.io API
+	// Host is set to the pod name (hostname) for better event attribution
 	eventsRecorder := &breakglass.K8sEventRecorder{
 		Clientset: kubeClientset,
-		Source:    corev1.EventSource{Component: "breakglass-controller"},
+		Source:    corev1.EventSource{Component: "breakglass-controller", Host: hostname},
 		Scheme:    scheme,
 		Namespace: cliConfig.PodNamespace,
 		Logger:    log,
@@ -342,11 +355,22 @@ func main() {
 
 	log.Infow("Creating leader election lease", "id", leaseName, "namespace", leaseNamespace)
 
-	// Get hostname for the resourcelock identity
-	hostname, err := os.Hostname()
-	if err != nil {
-		log.Fatalf("Failed to get hostname for leader election: %v", err)
+	// hostname was already retrieved earlier for event source - reuse it for leader election
+	// If it failed earlier, try again for leader election (which is critical)
+	if hostname == "" {
+		var hostnameErr error
+		hostname, hostnameErr = os.Hostname()
+		if hostnameErr != nil {
+			log.Fatalf("Failed to get hostname for leader election: %v", hostnameErr)
+		}
 	}
+
+	// Leader election events should be emitted to the API server.
+	// Use a dedicated core/v1 event recorder for the lease namespace.
+	leaderElectionBroadcaster := record.NewBroadcaster()
+	leaderElectionBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeClientset.CoreV1().Events(leaseNamespace)})
+	defer leaderElectionBroadcaster.Shutdown()
+	leaderElectionRecorder := leaderElectionBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "breakglass-leader-election", Host: hostname})
 
 	// Create the resourcelock directly using resourcelock.New
 	// This will automatically create the lease if it doesn't exist
@@ -358,7 +382,7 @@ func main() {
 		kubeClientset.CoordinationV1(),
 		resourcelock.ResourceLockConfig{
 			Identity:      hostname,
-			EventRecorder: legacyEventRecorder,
+			EventRecorder: leaderElectionRecorder,
 		},
 	)
 	if err != nil {

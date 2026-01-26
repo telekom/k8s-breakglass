@@ -260,7 +260,16 @@ func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs v1alpha1
 
 func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1alpha1.BreakglassSession) error {
 	zap.S().Infow("Updating BreakglassSession status", system.NamespacedFields(bs.Name, bs.Namespace)...)
-	if err := c.Status().Update(ctx, &bs); err != nil {
+	if bs.Namespace == "" || bs.ResourceVersion == "" {
+		current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
+		if err != nil {
+			zap.S().Errorw("Failed to resolve BreakglassSession before status update", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
+			return errors.Wrapf(err, "failed to update new BreakglassSession")
+		}
+		bs.Namespace = current.Namespace
+		bs.ResourceVersion = current.ResourceVersion
+	}
+	if err := applyBreakglassSessionStatus(ctx, c, &bs); err != nil {
 		zap.S().Errorw("Failed to update BreakglassSession status", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
 		return errors.Wrapf(err, "failed to update new BreakglassSession")
 	}

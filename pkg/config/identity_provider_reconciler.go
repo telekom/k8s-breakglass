@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
@@ -178,7 +179,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		idp.SetCondition(condition)
 		idp.Status.ObservedGeneration = idp.Generation
 
-		if statusErr := r.client.Status().Update(ctx, idp); statusErr != nil {
+		if statusErr := r.applyStatus(ctx, idp); statusErr != nil {
 			r.logger.Errorw("failed to update identity provider status after validation failure", "error", statusErr, "name", req.Name)
 		}
 
@@ -222,7 +223,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		idp.SetCondition(condition)
 		idp.Status.ObservedGeneration = idp.Generation
 
-		if statusErr := r.client.Status().Update(ctx, idp); statusErr != nil {
+		if statusErr := r.applyStatus(ctx, idp); statusErr != nil {
 			r.logger.Errorw("failed to update identity provider status after reload failure", "error", statusErr, "name", req.Name)
 		}
 
@@ -239,7 +240,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 				Message:            fmt.Sprintf("Failed to update provider cache: %v", cacheErr),
 			}
 			idp.SetCondition(cacheCondition)
-			if cacheStatusErr := r.client.Status().Update(ctx, idp); cacheStatusErr != nil {
+			if cacheStatusErr := r.applyStatus(ctx, idp); cacheStatusErr != nil {
 				r.logger.Errorw("failed to update IDP cache error status", "error", cacheStatusErr, "name", req.Name)
 			}
 		}
@@ -286,7 +287,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		idp.Status.ObservedGeneration = idp.Generation
 
 		// Try to persist this cache error in status
-		if cacheStatusErr := r.client.Status().Update(ctx, idp); cacheStatusErr != nil {
+		if cacheStatusErr := r.applyStatus(ctx, idp); cacheStatusErr != nil {
 			r.logger.Errorw("failed to update IDP cache error status", "error", cacheStatusErr, "name", req.Name)
 		}
 
@@ -357,7 +358,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	latest.Status.ObservedGeneration = idp.Status.ObservedGeneration
 
 	// Persist status to API server
-	if err := r.client.Status().Update(ctx, &latest); err != nil {
+	if err := r.applyStatus(ctx, &latest); err != nil {
 		// If the IdentityProvider was deleted, skip status update and event emission
 		if apierrors.IsNotFound(err) {
 			r.logger.Debugw("IdentityProvider deleted before status update, skipping", "name", req.Name)
@@ -381,7 +382,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		}
 		latest.SetCondition(errorCondition)
 
-		if statusErr := r.client.Status().Update(ctx, &latest); statusErr != nil {
+		if statusErr := r.applyStatus(ctx, &latest); statusErr != nil {
 			// If deleted during retry, skip silently
 			if apierrors.IsNotFound(statusErr) {
 				return reconcile.Result{}, nil
@@ -416,6 +417,10 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	// Requeue periodically for safety (even if no changes detected)
 	// This ensures we recover from transient failures
 	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
+}
+
+func (r *IdentityProviderReconciler) applyStatus(ctx context.Context, idp *breakglassv1alpha1.IdentityProvider) error {
+	return ssa.ApplyIdentityProviderStatus(ctx, r.client, idp)
 }
 
 // updateGroupSyncHealth checks the health of the group sync provider (if configured)

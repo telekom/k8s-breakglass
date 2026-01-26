@@ -47,7 +47,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 				wc.log.Debugw("could not refetch session before status update; will attempt update anyway", "session", ses.Name, "error", gerr)
 			}
 
-			// Persist the status change using Status().Update and retry on conflict with a few attempts.
+			// Persist the status change using SSA against the status subresource and retry on conflict.
 			var lastErr error
 			for attempt := range 3 {
 				if err := wc.sessionManager.UpdateBreakglassSessionStatus(context.Background(), ses); err == nil {
@@ -79,14 +79,6 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 			}
 			if lastErr != nil {
 				wc.log.Errorw("failed to update expired session after retries", "session", ses.Name, "error", lastErr)
-				// Fallback: try a full object update if Status().Update did not succeed.
-				if ferr := wc.sessionManager.UpdateBreakglassSession(context.Background(), ses); ferr == nil {
-					wc.log.Infow("fallback full update succeeded after status update failures", "session", ses.Name)
-					// Send expiration email on successful fallback update
-					wc.sendSessionExpiredEmail(ses, "timeExpired")
-				} else {
-					wc.log.Errorw("fallback full update failed", "session", ses.Name, "error", ferr)
-				}
 			} else {
 				// Send expiration email on successful status update
 				wc.sendSessionExpiredEmail(ses, "timeExpired")

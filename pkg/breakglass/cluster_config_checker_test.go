@@ -20,7 +20,7 @@ import (
 
 // newTestFakeClient creates a fake client with status subresource support for ClusterConfig.
 // This is critical: when status subresource is enabled (via +kubebuilder:subresource:status),
-// Status().Update() must be used to update status, and the fake client must be configured accordingly.
+// status updates must go through the status subresource, and the fake client must be configured accordingly.
 func newTestFakeClient(objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().
 		WithScheme(Scheme).
@@ -146,7 +146,7 @@ func TestClusterConfigChecker_SuccessfulValidation(t *testing.T) {
 }
 
 // TestClusterConfigChecker_StatusUpdatePersisted verifies that status updates are actually
-// persisted to the API server. This test would fail if Status().Update() wasn't used correctly.
+// persisted to the API server. This test would fail if status updates weren't persisted correctly.
 func TestClusterConfigChecker_StatusUpdatePersisted(t *testing.T) {
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "test-secret", Namespace: "default"}, Data: map[string][]byte{"value": []byte("kubeconfig")}}
 	cc := &telekomv1alpha1.ClusterConfig{

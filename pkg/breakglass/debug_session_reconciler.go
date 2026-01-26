@@ -36,6 +36,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
@@ -105,6 +106,7 @@ func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessiontemplates,verbs=get;list;watch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessiontemplates/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugpodtemplates,verbs=get;list;watch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugpodtemplates/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
@@ -134,7 +136,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		// Update status condition to reflect validation failure
 		ds.Status.State = v1alpha1.DebugSessionStateFailed
 		ds.Status.Message = fmt.Sprintf("Validation failed: %s", validationResult.ErrorMessage())
-		if statusErr := c.client.Status().Update(ctx, ds); statusErr != nil {
+		if statusErr := applyDebugSessionStatus(ctx, c.client, ds); statusErr != nil {
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
 		}
 
@@ -185,7 +187,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *v1alpha1
 	if requiresApproval {
 		ds.Status.State = v1alpha1.DebugSessionStatePendingApproval
 		ds.Status.Message = "Waiting for approval"
-		if err := c.client.Status().Update(ctx, ds); err != nil {
+		if err := applyDebugSessionStatus(ctx, c.client, ds); err != nil {
 			return ctrl.Result{}, err
 		}
 		metrics.DebugSessionsCreated.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
@@ -211,7 +213,7 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 	if ds.Status.Approval != nil && ds.Status.Approval.RejectedAt != nil {
 		ds.Status.State = v1alpha1.DebugSessionStateTerminated
 		ds.Status.Message = fmt.Sprintf("Rejected by %s: %s", ds.Status.Approval.RejectedBy, ds.Status.Approval.Reason)
-		return ctrl.Result{}, c.client.Status().Update(ctx, ds)
+		return ctrl.Result{}, applyDebugSessionStatus(ctx, c.client, ds)
 	}
 
 	// Still waiting for approval
@@ -227,7 +229,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *v1alpha1.
 		log.Info("Debug session expired")
 		ds.Status.State = v1alpha1.DebugSessionStateExpired
 		ds.Status.Message = "Session expired"
-		if err := c.client.Status().Update(ctx, ds); err != nil {
+		if err := applyDebugSessionStatus(ctx, c.client, ds); err != nil {
 			return ctrl.Result{}, err
 		}
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
@@ -264,6 +266,17 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *v1alpha1
 	if ds.Status.StartsAt != nil {
 		duration := time.Since(ds.Status.StartsAt.Time).Seconds()
 		metrics.DebugSessionDuration.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Observe(duration)
+	}
+
+	// Update template status to decrement active session count
+	if ds.Spec.TemplateRef != "" {
+		template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
+		if err == nil {
+			if err := c.updateTemplateStatus(ctx, template, false); err != nil {
+				log.Warnw("Failed to update template status during cleanup", "template", ds.Spec.TemplateRef, "error", err)
+				// Non-fatal: cleanup still succeeds
+			}
+		}
 	}
 
 	log.Info("Debug session cleanup complete")
@@ -311,12 +324,18 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 		ds.Status.TerminalSharing = c.setupTerminalSharing(ds, template)
 	}
 
-	if err := c.client.Status().Update(ctx, ds); err != nil {
+	if err := applyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	metrics.DebugSessionsCreated.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 	metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
+
+	// Update template status to reflect active session
+	if err := c.updateTemplateStatus(ctx, template, true); err != nil {
+		log.Warnw("Failed to update template status", "template", template.Name, "error", err)
+		// Non-fatal: session activation still succeeds
+	}
 
 	log.Infow("Debug session activated",
 		"expiresAt", expiresAt.Time,
@@ -364,7 +383,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.D
 	// Increment failure metric
 	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 
-	return ctrl.Result{}, c.client.Status().Update(ctx, ds)
+	return ctrl.Result{}, applyDebugSessionStatus(ctx, c.client, ds)
 }
 
 // sendDebugSessionFailedEmail sends email notification to requester when a debug session fails
@@ -885,7 +904,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *v1al
 	}
 
 	ds.Status.AllowedPods = allowedPods
-	return c.client.Status().Update(ctx, ds)
+	return applyDebugSessionStatus(ctx, c.client, ds)
 }
 
 // monitorPodHealth checks pod status and emits audit events for failures/restarts
@@ -1105,7 +1124,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	// Clear deployed resources from status
 	ds.Status.DeployedResources = nil
 	ds.Status.AllowedPods = nil
-	return c.client.Status().Update(ctx, ds)
+	return applyDebugSessionStatus(ctx, c.client, ds)
 }
 
 // parseDuration parses the requested duration with template constraints.
@@ -1186,6 +1205,81 @@ func IsPodInDebugSession(namespace, name string, allowedPods []v1alpha1.AllowedP
 		}
 	}
 	return false
+}
+
+// updateTemplateStatus updates the DebugSessionTemplate and DebugPodTemplate status
+// to reflect active session counts and usage tracking.
+// incrementActive: true when activating a session, false when deactivating (cleanup/expiry)
+func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, template *v1alpha1.DebugSessionTemplate, incrementActive bool) error {
+	log := c.log.With("template", template.Name)
+
+	// Re-fetch template to get latest version
+	currentTemplate := &v1alpha1.DebugSessionTemplate{}
+	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: template.Name}, currentTemplate); err != nil {
+		return fmt.Errorf("failed to get template: %w", err)
+	}
+
+	// Update active session count
+	if incrementActive {
+		currentTemplate.Status.ActiveSessionCount++
+		now := metav1.Now()
+		currentTemplate.Status.LastUsedAt = &now
+	} else {
+		if currentTemplate.Status.ActiveSessionCount > 0 {
+			currentTemplate.Status.ActiveSessionCount--
+		}
+	}
+
+	// Update the template status using SSA
+	if err := ssa.ApplyDebugSessionTemplateStatus(ctx, c.client, currentTemplate); err != nil {
+		return fmt.Errorf("failed to update template status: %w", err)
+	}
+
+	log.Debugw("Updated template status",
+		"activeSessionCount", currentTemplate.Status.ActiveSessionCount,
+		"lastUsedAt", currentTemplate.Status.LastUsedAt,
+		"incrementActive", incrementActive)
+
+	// Also update the DebugPodTemplate.status.usedBy if a pod template is referenced
+	if currentTemplate.Spec.PodTemplateRef != nil && currentTemplate.Spec.PodTemplateRef.Name != "" {
+		if err := c.updatePodTemplateUsedBy(ctx, currentTemplate.Spec.PodTemplateRef.Name, template.Name); err != nil {
+			log.Warnw("Failed to update pod template usedBy", "podTemplate", currentTemplate.Spec.PodTemplateRef.Name, "error", err)
+			// Non-fatal
+		}
+	}
+
+	return nil
+}
+
+// updatePodTemplateUsedBy ensures the DebugPodTemplate.status.usedBy list includes
+// the given DebugSessionTemplate name.
+func (c *DebugSessionController) updatePodTemplateUsedBy(ctx context.Context, podTemplateName, sessionTemplateName string) error {
+	podTemplate := &v1alpha1.DebugPodTemplate{}
+	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: podTemplateName}, podTemplate); err != nil {
+		return fmt.Errorf("failed to get pod template: %w", err)
+	}
+
+	// Check if already in usedBy list
+	for _, name := range podTemplate.Status.UsedBy {
+		if name == sessionTemplateName {
+			return nil // Already tracked
+		}
+	}
+
+	// Add to usedBy list
+	podTemplate.Status.UsedBy = append(podTemplate.Status.UsedBy, sessionTemplateName)
+
+	// Update using SSA
+	if err := ssa.ApplyDebugPodTemplateStatus(ctx, c.client, podTemplate); err != nil {
+		return fmt.Errorf("failed to update pod template status: %w", err)
+	}
+
+	c.log.Debugw("Updated pod template usedBy",
+		"podTemplate", podTemplateName,
+		"addedSessionTemplate", sessionTemplateName,
+		"usedBy", podTemplate.Status.UsedBy)
+
+	return nil
 }
 
 // Ensure DebugSessionController is a valid interface type

@@ -86,15 +86,17 @@ func TestDenyPolicyEnforcement(t *testing.T) {
 		err := cli.Get(ctx, types.NamespacedName{Name: "e2e-test-deny-secrets"}, &policy)
 		require.NoError(t, err)
 
-		// Add another deny rule
-		policy.Spec.Rules = append(policy.Spec.Rules, telekomv1alpha1.DenyRule{
-			APIGroups:  []string{""},
-			Resources:  []string{"configmaps"},
-			Verbs:      []string{"delete"},
-			Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+		// Use retry to handle conflicts with the DenyPolicyReconciler
+		err = helpers.UpdateWithRetry(ctx, cli, &policy, func(p *telekomv1alpha1.DenyPolicy) error {
+			// Add another deny rule
+			p.Spec.Rules = append(p.Spec.Rules, telekomv1alpha1.DenyRule{
+				APIGroups:  []string{""},
+				Resources:  []string{"configmaps"},
+				Verbs:      []string{"delete"},
+				Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"kube-system"}},
+			})
+			return nil
 		})
-
-		err = cli.Update(ctx, &policy)
 		require.NoError(t, err, "Failed to update DenyPolicy")
 
 		var fetched telekomv1alpha1.DenyPolicy

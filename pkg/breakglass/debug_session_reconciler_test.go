@@ -126,6 +126,28 @@ func newTestDebugSession(name, templateRef, cluster, user string) *telekomv1alph
 	}
 }
 
+// testApplyDebugSessionStatus applies status updates using SSA like production code.
+// This mirrors the production applyDebugSessionStatus function.
+func testApplyDebugSessionStatus(ctx context.Context, c client.Client, session *telekomv1alpha1.DebugSession) error {
+	session.ManagedFields = nil
+	patch := &telekomv1alpha1.DebugSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: telekomv1alpha1.GroupVersion.String(),
+			Kind:       "DebugSession",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            session.Name,
+			Namespace:       session.Namespace,
+			ResourceVersion: session.ResourceVersion,
+			ManagedFields:   nil,
+		},
+		Status: session.Status,
+	}
+
+	//nolint:staticcheck // SA1019: client.Apply for status subresource is still the recommended approach until SubResource("status").Apply() is available
+	return c.SubResource("status").Patch(ctx, patch, client.Apply, client.FieldOwner("breakglass-test"), client.ForceOwnership)
+}
+
 func TestDebugSessionReconciler_StateTransitions(t *testing.T) {
 	// Test that session state transitions follow expected flow
 	tests := []struct {
@@ -223,7 +245,7 @@ func TestDebugSessionReconciler_ParticipantManagement(t *testing.T) {
 				JoinedAt: metav1.Now(),
 			})
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify update
@@ -274,7 +296,7 @@ func TestDebugSessionReconciler_ParticipantManagement(t *testing.T) {
 			}
 		}
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -345,7 +367,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		fetchedSession.Status.Approval.ApprovedAt = &now
 		fetchedSession.Status.Approval.Reason = "Approved for incident response"
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -387,7 +409,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		fetchedSession.Status.State = telekomv1alpha1.DebugSessionStateFailed
 		fetchedSession.Status.Message = "Session rejected: Insufficient justification"
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -434,7 +456,7 @@ func TestDebugSessionReconciler_RenewalTracking(t *testing.T) {
 		fetchedSession.Status.ExpiresAt = &newExpiresAt
 		fetchedSession.Status.RenewalCount++
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -501,7 +523,7 @@ func TestDebugSessionReconciler_ExpirationHandling(t *testing.T) {
 		fetchedSession.Status.State = telekomv1alpha1.DebugSessionStateExpired
 		fetchedSession.Status.Message = "Session expired"
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -654,7 +676,7 @@ func TestDebugSessionReconciler_AllowedPodsTracking(t *testing.T) {
 
 		// Pod becomes ready
 		fetchedSession.Status.AllowedPods[0].Ready = true
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -1608,4 +1630,171 @@ func TestDebugSessionController_ShouldEmitAudit(t *testing.T) {
 			assert.Equal(t, tt.expectedEmitAudit, result)
 		})
 	}
+}
+
+// TestUpdateTemplateStatus tests the template status update functionality
+func TestUpdateTemplateStatus(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-pod-template",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "Test Pod Template",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "debug", Image: "busybox:latest"},
+					},
+				},
+			},
+		},
+	}
+
+	sessionTemplate := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-session-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "Test Session Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: "test-pod-template",
+			},
+		},
+		Status: telekomv1alpha1.DebugSessionTemplateStatus{
+			ActiveSessionCount: 0,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(podTemplate, sessionTemplate).
+		WithStatusSubresource(podTemplate, sessionTemplate).
+		Build()
+
+	ctrl := &DebugSessionController{
+		client: fakeClient,
+		log:    logger,
+	}
+
+	ctx := context.Background()
+
+	t.Run("increment active session count", func(t *testing.T) {
+		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, true)
+		require.NoError(t, err)
+
+		// Verify template status was updated
+		updatedTemplate := &telekomv1alpha1.DebugSessionTemplate{}
+		err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session-template"}, updatedTemplate)
+		require.NoError(t, err)
+		assert.Equal(t, int32(1), updatedTemplate.Status.ActiveSessionCount)
+		assert.NotNil(t, updatedTemplate.Status.LastUsedAt)
+
+		// Verify pod template usedBy was updated
+		updatedPodTemplate := &telekomv1alpha1.DebugPodTemplate{}
+		err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-pod-template"}, updatedPodTemplate)
+		require.NoError(t, err)
+		assert.Contains(t, updatedPodTemplate.Status.UsedBy, "test-session-template")
+	})
+
+	t.Run("decrement active session count", func(t *testing.T) {
+		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, false)
+		require.NoError(t, err)
+
+		// Verify template status was decremented
+		updatedTemplate := &telekomv1alpha1.DebugSessionTemplate{}
+		err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session-template"}, updatedTemplate)
+		require.NoError(t, err)
+		assert.Equal(t, int32(0), updatedTemplate.Status.ActiveSessionCount)
+	})
+
+	t.Run("does not go below zero", func(t *testing.T) {
+		// Decrement again - should stay at 0
+		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, false)
+		require.NoError(t, err)
+
+		updatedTemplate := &telekomv1alpha1.DebugSessionTemplate{}
+		err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session-template"}, updatedTemplate)
+		require.NoError(t, err)
+		assert.Equal(t, int32(0), updatedTemplate.Status.ActiveSessionCount)
+	})
+}
+
+// TestUpdatePodTemplateUsedBy tests the pod template usedBy update functionality
+func TestUpdatePodTemplateUsedBy(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "shared-pod-template",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "Shared Pod Template",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "debug", Image: "busybox:latest"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(podTemplate).
+		WithStatusSubresource(podTemplate).
+		Build()
+
+	ctrl := &DebugSessionController{
+		client: fakeClient,
+		log:    logger,
+	}
+
+	ctx := context.Background()
+
+	t.Run("adds session template to usedBy", func(t *testing.T) {
+		err := ctrl.updatePodTemplateUsedBy(ctx, "shared-pod-template", "session-template-1")
+		require.NoError(t, err)
+
+		updatedPodTemplate := &telekomv1alpha1.DebugPodTemplate{}
+		err = fakeClient.Get(ctx, types.NamespacedName{Name: "shared-pod-template"}, updatedPodTemplate)
+		require.NoError(t, err)
+		assert.Contains(t, updatedPodTemplate.Status.UsedBy, "session-template-1")
+	})
+
+	t.Run("does not duplicate entries", func(t *testing.T) {
+		// Add the same template again
+		err := ctrl.updatePodTemplateUsedBy(ctx, "shared-pod-template", "session-template-1")
+		require.NoError(t, err)
+
+		updatedPodTemplate := &telekomv1alpha1.DebugPodTemplate{}
+		err = fakeClient.Get(ctx, types.NamespacedName{Name: "shared-pod-template"}, updatedPodTemplate)
+		require.NoError(t, err)
+
+		// Count occurrences
+		count := 0
+		for _, name := range updatedPodTemplate.Status.UsedBy {
+			if name == "session-template-1" {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count, "should not have duplicate entries")
+	})
+
+	t.Run("supports multiple session templates", func(t *testing.T) {
+		err := ctrl.updatePodTemplateUsedBy(ctx, "shared-pod-template", "session-template-2")
+		require.NoError(t, err)
+
+		updatedPodTemplate := &telekomv1alpha1.DebugPodTemplate{}
+		err = fakeClient.Get(ctx, types.NamespacedName{Name: "shared-pod-template"}, updatedPodTemplate)
+		require.NoError(t, err)
+		assert.Contains(t, updatedPodTemplate.Status.UsedBy, "session-template-1")
+		assert.Contains(t, updatedPodTemplate.Status.UsedBy, "session-template-2")
+		assert.Len(t, updatedPodTemplate.Status.UsedBy, 2)
+	})
 }

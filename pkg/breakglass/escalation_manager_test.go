@@ -1021,7 +1021,9 @@ func TestEscalationManager_UpdateBreakglassEscalationStatus(t *testing.T) {
 
 		em := breakglass.EscalationManager{Client: fakeClient}
 
-		err := em.UpdateBreakglassEscalationStatus(context.Background(), *escalation)
+		missingEsc := *escalation
+		missingEsc.ResourceVersion = ""
+		err := em.UpdateBreakglassEscalationStatus(context.Background(), missingEsc)
 		if err == nil {
 			t.Error("UpdateBreakglassEscalationStatus() expected error for nonexistent escalation")
 		}

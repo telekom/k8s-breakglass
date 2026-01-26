@@ -43,8 +43,9 @@ func newTestMailProviderScheme() *runtime.Scheme {
 }
 
 func newTestMailProviderClient(objs ...client.Object) client.Client {
+	scheme := newTestMailProviderScheme()
 	return fake.NewClientBuilder().
-		WithScheme(newTestMailProviderScheme()).
+		WithScheme(scheme).
 		WithObjects(objs...).
 		WithStatusSubresource(&breakglassv1alpha1.MailProvider{}).
 		Build()

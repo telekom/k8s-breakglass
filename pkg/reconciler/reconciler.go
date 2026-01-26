@@ -16,13 +16,21 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
+
+func boolPtr(val bool) *bool {
+	return &val
+}
 
 func NewManager(
 	restCfg *rest.Config,
@@ -62,6 +70,15 @@ func NewManager(
 		HealthProbeBindAddress: probeAddr,
 		WebhookServer:          nil,
 		LeaderElection:         false,
+		Client: crclient.Options{
+			FieldOwner:      utils.FieldOwnerController,
+			FieldValidation: metav1.FieldValidationWarn,
+		},
+		Controller: ctrlconfig.Controller{
+			EnableWarmup:          boolPtr(true),
+			UsePriorityQueue:      boolPtr(true),
+			ReconciliationTimeout: 5 * time.Minute,
+		},
 	})
 }
 
@@ -194,6 +211,30 @@ func Setup(
 	}
 	log.Infow("Successfully registered BreakglassEscalation reconciler", "resyncPeriod", "10m")
 
+	// Register DenyPolicy Reconciler with controller-runtime manager
+	log.Debugw("Setting up DenyPolicy reconciler")
+	denyPolicyReconciler := config.NewDenyPolicyReconciler(mgr.GetClient(), log)
+	if err := denyPolicyReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup DenyPolicy reconciler with manager: %w", err)
+	}
+	log.Infow("Successfully registered DenyPolicy reconciler")
+
+	// Register DebugSessionTemplate Reconciler with controller-runtime manager
+	log.Debugw("Setting up DebugSessionTemplate reconciler")
+	debugSessionTemplateReconciler := config.NewDebugSessionTemplateReconciler(mgr.GetClient(), log)
+	if err := debugSessionTemplateReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup DebugSessionTemplate reconciler with manager: %w", err)
+	}
+	log.Infow("Successfully registered DebugSessionTemplate reconciler")
+
+	// Register DebugPodTemplate Reconciler with controller-runtime manager
+	log.Debugw("Setting up DebugPodTemplate reconciler")
+	debugPodTemplateReconciler := config.NewDebugPodTemplateReconciler(mgr.GetClient(), log)
+	if err := debugPodTemplateReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup DebugPodTemplate reconciler with manager: %w", err)
+	}
+	log.Infow("Successfully registered DebugPodTemplate reconciler")
+
 	// Register DebugSession Reconciler with controller-runtime manager
 	log.Debugw("Setting up DebugSession reconciler")
 	debugSessionReconciler := breakglass.NewDebugSessionController(log, mgr.GetClient(), ccProvider)
@@ -253,6 +294,18 @@ func Setup(
 				}
 			}
 			return result
+		})
+
+		// Set up stats provider to report event processing metrics
+		auditConfigReconciler.SetStatsProvider(func() *config.AuditStats {
+			stats := auditService.GetStats()
+			if stats == nil {
+				return nil
+			}
+			return &config.AuditStats{
+				ProcessedEvents: stats.ProcessedEvents,
+				DroppedEvents:   stats.DroppedEvents,
+			}
 		})
 	}
 

@@ -155,7 +155,7 @@ func TestExpiredSessionRaceCondition(t *testing.T) {
 	require.NoError(t, err)
 	toExpire.Status.State = telekomv1alpha1.SessionStateExpired
 	toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Second))
-	err = cli.Status().Update(ctx, &toExpire)
+	err = helpers.ApplySessionStatus(ctx, cli, &toExpire)
 	require.NoError(t, err)
 
 	t.Run("RapidSARAfterExpiry", func(t *testing.T) {

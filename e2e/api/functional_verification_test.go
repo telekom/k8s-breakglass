@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -137,17 +138,17 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 		time.Sleep(3 * time.Second)
 
 		// Verify Kubernetes events were created (secondary verification)
-		eventList := &corev1.EventList{}
+		eventList := &eventsv1.EventList{}
 		err = cli.List(ctx, eventList, client.InNamespace(namespace))
 		if err != nil {
 			t.Logf("Warning: Could not list events: %v", err)
 		} else {
-			var sessionEvents []corev1.Event
+			var sessionEvents []eventsv1.Event
 			for _, event := range eventList.Items {
-				if event.InvolvedObject.Name == session.Name {
+				if event.Regarding.Name == session.Name {
 					sessionEvents = append(sessionEvents, event)
 					t.Logf("Found event for session: Type=%s, Reason=%s, Message=%s",
-						event.Type, event.Reason, event.Message)
+						event.Type, event.Reason, event.Note)
 				}
 			}
 			// We should have at least one event for the session

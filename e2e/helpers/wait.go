@@ -259,7 +259,7 @@ func ApproveSession(ctx context.Context, cli client.Client, name, namespace, app
 	}
 	session.Status.ExpiresAt = metav1.NewTime(time.Now().Add(maxValidFor))
 
-	if err := cli.Status().Update(ctx, &session); err != nil {
+	if err := ApplySessionStatus(ctx, cli, &session); err != nil {
 		return fmt.Errorf("failed to approve session %s: %w", name, err)
 	}
 	return nil
@@ -278,7 +278,7 @@ func RejectSession(ctx context.Context, cli client.Client, name, namespace, appr
 	session.Status.State = telekomv1alpha1.SessionStateRejected
 	session.Status.ApprovalReason = reason
 
-	if err := cli.Status().Update(ctx, &session); err != nil {
+	if err := ApplySessionStatus(ctx, cli, &session); err != nil {
 		return fmt.Errorf("failed to reject session %s: %w", name, err)
 	}
 	return nil
@@ -294,7 +294,7 @@ func WithdrawSession(ctx context.Context, cli client.Client, name, namespace str
 
 	session.Status.State = telekomv1alpha1.SessionStateWithdrawn
 
-	if err := cli.Status().Update(ctx, &session); err != nil {
+	if err := ApplySessionStatus(ctx, cli, &session); err != nil {
 		return fmt.Errorf("failed to withdraw session %s: %w", name, err)
 	}
 	return nil

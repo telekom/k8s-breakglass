@@ -8,6 +8,7 @@ import (
 	"time"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
@@ -601,9 +602,8 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 	apimeta.SetStatusCondition(&latest.Status.Conditions, condition)
 	latest.Status.ObservedGeneration = latest.Generation
 
-	// Persist status using Status().Update() since ClusterConfig has status subresource enabled.
-	// When the status subresource is enabled, the main Update() endpoint ignores status changes.
-	if err := ccc.Client.Status().Update(ctx, &latest); err != nil {
+	// Persist status using SSA against the status subresource.
+	if err := ccc.applyStatus(ctx, &latest); err != nil {
 		if apierrors.IsConflict(err) {
 			lg.Debugw("Conflict updating ClusterConfig status, another controller likely handled it", "cluster", cc.Name)
 			return nil
@@ -626,6 +626,10 @@ func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telek
 		lg.Warnw("No Event recorder configured; skipping Kubernetes Event emission", "cluster", cc.Name)
 	}
 	return nil
+}
+
+func (ccc *ClusterConfigChecker) applyStatus(ctx context.Context, config *telekomv1alpha1.ClusterConfig) error {
+	return ssa.ApplyClusterConfigStatus(ctx, ccc.Client, config)
 }
 
 // checkClusterReachable tries to perform a simple discovery (server version) to ensure the cluster is reachable

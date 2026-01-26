@@ -9,14 +9,17 @@ import (
 	"time"
 
 	"github.com/open-policy-agent/cert-controller/pkg/rotator"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;update
 
 const (
@@ -140,6 +143,10 @@ func (m *Manager) getManagerFactory() func(*runtime.Scheme) (ctrl.Manager, error
 			LeaderElectionID: "",
 			Metrics: metricsserver.Options{
 				BindAddress: "0", // disable metrics server
+			},
+			Client: client.Options{
+				FieldOwner:      utils.FieldOwnerController,
+				FieldValidation: metav1.FieldValidationWarn,
 			},
 		})
 	}

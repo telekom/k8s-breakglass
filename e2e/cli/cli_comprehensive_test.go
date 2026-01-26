@@ -1144,14 +1144,15 @@ func TestCLIFullChainSessionLifecycle(t *testing.T) {
 	cfg := createCLIConfig(t, serverURL)
 	configPath := writeConfigFile(t, cfg)
 
-	// Helper to run command with specific token
+	// Helper to run command with specific token and verbose logging for CI debugging
 	runWithToken := func(token string, args ...string) (string, error) {
 		buf := &bytes.Buffer{}
 		root := bgctlcmd.NewRootCommand(bgctlcmd.Config{
 			ConfigPath:   configPath,
 			OutputWriter: buf,
 		})
-		allArgs := append([]string{"--token", token}, args...)
+		// Enable verbose mode for correlation ID logging in CI (writes to stderr)
+		allArgs := append([]string{"--verbose", "--token", token}, args...)
 		root.SetArgs(allArgs)
 		err := root.Execute()
 		return buf.String(), err
@@ -1380,14 +1381,15 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 	cfg := createCLIConfig(t, serverURL)
 	configPath := writeConfigFile(t, cfg)
 
-	// Helper to run command with specific token
+	// Helper to run command with specific token and verbose logging for CI debugging
 	runWithToken := func(token string, args ...string) (string, error) {
 		buf := &bytes.Buffer{}
 		root := bgctlcmd.NewRootCommand(bgctlcmd.Config{
 			ConfigPath:   configPath,
 			OutputWriter: buf,
 		})
-		allArgs := append([]string{"--token", token}, args...)
+		// Enable verbose mode for correlation ID logging in CI (writes to stderr)
+		allArgs := append([]string{"--verbose", "--token", token}, args...)
 		root.SetArgs(allArgs)
 		err := root.Execute()
 		return buf.String(), err
@@ -1576,14 +1578,15 @@ func TestCLIFullChainMultiActorWorkflow(t *testing.T) {
 	cfg := createCLIConfig(t, serverURL)
 	configPath := writeConfigFile(t, cfg)
 
-	// Helper to run command with specific token
+	// Helper to run command with specific token and verbose logging for CI debugging
 	runWithToken := func(token string, args ...string) (string, error) {
 		buf := &bytes.Buffer{}
 		root := bgctlcmd.NewRootCommand(bgctlcmd.Config{
 			ConfigPath:   configPath,
 			OutputWriter: buf,
 		})
-		allArgs := append([]string{"--token", token}, args...)
+		// Enable verbose mode for correlation ID logging in CI (writes to stderr)
+		allArgs := append([]string{"--verbose", "--token", token}, args...)
 		root.SetArgs(allArgs)
 		err := root.Execute()
 		return buf.String(), err

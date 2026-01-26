@@ -114,10 +114,12 @@ users:
 		err := cli.Get(ctx, types.NamespacedName{Name: "e2e-test-spoke-cluster", Namespace: namespace}, &clusterConfig)
 		require.NoError(t, err)
 
-		// Update the cluster config
-		clusterConfig.Spec.Location = "us-west-2"
-		clusterConfig.Spec.Site = "primary"
-		err = cli.Update(ctx, &clusterConfig)
+		// Use retry to handle conflicts with the ClusterConfigReconciler
+		err = helpers.UpdateWithRetry(ctx, cli, &clusterConfig, func(cc *telekomv1alpha1.ClusterConfig) error {
+			cc.Spec.Location = "us-west-2"
+			cc.Spec.Site = "primary"
+			return nil
+		})
 		require.NoError(t, err, "Failed to update ClusterConfig")
 
 		// Verify the update

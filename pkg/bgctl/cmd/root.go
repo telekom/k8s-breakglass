@@ -25,6 +25,7 @@ type runtimeState struct {
 	serverOverride  string
 	tokenOverride   string
 	nonInteractive  bool
+	verbose         bool
 	writer          io.Writer
 }
 
@@ -65,6 +66,9 @@ func NewRootCommand(cfg Config) *cobra.Command {
 			if !rt.nonInteractive {
 				rt.nonInteractive = strings.EqualFold(os.Getenv("BGCTL_NON_INTERACTIVE"), "true")
 			}
+			if !rt.verbose {
+				rt.verbose = strings.EqualFold(os.Getenv("BGCTL_VERBOSE"), "true")
+			}
 
 			// Skip config loading for commands that don't need it
 			if cmd.Name() == "init" && cmd.Parent() != nil && cmd.Parent().Name() == "config" {
@@ -99,6 +103,7 @@ func NewRootCommand(cfg Config) *cobra.Command {
 	root.PersistentFlags().StringVar(&rt.serverOverride, "server", "", "Server override (bypass config)")
 	root.PersistentFlags().StringVar(&rt.tokenOverride, "token", "", "Bearer token override")
 	root.PersistentFlags().BoolVar(&rt.nonInteractive, "non-interactive", false, "Fail instead of prompting")
+	root.PersistentFlags().BoolVarP(&rt.verbose, "verbose", "v", false, "Enable verbose output with correlation IDs")
 
 	root.SetContext(context.WithValue(context.Background(), runtimeKey{}, rt))
 

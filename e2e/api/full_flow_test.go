@@ -110,7 +110,7 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 		require.NoError(t, err)
 		sessionToExpire.Status.State = telekomv1alpha1.SessionStateExpired
 		sessionToExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
-		err = cli.Status().Update(ctx, &sessionToExpire)
+		err = helpers.ApplySessionStatus(ctx, cli, &sessionToExpire)
 		require.NoError(t, err)
 		t.Logf("Step 5: Session expired")
 
@@ -441,26 +441,15 @@ func TestHappyPathResourceUpdate(t *testing.T) {
 		t.Logf("Created escalation with maxValidFor: %s", escalation.Spec.MaxValidFor)
 
 		// Update maxValidFor with retry for conflict handling
-		var updated telekomv1alpha1.BreakglassEscalation
-		maxRetries := 3
-		for i := 0; i < maxRetries; i++ {
-			var toUpdate telekomv1alpha1.BreakglassEscalation
-			err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &toUpdate)
-			require.NoError(t, err)
-			toUpdate.Spec.MaxValidFor = "8h"
-			err = cli.Update(ctx, &toUpdate)
-			if err == nil {
-				t.Logf("Updated escalation maxValidFor to: 8h (attempt %d)", i+1)
-				break
-			}
-			if i == maxRetries-1 {
-				require.NoError(t, err, "Failed to update after retries")
-			}
-			t.Logf("Update conflict, retrying... (attempt %d)", i+1)
-			time.Sleep(100 * time.Millisecond)
-		}
+		err = helpers.UpdateWithRetry(ctx, cli, escalation, func(esc *telekomv1alpha1.BreakglassEscalation) error {
+			esc.Spec.MaxValidFor = "8h"
+			return nil
+		})
+		require.NoError(t, err)
+		t.Logf("Updated escalation maxValidFor to: 8h")
 
 		// Verify update
+		var updated telekomv1alpha1.BreakglassEscalation
 		err = cli.Get(ctx, types.NamespacedName{Name: escalation.Name, Namespace: namespace}, &updated)
 		require.NoError(t, err)
 		assert.Equal(t, "8h", updated.Spec.MaxValidFor)
@@ -477,18 +466,18 @@ func TestHappyPathResourceUpdate(t *testing.T) {
 		require.NoError(t, err)
 		t.Logf("Created policy with %d rules", len(policy.Spec.Rules))
 
-		// Add another rule
-		var toUpdate telekomv1alpha1.DenyPolicy
-		err = cli.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: namespace}, &toUpdate)
-		require.NoError(t, err)
-		toUpdate.Spec.Rules = append(toUpdate.Spec.Rules, telekomv1alpha1.DenyRule{
-			Verbs:     []string{"delete"},
-			Resources: []string{"secrets"},
-			APIGroups: []string{""},
+		// Add another rule using retry to handle conflicts with the reconciler
+		// The DenyPolicyReconciler may update status after creation, causing conflicts
+		err = helpers.UpdateWithRetry(ctx, cli, policy, func(p *telekomv1alpha1.DenyPolicy) error {
+			p.Spec.Rules = append(p.Spec.Rules, telekomv1alpha1.DenyRule{
+				Verbs:     []string{"delete"},
+				Resources: []string{"secrets"},
+				APIGroups: []string{""},
+			})
+			return nil
 		})
-		err = cli.Update(ctx, &toUpdate)
 		require.NoError(t, err)
-		t.Logf("Updated policy to have %d rules", len(toUpdate.Spec.Rules))
+		t.Logf("Updated policy to have %d rules", len(policy.Spec.Rules))
 
 		// Verify update
 		var updated telekomv1alpha1.DenyPolicy

@@ -251,7 +251,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 				ds.Status.State = telekomv1alpha1.DebugSessionStateExpired
 				ds.Status.Message = "Session expired (cleanup routine)"
 
-				if err := routine.Manager.Status().Update(ctx, &ds); err != nil {
+				if err := applyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
 					routine.Log.Errorw("error updating expired debug session status",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 					continue
@@ -286,7 +286,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 				ds.Status.State = telekomv1alpha1.DebugSessionStateFailed
 				ds.Status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
 
-				if err := routine.Manager.Status().Update(ctx, &ds); err != nil {
+				if err := applyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
 					routine.Log.Errorw("error updating timed-out debug session status",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 					continue

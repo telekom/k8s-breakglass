@@ -377,7 +377,7 @@ func TestDebugSessionAPIController_JoinSession(t *testing.T) {
 				JoinedAt: metav1.Now(),
 			})
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -454,7 +454,7 @@ func TestDebugSessionAPIController_RenewSession(t *testing.T) {
 		fetchedSession.Status.ExpiresAt = &newExpiresAt
 		fetchedSession.Status.RenewalCount++
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -526,7 +526,7 @@ func TestDebugSessionAPIController_TerminateSession(t *testing.T) {
 		fetchedSession.Status.State = telekomv1alpha1.DebugSessionStateTerminated
 		fetchedSession.Status.Message = "Terminated by owner"
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -580,7 +580,7 @@ func TestDebugSessionAPIController_ApproveSession(t *testing.T) {
 		fetchedSession.Status.Approval.ApprovedAt = &now
 		fetchedSession.Status.Approval.Reason = "Approved for debugging"
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify
@@ -637,7 +637,7 @@ func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 		fetchedSession.Status.State = telekomv1alpha1.DebugSessionStateFailed
 		fetchedSession.Status.Message = "Session rejected"
 
-		err = fakeClient.Status().Update(context.Background(), &fetchedSession)
+		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
 		require.NoError(t, err)
 
 		// Verify

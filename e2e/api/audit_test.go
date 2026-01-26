@@ -37,7 +37,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -649,7 +649,7 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Check for Kubernetes events in the namespace
-	eventList := &corev1.EventList{}
+	eventList := &eventsv1.EventList{}
 	err = cli.List(ctx, eventList)
 	if err != nil {
 		t.Logf("Warning: Could not list events: %v", err)
@@ -659,7 +659,7 @@ func TestAuditEventGenerationOnSessionApproval(t *testing.T) {
 			// Look for events related to breakglass/audit
 			if event.Reason == "SessionApproved" || event.Reason == "SessionRequested" {
 				auditEventCount++
-				t.Logf("Found audit event: %s - %s", event.Reason, event.Message)
+				t.Logf("Found audit event: %s - %s", event.Reason, event.Note)
 			}
 		}
 		t.Logf("Found %d audit-related events", auditEventCount)

@@ -1132,3 +1132,142 @@ func TestAuditConfigReconciler_GetActiveConfigs_ReturnsDeepCopy(t *testing.T) {
 
 	assert.True(t, configs2[0].Spec.Enabled, "GetActiveConfigs should return deep copies")
 }
+
+func TestAuditConfigReconciler_SetStatsProvider(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	// Initially no stats provider
+	assert.Nil(t, r.getStats)
+
+	// Set stats provider
+	statsProvider := func() *AuditStats {
+		return &AuditStats{
+			ProcessedEvents: 1000,
+			DroppedEvents:   5,
+		}
+	}
+	r.SetStatsProvider(statsProvider)
+
+	// Verify it was set
+	assert.NotNil(t, r.getStats)
+
+	// Verify the provider returns expected data
+	stats := r.getStats()
+	require.NotNil(t, stats)
+	assert.Equal(t, int64(1000), stats.ProcessedEvents)
+	assert.Equal(t, int64(5), stats.DroppedEvents)
+}
+
+func TestAuditConfigReconciler_UpdateStatus_WithStats(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-status-with-stats",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+
+	// Set stats provider
+	r.SetStatsProvider(func() *AuditStats {
+		return &AuditStats{
+			ProcessedEvents: 500,
+			DroppedEvents:   10,
+		}
+	})
+
+	// Update status with no validation errors
+	err := r.updateStatus(context.Background(), config, nil)
+	require.NoError(t, err)
+
+	// Verify status was updated with stats
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-status-with-stats"}, updatedConfig)
+	require.NoError(t, err)
+
+	// Check stats fields were populated
+	assert.Equal(t, int64(500), updatedConfig.Status.EventsProcessed)
+	assert.Equal(t, int64(10), updatedConfig.Status.EventsDropped)
+	assert.NotNil(t, updatedConfig.Status.LastEventTime, "LastEventTime should be set when events are processed")
+}
+
+func TestAuditConfigReconciler_UpdateStatus_NoStats(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-status-no-stats",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+
+	// No stats provider set
+
+	// Update status with no validation errors
+	err := r.updateStatus(context.Background(), config, nil)
+	require.NoError(t, err)
+
+	// Verify status was updated without stats
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-status-no-stats"}, updatedConfig)
+	require.NoError(t, err)
+
+	// Check stats fields are zero (no provider)
+	assert.Equal(t, int64(0), updatedConfig.Status.EventsProcessed)
+	assert.Equal(t, int64(0), updatedConfig.Status.EventsDropped)
+	assert.Nil(t, updatedConfig.Status.LastEventTime)
+}
+
+func TestAuditConfigReconciler_UpdateStatus_StatsProviderReturnsNil(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-status-nil-stats",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	r, _ := newTestAuditConfigReconciler(t, config)
+
+	// Set stats provider that returns nil (no manager initialized)
+	r.SetStatsProvider(func() *AuditStats {
+		return nil
+	})
+
+	// Update status with no validation errors
+	err := r.updateStatus(context.Background(), config, nil)
+	require.NoError(t, err)
+
+	// Verify status was updated without stats
+	updatedConfig := &breakglassv1alpha1.AuditConfig{}
+	err = r.client.Get(context.Background(), types.NamespacedName{Name: "test-status-nil-stats"}, updatedConfig)
+	require.NoError(t, err)
+
+	// Check stats fields are zero (provider returned nil)
+	assert.Equal(t, int64(0), updatedConfig.Status.EventsProcessed)
+	assert.Equal(t, int64(0), updatedConfig.Status.EventsDropped)
+	assert.Nil(t, updatedConfig.Status.LastEventTime)
+}
