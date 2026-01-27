@@ -171,7 +171,7 @@ func TestWebhookSubjectAccessReviewDeny(t *testing.T) {
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "unauthorized-user@example.com",
+				User:   helpers.TestUsers.UnauthorizedUser.Email,
 				Groups: []string{escalation.Spec.EscalatedGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: "default",
@@ -224,7 +224,7 @@ func TestWebhookExpiredSession(t *testing.T) {
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
-		User:    "expired-user@example.com",
+		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Testing expired session webhook",
 	}, helpers.WaitForStateTimeout)
@@ -253,7 +253,7 @@ func TestWebhookExpiredSession(t *testing.T) {
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "expired-user@example.com",
+				User:   helpers.TestUsers.Requester.Email,
 				Groups: []string{escalation.Spec.EscalatedGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: "default",
@@ -306,7 +306,7 @@ func TestWebhookPendingSession(t *testing.T) {
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
-		User:    "pending-user@example.com",
+		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Testing pending session webhook",
 	}, helpers.WaitForStateTimeout)
@@ -321,7 +321,7 @@ func TestWebhookPendingSession(t *testing.T) {
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "pending-user@example.com",
+				User:   helpers.TestUsers.Requester.Email,
 				Groups: []string{escalation.Spec.EscalatedGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: "default",
@@ -375,7 +375,7 @@ func TestWebhookRejectedSession(t *testing.T) {
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
-		User:    "rejected-user@example.com",
+		User:    helpers.TestUsers.Requester.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "Testing rejected session webhook",
 	}, helpers.WaitForStateTimeout)
@@ -394,7 +394,7 @@ func TestWebhookRejectedSession(t *testing.T) {
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "rejected-user@example.com",
+				User:   helpers.TestUsers.Requester.Email,
 				Groups: []string{escalation.Spec.EscalatedGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: "default",

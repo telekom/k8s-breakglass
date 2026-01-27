@@ -51,13 +51,16 @@ type DebugSessionDetailResponse struct {
 }
 
 type CreateDebugSessionRequest struct {
-	TemplateRef         string            `json:"templateRef"`
-	Cluster             string            `json:"cluster"`
-	RequestedDuration   string            `json:"requestedDuration,omitempty"`
-	NodeSelector        map[string]string `json:"nodeSelector,omitempty"`
-	Namespace           string            `json:"namespace,omitempty"`
-	Reason              string            `json:"reason,omitempty"`
-	InvitedParticipants []string          `json:"invitedParticipants,omitempty"`
+	TemplateRef              string            `json:"templateRef"`
+	Cluster                  string            `json:"cluster"`
+	BindingRef               string            `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" when multiple match
+	RequestedDuration        string            `json:"requestedDuration,omitempty"`
+	NodeSelector             map[string]string `json:"nodeSelector,omitempty"`
+	Namespace                string            `json:"namespace,omitempty"`
+	Reason                   string            `json:"reason,omitempty"`
+	InvitedParticipants      []string          `json:"invitedParticipants,omitempty"`
+	TargetNamespace          string            `json:"targetNamespace,omitempty"`
+	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"`
 }
 
 type JoinDebugSessionRequest struct {
@@ -258,6 +261,152 @@ func (d *DebugTemplateService) Get(ctx context.Context, name string) (*v1alpha1.
 		return nil, err
 	}
 	return &template, nil
+}
+
+// TemplateClustersResponse represents the response for GET /templates/{name}/clusters
+type TemplateClustersResponse struct {
+	TemplateName        string                   `json:"templateName"`
+	TemplateDisplayName string                   `json:"templateDisplayName"`
+	Clusters            []AvailableClusterDetail `json:"clusters"`
+}
+
+// AvailableClusterDetail represents a cluster with resolved constraints for a template.
+// When multiple bindings match a cluster, BindingOptions contains all available options.
+type AvailableClusterDetail struct {
+	Name                          string                            `json:"name"`
+	DisplayName                   string                            `json:"displayName,omitempty"`
+	Environment                   string                            `json:"environment,omitempty"`
+	Location                      string                            `json:"location,omitempty"`
+	Site                          string                            `json:"site,omitempty"`
+	Tenant                        string                            `json:"tenant,omitempty"`
+	BindingRef                    *BindingReference                 `json:"bindingRef,omitempty"`     // Default/primary binding (backward compat)
+	BindingOptions                []BindingOption                   `json:"bindingOptions,omitempty"` // All available binding options
+	Constraints                   *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	SchedulingConstraints         *SchedulingConstraintsSummary     `json:"schedulingConstraints,omitempty"`
+	SchedulingOptions             *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints          *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
+	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
+	Status                        *ClusterStatusInfo                `json:"status,omitempty"`
+}
+
+// BindingOption represents a single binding option with its resolved configuration
+type BindingOption struct {
+	BindingRef                    BindingReference                  `json:"bindingRef"`
+	DisplayName                   string                            `json:"displayName,omitempty"`
+	Constraints                   *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	SchedulingConstraints         *SchedulingConstraintsSummary     `json:"schedulingConstraints,omitempty"`
+	SchedulingOptions             *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints          *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
+	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
+}
+
+// BindingReference identifies the binding that enabled access
+type BindingReference struct {
+	Name              string `json:"name"`
+	Namespace         string `json:"namespace"`
+	DisplayNamePrefix string `json:"displayNamePrefix,omitempty"`
+}
+
+// SchedulingConstraintsSummary summarizes scheduling constraints for API responses
+type SchedulingConstraintsSummary struct {
+	Summary          string            `json:"summary,omitempty"`
+	DeniedNodeLabels map[string]string `json:"deniedNodeLabels,omitempty"`
+}
+
+// SchedulingOptionsResponse represents scheduling options in API responses
+type SchedulingOptionsResponse struct {
+	Required bool                       `json:"required"`
+	Options  []SchedulingOptionResponse `json:"options"`
+}
+
+// SchedulingOptionResponse represents a single scheduling option in API responses
+type SchedulingOptionResponse struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+}
+
+// NamespaceConstraintsResponse represents namespace constraints in API responses
+type NamespaceConstraintsResponse struct {
+	AllowedPatterns       []string                        `json:"allowedPatterns,omitempty"`
+	AllowedLabelSelectors []NamespaceSelectorTermResponse `json:"allowedLabelSelectors,omitempty"`
+	DeniedPatterns        []string                        `json:"deniedPatterns,omitempty"`
+	DeniedLabelSelectors  []NamespaceSelectorTermResponse `json:"deniedLabelSelectors,omitempty"`
+	DefaultNamespace      string                          `json:"defaultNamespace,omitempty"`
+	AllowUserNamespace    bool                            `json:"allowUserNamespace"`
+}
+
+// NamespaceSelectorTermResponse represents a label selector term in API responses
+type NamespaceSelectorTermResponse struct {
+	MatchLabels      map[string]string                      `json:"matchLabels,omitempty"`
+	MatchExpressions []NamespaceSelectorRequirementResponse `json:"matchExpressions,omitempty"`
+}
+
+// NamespaceSelectorRequirementResponse represents a label selector requirement in API responses
+type NamespaceSelectorRequirementResponse struct {
+	Key      string   `json:"key"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values,omitempty"`
+}
+
+// ImpersonationSummary summarizes impersonation configuration for API responses
+type ImpersonationSummary struct {
+	Enabled        bool   `json:"enabled"`
+	ServiceAccount string `json:"serviceAccount,omitempty"`
+	Namespace      string `json:"namespace,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+// ApprovalInfo contains approval requirements for a cluster
+type ApprovalInfo struct {
+	Required       bool     `json:"required"`
+	ApproverGroups []string `json:"approverGroups,omitempty"`
+	ApproverUsers  []string `json:"approverUsers,omitempty"`
+	CanAutoApprove bool     `json:"canAutoApprove,omitempty"`
+}
+
+// ClusterStatusInfo contains cluster health status
+type ClusterStatusInfo struct {
+	Healthy     bool   `json:"healthy"`
+	LastChecked string `json:"lastChecked,omitempty"`
+}
+
+// TemplateClustersOptions contains optional filters for GetClusters
+type TemplateClustersOptions struct {
+	Environment string
+	Location    string
+	BindingName string
+}
+
+// GetClusters returns cluster-specific details for a template
+func (d *DebugTemplateService) GetClusters(ctx context.Context, name string, opts TemplateClustersOptions) (*TemplateClustersResponse, error) {
+	endpoint := fmt.Sprintf("api/debugSessions/templates/%s/clusters", url.PathEscape(name))
+
+	// Build query params
+	params := url.Values{}
+	if opts.Environment != "" {
+		params.Set("environment", opts.Environment)
+	}
+	if opts.Location != "" {
+		params.Set("location", opts.Location)
+	}
+	if opts.BindingName != "" {
+		params.Set("bindingName", opts.BindingName)
+	}
+	if len(params) > 0 {
+		endpoint = endpoint + "?" + params.Encode()
+	}
+
+	var resp TemplateClustersResponse
+	if err := d.client.do(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 type DebugPodTemplateService struct {

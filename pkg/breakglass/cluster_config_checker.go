@@ -95,7 +95,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		if !validationResult.IsValid() {
 			msg := "ClusterConfig failed structural validation: " + validationResult.ErrorMessage()
 			lg.Warnw(msg, "cluster", cc.Name)
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
@@ -132,7 +132,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		if err := CheckClusterReachable(restCfg); err != nil {
 			msg := "cluster unreachable: " + err.Error()
 			lg.Warnw(msg, "cluster", cc.Name)
-			if err2 := ccc.setStatusAndEvent(ctx, &cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, &cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			metrics.ClusterConfigsFailed.WithLabelValues(cc.Name).Inc()
@@ -140,7 +140,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		}
 
 		// Success: update status Ready and emit Normal event
-		if err2 := ccc.setStatusAndEvent(ctx, &cc, "Ready", successMsg, corev1.EventTypeNormal, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, &cc, telekomv1alpha1.ConditionTypeReady, successMsg, corev1.EventTypeNormal, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 	}
@@ -155,7 +155,7 @@ func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *
 		lg.Warnw(msg,
 			"cluster", cc.Name,
 			"namespace", cc.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -171,7 +171,7 @@ func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *
 			"secretNamespace", ref.Namespace,
 			"error", err)
 		// update status and emit event
-		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -189,7 +189,7 @@ func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *
 			"secret", ref.Name,
 			"secretNamespace", ref.Namespace,
 			"secretCreation", sec.CreationTimestamp.Time.Format(time.RFC3339))
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -207,7 +207,7 @@ func (ccc ClusterConfigChecker) validateKubeconfigAuth(ctx context.Context, cc *
 	if err != nil {
 		msg := "kubeconfig parse failed: " + err.Error()
 		lg.Warnw(msg, "cluster", cc.Name)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -227,7 +227,7 @@ func (ccc ClusterConfigChecker) validateOIDCAuth(ctx context.Context, cc *teleko
 		lg.Warnw(msg,
 			"cluster", cc.Name,
 			"namespace", cc.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -252,7 +252,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 			"cluster", cc.Name,
 			"identityProviderRef", ref.Name,
 			"server", ref.Server)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -266,7 +266,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 			"cluster", cc.Name,
 			"identityProvider", ref.Name,
 			"error", err)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -276,7 +276,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 	if idp.Spec.Disabled {
 		msg := fmt.Sprintf("Referenced IdentityProvider %q is disabled", ref.Name)
 		lg.Warnw(msg, "cluster", cc.Name, "identityProvider", ref.Name)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -291,7 +291,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 	if secretRef == nil {
 		msg := "oidcFromIdentityProvider requires clientSecretRef or IdentityProvider must have Keycloak service account configured"
 		lg.Warnw(msg, "cluster", cc.Name, "identityProvider", ref.Name)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -307,7 +307,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 			"secret", secretRef.Name,
 			"secretNamespace", secretRef.Namespace,
 			"error", err)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -324,7 +324,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 			"cluster", cc.Name,
 			"secret", secretRef.Name,
 			"secretNamespace", secretRef.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -344,7 +344,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 				"secret", ref.CASecretRef.Name,
 				"secretNamespace", ref.CASecretRef.Namespace,
 				"error", err)
-			if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			return nil, err
@@ -376,7 +376,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 	if err != nil {
 		msg := "Failed to build OIDC rest config: " + err.Error()
 		lg.Warnw(msg, "cluster", cc.Name)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -397,7 +397,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 			"issuerURL", oidcConfig.IssuerURL,
 			"clientID", oidcConfig.ClientID,
 			"server", oidcConfig.Server)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -407,7 +407,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 	if oidcConfig.ClientSecretRef == nil {
 		msg := "OIDC config missing clientSecretRef (required for client credentials flow)"
 		lg.Warnw(msg, "cluster", cc.Name)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -423,7 +423,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 			"secret", secretRef.Name,
 			"secretNamespace", secretRef.Namespace,
 			"error", err)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -440,7 +440,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 			"cluster", cc.Name,
 			"secret", secretRef.Name,
 			"secretNamespace", secretRef.Namespace)
-		if err := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err != nil {
+		if err := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err)
 		}
 		return nil, errors.New(msg)
@@ -460,7 +460,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 				"secret", oidcConfig.CASecretRef.Name,
 				"secretNamespace", oidcConfig.CASecretRef.Namespace,
 				"error", err)
-			if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
+			if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg+": "+err.Error(), corev1.EventTypeWarning, lg); err2 != nil {
 				lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 			}
 			return nil, err
@@ -493,7 +493,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 	if err != nil {
 		msg := "Failed to build OIDC rest config: " + err.Error()
 		lg.Warnw(msg, "cluster", cc.Name)
-		if err2 := ccc.setStatusAndEvent(ctx, cc, "Failed", msg, corev1.EventTypeWarning, lg); err2 != nil {
+		if err2 := ccc.setStatusAndEvent(ctx, cc, telekomv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
 			lg.Warnw("failed to persist status/event for ClusterConfig", "cluster", cc.Name, "error", err2)
 		}
 		return nil, err
@@ -504,7 +504,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 
 func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *telekomv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
 	// Determine condition status and reason first for skip check
-	isSuccess := phase == "Ready"
+	isSuccess := phase == telekomv1alpha1.ConditionTypeReady
 	failureType := ""
 	if !isSuccess {
 		failureType = determineClusterConfigFailureType(message)

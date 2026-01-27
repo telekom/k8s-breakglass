@@ -118,6 +118,11 @@ func WithTLSConfig(caFile string, insecureSkipTLSVerify bool) Option {
 }
 
 func loadTLSConfig(caFile string, insecure bool) (*tls.Config, error) {
+	if insecure {
+		// WARNING: InsecureSkipVerify disables TLS certificate verification.
+		// This is a security risk and should only be used in development/testing.
+		fmt.Fprintln(os.Stderr, "WARNING: TLS certificate verification is disabled. This is insecure and should not be used in production.")
+	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: insecure}
 	if caFile == "" {
 		return tlsConfig, nil

@@ -21,6 +21,12 @@ type DeployedResourceRefApplyConfiguration struct {
 	Name *string `json:"name,omitempty"`
 	// namespace is the namespace of the resource (if namespaced).
 	Namespace *string `json:"namespace,omitempty"`
+	// source indicates where this resource came from.
+	// For debug pod: "debug-pod"
+	// For auxiliary resources: "auxiliary:<category>" (e.g., "auxiliary:network-policy")
+	Source *string `json:"source,omitempty"`
+	// uid is the UID of the deployed resource for precise identification.
+	UID *string `json:"uid,omitempty"`
 }
 
 // DeployedResourceRefApplyConfiguration constructs a declarative configuration of the DeployedResourceRef type for use with
@@ -58,5 +64,21 @@ func (b *DeployedResourceRefApplyConfiguration) WithName(value string) *Deployed
 // If called multiple times, the Namespace field is set to the value of the last call.
 func (b *DeployedResourceRefApplyConfiguration) WithNamespace(value string) *DeployedResourceRefApplyConfiguration {
 	b.Namespace = &value
+	return b
+}
+
+// WithSource sets the Source field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Source field is set to the value of the last call.
+func (b *DeployedResourceRefApplyConfiguration) WithSource(value string) *DeployedResourceRefApplyConfiguration {
+	b.Source = &value
+	return b
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *DeployedResourceRefApplyConfiguration) WithUID(value string) *DeployedResourceRefApplyConfiguration {
+	b.UID = &value
 	return b
 }

@@ -37,6 +37,8 @@ import (
 // will be provided as the `search` query parameter to pre-populate the cluster filter in the UI.
 const denyReasonMessage = "Access denied. To request temporary access via Breakglass, visit %s?search=%s and open a new request. Include the reason for access, the target cluster, and the requested group(s). If you need help, contact your platform admins."
 
+const maxSARBodySize = 1 << 20 // 1 MiB
+
 // buildReason appends a helpful link to the breakglass frontend for a given cluster.
 func (wc *WebhookController) buildBreakglassLink(cluster string) string {
 	base := strings.TrimRight(wc.config.Frontend.BaseURL, "/")
@@ -147,7 +149,13 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 	}
 
 	// Issuer didn't match any configured IDP - provide helpful guidance
-	// List all available providers to help user identify the right one
+	// Unless hardened mode is enabled, list available providers to help user identify the right one
+	if wc.config.Server.HardenedIDPHints {
+		// Hardened mode: don't expose available provider names to prevent reconnaissance
+		return "(Your token issuer is not configured for this cluster)"
+	}
+
+	// Default mode: list available providers to help users
 	var displayNames []string
 	for _, idp := range idpList.Items {
 		if idp.Spec.Disabled {
@@ -394,9 +402,16 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 	sar := authorizationv1.SubjectAccessReview{}
 
-	// Read raw body for better debug logging and then decode
+	// Read raw body for better debug logging and then decode (bounded)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSARBodySize)
 	bodyBytes, rerr := io.ReadAll(c.Request.Body)
 	if rerr != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(rerr, &maxErr) {
+			wc.log.With("error", rerr.Error()).Warn("SubjectAccessReview body too large")
+			c.Status(http.StatusRequestEntityTooLarge)
+			return
+		}
 		wc.log.With("error", rerr.Error()).Error("Failed to read request body for SubjectAccessReview")
 		c.Status(http.StatusUnprocessableEntity)
 		return

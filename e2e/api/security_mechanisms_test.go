@@ -161,11 +161,11 @@ func TestSecuritySARWebhookDeniesWithoutSession(t *testing.T) {
 
 	t.Run("SARDeniedForUserWithoutSession", func(t *testing.T) {
 		// Send a SubjectAccessReview request for a user with no active session
-		sarJSON := `{
+		sarJSON := fmt.Sprintf(`{
 			"apiVersion": "authorization.k8s.io/v1",
 			"kind": "SubjectAccessReview",
 			"spec": {
-				"user": "random-user-with-no-session@example.com",
+				"user": "%s",
 				"groups": ["oidc:random-group"],
 				"resourceAttributes": {
 					"verb": "get",
@@ -173,7 +173,7 @@ func TestSecuritySARWebhookDeniesWithoutSession(t *testing.T) {
 					"namespace": "default"
 				}
 			}
-		}`
+		}`, helpers.TestUsers.UnauthorizedUser.Email)
 
 		webhookURL := fmt.Sprintf("%s/api/breakglass/webhook/authorize/%s", apiURL, clusterName)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewBufferString(sarJSON))
@@ -204,18 +204,18 @@ func TestSecuritySARWebhookDeniesWithoutSession(t *testing.T) {
 
 	t.Run("SARDeniedForInvalidCluster", func(t *testing.T) {
 		// Send SAR request to non-existent cluster endpoint
-		sarJSON := `{
+		sarJSON := fmt.Sprintf(`{
 			"apiVersion": "authorization.k8s.io/v1",
 			"kind": "SubjectAccessReview",
 			"spec": {
-				"user": "test@example.com",
+				"user": "%s",
 				"groups": ["oidc:some-group"],
 				"resourceAttributes": {
 					"verb": "get",
 					"resource": "pods"
 				}
 			}
-		}`
+		}`, helpers.TestUsers.Requester.Email)
 
 		webhookURL := fmt.Sprintf("%s/api/breakglass/webhook/authorize/nonexistent-cluster-xyz", apiURL)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewBufferString(sarJSON))
@@ -570,11 +570,11 @@ func TestSecurityDenyPolicyEnforcement(t *testing.T) {
 		}
 
 		// Even if user had an active session, DenyPolicy should block
-		sarJSON := `{
+		sarJSON := fmt.Sprintf(`{
 			"apiVersion": "authorization.k8s.io/v1",
 			"kind": "SubjectAccessReview",
 			"spec": {
-				"user": "any-user@example.com",
+				"user": "%s",
 				"groups": ["oidc:some-group"],
 				"resourceAttributes": {
 					"verb": "get",
@@ -582,7 +582,7 @@ func TestSecurityDenyPolicyEnforcement(t *testing.T) {
 					"namespace": "default"
 				}
 			}
-		}`
+		}`, helpers.TestUsers.Requester.Email)
 
 		webhookURL := fmt.Sprintf("%s/api/breakglass/webhook/authorize/%s", apiURL, clusterName)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewBufferString(sarJSON))
@@ -1326,7 +1326,7 @@ func TestSecurityBlockSelfApprovalAtClusterLevel(t *testing.T) {
 			WithBlockSelfApproval(true).
 			WithAllowedClusters("*").
 			WithAllowedGroups("dev").
-			WithApproverUsers("approver@example.com").
+			WithApproverUsers(helpers.TestUsers.Approver.Email).
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			Build()
 		cleanup.Add(escalation)
@@ -1362,7 +1362,7 @@ func TestSecurityMandatoryReasonConfigured(t *testing.T) {
 			WithRequestReason(true, "Provide ticket ID or incident reference").
 			WithAllowedClusters(clusterName).
 			WithAllowedGroups("dev", "ops").
-			WithApproverUsers("approver@example.com").
+			WithApproverUsers(helpers.TestUsers.Approver.Email).
 			WithLabels(helpers.E2ELabelsWithFeature("security")).
 			Build()
 		cleanup.Add(escalation)

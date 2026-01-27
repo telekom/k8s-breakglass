@@ -83,7 +83,7 @@ func TestWebhookMalformedRequestHandling(t *testing.T) {
 			"kind":       "SubjectAccessReview",
 			"apiVersion": "authorization.k8s.io/v1beta1",
 			"spec": map[string]interface{}{
-				"user": "test@example.com",
+				"user": helpers.TestUsers.Requester.Email,
 				"resourceAttributes": map[string]interface{}{
 					"verb":     "get",
 					"resource": "pods",
@@ -135,7 +135,7 @@ func TestWebhookTimeoutBehavior(t *testing.T) {
 				APIVersion: "authorization.k8s.io/v1",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "nonexistent-user@example.com",
+				User:   helpers.TestUsers.UnauthorizedUser.Email,
 				Groups: []string{"some-group"},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Verb:     "get",
@@ -166,7 +166,7 @@ func TestWebhookTimeoutBehavior(t *testing.T) {
 				APIVersion: "authorization.k8s.io/v1",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "concurrent-test@example.com",
+				User:   helpers.TestUsers.Requester.Email,
 				Groups: []string{"test-group"},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Verb:     "list",
@@ -261,7 +261,7 @@ func TestWebhookContentTypeValidation(t *testing.T) {
 			APIVersion: "authorization.k8s.io/v1",
 		},
 		Spec: authorizationv1.SubjectAccessReviewSpec{
-			User: "content-type-test@example.com",
+			User: helpers.TestUsers.Requester.Email,
 			ResourceAttributes: &authorizationv1.ResourceAttributes{
 				Verb:     "get",
 				Resource: "pods",
@@ -341,7 +341,7 @@ func TestWebhookNonResourceURLHandling(t *testing.T) {
 				APIVersion: "authorization.k8s.io/v1",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "test@example.com",
+				User:   helpers.TestUsers.Requester.Email,
 				Groups: []string{escalation.Spec.EscalatedGroup},
 				NonResourceAttributes: &authorizationv1.NonResourceAttributes{
 					Path: "/healthz",
@@ -368,7 +368,7 @@ func TestWebhookNonResourceURLHandling(t *testing.T) {
 				APIVersion: "authorization.k8s.io/v1",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "test@example.com",
+				User:   helpers.TestUsers.Requester.Email,
 				Groups: []string{"some-group"},
 				NonResourceAttributes: &authorizationv1.NonResourceAttributes{
 					Path: "/api/v1",

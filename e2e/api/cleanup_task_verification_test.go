@@ -313,7 +313,7 @@ func TestCleanupApprovalTimeout(t *testing.T) {
 		// Create a session but don't approve it
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 			Cluster: clusterName,
-			User:    helpers.TestUsers.SchedulingTestRequester.Email,
+			User:    helpers.TestUsers.Requester.Email,
 			Group:   "timeout-test-group",
 			Reason:  "Approval timeout test",
 		})

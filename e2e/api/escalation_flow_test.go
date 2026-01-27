@@ -109,7 +109,7 @@ func TestEscalationValidation(t *testing.T) {
 					Clusters: []string{"cluster-a"},
 				},
 				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"approver@example.com"},
+					Users: []string{helpers.TestUsers.Approver.Email},
 				},
 			},
 		}
@@ -133,7 +133,7 @@ func TestEscalationValidation(t *testing.T) {
 					Clusters: []string{"cluster-a"},
 				},
 				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"approver@example.com"},
+					Users: []string{helpers.TestUsers.Approver.Email},
 				},
 			},
 		}
@@ -149,7 +149,7 @@ func TestEscalationValidation(t *testing.T) {
 			WithApprovalTimeout("30m").
 			WithAllowedClusters("cluster-a").
 			WithAllowedGroups("developers").
-			WithApproverUsers("approver@example.com").
+			WithApproverUsers(helpers.TestUsers.Approver.Email).
 			Build()
 
 		err := s.CreateResource(escalation)

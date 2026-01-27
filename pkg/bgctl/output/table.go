@@ -100,6 +100,128 @@ func WriteDebugPodTemplateTable(w io.Writer, templates []client.DebugPodTemplate
 	_ = tw.Flush()
 }
 
+// WriteTemplateClusterTable writes a compact table of available clusters for a template
+func WriteTemplateClusterTable(w io.Writer, clusters []client.AvailableClusterDetail) {
+	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tENVIRONMENT\tBINDINGS\tMAX_DURATION\tAPPROVAL")
+	for _, c := range clusters {
+		bindingsStr := "-"
+		if len(c.BindingOptions) > 0 {
+			bindingsStr = fmt.Sprintf("%d", len(c.BindingOptions))
+		} else if c.BindingRef != nil {
+			bindingsStr = "1"
+		}
+		maxDuration := "-"
+		if c.Constraints != nil && c.Constraints.MaxDuration != "" {
+			maxDuration = c.Constraints.MaxDuration
+		}
+		approval := "no"
+		if c.Approval != nil && c.Approval.Required {
+			approval = "yes"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			c.Name, c.DisplayName, c.Environment, bindingsStr, maxDuration, approval)
+	}
+	_ = tw.Flush()
+}
+
+// WriteTemplateClusterTableWide writes an expanded table of available clusters for a template
+func WriteTemplateClusterTableWide(w io.Writer, clusters []client.AvailableClusterDetail) {
+	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tENVIRONMENT\tBINDINGS\tMAX_DURATION\tNS_DEFAULT\tSCHEDULING\tIMPERSONATION\tAPPROVAL\tSTATUS")
+	for _, c := range clusters {
+		bindingsStr := "-"
+		if len(c.BindingOptions) > 0 {
+			names := make([]string, 0, len(c.BindingOptions))
+			for _, opt := range c.BindingOptions {
+				names = append(names, opt.BindingRef.Name)
+			}
+			if len(names) <= 2 {
+				bindingsStr = strings.Join(names, ", ")
+			} else {
+				bindingsStr = fmt.Sprintf("%s, +%d more", names[0], len(names)-1)
+			}
+		} else if c.BindingRef != nil {
+			bindingsStr = c.BindingRef.Name
+		}
+		maxDuration := "-"
+		if c.Constraints != nil && c.Constraints.MaxDuration != "" {
+			maxDuration = c.Constraints.MaxDuration
+		}
+		nsDefault := "-"
+		if c.NamespaceConstraints != nil && c.NamespaceConstraints.DefaultNamespace != "" {
+			nsDefault = c.NamespaceConstraints.DefaultNamespace
+		}
+		scheduling := "-"
+		if c.SchedulingOptions != nil && len(c.SchedulingOptions.Options) > 0 {
+			scheduling = fmt.Sprintf("%d options", len(c.SchedulingOptions.Options))
+			if c.SchedulingOptions.Required {
+				scheduling += " (required)"
+			}
+		}
+		impersonation := "-"
+		if c.Impersonation != nil && c.Impersonation.Enabled {
+			impersonation = c.Impersonation.ServiceAccount
+		}
+		approval := "no"
+		if c.Approval != nil && c.Approval.Required {
+			approval = "yes"
+		}
+		status := "-"
+		if c.Status != nil {
+			if c.Status.Healthy {
+				status = "healthy"
+			} else {
+				status = "unhealthy"
+			}
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			c.Name, c.DisplayName, c.Environment, bindingsStr, maxDuration, nsDefault, scheduling, impersonation, approval, status)
+	}
+	_ = tw.Flush()
+}
+
+// WriteBindingOptionsTable writes a detailed table of binding options for a cluster
+func WriteBindingOptionsTable(w io.Writer, clusterName string, options []client.BindingOption) {
+	if len(options) == 0 {
+		_, _ = fmt.Fprintf(w, "No binding options available for cluster '%s'. Using template defaults.\n", clusterName)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Binding options for cluster '%s':\n\n", clusterName)
+	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "BINDING\tDISPLAY_NAME\tMAX_DURATION\tNAMESPACE\tSCHEDULING\tIMPERSONATION\tAPPROVAL")
+	for _, opt := range options {
+		maxDuration := "-"
+		if opt.Constraints != nil && opt.Constraints.MaxDuration != "" {
+			maxDuration = opt.Constraints.MaxDuration
+		}
+		nsDefault := "-"
+		if opt.NamespaceConstraints != nil && opt.NamespaceConstraints.DefaultNamespace != "" {
+			nsDefault = opt.NamespaceConstraints.DefaultNamespace
+		}
+		scheduling := "-"
+		if opt.SchedulingOptions != nil && len(opt.SchedulingOptions.Options) > 0 {
+			scheduling = fmt.Sprintf("%d options", len(opt.SchedulingOptions.Options))
+		}
+		impersonation := "-"
+		if opt.Impersonation != nil && opt.Impersonation.Enabled {
+			impersonation = "yes"
+			if opt.Impersonation.ServiceAccount != "" {
+				impersonation = opt.Impersonation.ServiceAccount
+			}
+		}
+		approval := "no"
+		if opt.Approval != nil && opt.Approval.Required {
+			approval = "yes"
+		} else if opt.Approval != nil && opt.Approval.CanAutoApprove {
+			approval = "auto"
+		}
+		_, _ = fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			opt.BindingRef.Namespace, opt.BindingRef.Name, opt.DisplayName, maxDuration, nsDefault, scheduling, impersonation, approval)
+	}
+	_ = tw.Flush()
+}
+
 func formatTime(t time.Time) string {
 	if t.IsZero() {
 		return "-"

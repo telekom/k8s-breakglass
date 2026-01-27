@@ -223,7 +223,7 @@ func TestWebhookEndpoint(t *testing.T) {
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   "test-user@example.com",
+				User:   helpers.TestUsers.Requester.Email,
 				Groups: []string{"test-group"},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: "default",
@@ -442,7 +442,7 @@ func TestApprovedSessionAuthorization(t *testing.T) {
 
 		session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 			Cluster: helpers.GetTestClusterName(),
-			User:    helpers.GetTestUserEmail(),
+			User:    helpers.TestUsers.WebhookTestRequester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "E2E test - approved session authorization",
 		}, helpers.WaitForStateTimeout)
@@ -483,7 +483,8 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	// Create test context for authenticated API clients
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, helpers.GetTestNamespace())
 	requesterClient := tc.ClientForUser(helpers.TestUsers.WebhookTestRequester)
-	testUsername := helpers.TestUsers.WebhookTestRequester.Username
+	// Use username (not email) because debug sessions store RequestedBy as the preferred_username claim
+	testUser := helpers.TestUsers.WebhookTestRequester
 
 	// Create prerequisite templates (cluster-scoped resources, direct creation is fine)
 	podTemplateName := helpers.GenerateUniqueName("e2e-webhook-pod")
@@ -546,6 +547,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 
 	// Wait for AllowedPods to be populated by the reconciler
 	var allowedPodName string
+	var allowedPodNamespace string
 	err = helpers.WaitForConditionSimple(ctx, func() bool {
 		var ds telekomv1alpha1.DebugSession
 		if err := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &ds); err != nil {
@@ -553,6 +555,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 		}
 		if len(ds.Status.AllowedPods) > 0 {
 			allowedPodName = ds.Status.AllowedPods[0].Name
+			allowedPodNamespace = ds.Status.AllowedPods[0].Namespace
 			t.Logf("AllowedPods populated: %v", ds.Status.AllowedPods)
 			return true
 		}
@@ -560,19 +563,21 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	}, helpers.WaitForStateTimeout, 2*time.Second)
 	require.NoError(t, err, "Timeout waiting for AllowedPods to be populated")
 	require.NotEmpty(t, allowedPodName, "Expected at least one allowed pod")
+	require.NotEmpty(t, allowedPodNamespace, "Expected allowed pod to have namespace")
 
 	t.Run("PodExecAllowedForAllowedPod", func(t *testing.T) {
-		// Create SAR for pods/exec to an allowed pod (using real pod name from reconciler)
+		// Create SAR for pods/exec to an allowed pod (using real pod name and namespace from reconciler)
+		// Use Username because debug sessions store RequestedBy as preferred_username claim
 		sar := &authorizationv1.SubjectAccessReview{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "authorization.k8s.io/v1",
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   testUsername,
-				Groups: helpers.TestUsers.WebhookTestRequester.Groups,
+				User:   testUser.Username,
+				Groups: testUser.Groups,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   "default",
+					Namespace:   allowedPodNamespace,
 					Verb:        "create",
 					Resource:    "pods",
 					Subresource: "exec",
@@ -593,14 +598,15 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 
 	t.Run("PodExecDeniedForNonAllowedPod", func(t *testing.T) {
 		// Create SAR for pods/exec to a pod NOT in the allowed list
+		// Use Username because debug sessions store RequestedBy as preferred_username claim
 		sar := &authorizationv1.SubjectAccessReview{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "authorization.k8s.io/v1",
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   testUsername,
-				Groups: helpers.TestUsers.WebhookTestRequester.Groups,
+				User:   testUser.Username,
+				Groups: testUser.Groups,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace:   "default",
 					Verb:        "create",
@@ -661,16 +667,17 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 			telekomv1alpha1.DebugSessionStateTerminated, helpers.WaitForStateTimeout)
 
 		// Create SAR for pods/exec to an allowed pod
+		// Use Username because debug sessions store RequestedBy as preferred_username claim
 		sar := &authorizationv1.SubjectAccessReview{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "authorization.k8s.io/v1",
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   testUsername,
-				Groups: helpers.TestUsers.WebhookTestRequester.Groups,
+				User:   testUser.Username,
+				Groups: testUser.Groups,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   "default",
+					Namespace:   allowedPodNamespace,
 					Verb:        "create",
 					Resource:    "pods",
 					Subresource: "exec",

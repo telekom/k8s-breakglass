@@ -1,0 +1,117 @@
+# DebugSessionClusterBinding - Basic Example
+# This binding grants access to a specific debug template on specific clusters.
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: team-alpha-production
+  namespace: team-alpha
+spec:
+  # Reference a single template by name
+  templateRef:
+    name: debug-pod-template-network-inspector
+  
+  # Explicit list of clusters this binding applies to
+  clusters:
+    - production-eu-west-1
+    - production-eu-central-1
+  
+  # Optional display name override
+  displayName: "Production Network Debugging (Team Alpha)"
+  
+  # Optional description
+  description: "Allows Team Alpha engineers to debug network issues in production clusters"
+  
+  # Override who can use this binding (replaces template's allowed list)
+  allowed:
+    groups:
+      - team-alpha-engineers
+      - sre-oncall
+    users:
+      - alice@example.com
+      - bob@example.com
+  
+  # Override approvers for this binding
+  approvers:
+    groups:
+      - team-alpha-leads
+    users:
+      - charlie@example.com
+  
+  # Constraints are merged with and cannot be less restrictive than template
+  constraints:
+    maxDuration: "2h"  # More restrictive than template's default
+    defaultDuration: "30m"
+    maxRenewals: 2
+
+---
+# DebugSessionClusterBinding - Using Selectors
+# This binding matches multiple templates and clusters using label selectors.
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: development-all-templates
+  namespace: platform-team
+spec:
+  # Match multiple templates by label
+  templateSelector:
+    matchLabels:
+      environment: development
+      tier: standard
+  
+  # Display name prefix is prepended to matched template names
+  displayNamePrefix: "[Dev] "
+  
+  # Match clusters by label instead of explicit list
+  clusterSelector:
+    matchLabels:
+      environment: development
+  
+  # Additional scheduling constraints for dev clusters
+  schedulingConstraints:
+    nodePools:
+      - name: "debug-nodes"
+        nodeSelector:
+          node.kubernetes.io/debug: "true"
+  
+  # Namespace constraints
+  namespaceConstraints:
+    allowedNamespaces:
+      patterns:
+        - "dev-*"
+        - "test-*"
+    deniedNamespaces:
+      patterns:
+        - "kube-system"
+        - "kube-public"
+
+---
+# DebugSessionClusterBinding - With Auxiliary Resources
+# This binding enables specific auxiliary resource categories.
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: network-debug-with-isolation
+  namespace: security-team
+spec:
+  templateRef:
+    name: network-debug-template
+  
+  clusters:
+    - staging-cluster
+    - production-cluster
+  
+  # Require specific auxiliary resource categories
+  requiredAuxiliaryResourceCategories:
+    - network-isolation
+    - rbac
+  
+  # Override auxiliary resource defaults from template
+  auxiliaryResourceOverrides:
+    monitoring: false    # Disable monitoring aux resources
+    logging: true        # Enable logging aux resources
+  
+  # Impersonation configuration for cross-cluster deployment
+  impersonation:
+    enabled: true
+    serviceAccount: debug-deployer
+    serviceAccountNamespace: breakglass-system

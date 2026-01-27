@@ -9,6 +9,7 @@ resources:
 - bases/breakglass.t-caas.telekom.com_debugpodtemplates.yaml
 - bases/breakglass.t-caas.telekom.com_debugsessions.yaml
 - bases/breakglass.t-caas.telekom.com_debugsessiontemplates.yaml
+- bases/breakglass.t-caas.telekom.com_debugsessionclusterbindings.yaml
 - bases/breakglass.t-caas.telekom.com_denypolicies.yaml
 - bases/breakglass.t-caas.telekom.com_identityproviders.yaml
 - bases/breakglass.t-caas.telekom.com_mailproviders.yaml

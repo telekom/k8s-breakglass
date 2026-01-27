@@ -1029,3 +1029,140 @@ func validateSchedulingOptions(opts *SchedulingOptions, fieldPath *field.Path) f
 
 	return errs
 }
+
+// validateNamespaceConstraints validates the NamespaceConstraints configuration.
+func validateNamespaceConstraints(nc *NamespaceConstraints, fieldPath *field.Path) field.ErrorList {
+	if nc == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate allowed namespaces filter - use existing validator
+	if nc.AllowedNamespaces != nil && nc.AllowedNamespaces.IsEmpty() {
+		errs = append(errs, field.Required(fieldPath.Child("allowedNamespaces"),
+			"at least one of patterns or selectorTerms must be specified"))
+	}
+
+	// Validate denied namespaces filter - use existing validator
+	if nc.DeniedNamespaces != nil && nc.DeniedNamespaces.IsEmpty() {
+		errs = append(errs, field.Required(fieldPath.Child("deniedNamespaces"),
+			"at least one of patterns or selectorTerms must be specified"))
+	}
+
+	// Validate default namespace if specified
+	if nc.DefaultNamespace != "" {
+		// Default namespace should be allowed if allowedNamespaces is specified
+		if nc.AllowedNamespaces != nil && nc.AllowedNamespaces.HasPatterns() {
+			found := false
+			for _, pattern := range nc.AllowedNamespaces.Patterns {
+				// Exact match check (patterns may contain wildcards, so only check exact matches)
+				if pattern == nc.DefaultNamespace {
+					found = true
+					break
+				}
+			}
+			// Note: We can't reliably check wildcard patterns or selector terms at validation time
+			// Those require runtime evaluation against actual namespace resources
+			if !found && !nc.AllowedNamespaces.HasSelectorTerms() {
+				// Check if any pattern could be a wildcard that matches
+				hasWildcard := false
+				for _, pattern := range nc.AllowedNamespaces.Patterns {
+					if strings.Contains(pattern, "*") || strings.Contains(pattern, "?") {
+						hasWildcard = true
+						break
+					}
+				}
+				if !hasWildcard {
+					errs = append(errs, field.Invalid(fieldPath.Child("defaultNamespace"),
+						nc.DefaultNamespace, "default namespace must be in the allowed namespaces patterns"))
+				}
+			}
+		}
+
+		// Default namespace should not be denied
+		if nc.DeniedNamespaces != nil && nc.DeniedNamespaces.HasPatterns() {
+			for _, pattern := range nc.DeniedNamespaces.Patterns {
+				if pattern == nc.DefaultNamespace {
+					errs = append(errs, field.Invalid(fieldPath.Child("defaultNamespace"),
+						nc.DefaultNamespace, "default namespace cannot be in the denied namespaces patterns"))
+					break
+				}
+			}
+		}
+	}
+
+	return errs
+}
+
+// validateImpersonationConfig validates the ImpersonationConfig configuration.
+func validateImpersonationConfig(ic *ImpersonationConfig, fieldPath *field.Path) field.ErrorList {
+	if ic == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate service account reference
+	if ic.ServiceAccountRef != nil {
+		if ic.ServiceAccountRef.Name == "" {
+			errs = append(errs, field.Required(
+				fieldPath.Child("serviceAccountRef").Child("name"),
+				"service account name is required"))
+		}
+		if ic.ServiceAccountRef.Namespace == "" {
+			errs = append(errs, field.Required(
+				fieldPath.Child("serviceAccountRef").Child("namespace"),
+				"service account namespace is required"))
+		}
+	}
+
+	return errs
+}
+
+// validateAuxiliaryResources validates auxiliary resource definitions.
+func validateAuxiliaryResources(resources []AuxiliaryResource, fieldPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+	names := make(map[string]bool)
+
+	for i, res := range resources {
+		resPath := fieldPath.Index(i)
+
+		// Name is required
+		if res.Name == "" {
+			errs = append(errs, field.Required(resPath.Child("name"), "name is required"))
+		} else {
+			// Check for duplicates
+			if names[res.Name] {
+				errs = append(errs, field.Duplicate(resPath.Child("name"), res.Name))
+			}
+			names[res.Name] = true
+		}
+
+		// Template is required (check if RawExtension is empty)
+		if len(res.Template.Raw) == 0 && res.Template.Object == nil {
+			errs = append(errs, field.Required(resPath.Child("template"), "template is required"))
+		}
+
+		// Category validation
+		if res.Category != "" {
+			validCategories := []string{
+				"network-policy", "rbac", "configmap", "secret",
+				"service", "ingress", "other",
+			}
+			valid := false
+			for _, c := range validCategories {
+				if res.Category == c {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				errs = append(errs, field.NotSupported(
+					resPath.Child("category"), res.Category, validCategories))
+			}
+		}
+	}
+
+	return errs
+}

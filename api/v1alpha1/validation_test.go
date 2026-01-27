@@ -1981,3 +1981,261 @@ func TestDebugSessionTemplate_WithSchedulingOptions(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "at least one scheduling option is required")
 	})
 }
+
+// TestValidateNamespaceConstraints tests the NamespaceConstraints validation.
+func TestValidateNamespaceConstraints(t *testing.T) {
+	t.Run("nil namespace constraints", func(t *testing.T) {
+		errs := validateNamespaceConstraints(nil, field.NewPath("spec", "namespaceConstraints"))
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid namespace constraints with allowed patterns", func(t *testing.T) {
+		nc := &NamespaceConstraints{
+			AllowedNamespaces: &NamespaceFilter{
+				Patterns: []string{"debug-*", "test-*"},
+			},
+			DefaultNamespace: "debug-default",
+		}
+		errs := validateNamespaceConstraints(nc, field.NewPath("spec", "namespaceConstraints"))
+		// Should be valid because default matches wildcard pattern
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid namespace constraints with selector terms", func(t *testing.T) {
+		nc := &NamespaceConstraints{
+			AllowedNamespaces: &NamespaceFilter{
+				SelectorTerms: []NamespaceSelectorTerm{
+					{
+						MatchLabels: map[string]string{
+							"debug-enabled": "true",
+						},
+					},
+				},
+			},
+			DefaultNamespace: "my-namespace",
+		}
+		errs := validateNamespaceConstraints(nc, field.NewPath("spec", "namespaceConstraints"))
+		// Should be valid because selector terms take precedence
+		assert.Empty(t, errs)
+	})
+
+	t.Run("empty allowed namespaces filter", func(t *testing.T) {
+		nc := &NamespaceConstraints{
+			AllowedNamespaces: &NamespaceFilter{
+				// Empty - should fail
+			},
+		}
+		errs := validateNamespaceConstraints(nc, field.NewPath("spec", "namespaceConstraints"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "patterns or selectorTerms must be specified")
+	})
+
+	t.Run("empty denied namespaces filter", func(t *testing.T) {
+		nc := &NamespaceConstraints{
+			DeniedNamespaces: &NamespaceFilter{
+				// Empty - should fail
+			},
+		}
+		errs := validateNamespaceConstraints(nc, field.NewPath("spec", "namespaceConstraints"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "patterns or selectorTerms must be specified")
+	})
+
+	t.Run("default namespace in denied patterns", func(t *testing.T) {
+		nc := &NamespaceConstraints{
+			DeniedNamespaces: &NamespaceFilter{
+				Patterns: []string{"kube-system", "debug-prod"},
+			},
+			DefaultNamespace: "debug-prod",
+		}
+		errs := validateNamespaceConstraints(nc, field.NewPath("spec", "namespaceConstraints"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "default namespace cannot be in the denied namespaces")
+	})
+
+	t.Run("default namespace not in allowed patterns without wildcards", func(t *testing.T) {
+		nc := &NamespaceConstraints{
+			AllowedNamespaces: &NamespaceFilter{
+				Patterns: []string{"debug-ns-1", "debug-ns-2"},
+			},
+			DefaultNamespace: "debug-ns-3",
+		}
+		errs := validateNamespaceConstraints(nc, field.NewPath("spec", "namespaceConstraints"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "default namespace must be in the allowed namespaces")
+	})
+
+	t.Run("valid with denied and allowed namespaces", func(t *testing.T) {
+		nc := &NamespaceConstraints{
+			AllowedNamespaces: &NamespaceFilter{
+				Patterns: []string{"debug-*"},
+			},
+			DeniedNamespaces: &NamespaceFilter{
+				Patterns: []string{"kube-*", "default"},
+			},
+			DefaultNamespace:   "debug-main",
+			AllowUserNamespace: true,
+		}
+		errs := validateNamespaceConstraints(nc, field.NewPath("spec", "namespaceConstraints"))
+		assert.Empty(t, errs)
+	})
+}
+
+// TestValidateImpersonationConfig tests the ImpersonationConfig validation.
+func TestValidateImpersonationConfig(t *testing.T) {
+	t.Run("nil impersonation config", func(t *testing.T) {
+		errs := validateImpersonationConfig(nil, field.NewPath("spec", "impersonation"))
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid with serviceAccountRef", func(t *testing.T) {
+		ic := &ImpersonationConfig{
+			ServiceAccountRef: &ServiceAccountReference{
+				Name:      "debug-deployer",
+				Namespace: "breakglass-system",
+			},
+		}
+		errs := validateImpersonationConfig(ic, field.NewPath("spec", "impersonation"))
+		assert.Empty(t, errs)
+	})
+
+	t.Run("serviceAccountRef missing name", func(t *testing.T) {
+		ic := &ImpersonationConfig{
+			ServiceAccountRef: &ServiceAccountReference{
+				Namespace: "default",
+			},
+		}
+		errs := validateImpersonationConfig(ic, field.NewPath("spec", "impersonation"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "name is required")
+	})
+
+	t.Run("serviceAccountRef missing namespace", func(t *testing.T) {
+		ic := &ImpersonationConfig{
+			ServiceAccountRef: &ServiceAccountReference{
+				Name: "my-sa",
+			},
+		}
+		errs := validateImpersonationConfig(ic, field.NewPath("spec", "impersonation"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "namespace is required")
+	})
+}
+
+// TestDebugSessionTemplate_WithNamespaceConstraints tests template validation with namespace constraints.
+func TestDebugSessionTemplate_WithNamespaceConstraints(t *testing.T) {
+	t.Run("valid template with namespace constraints", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				NamespaceConstraints: &NamespaceConstraints{
+					AllowedNamespaces: &NamespaceFilter{
+						Patterns: []string{"debug-*"},
+					},
+					DefaultNamespace:   "debug-main",
+					AllowUserNamespace: true,
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("template with invalid namespace constraints", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				NamespaceConstraints: &NamespaceConstraints{
+					AllowedNamespaces: &NamespaceFilter{
+						// Empty - invalid
+					},
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "patterns or selectorTerms must be specified")
+	})
+}
+
+// TestDebugSessionTemplate_WithImpersonation tests template validation with impersonation config.
+func TestDebugSessionTemplate_WithImpersonation(t *testing.T) {
+	t.Run("valid template with serviceAccountRef impersonation", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Impersonation: &ImpersonationConfig{
+					ServiceAccountRef: &ServiceAccountReference{
+						Name:      "debug-deployer",
+						Namespace: "breakglass-system",
+					},
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("valid template with existing SA impersonation", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Impersonation: &ImpersonationConfig{
+					ServiceAccountRef: &ServiceAccountReference{
+						Name:      "debug-sa",
+						Namespace: "breakglass-system",
+					},
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("template with incomplete impersonation SA ref", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Impersonation: &ImpersonationConfig{
+					ServiceAccountRef: &ServiceAccountReference{
+						Name: "existing-sa",
+						// Missing namespace
+					},
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "namespace is required")
+	})
+}

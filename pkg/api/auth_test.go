@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"net/http"
@@ -13,8 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MicahParks/keyfunc"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap/zaptest"
 )
 
 func TestAuthHandler_Middleware(t *testing.T) {
@@ -114,12 +118,17 @@ func TestAuthHandler_Middleware(t *testing.T) {
 func TestAuthHandler_Middleware_ValidToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	// This test would require a more complex setup with actual JWKS
-	// For now, we'll test the structure and basic functionality
+	// Note: Comprehensive JWT validation tests with actual JWKS verification
+	// are in auth_jwt_test.go (TestAuthMiddleware_ExposesTokenAndRawClaims,
+	// TestAuthMiddleware_GroupNormalizationCases, etc.) and auth_jwt_negative_test.go.
+	// This test only validates the middleware function signature and basic structure.
 	t.Run("Middleware structure validation", func(t *testing.T) {
 		authHandler := &AuthHandler{}
 		middleware := authHandler.Middleware()
 		assert.NotNil(t, middleware, "Middleware should not be nil")
+		// Verify it's a valid Gin handler function
+		var handler gin.HandlerFunc = middleware
+		assert.NotNil(t, handler, "Middleware should be a gin.HandlerFunc")
 	})
 }
 
@@ -203,16 +212,51 @@ func TestAuthHandler_MiddlewareHeaderRemoval(t *testing.T) {
 }
 
 func TestAuthHandler_ClaimsExtraction(t *testing.T) {
-	// This is a conceptual test for the claims extraction logic
-	// In a real scenario, you'd need valid JWT tokens and JWKS setup
-	t.Run("Claims extraction concept", func(t *testing.T) {
-		// Test that the middleware would extract the expected claims
-		expectedClaims := []string{"sub", "email", "preferred_username"}
+	gin.SetMode(gin.TestMode)
 
-		for _, claim := range expectedClaims {
-			assert.NotEmpty(t, claim, "Claim %s should not be empty", claim)
-		}
+	srv, priv, kid := setupTestJWKSServer(t)
+	defer srv.Close()
+
+	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	assert.NoError(t, err)
+	defer jwks.EndBackground()
+
+	authHandler := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
+
+	router := gin.New()
+	router.Use(authHandler.Middleware())
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"email":    c.GetString("email"),
+			"username": c.GetString("username"),
+			"user_id":  c.GetString("user_id"),
+		})
 	})
+
+	claims := jwt.MapClaims{
+		"sub":                "user-123",
+		"email":              "user@example.com",
+		"preferred_username": "tester",
+		"exp":                time.Now().Add(time.Minute).Unix(),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	tokStr, err := tok.SignedString(priv)
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodGet, "/test", nil)
+	assert.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+tokStr)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var body map[string]string
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "user@example.com", body["email"])
+	assert.Equal(t, "tester", body["username"])
+	assert.Equal(t, "user-123", body["user_id"])
 }
 
 func TestBuildCertPoolFromPEM(t *testing.T) {
@@ -317,12 +361,21 @@ func (m *mockRateLimiter) Allow(c *gin.Context) (bool, bool) {
 func TestMiddlewareWithRateLimiting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	srv, priv, kid := setupTestJWKSServer(t)
+	defer srv.Close()
+
+	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	assert.NoError(t, err)
+	defer jwks.EndBackground()
+
 	tests := []struct {
 		name           string
 		allowed        bool
 		authenticated  bool
 		authHeader     string
 		expectedStatus int
+		method         string
+		expectedAuth   bool
 	}{
 		{
 			name:           "rate limited unauthenticated",
@@ -330,6 +383,8 @@ func TestMiddlewareWithRateLimiting(t *testing.T) {
 			authenticated:  false,
 			authHeader:     "",
 			expectedStatus: http.StatusTooManyRequests,
+			method:         http.MethodOptions,
+			expectedAuth:   false,
 		},
 		{
 			name:           "rate limited authenticated",
@@ -337,12 +392,23 @@ func TestMiddlewareWithRateLimiting(t *testing.T) {
 			authenticated:  true,
 			authHeader:     "",
 			expectedStatus: http.StatusTooManyRequests,
+			method:         http.MethodGet,
+			expectedAuth:   true,
+		},
+		{
+			name:           "allowed authenticated",
+			allowed:        true,
+			authenticated:  true,
+			authHeader:     "",
+			expectedStatus: http.StatusOK,
+			method:         http.MethodGet,
+			expectedAuth:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			authHandler := &AuthHandler{}
+			authHandler := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
 			mockRL := &mockRateLimiter{
 				allowed:         tt.allowed,
 				isAuthenticated: tt.authenticated,
@@ -354,23 +420,31 @@ func TestMiddlewareWithRateLimiting(t *testing.T) {
 				c.JSON(http.StatusOK, gin.H{"status": "ok"})
 			})
 
-			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-			if tt.authHeader != "" {
-				req.Header.Set("Authorization", tt.authHeader)
+			var tokenHeader string
+			if tt.method == http.MethodGet {
+				claims := jwt.MapClaims{
+					"sub": "rl-user",
+					"exp": time.Now().Add(time.Minute).Unix(),
+				}
+				tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+				tok.Header["kid"] = kid
+				tokStr, signErr := tok.SignedString(priv)
+				assert.NoError(t, signErr)
+				tokenHeader = "Bearer " + tokStr
+			}
+
+			req, _ := http.NewRequest(tt.method, "/test", nil)
+			if tokenHeader != "" {
+				req.Header.Set("Authorization", tokenHeader)
 			}
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
-			// The auth middleware runs first, so without a valid token we get 401
-			// For rate limit test, we need OPTIONS or a valid auth scenario
-			// Let's use OPTIONS which bypasses auth
-			req, _ = http.NewRequest(http.MethodOptions, "/test", nil)
-			w = httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			// OPTIONS goes through auth middleware, then rate limiting
-			if !tt.allowed {
-				assert.Equal(t, http.StatusTooManyRequests, w.Code)
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus == http.StatusTooManyRequests {
+				var body map[string]interface{}
+				assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+				assert.Equal(t, tt.expectedAuth, body["authenticated"])
 			}
 		})
 	}

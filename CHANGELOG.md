@@ -9,6 +9,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multiple Binding Options Support**: When multiple DebugSessionClusterBindings match the same cluster, all options are now presented to users
+  - API returns `bindingOptions[]` array in cluster details with each binding's resolved configuration
+  - Frontend displays binding selection cards only when multiple bindings are available
+  - Users can select their preferred binding (e.g., "SRE Access" vs "On-Call Emergency") when creating debug sessions
+  - Session creation accepts optional `bindingRef` as string format `namespace/name` for explicit binding selection
+  - Backward compatible: primary `bindingRef` field still set for clients not using binding selection
+  - CLI: New `bgctl debug template bindings <template> <cluster>` command shows all binding options for a cluster
+  - CLI: `--binding namespace/name` flag on `debug session create` for explicit binding selection
+  - CLI: `bgctl debug template clusters` now shows binding count and MAX_DURATION columns
+  - Performance: Parallel API calls for ClusterConfig and DebugSessionClusterBinding fetching
+
+### Changed
+
+- **API Breaking Change**: `bindingRef` in `CreateDebugSessionRequest` changed from object `{name, namespace}` to string format `namespace/name`
+  - Simpler API contract using standard Kubernetes namespaced name format
+  - CLI and frontend updated to use new format
+
+- **Binding Auto-Discovery Documentation**: Comprehensive documentation for DebugSessionClusterBinding resolution and config merging
+  - Mermaid flow diagram showing binding resolution process
+  - Detailed merge rules for all configuration fields
+  - Edge case handling documentation
+  - Debugging tips for binding resolution
+
+- **Configurable IDP Hint Disclosure**: New `server.hardenedIDPHints` configuration option controls whether identity provider names are exposed in authorization error messages
+  - Default (`false`): Lists available IDPs in error messages to help users troubleshoot authentication issues
+  - Hardened (`true`): Returns generic error messages to prevent IDP reconnaissance
+
+- **DebugSessionClusterBinding CRD**: Delegate debug session access across clusters with templated configurations
+  - `spec.templateRef` / `spec.templateSelector`: Reference templates by name or label selector
+  - `spec.clusters` / `spec.clusterSelector`: Target clusters by name or label selector
+  - `spec.allowed` / `spec.approvers`: Override access control per binding
+  - `spec.schedulingConstraintOverrides` / `spec.namespaceConstraintOverrides`: Cluster-specific overrides
+  - `spec.auxiliaryResourceOverrides`: Control auxiliary resource deployment per cluster
+  - Status tracks resolved templates, clusters, and active session count
+  - ClusterBinding reconciler validates and resolves references
+- **Auxiliary Resources for DebugSessionTemplate**: Deploy supporting resources alongside debug pods
+  - `auxiliaryResources[]` in template spec defines resources to deploy
+  - Go template rendering with session/cluster context using Sprig functions
+  - Category-based organization (network-policy, rbac, configmap, secret, service, etc.)
+  - Template-level defaults with per-resource and per-binding override capability
+  - Required categories for mandatory resources (e.g., network isolation)
+  - User-selectable optional resources with UI visibility control
+  - AuxiliaryResourceManager handles deployment, tracking, and cleanup
+  - Deployed resources tracked in session status with source field
+  - Metrics for auxiliary resource deployments and failures
+  - Audit events emitted for resource deployment and cleanup (`debug_session.resource_deployed`, `debug_session.resource_cleanup`)
+- **DeployedResourceRef Source tracking**: Track origin of deployed resources in DebugSession status
+  - `source` field indicates resource origin (e.g., "debug-pod", "auxiliary:network-policy")
+  - `uid` field for precise resource identification
+- **Namespace Constraints for DebugSessionTemplate**: Control where debug pods can be deployed
+  - `namespaceConstraints.allowedNamespaces`: Pattern and label-based namespace filtering
+  - `namespaceConstraints.deniedNamespaces`: Block specific namespaces (deny takes precedence)
+  - `namespaceConstraints.defaultNamespace`: Default when user doesn't specify
+  - `namespaceConstraints.allowUserNamespace`: Enable/disable user namespace selection
+  - `namespaceConstraints.createIfNotExists`: Auto-create missing namespaces
+  - API validates user-selected namespaces against template constraints
+- **Impersonation for DebugSessionTemplate**: Deploy debug resources with constrained identity
+  - `impersonation.serviceAccountRef`: Use existing ServiceAccount on spoke cluster
+  - Enables least-privilege deployment patterns via pre-configured ServiceAccounts
+- **Cluster Selector for DebugSessionTemplate**: Select clusters by labels (in addition to patterns)
+  - `allowed.clusterSelector`: Label selector for dynamic cluster matching
+  - Combined with `allowed.clusters` patterns (OR logic)
+- **Resolved Fields in DebugSession**: Session stores resolved configuration at creation time
+  - `spec.targetNamespace`: Resolved target namespace for debug pods
+  - `spec.selectedSchedulingOption`: Name of selected scheduling option
+  - `spec.resolvedSchedulingConstraints`: Merged constraints from template and option
+  - Ensures consistent behavior even if template changes after session creation
+- **Name Collision Detection for ClusterBindings**: Webhook validates unique display names across all bindings targeting the same template-cluster pair
+  - `NameCollision` type with `EffectiveDisplayName`, `ConflictingBinding`, and severity
+  - `GetEffectiveDisplayName()` and `CheckNameCollisions()` helper methods
+- **Template Clusters API Endpoint**: `GET /templates/{name}/clusters` returns detailed cluster availability for templates
+  - Resolves bindings, constraints, impersonation config per cluster
+  - Includes scheduling options, namespace constraints, approval requirements
+- **Impersonation Runtime Support**: Deploy debug resources using impersonated spoke cluster ServiceAccounts
+  - `validateSpokeServiceAccount()`: Runtime validation of SA existence in spoke cluster
+  - `createImpersonatedClient()`: Create Kubernetes client with impersonation
+  - `resolveImpersonationConfig()`: Merge template and binding impersonation settings
+- **CLI commands for templates and bindings**:
+  - `bgctl debug template list` - List available debug session templates
+  - `bgctl debug template get <name>` - Get template details
+  - `bgctl debug template clusters <name>` - List available clusters for a template with resolved constraints
+  - `bgctl debug binding list` - List cluster bindings with filtering by namespace/template/cluster
+  - `bgctl debug binding get <name>` - Get binding details
+  - `bgctl debug binding for-cluster <cluster>` - List bindings that apply to a specific cluster
 - **Scheduling Constraints and Options for DebugSessionTemplate**: Enhanced scheduling control for debug pods
   - `schedulingConstraints`: Define mandatory node affinity, tolerations, topology spread, and denied node rules
   - `schedulingOptions`: Allow users to choose from predefined scheduling configurations (e.g., SRIOV vs standard nodes)
@@ -61,6 +145,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Additional unit tests for `pkg/bgctl/cmd` runtime helpers
 - Unit tests for `cmd/bgctl` entrypoint
 - Additional unit tests for `pkg/config` IdentityProvider reconciler
+
+### Fixed
+
+- Align session ownership checks with configured user identifier claims to avoid duplicate or missing sessions.
+- Guard against zero `retainedUntil` timestamps so sessions are not treated as retained immediately.
+- Avoid startup panics on malformed email templates by returning controlled render errors.
+- Ensure JWKS HTTP clients use timeouts to prevent auth verification hangs.
+
+### Security
+
+- Enforce authenticated identity matching for session requests to prevent username spoofing when token groups are missing.
+- Limit webhook SubjectAccessReview request body size to reduce memory DoS risk.
+- Enforce JWT signing algorithm allowlist during verification.
+- Strip Authorization headers on optional-auth endpoints to reduce accidental token leakage in logs.
 - Additional unit tests for `pkg/bgctl/cmd` config commands
 - Additional unit tests for `pkg/bgctl/cmd` session commands
 - Additional unit tests for `pkg/bgctl/cmd` update helpers
@@ -69,6 +167,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI Correlation ID logging**: All API requests now include `X-Correlation-ID` header and support verbose mode via `WithVerbose()` for CI debugging
 - **CLI `--verbose` flag**: New `-v/--verbose` flag and `BGCTL_VERBOSE` environment variable for detailed request/response logging with correlation IDs
 - CLI E2E tests now run with verbose mode enabled for better CI debugging
+- **E2E Tests for ClusterBinding and Template Clusters API**: Comprehensive end-to-end tests for cluster bindings
+  - `TestClusterBindingWithAuxiliaryResources` - Validates auxiliary resource configuration in bindings
+  - `TestDebugSessionAPITemplateClusters` - Tests the template clusters API endpoint for the two-step wizard flow
+- **Frontend Mock API for Template Clusters**: Mock data implementation for `GET /api/debugSessions/templates/:name/clusters`
+  - Mock cluster metadata (environment, location, status)
+  - Mock cluster bindings with constraints and approvals
+  - `getTemplateClusters()` function for frontend development
+- **Comprehensive ClusterBinding Documentation**: New dedicated documentation for DebugSessionClusterBinding
+  - [docs/debug-session-cluster-binding.md](docs/debug-session-cluster-binding.md) with full specification reference
+  - Use cases for multi-tenant access, environment-specific constraints, and least-privilege patterns
+  - Integration with the template clusters API
 
 ### Changed
 
@@ -85,8 +194,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - E2E event verification now queries `events.k8s.io/v1` instead of the legacy core/v1 events API
 - DebugSessionTemplate and DebugPodTemplate status updates now use SSA via `ssa.ApplyDebugSessionTemplateStatus` and `ssa.ApplyDebugPodTemplateStatus`
 
+### Removed
+
+- **Per-session ServiceAccount support**: Removed `createPerSession`, `perSessionTemplate`, and `clusterRoleRef` from `ImpersonationConfig`
+  - Use pre-existing ServiceAccounts via `serviceAccountRef` instead
+  - Removed `perSessionServiceAccount` from `DebugSessionStatus`
+  - Simplifies impersonation to use only pre-configured spoke cluster ServiceAccounts
+
 ### Fixed
 
+- **Auxiliary resources now deployed and cleaned up**: Wired `AuxiliaryResourceManager` into `DebugSessionController` reconciler
+  - Auxiliary resources are deployed after main workload creation using `DeployAuxiliaryResources()`
+  - Auxiliary resources are cleaned up before main workload deletion using `CleanupAuxiliaryResources()`
+  - Resources tracked in `status.auxiliaryResourceStatuses` with proper state management
+- **Webhook validation for auxiliary resources**: Added `validateAuxiliaryResources()` to template validation
+  - Validates unique names, non-empty templates, and valid categories
 - Documentation incorrectly referenced `allowed.users` field which doesn't exist in BreakglassEscalation CRD
 - Documentation incorrectly referenced `idleTimeout` as functional; now marked as NOT IMPLEMENTED
 - Helm chart template no longer renders non-existent `allowed.users` field

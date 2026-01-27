@@ -1,0 +1,200 @@
+# DebugSessionTemplate with Auxiliary Resources
+# This template demonstrates deploying supporting resources alongside debug pods.
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: network-debug-with-auxiliary
+  labels:
+    tier: advanced
+    feature: auxiliary-resources
+spec:
+  displayName: "Network Debug with Isolation"
+  description: "Debug network issues with automatic network policy and RBAC setup"
+  
+  # Reference the pod template
+  podTemplateRef:
+    name: debug-pod-template-network
+  
+  # Basic constraints
+  constraints:
+    maxDuration: "4h"
+    defaultDuration: "1h"
+    maxRenewals: 3
+    requireApproval: true
+    approvalTimeout: "30m"
+  
+  # Namespace constraints
+  namespaceConstraints:
+    allowedNamespaces:
+      patterns:
+        - "app-*"
+        - "workload-*"
+    deniedNamespaces:
+      patterns:
+        - "kube-system"
+        - "kube-public"
+    defaultNamespace: "app-debug"
+  
+  # Access control
+  allowed:
+    groups:
+      - platform-engineers
+      - sre-team
+  
+  approvers:
+    groups:
+      - security-team
+  
+  # Auxiliary Resources - deployed alongside the debug pod
+  auxiliaryResources:
+    # Network Policy - required for isolation
+    - name: debug-network-policy
+      category: network-policy
+      displayName: "Network Isolation Policy"
+      description: "Restricts debug pod network access to target namespace only"
+      enabled: true        # Enabled by default
+      required: true       # Cannot be disabled by user
+      showInUI: false      # Don't show in UI since required
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      template: |
+        metadata:
+          name: "debug-{{ .Session.Name }}-isolation"
+          namespace: "{{ .Session.Spec.TargetNamespace }}"
+          labels:
+            app.kubernetes.io/managed-by: breakglass
+            breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+        spec:
+          podSelector:
+            matchLabels:
+              breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+          policyTypes:
+            - Ingress
+            - Egress
+          ingress:
+            - from:
+                - podSelector: {}
+          egress:
+            - to:
+                - podSelector: {}
+            - to:
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: kube-dns
+              ports:
+                - protocol: UDP
+                  port: 53
+    
+    # RBAC - ServiceAccount and RoleBinding
+    - name: debug-rbac-role
+      category: rbac
+      displayName: "Debug RBAC"
+      description: "Creates role with limited permissions for debug operations"
+      enabled: true
+      required: true
+      showInUI: false
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      template: |
+        metadata:
+          name: "debug-{{ .Session.Name }}-role"
+          namespace: "{{ .Session.Spec.TargetNamespace }}"
+          labels:
+            app.kubernetes.io/managed-by: breakglass
+            breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+        rules:
+          - apiGroups: [""]
+            resources: ["pods", "pods/log", "services", "endpoints", "configmaps"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["apps"]
+            resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+            verbs: ["get", "list", "watch"]
+    
+    - name: debug-rbac-binding
+      category: rbac
+      displayName: "Debug Role Binding"
+      description: "Binds debug role to session service account"
+      enabled: true
+      required: true
+      showInUI: false
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      template: |
+        metadata:
+          name: "debug-{{ .Session.Name }}-binding"
+          namespace: "{{ .Session.Spec.TargetNamespace }}"
+          labels:
+            app.kubernetes.io/managed-by: breakglass
+            breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: "debug-{{ .Session.Name }}-role"
+        subjects:
+          - kind: ServiceAccount
+            name: "{{ .Session.Name }}-sa"
+            namespace: "{{ .Session.Spec.TargetNamespace }}"
+    
+    # ConfigMap with debug tools configuration - optional
+    - name: debug-config
+      category: configmap
+      displayName: "Debug Configuration"
+      description: "ConfigMap with debug tool configurations and scripts"
+      enabled: false       # Disabled by default
+      required: false      # Optional
+      showInUI: true       # Show in UI for user selection
+      apiVersion: v1
+      kind: ConfigMap
+      template: |
+        metadata:
+          name: "debug-{{ .Session.Name }}-config"
+          namespace: "{{ .Session.Spec.TargetNamespace }}"
+          labels:
+            app.kubernetes.io/managed-by: breakglass
+            breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+        data:
+          debug-info.yaml: |
+            session:
+              name: "{{ .Session.Name }}"
+              user: "{{ .Session.Spec.User }}"
+              targetNamespace: "{{ .Session.Spec.TargetNamespace }}"
+              cluster: "{{ .Session.Spec.Cluster }}"
+              reason: "{{ .Session.Spec.Reason }}"
+            template:
+              name: "{{ .Template.Name }}"
+          network-test.sh: |
+            #!/bin/bash
+            # Network connectivity test script
+            echo "Testing DNS resolution..."
+            nslookup kubernetes.default.svc.cluster.local
+            echo ""
+            echo "Testing connectivity to API server..."
+            curl -sk https://kubernetes.default.svc/healthz
+            echo ""
+            echo "Listing services in namespace..."
+            kubectl get svc -n {{ .Session.Spec.TargetNamespace }}
+    
+    # Monitoring ServiceMonitor - optional for Prometheus
+    - name: debug-monitoring
+      category: monitoring
+      displayName: "Prometheus Monitoring"
+      description: "ServiceMonitor for debug pod metrics (requires Prometheus Operator)"
+      enabled: false
+      required: false
+      showInUI: true
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      template: |
+        metadata:
+          name: "debug-{{ .Session.Name }}-monitor"
+          namespace: "{{ .Session.Spec.TargetNamespace }}"
+          labels:
+            app.kubernetes.io/managed-by: breakglass
+            breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+        spec:
+          selector:
+            matchLabels:
+              breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+          endpoints:
+            - port: metrics
+              interval: 30s

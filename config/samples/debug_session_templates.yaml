@@ -1,5 +1,6 @@
 # Sample DebugSessionTemplate - Standard debug session
 # This template allows debugging on dev/test clusters with auto-approval
+# Includes scheduling options and namespace constraints
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionTemplate
 metadata:
@@ -39,6 +40,61 @@ spec:
     maxRenewals: 2
     maxConcurrentSessions: 3
   
+  # Scheduling constraints - applied to all debug pods
+  schedulingConstraints:
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
+    tolerations:
+      - key: "debug-workload"
+        operator: "Equal"
+        value: "allowed"
+        effect: "NoSchedule"
+    deniedNodes:
+      - "control-plane-*"
+  
+  # Scheduling options - users can choose their scheduling preference
+  schedulingOptions:
+    required: false
+    options:
+      - name: any-worker
+        displayName: "Any Worker Node"
+        description: "Deploy to any available worker node (default)"
+        default: true
+      - name: dedicated-debug
+        displayName: "Dedicated Debug Nodes"
+        description: "Deploy to nodes labeled for debugging"
+        schedulingConstraints:
+          nodeSelector:
+            debug-enabled: "true"
+      - name: high-memory
+        displayName: "High Memory Nodes"
+        description: "Deploy to nodes with extra memory"
+        allowedGroups:
+          - sre-team
+        schedulingConstraints:
+          nodeSelector:
+            node.kubernetes.io/instance-type: "memory-optimized"
+  
+  # Namespace constraints - controls where debug pods can be deployed
+  namespaceConstraints:
+    defaultNamespace: breakglass-debug
+    allowUserNamespace: true
+    createIfNotExists: false
+    allowedNamespaces:
+      patterns:
+        - "breakglass-*"
+        - "debug-*"
+      selectorTerms:
+        - matchLabels:
+            debug-allowed: "true"
+    deniedNamespaces:
+      patterns:
+        - "kube-*"
+        - "*-system"
+      selectorTerms:
+        - matchLabels:
+            protected: "true"
+  
   terminalSharing:
     enabled: true
     provider: tmux
@@ -51,6 +107,7 @@ spec:
 ---
 # Sample DebugSessionTemplate - Production debug session
 # This template requires approval for production clusters
+# Uses strict scheduling constraints and namespace controls
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionTemplate
 metadata:
@@ -87,6 +144,72 @@ spec:
     maxRenewals: 1
     maxConcurrentSessions: 1
   
+  # Strict scheduling for production
+  schedulingConstraints:
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
+    # Keep debug pods away from critical workloads
+    requiredPodAntiAffinity:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/component: database
+        topologyKey: kubernetes.io/hostname
+    deniedNodes:
+      - "control-plane-*"
+      - "etcd-*"
+    deniedNodeLabels:
+      node-restriction.kubernetes.io/critical: "*"
+  
+  # Limited scheduling options for production
+  schedulingOptions:
+    required: true
+    options:
+      - name: isolated
+        displayName: "Isolated Debug Node"
+        description: "Deploy to dedicated debug nodes only"
+        default: true
+        schedulingConstraints:
+          nodeSelector:
+            debug-environment: "production"
+            isolation-level: "high"
+      - name: standard
+        displayName: "Standard Worker"
+        description: "Deploy to standard worker nodes"
+        allowedGroups:
+          - sre-leads
+        schedulingConstraints:
+          tolerations:
+            - key: "production-critical"
+              operator: "Exists"
+              effect: "NoSchedule"
+  
+  # Strict namespace constraints for production
+  namespaceConstraints:
+    defaultNamespace: breakglass-prod-debug
+    allowUserNamespace: false
+    createIfNotExists: true
+    namespaceLabels:
+      managed-by: breakglass
+      environment: production
+    allowedNamespaces:
+      patterns:
+        - "breakglass-prod-debug"
+      selectorTerms:
+        - matchLabels:
+            debug-allowed: "true"
+            environment: production
+    deniedNamespaces:
+      patterns:
+        - "kube-*"
+        - "*-system"
+        - "prod-*"
+      selectorTerms:
+        - matchExpressions:
+            - key: protected
+              operator: Exists
+        - matchLabels:
+            compliance: pci-dss
+  
   terminalSharing:
     enabled: false
   
@@ -101,6 +224,7 @@ spec:
 ---
 # Sample DebugSessionTemplate - Kubectl Debug mode
 # This template uses kubectl debug for ephemeral containers
+# Includes scheduling options for node selection
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionTemplate
 metadata:
@@ -118,10 +242,20 @@ spec:
         patterns:
           - "default"
           - "app-*"
+        selectorTerms:
+          - matchLabels:
+              ephemeral-debug-allowed: "true"
+          - matchExpressions:
+              - key: environment
+                operator: In
+                values: ["dev", "test", "staging"]
       deniedNamespaces:
         patterns:
           - "kube-system"
           - "kube-public"
+        selectorTerms:
+          - matchLabels:
+              restricted: "true"
       allowedImages:
         - "nicolaka/netshoot:*"
         - "busybox:*"
@@ -155,12 +289,42 @@ spec:
     maxRenewals: 2
     maxConcurrentSessions: 5
   
+  # Scheduling options for kubectl-debug mode
+  schedulingOptions:
+    required: false
+    options:
+      - name: any-node
+        displayName: "Any Node"
+        description: "Debug pods on any available node"
+        default: true
+      - name: same-az
+        displayName: "Same Availability Zone"
+        description: "Deploy debug pods in the same AZ as target workload"
+        schedulingConstraints:
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: DoNotSchedule
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: breakglass
+  
+  # Namespace constraints for where debug management pods go
+  namespaceConstraints:
+    defaultNamespace: breakglass-debug
+    allowUserNamespace: true
+    allowedNamespaces:
+      patterns:
+        - "breakglass-*"
+        - "debug-*"
+  
   audit:
     enabled: true
     enableShellHistory: true
 ---
 # Sample DebugSessionTemplate - Privileged node debugging
 # This template allows privileged debugging for emergency scenarios
+# Requires strict scheduling controls and full audit
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionTemplate
 metadata:
@@ -219,6 +383,48 @@ spec:
     allowRenewal: false
     maxRenewals: 0
     maxConcurrentSessions: 1
+  
+  # Emergency scheduling - allow on any node but with explicit control
+  schedulingConstraints:
+    tolerations:
+      - operator: Exists
+    deniedNodeLabels:
+      node.kubernetes.io/unschedulable: "*"
+  
+  # Node selection options for emergency access
+  schedulingOptions:
+    required: true
+    options:
+      - name: worker-nodes
+        displayName: "Worker Nodes Only"
+        description: "Debug on worker nodes (safer)"
+        default: true
+        schedulingConstraints:
+          nodeSelector:
+            node-role.kubernetes.io/worker: ""
+      - name: control-plane
+        displayName: "Control Plane"
+        description: "Debug on control plane nodes (high risk)"
+        allowedGroups:
+          - incident-commanders
+        schedulingConstraints:
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ""
+      - name: specific-node
+        displayName: "Any Schedulable Node"
+        description: "Allow scheduling on any node"
+        allowedGroups:
+          - incident-commanders
+  
+  # Emergency namespace constraints
+  namespaceConstraints:
+    defaultNamespace: breakglass-emergency
+    allowUserNamespace: false
+    createIfNotExists: true
+    namespaceLabels:
+      managed-by: breakglass
+      access-level: emergency
+      auto-cleanup: "true"
   
   terminalSharing:
     enabled: true

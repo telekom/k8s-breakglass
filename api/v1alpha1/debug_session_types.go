@@ -118,6 +118,47 @@ type DebugSessionSpec struct {
 	// invitedParticipants lists users invited to join the session.
 	// +optional
 	InvitedParticipants []string `json:"invitedParticipants,omitempty"`
+
+	// targetNamespace is the namespace where debug pods will be deployed.
+	// This is resolved at session creation time from template's namespaceConstraints.
+	// If empty, the controller uses the template's defaultNamespace.
+	// +optional
+	TargetNamespace string `json:"targetNamespace,omitempty"`
+
+	// selectedSchedulingOption is the name of the scheduling option selected by the user.
+	// Must match one of the options defined in the template's schedulingOptions.
+	// If empty and template has options, the default option is used.
+	// +optional
+	SelectedSchedulingOption string `json:"selectedSchedulingOption,omitempty"`
+
+	// resolvedSchedulingConstraints contains the merged scheduling constraints
+	// from the template's base constraints and the selected scheduling option.
+	// This is computed at session creation time and used by the controller.
+	// +optional
+	ResolvedSchedulingConstraints *SchedulingConstraints `json:"resolvedSchedulingConstraints,omitempty"`
+
+	// bindingRef references the DebugSessionClusterBinding used to create this session.
+	// If set, indicates this session was created via a binding rather than direct template reference.
+	// +optional
+	BindingRef *BindingReference `json:"bindingRef,omitempty"`
+
+	// selectedAuxiliaryResources lists auxiliary resource categories that are enabled for this session.
+	// Merged from template defaults and binding overrides at session creation time.
+	// +optional
+	SelectedAuxiliaryResources []string `json:"selectedAuxiliaryResources,omitempty"`
+}
+
+// BindingReference references a DebugSessionClusterBinding.
+type BindingReference struct {
+	// name is the name of the DebugSessionClusterBinding.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// namespace is the namespace of the DebugSessionClusterBinding.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Namespace string `json:"namespace"`
 }
 
 // DebugSessionStatus defines the observed state of DebugSession.
@@ -175,6 +216,26 @@ type DebugSessionStatus struct {
 	// Used to ensure consistent behavior even if template changes.
 	// +optional
 	ResolvedTemplate *DebugSessionTemplateSpec `json:"resolvedTemplate,omitempty"`
+
+	// resolvedBinding caches information about the binding used (if any).
+	// +optional
+	ResolvedBinding *ResolvedBindingRef `json:"resolvedBinding,omitempty"`
+
+	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
+	// +optional
+	AuxiliaryResourceStatuses []AuxiliaryResourceStatus `json:"auxiliaryResourceStatuses,omitempty"`
+}
+
+// ResolvedBindingRef contains information about the binding used to create a session.
+type ResolvedBindingRef struct {
+	// name is the binding name.
+	Name string `json:"name"`
+
+	// namespace is the binding namespace.
+	Namespace string `json:"namespace"`
+
+	// displayName is the effective display name from the binding.
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // DebugSessionApproval tracks approval information.
@@ -264,6 +325,16 @@ type DeployedResourceRef struct {
 	// namespace is the namespace of the resource (if namespaced).
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// source indicates where this resource came from.
+	// For debug pod: "debug-pod"
+	// For auxiliary resources: "auxiliary:<category>" (e.g., "auxiliary:network-policy")
+	// +optional
+	Source string `json:"source,omitempty"`
+
+	// uid is the UID of the deployed resource for precise identification.
+	// +optional
+	UID string `json:"uid,omitempty"`
 }
 
 // AllowedPodRef references a pod that users can exec into.

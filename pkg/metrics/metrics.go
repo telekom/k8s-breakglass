@@ -434,6 +434,26 @@ var (
 		Help: "Total debug sessions rejected",
 	}, []string{"cluster", "reason"})
 
+	// Auxiliary resource metrics
+	AuxiliaryResourceDeployments = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_auxiliary_resource_deployments_total",
+		Help: "Total number of auxiliary resources deployed",
+	}, []string{"cluster", "category", "status"})
+	AuxiliaryResourceCleanups = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_auxiliary_resource_cleanups_total",
+		Help: "Total number of auxiliary resources cleaned up",
+	}, []string{"cluster", "category", "status"})
+	AuxiliaryResourceFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_auxiliary_resource_failures_total",
+		Help: "Total number of auxiliary resource deployment failures",
+	}, []string{"cluster", "category", "reason"})
+
+	// Debug session cluster binding metrics
+	ClusterBindingsResolved = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_bindings_resolved_total",
+		Help: "Total number of cluster binding resolutions",
+	}, []string{"cluster", "binding", "status"})
+
 	// Audit metrics
 	AuditEventsProcessed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_events_processed_total",
@@ -627,6 +647,12 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(DebugSessionApprovalRequired)
 	ctrlmetrics.Registry.MustRegister(DebugSessionApproved)
 	ctrlmetrics.Registry.MustRegister(DebugSessionRejected)
+
+	// Register auxiliary resource metrics
+	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceDeployments)
+	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceCleanups)
+	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceFailures)
+	ctrlmetrics.Registry.MustRegister(ClusterBindingsResolved)
 
 	// Register audit metrics
 	ctrlmetrics.Registry.MustRegister(AuditEventsProcessed)

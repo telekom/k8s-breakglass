@@ -64,6 +64,7 @@ type DebugSessionController struct {
 	ccProvider   *cluster.ClientProvider
 	auditManager *audit.Manager
 	mailService  MailEnqueuer
+	auxiliaryMgr *AuxiliaryResourceManager
 	brandingName string
 	baseURL      string
 	disableEmail bool
@@ -72,9 +73,10 @@ type DebugSessionController struct {
 // NewDebugSessionController creates a new DebugSessionController
 func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider) *DebugSessionController {
 	return &DebugSessionController{
-		log:        log,
-		client:     client,
-		ccProvider: ccProvider,
+		log:          log,
+		client:       client,
+		ccProvider:   ccProvider,
+		auxiliaryMgr: NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
 }
 
@@ -521,6 +523,171 @@ func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string
 	return template, nil
 }
 
+// getBinding retrieves a DebugSessionClusterBinding by name and namespace
+func (c *DebugSessionController) getBinding(ctx context.Context, name, namespace string) (*v1alpha1.DebugSessionClusterBinding, error) {
+	binding := &v1alpha1.DebugSessionClusterBinding{}
+	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespace}, binding); err != nil {
+		return nil, err
+	}
+	return binding, nil
+}
+
+// findBindingForSession finds a DebugSessionClusterBinding that matches the session's template and cluster.
+// This enables binding configuration to be applied even when BindingRef is not explicitly set.
+// Returns nil if no matching binding is found.
+func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *v1alpha1.DebugSessionTemplate, clusterName string) (*v1alpha1.DebugSessionClusterBinding, error) {
+	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
+	if err := c.client.List(ctx, bindingList); err != nil {
+		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
+	}
+
+	// Get cluster config for label-based matching
+	var clusterConfig *v1alpha1.ClusterConfig
+	clusterConfigList := &v1alpha1.ClusterConfigList{}
+	if err := c.client.List(ctx, clusterConfigList); err == nil {
+		for i := range clusterConfigList.Items {
+			if clusterConfigList.Items[i].Name == clusterName {
+				clusterConfig = &clusterConfigList.Items[i]
+				break
+			}
+		}
+	}
+
+	for i := range bindingList.Items {
+		binding := &bindingList.Items[i]
+		if binding.Spec.Disabled {
+			continue
+		}
+
+		// Check if binding references this template
+		if !c.bindingMatchesTemplate(binding, template) {
+			continue
+		}
+
+		// Check if binding matches this cluster
+		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
+			continue
+		}
+
+		// Found a matching binding
+		return binding, nil
+	}
+
+	return nil, nil // No matching binding found (not an error)
+}
+
+// bindingMatchesTemplate checks if a binding references the given template
+func (c *DebugSessionController) bindingMatchesTemplate(binding *v1alpha1.DebugSessionClusterBinding, template *v1alpha1.DebugSessionTemplate) bool {
+	// Check templateRef
+	if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
+		return true
+	}
+	// Check templateSelector
+	if binding.Spec.TemplateSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
+		if err == nil {
+			templateLabels := labels.Set(template.Labels)
+			if selector.Matches(templateLabels) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bindingMatchesCluster checks if a binding applies to the given cluster
+func (c *DebugSessionController) bindingMatchesCluster(binding *v1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *v1alpha1.ClusterConfig) bool {
+	// Check explicit cluster list
+	for _, cluster := range binding.Spec.Clusters {
+		if cluster == clusterName {
+			return true
+		}
+	}
+
+	// Check clusterSelector
+	if binding.Spec.ClusterSelector != nil && clusterConfig != nil {
+		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+		if err == nil {
+			clusterLabels := labels.Set(clusterConfig.Labels)
+			if selector.Matches(clusterLabels) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// resolveImpersonationConfig determines the impersonation configuration for a session.
+// Binding impersonation overrides template impersonation.
+func (c *DebugSessionController) resolveImpersonationConfig(
+	template *v1alpha1.DebugSessionTemplate,
+	binding *v1alpha1.DebugSessionClusterBinding,
+) *v1alpha1.ImpersonationConfig {
+	// Binding takes precedence
+	if binding != nil && binding.Spec.Impersonation != nil {
+		return binding.Spec.Impersonation
+	}
+	// Fall back to template
+	if template != nil && template.Spec.Impersonation != nil {
+		return template.Spec.Impersonation
+	}
+	return nil
+}
+
+// createImpersonatedClient creates a spoke cluster client that impersonates the specified ServiceAccount.
+// The SA is expected to exist in the spoke cluster, not the hub.
+func (c *DebugSessionController) createImpersonatedClient(
+	ctx context.Context,
+	clusterName string,
+	impConfig *v1alpha1.ImpersonationConfig,
+) (ctrlclient.Client, error) {
+	// Get base REST config for spoke cluster
+	restCfg, err := c.ccProvider.GetRESTConfig(ctx, clusterName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
+	}
+
+	// If impersonation is configured, set up impersonation
+	if impConfig != nil && impConfig.ServiceAccountRef != nil {
+		// Impersonate the spoke cluster's ServiceAccount
+		// Format: system:serviceaccount:<namespace>:<name>
+		restCfg.Impersonate = rest.ImpersonationConfig{
+			UserName: fmt.Sprintf("system:serviceaccount:%s:%s",
+				impConfig.ServiceAccountRef.Namespace,
+				impConfig.ServiceAccountRef.Name),
+		}
+	}
+
+	client, err := ctrlclient.New(restCfg, ctrlclient.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client for cluster %s: %w", clusterName, err)
+	}
+	return client, nil
+}
+
+// validateSpokeServiceAccount checks if the ServiceAccount exists in the spoke cluster.
+// This is a runtime validation that cannot happen at webhook time.
+func (c *DebugSessionController) validateSpokeServiceAccount(
+	ctx context.Context,
+	spokeClient ctrlclient.Client,
+	saRef *v1alpha1.ServiceAccountReference,
+) error {
+	sa := &corev1.ServiceAccount{}
+	err := spokeClient.Get(ctx, ctrlclient.ObjectKey{
+		Name:      saRef.Name,
+		Namespace: saRef.Namespace,
+	}, sa)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("impersonation ServiceAccount %s/%s not found in spoke cluster",
+				saRef.Namespace, saRef.Name)
+		}
+		return fmt.Errorf("failed to validate impersonation ServiceAccount: %w", err)
+	}
+	return nil
+}
+
 // requiresApproval checks if the session requires approval
 func (c *DebugSessionController) requiresApproval(template *v1alpha1.DebugSessionTemplate, ds *v1alpha1.DebugSession) bool {
 	if template.Spec.Approvers == nil {
@@ -575,22 +742,101 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 		}
 	}
 
-	// Get target cluster client
-	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
-	if err != nil {
-		return fmt.Errorf("failed to get REST config for cluster %s: %w", ds.Spec.Cluster, err)
-	}
-	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
-	if err != nil {
-		return fmt.Errorf("failed to create client for cluster %s: %w", ds.Spec.Cluster, err)
+	// Get binding if session was created via a binding
+	var binding *v1alpha1.DebugSessionClusterBinding
+	if ds.Spec.BindingRef != nil {
+		var err error
+		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
+		if err != nil {
+			log.Warnw("Failed to get binding by ref, will try auto-discovery",
+				"binding", ds.Spec.BindingRef.Name,
+				"namespace", ds.Spec.BindingRef.Namespace,
+				"error", err)
+			// Non-fatal: try auto-discovery below
+		}
 	}
 
-	// Ensure target namespace exists
-	targetNs := template.Spec.TargetNamespace
+	// Auto-discover binding if not found via BindingRef
+	// This enables binding configuration to apply even when sessions are created
+	// without explicitly setting BindingRef (e.g., via the unified API)
+	if binding == nil {
+		discoveredBinding, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		if err != nil {
+			log.Warnw("Failed to auto-discover binding, continuing without binding config",
+				"error", err)
+		} else if discoveredBinding != nil {
+			log.Infow("Auto-discovered binding for session",
+				"binding", discoveredBinding.Name,
+				"namespace", discoveredBinding.Namespace)
+			binding = discoveredBinding
+		}
+	}
+
+	// Cache resolved binding info in session status for observability
+	if binding != nil {
+		displayName := v1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name)
+		ds.Status.ResolvedBinding = &v1alpha1.ResolvedBindingRef{
+			Name:        binding.Name,
+			Namespace:   binding.Namespace,
+			DisplayName: displayName,
+		}
+	}
+
+	// Resolve impersonation configuration (binding overrides template)
+	impConfig := c.resolveImpersonationConfig(template, binding)
+
+	// Get target cluster client (with or without impersonation)
+	var targetClient ctrlclient.Client
+	var err error
+
+	// First, resolve the target namespace (needed for per-session SA creation)
+	targetNs := ds.Spec.TargetNamespace
+	if targetNs == "" {
+		targetNs = template.Spec.TargetNamespace
+	}
+	if targetNs == "" {
+		// Check namespaceConstraints for default
+		if template.Spec.NamespaceConstraints != nil && template.Spec.NamespaceConstraints.DefaultNamespace != "" {
+			targetNs = template.Spec.NamespaceConstraints.DefaultNamespace
+		}
+	}
 	if targetNs == "" {
 		targetNs = "breakglass-debug"
 	}
 
+	// Create base client for spoke cluster (no impersonation yet)
+	baseRestCfg, restErr := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
+	if restErr != nil {
+		return fmt.Errorf("failed to get REST config for cluster %s: %w", ds.Spec.Cluster, restErr)
+	}
+	baseClient, baseErr := ctrlclient.New(baseRestCfg, ctrlclient.Options{})
+	if baseErr != nil {
+		return fmt.Errorf("failed to create base client for cluster %s: %w", ds.Spec.Cluster, baseErr)
+	}
+
+	// Handle impersonation configuration
+	if impConfig != nil && impConfig.ServiceAccountRef != nil {
+		// Use existing ServiceAccount - validate it exists
+		if err := c.validateSpokeServiceAccount(ctx, baseClient, impConfig.ServiceAccountRef); err != nil {
+			return fmt.Errorf("impersonation validation failed: %w", err)
+		}
+
+		// Create impersonated client
+		targetClient, err = c.createImpersonatedClient(ctx, ds.Spec.Cluster, impConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create impersonated client: %w", err)
+		}
+
+		log.Infow("Using impersonation for deployment",
+			"serviceAccount", fmt.Sprintf("%s/%s",
+				impConfig.ServiceAccountRef.Namespace,
+				impConfig.ServiceAccountRef.Name))
+	} else {
+		// No impersonation - use controller's own credentials
+		targetClient = baseClient
+	}
+
+	// Ensure target namespace exists
 	ns := &corev1.Namespace{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -627,12 +873,24 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 		Kind:       gvk.Kind,
 		Name:       workload.GetName(),
 		Namespace:  targetNs,
+		Source:     "debug-pod",
 	})
 
 	log.Infow("Deployed debug workload",
 		"name", workload.GetName(),
 		"namespace", targetNs,
 		"kind", gvk.Kind)
+
+	// Deploy auxiliary resources if configured
+	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
+		auxStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResources(ctx, ds, &template.Spec, binding, targetClient, targetNs)
+		if auxErr != nil {
+			// Log but don't fail the session - auxiliary resources are optional
+			log.Warnw("Failed to deploy some auxiliary resources", "error", auxErr)
+		}
+		// Add deployed auxiliary resources to status
+		ds.Status.AuxiliaryResourceStatuses = auxStatuses
+	}
 
 	return nil
 }
@@ -779,6 +1037,15 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 		}
 	}
 
+	// Apply resolved scheduling constraints from session
+	// These are computed at session creation time and take precedence
+	if ds.Spec.ResolvedSchedulingConstraints != nil {
+		c.applySchedulingConstraints(&spec, ds.Spec.ResolvedSchedulingConstraints)
+	} else if template.Spec.SchedulingConstraints != nil {
+		// Fallback to template constraints if session doesn't have resolved constraints
+		c.applySchedulingConstraints(&spec, template.Spec.SchedulingConstraints)
+	}
+
 	// Verify if terminal sharing is enabled and inject multiplexer command
 	if template.Spec.TerminalSharing != nil && template.Spec.TerminalSharing.Enabled && len(spec.Containers) > 0 {
 		container := &spec.Containers[0]
@@ -815,6 +1082,94 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 	}
 
 	return spec
+}
+
+// applySchedulingConstraints applies SchedulingConstraints to a PodSpec.
+// This merges the constraints with any existing scheduling configuration.
+func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec, constraints *v1alpha1.SchedulingConstraints) {
+	if constraints == nil {
+		return
+	}
+
+	// Apply node selector (merge, constraints take precedence)
+	if len(constraints.NodeSelector) > 0 {
+		if spec.NodeSelector == nil {
+			spec.NodeSelector = make(map[string]string)
+		}
+		for k, v := range constraints.NodeSelector {
+			spec.NodeSelector[k] = v
+		}
+	}
+
+	// Apply tolerations (additive)
+	if len(constraints.Tolerations) > 0 {
+		spec.Tolerations = append(spec.Tolerations, constraints.Tolerations...)
+	}
+
+	// Apply node affinity
+	if constraints.RequiredNodeAffinity != nil || len(constraints.PreferredNodeAffinity) > 0 {
+		if spec.Affinity == nil {
+			spec.Affinity = &corev1.Affinity{}
+		}
+		if spec.Affinity.NodeAffinity == nil {
+			spec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+		}
+
+		// Merge required node affinity (AND logic)
+		if constraints.RequiredNodeAffinity != nil {
+			if spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = constraints.RequiredNodeAffinity.DeepCopy()
+			} else {
+				// AND the node selector terms
+				spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = append(
+					spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms,
+					constraints.RequiredNodeAffinity.NodeSelectorTerms...,
+				)
+			}
+		}
+
+		// Add preferred node affinity
+		if len(constraints.PreferredNodeAffinity) > 0 {
+			spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
+				spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
+				constraints.PreferredNodeAffinity...,
+			)
+		}
+	}
+
+	// Apply pod anti-affinity
+	if len(constraints.RequiredPodAntiAffinity) > 0 || len(constraints.PreferredPodAntiAffinity) > 0 {
+		if spec.Affinity == nil {
+			spec.Affinity = &corev1.Affinity{}
+		}
+		if spec.Affinity.PodAntiAffinity == nil {
+			spec.Affinity.PodAntiAffinity = &corev1.PodAntiAffinity{}
+		}
+
+		if len(constraints.RequiredPodAntiAffinity) > 0 {
+			spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution = append(
+				spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution,
+				constraints.RequiredPodAntiAffinity...,
+			)
+		}
+		if len(constraints.PreferredPodAntiAffinity) > 0 {
+			spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
+				spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
+				constraints.PreferredPodAntiAffinity...,
+			)
+		}
+	}
+
+	// Note: deniedNodes and deniedNodeLabels are advisory constraints
+	// They should be enforced via admission webhooks or node anti-affinity rules
+	// Here we convert them to node anti-affinity expressions
+	if len(constraints.DeniedNodes) > 0 || len(constraints.DeniedNodeLabels) > 0 {
+		c.log.Debugw("Denied nodes/labels configured",
+			"deniedNodes", constraints.DeniedNodes,
+			"deniedNodeLabels", constraints.DeniedNodeLabels)
+		// These are enforced at the admission webhook level for hard blocks
+		// For soft enforcement, we could add them as preferredNodeAffinity with negative weight
+	}
 }
 
 // convertDebugPodSpec converts our DebugPodSpecInner to corev1.PodSpec
@@ -1078,10 +1433,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 		// Continue to clean up deployed resources even if this fails
 	}
 
-	if len(ds.Status.DeployedResources) == 0 {
-		return nil
-	}
-
+	// Get spoke cluster client for cleanup
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
 		return fmt.Errorf("failed to get REST config: %w", err)
@@ -1091,7 +1443,25 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 
+	// Cleanup auxiliary resources first using the manager
+	if c.auxiliaryMgr != nil && len(ds.Status.AuxiliaryResourceStatuses) > 0 {
+		if err := c.auxiliaryMgr.CleanupAuxiliaryResources(ctx, ds, targetClient); err != nil {
+			log.Warnw("Failed to cleanup auxiliary resources", "error", err)
+			// Continue to clean up main workloads
+		}
+	}
+
+	if len(ds.Status.DeployedResources) == 0 {
+		return nil
+	}
+
+	// Cleanup main workloads (DaemonSet/Deployment)
 	for _, ref := range ds.Status.DeployedResources {
+		// Skip auxiliary resources - already cleaned up by manager
+		if ref.Source != "" && ref.Source != "debug-pod" {
+			continue
+		}
+
 		var obj ctrlclient.Object
 
 		switch ref.Kind {

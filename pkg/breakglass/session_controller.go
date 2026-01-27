@@ -151,23 +151,44 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	var request BreakglassSessionRequest
 	if err := json.NewDecoder(c.Request.Body).Decode(&request); err != nil {
 		reqLog.With("error", err).Error("Failed to decode JSON request body")
-		c.Status(http.StatusUnprocessableEntity)
+		apiresponses.RespondUnprocessableEntity(c, "failed to decode JSON request body")
 		return
 	}
 
 	// Debug: log decoded request to help trace missing or malformed fields in e2e
 	reqLog.Debugw("Decoded breakglass session request", "request", request)
 
+	// Resolve authenticated identities and enforce request user matching
+	authEmail, emailErr := wc.identityProvider.GetEmail(c)
+	authUsername := wc.identityProvider.GetUsername(c)
+	authUserID := wc.identityProvider.GetIdentity(c)
+	authIdentifiers := collectAuthIdentifiers(authEmail, authUsername, authUserID)
+	if len(authIdentifiers) == 0 {
+		reqLog.Error("No authenticated identity claims found in request context")
+		apiresponses.RespondUnauthorizedWithMessage(c, "user identity not found")
+		return
+	}
+	if request.Username == "" {
+		// default to authenticated identity to avoid spoofing
+		request.Username = firstNonEmpty(authEmail, authUsername, authUserID)
+	} else if !matchesAuthIdentifier(request.Username, authIdentifiers) {
+		reqLog.Warnw("Request username does not match authenticated identity",
+			"requestUsername", request.Username,
+			"authIdentifiers", authIdentifiers)
+		apiresponses.RespondForbidden(c, "user identity mismatch")
+		return
+	}
+
 	if err := wc.validateSessionRequest(request); err != nil {
 		reqLog.With("error", err, "request", request).Warn("Invalid session request parameters")
-		c.JSON(http.StatusUnprocessableEntity, "missing input request data: "+err.Error())
+		apiresponses.RespondUnprocessableEntity(c, "missing input request data: "+err.Error())
 		return
 	}
 
 	// Sanitize reason field to prevent injection attacks
 	if err := request.SanitizeReason(); err != nil {
 		reqLog.With("error", err).Warn("Reason field sanitization failed")
-		c.JSON(http.StatusUnprocessableEntity, "invalid reason: "+err.Error())
+		apiresponses.RespondUnprocessableEntity(c, "invalid reason: "+err.Error())
 		return
 	}
 
@@ -238,7 +259,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			}
 			reqLog.Debugw("Cluster escalations (for visibility)", "cluster", cug.Clustername, "escalations", names)
 		}
-		c.JSON(http.StatusUnauthorized, "user unauthorized for group")
+		apiresponses.RespondUnauthorizedWithMessage(c, "user unauthorized for group")
 		return
 	} else {
 		reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(possibleEscals))
@@ -352,61 +373,16 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 	if !slices.Contains(possible, request.GroupName) {
 		reqLog.Warnw("User unauthorized for group", "user", request.Username, "group", request.GroupName)
-		c.JSON(http.StatusUnauthorized, "user unauthorized for group")
+		apiresponses.RespondUnauthorizedWithMessage(c, "user unauthorized for group")
 		return
 	}
 	if matchedEsc != nil && matchedEsc.Spec.RequestReason != nil && matchedEsc.Spec.RequestReason.Mandatory {
 		if strings.TrimSpace(request.Reason) == "" {
 			reqLog.Warnw("Missing required request reason", "group", request.GroupName)
-			c.JSON(http.StatusUnprocessableEntity, "missing required request reason")
+			apiresponses.RespondUnprocessableEntity(c, "missing required request reason")
 			return
 		}
 	}
-
-	ses, err := wc.getActiveBreakglassSession(ctx,
-		request.Username, request.Clustername, request.GroupName)
-	if err != nil {
-		if !errors.Is(err, ErrSessionNotFound) {
-			reqLog.Errorw("Error getting breakglass sessions", "error", err)
-			apiresponses.RespondInternalError(c, "extract breakglass session information", err, reqLog)
-			return
-		}
-	} else {
-		// A matching session exists; decide response based on its canonical state.
-		reqLog.Infow("Existing session found", "session", ses.Name, "cluster", request.Clustername, "user", request.Username, "group", request.GroupName, "state", ses.Status.State)
-		// Remove k8s internal fields before returning session in API response
-		dropK8sInternalFieldsSession(&ses)
-
-		// Approved session -> explicit "already approved" error
-		if ses.Status.State == v1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero() {
-			c.JSON(http.StatusConflict, gin.H{"error": "already approved", "session": ses})
-			return
-		}
-
-		// Pending (requested but not yet approved/rejected) -> "already requested" with linked session
-		if IsSessionPendingApproval(ses) {
-			c.JSON(http.StatusConflict, gin.H{"error": "already requested", "session": ses})
-			return
-		}
-
-		// Fallback: session exists but in another terminal state (e.g. timeout) — return generic conflict with session
-		c.JSON(http.StatusConflict, gin.H{"error": "session exists", "session": ses})
-		return
-	}
-
-	useremail, err := wc.identityProvider.GetEmail(c)
-	if err != nil {
-		reqLog.Errorw("Error getting user identity email", "error", err)
-		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
-		return
-	}
-	username := wc.identityProvider.GetUsername(c)
-
-	reqLog.Debugw("Session creation initiated by user",
-		"requestorEmail", useremail,
-		"requestorUsername", username,
-		"requestedGroup", request.GroupName,
-		"requestedCluster", request.Clustername)
 
 	// Determine the user identifier claim.
 	// This ensures the session's spec.User matches what the spoke cluster's OIDC sends in SAR.
@@ -446,6 +422,50 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		"userIdentifier", userIdentifier,
 		"userIdentifierClaim", userIdentifierClaim,
 		"requestUsername", request.Username)
+
+	ses, err := wc.getActiveBreakglassSession(ctx,
+		userIdentifier, request.Clustername, request.GroupName)
+	if err != nil {
+		if !errors.Is(err, ErrSessionNotFound) {
+			reqLog.Errorw("Error getting breakglass sessions", "error", err)
+			apiresponses.RespondInternalError(c, "extract breakglass session information", err, reqLog)
+			return
+		}
+	} else {
+		// A matching session exists; decide response based on its canonical state.
+		reqLog.Infow("Existing session found", "session", ses.Name, "cluster", request.Clustername, "user", userIdentifier, "group", request.GroupName, "state", ses.Status.State)
+		// Remove k8s internal fields before returning session in API response
+		dropK8sInternalFieldsSession(&ses)
+
+		// Approved session -> explicit "already approved" error
+		if ses.Status.State == v1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero() {
+			c.JSON(http.StatusConflict, gin.H{"error": "already approved", "session": ses})
+			return
+		}
+
+		// Pending (requested but not yet approved/rejected) -> "already requested" with linked session
+		if IsSessionPendingApproval(ses) {
+			c.JSON(http.StatusConflict, gin.H{"error": "already requested", "session": ses})
+			return
+		}
+
+		// Fallback: session exists but in another terminal state (e.g. timeout) — return generic conflict with session
+		c.JSON(http.StatusConflict, gin.H{"error": "session exists", "session": ses})
+		return
+	}
+
+	if authEmail == "" {
+		reqLog.Errorw("Error getting user identity email", "error", emailErr)
+		apiresponses.RespondInternalError(c, "extract email from token", emailErr, reqLog)
+		return
+	}
+	username := wc.identityProvider.GetUsername(c)
+
+	reqLog.Debugw("Session creation initiated by user",
+		"requestorEmail", authEmail,
+		"requestorUsername", username,
+		"requestedGroup", request.GroupName,
+		"requestedCluster", request.Clustername)
 
 	// Initialize session spec and populate duration fields from matched escalation when available
 	spec := v1alpha1.BreakglassSessionSpec{
@@ -511,7 +531,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			maxAllowed := int64(d.Seconds())
 			if err := request.ValidateDuration(maxAllowed); err != nil {
 				reqLog.Warnw("Duration validation failed", "error", err, "requestedDuration", request.Duration, "maxAllowed", maxAllowed)
-				c.JSON(http.StatusUnprocessableEntity, "invalid duration: "+err.Error())
+				apiresponses.RespondUnprocessableEntity(c, "invalid duration: "+err.Error())
 				return
 			}
 			// Convert custom duration to Go duration string (e.g., "1h30m")
@@ -526,7 +546,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			scheduledTime, err := time.Parse(time.RFC3339, request.ScheduledStartTime)
 			if err != nil {
 				reqLog.Warnw("Failed to parse scheduledStartTime", "error", err, "value", request.ScheduledStartTime)
-				c.JSON(http.StatusUnprocessableEntity, "invalid scheduledStartTime format (expected ISO 8601)")
+				apiresponses.RespondUnprocessableEntity(c, "invalid scheduledStartTime format (expected ISO 8601)")
 				return
 			}
 
@@ -540,7 +560,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 					"nowLocal", now.Local().Format(time.RFC3339),
 					"parsedLocal", scheduledTime.Local().Format(time.RFC3339),
 					"timeDiffSeconds", now.Unix()-scheduledTime.Unix())
-				c.JSON(http.StatusUnprocessableEntity, "scheduledStartTime must be in the future")
+				apiresponses.RespondUnprocessableEntity(c, "scheduledStartTime must be in the future")
 				return
 			}
 
@@ -587,7 +607,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	// If no escalation was matched, reject creation: sessions must be tied to an escalation
 	if matchedEsc == nil {
 		reqLog.Warnw("Refusing to create session without matched escalation", "user", userIdentifier, "cluster", request.Clustername, "group", request.GroupName)
-		c.JSON(http.StatusUnauthorized, "no escalation found for requested group")
+		apiresponses.RespondUnauthorizedWithMessage(c, "no escalation found for requested group")
 		return
 	}
 
@@ -662,7 +682,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		reqLog.Debugw("About to send breakglass request email",
 			"approvalsRequired", len(allApprovers),
 			"approvers", allApprovers,
-			"requestorEmail", useremail,
+			"requestorEmail", authEmail,
 			"requestorUsername", username,
 			"grantedGroup", bs.Spec.GrantedGroup,
 			"cluster", bs.Spec.Cluster)
@@ -670,7 +690,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			reqLog.Warnw("No approvers resolved for email notification; cannot send email with empty recipients",
 				"escalation", bs.Spec.GrantedGroup,
 				"cluster", bs.Spec.Cluster,
-				"requestorEmail", useremail,
+				"requestorEmail", authEmail,
 				"requestorUsername", username)
 		} else {
 			// Trigger a group sync before sending email (but still send based on current status)
@@ -739,7 +759,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			} else {
 				// Send separate emails per approver group
 				// Each email shows only the specific group that matched
-				wc.sendOnRequestEmailsByGroup(reqLog, bs, useremail, username, filteredApprovers, approversByGroup, matchedEsc)
+				wc.sendOnRequestEmailsByGroup(reqLog, bs, authEmail, username, filteredApprovers, approversByGroup, matchedEsc)
 			}
 		}
 	}
@@ -774,7 +794,9 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	}
 	// Ignore errors; payload is optional. Guard against nil Request.Body which can occur in tests/clients.
 	if c.Request != nil && c.Request.Body != nil {
-		_ = json.NewDecoder(c.Request.Body).Decode(&approverPayload)
+		if err := json.NewDecoder(c.Request.Body).Decode(&approverPayload); err != nil {
+			reqLog.Debugw("Failed to decode optional approver payload (using empty values)", "error", err)
+		}
 	}
 	// Sanitize approver reason to prevent injection attacks
 	if approverPayload.Reason != "" {
@@ -854,7 +876,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 
 	if !allowOwnerReject {
 		if !wc.isSessionApprover(c, bs) {
-			c.Status(http.StatusUnauthorized)
+			apiresponses.RespondUnauthorized(c)
 			return
 		}
 	}
@@ -1141,9 +1163,19 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		}
 	}
 
+	authIdentifiers := []string{}
+	if includeMine {
+		authIdentifiers = collectAuthIdentifiers(userEmail, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+		if len(authIdentifiers) == 0 {
+			reqLog.Error("No authenticated identity claims found for session ownership filtering")
+			apiresponses.RespondUnauthorizedWithMessage(c, "user identity not found")
+			return
+		}
+	}
+
 	filtered := make([]v1alpha1.BreakglassSession, 0, len(sessions))
 	for _, ses := range sessions {
-		isMine := userEmail != "" && ses.Spec.User == userEmail
+		isMine := matchesAuthIdentifier(ses.Spec.User, authIdentifiers)
 		var isApprover bool
 		if includeApprover {
 			isApprover = wc.isSessionApprover(c, ses)
@@ -1348,13 +1380,13 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 		return
 	}
 	if bs.Spec.User != requesterEmail {
-		c.Status(http.StatusUnauthorized)
+		apiresponses.RespondUnauthorized(c)
 		return
 	}
 
 	// Only allow withdrawal if session is still pending
 	if !IsSessionPendingApproval(bs) {
-		c.JSON(http.StatusBadRequest, "Session is not pending and cannot be withdrawn")
+		apiresponses.RespondBadRequest(c, "Session is not pending and cannot be withdrawn")
 		return
 	}
 
@@ -1425,7 +1457,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		return
 	}
 	if bs.Spec.User != requesterEmail {
-		c.Status(http.StatusUnauthorized)
+		apiresponses.RespondUnauthorized(c)
 		return
 	}
 
@@ -1457,7 +1489,6 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 
 		// Set RetainedUntil for withdrawn sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 		bs.Status.RetainedUntil = metav1.NewTime(time.Now().Add(retainFor))
 
 		bs.Status.Conditions = append(bs.Status.Conditions, metav1.Condition{
@@ -1508,13 +1539,13 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 
 	// Only approvers can cancel via this endpoint
 	if !wc.isSessionApprover(c, bs) {
-		c.Status(http.StatusUnauthorized)
+		apiresponses.RespondUnauthorized(c)
 		return
 	}
 
 	// Only allow cancellation of active/approved sessions
 	if bs.Status.State != v1alpha1.SessionStateApproved || bs.Status.ApprovedAt.IsZero() {
-		c.JSON(http.StatusBadRequest, "Session is not active/approved and cannot be canceled by approver")
+		apiresponses.RespondBadRequest(c, "Session is not active/approved and cannot be canceled by approver")
 		return
 	}
 
@@ -1820,22 +1851,9 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 				"recipients", approvers,
 				"subject", subject,
 				"error", err)
-			// Try fallback to synchronous send if queue fails
-			if err := wc.mail.Send(approvers, subject, body); err != nil {
-				wc.log.Errorw("fallback: failed to send request email",
-					"session", bs.Name,
-					"recipientCount", len(approvers),
-					"recipients", approvers,
-					"subject", subject,
-					"error", err)
-				return err
-			}
-			wc.log.Infow("Fallback: session request email sent synchronously",
-				"session", bs.Name,
-				"recipientCount", len(approvers),
-				"recipients", approvers,
-				"subject", subject)
-			return nil
+			// Don't fall back to synchronous send - if queue is configured but failing,
+			// synchronous send would likely fail too. Just log and continue.
+			return err
 		}
 		wc.log.Infow("Breakglass session request email queued",
 			"session", bs.Name,
@@ -1845,18 +1863,29 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 		return nil
 	}
 
-	// Fallback to synchronous send if no queue is available
-	if err := wc.mail.Send(approvers, subject, body); err != nil {
-		wc.log.Errorw("failed to send request email",
+	// Fallback to synchronous send if mail sender is configured (for legacy/test compatibility)
+	// Note: In production, mailService should be used via WithMailService() which sets wc.mailService
+	// This fallback is primarily for tests that set wc.mail directly to a FakeMailSender
+	if wc.mail != nil {
+		if err := wc.mail.Send(approvers, subject, body); err != nil {
+			wc.log.Errorw("failed to send request email",
+				"session", bs.Name,
+				"recipientCount", len(approvers),
+				"recipients", approvers,
+				"subject", subject,
+				"error", err)
+			return err
+		}
+		wc.log.Infow("Breakglass session request email sent",
 			"session", bs.Name,
 			"recipientCount", len(approvers),
 			"recipients", approvers,
-			"subject", subject,
-			"error", err)
-		return err
+			"subject", subject)
+		return nil
 	}
 
-	wc.log.Infow("Breakglass session request email sent",
+	// No mail service, queue, or sender configured - email notifications are disabled
+	wc.log.Warnw("No mail provider configured - email notification skipped",
 		"session", bs.Name,
 		"recipientCount", len(approvers),
 		"recipients", approvers,
@@ -2356,7 +2385,48 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 
 // IsSessionRetained checks if a session should be removed (retainedUntil passed)
 func IsSessionRetained(session v1alpha1.BreakglassSession) bool {
+	if session.Status.RetainedUntil.IsZero() {
+		return false
+	}
 	return time.Now().After(session.Status.RetainedUntil.Time)
+}
+
+func collectAuthIdentifiers(email, username, userID string) []string {
+	identifiers := make([]string, 0, 3)
+	if email != "" {
+		identifiers = append(identifiers, email)
+	}
+	if username != "" {
+		identifiers = append(identifiers, username)
+	}
+	if userID != "" {
+		identifiers = append(identifiers, userID)
+	}
+	return identifiers
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func matchesAuthIdentifier(value string, identifiers []string) bool {
+	if value == "" {
+		return false
+	}
+	for _, id := range identifiers {
+		if id == "" {
+			continue
+		}
+		if strings.EqualFold(id, value) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsSessionRejected returns true if session is in Rejected state (state-first validation)
@@ -2458,20 +2528,9 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		disableEmailFlag = disableEmail[0]
 	}
 
-	// Create stub mail sender (will be replaced with MailProvider loader)
-	stubMailConfig := &config.MailProviderConfig{
-		Name:           "stub-provider",
-		Host:           "localhost",
-		Port:           1025,
-		SenderAddress:  "noreply@breakglass.local",
-		SenderName:     "Breakglass",
-		RetryCount:     3,
-		RetryBackoffMs: 100,
-		QueueSize:      1000,
-	}
-	if cfg.Frontend.BrandingName != "" {
-		stubMailConfig.SenderName = cfg.Frontend.BrandingName
-	}
+	// NOTE: mail field is left nil by default. Use WithMailService() to configure email sending
+	// via the MailProvider CRD (preferred), or WithQueue() for legacy queue support.
+	// Tests can set mail directly via struct initialization with &FakeMailSender{}.
 
 	ctrl := &BreakglassSessionController{
 		log:                  log,
@@ -2480,7 +2539,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		escalationManager:    escalationManager,
 		middleware:           middleware,
 		identityProvider:     ip,
-		mail:                 mail.NewSenderFromMailProvider(stubMailConfig, cfg.Frontend.BrandingName),
+		mail:                 nil, // Do not create stub sender; use mailService via WithMailService()
 		mailQueue:            nil,
 		disableEmail:         disableEmailFlag,
 		configPath:           configPath,

@@ -242,3 +242,111 @@ describe("Debug Session Participant Management", () => {
     expect(canLeave(participants, "participant@example.com")).toBe(true);
   });
 });
+
+describe("Debug Session Binding Options", () => {
+  interface BindingOption {
+    bindingRef: { name: string; namespace: string };
+    displayName?: string;
+    constraints?: { maxDuration?: string };
+    approval?: { required: boolean };
+    impersonation?: { enabled: boolean };
+    schedulingOptions?: { options: { name: string }[] };
+    namespaceConstraints?: { defaultNamespace?: string };
+  }
+
+  interface ClusterDetail {
+    name: string;
+    bindingOptions?: BindingOption[];
+    bindingRef?: { name: string; namespace: string };
+  }
+
+  const hasMultipleBindings = (cluster: ClusterDetail): boolean => {
+    return (cluster.bindingOptions?.length ?? 0) > 1;
+  };
+
+  const getSelectedBinding = (cluster: ClusterDetail, index: number): BindingOption | undefined => {
+    if (!cluster.bindingOptions || cluster.bindingOptions.length === 0) return undefined;
+    return cluster.bindingOptions[index] || cluster.bindingOptions[0];
+  };
+
+  const isDirectTemplateAccess = (cluster: ClusterDetail): boolean => {
+    // No bindings means direct template access
+    return !cluster.bindingOptions?.length && !cluster.bindingRef;
+  };
+
+  it("detects multiple binding options", () => {
+    const clusterWithMultiple: ClusterDetail = {
+      name: "prod-cluster",
+      bindingOptions: [
+        { bindingRef: { name: "sre-access", namespace: "breakglass" }, displayName: "SRE Access" },
+        { bindingRef: { name: "oncall-access", namespace: "breakglass" }, displayName: "On-Call Emergency" },
+      ],
+    };
+
+    const clusterWithOne: ClusterDetail = {
+      name: "dev-cluster",
+      bindingOptions: [{ bindingRef: { name: "dev-access", namespace: "breakglass" } }],
+    };
+
+    expect(hasMultipleBindings(clusterWithMultiple)).toBe(true);
+    expect(hasMultipleBindings(clusterWithOne)).toBe(false);
+  });
+
+  it("returns selected binding by index", () => {
+    const cluster: ClusterDetail = {
+      name: "prod-cluster",
+      bindingOptions: [
+        { bindingRef: { name: "sre-access", namespace: "breakglass" }, constraints: { maxDuration: "2h" } },
+        { bindingRef: { name: "oncall-access", namespace: "breakglass" }, constraints: { maxDuration: "4h" } },
+      ],
+    };
+
+    expect(getSelectedBinding(cluster, 0)?.bindingRef.name).toBe("sre-access");
+    expect(getSelectedBinding(cluster, 1)?.bindingRef.name).toBe("oncall-access");
+    // Falls back to first if index out of bounds
+    expect(getSelectedBinding(cluster, 99)?.bindingRef.name).toBe("sre-access");
+  });
+
+  it("detects direct template access (no binding)", () => {
+    const clusterWithBinding: ClusterDetail = {
+      name: "prod-cluster",
+      bindingRef: { name: "sre-access", namespace: "breakglass" },
+    };
+
+    const clusterDirect: ClusterDetail = {
+      name: "dev-cluster",
+      // No bindingOptions and no bindingRef - direct template access
+    };
+
+    expect(isDirectTemplateAccess(clusterWithBinding)).toBe(false);
+    expect(isDirectTemplateAccess(clusterDirect)).toBe(true);
+  });
+
+  it("extracts constraints from selected binding", () => {
+    const cluster: ClusterDetail = {
+      name: "prod-cluster",
+      bindingOptions: [
+        {
+          bindingRef: { name: "sre-access", namespace: "breakglass" },
+          constraints: { maxDuration: "2h" },
+          approval: { required: true },
+          impersonation: { enabled: true },
+        },
+        {
+          bindingRef: { name: "oncall-access", namespace: "breakglass" },
+          constraints: { maxDuration: "4h" },
+          approval: { required: false },
+        },
+      ],
+    };
+
+    const sreBinding = getSelectedBinding(cluster, 0);
+    expect(sreBinding?.constraints?.maxDuration).toBe("2h");
+    expect(sreBinding?.approval?.required).toBe(true);
+    expect(sreBinding?.impersonation?.enabled).toBe(true);
+
+    const oncallBinding = getSelectedBinding(cluster, 1);
+    expect(oncallBinding?.constraints?.maxDuration).toBe("4h");
+    expect(oncallBinding?.approval?.required).toBe(false);
+  });
+});

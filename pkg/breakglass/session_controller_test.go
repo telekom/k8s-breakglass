@@ -802,6 +802,148 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 	}
 }
 
+func TestHandleRequestBreakglassSession_RejectsUserMismatch(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "esc-user-mismatch",
+			Namespace: "escns",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"test"},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "g1",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "req@example.com")
+			c.Set("username", "Req")
+			c.Set("user_id", "sub-req")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	reqData := BreakglassSessionRequest{
+		Clustername: "test",
+		Username:    "other@example.com",
+		GroupName:   "g1",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusForbidden {
+		t.Fatalf("expected forbidden for username mismatch, got %d", w.Result().StatusCode)
+	}
+}
+
+func TestHandleRequestBreakglassSession_UsesUserIdentifierForExistingSessionLookup(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+
+	clusterName := "test-cluster"
+	// Existing session stored with sub claim
+	existing := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "existing-session",
+			Namespace: "escns",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:      clusterName,
+			User:         "sub-123",
+			GrantedGroup: "g1",
+		},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State: v1alpha1.SessionStatePending,
+		},
+	}
+
+	// ClusterConfig specifying sub as the user identifier claim
+	clusterConfig := &v1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      clusterName,
+			Namespace: "escns",
+		},
+		Spec: v1alpha1.ClusterConfigSpec{
+			UserIdentifierClaim: v1alpha1.UserIdentifierClaimSub,
+		},
+	}
+
+	builder.WithObjects(existing, clusterConfig, &v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "esc-existing",
+			Namespace: "escns",
+		},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{clusterName},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "g1",
+		},
+	})
+
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "req@example.com")
+			c.Set("username", "Req")
+			c.Set("user_id", "sub-123")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+
+	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	reqData := BreakglassSessionRequest{
+		Clustername: clusterName,
+		Username:    "req@example.com",
+		GroupName:   "g1",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(w.Result().Body)
+		t.Fatalf("expected conflict for existing session, got %d: %s", w.Result().StatusCode, string(body))
+	}
+}
+
 // TestSessionCreatedUsesUserIdentifierClaim
 //
 // Purpose:
@@ -1189,8 +1331,8 @@ func TestTerminalStateImmutability(t *testing.T) {
 	engine := gin.New()
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
-	// create session
-	reqData := BreakglassSessionRequest{Clustername: "c", Username: "user@e.com", GroupName: "g"}
+	// create session - username must match the authenticated email for POST requests
+	reqData := BreakglassSessionRequest{Clustername: "c", Username: "a@e.com", GroupName: "g"}
 	b, _ := json.Marshal(reqData)
 	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 	w := httptest.NewRecorder()
@@ -4455,5 +4597,12 @@ func TestAddIfNotPresentFunction(t *testing.T) {
 			result := addIfNotPresent(tt.slice, tt.item)
 			require.Equal(t, tt.expected, result)
 		})
+	}
+}
+
+func TestIsSessionRetained_ZeroTimestamp(t *testing.T) {
+	session := v1alpha1.BreakglassSession{}
+	if IsSessionRetained(session) {
+		t.Fatalf("expected IsSessionRetained to be false when RetainedUntil is zero")
 	}
 }

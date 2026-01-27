@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,6 +37,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -117,6 +119,7 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	// Template endpoints
 	rg.GET("templates", instrumentedHandler("handleListTemplates", c.handleListTemplates))
 	rg.GET("templates/:name", instrumentedHandler("handleGetTemplate", c.handleGetTemplate))
+	rg.GET("templates/:name/clusters", instrumentedHandler("handleGetTemplateClusters", c.handleGetTemplateClusters))
 	rg.GET("podTemplates", instrumentedHandler("handleListPodTemplates", c.handleListPodTemplates))
 	rg.GET("podTemplates/:name", instrumentedHandler("handleGetPodTemplate", c.handleGetPodTemplate))
 	return nil
@@ -153,13 +156,16 @@ func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, n
 
 // CreateDebugSessionRequest represents the request body for creating a debug session
 type CreateDebugSessionRequest struct {
-	TemplateRef         string            `json:"templateRef" binding:"required"`
-	Cluster             string            `json:"cluster" binding:"required"`
-	RequestedDuration   string            `json:"requestedDuration,omitempty"`
-	NodeSelector        map[string]string `json:"nodeSelector,omitempty"`
-	Namespace           string            `json:"namespace,omitempty"`
-	Reason              string            `json:"reason,omitempty"`
-	InvitedParticipants []string          `json:"invitedParticipants,omitempty"`
+	TemplateRef              string            `json:"templateRef" binding:"required"`
+	Cluster                  string            `json:"cluster" binding:"required"`
+	BindingRef               string            `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" (when multiple match)
+	RequestedDuration        string            `json:"requestedDuration,omitempty"`
+	NodeSelector             map[string]string `json:"nodeSelector,omitempty"`
+	Namespace                string            `json:"namespace,omitempty"`
+	Reason                   string            `json:"reason,omitempty"`
+	InvitedParticipants      []string          `json:"invitedParticipants,omitempty"`
+	TargetNamespace          string            `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
+	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
 }
 
 // JoinDebugSessionRequest represents the request to join an existing debug session
@@ -235,10 +241,12 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	user := ctx.Query("user")
 	mine := ctx.Query("mine") == "true"
 
-	// Get current user from context
-	currentUser, _ := ctx.Get("username")
-	if currentUser == nil {
-		currentUser = ""
+	// Get current user from context with safe type assertion
+	currentUserStr := ""
+	if currentUser, exists := ctx.Get("username"); exists && currentUser != nil {
+		if userStr, ok := currentUser.(string); ok {
+			currentUserStr = userStr
+		}
 	}
 
 	sessionList := &v1alpha1.DebugSessionList{}
@@ -272,7 +280,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			continue
 		}
 		// Mine filter
-		if mine && s.Spec.RequestedBy != currentUser.(string) {
+		if mine && s.Spec.RequestedBy != currentUserStr {
 			continue
 		}
 		filtered = append(filtered, s)
@@ -381,6 +389,20 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
+	// Validate and resolve target namespace
+	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate and resolve scheduling option
+	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Get current user from context
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
@@ -412,8 +434,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Generate session name
-	sessionName := fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(currentUser.(string)), naming.ToRFC1123Subdomain(req.Cluster), time.Now().Unix())
+	// Generate session name - use safe type assertion
+	currentUserStr, ok := currentUser.(string)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "invalid user context type"})
+		return
+	}
+	sessionName := fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(currentUserStr), naming.ToRFC1123Subdomain(req.Cluster), time.Now().Unix())
 
 	// Determine namespace from ClusterConfig for the requested cluster
 	// DebugSessions should be in the same namespace as the ClusterConfig
@@ -446,17 +473,33 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			},
 		},
 		Spec: v1alpha1.DebugSessionSpec{
-			TemplateRef:            req.TemplateRef,
-			Cluster:                req.Cluster,
-			RequestedBy:            currentUser.(string),
-			RequestedByEmail:       userEmail,
-			RequestedByDisplayName: displayName,
-			UserGroups:             userGroups,
-			RequestedDuration:      req.RequestedDuration,
-			NodeSelector:           req.NodeSelector,
-			Reason:                 req.Reason,
-			InvitedParticipants:    req.InvitedParticipants,
+			TemplateRef:                   req.TemplateRef,
+			Cluster:                       req.Cluster,
+			RequestedBy:                   currentUserStr,
+			RequestedByEmail:              userEmail,
+			RequestedByDisplayName:        displayName,
+			UserGroups:                    userGroups,
+			RequestedDuration:             req.RequestedDuration,
+			NodeSelector:                  req.NodeSelector,
+			Reason:                        req.Reason,
+			InvitedParticipants:           req.InvitedParticipants,
+			TargetNamespace:               targetNamespace,
+			SelectedSchedulingOption:      selectedOption,
+			ResolvedSchedulingConstraints: resolvedScheduling,
 		},
+	}
+
+	// Set explicit binding reference if provided (format: "namespace/name")
+	if req.BindingRef != "" {
+		parts := strings.SplitN(req.BindingRef, "/", 2)
+		if len(parts) == 2 {
+			session.Spec.BindingRef = &v1alpha1.BindingReference{
+				Name:      parts[1],
+				Namespace: parts[0],
+			}
+		} else {
+			reqLog.Warnw("Invalid bindingRef format, expected namespace/name", "bindingRef", req.BindingRef)
+		}
 	}
 
 	if err := c.client.Create(apiCtx, session); err != nil {
@@ -1002,17 +1045,56 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 
 // DebugSessionTemplateResponse represents a template in API responses
 type DebugSessionTemplateResponse struct {
-	Name             string                            `json:"name"`
-	DisplayName      string                            `json:"displayName"`
-	Description      string                            `json:"description,omitempty"`
-	Mode             v1alpha1.DebugSessionTemplateMode `json:"mode"`
-	WorkloadType     v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
-	PodTemplateRef   string                            `json:"podTemplateRef,omitempty"`
-	TargetNamespace  string                            `json:"targetNamespace,omitempty"`
-	Constraints      *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	AllowedClusters  []string                          `json:"allowedClusters,omitempty"`
-	AllowedGroups    []string                          `json:"allowedGroups,omitempty"`
-	RequiresApproval bool                              `json:"requiresApproval"`
+	Name                 string                            `json:"name"`
+	DisplayName          string                            `json:"displayName"`
+	Description          string                            `json:"description,omitempty"`
+	Mode                 v1alpha1.DebugSessionTemplateMode `json:"mode"`
+	WorkloadType         v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
+	PodTemplateRef       string                            `json:"podTemplateRef,omitempty"`
+	TargetNamespace      string                            `json:"targetNamespace,omitempty"`
+	Constraints          *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	AllowedClusters      []string                          `json:"allowedClusters,omitempty"`
+	AllowedGroups        []string                          `json:"allowedGroups,omitempty"`
+	RequiresApproval     bool                              `json:"requiresApproval"`
+	SchedulingOptions    *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+}
+
+// SchedulingOptionsResponse represents scheduling options in API responses
+type SchedulingOptionsResponse struct {
+	Required bool                       `json:"required"`
+	Options  []SchedulingOptionResponse `json:"options"`
+}
+
+// SchedulingOptionResponse represents a single scheduling option in API responses
+type SchedulingOptionResponse struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+}
+
+// NamespaceConstraintsResponse represents namespace constraints in API responses
+type NamespaceConstraintsResponse struct {
+	AllowedPatterns       []string                        `json:"allowedPatterns,omitempty"`
+	AllowedLabelSelectors []NamespaceSelectorTermResponse `json:"allowedLabelSelectors,omitempty"`
+	DeniedPatterns        []string                        `json:"deniedPatterns,omitempty"`
+	DeniedLabelSelectors  []NamespaceSelectorTermResponse `json:"deniedLabelSelectors,omitempty"`
+	DefaultNamespace      string                          `json:"defaultNamespace,omitempty"`
+	AllowUserNamespace    bool                            `json:"allowUserNamespace"`
+}
+
+// NamespaceSelectorTermResponse represents a label selector term in API responses
+type NamespaceSelectorTermResponse struct {
+	MatchLabels      map[string]string                      `json:"matchLabels,omitempty"`
+	MatchExpressions []NamespaceSelectorRequirementResponse `json:"matchExpressions,omitempty"`
+}
+
+// NamespaceSelectorRequirementResponse represents a label selector requirement in API responses
+type NamespaceSelectorRequirementResponse struct {
+	Key      string   `json:"key"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values,omitempty"`
 }
 
 // DebugPodTemplateResponse represents a pod template in API responses
@@ -1021,6 +1103,84 @@ type DebugPodTemplateResponse struct {
 	DisplayName string `json:"displayName"`
 	Description string `json:"description,omitempty"`
 	Containers  int    `json:"containers"`
+}
+
+// TemplateClustersResponse represents the response for GET /templates/{name}/clusters
+type TemplateClustersResponse struct {
+	TemplateName        string                   `json:"templateName"`
+	TemplateDisplayName string                   `json:"templateDisplayName"`
+	Clusters            []AvailableClusterDetail `json:"clusters"`
+}
+
+// AvailableClusterDetail represents a cluster with resolved constraints for a template.
+// When multiple bindings match a cluster, BindingOptions contains all available options.
+// The first binding option (or BindingRef for backward compatibility) is the default.
+type AvailableClusterDetail struct {
+	Name                          string                            `json:"name"`
+	DisplayName                   string                            `json:"displayName,omitempty"`
+	Environment                   string                            `json:"environment,omitempty"`
+	Location                      string                            `json:"location,omitempty"`
+	Site                          string                            `json:"site,omitempty"`
+	Tenant                        string                            `json:"tenant,omitempty"`
+	BindingRef                    *BindingReference                 `json:"bindingRef,omitempty"`     // Default/primary binding (backward compat)
+	BindingOptions                []BindingOption                   `json:"bindingOptions,omitempty"` // All available binding options
+	Constraints                   *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`    // Default constraints (from first binding)
+	SchedulingConstraints         *SchedulingConstraintsSummary     `json:"schedulingConstraints,omitempty"`
+	SchedulingOptions             *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints          *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
+	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
+	Status                        *ClusterStatusInfo                `json:"status,omitempty"`
+}
+
+// BindingOption represents a single binding option for a cluster with its resolved configuration.
+// When users select a cluster with multiple binding options, they can choose which binding to use.
+type BindingOption struct {
+	BindingRef                    BindingReference                  `json:"bindingRef"`
+	DisplayName                   string                            `json:"displayName,omitempty"` // Effective display name for this binding
+	Constraints                   *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	SchedulingConstraints         *SchedulingConstraintsSummary     `json:"schedulingConstraints,omitempty"`
+	SchedulingOptions             *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints          *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
+	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
+}
+
+// BindingReference identifies the binding that enabled access
+type BindingReference struct {
+	Name              string `json:"name"`
+	Namespace         string `json:"namespace"`
+	DisplayNamePrefix string `json:"displayNamePrefix,omitempty"`
+}
+
+// SchedulingConstraintsSummary summarizes scheduling constraints for API responses
+type SchedulingConstraintsSummary struct {
+	Summary          string            `json:"summary,omitempty"`
+	DeniedNodeLabels map[string]string `json:"deniedNodeLabels,omitempty"`
+}
+
+// ImpersonationSummary summarizes impersonation configuration for API responses
+type ImpersonationSummary struct {
+	Enabled        bool   `json:"enabled"`
+	ServiceAccount string `json:"serviceAccount,omitempty"`
+	Namespace      string `json:"namespace,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+// ApprovalInfo contains approval requirements for a cluster
+type ApprovalInfo struct {
+	Required       bool     `json:"required"`
+	ApproverGroups []string `json:"approverGroups,omitempty"`
+	ApproverUsers  []string `json:"approverUsers,omitempty"`
+	CanAutoApprove bool     `json:"canAutoApprove,omitempty"`
+}
+
+// ClusterStatusInfo contains cluster health status
+type ClusterStatusInfo struct {
+	Healthy     bool   `json:"healthy"`
+	LastChecked string `json:"lastChecked,omitempty"`
 }
 
 // handleListTemplates returns available debug session templates
@@ -1103,6 +1263,38 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			resp.AllowedGroups = t.Spec.Allowed.Groups
 		}
 
+		// Include scheduling options if present
+		if t.Spec.SchedulingOptions != nil {
+			resp.SchedulingOptions = &SchedulingOptionsResponse{
+				Required: t.Spec.SchedulingOptions.Required,
+				Options:  make([]SchedulingOptionResponse, 0, len(t.Spec.SchedulingOptions.Options)),
+			}
+			for _, opt := range t.Spec.SchedulingOptions.Options {
+				resp.SchedulingOptions.Options = append(resp.SchedulingOptions.Options, SchedulingOptionResponse{
+					Name:        opt.Name,
+					DisplayName: opt.DisplayName,
+					Description: opt.Description,
+					Default:     opt.Default,
+				})
+			}
+		}
+
+		// Include namespace constraints if present
+		if t.Spec.NamespaceConstraints != nil {
+			resp.NamespaceConstraints = &NamespaceConstraintsResponse{
+				DefaultNamespace:   t.Spec.NamespaceConstraints.DefaultNamespace,
+				AllowUserNamespace: t.Spec.NamespaceConstraints.AllowUserNamespace,
+			}
+			if t.Spec.NamespaceConstraints.AllowedNamespaces != nil {
+				resp.NamespaceConstraints.AllowedPatterns = t.Spec.NamespaceConstraints.AllowedNamespaces.Patterns
+				resp.NamespaceConstraints.AllowedLabelSelectors = convertSelectorTerms(t.Spec.NamespaceConstraints.AllowedNamespaces.SelectorTerms)
+			}
+			if t.Spec.NamespaceConstraints.DeniedNamespaces != nil {
+				resp.NamespaceConstraints.DeniedPatterns = t.Spec.NamespaceConstraints.DeniedNamespaces.Patterns
+				resp.NamespaceConstraints.DeniedLabelSelectors = convertSelectorTerms(t.Spec.NamespaceConstraints.DeniedNamespaces.SelectorTerms)
+			}
+		}
+
 		templates = append(templates, resp)
 	}
 
@@ -1137,6 +1329,558 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, template)
+}
+
+// handleGetTemplateClusters returns cluster-specific details for a template
+func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) {
+	reqLog := system.GetReqLogger(ctx, c.log)
+	name := ctx.Param("name")
+
+	if name == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "template name is required"})
+		return
+	}
+
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
+	defer cancel()
+
+	// Fetch the template
+	template := &v1alpha1.DebugSessionTemplate{}
+	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+		if apierrors.IsNotFound(err) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "template not found"})
+			return
+		}
+		reqLog.Errorw("Failed to get template", "name", name, "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get template"})
+		return
+	}
+
+	// Get user's groups for filtering
+	userGroups, _ := ctx.Get("groups")
+	groups := []string{}
+	if userGroups != nil {
+		if g, ok := userGroups.([]string); ok {
+			groups = g
+		}
+	}
+
+	// Check if user has access to this template
+	if template.Spec.Allowed != nil && len(template.Spec.Allowed.Groups) > 0 {
+		hasAccess := false
+		for _, allowedGroup := range template.Spec.Allowed.Groups {
+			if allowedGroup == "*" {
+				hasAccess = true
+				break
+			}
+			for _, userGroup := range groups {
+				if matchPattern(allowedGroup, userGroup) {
+					hasAccess = true
+					break
+				}
+			}
+			if hasAccess {
+				break
+			}
+		}
+		if !hasAccess {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "access denied to this template"})
+			return
+		}
+	}
+
+	// Fetch ClusterConfigs and ClusterBindings in parallel for performance
+	var clusterConfigList v1alpha1.ClusterConfigList
+	var bindingList v1alpha1.DebugSessionClusterBindingList
+	var ccErr, bindErr error
+
+	// Use goroutines with sync.WaitGroup for parallel fetching
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		ccErr = c.client.List(apiCtx, &clusterConfigList)
+	}()
+
+	go func() {
+		defer wg.Done()
+		bindErr = c.client.List(apiCtx, &bindingList)
+	}()
+
+	wg.Wait()
+
+	if ccErr != nil {
+		reqLog.Errorw("Failed to list cluster configs", "error", ccErr)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list clusters"})
+		return
+	}
+
+	if bindErr != nil {
+		reqLog.Errorw("Failed to list cluster bindings", "error", bindErr)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list bindings"})
+		return
+	}
+
+	// Build cluster name -> ClusterConfig map
+	clusterMap := make(map[string]*v1alpha1.ClusterConfig, len(clusterConfigList.Items))
+	for i := range clusterConfigList.Items {
+		cc := &clusterConfigList.Items[i]
+		clusterMap[cc.Name] = cc
+	}
+
+	// Find all bindings that apply to this template
+	applicableBindings := c.findBindingsForTemplate(template, bindingList.Items)
+
+	// Build the response - resolve clusters from bindings and template's allowed.clusters
+	clusterDetails := c.resolveTemplateClusters(template, applicableBindings, clusterMap)
+
+	// Apply optional query filters
+	environment := ctx.Query("environment")
+	location := ctx.Query("location")
+	bindingName := ctx.Query("bindingName")
+
+	filteredClusters := make([]AvailableClusterDetail, 0, len(clusterDetails))
+	for _, cd := range clusterDetails {
+		if environment != "" && cd.Environment != environment {
+			continue
+		}
+		if location != "" && cd.Location != location {
+			continue
+		}
+		if bindingName != "" && (cd.BindingRef == nil || cd.BindingRef.Name != bindingName) {
+			continue
+		}
+		filteredClusters = append(filteredClusters, cd)
+	}
+
+	response := TemplateClustersResponse{
+		TemplateName:        template.Name,
+		TemplateDisplayName: template.Spec.DisplayName,
+		Clusters:            filteredClusters,
+	}
+
+	ctx.JSON(http.StatusOK, response)
+}
+
+// findBindingsForTemplate returns all bindings that reference the given template
+func (c *DebugSessionAPIController) findBindingsForTemplate(template *v1alpha1.DebugSessionTemplate, bindings []v1alpha1.DebugSessionClusterBinding) []v1alpha1.DebugSessionClusterBinding {
+	var result []v1alpha1.DebugSessionClusterBinding
+	for _, binding := range bindings {
+		if binding.Spec.Disabled {
+			continue
+		}
+		// Check templateRef
+		if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
+			result = append(result, binding)
+			continue
+		}
+		// Check templateSelector
+		if binding.Spec.TemplateSelector != nil {
+			selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
+			if err == nil {
+				labelSet := labelSetFromMap(template.Labels)
+				if selector.Matches(labelSet) {
+					result = append(result, binding)
+				}
+			}
+		}
+	}
+	return result
+}
+
+// resolveTemplateClusters resolves all available clusters for a template.
+// When multiple bindings match the same cluster, all binding options are returned
+// so users can select which binding configuration to use.
+func (c *DebugSessionAPIController) resolveTemplateClusters(template *v1alpha1.DebugSessionTemplate, bindings []v1alpha1.DebugSessionClusterBinding, clusterMap map[string]*v1alpha1.ClusterConfig) []AvailableClusterDetail {
+	// Build a map of cluster -> all matching bindings
+	clusterBindings := make(map[string][]*v1alpha1.DebugSessionClusterBinding)
+
+	// Collect all bindings for each cluster
+	for i := range bindings {
+		binding := &bindings[i]
+		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
+		for _, clusterName := range bindingClusters {
+			clusterBindings[clusterName] = append(clusterBindings[clusterName], binding)
+		}
+	}
+
+	var result []AvailableClusterDetail
+	seenClusters := make(map[string]bool)
+
+	// Build cluster details with all binding options
+	for clusterName, matchingBindings := range clusterBindings {
+		if seenClusters[clusterName] {
+			continue
+		}
+		seenClusters[clusterName] = true
+
+		cc := clusterMap[clusterName]
+		if cc == nil {
+			continue
+		}
+
+		// Build detail with all binding options
+		detail := c.buildClusterDetailWithBindings(template, matchingBindings, cc)
+		result = append(result, detail)
+	}
+
+	// Then, resolve clusters from template's allowed.clusters (fallback, no binding)
+	if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+		allClusterNames := make([]string, 0, len(clusterMap))
+		for name := range clusterMap {
+			allClusterNames = append(allClusterNames, name)
+		}
+		allowedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
+		for _, clusterName := range allowedClusters {
+			if seenClusters[clusterName] {
+				continue
+			}
+			seenClusters[clusterName] = true
+
+			cc := clusterMap[clusterName]
+			if cc == nil {
+				continue
+			}
+
+			// No binding - use template defaults
+			detail := c.buildClusterDetailWithBindings(template, nil, cc)
+			result = append(result, detail)
+		}
+	}
+
+	return result
+}
+
+// buildClusterDetailWithBindings creates a cluster detail with all matching binding options.
+// The first binding becomes the default (for backward compatibility with BindingRef).
+func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1alpha1.DebugSessionTemplate, matchingBindings []*v1alpha1.DebugSessionClusterBinding, cc *v1alpha1.ClusterConfig) AvailableClusterDetail {
+	detail := AvailableClusterDetail{
+		Name:        cc.Name,
+		DisplayName: cc.Name,
+		Environment: cc.Labels["environment"],
+		Location:    cc.Labels["location"],
+		Site:        cc.Labels["site"],
+		Tenant:      cc.Labels["tenant"],
+		Status:      c.resolveClusterStatus(cc),
+	}
+
+	if len(matchingBindings) == 0 {
+		// No bindings - use template defaults
+		detail.Constraints = template.Spec.Constraints
+		detail.SchedulingConstraints = c.getSchedulingConstraintsSummary(template, nil)
+		detail.SchedulingOptions = c.resolveSchedulingOptions(template, nil)
+		detail.NamespaceConstraints = c.resolveNamespaceConstraints(template, nil)
+		detail.Impersonation = c.resolveImpersonation(template, nil)
+		detail.Approval = c.resolveApproval(template, nil, cc)
+		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, nil)
+		return detail
+	}
+
+	// Build all binding options
+	detail.BindingOptions = make([]BindingOption, 0, len(matchingBindings))
+	for _, binding := range matchingBindings {
+		effectiveDisplayName := v1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name)
+		option := BindingOption{
+			BindingRef: BindingReference{
+				Name:              binding.Name,
+				Namespace:         binding.Namespace,
+				DisplayNamePrefix: binding.Spec.DisplayNamePrefix,
+			},
+			DisplayName:                   effectiveDisplayName,
+			Constraints:                   c.mergeConstraints(template.Spec.Constraints, binding),
+			SchedulingConstraints:         c.getSchedulingConstraintsSummary(template, binding),
+			SchedulingOptions:             c.resolveSchedulingOptions(template, binding),
+			NamespaceConstraints:          c.resolveNamespaceConstraints(template, binding),
+			Impersonation:                 c.resolveImpersonation(template, binding),
+			RequiredAuxResourceCategories: c.resolveRequiredAuxResourceCategories(template, binding),
+			Approval:                      c.resolveApproval(template, binding, cc),
+		}
+		detail.BindingOptions = append(detail.BindingOptions, option)
+	}
+
+	// Set primary binding (first one) for backward compatibility
+	if len(matchingBindings) > 0 {
+		primaryBinding := matchingBindings[0]
+		detail.BindingRef = &BindingReference{
+			Name:              primaryBinding.Name,
+			Namespace:         primaryBinding.Namespace,
+			DisplayNamePrefix: primaryBinding.Spec.DisplayNamePrefix,
+		}
+		// Set default constraints from primary binding for backward compatibility
+		detail.Constraints = c.mergeConstraints(template.Spec.Constraints, primaryBinding)
+		detail.SchedulingConstraints = c.getSchedulingConstraintsSummary(template, primaryBinding)
+		detail.SchedulingOptions = c.resolveSchedulingOptions(template, primaryBinding)
+		detail.NamespaceConstraints = c.resolveNamespaceConstraints(template, primaryBinding)
+		detail.Impersonation = c.resolveImpersonation(template, primaryBinding)
+		detail.Approval = c.resolveApproval(template, primaryBinding, cc)
+		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, primaryBinding)
+	}
+
+	return detail
+}
+
+// resolveClustersFromBinding resolves cluster names from a binding's spec
+func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *v1alpha1.DebugSessionClusterBinding, clusterMap map[string]*v1alpha1.ClusterConfig) []string {
+	var result []string
+
+	// Add explicit clusters
+	for _, clusterName := range binding.Spec.Clusters {
+		if _, exists := clusterMap[clusterName]; exists {
+			result = append(result, clusterName)
+		}
+	}
+
+	// Add clusters matching selector
+	if binding.Spec.ClusterSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+		if err == nil {
+			for name, cc := range clusterMap {
+				labelSet := labelSetFromMap(cc.Labels)
+				if selector.Matches(labelSet) {
+					result = append(result, name)
+				}
+			}
+		}
+	}
+
+	return result
+}
+
+// mergeConstraints merges template and binding constraints
+func (c *DebugSessionAPIController) mergeConstraints(templateConstraints *v1alpha1.DebugSessionConstraints, binding *v1alpha1.DebugSessionClusterBinding) *v1alpha1.DebugSessionConstraints {
+	if binding == nil || binding.Spec.Constraints == nil {
+		return templateConstraints
+	}
+	if templateConstraints == nil {
+		return binding.Spec.Constraints
+	}
+
+	// Binding constraints override template constraints
+	merged := templateConstraints.DeepCopy()
+	bc := binding.Spec.Constraints
+
+	if bc.MaxDuration != "" {
+		merged.MaxDuration = bc.MaxDuration
+	}
+	if bc.DefaultDuration != "" {
+		merged.DefaultDuration = bc.DefaultDuration
+	}
+	if bc.MaxConcurrentSessions > 0 {
+		merged.MaxConcurrentSessions = bc.MaxConcurrentSessions
+	}
+	if bc.MaxRenewals != nil {
+		merged.MaxRenewals = bc.MaxRenewals
+	}
+
+	return merged
+}
+
+// getSchedulingConstraintsSummary builds a summary of scheduling constraints
+func (c *DebugSessionAPIController) getSchedulingConstraintsSummary(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *SchedulingConstraintsSummary {
+	var sc *v1alpha1.SchedulingConstraints
+
+	// Binding constraints take precedence
+	if binding != nil && binding.Spec.SchedulingConstraints != nil {
+		sc = binding.Spec.SchedulingConstraints
+	} else if template.Spec.SchedulingConstraints != nil {
+		sc = template.Spec.SchedulingConstraints
+	}
+
+	if sc == nil {
+		return nil
+	}
+
+	summary := &SchedulingConstraintsSummary{
+		DeniedNodeLabels: sc.DeniedNodeLabels,
+	}
+
+	// Build summary string
+	var parts []string
+	if len(sc.DeniedNodeLabels) > 0 {
+		parts = append(parts, "Some node labels are restricted")
+	}
+	if len(sc.NodeSelector) > 0 {
+		parts = append(parts, "Specific node labels required")
+	}
+	if len(sc.DeniedNodes) > 0 {
+		parts = append(parts, "Some nodes are denied")
+	}
+	if len(parts) > 0 {
+		summary.Summary = strings.Join(parts, "; ")
+	}
+
+	return summary
+}
+
+// resolveSchedulingOptions resolves scheduling options from binding or template
+func (c *DebugSessionAPIController) resolveSchedulingOptions(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *SchedulingOptionsResponse {
+	var so *v1alpha1.SchedulingOptions
+
+	// Binding options take precedence
+	if binding != nil && binding.Spec.SchedulingOptions != nil {
+		so = binding.Spec.SchedulingOptions
+	} else if template.Spec.SchedulingOptions != nil {
+		so = template.Spec.SchedulingOptions
+	}
+
+	if so == nil {
+		return nil
+	}
+
+	response := &SchedulingOptionsResponse{
+		Required: so.Required,
+		Options:  make([]SchedulingOptionResponse, 0, len(so.Options)),
+	}
+
+	for _, opt := range so.Options {
+		response.Options = append(response.Options, SchedulingOptionResponse{
+			Name:        opt.Name,
+			DisplayName: opt.DisplayName,
+			Description: opt.Description,
+			Default:     opt.Default,
+		})
+	}
+
+	return response
+}
+
+// resolveNamespaceConstraints resolves namespace constraints from binding or template
+func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *NamespaceConstraintsResponse {
+	var nc *v1alpha1.NamespaceConstraints
+
+	// Binding constraints take precedence
+	if binding != nil && binding.Spec.NamespaceConstraints != nil {
+		nc = binding.Spec.NamespaceConstraints
+	} else if template.Spec.NamespaceConstraints != nil {
+		nc = template.Spec.NamespaceConstraints
+	}
+
+	if nc == nil {
+		return nil
+	}
+
+	response := &NamespaceConstraintsResponse{
+		DefaultNamespace:   nc.DefaultNamespace,
+		AllowUserNamespace: nc.AllowUserNamespace,
+	}
+
+	if nc.AllowedNamespaces != nil {
+		response.AllowedPatterns = nc.AllowedNamespaces.Patterns
+		response.AllowedLabelSelectors = convertSelectorTerms(nc.AllowedNamespaces.SelectorTerms)
+	}
+	if nc.DeniedNamespaces != nil {
+		response.DeniedPatterns = nc.DeniedNamespaces.Patterns
+		response.DeniedLabelSelectors = convertSelectorTerms(nc.DeniedNamespaces.SelectorTerms)
+	}
+
+	return response
+}
+
+// resolveImpersonation resolves impersonation settings from binding or template
+func (c *DebugSessionAPIController) resolveImpersonation(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *ImpersonationSummary {
+	var imp *v1alpha1.ImpersonationConfig
+
+	// Binding impersonation takes precedence
+	if binding != nil && binding.Spec.Impersonation != nil {
+		imp = binding.Spec.Impersonation
+	} else if template.Spec.Impersonation != nil {
+		imp = template.Spec.Impersonation
+	}
+
+	if imp == nil {
+		return nil
+	}
+
+	summary := &ImpersonationSummary{
+		Enabled: true,
+	}
+
+	if imp.ServiceAccountRef != nil {
+		summary.ServiceAccount = imp.ServiceAccountRef.Name
+		summary.Namespace = imp.ServiceAccountRef.Namespace
+	}
+
+	return summary
+}
+
+// resolveApproval resolves approval requirements from binding, template, or ClusterConfig
+func (c *DebugSessionAPIController) resolveApproval(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, cc *v1alpha1.ClusterConfig) *ApprovalInfo {
+	info := &ApprovalInfo{}
+
+	// Check binding approvers first
+	if binding != nil && binding.Spec.Approvers != nil {
+		info.Required = len(binding.Spec.Approvers.Groups) > 0 || len(binding.Spec.Approvers.Users) > 0
+		info.ApproverGroups = binding.Spec.Approvers.Groups
+		info.ApproverUsers = binding.Spec.Approvers.Users
+		return info
+	}
+
+	// Check template approvers
+	if template.Spec.Approvers != nil {
+		info.Required = len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0
+		info.ApproverGroups = template.Spec.Approvers.Groups
+		info.ApproverUsers = template.Spec.Approvers.Users
+		return info
+	}
+
+	// No approvers required
+	return info
+}
+
+// resolveClusterStatus returns cluster health status
+func (c *DebugSessionAPIController) resolveClusterStatus(cc *v1alpha1.ClusterConfig) *ClusterStatusInfo {
+	status := &ClusterStatusInfo{}
+
+	// Check for Ready condition
+	for _, cond := range cc.Status.Conditions {
+		if cond.Type == string(v1alpha1.ClusterConfigConditionReady) {
+			status.Healthy = cond.Status == metav1.ConditionTrue
+			status.LastChecked = cond.LastTransitionTime.Format("2006-01-02T15:04:05Z")
+			break
+		}
+	}
+
+	return status
+}
+
+// resolveRequiredAuxResourceCategories returns required auxiliary resource categories
+// from binding or template configuration.
+func (c *DebugSessionAPIController) resolveRequiredAuxResourceCategories(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) []string {
+	// Collect categories from both template and binding
+	categories := make(map[string]bool)
+
+	// Template required categories take precedence
+	if template.Spec.RequiredAuxiliaryResourceCategories != nil {
+		for _, cat := range template.Spec.RequiredAuxiliaryResourceCategories {
+			categories[cat] = true
+		}
+	}
+
+	// Binding required categories are added
+	if binding != nil && len(binding.Spec.RequiredAuxiliaryResourceCategories) > 0 {
+		for _, cat := range binding.Spec.RequiredAuxiliaryResourceCategories {
+			categories[cat] = true
+		}
+	}
+
+	if len(categories) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(categories))
+	for cat := range categories {
+		result = append(result, cat)
+	}
+	return result
+}
+
+// labelSetFromMap creates a labels.Set from a map for selector matching
+func labelSetFromMap(m map[string]string) labels.Set {
+	if m == nil {
+		return labels.Set{}
+	}
+	return labels.Set(m)
 }
 
 // handleListPodTemplates returns available debug pod templates
@@ -1276,6 +2020,230 @@ func matchPattern(pattern, value string) bool {
 		return strings.HasSuffix(value, suffix)
 	}
 	return pattern == value
+}
+
+// convertSelectorTerms converts v1alpha1 selector terms to API response format
+func convertSelectorTerms(terms []v1alpha1.NamespaceSelectorTerm) []NamespaceSelectorTermResponse {
+	if len(terms) == 0 {
+		return nil
+	}
+	result := make([]NamespaceSelectorTermResponse, 0, len(terms))
+	for _, term := range terms {
+		respTerm := NamespaceSelectorTermResponse{
+			MatchLabels: term.MatchLabels,
+		}
+		if len(term.MatchExpressions) > 0 {
+			respTerm.MatchExpressions = make([]NamespaceSelectorRequirementResponse, 0, len(term.MatchExpressions))
+			for _, expr := range term.MatchExpressions {
+				respTerm.MatchExpressions = append(respTerm.MatchExpressions, NamespaceSelectorRequirementResponse{
+					Key:      expr.Key,
+					Operator: string(expr.Operator),
+					Values:   expr.Values,
+				})
+			}
+		}
+		result = append(result, respTerm)
+	}
+	return result
+}
+
+// resolveTargetNamespace validates and resolves the target namespace for debug pods.
+// Returns the resolved namespace or an error if the requested namespace is not allowed.
+func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.DebugSessionTemplate, requestedNamespace string) (string, error) {
+	nc := template.Spec.NamespaceConstraints
+
+	// If no namespace constraints, use default behavior
+	if nc == nil {
+		if requestedNamespace != "" {
+			return requestedNamespace, nil
+		}
+		return "breakglass-debug", nil // Default namespace
+	}
+
+	// If user didn't request a specific namespace, use the default
+	if requestedNamespace == "" {
+		if nc.DefaultNamespace != "" {
+			return nc.DefaultNamespace, nil
+		}
+		return "breakglass-debug", nil
+	}
+
+	// Check if user is allowed to specify a namespace
+	if !nc.AllowUserNamespace {
+		return "", fmt.Errorf("template does not allow user-specified namespaces")
+	}
+
+	// Validate against allowed namespaces
+	if nc.AllowedNamespaces != nil && !nc.AllowedNamespaces.IsEmpty() {
+		if !matchNamespaceFilter(requestedNamespace, nc.AllowedNamespaces) {
+			return "", fmt.Errorf("namespace '%s' is not in the allowed namespaces", requestedNamespace)
+		}
+	}
+
+	// Validate against denied namespaces
+	if nc.DeniedNamespaces != nil && !nc.DeniedNamespaces.IsEmpty() {
+		if matchNamespaceFilter(requestedNamespace, nc.DeniedNamespaces) {
+			return "", fmt.Errorf("namespace '%s' is explicitly denied", requestedNamespace)
+		}
+	}
+
+	return requestedNamespace, nil
+}
+
+// matchNamespaceFilter checks if a namespace matches a NamespaceFilter.
+// Only evaluates patterns; label selector matching requires runtime access to namespaces.
+func matchNamespaceFilter(namespace string, filter *v1alpha1.NamespaceFilter) bool {
+	if filter == nil || filter.IsEmpty() {
+		return false
+	}
+
+	// Check patterns
+	for _, pattern := range filter.Patterns {
+		if matchPattern(pattern, namespace) {
+			return true
+		}
+	}
+
+	// Note: SelectorTerms require runtime namespace label access
+	// For now, if only selector terms are specified, we allow it
+	// (actual validation happens at deployment time)
+	if len(filter.Patterns) == 0 && filter.HasSelectorTerms() {
+		return true // Defer to runtime validation
+	}
+
+	return false
+}
+
+// resolveSchedulingConstraints validates and resolves the scheduling constraints.
+// It merges the template's base constraints with the selected scheduling option.
+// Returns the merged constraints, the selected option name, and any error.
+func (c *DebugSessionAPIController) resolveSchedulingConstraints(
+	template *v1alpha1.DebugSessionTemplate,
+	selectedOption string,
+) (*v1alpha1.SchedulingConstraints, string, error) {
+	// Start with the template's base scheduling constraints
+	baseConstraints := template.Spec.SchedulingConstraints
+
+	// If no scheduling options defined, just return base constraints
+	if template.Spec.SchedulingOptions == nil || len(template.Spec.SchedulingOptions.Options) == 0 {
+		if selectedOption != "" {
+			return nil, "", fmt.Errorf("template has no scheduling options, but '%s' was requested", selectedOption)
+		}
+		return baseConstraints, "", nil
+	}
+
+	opts := template.Spec.SchedulingOptions
+
+	// If required and no option selected, find the default
+	if selectedOption == "" {
+		if opts.Required {
+			// Find the default option
+			for _, opt := range opts.Options {
+				if opt.Default {
+					selectedOption = opt.Name
+					break
+				}
+			}
+			if selectedOption == "" {
+				return nil, "", fmt.Errorf("scheduling option is required but none selected and no default defined")
+			}
+		} else {
+			// Not required, no selection - use base constraints only
+			return baseConstraints, "", nil
+		}
+	}
+
+	// Find the selected option
+	var selectedOpt *v1alpha1.SchedulingOption
+	for i := range opts.Options {
+		if opts.Options[i].Name == selectedOption {
+			selectedOpt = &opts.Options[i]
+			break
+		}
+	}
+
+	if selectedOpt == nil {
+		return nil, "", fmt.Errorf("scheduling option '%s' not found in template", selectedOption)
+	}
+
+	// Merge base constraints with option's constraints
+	merged := mergeSchedulingConstraints(baseConstraints, selectedOpt.SchedulingConstraints)
+
+	return merged, selectedOption, nil
+}
+
+// mergeSchedulingConstraints merges base constraints with option constraints.
+// Option constraints override base constraints for conflicting keys.
+func mergeSchedulingConstraints(base, option *v1alpha1.SchedulingConstraints) *v1alpha1.SchedulingConstraints {
+	if base == nil && option == nil {
+		return nil
+	}
+	if base == nil {
+		return option.DeepCopy()
+	}
+	if option == nil {
+		return base.DeepCopy()
+	}
+
+	merged := base.DeepCopy()
+
+	// Merge nodeSelector (option overrides base on conflict)
+	if len(option.NodeSelector) > 0 {
+		if merged.NodeSelector == nil {
+			merged.NodeSelector = make(map[string]string)
+		}
+		for k, v := range option.NodeSelector {
+			merged.NodeSelector[k] = v
+		}
+	}
+
+	// Merge deniedNodes (additive)
+	if len(option.DeniedNodes) > 0 {
+		merged.DeniedNodes = append(merged.DeniedNodes, option.DeniedNodes...)
+	}
+
+	// Merge deniedNodeLabels (option overrides base on conflict)
+	if len(option.DeniedNodeLabels) > 0 {
+		if merged.DeniedNodeLabels == nil {
+			merged.DeniedNodeLabels = make(map[string]string)
+		}
+		for k, v := range option.DeniedNodeLabels {
+			merged.DeniedNodeLabels[k] = v
+		}
+	}
+
+	// Merge tolerations (additive)
+	if len(option.Tolerations) > 0 {
+		merged.Tolerations = append(merged.Tolerations, option.Tolerations...)
+	}
+
+	// For node affinity, option's required affinity is ANDed with base
+	if option.RequiredNodeAffinity != nil {
+		if merged.RequiredNodeAffinity == nil {
+			merged.RequiredNodeAffinity = option.RequiredNodeAffinity.DeepCopy()
+		} else {
+			// AND the node selector terms
+			merged.RequiredNodeAffinity.NodeSelectorTerms = append(
+				merged.RequiredNodeAffinity.NodeSelectorTerms,
+				option.RequiredNodeAffinity.NodeSelectorTerms...,
+			)
+		}
+	}
+
+	// Preferred affinities are additive
+	if len(option.PreferredNodeAffinity) > 0 {
+		merged.PreferredNodeAffinity = append(merged.PreferredNodeAffinity, option.PreferredNodeAffinity...)
+	}
+
+	// Pod anti-affinity is additive
+	if len(option.RequiredPodAntiAffinity) > 0 {
+		merged.RequiredPodAntiAffinity = append(merged.RequiredPodAntiAffinity, option.RequiredPodAntiAffinity...)
+	}
+	if len(option.PreferredPodAntiAffinity) > 0 {
+		merged.PreferredPodAntiAffinity = append(merged.PreferredPodAntiAffinity, option.PreferredPodAntiAffinity...)
+	}
+
+	return merged
 }
 
 // resolveClusterPatterns expands cluster patterns (e.g., "*", "prod-*") to actual cluster names.

@@ -124,7 +124,8 @@ func main() {
 	var err error
 
 	if zapLogger, err = utils.SetupLogger(cliConfig.Debug); err != nil {
-		panic(fmt.Errorf("failed to setup logger: %w", err))
+		fmt.Fprintf(os.Stderr, "failed to setup logger: %v\n", err)
+		os.Exit(1)
 	}
 
 	defer func() {
@@ -246,6 +247,10 @@ func main() {
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).
 		WithDisableEmail(cliConfig.DisableEmail)
+
+	// Note: ClusterBindingAPIController is not exposed as a public API endpoint.
+	// Cluster bindings are aggregated internally through the template/clusters endpoint
+	// (GET /api/debugSessions/templates/:name/clusters) for a unified user experience.
 
 	// Register API controllers based on component flags
 	apiControllers := api.Setup(sessionController, escalationManager, &sessionManager, cliConfig.EnableFrontend,

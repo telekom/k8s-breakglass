@@ -138,6 +138,9 @@ func Setup(
 		if err := registerWebhook(&v1alpha1.AuditConfig{}, "AuditConfig", mgr, log); err != nil {
 			return err
 		}
+		if err := registerWebhook(&v1alpha1.DebugSessionClusterBinding{}, "DebugSessionClusterBinding", mgr, log); err != nil {
+			return err
+		}
 
 		// Register ephemeral container webhook
 		log.Infof("Registering ephemeral container webhook at /validate-ephemeral-containers")

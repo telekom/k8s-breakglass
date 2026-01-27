@@ -241,9 +241,9 @@ func TestIsSessionRetained_TimeVariants(t *testing.T) {
 			expected:      false,
 		},
 		{
-			name:          "zero time returns true",
+			name:          "zero time returns false",
 			retainedUntil: time.Time{},
-			expected:      true,
+			expected:      false,
 		},
 	}
 

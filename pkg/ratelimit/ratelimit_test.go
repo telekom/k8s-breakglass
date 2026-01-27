@@ -238,6 +238,115 @@ func TestMiddleware(t *testing.T) {
 	})
 }
 
+func TestMiddlewareWithExclusions(t *testing.T) {
+	t.Run("excludes paths matching prefixes from rate limiting", func(t *testing.T) {
+		// Very restrictive: 1 req/s, burst of 1 - so second request would be rate limited
+		cfg := Config{Rate: 1, Burst: 1, CleanupInterval: time.Hour, MaxAge: time.Hour}
+		rl := New(cfg)
+		defer rl.Stop()
+
+		router := gin.New()
+		router.Use(rl.MiddlewareWithExclusions([]string{"/assets/", "/favicon"}))
+		router.GET("/api/test", func(c *gin.Context) {
+			c.String(http.StatusOK, "API OK")
+		})
+		router.GET("/assets/script.js", func(c *gin.Context) {
+			c.String(http.StatusOK, "JS OK")
+		})
+		router.GET("/favicon.ico", func(c *gin.Context) {
+			c.String(http.StatusOK, "FAVICON OK")
+		})
+
+		// First API request - should succeed
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/test", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		// Second API request from same IP - should be rate limited
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest(http.MethodGet, "/api/test", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusTooManyRequests, w.Code)
+
+		// But /assets/* requests should NOT be rate limited (excluded)
+		for i := 0; i < 10; i++ {
+			w = httptest.NewRecorder()
+			req, _ = http.NewRequest(http.MethodGet, "/assets/script.js", nil)
+			req.RemoteAddr = "192.168.1.1:12345"
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code, "asset request %d should not be rate limited", i)
+		}
+
+		// And /favicon* requests should NOT be rate limited (excluded)
+		for i := 0; i < 10; i++ {
+			w = httptest.NewRecorder()
+			req, _ = http.NewRequest(http.MethodGet, "/favicon.ico", nil)
+			req.RemoteAddr = "192.168.1.1:12345"
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code, "favicon request %d should not be rate limited", i)
+		}
+	})
+
+	t.Run("nil exclusions behaves like regular Middleware", func(t *testing.T) {
+		cfg := Config{Rate: 1, Burst: 2, CleanupInterval: time.Hour, MaxAge: time.Hour}
+		rl := New(cfg)
+		defer rl.Stop()
+
+		router := gin.New()
+		router.Use(rl.MiddlewareWithExclusions(nil))
+		router.GET("/test", func(c *gin.Context) {
+			c.String(http.StatusOK, "OK")
+		})
+
+		// Exhaust burst
+		for i := 0; i < 2; i++ {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+			req.RemoteAddr = "192.168.1.1:12345"
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code)
+		}
+
+		// Should be rate limited
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	})
+
+	t.Run("empty exclusions behaves like regular Middleware", func(t *testing.T) {
+		cfg := Config{Rate: 1, Burst: 2, CleanupInterval: time.Hour, MaxAge: time.Hour}
+		rl := New(cfg)
+		defer rl.Stop()
+
+		router := gin.New()
+		router.Use(rl.MiddlewareWithExclusions([]string{}))
+		router.GET("/test", func(c *gin.Context) {
+			c.String(http.StatusOK, "OK")
+		})
+
+		// Exhaust burst
+		for i := 0; i < 2; i++ {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+			req.RemoteAddr = "192.168.1.1:12345"
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code)
+		}
+
+		// Should be rate limited
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	})
+}
+
 func TestCleanup(t *testing.T) {
 	t.Run("removes stale entries", func(t *testing.T) {
 		cfg := Config{

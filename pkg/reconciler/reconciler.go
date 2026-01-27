@@ -235,6 +235,14 @@ func Setup(
 	}
 	log.Infow("Successfully registered DebugPodTemplate reconciler")
 
+	// Register DebugSessionClusterBinding Reconciler with controller-runtime manager
+	log.Debugw("Setting up DebugSessionClusterBinding reconciler")
+	clusterBindingReconciler := config.NewDebugSessionClusterBindingReconciler(mgr.GetClient(), log)
+	if err := clusterBindingReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup DebugSessionClusterBinding reconciler with manager: %w", err)
+	}
+	log.Infow("Successfully registered DebugSessionClusterBinding reconciler")
+
 	// Register DebugSession Reconciler with controller-runtime manager
 	log.Debugw("Setting up DebugSession reconciler")
 	debugSessionReconciler := breakglass.NewDebugSessionController(log, mgr.GetClient(), ccProvider)

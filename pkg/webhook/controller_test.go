@@ -92,6 +92,32 @@ func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 	}
 }
 
+func TestHandleAuthorize_BodyTooLarge(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	for k, fn := range sessionIndexFnsWebhook {
+		builder = builder.WithIndex(&v1alpha1.BreakglassSession{}, k, fn)
+	}
+	cli := builder.Build()
+
+	sesMgr := &breakglass.SessionManager{Client: cli}
+	escalMgr := &breakglass.EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, sesMgr, escalMgr, nil, policy.NewEvaluator(cli, logger.Sugar()))
+
+	engine := gin.New()
+	_ = wc.Register(engine.Group("/" + wc.BasePath()))
+
+	bigBody := bytes.Repeat([]byte("a"), maxSARBodySize+1)
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/test-cluster", bytes.NewReader(bigBody))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 Request Entity Too Large, got %d", w.Result().StatusCode)
+	}
+}
+
 // Test that when RBAC denies and escalations exist the webhook returns allowed=false and a deny reason
 func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 	// Create a BreakglassEscalation that matches system:authenticated so escalation path exists
@@ -625,6 +651,70 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 			expectContains: "Enabled Provider",
 		},
 	}
+
+	// Additional test for hardenedIDPHints mode
+	t.Run("hardenedIDPHints hides provider names", func(t *testing.T) {
+		sar := &authorizationv1.SubjectAccessReview{
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: "test-user",
+				Extra: map[string]authorizationv1.ExtraValue{
+					"identity.t-caas.telekom.com/issuer": {"https://unknown.example.com/"},
+				},
+			},
+		}
+		idps := []v1alpha1.IdentityProvider{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
+				Spec: v1alpha1.IdentityProviderSpec{
+					Issuer:      "https://keycloak.example.com/realms/test",
+					DisplayName: "Keycloak Provider",
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "azure-idp"},
+				Spec: v1alpha1.IdentityProviderSpec{
+					Issuer:      "https://login.microsoft.com/tenant",
+					DisplayName: "Azure AD",
+				},
+			},
+		}
+
+		objs := make([]client.Object, 0, len(idps))
+		for i := range idps {
+			objs = append(objs, &idps[i])
+		}
+
+		cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
+		escalMgr := &breakglass.EscalationManager{Client: cli}
+
+		// Test with hardenedIDPHints = false (default - should show provider names)
+		wcDefault := &WebhookController{
+			log:          logger.Sugar(),
+			escalManager: escalMgr,
+			config:       config.Config{Server: config.Server{HardenedIDPHints: false}},
+		}
+		resultDefault := wcDefault.getIDPHintFromIssuer(context.Background(), sar, logger.Sugar())
+		if !contains(resultDefault, "Keycloak Provider") && !contains(resultDefault, "Azure AD") {
+			t.Errorf("expected default mode to show provider names, got %q", resultDefault)
+		}
+		if contains(resultDefault, "not configured for this cluster") {
+			t.Errorf("default mode should not use hardened message, got %q", resultDefault)
+		}
+
+		// Test with hardenedIDPHints = true (hardened - should NOT show provider names)
+		wcHardened := &WebhookController{
+			log:          logger.Sugar(),
+			escalManager: escalMgr,
+			config:       config.Config{Server: config.Server{HardenedIDPHints: true}},
+		}
+		resultHardened := wcHardened.getIDPHintFromIssuer(context.Background(), sar, logger.Sugar())
+		if contains(resultHardened, "Keycloak") || contains(resultHardened, "Azure") {
+			t.Errorf("expected hardened mode to hide provider names, got %q", resultHardened)
+		}
+		if !contains(resultHardened, "not configured for this cluster") {
+			t.Errorf("expected hardened mode to use generic message, got %q", resultHardened)
+		}
+	})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

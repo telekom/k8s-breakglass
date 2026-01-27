@@ -140,20 +140,28 @@ func TestConcurrentSessionCreation(t *testing.T) {
 	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
-	escalation := helpers.NewEscalationBuilder("e2e-concurrent-escalation", namespace).
-		WithEscalatedGroup("concurrent-admins").
-		WithAllowedClusters(clusterName).
-		Build()
-	cleanup.Add(escalation)
-	err := cli.Create(ctx, escalation)
-	require.NoError(t, err)
-
 	// Create test context for authenticated API client
 	tc := helpers.NewTestContext(t, ctx)
 	requesterClient := tc.RequesterClient()
 
 	t.Run("MultipleUsersCreateSessionsConcurrently", func(t *testing.T) {
 		const numUsers = 5
+
+		// Create unique escalations for each concurrent request to avoid
+		// the user+cluster+group uniqueness constraint
+		groups := make([]string, numUsers)
+		for i := 0; i < numUsers; i++ {
+			groupName := helpers.GenerateUniqueName("concurrent-admins")
+			groups[i] = groupName
+			escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-concurrent"), namespace).
+				WithEscalatedGroup(groupName).
+				WithAllowedClusters(clusterName).
+				Build()
+			cleanup.Add(escalation)
+			err := cli.Create(ctx, escalation)
+			require.NoError(t, err)
+		}
+
 		var wg sync.WaitGroup
 		results := make(chan error, numUsers)
 
@@ -162,12 +170,12 @@ func TestConcurrentSessionCreation(t *testing.T) {
 			go func(idx int) {
 				defer wg.Done()
 
-				// Create session via API
+				// Create session via API - each uses a unique group
 				session, apiErr := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 					Cluster: clusterName,
-					User:    fmt.Sprintf("user%d@example.com", idx),
-					Group:   escalation.Spec.EscalatedGroup,
-					Reason:  fmt.Sprintf("Concurrent test user %d", idx),
+					User:    helpers.TestUsers.Requester.Email,
+					Group:   groups[idx],
+					Reason:  fmt.Sprintf("Concurrent test request %d", idx),
 				})
 				if apiErr == nil {
 					// Add to cleanup

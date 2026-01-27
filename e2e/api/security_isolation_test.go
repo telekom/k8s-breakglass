@@ -68,7 +68,7 @@ func TestCrossClusterSessionIsolation(t *testing.T) {
 	apiClient := tc.RequesterClient()
 	approverClient := tc.ApproverClient()
 
-	sessionUser := "isolation-test-user@example.com"
+	sessionUser := helpers.TestUsers.Requester.Email
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterA,
 		User:    sessionUser,
@@ -135,7 +135,7 @@ func TestExpiredSessionRaceCondition(t *testing.T) {
 	apiClient := tc.RequesterClient()
 	approverClient := tc.ApproverClient()
 
-	sessionUser := "race-condition-test-user@example.com"
+	sessionUser := helpers.TestUsers.Requester.Email
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
 		User:    sessionUser,
@@ -199,15 +199,16 @@ func TestDifferentUserSameGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
-	apiClient := tc.RequesterClient()
 	approverClient := tc.ApproverClient()
 
-	userA := "user-a-isolation@example.com"
-	userB := "user-b-isolation@example.com"
+	// Use DevAlpha as user-A and DevBeta as user-B for isolation testing
+	userA := helpers.TestUsers.DevAlpha
+	userB := helpers.TestUsers.DevBeta
+	userAClient := tc.ClientForUser(userA)
 
-	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
+	session, err := userAClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
-		User:    userA,
+		User:    userA.Email,
 		Group:   escalation.Spec.EscalatedGroup,
 		Reason:  "SEC-003: User isolation test",
 	}, helpers.WaitForStateTimeout)
@@ -220,7 +221,7 @@ func TestDifferentUserSameGroup(t *testing.T) {
 		telekomv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
 	t.Run("VerifyUserBDeniedSameGroup", func(t *testing.T) {
-		sar := createSecuritySAR(userB, escalation.Spec.EscalatedGroup)
+		sar := createSecuritySAR(userB.Email, escalation.Spec.EscalatedGroup)
 		sarResp, statusCode, err := helpers.SendSARToWebhook(t, ctx, sar, clusterName)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, statusCode)
@@ -266,7 +267,7 @@ func TestSameUserDifferentGroup(t *testing.T) {
 	apiClient := tc.RequesterClient()
 	approverClient := tc.ApproverClient()
 
-	user := "group-isolation-user@example.com"
+	user := helpers.TestUsers.Requester.Email
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,

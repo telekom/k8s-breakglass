@@ -52,10 +52,10 @@ func TestDebugSessionParticipantManagement(t *testing.T) {
 	t.Run("ParticipantStructure", func(t *testing.T) {
 		// Test that DebugSessionParticipant can hold required fields
 		participant := telekomv1alpha1.DebugSessionParticipant{
-			User: "test@example.com",
+			User: helpers.TestUsers.Requester.Email,
 			Role: telekomv1alpha1.ParticipantRoleParticipant,
 		}
-		assert.Equal(t, "test@example.com", participant.User)
+		assert.Equal(t, helpers.TestUsers.Requester.Email, participant.User)
 		assert.Equal(t, telekomv1alpha1.ParticipantRoleParticipant, participant.Role)
 		t.Logf("PARTICIPANT-001: Participant structure correctly holds user and role")
 	})
@@ -65,8 +65,8 @@ func TestDebugSessionParticipantManagement(t *testing.T) {
 		spec := telekomv1alpha1.DebugSessionSpec{
 			Cluster:             "test-cluster",
 			TemplateRef:         "test-template",
-			RequestedBy:         "owner@example.com",
-			InvitedParticipants: []string{"user1@example.com", "user2@example.com"},
+			RequestedBy:         helpers.TestUsers.Requester.Email,
+			InvitedParticipants: []string{helpers.TestUsers.DevAlpha.Email, helpers.TestUsers.DevBeta.Email},
 		}
 		assert.Len(t, spec.InvitedParticipants, 2)
 		t.Logf("PARTICIPANT-002: DebugSessionSpec supports invitedParticipants list")
@@ -77,8 +77,8 @@ func TestDebugSessionParticipantManagement(t *testing.T) {
 		status := telekomv1alpha1.DebugSessionStatus{
 			State: telekomv1alpha1.DebugSessionStateActive,
 			Participants: []telekomv1alpha1.DebugSessionParticipant{
-				{User: "owner@example.com", Role: telekomv1alpha1.ParticipantRoleOwner},
-				{User: "viewer@example.com", Role: telekomv1alpha1.ParticipantRoleViewer},
+				{User: helpers.TestUsers.Requester.Email, Role: telekomv1alpha1.ParticipantRoleOwner},
+				{User: helpers.TestUsers.Limited.Email, Role: telekomv1alpha1.ParticipantRoleViewer},
 			},
 		}
 		assert.Len(t, status.Participants, 2)
@@ -164,9 +164,9 @@ func TestDebugSessionOwnerPermissions(t *testing.T) {
 		spec := telekomv1alpha1.DebugSessionSpec{
 			Cluster:     "test-cluster",
 			TemplateRef: "test-template",
-			RequestedBy: "owner@example.com",
+			RequestedBy: helpers.TestUsers.Requester.Email,
 		}
-		assert.Equal(t, "owner@example.com", spec.RequestedBy)
+		assert.Equal(t, helpers.TestUsers.Requester.Email, spec.RequestedBy)
 		t.Logf("OWNER-005: RequestedBy field identifies the session owner")
 	})
 }

@@ -104,6 +104,85 @@ type DebugPodTemplateAPIResponse struct {
 	Containers  int    `json:"containers"`
 }
 
+// TemplateClustersResponse represents the response from GET /templates/:name/clusters
+type TemplateClustersResponse struct {
+	TemplateName        string                   `json:"templateName"`
+	TemplateDisplayName string                   `json:"templateDisplayName"`
+	Clusters            []AvailableClusterDetail `json:"clusters"`
+}
+
+// AvailableClusterDetail represents detailed cluster info for template selection
+type AvailableClusterDetail struct {
+	Name                    string                    `json:"name"`
+	DisplayName             string                    `json:"displayName,omitempty"`
+	Environment             string                    `json:"environment,omitempty"`
+	Location                string                    `json:"location,omitempty"`
+	BindingRef              *BindingReference         `json:"bindingRef,omitempty"`
+	Constraints             *SessionConstraints       `json:"constraints,omitempty"`
+	SchedulingOptions       *SchedulingOptionsResp    `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints    *NamespaceConstraintsResp `json:"namespaceConstraints,omitempty"`
+	Impersonation           *ImpersonationInfo        `json:"impersonation,omitempty"`
+	Approval                *ApprovalInfo             `json:"approval,omitempty"`
+	Status                  *ClusterStatusInfo        `json:"status,omitempty"`
+	RequiredAuxResourceCats []string                  `json:"requiredAuxiliaryResourceCategories,omitempty"`
+}
+
+// BindingReference references the cluster binding providing access
+type BindingReference struct {
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+	DisplayName string `json:"displayName,omitempty"`
+}
+
+// SessionConstraints from the template/binding
+type SessionConstraints struct {
+	MaxDuration     string `json:"maxDuration,omitempty"`
+	DefaultDuration string `json:"defaultDuration,omitempty"`
+	AllowRenewal    bool   `json:"allowRenewal,omitempty"`
+	MaxRenewals     int    `json:"maxRenewals,omitempty"`
+}
+
+// SchedulingOptionsResp for scheduling selections
+type SchedulingOptionsResp struct {
+	Required bool                    `json:"required"`
+	Options  []SchedulingOptionEntry `json:"options,omitempty"`
+}
+
+// SchedulingOptionEntry single scheduling option
+type SchedulingOptionEntry struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+}
+
+// NamespaceConstraintsResp for namespace selections
+type NamespaceConstraintsResp struct {
+	DefaultNamespace   string   `json:"defaultNamespace,omitempty"`
+	AllowUserNamespace bool     `json:"allowUserNamespace"`
+	AllowedPatterns    []string `json:"allowedPatterns,omitempty"`
+	DeniedPatterns     []string `json:"deniedPatterns,omitempty"`
+}
+
+// ImpersonationInfo about service account impersonation
+type ImpersonationInfo struct {
+	Enabled           bool   `json:"enabled"`
+	ServiceAccountRef string `json:"serviceAccountRef,omitempty"`
+}
+
+// ApprovalInfo about approval requirements
+type ApprovalInfo struct {
+	Required       bool     `json:"required"`
+	ApproverGroups []string `json:"approverGroups,omitempty"`
+}
+
+// ClusterStatusInfo about cluster health
+type ClusterStatusInfo struct {
+	Healthy     bool   `json:"healthy"`
+	LastChecked string `json:"lastChecked,omitempty"`
+	Message     string `json:"message,omitempty"`
+}
+
 // DebugSessionAPIClient provides methods to interact with the Debug Session REST API
 type DebugSessionAPIClient struct {
 	BaseURL    string
@@ -376,6 +455,33 @@ func (c *DebugSessionAPIClient) ListPodTemplates(ctx context.Context, t *testing
 	}
 
 	return wrapped.Templates, resp.StatusCode, nil
+}
+
+// GetTemplateClusters retrieves available clusters for a template with resolved constraints
+func (c *DebugSessionAPIClient) GetTemplateClusters(ctx context.Context, t *testing.T, templateName string) (*TemplateClustersResponse, int, error) {
+	path := fmt.Sprintf("%s/templates/%s/clusters", debugSessionsBasePath, templateName)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get template clusters: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	if t != nil {
+		t.Logf("GetTemplateClusters: templateName=%s, status=%d", templateName, resp.StatusCode)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("failed to get template clusters: status=%d, body=%s", resp.StatusCode, string(body))
+	}
+
+	var result TemplateClustersResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("failed to parse template clusters response: %w", err)
+	}
+
+	return &result, resp.StatusCode, nil
 }
 
 // =============================================================================
@@ -915,6 +1021,264 @@ func TestDebugSessionAPIUnauthorized(t *testing.T) {
 			Cluster:     "test",
 		}
 		_, status, _ := client.CreateDebugSession(ctx, t, req)
+		assert.Equal(t, http.StatusUnauthorized, status)
+	})
+}
+
+// TestDebugSessionAPITemplateClusters tests the GET /api/debugSessions/templates/:name/clusters endpoint
+func TestDebugSessionAPITemplateClusters(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	namespace := helpers.GetTestNamespace()
+
+	// Get token for authenticated requests
+	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
+	token := tc.OIDCProvider().GetToken(t, ctx, helpers.TestUsers.DebugSessionRequester.Username, helpers.TestUsers.DebugSessionRequester.Password)
+	require.NotEmpty(t, token, "Failed to get auth token")
+
+	client := NewDebugSessionAPIClient(token)
+
+	// Create a test template
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-template-clusters-test",
+			Labels: map[string]string{
+				"e2e-test": "template-clusters",
+			},
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Template Clusters Test",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: "basic-debug",
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Clusters: []string{helpers.GetTestClusterName()},
+				Groups:   []string{"*"},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+			},
+		},
+	}
+
+	// Clean up any existing template
+	_ = cli.Delete(ctx, template)
+	time.Sleep(time.Second)
+
+	err := cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create test template")
+	defer func() {
+		_ = cli.Delete(ctx, template)
+	}()
+
+	// Create a cluster binding for this template with comprehensive settings
+	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "e2e-clusters-test-binding",
+			Namespace: namespace,
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &telekomv1alpha1.TemplateReference{
+				Name: template.Name,
+			},
+			Clusters:    []string{helpers.GetTestClusterName()},
+			DisplayName: "E2E Test Cluster Access",
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "2h",
+				DefaultDuration: "30m",
+			},
+			// Add namespace constraints to test namespace editability
+			NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+				DefaultNamespace:   "default",
+				AllowUserNamespace: true,
+				AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+					Patterns: []string{"debug-*", "test-*"},
+				},
+			},
+			// Add impersonation config
+			Impersonation: &telekomv1alpha1.ImpersonationConfig{
+				ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+					Name:      "debug-sa",
+					Namespace: "system",
+				},
+			},
+			// Add approvers to test approval flow
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				Groups: []string{"approvers-group"},
+			},
+			// Add required auxiliary resource categories
+			RequiredAuxiliaryResourceCategories: []string{"logging", "monitoring"},
+		},
+	}
+
+	// Ensure namespace exists
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: namespace,
+		},
+	}
+	_ = cli.Create(ctx, ns)
+
+	// Clean up any existing binding
+	_ = cli.Delete(ctx, binding)
+	time.Sleep(time.Second)
+
+	err = cli.Create(ctx, binding)
+	require.NoError(t, err, "Failed to create test binding")
+	defer func() {
+		_ = cli.Delete(ctx, binding)
+	}()
+
+	// Wait for binding status to be updated
+	// Note: ResolvedClusters may be empty if ClusterConfig doesn't exist for the cluster,
+	// so we check for either templates or clusters being resolved
+	require.Eventually(t, func() bool {
+		var updatedBinding telekomv1alpha1.DebugSessionClusterBinding
+		if err := cli.Get(ctx, types.NamespacedName{Name: binding.Name, Namespace: namespace}, &updatedBinding); err != nil {
+			return false
+		}
+		return len(updatedBinding.Status.ResolvedTemplates) > 0 ||
+			len(updatedBinding.Status.ResolvedClusters) > 0
+	}, 30*time.Second, 2*time.Second, "Binding status should be updated")
+
+	t.Run("GetTemplateClustersSuccess", func(t *testing.T) {
+		result, status, err := client.GetTemplateClusters(ctx, t, template.Name)
+		require.NoError(t, err, "Should successfully get template clusters")
+		assert.Equal(t, http.StatusOK, status)
+
+		assert.Equal(t, template.Name, result.TemplateName)
+		assert.Equal(t, template.Spec.DisplayName, result.TemplateDisplayName)
+		assert.NotEmpty(t, result.Clusters, "Should have at least one cluster")
+
+		// Find our test cluster
+		var foundCluster *AvailableClusterDetail
+		for i := range result.Clusters {
+			if result.Clusters[i].Name == helpers.GetTestClusterName() {
+				foundCluster = &result.Clusters[i]
+				break
+			}
+		}
+		require.NotNil(t, foundCluster, "Should find test cluster in response")
+
+		// Verify cluster has binding reference
+		require.NotNil(t, foundCluster.BindingRef, "Should have binding reference")
+		assert.Equal(t, binding.Name, foundCluster.BindingRef.Name)
+		assert.Equal(t, namespace, foundCluster.BindingRef.Namespace)
+
+		// Verify constraints are resolved from binding
+		require.NotNil(t, foundCluster.Constraints, "Should have constraints")
+		t.Logf("Cluster constraints: maxDuration=%s, defaultDuration=%s",
+			foundCluster.Constraints.MaxDuration, foundCluster.Constraints.DefaultDuration)
+		// Binding overrides template: 2h max instead of 4h, 30m default instead of 1h
+		assert.Equal(t, "2h", foundCluster.Constraints.MaxDuration)
+		assert.Equal(t, "30m", foundCluster.Constraints.DefaultDuration)
+	})
+
+	t.Run("GetTemplateClustersWithNamespaceConstraints", func(t *testing.T) {
+		result, status, err := client.GetTemplateClusters(ctx, t, template.Name)
+		require.NoError(t, err, "Should successfully get template clusters")
+		assert.Equal(t, http.StatusOK, status)
+
+		// Find our test cluster
+		var foundCluster *AvailableClusterDetail
+		for i := range result.Clusters {
+			if result.Clusters[i].Name == helpers.GetTestClusterName() {
+				foundCluster = &result.Clusters[i]
+				break
+			}
+		}
+		require.NotNil(t, foundCluster, "Should find test cluster in response")
+
+		// Verify namespace constraints are populated from binding
+		require.NotNil(t, foundCluster.NamespaceConstraints, "Should have namespace constraints from binding")
+		assert.Equal(t, "default", foundCluster.NamespaceConstraints.DefaultNamespace)
+		assert.True(t, foundCluster.NamespaceConstraints.AllowUserNamespace, "AllowUserNamespace should be true")
+		assert.Contains(t, foundCluster.NamespaceConstraints.AllowedPatterns, "debug-*")
+		assert.Contains(t, foundCluster.NamespaceConstraints.AllowedPatterns, "test-*")
+	})
+
+	t.Run("GetTemplateClustersWithImpersonation", func(t *testing.T) {
+		result, status, err := client.GetTemplateClusters(ctx, t, template.Name)
+		require.NoError(t, err, "Should successfully get template clusters")
+		assert.Equal(t, http.StatusOK, status)
+
+		// Find our test cluster
+		var foundCluster *AvailableClusterDetail
+		for i := range result.Clusters {
+			if result.Clusters[i].Name == helpers.GetTestClusterName() {
+				foundCluster = &result.Clusters[i]
+				break
+			}
+		}
+		require.NotNil(t, foundCluster, "Should find test cluster in response")
+
+		// Verify impersonation is populated from binding
+		require.NotNil(t, foundCluster.Impersonation, "Should have impersonation config from binding")
+		assert.True(t, foundCluster.Impersonation.Enabled, "Impersonation should be enabled")
+		t.Logf("Impersonation: serviceAccountRef=%s", foundCluster.Impersonation.ServiceAccountRef)
+	})
+
+	t.Run("GetTemplateClustersWithApproval", func(t *testing.T) {
+		result, status, err := client.GetTemplateClusters(ctx, t, template.Name)
+		require.NoError(t, err, "Should successfully get template clusters")
+		assert.Equal(t, http.StatusOK, status)
+
+		// Find our test cluster
+		var foundCluster *AvailableClusterDetail
+		for i := range result.Clusters {
+			if result.Clusters[i].Name == helpers.GetTestClusterName() {
+				foundCluster = &result.Clusters[i]
+				break
+			}
+		}
+		require.NotNil(t, foundCluster, "Should find test cluster in response")
+
+		// Verify approval is populated from binding
+		require.NotNil(t, foundCluster.Approval, "Should have approval info from binding")
+		assert.True(t, foundCluster.Approval.Required, "Approval should be required")
+		assert.Contains(t, foundCluster.Approval.ApproverGroups, "approvers-group")
+	})
+
+	t.Run("GetTemplateClustersWithRequiredAuxResources", func(t *testing.T) {
+		result, status, err := client.GetTemplateClusters(ctx, t, template.Name)
+		require.NoError(t, err, "Should successfully get template clusters")
+		assert.Equal(t, http.StatusOK, status)
+
+		// Find our test cluster
+		var foundCluster *AvailableClusterDetail
+		for i := range result.Clusters {
+			if result.Clusters[i].Name == helpers.GetTestClusterName() {
+				foundCluster = &result.Clusters[i]
+				break
+			}
+		}
+		require.NotNil(t, foundCluster, "Should find test cluster in response")
+
+		// Verify required auxiliary resource categories from binding
+		assert.NotEmpty(t, foundCluster.RequiredAuxResourceCats, "Should have required auxiliary resource categories")
+		assert.Contains(t, foundCluster.RequiredAuxResourceCats, "logging")
+		assert.Contains(t, foundCluster.RequiredAuxResourceCats, "monitoring")
+	})
+
+	t.Run("GetTemplateClustersNotFound", func(t *testing.T) {
+		_, status, err := client.GetTemplateClusters(ctx, t, "nonexistent-template")
+		require.Error(t, err, "Should fail for nonexistent template")
+		assert.Equal(t, http.StatusNotFound, status)
+	})
+
+	t.Run("GetTemplateClustersWithoutAuth", func(t *testing.T) {
+		unauthClient := NewDebugSessionAPIClient("")
+		_, status, err := unauthClient.GetTemplateClusters(ctx, t, template.Name)
+		require.Error(t, err, "Should fail without auth")
 		assert.Equal(t, http.StatusUnauthorized, status)
 	})
 }

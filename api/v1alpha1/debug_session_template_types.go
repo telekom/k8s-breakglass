@@ -143,6 +143,16 @@ type DebugSessionTemplateSpec struct {
 	// +kubebuilder:default="breakglass-debug"
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 
+	// namespaceConstraints defines where debug pods can be deployed.
+	// Allows user choice within administrator-defined boundaries.
+	// +optional
+	NamespaceConstraints *NamespaceConstraints `json:"namespaceConstraints,omitempty"`
+
+	// impersonation controls which identity is used to deploy debug resources.
+	// Enables least-privilege deployment using a constrained ServiceAccount.
+	// +optional
+	Impersonation *ImpersonationConfig `json:"impersonation,omitempty"`
+
 	// failMode specifies behavior when namespace doesn't exist or deployment fails.
 	// "closed" (default) denies the session, "open" allows without deployed pods.
 	// +optional
@@ -157,6 +167,21 @@ type DebugSessionTemplateSpec struct {
 	// audit configures audit logging for debug sessions.
 	// +optional
 	Audit *DebugSessionAuditConfig `json:"audit,omitempty"`
+
+	// auxiliaryResources defines additional Kubernetes resources to deploy with the debug session.
+	// These resources are created/deleted alongside the debug pods.
+	// +optional
+	AuxiliaryResources []AuxiliaryResource `json:"auxiliaryResources,omitempty"`
+
+	// auxiliaryResourceDefaults sets default enabled/disabled state for auxiliary resource categories.
+	// Key is the category name, value is whether it's enabled by default.
+	// +optional
+	AuxiliaryResourceDefaults map[string]bool `json:"auxiliaryResourceDefaults,omitempty"`
+
+	// requiredAuxiliaryResourceCategories lists categories that MUST be enabled.
+	// These cannot be disabled by bindings or users.
+	// +optional
+	RequiredAuxiliaryResourceCategories []string `json:"requiredAuxiliaryResourceCategories,omitempty"`
 }
 
 // DebugPodTemplateReference references a DebugPodTemplate.
@@ -344,6 +369,11 @@ type DebugSessionAllowed struct {
 	// Supports glob patterns.
 	// +optional
 	Clusters []string `json:"clusters,omitempty"`
+
+	// clusterSelector allows selecting clusters by labels.
+	// Matched clusters are added to the allowed list (OR logic with clusters field).
+	// +optional
+	ClusterSelector *metav1.LabelSelector `json:"clusterSelector,omitempty"`
 }
 
 // DebugSessionApprovers configures the approval workflow.
@@ -503,6 +533,65 @@ type SchedulingOption struct {
 	// allowedUsers restricts this option to specific users.
 	// +optional
 	AllowedUsers []string `json:"allowedUsers,omitempty"`
+}
+
+// NamespaceConstraints defines where debug pods can be deployed.
+// This allows user choice within administrator-defined boundaries.
+type NamespaceConstraints struct {
+	// allowedNamespaces specifies namespaces where debug pods can be deployed.
+	// Uses NamespaceFilter for pattern and label-based selection.
+	// If empty, only defaultNamespace is allowed.
+	// +optional
+	AllowedNamespaces *NamespaceFilter `json:"allowedNamespaces,omitempty"`
+
+	// deniedNamespaces specifies namespaces that are never allowed.
+	// Evaluated AFTER allowedNamespaces (deny takes precedence).
+	// +optional
+	DeniedNamespaces *NamespaceFilter `json:"deniedNamespaces,omitempty"`
+
+	// defaultNamespace is used when user doesn't specify a namespace.
+	// Must be within allowedNamespaces if specified.
+	// +optional
+	// +kubebuilder:default="breakglass-debug"
+	DefaultNamespace string `json:"defaultNamespace,omitempty"`
+
+	// allowUserNamespace allows users to request a specific namespace.
+	// If false, only defaultNamespace is used.
+	// +optional
+	// +kubebuilder:default=false
+	AllowUserNamespace bool `json:"allowUserNamespace,omitempty"`
+
+	// createIfNotExists creates the target namespace if it doesn't exist.
+	// Requires appropriate RBAC permissions.
+	// +optional
+	// +kubebuilder:default=false
+	CreateIfNotExists bool `json:"createIfNotExists,omitempty"`
+
+	// namespaceLabels are labels applied to created namespaces.
+	// Only used when createIfNotExists=true.
+	// +optional
+	NamespaceLabels map[string]string `json:"namespaceLabels,omitempty"`
+}
+
+// ImpersonationConfig controls which identity is used to deploy debug resources.
+// This enables least-privilege deployment where the controller impersonates
+// a constrained ServiceAccount rather than using its own permissions.
+type ImpersonationConfig struct {
+	// serviceAccountRef references an existing ServiceAccount to impersonate.
+	// The breakglass controller must have impersonation permissions for this SA.
+	// +optional
+	ServiceAccountRef *ServiceAccountReference `json:"serviceAccountRef,omitempty"`
+}
+
+// ServiceAccountReference references a ServiceAccount in a specific namespace.
+type ServiceAccountReference struct {
+	// name is the ServiceAccount name.
+	// +required
+	Name string `json:"name"`
+
+	// namespace is the ServiceAccount namespace.
+	// +required
+	Namespace string `json:"namespace"`
 }
 
 // TerminalSharingConfig configures collaborative terminal sessions.
@@ -684,6 +773,21 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 	// Validate schedulingOptions if specified
 	if template.Spec.SchedulingOptions != nil {
 		allErrs = append(allErrs, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
+	}
+
+	// Validate impersonation if specified
+	if template.Spec.Impersonation != nil {
+		allErrs = append(allErrs, validateImpersonationConfig(template.Spec.Impersonation, specPath.Child("impersonation"))...)
+	}
+
+	// Validate namespaceConstraints if specified
+	if template.Spec.NamespaceConstraints != nil {
+		allErrs = append(allErrs, validateNamespaceConstraints(template.Spec.NamespaceConstraints, specPath.Child("namespaceConstraints"))...)
+	}
+
+	// Validate auxiliary resources if specified
+	if len(template.Spec.AuxiliaryResources) > 0 {
+		allErrs = append(allErrs, validateAuxiliaryResources(template.Spec.AuxiliaryResources, specPath.Child("auxiliaryResources"))...)
 	}
 
 	return allErrs

@@ -366,5 +366,6 @@ func TestTryExtractUserIdentity(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Empty(t, identity)
+		assert.Empty(t, req.Header.Get("Authorization"), "Authorization header should be removed")
 	})
 }

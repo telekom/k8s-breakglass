@@ -15,6 +15,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// DefaultCleanupOperationTimeout is the timeout for cleanup operations to ensure
+	// shutdown is predictable and we don't accumulate slow API calls
+	DefaultCleanupOperationTimeout = 2 * time.Minute
+)
+
 type CleanupRoutine struct {
 	Log           *zap.SugaredLogger
 	Manager       *SessionManager
@@ -126,7 +132,7 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		cleanupCtx = context.Background()
 	}
 	// Bound cleanup operations so shutdown is predictable and we don't accumulate slow API calls.
-	opCtx, cancel := context.WithTimeout(cleanupCtx, 2*time.Minute)
+	opCtx, cancel := context.WithTimeout(cleanupCtx, DefaultCleanupOperationTimeout)
 	defer cancel()
 
 	cr.markCleanupExpiredSession(opCtx)
@@ -150,6 +156,15 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 
 	now := time.Now()
 	for _, ses := range sessions {
+		// Check for context cancellation to allow graceful shutdown
+		select {
+		case <-ctx.Done():
+			routine.Log.Infow("Session cleanup interrupted by context cancellation", "processed", deletedCount)
+			return
+		default:
+			// continue processing
+		}
+
 		routine.Log.Debugw("Checking session for expiration", system.NamespacedFields(ses.Name, ses.Namespace)...)
 		routine.Log.Debugw("Checking session retainedUntil", "retainedUntil", ses.Status.RetainedUntil.Time)
 		// Delete sessions that are past their retained-until timestamp
@@ -202,6 +217,16 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 
 	now := time.Now()
 	for _, ds := range dsl.Items {
+		// Check for context cancellation to allow graceful shutdown
+		select {
+		case <-ctx.Done():
+			routine.Log.Infow("Debug session cleanup interrupted by context cancellation",
+				"expired", expiredCount, "deleted", deletedCount)
+			return
+		default:
+			// continue processing
+		}
+
 		routine.Log.Debugw("Checking debug session for expiration",
 			system.NamespacedFields(ds.Name, ds.Namespace)...)
 

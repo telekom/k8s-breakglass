@@ -12,10 +12,12 @@ import (
 
 func TestGetKeycloakInternalURL(t *testing.T) {
 	// Save original env vars and restore after test
+	origInternalURL := os.Getenv("KEYCLOAK_INTERNAL_URL")
 	origIssuerURL := os.Getenv("KEYCLOAK_ISSUER_URL")
 	origIssuerHost := os.Getenv("KEYCLOAK_ISSUER_HOST")
 	origServiceHostname := os.Getenv("KEYCLOAK_SERVICE_HOSTNAME")
 	defer func() {
+		os.Setenv("KEYCLOAK_INTERNAL_URL", origInternalURL)
 		os.Setenv("KEYCLOAK_ISSUER_URL", origIssuerURL)
 		os.Setenv("KEYCLOAK_ISSUER_HOST", origIssuerHost)
 		os.Setenv("KEYCLOAK_SERVICE_HOSTNAME", origServiceHostname)
@@ -64,7 +66,8 @@ func TestGetKeycloakInternalURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear all env vars first
+			// Clear all env vars first (including KEYCLOAK_INTERNAL_URL which takes priority)
+			os.Unsetenv("KEYCLOAK_INTERNAL_URL")
 			os.Unsetenv("KEYCLOAK_ISSUER_URL")
 			os.Unsetenv("KEYCLOAK_ISSUER_HOST")
 			os.Unsetenv("KEYCLOAK_SERVICE_HOSTNAME")

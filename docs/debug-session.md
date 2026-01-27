@@ -372,6 +372,371 @@ schedulingOptions:
 4. Selected option's `schedulingConstraints` (additive)
 5. User's `nodeSelector` (if allowed by template)
 
+## Namespace Constraints
+
+Namespace constraints control where debug pods can be deployed. They allow administrators to:
+- Define allowed and denied namespace patterns
+- Set a default namespace for debug sessions
+- Allow or prohibit user-specified namespaces
+- Automatically create namespaces if they don't exist
+
+### Configuration
+
+```yaml
+namespaceConstraints:
+  # Default namespace when user doesn't specify one
+  defaultNamespace: "breakglass-debug"
+  
+  # Allow users to request a specific namespace
+  allowUserNamespace: true
+  
+  # Patterns for allowed namespaces (glob-style)
+  allowedNamespaces:
+    patterns:
+      - "debug-*"
+      - "troubleshoot-*"
+    # Or use label selectors (Kubernetes label selector semantics)
+    selectorTerms:
+      # matchLabels for simple key=value matching
+      - matchLabels:
+          debug-enabled: "true"
+      # matchExpressions for advanced matching
+      - matchExpressions:
+          - key: environment
+            operator: In
+            values: ["dev", "staging", "test"]
+          - key: restricted
+            operator: DoesNotExist
+  
+  # Patterns for denied namespaces (evaluated after allowed)
+  deniedNamespaces:
+    patterns:
+      - "kube-*"
+      - "default"
+      - "production-*"
+    selectorTerms:
+      - matchLabels:
+          protected: "true"
+      - matchExpressions:
+          - key: compliance
+            operator: In
+            values: ["pci-dss", "hipaa"]
+  
+  # Create namespace if it doesn't exist
+  createIfNotExists: false
+  
+  # Labels to apply when creating namespaces
+  namespaceLabels:
+    managed-by: breakglass
+    purpose: debug-session
+```
+
+### Label Selector Semantics
+
+The `selectorTerms` field uses standard Kubernetes label selector semantics:
+
+- **Multiple `selectorTerms`**: Combined with OR logic (namespace matches if ANY term matches)
+- **Within a single term**: `matchLabels` and `matchExpressions` are combined with AND logic
+- **Supported operators**: `In`, `NotIn`, `Exists`, `DoesNotExist`
+
+Example: Allow debugging in namespaces that are EITHER:
+- Labeled with `debug-enabled: true`, OR
+- In non-production environments (dev/staging/test)
+
+```yaml
+selectorTerms:
+  # Term 1: explicit opt-in
+  - matchLabels:
+      debug-enabled: "true"
+  # Term 2: environment-based (OR with Term 1)
+  - matchExpressions:
+      - key: environment
+        operator: In
+        values: ["dev", "staging", "test"]
+```
+
+### Behavior
+
+When a user creates a debug session:
+
+1. **No namespace specified**: Uses `defaultNamespace` from constraints
+2. **Namespace specified + `allowUserNamespace: false`**: Request rejected
+3. **Namespace specified + `allowUserNamespace: true`**: 
+   - Validated against `allowedNamespaces` patterns/selectors
+   - Validated against `deniedNamespaces` (deny takes precedence)
+4. **Namespace doesn't exist**: 
+   - `createIfNotExists: true`: Creates namespace with `namespaceLabels`
+   - `createIfNotExists: false`: Session fails or uses fail-open mode
+
+### Example: Team-Isolated Debug Namespaces
+
+```yaml
+spec:
+  namespaceConstraints:
+    defaultNamespace: "team-sre-debug"
+    allowUserNamespace: true
+    allowedNamespaces:
+      patterns:
+        - "team-sre-*"
+        - "shared-debug"
+      selectorTerms:
+        - matchLabels:
+            team: sre
+        - matchExpressions:
+            - key: debug-level
+              operator: In
+              values: ["standard", "elevated"]
+    deniedNamespaces:
+      patterns:
+        - "*-prod"
+        - "*-production"
+      selectorTerms:
+        - matchLabels:
+            production: "true"
+    createIfNotExists: true
+    namespaceLabels:
+      team: sre
+      purpose: debug
+```
+
+## Impersonation
+
+Impersonation allows the breakglass controller to deploy debug resources using a constrained ServiceAccount instead of its own permissions. This enables least-privilege deployment:
+
+### Using an Existing ServiceAccount
+
+Reference a pre-existing ServiceAccount that the controller will impersonate:
+
+```yaml
+impersonation:
+  serviceAccountRef:
+    name: debug-deployer
+    namespace: breakglass-system
+```
+
+**Requirements:**
+- The referenced ServiceAccount must exist
+- The breakglass controller needs impersonation permissions for this SA
+- RBAC for impersonation:
+  ```yaml
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: breakglass-impersonator
+  rules:
+    - apiGroups: [""]
+      resources: ["serviceaccounts"]
+      verbs: ["impersonate"]
+      resourceNames: ["debug-deployer"]
+  ```
+
+### When to Use Impersonation
+
+| Scenario | Approach |
+|----------|----------|
+| Multi-tenant clusters | Pre-configured SA with tenant-scoped permissions |
+| Audit requirements | Existing SA with dedicated identity |
+| Least-privilege | SA with minimal permissions |
+| Simple setup | No impersonation (uses controller's SA) |
+
+## Auxiliary Resources
+
+Auxiliary resources are additional Kubernetes objects deployed alongside debug pods. They provide supporting infrastructure like network isolation, RBAC, configuration, and monitoring.
+
+### Configuration
+
+Define auxiliary resources in your `DebugSessionTemplate`:
+
+```yaml
+spec:
+  auxiliaryResources:
+    - name: debug-network-policy
+      category: network-policy
+      description: "Restricts debug pod network access"
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: "debug-{{ .Session.Name }}-isolation"
+          namespace: "{{ .Session.Spec.TargetNamespace }}"
+        spec:
+          podSelector:
+            matchLabels:
+              breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+          policyTypes:
+            - Ingress
+            - Egress
+          egress:
+            - to:
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: kube-dns
+              ports:
+                - protocol: UDP
+                  port: 53
+```
+
+### Resource Categories
+
+Common categories for organizing auxiliary resources:
+
+| Category | Description | Examples |
+|----------|-------------|----------|
+| `network-policy` | Network isolation | NetworkPolicy, CiliumNetworkPolicy |
+| `rbac` | Access control | Role, RoleBinding, ServiceAccount |
+| `configmap` | Configuration data | ConfigMap, Secret |
+| `monitoring` | Observability | ServiceMonitor, PodMonitor |
+| `custom` | Other resources | Any Kubernetes resource |
+
+### Template Variables
+
+Auxiliary resource templates support Go templating with [Sprig functions](https://masterminds.github.io/sprig/). Available variables:
+
+| Variable | Description |
+|----------|-------------|
+| `.Session.Name` | Debug session name |
+| `.Session.Namespace` | Session's namespace |
+| `.Session.Spec.Cluster` | Target cluster name |
+| `.Session.Spec.User` | Requesting user |
+| `.Session.Spec.TargetNamespace` | Target namespace for debug pods |
+| `.Session.Spec.Reason` | Session request reason |
+| `.Template.Name` | Template name |
+
+### Lifecycle
+
+1. **Creation**: Auxiliary resources are created BEFORE debug pods start (when `createBefore: true`, the default)
+2. **Cleanup**: Resources are deleted when the session ends (when `deleteAfter: true`, the default)
+
+### Failure Policies
+
+Control behavior when auxiliary resource creation fails:
+
+```yaml
+auxiliaryResources:
+  - name: optional-monitoring
+    category: monitoring
+    failurePolicy: ignore  # Continue if creation fails
+    template: ...
+```
+
+| Policy | Behavior |
+|--------|----------|
+| `fail` | Abort session if resource creation fails (default) |
+| `ignore` | Continue session regardless of failure |
+| `warn` | Log warning and continue |
+
+### Cluster Binding Overrides
+
+Cluster bindings can require specific auxiliary resource categories:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: team-production
+spec:
+  templateRef:
+    name: standard-debug
+  clusters:
+    - production-eu
+  requiredAuxiliaryResourceCategories:
+    - network-policy  # Always require network isolation
+    - rbac            # Always require RBAC setup
+```
+
+## Cluster Bindings
+
+`DebugSessionClusterBinding` resources delegate access to debug session templates for specific clusters and teams. They enable:
+
+- **Team-scoped access**: Restrict which teams can use a template on which clusters
+- **Constraint overrides**: Customize durations, namespaces, and approval requirements per cluster
+- **Impersonation**: Deploy debug pods using a constrained ServiceAccount
+
+### Basic Binding
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: sre-production-access
+  namespace: breakglass
+spec:
+  templateRef:
+    name: network-debug
+  clusters:
+    - production-eu
+    - production-us
+  displayName: "SRE Production Debug"
+  allowed:
+    groups:
+      - sre-team
+      - platform-oncall
+```
+
+### Constraint Overrides
+
+Override template constraints for specific clusters:
+
+```yaml
+spec:
+  constraints:
+    maxDuration: "2h"      # Stricter than template
+    defaultDuration: "30m"
+    maxRenewals: 1
+  namespaceConstraints:
+    allowedPatterns:
+      - "breakglass-*"
+    deniedPatterns:
+      - "kube-*"
+```
+
+### Approval Overrides
+
+Configure cluster-specific approval requirements:
+
+```yaml
+spec:
+  approvers:
+    groups:
+      - security-leads     # Different approvers per cluster
+  autoApprove: false       # Require manual approval
+```
+
+### Template Clusters API
+
+The two-step session creation flow uses the template clusters API to show users available clusters with resolved constraints:
+
+```http
+GET /api/debugSessions/templates/:name/clusters
+```
+
+Response includes per-cluster details:
+
+```json
+{
+  "templateName": "network-debug",
+  "templateDisplayName": "Network Debug Access",
+  "clusters": [
+    {
+      "name": "production-eu",
+      "displayName": "Production EU",
+      "bindingRef": {
+        "name": "sre-production",
+        "namespace": "breakglass"
+      },
+      "constraints": {
+        "maxDuration": "2h",
+        "defaultDuration": "30m"
+      },
+      "approval": {
+        "required": true,
+        "approverGroups": ["security-leads"]
+      }
+    }
+  ]
+}
+```
+
 ## Kubectl Debug Configuration
 
 ### Ephemeral Containers

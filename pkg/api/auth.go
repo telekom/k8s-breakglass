@@ -27,6 +27,18 @@ const (
 	maxJWKSCacheSize = 100
 )
 
+var allowedJWTAlgs = []string{
+	jwt.SigningMethodRS256.Alg(),
+	jwt.SigningMethodRS384.Alg(),
+	jwt.SigningMethodRS512.Alg(),
+	jwt.SigningMethodPS256.Alg(),
+	jwt.SigningMethodPS384.Alg(),
+	jwt.SigningMethodPS512.Alg(),
+	jwt.SigningMethodES256.Alg(),
+	jwt.SigningMethodES384.Alg(),
+	jwt.SigningMethodES512.Alg(),
+}
+
 // jwksCacheEntry holds the JWKS and its position in the LRU list
 type jwksCacheEntry struct {
 	issuer string
@@ -108,17 +120,17 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 			return nil, fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
 		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
-		options.Client = &http.Client{Transport: transport}
+		options.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
 		pool, err := buildCertPoolFromPEM(idpCfg.Keycloak.CertificateAuthority)
 		if err != nil {
 			return nil, fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
 		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
-		options.Client = &http.Client{Transport: transport}
+		options.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
 		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-		options.Client = &http.Client{Transport: transport}
+		options.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
 	}
 
@@ -219,236 +231,242 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 	return jwks, nil
 }
 
-func (a *AuthHandler) Middleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.Request.Method == http.MethodOptions {
-			c.Next()
-			return
-		}
+func (a *AuthHandler) authenticate(c *gin.Context) bool {
+	if c.Request.Method == http.MethodOptions {
+		return true
+	}
 
-		// Record JWT validation request
-		mode := "single-idp"
-		if a.idpLoader != nil {
-			mode = "multi-idp"
-		}
+	// Record JWT validation request
+	mode := "single-idp"
+	if a.idpLoader != nil {
+		mode = "multi-idp"
+	}
 
-		authHeader := c.GetHeader(AuthHeaderKey)
-		// delete the header to avoid logging it by accident
-		c.Request.Header.Del(AuthHeaderKey)
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			RespondUnauthorizedWithMessage(c, "No Bearer token provided in Authorization header")
-			c.Abort()
-			return
-		}
-		bearer := authHeader[7:]
+	authHeader := c.GetHeader(AuthHeaderKey)
+	// delete the header to avoid logging it by accident
+	c.Request.Header.Del(AuthHeaderKey)
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		RespondUnauthorizedWithMessage(c, "No Bearer token provided in Authorization header")
+		c.Abort()
+		return false
+	}
+	bearer := authHeader[7:]
 
-		// Parse JWT without verification first to extract issuer and basic claims
-		unverifiedClaims := jwt.MapClaims{}
-		parser := jwt.NewParser()
-		_, _, err := parser.ParseUnverified(bearer, unverifiedClaims)
-		if err != nil {
-			RespondUnauthorizedWithMessage(c, "Invalid JWT format")
-			c.Abort()
-			return
-		}
+	// Parse JWT without verification first to extract issuer and basic claims
+	unverifiedClaims := jwt.MapClaims{}
+	parser := jwt.NewParser()
+	_, _, err := parser.ParseUnverified(bearer, unverifiedClaims)
+	if err != nil {
+		RespondUnauthorizedWithMessage(c, "Invalid JWT format")
+		c.Abort()
+		return false
+	}
 
-		// Extract issuer from claims for multi-IDP mode
-		var issuer string
-		if iss, ok := unverifiedClaims["iss"]; ok {
-			issuer, _ = iss.(string)
-		}
+	// Extract issuer from claims for multi-IDP mode
+	var issuer string
+	if iss, ok := unverifiedClaims["iss"]; ok {
+		issuer, _ = iss.(string)
+	}
 
-		// Record validation attempt
-		metrics.JWTValidationRequests.WithLabelValues(issuer, mode).Inc()
-		startTime := time.Now()
+	// Record validation attempt
+	metrics.JWTValidationRequests.WithLabelValues(issuer, mode).Inc()
+	startTime := time.Now()
 
-		// Get appropriate JWKS (based on issuer or default)
-		var jwks *keyfunc.JWKS
-		var selectedIDP string
+	// Get appropriate JWKS (based on issuer or default)
+	var jwks *keyfunc.JWKS
+	var selectedIDP string
 
-		if a.idpLoader != nil && issuer != "" {
-			// Multi-IDP mode: load JWKS for specific issuer
-			// Record cache check (using RLock for read-only check)
-			a.jwksMutex.RLock()
-			elem, cacheHit := a.jwksCache[issuer]
-			_ = elem // silence unused variable warning
-			a.jwksMutex.RUnlock()
+	if a.idpLoader != nil && issuer != "" {
+		// Multi-IDP mode: load JWKS for specific issuer
+		// Record cache check (using RLock for read-only check)
+		a.jwksMutex.RLock()
+		_, cacheHit := a.jwksCache[issuer]
+		a.jwksMutex.RUnlock()
 
-			if cacheHit {
-				metrics.JWKSCacheHits.WithLabelValues(issuer).Inc()
-			} else {
-				metrics.JWKSCacheMisses.WithLabelValues(issuer).Inc()
-			}
-
-			loadedJwks, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
-			if err != nil {
-				a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
-				metrics.JWTValidationFailure.WithLabelValues(issuer, "jwks_load_failed").Inc()
-
-				// Try to provide helpful error message with IDP suggestions.
-				// Do not echo the raw issuer back to the client to avoid reconnaissance leaks.
-				idpName, idpLookupErr := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
-				errorMsg := "unable to verify token"
-				if idpLookupErr == nil && idpName != "" {
-					errorMsg = fmt.Sprintf("token issuer is not configured. Please use the '%s' identity provider to log in.", idpName)
-				}
-				RespondUnauthorizedWithMessage(c, errorMsg)
-				c.Abort()
-				return
-			}
-			jwks = loadedJwks
-			idpName, err := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
-			if err != nil {
-				a.log.Debugw("failed to get IDP name by issuer", "issuer", issuer, "error", err)
-			} else {
-				selectedIDP = idpName
-			}
-		} else if a.idpLoader != nil && issuer == "" {
-			// Multi-IDP mode but no issuer in token: require issuer claim
-			metrics.JWTValidationFailure.WithLabelValues("", "missing_issuer").Inc()
-			RespondUnauthorizedWithMessage(c, "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.")
-			c.Abort()
-			return
+		if cacheHit {
+			metrics.JWKSCacheHits.WithLabelValues(issuer).Inc()
 		} else {
-			// Single-IDP mode: use default JWKS (issuer claim optional for backward compatibility)
-			jwks = a.jwks
+			metrics.JWKSCacheMisses.WithLabelValues(issuer).Inc()
 		}
 
-		// Verify and parse JWT with selected JWKS
-		claims := jwt.MapClaims{}
-		token, err := jwt.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
+		loadedJwks, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
 		if err != nil {
-			// Attempt single forced JWKS refresh if kid missing
-			if strings.Contains(err.Error(), "key ID") {
-				c.Set("jwks_refresh_attempt", true)
-				if rErr := jwks.Refresh(context.Background(), keyfunc.RefreshOptions{}); rErr == nil {
-					token, err = jwt.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
-				}
-			}
-		}
-		if err != nil {
-			// Record failure with reason
-			failureReason := "verification_failed"
-			if strings.Contains(err.Error(), "key ID") {
-				failureReason = "key_id_not_found"
-			} else if strings.Contains(err.Error(), "signature") {
-				failureReason = "invalid_signature"
-			} else if strings.Contains(err.Error(), "expired") {
-				failureReason = "token_expired"
-			}
-			metrics.JWTValidationFailure.WithLabelValues(issuer, failureReason).Inc()
+			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
+			metrics.JWTValidationFailure.WithLabelValues(issuer, "jwks_load_failed").Inc()
 
-			errorMsg := "Token verification failed. Please re-authenticate."
+			// Try to provide helpful error message with IDP suggestions.
+			// Do not echo the raw issuer back to the client to avoid reconnaissance leaks.
+			idpName, idpLookupErr := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
+			errorMsg := "unable to verify token"
+			if idpLookupErr == nil && idpName != "" {
+				errorMsg = fmt.Sprintf("token issuer is not configured. Please use the '%s' identity provider to log in.", idpName)
+			}
 			RespondUnauthorizedWithMessage(c, errorMsg)
 			c.Abort()
+			return false
+		}
+		jwks = loadedJwks
+		idpName, err := a.idpLoader.GetIDPNameByIssuer(c.Request.Context(), issuer)
+		if err != nil {
+			a.log.Debugw("failed to get IDP name by issuer", "issuer", issuer, "error", err)
+		} else {
+			selectedIDP = idpName
+		}
+	} else if a.idpLoader != nil && issuer == "" {
+		// Multi-IDP mode but no issuer in token: require issuer claim
+		metrics.JWTValidationFailure.WithLabelValues("", "missing_issuer").Inc()
+		RespondUnauthorizedWithMessage(c, "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.")
+		c.Abort()
+		return false
+	} else {
+		// Single-IDP mode: use default JWKS (issuer claim optional for backward compatibility)
+		jwks = a.jwks
+	}
+
+	// Verify and parse JWT with selected JWKS
+	claims := jwt.MapClaims{}
+	verifiedParser := jwt.NewParser(jwt.WithValidMethods(allowedJWTAlgs))
+	token, err := verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
+	if err != nil {
+		// Attempt single forced JWKS refresh if kid missing
+		if strings.Contains(err.Error(), "key ID") {
+			c.Set("jwks_refresh_attempt", true)
+			if rErr := jwks.Refresh(context.Background(), keyfunc.RefreshOptions{}); rErr == nil {
+				token, err = verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
+			}
+		}
+	}
+	if err != nil {
+		// Record failure with reason
+		failureReason := "verification_failed"
+		if strings.Contains(err.Error(), "key ID") {
+			failureReason = "key_id_not_found"
+		} else if strings.Contains(err.Error(), "signature") {
+			failureReason = "invalid_signature"
+		} else if strings.Contains(err.Error(), "expired") {
+			failureReason = "token_expired"
+		}
+		metrics.JWTValidationFailure.WithLabelValues(issuer, failureReason).Inc()
+
+		errorMsg := "Token verification failed. Please re-authenticate."
+		RespondUnauthorizedWithMessage(c, errorMsg)
+		c.Abort()
+		return false
+	}
+
+	// Record successful validation with duration
+	metrics.JWTValidationSuccess.WithLabelValues(issuer).Inc()
+	metrics.JWTValidationDuration.WithLabelValues(issuer).Observe(time.Since(startTime).Seconds())
+
+	// Extract core identity claims
+	userID := claims["sub"]
+	email := claims["email"]
+	username := claims["preferred_username"]
+
+	// Multi-IDP: Store issuer and IDP name for downstream use
+	if issuer != "" {
+		c.Set("issuer", issuer)
+	}
+	if selectedIDP != "" {
+		c.Set("identity_provider_name", selectedIDP)
+	}
+
+	// Attach raw claims for downstream debugging if needed
+	// Note: this is only used for debug logs and should not be exposed to end users.
+	c.Set("raw_claims", claims)
+
+	// Attempt to extract groups from common Keycloak / OIDC claims
+	var groups []string
+	if rawGroups, ok := claims["groups"]; ok {
+		switch g := rawGroups.(type) {
+		case []interface{}:
+			for _, v := range g {
+				if s, ok := v.(string); ok && s != "" {
+					groups = append(groups, s)
+				}
+			}
+		case []string:
+			groups = append(groups, g...)
+		}
+	} else if rawRealm, ok := claims["realm_access"]; ok { // Keycloak specific structure
+		if m, ok := rawRealm.(map[string]interface{}); ok {
+			if rolesRaw, ok := m["roles"]; ok {
+				switch roles := rolesRaw.(type) {
+				case []interface{}:
+					for _, v := range roles {
+						if s, ok := v.(string); ok && s != "" {
+							groups = append(groups, s)
+						}
+					}
+				case []string:
+					groups = append(groups, roles...)
+				}
+			}
+		}
+	}
+
+	// Normalize group names: strip leading slashes and reduce nested paths to final segment.
+	if len(groups) > 0 {
+		seen := make(map[string]struct{}, len(groups))
+		normalized := make([]string, 0, len(groups))
+		for _, g := range groups {
+			g = strings.TrimSpace(g)
+			if g == "" { // skip empty
+				continue
+			}
+			// Remove leading slash (Keycloak group path style: /team/role)
+			for strings.HasPrefix(g, "/") {
+				g = strings.TrimPrefix(g, "/")
+			}
+			if idx := strings.LastIndex(g, "/"); idx != -1 && idx < len(g)-1 { // keep only final path element
+				g = g[idx+1:]
+			}
+			if g == "" { // after normalization
+				continue
+			}
+			if _, exists := seen[g]; exists {
+				continue
+			}
+			seen[g] = struct{}{}
+			normalized = append(normalized, g)
+		}
+		groups = normalized
+	}
+
+	// If groups are empty, log claims at debug so we can diagnose missing group mappers
+	if len(groups) == 0 {
+		// avoid logging tokens at info level; use debug for development troubleshooting
+		if a.log != nil {
+			a.log.Debugw("JWT parsed but no groups claim found", "sub", userID, "username", username, "claims_keys", func() []string {
+				keys := make([]string, 0, len(claims))
+				for k := range claims {
+					keys = append(keys, k)
+				}
+				return keys
+			}())
+		}
+	}
+
+	c.Set("token", token)
+	c.Set("user_id", userID)
+	c.Set("email", email)
+	c.Set("username", username)
+	// Extract display name from "name" claim (standard OIDC claim for full name)
+	if displayName, ok := claims["name"]; ok {
+		c.Set("displayName", displayName)
+	}
+	if len(groups) > 0 {
+		c.Set("groups", groups)
+	}
+
+	return true
+}
+
+func (a *AuthHandler) Middleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !a.authenticate(c) {
 			return
 		}
-
-		// Record successful validation with duration
-		metrics.JWTValidationSuccess.WithLabelValues(issuer).Inc()
-		metrics.JWTValidationDuration.WithLabelValues(issuer).Observe(time.Since(startTime).Seconds())
-
-		// Extract core identity claims
-		user_id := claims["sub"]
-		email := claims["email"]
-		username := claims["preferred_username"]
-
-		// Multi-IDP: Store issuer and IDP name for downstream use
-		if issuer != "" {
-			c.Set("issuer", issuer)
-		}
-		if selectedIDP != "" {
-			c.Set("identity_provider_name", selectedIDP)
-		}
-
-		// Attach raw claims for downstream debugging if needed
-		// Note: this is only used for debug logs and should not be exposed to end users.
-		c.Set("raw_claims", claims)
-
-		// Attempt to extract groups from common Keycloak / OIDC claims
-		var groups []string
-		if rawGroups, ok := claims["groups"]; ok {
-			switch g := rawGroups.(type) {
-			case []interface{}:
-				for _, v := range g {
-					if s, ok := v.(string); ok && s != "" {
-						groups = append(groups, s)
-					}
-				}
-			case []string:
-				groups = append(groups, g...)
-			}
-		} else if rawRealm, ok := claims["realm_access"]; ok { // Keycloak specific structure
-			if m, ok := rawRealm.(map[string]interface{}); ok {
-				if rolesRaw, ok := m["roles"]; ok {
-					switch roles := rolesRaw.(type) {
-					case []interface{}:
-						for _, v := range roles {
-							if s, ok := v.(string); ok && s != "" {
-								groups = append(groups, s)
-							}
-						}
-					case []string:
-						groups = append(groups, roles...)
-					}
-				}
-			}
-		}
-
-		// Normalize group names: strip leading slashes and reduce nested paths to final segment.
-		if len(groups) > 0 {
-			seen := make(map[string]struct{}, len(groups))
-			normalized := make([]string, 0, len(groups))
-			for _, g := range groups {
-				g = strings.TrimSpace(g)
-				if g == "" { // skip empty
-					continue
-				}
-				// Remove leading slash (Keycloak group path style: /team/role)
-				for strings.HasPrefix(g, "/") {
-					g = strings.TrimPrefix(g, "/")
-				}
-				if idx := strings.LastIndex(g, "/"); idx != -1 && idx < len(g)-1 { // keep only final path element
-					g = g[idx+1:]
-				}
-				if g == "" { // after normalization
-					continue
-				}
-				if _, exists := seen[g]; exists {
-					continue
-				}
-				seen[g] = struct{}{}
-				normalized = append(normalized, g)
-			}
-			groups = normalized
-		}
-
-		// If groups are empty, log claims at debug so we can diagnose missing group mappers
-		if len(groups) == 0 {
-			// avoid logging tokens at info level; use debug for development troubleshooting
-			if a.log != nil {
-				a.log.Debugw("JWT parsed but no groups claim found", "sub", user_id, "username", username, "claims_keys", func() []string {
-					keys := make([]string, 0, len(claims))
-					for k := range claims {
-						keys = append(keys, k)
-					}
-					return keys
-				}())
-			}
-		}
-
-		c.Set("token", token)
-		c.Set("user_id", user_id)
-		c.Set("email", email)
-		c.Set("username", username)
-		// Extract display name from "name" claim (standard OIDC claim for full name)
-		if displayName, ok := claims["name"]; ok {
-			c.Set("displayName", displayName)
-		}
-		if len(groups) > 0 {
-			c.Set("groups", groups)
-		}
-
 		c.Next()
 	}
 }
@@ -459,11 +477,9 @@ func (a *AuthHandler) Middleware() gin.HandlerFunc {
 // This should be used for API endpoints that handle authenticated requests.
 // The rate limiter uses the "email" context key to identify users after authentication.
 func (a *AuthHandler) MiddlewareWithRateLimiting(rl RateLimiter) gin.HandlerFunc {
-	authMiddleware := a.Middleware()
 	return func(c *gin.Context) {
 		// First run authentication
-		authMiddleware(c)
-		if c.IsAborted() {
+		if !a.authenticate(c) {
 			return
 		}
 
@@ -523,6 +539,10 @@ func (a *AuthHandler) OptionalAuthRateLimitMiddleware(rl RateLimiter) gin.Handle
 // without enforcing authentication. Returns empty string if no valid token.
 func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 	authHeader := c.GetHeader(AuthHeaderKey)
+	if authHeader != "" {
+		// Remove to avoid accidental logging of bearer tokens downstream
+		c.Request.Header.Del(AuthHeaderKey)
+	}
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return ""
 	}
@@ -550,7 +570,8 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 
 	// Verify the token
 	claims := jwt.MapClaims{}
-	_, err = jwt.ParseWithClaims(bearer, claims, jwks.Keyfunc)
+	verifiedParser := jwt.NewParser(jwt.WithValidMethods(allowedJWTAlgs))
+	_, err = verifiedParser.ParseWithClaims(bearer, claims, jwks.Keyfunc)
 	if err != nil {
 		return ""
 	}

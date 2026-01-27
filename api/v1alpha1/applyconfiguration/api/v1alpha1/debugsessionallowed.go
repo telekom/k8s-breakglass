@@ -8,6 +8,10 @@ Here we can add license
 
 package v1alpha1
 
+import (
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+)
+
 // DebugSessionAllowedApplyConfiguration represents a declarative configuration of the DebugSessionAllowed type for use
 // with apply.
 //
@@ -20,6 +24,9 @@ type DebugSessionAllowedApplyConfiguration struct {
 	// clusters specifies which clusters this template can be used on.
 	// Supports glob patterns.
 	Clusters []string `json:"clusters,omitempty"`
+	// clusterSelector allows selecting clusters by labels.
+	// Matched clusters are added to the allowed list (OR logic with clusters field).
+	ClusterSelector *v1.LabelSelectorApplyConfiguration `json:"clusterSelector,omitempty"`
 }
 
 // DebugSessionAllowedApplyConfiguration constructs a declarative configuration of the DebugSessionAllowed type for use with
@@ -55,5 +62,13 @@ func (b *DebugSessionAllowedApplyConfiguration) WithClusters(values ...string) *
 	for i := range values {
 		b.Clusters = append(b.Clusters, values[i])
 	}
+	return b
+}
+
+// WithClusterSelector sets the ClusterSelector field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ClusterSelector field is set to the value of the last call.
+func (b *DebugSessionAllowedApplyConfiguration) WithClusterSelector(value *v1.LabelSelectorApplyConfiguration) *DebugSessionAllowedApplyConfiguration {
+	b.ClusterSelector = value
 	return b
 }

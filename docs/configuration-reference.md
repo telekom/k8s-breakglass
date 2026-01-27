@@ -178,6 +178,36 @@ server:
 
 ---
 
+#### `hardenedIDPHints` (Optional)
+
+Controls whether identity provider names are exposed in authorization error messages.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Secure Setting** | `true` |
+
+```yaml
+server:
+  hardenedIDPHints: true
+```
+
+**Behavior:**
+
+- `false` (default): When authentication fails due to an unknown token issuer, the error message lists available identity providers to help users identify which IDP to use.
+  - Example: `"Your token issuer 'https://wrong.issuer.com' is not configured. Available providers: keycloak, azure-ad"`
+
+- `true` (hardened): Error messages do not expose configured identity provider names, preventing reconnaissance attacks.
+  - Example: `"Your token issuer is not configured for this cluster"`
+
+**Security Considerations:**
+
+- In high-security environments, set `hardenedIDPHints: true` to prevent attackers from discovering which identity providers are configured.
+- In user-friendly environments (e.g., internal platforms), leave as `false` to help users troubleshoot authentication issues.
+
+---
+
 ### `frontend`
 
 Frontend UI configuration.

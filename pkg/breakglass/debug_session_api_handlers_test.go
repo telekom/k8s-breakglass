@@ -1300,3 +1300,584 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "Terminated")
 	assert.Contains(t, rr.Body.String(), "Rejected by approver@example.com")
 }
+
+// ============================================================================
+// Tests for resolveTargetNamespace
+// ============================================================================
+
+func TestResolveTargetNamespace(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	ctrl := NewDebugSessionAPIController(logger, nil, nil, nil)
+
+	t.Run("no namespace constraints uses default", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{},
+		}
+		ns, err := ctrl.resolveTargetNamespace(template, "")
+		require.NoError(t, err)
+		assert.Equal(t, "breakglass-debug", ns)
+	})
+
+	t.Run("no constraints with requested namespace", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{},
+		}
+		ns, err := ctrl.resolveTargetNamespace(template, "custom-ns")
+		require.NoError(t, err)
+		assert.Equal(t, "custom-ns", ns)
+	})
+
+	t.Run("uses default namespace from constraints", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace: "my-debug-ns",
+				},
+			},
+		}
+		ns, err := ctrl.resolveTargetNamespace(template, "")
+		require.NoError(t, err)
+		assert.Equal(t, "my-debug-ns", ns)
+	})
+
+	t.Run("rejects user namespace when not allowed", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "default-ns",
+					AllowUserNamespace: false,
+				},
+			},
+		}
+		_, err := ctrl.resolveTargetNamespace(template, "custom-ns")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
+	})
+
+	t.Run("validates against allowed patterns", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"debug-*", "test-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		// Allowed namespace
+		ns, err := ctrl.resolveTargetNamespace(template, "debug-my-session")
+		require.NoError(t, err)
+		assert.Equal(t, "debug-my-session", ns)
+
+		// Not allowed namespace
+		_, err = ctrl.resolveTargetNamespace(template, "prod-ns")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+	})
+
+	t.Run("validates against denied patterns", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DeniedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"kube-*", "default"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		// Allowed namespace
+		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns")
+		require.NoError(t, err)
+		assert.Equal(t, "debug-ns", ns)
+
+		// Denied namespace
+		_, err = ctrl.resolveTargetNamespace(template, "kube-system")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+	})
+}
+
+// ============================================================================
+// Tests for resolveSchedulingConstraints
+// ============================================================================
+
+func TestResolveSchedulingConstraints(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	ctrl := NewDebugSessionAPIController(logger, nil, nil, nil)
+
+	t.Run("no scheduling options returns base constraints", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"pool": "debug"},
+				},
+			},
+		}
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "")
+		require.NoError(t, err)
+		assert.Empty(t, selectedOpt)
+		require.NotNil(t, resolved)
+		assert.Equal(t, "debug", resolved.NodeSelector["pool"])
+	})
+
+	t.Run("error when selecting nonexistent option", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Options: []telekomv1alpha1.SchedulingOption{
+						{Name: "sriov", DisplayName: "SRIOV Nodes"},
+					},
+				},
+			},
+		}
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "nonexistent")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found in template")
+	})
+
+	t.Run("error when required but no selection and no default", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Required: true,
+					Options: []telekomv1alpha1.SchedulingOption{
+						{Name: "sriov", DisplayName: "SRIOV Nodes"},
+					},
+				},
+			},
+		}
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "required but none selected")
+	})
+
+	t.Run("uses default option when required and no selection", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Required: true,
+					Options: []telekomv1alpha1.SchedulingOption{
+						{Name: "standard", DisplayName: "Standard Nodes", Default: true},
+						{Name: "sriov", DisplayName: "SRIOV Nodes"},
+					},
+				},
+			},
+		}
+		_, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "")
+		require.NoError(t, err)
+		assert.Equal(t, "standard", selectedOpt)
+	})
+
+	t.Run("merges base and option constraints", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"base": "value"},
+					DeniedNodes:  []string{"control-plane-*"},
+				},
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Options: []telekomv1alpha1.SchedulingOption{
+						{
+							Name:        "sriov",
+							DisplayName: "SRIOV Nodes",
+							SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+								NodeSelector: map[string]string{"sriov": "true"},
+								DeniedNodes:  []string{"old-node-*"},
+							},
+						},
+					},
+				},
+			},
+		}
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "sriov")
+		require.NoError(t, err)
+		assert.Equal(t, "sriov", selectedOpt)
+		require.NotNil(t, resolved)
+
+		// Both node selectors should be present
+		assert.Equal(t, "value", resolved.NodeSelector["base"])
+		assert.Equal(t, "true", resolved.NodeSelector["sriov"])
+
+		// Denied nodes should be merged (additive)
+		assert.Contains(t, resolved.DeniedNodes, "control-plane-*")
+		assert.Contains(t, resolved.DeniedNodes, "old-node-*")
+	})
+}
+
+// ============================================================================
+// Tests for mergeSchedulingConstraints
+// ============================================================================
+
+func TestMergeSchedulingConstraints(t *testing.T) {
+	t.Run("nil base and option returns nil", func(t *testing.T) {
+		result := mergeSchedulingConstraints(nil, nil)
+		assert.Nil(t, result)
+	})
+
+	t.Run("nil base returns option copy", func(t *testing.T) {
+		option := &telekomv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"key": "value"},
+		}
+		result := mergeSchedulingConstraints(nil, option)
+		require.NotNil(t, result)
+		assert.Equal(t, "value", result.NodeSelector["key"])
+		// Ensure it's a copy
+		result.NodeSelector["key"] = "modified"
+		assert.Equal(t, "value", option.NodeSelector["key"])
+	})
+
+	t.Run("nil option returns base copy", func(t *testing.T) {
+		base := &telekomv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"key": "value"},
+		}
+		result := mergeSchedulingConstraints(base, nil)
+		require.NotNil(t, result)
+		assert.Equal(t, "value", result.NodeSelector["key"])
+	})
+
+	t.Run("option overrides base for conflicts", func(t *testing.T) {
+		base := &telekomv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"shared": "base-value", "base-only": "base"},
+		}
+		option := &telekomv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"shared": "option-value", "option-only": "option"},
+		}
+		result := mergeSchedulingConstraints(base, option)
+		require.NotNil(t, result)
+		assert.Equal(t, "option-value", result.NodeSelector["shared"])
+		assert.Equal(t, "base", result.NodeSelector["base-only"])
+		assert.Equal(t, "option", result.NodeSelector["option-only"])
+	})
+
+	t.Run("denied nodes are additive", func(t *testing.T) {
+		base := &telekomv1alpha1.SchedulingConstraints{
+			DeniedNodes: []string{"node-a", "node-b"},
+		}
+		option := &telekomv1alpha1.SchedulingConstraints{
+			DeniedNodes: []string{"node-c"},
+		}
+		result := mergeSchedulingConstraints(base, option)
+		require.NotNil(t, result)
+		assert.Len(t, result.DeniedNodes, 3)
+		assert.Contains(t, result.DeniedNodes, "node-a")
+		assert.Contains(t, result.DeniedNodes, "node-c")
+	})
+}
+
+// ============================================================================
+// Tests for handleGetTemplateClusters
+// ============================================================================
+
+func TestHandleGetTemplateClusters(t *testing.T) {
+	// Create a template for testing
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-template",
+			Labels: map[string]string{
+				"tier": "production",
+			},
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "Test Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Clusters: []string{"cluster-a", "cluster-b"},
+				Groups:   []string{"*"},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+			},
+		},
+	}
+
+	// Create a ClusterConfig for testing
+	clusterA := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster-a",
+			Labels: map[string]string{
+				"environment": "production",
+				"location":    "eu-west-1",
+			},
+		},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+				Name:      "cluster-a-kubeconfig",
+				Namespace: "breakglass-system",
+			},
+		},
+	}
+
+	clusterB := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster-b",
+			Labels: map[string]string{
+				"environment": "staging",
+				"location":    "us-east-1",
+			},
+		},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+				Name:      "cluster-b-kubeconfig",
+				Namespace: "breakglass-system",
+			},
+		},
+	}
+
+	t.Run("returns clusters for template without bindings", func(t *testing.T) {
+		router, _ := setupTestRouter(t, template, clusterA, clusterB)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+
+		assert.Equal(t, "test-template", resp.TemplateName)
+		assert.Equal(t, "Test Template", resp.TemplateDisplayName)
+		assert.Len(t, resp.Clusters, 2)
+
+		// Verify cluster details
+		clusterNames := make([]string, len(resp.Clusters))
+		for i, c := range resp.Clusters {
+			clusterNames[i] = c.Name
+		}
+		assert.Contains(t, clusterNames, "cluster-a")
+		assert.Contains(t, clusterNames, "cluster-b")
+	})
+
+	t.Run("returns clusters with binding constraints", func(t *testing.T) {
+		// Create a binding that overrides constraints
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-binding",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Groups: []string{"*"},
+				},
+				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+					MaxDuration:     "2h",
+					DefaultDuration: "30m",
+				},
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "debug-ns",
+					AllowUserNamespace: true,
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"debug-*", "test-*"},
+					},
+				},
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "debug-sa",
+						Namespace: "system",
+					},
+				},
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers"},
+				},
+				RequiredAuxiliaryResourceCategories: []string{"logging", "monitoring"},
+			},
+		}
+
+		router, _ := setupTestRouter(t, template, clusterA, clusterB, binding)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+
+		// Find cluster-a (should have binding constraints)
+		var clusterADetail *AvailableClusterDetail
+		for i := range resp.Clusters {
+			if resp.Clusters[i].Name == "cluster-a" {
+				clusterADetail = &resp.Clusters[i]
+				break
+			}
+		}
+		require.NotNil(t, clusterADetail, "cluster-a should be in response")
+
+		// Verify binding reference
+		require.NotNil(t, clusterADetail.BindingRef)
+		assert.Equal(t, "test-binding", clusterADetail.BindingRef.Name)
+		assert.Equal(t, "breakglass", clusterADetail.BindingRef.Namespace)
+
+		// Verify constraints are from binding
+		require.NotNil(t, clusterADetail.Constraints)
+		assert.Equal(t, "2h", clusterADetail.Constraints.MaxDuration)
+		assert.Equal(t, "30m", clusterADetail.Constraints.DefaultDuration)
+
+		// Verify namespace constraints
+		require.NotNil(t, clusterADetail.NamespaceConstraints)
+		assert.Equal(t, "debug-ns", clusterADetail.NamespaceConstraints.DefaultNamespace)
+		assert.True(t, clusterADetail.NamespaceConstraints.AllowUserNamespace)
+		assert.Contains(t, clusterADetail.NamespaceConstraints.AllowedPatterns, "debug-*")
+
+		// Verify impersonation
+		require.NotNil(t, clusterADetail.Impersonation)
+		assert.True(t, clusterADetail.Impersonation.Enabled)
+		assert.Equal(t, "debug-sa", clusterADetail.Impersonation.ServiceAccount)
+
+		// Verify approval
+		require.NotNil(t, clusterADetail.Approval)
+		assert.True(t, clusterADetail.Approval.Required)
+		assert.Contains(t, clusterADetail.Approval.ApproverGroups, "approvers")
+
+		// Verify required auxiliary resource categories
+		assert.Contains(t, clusterADetail.RequiredAuxResourceCategories, "logging")
+		assert.Contains(t, clusterADetail.RequiredAuxResourceCategories, "monitoring")
+	})
+
+	t.Run("returns 404 for non-existent template", func(t *testing.T) {
+		router, _ := setupTestRouter(t, clusterA)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/non-existent/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("filters clusters by environment query param", func(t *testing.T) {
+		router, _ := setupTestRouter(t, template, clusterA, clusterB)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters?environment=production", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+
+		// Only cluster-a has environment=production
+		assert.Len(t, resp.Clusters, 1)
+		assert.Equal(t, "cluster-a", resp.Clusters[0].Name)
+		assert.Equal(t, "production", resp.Clusters[0].Environment)
+	})
+
+	t.Run("returns multiple binding options when multiple bindings match cluster", func(t *testing.T) {
+		// Create two bindings that both match cluster-a
+		binding1 := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-sre",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters:    []string{"cluster-a"},
+				DisplayName: "SRE Access",
+				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+					MaxDuration: "2h",
+				},
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"sre-approvers"},
+				},
+			},
+		}
+
+		binding2 := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-oncall",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters:    []string{"cluster-a"},
+				DisplayName: "On-Call Emergency",
+				Constraints: &telekomv1alpha1.DebugSessionConstraints{
+					MaxDuration: "4h",
+				},
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"*"},
+					},
+				},
+			},
+		}
+
+		router, _ := setupTestRouter(t, template, clusterA, binding1, binding2)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+
+		// Find cluster-a
+		var clusterADetail *AvailableClusterDetail
+		for i := range resp.Clusters {
+			if resp.Clusters[i].Name == "cluster-a" {
+				clusterADetail = &resp.Clusters[i]
+				break
+			}
+		}
+		require.NotNil(t, clusterADetail, "cluster-a should be in response")
+
+		// Should have multiple binding options
+		require.NotNil(t, clusterADetail.BindingOptions, "BindingOptions should be populated")
+		assert.Len(t, clusterADetail.BindingOptions, 2, "Should have 2 binding options")
+
+		// Verify first binding option
+		foundSRE := false
+		foundOncall := false
+		for _, opt := range clusterADetail.BindingOptions {
+			if opt.BindingRef.Name == "binding-sre" {
+				foundSRE = true
+				assert.Equal(t, "breakglass", opt.BindingRef.Namespace)
+				require.NotNil(t, opt.Constraints)
+				assert.Equal(t, "2h", opt.Constraints.MaxDuration)
+				require.NotNil(t, opt.Approval)
+				assert.True(t, opt.Approval.Required)
+			}
+			if opt.BindingRef.Name == "binding-oncall" {
+				foundOncall = true
+				assert.Equal(t, "breakglass", opt.BindingRef.Namespace)
+				require.NotNil(t, opt.Constraints)
+				assert.Equal(t, "4h", opt.Constraints.MaxDuration)
+			}
+		}
+		assert.True(t, foundSRE, "Should find binding-sre in options")
+		assert.True(t, foundOncall, "Should find binding-oncall in options")
+
+		// Primary binding ref should still be set for backward compat
+		require.NotNil(t, clusterADetail.BindingRef, "Primary BindingRef should be set")
+	})
+}
