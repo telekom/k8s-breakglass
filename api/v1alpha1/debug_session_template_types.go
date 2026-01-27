@@ -109,6 +109,16 @@ type DebugSessionTemplateSpec struct {
 	// +optional
 	AdditionalTolerations []corev1.Toleration `json:"additionalTolerations,omitempty"`
 
+	// schedulingConstraints defines mandatory scheduling rules for debug pods.
+	// These constraints are applied AFTER template settings and CANNOT be overridden by users.
+	// +optional
+	SchedulingConstraints *SchedulingConstraints `json:"schedulingConstraints,omitempty"`
+
+	// schedulingOptions offers users a choice of predefined scheduling configurations.
+	// Each option can define different node selectors, affinities, etc.
+	// +optional
+	SchedulingOptions *SchedulingOptions `json:"schedulingOptions,omitempty"`
+
 	// kubectlDebug configures kubectl debug operations.
 	// Required when mode is "kubectl-debug" or "hybrid".
 	// +optional
@@ -396,6 +406,105 @@ type DebugSessionConstraints struct {
 	MaxConcurrentSessions int32 `json:"maxConcurrentSessions,omitempty"`
 }
 
+// SchedulingConstraints defines mandatory scheduling rules for debug pods.
+// These constraints are applied AFTER template/user settings and CANNOT be overridden.
+type SchedulingConstraints struct {
+	// requiredNodeAffinity specifies hard node affinity requirements.
+	// Merged with template's affinity using AND logic.
+	// +optional
+	RequiredNodeAffinity *corev1.NodeSelector `json:"requiredNodeAffinity,omitempty"`
+
+	// preferredNodeAffinity specifies soft node affinity preferences.
+	// Added to template's preferred affinities.
+	// +optional
+	PreferredNodeAffinity []corev1.PreferredSchedulingTerm `json:"preferredNodeAffinity,omitempty"`
+
+	// requiredPodAntiAffinity specifies hard pod anti-affinity rules.
+	// Ensures debug pods don't co-locate inappropriately.
+	// +optional
+	RequiredPodAntiAffinity []corev1.PodAffinityTerm `json:"requiredPodAntiAffinity,omitempty"`
+
+	// preferredPodAntiAffinity specifies soft pod anti-affinity preferences.
+	// +optional
+	PreferredPodAntiAffinity []corev1.WeightedPodAffinityTerm `json:"preferredPodAntiAffinity,omitempty"`
+
+	// nodeSelector adds mandatory node labels for scheduling.
+	// Merged with template's nodeSelector (constraints take precedence on conflicts).
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// tolerations adds tolerations for debug pods.
+	// Merged with template's tolerations.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// topologySpreadConstraints controls how debug pods are spread.
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+
+	// deniedNodes is a list of node name patterns that MUST NOT run debug pods.
+	// Evaluated as glob patterns.
+	// +optional
+	DeniedNodes []string `json:"deniedNodes,omitempty"`
+
+	// deniedNodeLabels blocks nodes with any of these labels.
+	// Key-value pairs where value can be "*" for any value.
+	// +optional
+	DeniedNodeLabels map[string]string `json:"deniedNodeLabels,omitempty"`
+}
+
+// SchedulingOptions allows users to choose from predefined scheduling configurations.
+// This reduces the need for multiple bindings/templates for the same cluster.
+type SchedulingOptions struct {
+	// required specifies whether the user MUST select an option.
+	// If false and no option is selected, base schedulingConstraints are used alone.
+	// +optional
+	// +kubebuilder:default=false
+	Required bool `json:"required,omitempty"`
+
+	// options is the list of available scheduling configurations.
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	Options []SchedulingOption `json:"options"`
+}
+
+// SchedulingOption represents a single scheduling configuration choice.
+type SchedulingOption struct {
+	// name is a unique identifier for this option (used in API requests).
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// displayName is the human-readable name shown in UI.
+	// +required
+	DisplayName string `json:"displayName"`
+
+	// description explains what this option does.
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// default marks this option as the pre-selected choice.
+	// Only one option can be marked as default.
+	// +optional
+	Default bool `json:"default,omitempty"`
+
+	// schedulingConstraints are merged with the base constraints.
+	// These are ADDITIVE - they cannot remove base constraints.
+	// +optional
+	SchedulingConstraints *SchedulingConstraints `json:"schedulingConstraints,omitempty"`
+
+	// allowedGroups restricts this option to specific groups.
+	// If empty, all users with access to the template can use this option.
+	// +optional
+	AllowedGroups []string `json:"allowedGroups,omitempty"`
+
+	// allowedUsers restricts this option to specific users.
+	// +optional
+	AllowedUsers []string `json:"allowedUsers,omitempty"`
+}
+
 // TerminalSharingConfig configures collaborative terminal sessions.
 type TerminalSharingConfig struct {
 	// enabled allows terminal sharing between participants.
@@ -570,6 +679,11 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 		if template.Spec.Constraints.DefaultDuration != "" {
 			allErrs = append(allErrs, validateDurationFormat(template.Spec.Constraints.DefaultDuration, specPath.Child("constraints").Child("defaultDuration"))...)
 		}
+	}
+
+	// Validate schedulingOptions if specified
+	if template.Spec.SchedulingOptions != nil {
+		allErrs = append(allErrs, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
 	}
 
 	return allErrs

@@ -719,6 +719,11 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		}
 	}
 
+	// Validate schedulingOptions if specified
+	if template.Spec.SchedulingOptions != nil {
+		result.Errors = append(result.Errors, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
+	}
+
 	return result
 }
 

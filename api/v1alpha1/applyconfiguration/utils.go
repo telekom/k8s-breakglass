@@ -196,6 +196,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.RiskFactorsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("RiskThreshold"):
 		return &apiv1alpha1.RiskThresholdApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingConstraints"):
+		return &apiv1alpha1.SchedulingConstraintsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingOption"):
+		return &apiv1alpha1.SchedulingOptionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingOptions"):
+		return &apiv1alpha1.SchedulingOptionsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SecretKeyReference"):
 		return &apiv1alpha1.SecretKeyReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SecretKeySelector"):

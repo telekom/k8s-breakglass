@@ -1730,3 +1730,254 @@ func TestValidateBreakglassSessionForReconciler(t *testing.T) {
 		assert.Len(t, result.Errors, 3)
 	})
 }
+
+// ==================== SchedulingOptions Validation Tests ====================
+
+func TestValidateSchedulingOptions(t *testing.T) {
+	t.Run("nil scheduling options", func(t *testing.T) {
+		errs := validateSchedulingOptions(nil, field.NewPath("spec", "schedulingOptions"))
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid scheduling options", func(t *testing.T) {
+		opts := &SchedulingOptions{
+			Required: true,
+			Options: []SchedulingOption{
+				{
+					Name:        "sriov",
+					DisplayName: "SRIOV Nodes",
+					Description: "Deploy on nodes with SR-IOV network interfaces",
+					Default:     true,
+				},
+				{
+					Name:        "standard",
+					DisplayName: "Standard Nodes",
+					Description: "Deploy on regular worker nodes",
+				},
+			},
+		}
+		errs := validateSchedulingOptions(opts, field.NewPath("spec", "schedulingOptions"))
+		assert.Empty(t, errs)
+	})
+
+	t.Run("empty options list", func(t *testing.T) {
+		opts := &SchedulingOptions{
+			Required: false,
+			Options:  []SchedulingOption{},
+		}
+		errs := validateSchedulingOptions(opts, field.NewPath("spec", "schedulingOptions"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "at least one scheduling option is required")
+	})
+
+	t.Run("missing option name", func(t *testing.T) {
+		opts := &SchedulingOptions{
+			Options: []SchedulingOption{
+				{
+					DisplayName: "Test Option",
+				},
+			},
+		}
+		errs := validateSchedulingOptions(opts, field.NewPath("spec", "schedulingOptions"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "name")
+	})
+
+	t.Run("missing option displayName", func(t *testing.T) {
+		opts := &SchedulingOptions{
+			Options: []SchedulingOption{
+				{
+					Name: "test",
+				},
+			},
+		}
+		errs := validateSchedulingOptions(opts, field.NewPath("spec", "schedulingOptions"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "displayName")
+	})
+
+	t.Run("duplicate option names", func(t *testing.T) {
+		opts := &SchedulingOptions{
+			Options: []SchedulingOption{
+				{
+					Name:        "sriov",
+					DisplayName: "SRIOV Option 1",
+				},
+				{
+					Name:        "sriov",
+					DisplayName: "SRIOV Option 2",
+				},
+			},
+		}
+		errs := validateSchedulingOptions(opts, field.NewPath("spec", "schedulingOptions"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "Duplicate")
+	})
+
+	t.Run("multiple defaults not allowed", func(t *testing.T) {
+		opts := &SchedulingOptions{
+			Options: []SchedulingOption{
+				{
+					Name:        "option1",
+					DisplayName: "Option 1",
+					Default:     true,
+				},
+				{
+					Name:        "option2",
+					DisplayName: "Option 2",
+					Default:     true,
+				},
+			},
+		}
+		errs := validateSchedulingOptions(opts, field.NewPath("spec", "schedulingOptions"))
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "only one option can be marked as default")
+	})
+
+	t.Run("option with scheduling constraints", func(t *testing.T) {
+		opts := &SchedulingOptions{
+			Required: true,
+			Options: []SchedulingOption{
+				{
+					Name:        "sriov",
+					DisplayName: "SRIOV Nodes",
+					SchedulingConstraints: &SchedulingConstraints{
+						NodeSelector: map[string]string{
+							"network.kubernetes.io/sriov": "true",
+						},
+					},
+				},
+			},
+		}
+		errs := validateSchedulingOptions(opts, field.NewPath("spec", "schedulingOptions"))
+		assert.Empty(t, errs)
+	})
+
+	t.Run("option with allowed groups", func(t *testing.T) {
+		opts := &SchedulingOptions{
+			Options: []SchedulingOption{
+				{
+					Name:          "privileged",
+					DisplayName:   "Privileged Nodes",
+					AllowedGroups: []string{"admin-group"},
+					AllowedUsers:  []string{"admin@example.com"},
+				},
+			},
+		}
+		errs := validateSchedulingOptions(opts, field.NewPath("spec", "schedulingOptions"))
+		assert.Empty(t, errs)
+	})
+}
+
+func TestDebugSessionTemplate_WithSchedulingOptions(t *testing.T) {
+	t.Run("valid template with scheduling options", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				SchedulingOptions: &SchedulingOptions{
+					Required: true,
+					Options: []SchedulingOption{
+						{
+							Name:        "sriov",
+							DisplayName: "SRIOV Nodes",
+							Default:     true,
+						},
+						{
+							Name:        "standard",
+							DisplayName: "Standard Nodes",
+						},
+					},
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("template with scheduling constraints", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				SchedulingConstraints: &SchedulingConstraints{
+					NodeSelector: map[string]string{
+						"node-pool": "general",
+					},
+					DeniedNodes: []string{"control-plane-*"},
+					DeniedNodeLabels: map[string]string{
+						"node-role.kubernetes.io/control-plane": "*",
+					},
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("template with both constraints and options", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				// Base constraints that apply to all options
+				SchedulingConstraints: &SchedulingConstraints{
+					DeniedNodeLabels: map[string]string{
+						"node-role.kubernetes.io/control-plane": "*",
+					},
+				},
+				// Options that add additional constraints
+				SchedulingOptions: &SchedulingOptions{
+					Options: []SchedulingOption{
+						{
+							Name:        "sriov",
+							DisplayName: "SRIOV Nodes",
+							SchedulingConstraints: &SchedulingConstraints{
+								NodeSelector: map[string]string{
+									"network.kubernetes.io/sriov": "true",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("template with invalid scheduling options", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				SchedulingOptions: &SchedulingOptions{
+					Options: []SchedulingOption{}, // Empty - should fail
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "at least one scheduling option is required")
+	})
+}

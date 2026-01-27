@@ -189,6 +189,32 @@ spec:
     allowRenewal: true
     maxRenewals: 3
   
+  # Optional: Scheduling constraints (mandatory, cannot be overridden by users)
+  schedulingConstraints:
+    nodeSelector:
+      node-pool: "general-purpose"
+    deniedNodeLabels:
+      node-role.kubernetes.io/control-plane: "*"
+    deniedNodes:
+      - "control-plane-*"
+  
+  # Optional: Scheduling options (user can choose one)
+  schedulingOptions:
+    required: true
+    options:
+      - name: sriov
+        displayName: "SRIOV Nodes"
+        description: "Deploy on nodes with SR-IOV network interfaces"
+        schedulingConstraints:
+          nodeSelector:
+            network.kubernetes.io/sriov: "true"
+      - name: standard
+        displayName: "Standard Nodes"
+        default: true
+        schedulingConstraints:
+          nodeSelector:
+            network.kubernetes.io/sriov: "false"
+  
   # Optional: Terminal sharing
   terminalSharing:
     enabled: true
@@ -241,6 +267,110 @@ status:
       name: debug-session-abc123-ds
       namespace: breakglass-debug
 ```
+
+## Scheduling Constraints and Options
+
+Debug sessions support advanced scheduling controls that allow administrators to:
+- Define mandatory constraints that cannot be overridden by users
+- Offer users a choice of predefined scheduling configurations
+- Prevent pods from running on control-plane or other restricted nodes
+
+### Scheduling Constraints
+
+Scheduling constraints are **mandatory** and cannot be overridden by users. They're applied after template settings:
+
+```yaml
+schedulingConstraints:
+  # Mandatory node labels (merged with template)
+  nodeSelector:
+    node-pool: "general-purpose"
+  
+  # Hard node affinity requirements (AND logic with existing)
+  requiredNodeAffinity:
+    nodeSelectorTerms:
+      - matchExpressions:
+          - key: node-role.kubernetes.io/control-plane
+            operator: DoesNotExist
+  
+  # Soft node affinity preferences (added to existing)
+  preferredNodeAffinity:
+    - weight: 100
+      preference:
+        matchExpressions:
+          - key: debug-workloads
+            operator: In
+            values: ["allowed"]
+  
+  # Pod anti-affinity to spread debug pods
+  requiredPodAntiAffinity:
+    - labelSelector:
+        matchLabels:
+          breakglass.t-caas.telekom.com/session-type: debug
+      topologyKey: kubernetes.io/hostname
+  
+  # Additional tolerations (merged with template)
+  tolerations:
+    - key: "dedicated"
+      value: "debug-workloads"
+      effect: NoSchedule
+  
+  # Topology spread constraints
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+  
+  # Block specific nodes by name pattern (glob)
+  deniedNodes:
+    - "control-plane-*"
+    - "etcd-*"
+  
+  # Block nodes with any of these labels
+  deniedNodeLabels:
+    node-role.kubernetes.io/control-plane: "*"
+    node-role.kubernetes.io/master: "*"
+```
+
+### Scheduling Options
+
+Scheduling options allow administrators to offer users a choice of predefined scheduling configurations. This reduces the need for multiple templates for different node pools:
+
+```yaml
+schedulingOptions:
+  # If true, user MUST select an option
+  required: true
+  
+  options:
+    - name: sriov
+      displayName: "SRIOV Nodes"
+      description: "Deploy on nodes with SR-IOV network interfaces"
+      schedulingConstraints:
+        nodeSelector:
+          network.kubernetes.io/sriov: "true"
+      # Restrict this option to specific groups
+      allowedGroups:
+        - netops-admins
+    
+    - name: standard
+      displayName: "Standard Nodes"
+      description: "Deploy on regular worker nodes"
+      default: true  # Pre-selected in UI
+      schedulingConstraints:
+        nodeSelector:
+          network.kubernetes.io/sriov: "false"
+    
+    - name: any
+      displayName: "Any Worker Node"
+      description: "Deploy on any available worker node"
+      schedulingConstraints: {}  # No additional constraints
+```
+
+**Merge Logic**: When a user selects an option, the constraints are merged in this order:
+1. Base constraints from `DebugPodTemplate`
+2. Overrides from `DebugSessionTemplate`
+3. Base `schedulingConstraints` from template (mandatory for all options)
+4. Selected option's `schedulingConstraints` (additive)
+5. User's `nodeSelector` (if allowed by template)
 
 ## Kubectl Debug Configuration
 

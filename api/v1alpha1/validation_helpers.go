@@ -977,3 +977,55 @@ func validateOIDCAuthConfig(oidc *OIDCAuthConfig, fieldPath *field.Path) field.E
 
 	return errs
 }
+
+// validateSchedulingOptions validates SchedulingOptions configuration.
+func validateSchedulingOptions(opts *SchedulingOptions, fieldPath *field.Path) field.ErrorList {
+	if opts == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	if len(opts.Options) == 0 {
+		errs = append(errs, field.Required(fieldPath.Child("options"), "at least one scheduling option is required"))
+		return errs
+	}
+
+	// Track option names for uniqueness
+	seenNames := make(map[string]bool)
+	// Track if a default is already set
+	defaultCount := 0
+
+	for i, opt := range opts.Options {
+		optPath := fieldPath.Child("options").Index(i)
+
+		// Validate name is set
+		if opt.Name == "" {
+			errs = append(errs, field.Required(optPath.Child("name"), "option name is required"))
+		} else {
+			// Check for duplicate names
+			if seenNames[opt.Name] {
+				errs = append(errs, field.Duplicate(optPath.Child("name"), opt.Name))
+			}
+			seenNames[opt.Name] = true
+		}
+
+		// Validate displayName is set
+		if opt.DisplayName == "" {
+			errs = append(errs, field.Required(optPath.Child("displayName"), "displayName is required"))
+		}
+
+		// Count defaults
+		if opt.Default {
+			defaultCount++
+		}
+	}
+
+	// Only one option can be marked as default
+	if defaultCount > 1 {
+		errs = append(errs, field.Invalid(fieldPath.Child("options"), defaultCount,
+			"only one option can be marked as default"))
+	}
+
+	return errs
+}

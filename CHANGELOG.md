@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scheduling Constraints and Options for DebugSessionTemplate**: Enhanced scheduling control for debug pods
+  - `schedulingConstraints`: Define mandatory node affinity, tolerations, topology spread, and denied node rules
+  - `schedulingOptions`: Allow users to choose from predefined scheduling configurations (e.g., SRIOV vs standard nodes)
+  - Support for `deniedNodes` (glob patterns) and `deniedNodeLabels` to block specific nodes
+  - Option-level access control with `allowedGroups` and `allowedUsers`
+  - Webhook validation for scheduling options (unique names, single default, required fields)
 - **Kustomize deployment targets restructuring**: New shared base configuration for all deployment targets
   - `config/base`: New canonical production deployment target with webhooks enabled
   - `config/debug`: Production deployment with debug logging

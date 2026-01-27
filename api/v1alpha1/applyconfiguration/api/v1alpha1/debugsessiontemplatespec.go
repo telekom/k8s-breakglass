@@ -41,6 +41,12 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	AffinityOverrides *v1.Affinity `json:"affinityOverrides,omitempty"`
 	// additionalTolerations adds tolerations to those defined in the pod template.
 	AdditionalTolerations []v1.Toleration `json:"additionalTolerations,omitempty"`
+	// schedulingConstraints defines mandatory scheduling rules for debug pods.
+	// These constraints are applied AFTER template settings and CANNOT be overridden by users.
+	SchedulingConstraints *SchedulingConstraintsApplyConfiguration `json:"schedulingConstraints,omitempty"`
+	// schedulingOptions offers users a choice of predefined scheduling configurations.
+	// Each option can define different node selectors, affinities, etc.
+	SchedulingOptions *SchedulingOptionsApplyConfiguration `json:"schedulingOptions,omitempty"`
 	// kubectlDebug configures kubectl debug operations.
 	// Required when mode is "kubectl-debug" or "hybrid".
 	KubectlDebug *KubectlDebugConfigApplyConfiguration `json:"kubectlDebug,omitempty"`
@@ -140,6 +146,22 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithAdditionalTolerations(v
 	for i := range values {
 		b.AdditionalTolerations = append(b.AdditionalTolerations, values[i])
 	}
+	return b
+}
+
+// WithSchedulingConstraints sets the SchedulingConstraints field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SchedulingConstraints field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithSchedulingConstraints(value *SchedulingConstraintsApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.SchedulingConstraints = value
+	return b
+}
+
+// WithSchedulingOptions sets the SchedulingOptions field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SchedulingOptions field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithSchedulingOptions(value *SchedulingOptionsApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.SchedulingOptions = value
 	return b
 }
 
