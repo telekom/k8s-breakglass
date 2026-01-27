@@ -348,7 +348,9 @@ func TestExpireApprovedSessions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	err := telekomv1alpha1.AddToScheme(scheme)
 	assert.NoError(t, err)
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).Build()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).
+		WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+		Build()
 	manager.Client = fakeClient
 
 	logger := zaptest.NewLogger(t).Sugar()
@@ -393,7 +395,9 @@ func TestExpireApprovedSessions_SendsEmail(t *testing.T) {
 				ActualStartTime: startTime,
 			},
 		}
-		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).Build()
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).
+			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			Build()
 
 		manager := &SessionManager{Client: fakeClient}
 		mockMail := NewMockMailEnqueuer(true)
@@ -437,7 +441,9 @@ func TestExpireApprovedSessions_SendsEmail(t *testing.T) {
 				ExpiresAt: past,
 			},
 		}
-		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).Build()
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ses).
+			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			Build()
 
 		manager := &SessionManager{Client: fakeClient}
 		mockMail := NewMockMailEnqueuer(true)

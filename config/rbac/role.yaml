@@ -10,7 +10,6 @@ rules:
   - configmaps
   verbs:
   - create
-  - delete
   - get
   - list
   - patch
@@ -51,6 +50,7 @@ rules:
   resources:
   - secrets
   verbs:
+  - create
   - get
   - list
   - update
@@ -98,8 +98,10 @@ rules:
   - breakglassescalations/status
   - breakglasssessions/status
   - clusterconfigs/status
+  - debugpodtemplates/status
   - debugsessions/status
   - debugsessiontemplates/status
+  - denypolicies/status
   - identityproviders/status
   - mailproviders/status
   verbs:
@@ -131,12 +133,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - breakglass.t-caas.telekom.com
-  resources:
-  - denypolicies/status
-  verbs:
-  - get
 - apiGroups:
   - coordination.k8s.io
   resources:

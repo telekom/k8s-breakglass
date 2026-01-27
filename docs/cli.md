@@ -187,9 +187,22 @@ All commands support these flags:
 - `--config` - Path to config file (default: `~/.config/bgctl/config.yaml`)
 - `--server` - Override server URL (bypasses context)
 - `--token` - Bearer token override (bypasses OIDC)
+- `--verbose` / `-v` - Enable verbose output with correlation IDs for debugging (writes to stderr)
 - `--page` - Page number for paginated output
 - `--page-size` - Items per page
 - `--all` - Disable pagination
+- `--non-interactive` - Fail instead of prompting for input
+
+### Environment Variables
+
+Global flags can also be set via environment variables:
+
+- `BGCTL_CONTEXT` - Context name override
+- `BGCTL_OUTPUT` - Output format
+- `BGCTL_SERVER` - Server URL override
+- `BGCTL_TOKEN` - Bearer token override
+- `BGCTL_VERBOSE` - Set to `true` to enable verbose logging (output goes to stderr)
+- `BGCTL_NON_INTERACTIVE` - Set to `true` to disable interactive prompts
 
 ## Shell Completion
 

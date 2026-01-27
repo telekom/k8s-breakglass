@@ -231,7 +231,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		})
 	}
 
-	return h.client.Status().Update(ctx, ds)
+	return applyDebugSessionStatus(ctx, h.client, ds)
 }
 
 // CreatePodCopy creates a debug copy of a pod
@@ -366,7 +366,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		Ready:     false, // Will be updated by reconciler
 	})
 
-	if err := h.client.Status().Update(ctx, ds); err != nil {
+	if err := applyDebugSessionStatus(ctx, h.client, ds); err != nil {
 		return nil, fmt.Errorf("failed to update session status: %w", err)
 	}
 
@@ -520,7 +520,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		Namespace:  namespace,
 	})
 
-	if err := h.client.Status().Update(ctx, ds); err != nil {
+	if err := applyDebugSessionStatus(ctx, h.client, ds); err != nil {
 		return nil, fmt.Errorf("failed to update session status: %w", err)
 	}
 
@@ -556,7 +556,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 	// Clear the status
 	ds.Status.KubectlDebugStatus = nil
 
-	return h.client.Status().Update(ctx, ds)
+	return applyDebugSessionStatus(ctx, h.client, ds)
 }
 
 // Helper functions

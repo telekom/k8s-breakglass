@@ -1081,7 +1081,9 @@ func TestHandleApproveDebugSession_Success(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Contains(t, rr.Body.String(), "approved successfully")
+	// Response now returns the session object, verify it contains expected fields
+	assert.Contains(t, rr.Body.String(), "pending-session")
+	assert.Contains(t, rr.Body.String(), "approver@example.com")
 }
 
 // ============================================================================
@@ -1293,5 +1295,8 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Contains(t, rr.Body.String(), "rejected successfully")
+	// Response now returns the session object, verify it contains expected fields
+	assert.Contains(t, rr.Body.String(), "pending-session")
+	assert.Contains(t, rr.Body.String(), "Terminated")
+	assert.Contains(t, rr.Body.String(), "Rejected by approver@example.com")
 }

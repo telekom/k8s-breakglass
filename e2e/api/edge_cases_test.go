@@ -269,7 +269,7 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 		require.NoError(t, err)
 		toRevert.Status.State = telekomv1alpha1.SessionStatePending
 
-		err = cli.Status().Update(ctx, &toRevert)
+		err = helpers.ApplySessionStatus(ctx, cli, &toRevert)
 		if err != nil {
 			t.Logf("Invalid transition blocked: %v", err)
 		} else {
@@ -301,7 +301,7 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 		require.NoError(t, err)
 		toExpire.Status.State = telekomv1alpha1.SessionStateExpired
 		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		err = cli.Status().Update(ctx, &toExpire)
+		err = helpers.ApplySessionStatus(ctx, cli, &toExpire)
 		require.NoError(t, err)
 
 		// Try to move back to approved (invalid - resurrection) - this tests webhook validation
@@ -311,7 +311,7 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 		toRevive.Status.State = telekomv1alpha1.SessionStateApproved
 		toRevive.Status.ExpiresAt = metav1.NewTime(time.Now().Add(1 * time.Hour))
 
-		err = cli.Status().Update(ctx, &toRevive)
+		err = helpers.ApplySessionStatus(ctx, cli, &toRevive)
 		if err != nil {
 			t.Logf("Resurrection correctly blocked: %v", err)
 		} else {

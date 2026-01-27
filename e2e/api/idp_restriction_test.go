@@ -91,13 +91,15 @@ func TestIdentityProviderCRUD(t *testing.T) {
 		err := cli.Create(ctx, idp)
 		require.NoError(t, err)
 
-		// Update the IDP
+		// Update the IDP using retry to handle conflicts with the IdentityProviderReconciler
 		var fetched telekomv1alpha1.IdentityProvider
 		err = cli.Get(ctx, types.NamespacedName{Name: idp.Name}, &fetched)
 		require.NoError(t, err)
 
-		fetched.Spec.DisplayName = "Updated Name"
-		err = cli.Update(ctx, &fetched)
+		err = helpers.UpdateWithRetry(ctx, cli, &fetched, func(idp *telekomv1alpha1.IdentityProvider) error {
+			idp.Spec.DisplayName = "Updated Name"
+			return nil
+		})
 		require.NoError(t, err)
 
 		// Verify update

@@ -877,6 +877,8 @@ POST /api/debugSessions/:name/terminate
 
 Terminates the session early. Only the session owner can terminate.
 
+**Response:** Updated `DebugSession` object with `state: Terminated`.
+
 ### Approve Debug Session
 
 ```http
@@ -893,6 +895,8 @@ POST /api/debugSessions/:name/approve
 
 Approves a session in `PendingApproval` state.
 
+**Response:** Updated `DebugSession` object with `state: Approved`.
+
 ### Reject Debug Session
 
 ```http
@@ -908,6 +912,8 @@ POST /api/debugSessions/:name/reject
 ```
 
 Rejects a session in `PendingApproval` state.
+
+**Response:** Updated `DebugSession` object with `state: Rejected`.
 
 ### List Debug Session Templates
 

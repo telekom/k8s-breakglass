@@ -26,6 +26,7 @@ coverage:
 # Exclude auto-generated files from coverage
 ignore:
   - "api/v1alpha1/zz_generated.deepcopy.go"
+  - "api/v1alpha1/applyconfiguration/**"  # Generated SSA apply configurations
   - "**/*_generated.go"
   - "**/zz_generated*.go"
   - "frontend/**"  # Frontend has its own coverage

@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 )
 
 // EscalationReconciler watches BreakglassEscalation CRs and caches escalation→IDP mappings
@@ -49,6 +50,10 @@ type EscalationReconciler struct {
 	// Cache for escalation→IDP mapping to avoid APIServer queries
 	escalationIDPMappingMutex sync.RWMutex
 	escalationIDPMapping      map[string][]string // { escalationName: [idp1, idp2, ...] }
+}
+
+func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
+	return ssa.ApplyBreakglassEscalationStatus(ctx, r.client, escalation)
 }
 
 // NewEscalationReconciler creates a new EscalationReconciler instance.
@@ -206,7 +211,9 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 				"error", ve.error)
 		}
 
-		if err := r.client.Status().Update(ctx, escalation); err != nil {
+		// Update ObservedGeneration before applying status
+		escalation.Status.ObservedGeneration = escalation.Generation
+		if err := r.applyStatus(ctx, escalation); err != nil {
 			r.logger.Warnw("Failed to update escalation status with validation errors",
 				"escalation", escalation.Name,
 				"error", err)
@@ -237,7 +244,9 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		r.recorder.Eventf(escalation, nil, "Normal", "ValidationSucceeded", "ValidationSucceeded", "All escalation validations passed successfully")
 	}
 
-	if err := r.client.Status().Update(ctx, escalation); err != nil {
+	// Update ObservedGeneration before applying status
+	escalation.Status.ObservedGeneration = escalation.Generation
+	if err := r.applyStatus(ctx, escalation); err != nil {
 		r.logger.Warnw("Failed to update escalation status with success state",
 			"escalation", escalation.Name,
 			"error", err)

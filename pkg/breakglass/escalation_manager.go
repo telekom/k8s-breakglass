@@ -405,7 +405,7 @@ func (em *EscalationManager) SetResolver(resolver GroupMemberResolver) {
 func (em *EscalationManager) UpdateBreakglassEscalationStatus(ctx context.Context, esc telekomv1alpha1.BreakglassEscalation) error {
 	log := em.getLogger()
 	log.Infow("Updating BreakglassEscalation status", "name", esc.Name)
-	if err := em.Status().Update(ctx, &esc); err != nil {
+	if err := applyBreakglassEscalationStatus(ctx, em, &esc); err != nil {
 		log.Errorw("Failed to update BreakglassEscalation status", "name", esc.Name, "error", err)
 		return errors.Wrapf(err, "failed to update BreakglassEscalation status %s", esc.Name)
 	}

@@ -6,6 +6,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -18,6 +19,11 @@ func CreateScheme() (*runtime.Scheme, error) {
 	// Add standard Kubernetes types (core API)
 	if err := corev1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add corev1 to scheme: %w", err)
+	}
+
+	// Add events.k8s.io/v1 types for SSA-backed event queries
+	if err := eventsv1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add eventsv1 to scheme: %w", err)
 	}
 
 	// Add custom breakglass CRD types (v1alpha1)

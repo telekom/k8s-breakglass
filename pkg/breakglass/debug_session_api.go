@@ -582,7 +582,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		JoinedAt:    now,
 	})
 
-	if err := c.client.Status().Update(apiCtx, session); err != nil {
+	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to add participant", "session", name, "user", username, "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join session"})
 		return
@@ -683,7 +683,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	session.Status.ExpiresAt = &newExpiry
 	session.Status.RenewalCount++
 
-	if err := c.client.Status().Update(apiCtx, session); err != nil {
+	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to renew session", "session", name, "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to renew session"})
 		return
@@ -748,7 +748,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	session.Status.State = v1alpha1.DebugSessionStateTerminated
 	session.Status.Message = fmt.Sprintf("Terminated by %s", currentUser)
 
-	if err := c.client.Status().Update(apiCtx, session); err != nil {
+	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to terminate session", "session", name, "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to terminate session"})
 		return
@@ -760,7 +760,8 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	reqLog.Infow("Debug session terminated", "session", name, "user", currentUser)
 	metrics.DebugSessionsTerminated.WithLabelValues(session.Spec.Cluster, "user_terminated").Inc()
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "session terminated successfully"})
+	// Return updated session - client expects the session object, not just a message
+	ctx.JSON(http.StatusOK, session)
 }
 
 // handleApproveDebugSession approves a pending debug session
@@ -826,7 +827,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		session.Status.Approval.Reason = req.Reason
 	}
 
-	if err := c.client.Status().Update(apiCtx, session); err != nil {
+	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to approve session", "session", name, "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve session"})
 		return
@@ -841,7 +842,8 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	reqLog.Infow("Debug session approved", "session", name, "approver", currentUser)
 	metrics.DebugSessionApproved.WithLabelValues(session.Spec.Cluster, "user").Inc()
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "session approved successfully"})
+	// Return updated session - client expects the session object, not just a message
+	ctx.JSON(http.StatusOK, session)
 }
 
 // handleRejectDebugSession rejects a pending debug session
@@ -910,7 +912,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	session.Status.State = v1alpha1.DebugSessionStateTerminated
 	session.Status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
 
-	if err := c.client.Status().Update(apiCtx, session); err != nil {
+	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to reject session", "session", name, "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject session"})
 		return
@@ -925,7 +927,8 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	reqLog.Infow("Debug session rejected", "session", name, "rejector", currentUser, "reason", req.Reason)
 	metrics.DebugSessionRejected.WithLabelValues(session.Spec.Cluster, "user_rejected").Inc()
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "session rejected successfully"})
+	// Return updated session - client expects the session object, not just a message
+	ctx.JSON(http.StatusOK, session)
 }
 
 // handleLeaveDebugSession allows a participant to leave a session
@@ -978,7 +981,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	if err := c.client.Status().Update(apiCtx, session); err != nil {
+	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to leave session", "session", name, "user", username, "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to leave session"})
 		return

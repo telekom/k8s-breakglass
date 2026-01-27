@@ -885,3 +885,54 @@ func TestService_BuildKafkaSASLConfig(t *testing.T) {
 		assert.Equal(t, "other-user", cfg.Username)
 	})
 }
+
+func TestService_GetStats_NoManager(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, logger, "test-namespace")
+
+	// No manager initialized
+	stats := svc.GetStats()
+	assert.Nil(t, stats)
+}
+
+func TestService_GetStats_WithManager(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, logger, "test-namespace")
+
+	// Reload with a valid config to initialize the manager
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-stats-config",
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{
+				{
+					Name: "log-sink",
+					Type: breakglassv1alpha1.AuditSinkTypeLog,
+				},
+			},
+		},
+	}
+
+	err := svc.Reload(context.Background(), config)
+	require.NoError(t, err)
+
+	// Manager should now be initialized
+	stats := svc.GetStats()
+	assert.NotNil(t, stats)
+	assert.GreaterOrEqual(t, stats.ProcessedEvents, int64(0))
+	assert.GreaterOrEqual(t, stats.DroppedEvents, int64(0))
+
+	_ = svc.Close()
+}

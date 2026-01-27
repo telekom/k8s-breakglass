@@ -84,24 +84,31 @@ func (r *K8sEventRecorder) Eventf(regarding runtime.Object, related runtime.Obje
 		noteMessage = fmt.Sprintf(note, args...)
 	}
 
+	// For events.k8s.io/v1 API:
+	// - ReportingInstance is required and must be non-empty
+	// - Deprecated fields (firstTimestamp, lastTimestamp, count, source) must NOT be set
+	reportingInstance := r.Source.Host
+	if reportingInstance == "" {
+		// Use component name as fallback if host is not set
+		reportingInstance = r.Source.Component
+	}
+
 	ev := &eventsv1.Event{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: metaObj.GetName() + "-",
 			Namespace:    ns,
 		},
-		Regarding:                *regardingRef,
-		Related:                  relatedRef,
-		Reason:                   reason,
-		Note:                     noteMessage,
-		Type:                     eventtype,
-		Action:                   action,
-		ReportingController:      r.Source.Component,
-		ReportingInstance:        r.Source.Host,
-		EventTime:                metav1.MicroTime{Time: time.Now()},
-		DeprecatedSource:         r.Source,
-		DeprecatedFirstTimestamp: metav1.NewTime(time.Now()),
-		DeprecatedLastTimestamp:  metav1.NewTime(time.Now()),
-		DeprecatedCount:          1,
+		Regarding:           *regardingRef,
+		Related:             relatedRef,
+		Reason:              reason,
+		Note:                noteMessage,
+		Type:                eventtype,
+		Action:              action,
+		ReportingController: r.Source.Component,
+		ReportingInstance:   reportingInstance,
+		EventTime:           metav1.MicroTime{Time: time.Now()},
+		// NOTE: Do NOT set deprecated fields (DeprecatedSource, DeprecatedFirstTimestamp,
+		// DeprecatedLastTimestamp, DeprecatedCount) - events.k8s.io/v1 API rejects them
 	}
 	// best-effort write; surface errors to optional logger so operators can diagnose
 	if created, err := r.Clientset.EventsV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{}); err != nil {

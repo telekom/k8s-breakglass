@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -60,6 +61,8 @@ type AuditConfigReconciler struct {
 	onError func(ctx context.Context, err error)
 	// getSinkHealth returns the current health status of all sinks (optional)
 	getSinkHealth func() []SinkHealthInfo
+	// getStats returns the current audit manager statistics (optional)
+	getStats func() *AuditStats
 	// resyncPeriod defines the full reconciliation interval (default 10m)
 	resyncPeriod time.Duration
 
@@ -75,6 +78,12 @@ type SinkHealthInfo struct {
 	CircuitState        string
 	ConsecutiveFailures int64
 	LastError           string
+}
+
+// AuditStats contains audit manager statistics for populating CRD status.
+type AuditStats struct {
+	ProcessedEvents int64
+	DroppedEvents   int64
 }
 
 // NewAuditConfigReconciler creates a new AuditConfigReconciler instance.
@@ -102,6 +111,12 @@ func NewAuditConfigReconciler(
 // SetSinkHealthProvider sets the callback to retrieve sink health information.
 func (r *AuditConfigReconciler) SetSinkHealthProvider(fn func() []SinkHealthInfo) {
 	r.getSinkHealth = fn
+}
+
+// SetStatsProvider sets the callback to retrieve audit manager statistics.
+// This allows the reconciler to populate EventsProcessed and EventsDropped in the status.
+func (r *AuditConfigReconciler) SetStatsProvider(fn func() *AuditStats) {
+	r.getStats = fn
 }
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=auditconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -147,7 +162,7 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 				Message:            fmt.Sprintf("Resource validation failed: %s", validationResult.ErrorMessage()),
 			}
 			apimeta.SetStatusCondition(&config.Status.Conditions, condition)
-			if statusErr := r.client.Status().Update(ctx, config); statusErr != nil {
+			if statusErr := r.applyStatus(ctx, config); statusErr != nil {
 				r.logger.Errorw("Failed to update AuditConfig status", "name", config.Name, "error", statusErr)
 			}
 
@@ -419,7 +434,24 @@ func (r *AuditConfigReconciler) updateStatus(ctx context.Context, config *breakg
 		}
 	}
 
-	return r.client.Status().Update(ctx, config)
+	// Update audit statistics if provider is available
+	if r.getStats != nil {
+		if stats := r.getStats(); stats != nil {
+			config.Status.EventsProcessed = stats.ProcessedEvents
+			config.Status.EventsDropped = stats.DroppedEvents
+			// Set LastEventTime to now if events have been processed
+			if stats.ProcessedEvents > 0 {
+				now := metav1.Now()
+				config.Status.LastEventTime = &now
+			}
+		}
+	}
+
+	return r.applyStatus(ctx, config)
+}
+
+func (r *AuditConfigReconciler) applyStatus(ctx context.Context, config *breakglassv1alpha1.AuditConfig) error {
+	return ssa.ApplyAuditConfigStatus(ctx, r.client, config)
 }
 
 // GetActiveConfig returns the first currently active AuditConfig (thread-safe).

@@ -147,7 +147,7 @@ func ExpireActiveSessionsForUser(ctx context.Context, cli client.Client, namespa
 			// Mark as expired by setting expiresAt to the past
 			session.Status.ExpiresAt = now
 			session.Status.State = telekomv1alpha1.SessionStateExpired
-			if err := cli.Status().Update(ctx, session); err != nil {
+			if err := ApplySessionStatus(ctx, cli, session); err != nil {
 				if client.IgnoreNotFound(err) != nil {
 					return err
 				}

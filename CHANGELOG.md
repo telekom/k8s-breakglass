@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Additional unit tests for `pkg/bgctl/cmd` update helpers
 - Additional unit tests for `pkg/bgctl/cmd` update helpers (archive edge cases)
 - Additional unit tests for `pkg/bgctl/cmd` client building
+- **CLI Correlation ID logging**: All API requests now include `X-Correlation-ID` header and support verbose mode via `WithVerbose()` for CI debugging
+- **CLI `--verbose` flag**: New `-v/--verbose` flag and `BGCTL_VERBOSE` environment variable for detailed request/response logging with correlation IDs
+- CLI E2E tests now run with verbose mode enabled for better CI debugging
 
 ### Changed
 
@@ -71,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DebugSession lookups now use indexed field selectors for cluster, state, and participant filters
 - Bumped controller-runtime to v0.23.0 and adopted typed webhooks with `events.k8s.io` RBAC for event recording
 - Switched internal event emission to the `events.k8s.io` recorder API
+- Adopted SSA for controller-managed status updates with field manager `breakglass-controller`
+- Enabled controller warmup and a 5-minute reconciliation timeout for manager-registered controllers
+- E2E event verification now queries `events.k8s.io/v1` instead of the legacy core/v1 events API
+- DebugSessionTemplate and DebugPodTemplate status updates now use SSA via `ssa.ApplyDebugSessionTemplateStatus` and `ssa.ApplyDebugPodTemplateStatus`
 
 ### Fixed
 
@@ -83,13 +90,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Technical debt documentation now references the correct PR for webhook validation fix
 - **CLI completion** now writes to configured output writer instead of hardcoded stdout
 - **CLI E2E tests** fixed to use correct flag names (`--context` instead of `--context-name`)
+- Leader election now emits Kubernetes events for lease transitions
 - BreakglassSession webhooks now reject invalid status transitions
 - DenyPolicy validation now rejects negative precedence values
 - Breakglass session list reads now use a fresh API reader for consistent filtering results
+- BreakglassSession SSA status updates now resolve namespace/resourceVersion and force ownership to avoid field manager conflicts
+- SSA status apply conflicts are now logged for CI visibility
 - Multi-cluster e2e setup now applies debug session templates
 - Documentation now covers full CRD set, validating webhook scope, and email optionality
 - **Dev kustomize overlay**: Disabled hash suffix for `keycloak-realm`, `keycloak-tls`, and `breakglass-certs` to fix volume mount failures in E2E tests
 - **Dev kustomize overlay**: Renamed dev services/deployments to use `breakglass-` prefix (`breakglass-keycloak`, `breakglass-mailhog`, `breakglass-kafka`, `breakglass-audit-webhook-receiver`) to match FQDN references in config files and e2e helpers
+- **Debug session API handlers** now return session object instead of message for terminate, approve, and reject endpoints to match client expectations
+- **CLI verbose logging** now writes to stderr instead of stdout to avoid corrupting JSON/YAML output
 
 ### Security
 

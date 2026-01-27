@@ -6,6 +6,7 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -46,15 +47,31 @@ func StatusUpdateWithRetry[T client.Object](
 	config RetryConfig,
 ) error {
 	backoff := config.InitialBackoff
+	initialGVK := obj.GetObjectKind().GroupVersionKind()
+	if initialGVK.Empty() {
+		return fmt.Errorf("status apply requires TypeMeta to be set on %T", obj)
+	}
 
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		// Apply the modification function
 		if err := modifyFunc(obj); err != nil {
 			return err
 		}
+		obj.GetObjectKind().SetGroupVersionKind(initialGVK)
 
-		// Try to update the status
-		err := c.Status().Update(ctx, obj)
+		if obj.GetResourceVersion() == "" {
+			current := obj.DeepCopyObject().(client.Object)
+			if err := c.Get(ctx, client.ObjectKeyFromObject(obj), current); err != nil {
+				return err
+			}
+			obj.SetResourceVersion(current.GetResourceVersion())
+		}
+
+		obj.SetManagedFields(nil)
+
+		// Try to apply the status using SSA
+		//nolint:staticcheck // SA1019: client.Apply for status subresource is still the recommended approach until SubResource("status").Apply() is available
+		err := c.SubResource("status").Patch(ctx, obj, client.Apply, client.FieldOwner(FieldOwnerController), client.ForceOwnership)
 		if err == nil {
 			return nil // Success
 		}
@@ -88,6 +105,7 @@ func StatusUpdateWithRetry[T client.Object](
 		if err := c.Get(ctx, objKey, obj); err != nil {
 			return err
 		}
+		obj.GetObjectKind().SetGroupVersionKind(initialGVK)
 	}
 
 	// Should not reach here, but return the last error for safety

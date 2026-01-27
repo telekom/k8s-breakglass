@@ -12,9 +12,12 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -62,6 +65,10 @@ func Setup(
 		Metrics:          metricsServerOptions,
 		LeaderElection:   false,
 		LeaderElectionID: "",
+		Client: client.Options{
+			FieldOwner:      utils.FieldOwnerController,
+			FieldValidation: metav1.FieldValidationWarn,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start webhook server; webhooks will not be registered: %w", err)

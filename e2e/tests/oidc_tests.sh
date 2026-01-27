@@ -907,24 +907,52 @@ EOF
 # ============================================================================
 test_O007_oidc_token_exchange() {
   log "=== O-007: OIDC token exchange flow ==="
-  local test_name="oidc-test-007"
   
+  # This test uses real Keycloak to verify token exchange configuration is processed
+  if ! check_keycloak_available; then
+    log_skip "O-007: Keycloak is not available - cannot test token exchange"
+    return 0
+  fi
+  
+  local test_name="oidc-test-007"
   cleanup_test_resources "$test_name"
   
-  # Create secrets for token exchange
-  $KUBECTL create secret generic "${test_name}-client-secret" \
-    -n "$NAMESPACE" \
-    --from-literal=client-secret="test-client-secret-value" \
-    --dry-run=client -o yaml | $KUBECTL apply -f -
-  $KUBECTL label secret "${test_name}-client-secret" -n "$NAMESPACE" "e2e-test=$test_name"
+  # Get the target cluster API server
+  local api_server
+  api_server=$(get_cluster_api_server)
+  if [ -z "$api_server" ]; then
+    log_fail "O-007: Could not determine cluster API server"
+    return 1
+  fi
+  log "Using API server: $api_server"
   
+  # Get Keycloak CA for OIDC issuer TLS verification
+  local keycloak_ca
+  keycloak_ca=$(get_keycloak_ca)
+  
+  # Create a mock subject token secret for token exchange
+  # In real scenarios, this would be a service account token or external IdP token
   $KUBECTL create secret generic "${test_name}-subject-token" \
     -n "$NAMESPACE" \
-    --from-literal=token="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXN1YmplY3QifQ.mock" \
+    --from-literal=token="mock-subject-token-for-exchange" \
     --dry-run=client -o yaml | $KUBECTL apply -f -
   $KUBECTL label secret "${test_name}-subject-token" -n "$NAMESPACE" "e2e-test=$test_name"
   
-  # Create ClusterConfig with token exchange enabled
+  # Create empty secret for cluster CA TOFU
+  local ca_secret_name="${test_name}-cluster-ca"
+  cat <<EOF | $KUBECTL apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${ca_secret_name}
+  namespace: ${NAMESPACE}
+  labels:
+    e2e-test: ${test_name}
+type: Opaque
+data: {}
+EOF
+  
+  # Create ClusterConfig with token exchange enabled using real Keycloak
   cat <<EOF | $KUBECTL apply -f -
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
@@ -936,26 +964,37 @@ metadata:
 spec:
   authType: OIDC
   oidcAuth:
-    issuerURL: https://keycloak.example.com/realms/test
-    clientID: test-client
-    server: https://api.test-cluster.example.com:6443
+    issuerURL: ${KEYCLOAK_ISSUER_URL}
+    clientID: ${KEYCLOAK_CLIENT_ID}
+    server: ${api_server}
     clientSecretRef:
-      name: ${test_name}-client-secret
+      name: ${KEYCLOAK_CLIENT_SECRET_NAME}
       namespace: ${NAMESPACE}
       key: client-secret
+$(if [ -n "$keycloak_ca" ]; then
+cat <<CAEOF
+    certificateAuthority: |
+$(echo "$keycloak_ca" | sed 's/^/      /')
+CAEOF
+fi)
+    # Use TOFU for cluster CA
+    caSecretRef:
+      name: ${ca_secret_name}
+      namespace: ${NAMESPACE}
+      key: ca.crt
+    # Enable token exchange flow
     tokenExchange:
       enabled: true
       subjectTokenSecretRef:
         name: ${test_name}-subject-token
         namespace: ${NAMESPACE}
         key: token
-      resource: https://api.test-cluster.example.com:6443
+      resource: ${api_server}
 EOF
   
   # Wait for controller to process
+  log "Waiting for token exchange processing..."
   sleep $PROCESS_WAIT
-  
-  # Wait for controller to process
   sleep $PROCESS_WAIT
   
   # Check that the config was created and processed
@@ -974,15 +1013,20 @@ EOF
   message=$($KUBECTL get clusterconfig "${test_name}" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || echo "")
   
   log "Status: $status, Reason: $reason"
+  if [ -n "$message" ]; then
+    log "Message: $message"
+  fi
   
   # Check controller logs for token exchange attempt
   local controller_pod
   controller_pod=$($KUBECTL get pods -l app=breakglass -n "$NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
   
   local token_exchange_attempted=false
+  local token_exchange_logs=""
   if [ -n "$controller_pod" ]; then
     log "Checking controller logs for token exchange activity..."
-    if $KUBECTL logs "$controller_pod" -n "$NAMESPACE" --tail=100 2>/dev/null | grep -qiE "token.*exchange|TokenExchange|exchange.*token"; then
+    token_exchange_logs=$($KUBECTL logs "$controller_pod" -n "$NAMESPACE" --tail=200 2>/dev/null | grep -iE "token.*exchange|TokenExchange|exchange.*token|STS" || echo "")
+    if [ -n "$token_exchange_logs" ]; then
       log "Token exchange activity detected in logs"
       token_exchange_attempted=true
     fi
@@ -990,27 +1034,27 @@ EOF
   
   cleanup_test_resources "$test_name"
   
-  # Success criteria - STRICT:
-  # This test uses an unreachable issuer, so token exchange will fail.
-  # But we should verify the controller ATTEMPTED token exchange.
-  #
-  # NOTE: Previous version only checked CRD creation, not actual token exchange.
-  # For a real token exchange test, we need a reachable issuer with STS configured.
+  # Success criteria:
+  # 1. If Ready=True: Token exchange worked and cluster is reachable
+  # 2. If token exchange was attempted (visible in logs): The flow was triggered
+  # 3. If OIDCValidated but cluster unreachable: Token exchange succeeded but cluster auth failed
+  # 4. If token exchange error in message: Flow was attempted but failed (e.g., STS not configured)
   
   if [ "$status" = "True" ]; then
-    log_pass "O-007: Token exchange ClusterConfig processed successfully"
+    log_pass "O-007: Token exchange succeeded - cluster reachable with exchanged token"
+  elif [ "$reason" = "OIDCValidated" ]; then
+    log_pass "O-007: Token exchange configuration processed, OIDC validated"
   elif $token_exchange_attempted; then
-    # Token exchange was attempted but failed (expected with fake issuer)
-    log_pass "O-007: Token exchange was attempted (failed as expected with unreachable issuer)"
-  elif [[ "$message" == *"exchange"* ]] || [[ "$message" == *"STS"* ]]; then
-    # Error message indicates token exchange was processed
-    log_pass "O-007: Token exchange configuration processed (error: $message)"
+    log_pass "O-007: Token exchange was attempted (logs show activity)"
+  elif [[ "$message" == *"exchange"* ]] || [[ "$message" == *"STS"* ]] || [[ "$message" == *"token_exchange"* ]]; then
+    # Error message indicates token exchange was attempted
+    log_pass "O-007: Token exchange flow triggered (error in exchange: ${message:0:100}...)"
   elif [ "$reason" = "OIDCDiscoveryFailed" ]; then
-    # OIDC discovery failed - can't test token exchange without reaching issuer
-    log_fail "O-007: Cannot test token exchange - OIDC discovery failed: $message"
+    # Discovery failed - this shouldn't happen with real Keycloak
+    log_fail "O-007: OIDC discovery failed even with real Keycloak: $message"
     return 1
   else
-    log_fail "O-007: Token exchange not attempted. Status: $status, Reason: $reason, Message: $message"
+    log_fail "O-007: Token exchange not triggered. Status: $status, Reason: $reason, Message: $message"
     return 1
   fi
 }

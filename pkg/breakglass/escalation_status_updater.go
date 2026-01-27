@@ -12,6 +12,7 @@ import (
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/go-resty/resty/v2"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	"k8s.io/client-go/tools/events"
@@ -602,7 +603,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 
 		if changed {
 			log.Infow("Updating escalation status with resolved group members", "escalation", esc.Name, "groupCount", len(groups))
-			if err := u.K8sClient.Status().Update(ctx, updated); err != nil {
+			if err := u.applyStatus(ctx, updated); err != nil {
 				log.Errorw("Failed updating escalation status", "escalation", esc.Name, "error", err)
 				// Emit error event
 				if u.EventRecorder != nil {
@@ -633,6 +634,10 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 		}
 	}
 	log.Debugw("Completed escalation status update cycle")
+}
+
+func (u EscalationStatusUpdater) applyStatus(ctx context.Context, escalation *telekomv1alpha1.BreakglassEscalation) error {
+	return ssa.ApplyBreakglassEscalationStatus(ctx, u.K8sClient, escalation)
 }
 
 // fetchGroupMembersFromMultipleIDPs fetches group members from multiple IDPs and stores in IDP hierarchy structure.

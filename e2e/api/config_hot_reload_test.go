@@ -71,10 +71,14 @@ func TestIdentityProviderHotReload(t *testing.T) {
 		assert.Equal(t, "https://original-issuer.example.com", initial.Spec.OIDC.Authority)
 		t.Logf("Initial IDP authority: %s", initial.Spec.OIDC.Authority)
 
-		initial.Spec.OIDC.Authority = "https://updated-issuer.example.com"
-		initial.Spec.OIDC.ClientID = "updated-client-id"
-		initial.Spec.Issuer = "https://updated-issuer.example.com"
-		require.NoError(t, cli.Update(ctx, &initial), "Failed to update IdentityProvider")
+		// Use retry to handle conflicts with the IdentityProviderReconciler
+		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(idp *telekomv1alpha1.IdentityProvider) error {
+			idp.Spec.OIDC.Authority = "https://updated-issuer.example.com"
+			idp.Spec.OIDC.ClientID = "updated-client-id"
+			idp.Spec.Issuer = "https://updated-issuer.example.com"
+			return nil
+		})
+		require.NoError(t, err, "Failed to update IdentityProvider")
 
 		time.Sleep(3 * time.Second)
 
@@ -117,9 +121,12 @@ func TestIdentityProviderHotReload(t *testing.T) {
 		assert.False(t, initial.Spec.Disabled)
 		t.Logf("Initial IDP disabled: %v", initial.Spec.Disabled)
 
-		// Disable the provider
-		initial.Spec.Disabled = true
-		require.NoError(t, cli.Update(ctx, &initial), "Failed to disable IdentityProvider")
+		// Disable the provider using retry to handle conflicts with reconciler
+		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(idp *telekomv1alpha1.IdentityProvider) error {
+			idp.Spec.Disabled = true
+			return nil
+		})
+		require.NoError(t, err, "Failed to disable IdentityProvider")
 
 		time.Sleep(3 * time.Second)
 
@@ -193,9 +200,13 @@ users:
 		assert.Equal(t, "original-cluster-id", initial.Spec.ClusterID)
 		t.Logf("Initial ClusterConfig: ClusterID=%s", initial.Spec.ClusterID)
 
-		initial.Spec.ClusterID = "updated-cluster-id"
-		initial.Spec.Environment = "staging"
-		require.NoError(t, cli.Update(ctx, &initial), "Failed to update ClusterConfig")
+		// Use retry to handle conflicts with the ClusterConfigReconciler
+		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(cc *telekomv1alpha1.ClusterConfig) error {
+			cc.Spec.ClusterID = "updated-cluster-id"
+			cc.Spec.Environment = "staging"
+			return nil
+		})
+		require.NoError(t, err, "Failed to update ClusterConfig")
 
 		time.Sleep(3 * time.Second)
 
@@ -350,9 +361,13 @@ func TestMailProviderHotReload(t *testing.T) {
 		assert.Equal(t, "original-smtp.example.com", initial.Spec.SMTP.Host)
 		t.Logf("Initial MailProvider host: %s", initial.Spec.SMTP.Host)
 
-		initial.Spec.SMTP.Host = "updated-smtp.example.com"
-		initial.Spec.Sender.Address = "updated@example.com"
-		require.NoError(t, cli.Update(ctx, &initial), "Failed to update MailProvider")
+		// Use retry to handle conflicts with the MailProviderReconciler
+		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(mp *telekomv1alpha1.MailProvider) error {
+			mp.Spec.SMTP.Host = "updated-smtp.example.com"
+			mp.Spec.Sender.Address = "updated@example.com"
+			return nil
+		})
+		require.NoError(t, err, "Failed to update MailProvider")
 
 		time.Sleep(3 * time.Second)
 
@@ -373,7 +388,6 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 	defer cancel()
 
 	cli := helpers.GetClient(t)
-	namespace := helpers.GetTestNamespace()
 
 	provider := helpers.DefaultOIDCProvider()
 	token := provider.GetToken(t, ctx, helpers.TestUsers.Requester.Username, helpers.TestUsers.Requester.Password)
@@ -409,14 +423,16 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 		// Ensure we restore the original client ID at the end
 		defer func() {
 			// Re-fetch to get latest version to avoid conflict
-			if err := cli.Get(ctx, types.NamespacedName{Name: testIDP.Name, Namespace: namespace}, testIDP); err == nil {
-				testIDP.Spec.OIDC.ClientID = originalClientID
-				_ = cli.Update(ctx, testIDP)
-			}
+			_ = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *telekomv1alpha1.IdentityProvider) error {
+				idp.Spec.OIDC.ClientID = originalClientID
+				return nil
+			})
 		}()
 
-		testIDP.Spec.OIDC.ClientID = "temporary-client-id-" + helpers.GenerateUniqueName("")
-		err = cli.Update(ctx, testIDP)
+		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *telekomv1alpha1.IdentityProvider) error {
+			idp.Spec.OIDC.ClientID = "temporary-client-id-" + helpers.GenerateUniqueName("")
+			return nil
+		})
 		require.NoError(t, err, "Failed to update test IDP")
 
 		for i := 0; i < 5; i++ {
@@ -430,10 +446,10 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 		}
 
 		// Explicitly restore (defer will handle it if this fails, but good to be explicit for the test flow)
-		err = cli.Get(ctx, types.NamespacedName{Name: testIDP.Name, Namespace: namespace}, testIDP)
-		require.NoError(t, err)
-		testIDP.Spec.OIDC.ClientID = originalClientID
-		err = cli.Update(ctx, testIDP)
+		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *telekomv1alpha1.IdentityProvider) error {
+			idp.Spec.OIDC.ClientID = originalClientID
+			return nil
+		})
 		require.NoError(t, err, "Failed to restore test IDP")
 
 		sessions, err = apiClient.ListSessions(ctx)

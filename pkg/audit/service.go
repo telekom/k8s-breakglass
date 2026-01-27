@@ -264,6 +264,18 @@ func (s *Service) IsEnabled() bool {
 	return s.enabled
 }
 
+// GetStats returns the current audit manager statistics.
+// Returns nil if the audit manager is not initialized.
+func (s *Service) GetStats() *ManagerStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.manager == nil {
+		return nil
+	}
+	stats := s.manager.Stats()
+	return &stats
+}
+
 // SinkHealth represents the health status of a single audit sink.
 type SinkHealth struct {
 	Name                string

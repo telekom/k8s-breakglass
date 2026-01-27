@@ -2,6 +2,20 @@
 
 This guide covers advanced configuration options and features for breakglass.
 
+## Controller Runtime Behavior
+
+Breakglass controllers use server-side apply (SSA) for status updates with the field manager set to
+`breakglass-controller`. This improves conflict handling and preserves status ownership across
+multiple controller instances.
+
+Additional controller-runtime features in use:
+
+- **Reconciliation timeout**: Default timeout is 5 minutes per reconciliation. Timeouts are surfaced
+  via `controller_runtime_reconcile_timeouts_total`.
+- **Warmup enabled**: Controllers warm their caches before leadership acquisition to reduce failover
+  latency.
+- **Priority queue**: Reconcile queues use controller-runtime priority queue (enabled by default).
+
 ## Request and Approval Reasons
 
 Breakglass supports optional free-text reason fields that can be required or optional during session requests and approvals.

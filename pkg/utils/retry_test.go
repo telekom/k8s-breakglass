@@ -37,6 +37,10 @@ func TestStatusUpdateWithRetry_Success(t *testing.T) {
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
 	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
@@ -73,6 +77,10 @@ func TestStatusUpdateWithRetry_ConflictRetry(t *testing.T) {
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
 	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
@@ -92,7 +100,7 @@ func TestStatusUpdateWithRetry_ConflictRetry(t *testing.T) {
 		WithObjects(session).
 		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourceUpdate: func(ctx context.Context, client client.Client, subResource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			SubResourcePatch: func(ctx context.Context, client client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 				if subResource == "status" && conflictCount < maxConflicts {
 					conflictCount++
 					return apierrors.NewConflict(
@@ -101,7 +109,7 @@ func TestStatusUpdateWithRetry_ConflictRetry(t *testing.T) {
 						nil,
 					)
 				}
-				return client.SubResource(subResource).Update(ctx, obj, opts...)
+				return client.SubResource(subResource).Patch(ctx, obj, patch, opts...)
 			},
 		}).
 		Build()
@@ -128,6 +136,10 @@ func TestStatusUpdateWithRetry_MaxRetriesExceeded(t *testing.T) {
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
 	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
@@ -144,7 +156,7 @@ func TestStatusUpdateWithRetry_MaxRetriesExceeded(t *testing.T) {
 		WithObjects(session).
 		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourceUpdate: func(ctx context.Context, client client.Client, subResource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			SubResourcePatch: func(ctx context.Context, client client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 				if subResource == "status" {
 					return apierrors.NewConflict(
 						schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
@@ -152,7 +164,7 @@ func TestStatusUpdateWithRetry_MaxRetriesExceeded(t *testing.T) {
 						nil,
 					)
 				}
-				return client.SubResource(subResource).Update(ctx, obj, opts...)
+				return client.SubResource(subResource).Patch(ctx, obj, patch, opts...)
 			},
 		}).
 		Build()
@@ -179,6 +191,10 @@ func TestStatusUpdateWithRetry_ContextCancelled(t *testing.T) {
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
 	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
@@ -195,7 +211,7 @@ func TestStatusUpdateWithRetry_ContextCancelled(t *testing.T) {
 		WithObjects(session).
 		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourceUpdate: func(ctx context.Context, client client.Client, subResource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			SubResourcePatch: func(ctx context.Context, client client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 				if subResource == "status" {
 					return apierrors.NewConflict(
 						schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
@@ -203,7 +219,7 @@ func TestStatusUpdateWithRetry_ContextCancelled(t *testing.T) {
 						nil,
 					)
 				}
-				return client.SubResource(subResource).Update(ctx, obj, opts...)
+				return client.SubResource(subResource).Patch(ctx, obj, patch, opts...)
 			},
 		}).
 		Build()
@@ -233,6 +249,10 @@ func TestUpdateWithRetry_Success(t *testing.T) {
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
 	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
@@ -268,6 +288,10 @@ func TestStatusUpdateWithRetry_NonConflictError(t *testing.T) {
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
 	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
@@ -284,14 +308,14 @@ func TestStatusUpdateWithRetry_NonConflictError(t *testing.T) {
 		WithObjects(session).
 		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourceUpdate: func(ctx context.Context, client client.Client, subResource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			SubResourcePatch: func(ctx context.Context, client client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 				if subResource == "status" {
 					return apierrors.NewNotFound(
 						schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
 						session.Name,
 					)
 				}
-				return client.SubResource(subResource).Update(ctx, obj, opts...)
+				return client.SubResource(subResource).Patch(ctx, obj, patch, opts...)
 			},
 		}).
 		Build()

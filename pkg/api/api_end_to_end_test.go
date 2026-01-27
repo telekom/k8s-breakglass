@@ -505,6 +505,8 @@ func (env *apiEndToEndEnv) updateSessionStatus(t *testing.T, name string, mutate
 	var session v1alpha1.BreakglassSession
 	require.NoError(t, env.client.Get(ctx, client.ObjectKey{Namespace: e2eNamespace, Name: name}, &session))
 	mutate(&session)
+	// Use Status().Update() for fake client - SSA is used in production code
+	// Fake client's SSA implementation has limitations with unstructured objects
 	require.NoError(t, env.client.Status().Update(ctx, &session))
 }
 
