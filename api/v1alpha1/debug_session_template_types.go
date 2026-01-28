@@ -182,6 +182,72 @@ type DebugSessionTemplateSpec struct {
 	// These cannot be disabled by bindings or users.
 	// +optional
 	RequiredAuxiliaryResourceCategories []string `json:"requiredAuxiliaryResourceCategories,omitempty"`
+
+	// notification configures notification settings for debug sessions using this template.
+	// +optional
+	Notification *DebugSessionNotificationConfig `json:"notification,omitempty"`
+
+	// requestReason configures reason requirements for debug session requests.
+	// +optional
+	RequestReason *DebugRequestReasonConfig `json:"requestReason,omitempty"`
+
+	// approvalReason configures reason requirements for approval/rejection actions.
+	// +optional
+	ApprovalReason *DebugApprovalReasonConfig `json:"approvalReason,omitempty"`
+
+	// resourceQuota specifies resource limits for debug sessions using this template.
+	// Helps prevent resource exhaustion on target clusters.
+	// +optional
+	ResourceQuota *DebugResourceQuotaConfig `json:"resourceQuota,omitempty"`
+
+	// podDisruptionBudget configures disruption tolerance for debug pods.
+	// Useful for long-running debug sessions that shouldn't be evicted.
+	// +optional
+	PodDisruptionBudget *DebugPDBConfig `json:"podDisruptionBudget,omitempty"`
+
+	// labels are additional labels applied to all resources created by this template.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// annotations are additional annotations applied to all resources created by this template.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// priority controls the order in which templates are displayed in the UI.
+	// Higher values appear first. Defaults to 0.
+	// +optional
+	// +kubebuilder:default=0
+	Priority int32 `json:"priority,omitempty"`
+
+	// hidden hides this template from the UI but allows API usage.
+	// Useful for templates used by automation or internal tools.
+	// +optional
+	// +kubebuilder:default=false
+	Hidden bool `json:"hidden,omitempty"`
+
+	// deprecated marks this template as deprecated.
+	// Deprecated templates show a warning but can still be used.
+	// +optional
+	// +kubebuilder:default=false
+	Deprecated bool `json:"deprecated,omitempty"`
+
+	// deprecationMessage explains why this template is deprecated and suggests alternatives.
+	// Only displayed when deprecated is true.
+	// +optional
+	DeprecationMessage string `json:"deprecationMessage,omitempty"`
+
+	// expirationBehavior controls what happens when a session expires.
+	// Options: "terminate" (default) or "notify-only".
+	// +optional
+	// +kubebuilder:default="terminate"
+	// +kubebuilder:validation:Enum=terminate;notify-only
+	ExpirationBehavior string `json:"expirationBehavior,omitempty"`
+
+	// gracePeriodBeforeExpiry is the duration before expiry when users are notified.
+	// Users will receive a warning notification at this interval before session expires.
+	// +optional
+	// +kubebuilder:default="15m"
+	GracePeriodBeforeExpiry string `json:"gracePeriodBeforeExpiry,omitempty"`
 }
 
 // DebugPodTemplateReference references a DebugPodTemplate.
@@ -234,6 +300,142 @@ type DebugContainerOverride struct {
 	// env adds environment variables to the container.
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
+}
+
+// DebugSessionNotificationConfig configures notification settings for debug sessions.
+type DebugSessionNotificationConfig struct {
+	// enabled enables/disables notifications for debug sessions.
+	// +optional
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// notifyOnRequest sends notifications when a session is requested.
+	// +optional
+	// +kubebuilder:default=true
+	NotifyOnRequest bool `json:"notifyOnRequest,omitempty"`
+
+	// notifyOnApproval sends notifications when a session is approved/rejected.
+	// +optional
+	// +kubebuilder:default=true
+	NotifyOnApproval bool `json:"notifyOnApproval,omitempty"`
+
+	// notifyOnExpiry sends notifications when a session is about to expire.
+	// +optional
+	// +kubebuilder:default=true
+	NotifyOnExpiry bool `json:"notifyOnExpiry,omitempty"`
+
+	// notifyOnTermination sends notifications when a session is terminated.
+	// +optional
+	// +kubebuilder:default=true
+	NotifyOnTermination bool `json:"notifyOnTermination,omitempty"`
+
+	// additionalRecipients are extra email addresses to notify (beyond requester/approvers).
+	// +optional
+	AdditionalRecipients []string `json:"additionalRecipients,omitempty"`
+
+	// excludedRecipients are users/groups that should never receive notifications.
+	// Uses the same NotificationExclusions type as BreakglassEscalation for consistency.
+	// +optional
+	ExcludedRecipients *NotificationExclusions `json:"excludedRecipients,omitempty"`
+}
+
+// DebugRequestReasonConfig configures reason requirements for debug session requests.
+type DebugRequestReasonConfig struct {
+	// mandatory requires a reason for all session requests.
+	// +optional
+	// +kubebuilder:default=false
+	Mandatory bool `json:"mandatory,omitempty"`
+
+	// minLength is the minimum character length for the reason.
+	// +optional
+	// +kubebuilder:default=10
+	// +kubebuilder:validation:Minimum=0
+	MinLength int32 `json:"minLength,omitempty"`
+
+	// maxLength is the maximum character length for the reason.
+	// +optional
+	// +kubebuilder:default=1000
+	// +kubebuilder:validation:Minimum=1
+	MaxLength int32 `json:"maxLength,omitempty"`
+
+	// description is help text displayed to users when entering a reason.
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// suggestedReasons is a list of pre-defined reason options for quick selection.
+	// +optional
+	SuggestedReasons []string `json:"suggestedReasons,omitempty"`
+}
+
+// DebugApprovalReasonConfig configures reason requirements for approval/rejection.
+type DebugApprovalReasonConfig struct {
+	// mandatory requires a reason for all approval/rejection actions.
+	// +optional
+	// +kubebuilder:default=false
+	Mandatory bool `json:"mandatory,omitempty"`
+
+	// mandatoryForRejection requires a reason specifically for rejections.
+	// +optional
+	// +kubebuilder:default=true
+	MandatoryForRejection bool `json:"mandatoryForRejection,omitempty"`
+
+	// minLength is the minimum character length for the reason.
+	// +optional
+	// +kubebuilder:default=10
+	// +kubebuilder:validation:Minimum=0
+	MinLength int32 `json:"minLength,omitempty"`
+
+	// description is help text displayed to approvers.
+	// +optional
+	Description string `json:"description,omitempty"`
+}
+
+// DebugResourceQuotaConfig specifies resource limits for debug sessions.
+type DebugResourceQuotaConfig struct {
+	// maxPods limits the maximum number of debug pods per session.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxPods *int32 `json:"maxPods,omitempty"`
+
+	// maxCPU limits the total CPU across all debug pods.
+	// Uses Kubernetes resource quantity format (e.g., "2", "500m").
+	// +optional
+	MaxCPU string `json:"maxCPU,omitempty"`
+
+	// maxMemory limits the total memory across all debug pods.
+	// Uses Kubernetes resource quantity format (e.g., "1Gi", "512Mi").
+	// +optional
+	MaxMemory string `json:"maxMemory,omitempty"`
+
+	// maxStorage limits ephemeral storage for debug pods.
+	// +optional
+	MaxStorage string `json:"maxStorage,omitempty"`
+
+	// enforceResourceRequests requires resource requests on all containers.
+	// +optional
+	// +kubebuilder:default=true
+	EnforceResourceRequests bool `json:"enforceResourceRequests,omitempty"`
+
+	// enforceResourceLimits requires resource limits on all containers.
+	// +optional
+	// +kubebuilder:default=true
+	EnforceResourceLimits bool `json:"enforceResourceLimits,omitempty"`
+}
+
+// DebugPDBConfig configures PodDisruptionBudget settings.
+type DebugPDBConfig struct {
+	// enabled creates a PDB for debug pods.
+	// +optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// minAvailable specifies the minimum number of debug pods that must be available.
+	// +optional
+	MinAvailable *int32 `json:"minAvailable,omitempty"`
+
+	// maxUnavailable specifies the maximum number of debug pods that can be unavailable.
+	// +optional
+	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
 }
 
 // KubectlDebugConfig configures kubectl debug operations.
@@ -660,15 +862,41 @@ type AuditDestination struct {
 type DebugSessionTemplateStatus struct {
 	// conditions represent the latest available observations.
 	// +optional
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// observedGeneration is the generation last observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// activeSessionCount tracks active sessions using this template.
 	// +optional
 	ActiveSessionCount int32 `json:"activeSessionCount,omitempty"`
 
+	// pendingSessionCount tracks sessions pending approval.
+	// +optional
+	PendingSessionCount int32 `json:"pendingSessionCount,omitempty"`
+
+	// totalSessionCount tracks total sessions ever created using this template.
+	// +optional
+	TotalSessionCount int64 `json:"totalSessionCount,omitempty"`
+
 	// lastUsedAt records when this template was last used.
 	// +optional
 	LastUsedAt *metav1.Time `json:"lastUsedAt,omitempty"`
+
+	// podTemplateResolved indicates if the referenced DebugPodTemplate exists.
+	// +optional
+	PodTemplateResolved bool `json:"podTemplateResolved,omitempty"`
+
+	// boundClusters lists clusters where this template is available via bindings.
+	// +optional
+	BoundClusters []string `json:"boundClusters,omitempty"`
+
+	// bindingCount tracks how many DebugSessionClusterBindings reference this template.
+	// +optional
+	BindingCount int32 `json:"bindingCount,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Cluster,shortName=dst

@@ -130,6 +130,57 @@ type DebugSessionClusterBindingSpec struct {
 	// +optional
 	// +kubebuilder:default=false
 	Disabled bool `json:"disabled,omitempty"`
+
+	// notification overrides notification settings from the template.
+	// +optional
+	Notification *DebugSessionNotificationConfig `json:"notification,omitempty"`
+
+	// requestReason overrides reason requirements from the template.
+	// +optional
+	RequestReason *DebugRequestReasonConfig `json:"requestReason,omitempty"`
+
+	// approvalReason overrides approval reason requirements from the template.
+	// +optional
+	ApprovalReason *DebugApprovalReasonConfig `json:"approvalReason,omitempty"`
+
+	// labels are additional labels applied to resources created via this binding.
+	// Merged with template labels.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// annotations are additional annotations applied to resources created via this binding.
+	// Merged with template annotations.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// priority overrides the template's priority for UI ordering.
+	// +optional
+	Priority *int32 `json:"priority,omitempty"`
+
+	// hidden hides this binding from the UI but allows API usage.
+	// +optional
+	// +kubebuilder:default=false
+	Hidden bool `json:"hidden,omitempty"`
+
+	// expiresAt optionally sets an expiry time for this binding.
+	// After this time, the binding becomes inactive automatically.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// effectiveFrom optionally sets when this binding becomes active.
+	// Before this time, the binding cannot be used.
+	// +optional
+	EffectiveFrom *metav1.Time `json:"effectiveFrom,omitempty"`
+
+	// maxActiveSessionsPerUser limits concurrent sessions per user via this binding.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxActiveSessionsPerUser *int32 `json:"maxActiveSessionsPerUser,omitempty"`
+
+	// maxActiveSessionsTotal limits total concurrent sessions via this binding.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxActiveSessionsTotal *int32 `json:"maxActiveSessionsTotal,omitempty"`
 }
 
 // TemplateReference references a DebugSessionTemplate by name.
@@ -172,6 +223,27 @@ type DebugSessionClusterBindingStatus struct {
 	// A collision occurs when the same template+cluster produces the same effective name.
 	// +optional
 	NameCollisions []NameCollision `json:"nameCollisions,omitempty"`
+
+	// pendingSessionCount is the number of sessions pending approval.
+	// +optional
+	PendingSessionCount int32 `json:"pendingSessionCount,omitempty"`
+
+	// totalSessionCount is the total number of sessions ever created via this binding.
+	// +optional
+	TotalSessionCount int64 `json:"totalSessionCount,omitempty"`
+
+	// activeByUser tracks active session counts per user.
+	// Key is user email, value is active session count.
+	// +optional
+	ActiveByUser map[string]int32 `json:"activeByUser,omitempty"`
+
+	// isActive indicates if this binding is currently active (not disabled, not expired, after effectiveFrom).
+	// +optional
+	IsActive bool `json:"isActive,omitempty"`
+
+	// effectiveDisplayName shows the computed display name for this binding.
+	// +optional
+	EffectiveDisplayName string `json:"effectiveDisplayName,omitempty"`
 }
 
 // ResolvedTemplateRef contains information about a resolved template.
@@ -432,6 +504,24 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 	if spec.Impersonation != nil {
 		result.Errors = append(result.Errors, validateImpersonationConfig(spec.Impersonation, specPath.Child("impersonation"))...)
 	}
+
+	// Validate notification config if specified
+	if spec.Notification != nil {
+		result.Errors = append(result.Errors, validateDebugSessionNotificationConfig(spec.Notification, specPath.Child("notification"))...)
+	}
+
+	// Validate request reason config if specified
+	if spec.RequestReason != nil {
+		result.Errors = append(result.Errors, validateDebugRequestReasonConfig(spec.RequestReason, specPath.Child("requestReason"))...)
+	}
+
+	// Validate approval reason config if specified
+	if spec.ApprovalReason != nil {
+		result.Errors = append(result.Errors, validateDebugApprovalReasonConfig(spec.ApprovalReason, specPath.Child("approvalReason"))...)
+	}
+
+	// Validate time window (effectiveFrom/expiresAt)
+	result.Errors = append(result.Errors, validateBindingTimeWindow(spec.EffectiveFrom, spec.ExpiresAt, specPath)...)
 
 	return result
 }

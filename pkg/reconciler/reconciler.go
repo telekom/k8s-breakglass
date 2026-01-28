@@ -227,6 +227,19 @@ func Setup(
 	}
 	log.Infow("Successfully registered DebugSessionTemplate reconciler")
 
+	// Register ClusterConfig Reconciler with controller-runtime manager
+	// This reconciler handles session cleanup when ClusterConfigs are deleted
+	log.Debugw("Setting up ClusterConfig reconciler")
+	clusterConfigReconciler := &config.ClusterConfigReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Log:    log,
+	}
+	if err := clusterConfigReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup ClusterConfig reconciler with manager: %w", err)
+	}
+	log.Infow("Successfully registered ClusterConfig reconciler")
+
 	// Register DebugPodTemplate Reconciler with controller-runtime manager
 	log.Debugw("Setting up DebugPodTemplate reconciler")
 	debugPodTemplateReconciler := config.NewDebugPodTemplateReconciler(mgr.GetClient(), log)

@@ -302,6 +302,9 @@ type BindingOption struct {
 	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
 	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
 	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
+	RequestReason                 *ReasonConfigInfo                 `json:"requestReason,omitempty"`
+	ApprovalReason                *ReasonConfigInfo                 `json:"approvalReason,omitempty"`
+	Notification                  *NotificationConfigInfo           `json:"notification,omitempty"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -374,6 +377,20 @@ type ApprovalInfo struct {
 type ClusterStatusInfo struct {
 	Healthy     bool   `json:"healthy"`
 	LastChecked string `json:"lastChecked,omitempty"`
+}
+
+// ReasonConfigInfo contains reason configuration for API responses
+type ReasonConfigInfo struct {
+	Mandatory        bool     `json:"mandatory"`
+	Description      string   `json:"description,omitempty"`
+	MinLength        int32    `json:"minLength,omitempty"`
+	MaxLength        int32    `json:"maxLength,omitempty"`
+	SuggestedReasons []string `json:"suggestedReasons,omitempty"`
+}
+
+// NotificationConfigInfo contains notification configuration for API responses
+type NotificationConfigInfo struct {
+	Enabled bool `json:"enabled"`
 }
 
 // TemplateClustersOptions contains optional filters for GetClusters

@@ -8,6 +8,8 @@ import (
 	v1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // TestScheduledSessionValidation tests that sessions with scheduled start times are properly validated
@@ -412,22 +414,274 @@ func TestScheduledSessionActivator_ActivatesAndSendsEmail(t *testing.T) {
 
 // TestScheduledSessionActivator_FullActivationFlow tests the complete activation workflow
 func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
-	// This test sets up a fake client and tests the actual ActivateScheduledSessions
-	// method to verify end-to-end behavior including email sending.
+	log := zap.NewNop().Sugar()
 
-	// Note: This is a more integration-style test that requires a full SessionManager.
-	// For unit testing the email flow, see TestScheduledSessionActivator_ActivatesAndSendsEmail.
+	// Set up sessions with different states
+	now := time.Now()
+	pastTime := now.Add(-5 * time.Minute)   // Already passed
+	futureTime := now.Add(10 * time.Minute) // Not yet
 
-	t.Log("Full activation flow test - verifies scheduled session activation with email")
+	// Session whose scheduled time has passed - should be activated
+	sessionToActivate := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "session-to-activate",
+			Namespace:       "default",
+			ResourceVersion: "1",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:            "test-cluster",
+			User:               "test@example.com",
+			GrantedGroup:       "admin",
+			ScheduledStartTime: &metav1.Time{Time: pastTime},
+		},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+			ApprovedAt: metav1.NewTime(now.Add(-10 * time.Minute)),
+			ExpiresAt:  metav1.NewTime(now.Add(50 * time.Minute)),
+		},
+	}
 
-	// The actual integration test would need to set up:
-	// 1. Fake k8s client with BreakglassSession in WaitingForScheduledTime state
-	// 2. SessionManager pointing to fake client
-	// 3. MockMailEnqueuer
-	// 4. ScheduledSessionActivator with all dependencies
-	// 5. Call ActivateScheduledSessions and verify:
-	//    - Session state changed to Approved
-	//    - Email was sent with correct content
+	// Session whose scheduled time has NOT passed - should NOT be activated
+	sessionNotReady := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "session-not-ready",
+			Namespace:       "default",
+			ResourceVersion: "1",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:            "test-cluster",
+			User:               "test2@example.com",
+			GrantedGroup:       "editor",
+			ScheduledStartTime: &metav1.Time{Time: futureTime},
+		},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+			ApprovedAt: metav1.NewTime(now.Add(-5 * time.Minute)),
+			ExpiresAt:  metav1.NewTime(futureTime.Add(1 * time.Hour)),
+		},
+	}
 
-	t.Log("This is a placeholder for the full integration test")
+	// Session already approved - should be left alone
+	sessionAlreadyApproved := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "session-already-approved",
+			Namespace:       "default",
+			ResourceVersion: "1",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:      "test-cluster",
+			User:         "test3@example.com",
+			GrantedGroup: "viewer",
+		},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State:           v1alpha1.SessionStateApproved,
+			ApprovedAt:      metav1.NewTime(now.Add(-30 * time.Minute)),
+			ActualStartTime: metav1.NewTime(now.Add(-30 * time.Minute)),
+			ExpiresAt:       metav1.NewTime(now.Add(30 * time.Minute)),
+		},
+	}
+
+	// Session in WaitingForScheduledTime but missing ScheduledStartTime (edge case)
+	sessionMissingScheduledTime := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "session-missing-time",
+			Namespace:       "default",
+			ResourceVersion: "1",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:      "test-cluster",
+			User:         "test4@example.com",
+			GrantedGroup: "viewer",
+			// No ScheduledStartTime
+		},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+			ApprovedAt: metav1.NewTime(now.Add(-5 * time.Minute)),
+			ExpiresAt:  metav1.NewTime(now.Add(1 * time.Hour)),
+		},
+	}
+
+	// Create fake client with status subresource support
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(sessionToActivate, sessionNotReady, sessionAlreadyApproved, sessionMissingScheduledTime).
+		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
+		Build()
+
+	// Create session manager
+	sesManager := NewSessionManagerWithClient(fakeClient)
+
+	// Create mock mail enqueuer
+	mockMail := NewMockMailEnqueuer(true)
+
+	// Create the activator
+	activator := NewScheduledSessionActivator(log, &sesManager).
+		WithMailService(mockMail, "TestBrand", false)
+
+	// Run activation
+	activator.ActivateScheduledSessions()
+
+	// Verify sessionToActivate was activated
+	var updatedSession v1alpha1.BreakglassSession
+	err := fakeClient.Get(context.Background(), client.ObjectKey{
+		Name:      "session-to-activate",
+		Namespace: "default",
+	}, &updatedSession)
+	if err != nil {
+		t.Fatalf("Failed to get session-to-activate: %v", err)
+	}
+	if updatedSession.Status.State != v1alpha1.SessionStateApproved {
+		t.Errorf("session-to-activate should be Approved, got %s", updatedSession.Status.State)
+	}
+	if updatedSession.Status.ActualStartTime.IsZero() {
+		t.Error("session-to-activate should have ActualStartTime set")
+	}
+	// Verify condition was added
+	hasCondition := false
+	for _, cond := range updatedSession.Status.Conditions {
+		if cond.Type == "ScheduledStartTimeReached" {
+			hasCondition = true
+			break
+		}
+	}
+	if !hasCondition {
+		t.Error("session-to-activate should have ScheduledStartTimeReached condition")
+	}
+
+	// Verify sessionNotReady was NOT activated
+	var notReadySession v1alpha1.BreakglassSession
+	err = fakeClient.Get(context.Background(), client.ObjectKey{
+		Name:      "session-not-ready",
+		Namespace: "default",
+	}, &notReadySession)
+	if err != nil {
+		t.Fatalf("Failed to get session-not-ready: %v", err)
+	}
+	if notReadySession.Status.State != v1alpha1.SessionStateWaitingForScheduledTime {
+		t.Errorf("session-not-ready should still be WaitingForScheduledTime, got %s", notReadySession.Status.State)
+	}
+
+	// Verify sessionAlreadyApproved was NOT modified
+	var approvedSession v1alpha1.BreakglassSession
+	err = fakeClient.Get(context.Background(), client.ObjectKey{
+		Name:      "session-already-approved",
+		Namespace: "default",
+	}, &approvedSession)
+	if err != nil {
+		t.Fatalf("Failed to get session-already-approved: %v", err)
+	}
+	if approvedSession.Status.State != v1alpha1.SessionStateApproved {
+		t.Errorf("session-already-approved should remain Approved, got %s", approvedSession.Status.State)
+	}
+
+	// Verify sessionMissingScheduledTime was NOT activated (edge case handling)
+	var missingTimeSession v1alpha1.BreakglassSession
+	err = fakeClient.Get(context.Background(), client.ObjectKey{
+		Name:      "session-missing-time",
+		Namespace: "default",
+	}, &missingTimeSession)
+	if err != nil {
+		t.Fatalf("Failed to get session-missing-time: %v", err)
+	}
+	if missingTimeSession.Status.State != v1alpha1.SessionStateWaitingForScheduledTime {
+		t.Errorf("session-missing-time should still be WaitingForScheduledTime (invalid state), got %s", missingTimeSession.Status.State)
+	}
+
+	// Verify email was sent for activated session only
+	messages := mockMail.GetMessages()
+	if len(messages) != 1 {
+		t.Errorf("Expected 1 email to be sent, got %d", len(messages))
+	} else {
+		if messages[0].SessionID != "session-to-activate" {
+			t.Errorf("Email should be for session-to-activate, got %s", messages[0].SessionID)
+		}
+		if len(messages[0].Recipients) != 1 || messages[0].Recipients[0] != "test@example.com" {
+			t.Errorf("Email should be sent to test@example.com, got %v", messages[0].Recipients)
+		}
+	}
+}
+
+// TestScheduledSessionActivator_NoSessionsToActivate tests when there are no sessions to activate
+func TestScheduledSessionActivator_NoSessionsToActivate(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	// Create fake client with no sessions
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
+		Build()
+
+	sesManager := NewSessionManagerWithClient(fakeClient)
+	mockMail := NewMockMailEnqueuer(true)
+
+	activator := NewScheduledSessionActivator(log, &sesManager).
+		WithMailService(mockMail, "TestBrand", false)
+
+	// Should not panic with empty session list
+	activator.ActivateScheduledSessions()
+
+	// No emails should be sent
+	if len(mockMail.GetMessages()) != 0 {
+		t.Errorf("Expected 0 emails, got %d", len(mockMail.GetMessages()))
+	}
+}
+
+// TestScheduledSessionActivator_EmailDisabled tests that emails are not sent when disabled
+func TestScheduledSessionActivator_EmailDisabled(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	now := time.Now()
+	pastTime := now.Add(-5 * time.Minute)
+
+	sessionToActivate := &v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "session-to-activate-no-email",
+			Namespace:       "default",
+			ResourceVersion: "1",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster:            "test-cluster",
+			User:               "test@example.com",
+			GrantedGroup:       "admin",
+			ScheduledStartTime: &metav1.Time{Time: pastTime},
+		},
+		Status: v1alpha1.BreakglassSessionStatus{
+			State:      v1alpha1.SessionStateWaitingForScheduledTime,
+			ApprovedAt: metav1.NewTime(now.Add(-10 * time.Minute)),
+			ExpiresAt:  metav1.NewTime(now.Add(50 * time.Minute)),
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(sessionToActivate).
+		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
+		Build()
+
+	sesManager := NewSessionManagerWithClient(fakeClient)
+	mockMail := NewMockMailEnqueuer(true)
+
+	// Email disabled
+	activator := NewScheduledSessionActivator(log, &sesManager).
+		WithMailService(mockMail, "TestBrand", true) // disableEmail = true
+
+	activator.ActivateScheduledSessions()
+
+	// Session should still be activated
+	var updatedSession v1alpha1.BreakglassSession
+	err := fakeClient.Get(context.Background(), client.ObjectKey{
+		Name:      "session-to-activate-no-email",
+		Namespace: "default",
+	}, &updatedSession)
+	if err != nil {
+		t.Fatalf("Failed to get session: %v", err)
+	}
+	if updatedSession.Status.State != v1alpha1.SessionStateApproved {
+		t.Errorf("Session should be Approved, got %s", updatedSession.Status.State)
+	}
+
+	// But no email should be sent
+	if len(mockMail.GetMessages()) != 0 {
+		t.Errorf("Expected 0 emails when email disabled, got %d", len(mockMail.GetMessages()))
+	}
 }

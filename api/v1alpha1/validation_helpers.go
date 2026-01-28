@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1144,23 +1145,191 @@ func validateAuxiliaryResources(resources []AuxiliaryResource, fieldPath *field.
 			errs = append(errs, field.Required(resPath.Child("template"), "template is required"))
 		}
 
-		// Category validation
+		// Category validation - these are common categories, but others are allowed
+		// Only validate format, not specific values, to allow extensibility
 		if res.Category != "" {
-			validCategories := []string{
-				"network-policy", "rbac", "configmap", "secret",
-				"service", "ingress", "other",
+			// Check for valid DNS label format (lowercase alphanumeric with hyphens)
+			if len(res.Category) > 63 {
+				errs = append(errs, field.TooLong(resPath.Child("category"), res.Category, 63))
 			}
-			valid := false
-			for _, c := range validCategories {
-				if res.Category == c {
-					valid = true
+			// Validate category format - should be lowercase alphanumeric with hyphens
+			for _, ch := range res.Category {
+				if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
+					errs = append(errs, field.Invalid(resPath.Child("category"), res.Category,
+						"category must be lowercase alphanumeric with hyphens (e.g., 'network-policy', 'monitoring')"))
 					break
 				}
 			}
-			if !valid {
-				errs = append(errs, field.NotSupported(
-					resPath.Child("category"), res.Category, validCategories))
+		}
+	}
+
+	return errs
+}
+
+// validateDebugSessionNotificationConfig validates notification configuration.
+func validateDebugSessionNotificationConfig(cfg *DebugSessionNotificationConfig, fieldPath *field.Path) field.ErrorList {
+	if cfg == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate email formats in additionalRecipients
+	for i, email := range cfg.AdditionalRecipients {
+		if email == "" {
+			errs = append(errs, field.Required(fieldPath.Child("additionalRecipients").Index(i), "email cannot be empty"))
+		} else if !strings.Contains(email, "@") {
+			errs = append(errs, field.Invalid(fieldPath.Child("additionalRecipients").Index(i), email, "must be a valid email address"))
+		}
+	}
+
+	// Validate excluded recipients
+	if cfg.ExcludedRecipients != nil {
+		errs = append(errs, validateStringListEntriesNotEmpty(cfg.ExcludedRecipients.Users, fieldPath.Child("excludedRecipients", "users"))...)
+		errs = append(errs, validateStringListEntriesNotEmpty(cfg.ExcludedRecipients.Groups, fieldPath.Child("excludedRecipients", "groups"))...)
+	}
+
+	return errs
+}
+
+// validateDebugRequestReasonConfig validates request reason configuration.
+func validateDebugRequestReasonConfig(cfg *DebugRequestReasonConfig, fieldPath *field.Path) field.ErrorList {
+	if cfg == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate minLength <= maxLength
+	if cfg.MinLength > cfg.MaxLength {
+		errs = append(errs, field.Invalid(fieldPath.Child("minLength"), cfg.MinLength,
+			fmt.Sprintf("minLength (%d) cannot be greater than maxLength (%d)", cfg.MinLength, cfg.MaxLength)))
+	}
+
+	// Validate suggestedReasons are not empty
+	errs = append(errs, validateStringListEntriesNotEmpty(cfg.SuggestedReasons, fieldPath.Child("suggestedReasons"))...)
+	errs = append(errs, validateStringListNoDuplicates(cfg.SuggestedReasons, fieldPath.Child("suggestedReasons"))...)
+
+	return errs
+}
+
+// validateDebugApprovalReasonConfig validates approval reason configuration.
+func validateDebugApprovalReasonConfig(cfg *DebugApprovalReasonConfig, fieldPath *field.Path) field.ErrorList {
+	if cfg == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate minLength is reasonable
+	if cfg.MinLength < 0 {
+		errs = append(errs, field.Invalid(fieldPath.Child("minLength"), cfg.MinLength, "minLength cannot be negative"))
+	}
+
+	return errs
+}
+
+// validateDebugResourceQuotaConfig validates resource quota configuration.
+func validateDebugResourceQuotaConfig(cfg *DebugResourceQuotaConfig, fieldPath *field.Path) field.ErrorList {
+	if cfg == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate resource quantities
+	if cfg.MaxCPU != "" {
+		if _, err := parseResourceQuantity(cfg.MaxCPU); err != nil {
+			errs = append(errs, field.Invalid(fieldPath.Child("maxCPU"), cfg.MaxCPU,
+				fmt.Sprintf("invalid CPU quantity: %v", err)))
+		}
+	}
+
+	if cfg.MaxMemory != "" {
+		if _, err := parseResourceQuantity(cfg.MaxMemory); err != nil {
+			errs = append(errs, field.Invalid(fieldPath.Child("maxMemory"), cfg.MaxMemory,
+				fmt.Sprintf("invalid memory quantity: %v", err)))
+		}
+	}
+
+	if cfg.MaxStorage != "" {
+		if _, err := parseResourceQuantity(cfg.MaxStorage); err != nil {
+			errs = append(errs, field.Invalid(fieldPath.Child("maxStorage"), cfg.MaxStorage,
+				fmt.Sprintf("invalid storage quantity: %v", err)))
+		}
+	}
+
+	return errs
+}
+
+// parseResourceQuantity validates a Kubernetes resource quantity string.
+func parseResourceQuantity(q string) (int64, error) {
+	if q == "" {
+		return 0, nil
+	}
+	// Simple validation - more complex parsing done by k8s at runtime
+	// This catches obvious errors like invalid suffixes
+	// Order matters: check longer suffixes first
+	validSuffixes := []string{"Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "k", "M", "G", "T", "P", "E", "m", ""}
+	hasValidSuffix := false
+	for _, suffix := range validSuffixes {
+		if strings.HasSuffix(q, suffix) {
+			numPart := strings.TrimSuffix(q, suffix)
+			if numPart == "" && suffix != "" {
+				return 0, fmt.Errorf("empty numeric value")
 			}
+			if numPart == "" && suffix == "" {
+				return 0, fmt.Errorf("empty quantity")
+			}
+			_, err := strconv.ParseFloat(numPart, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid numeric value: %v", err)
+			}
+			hasValidSuffix = true
+			break
+		}
+	}
+	if !hasValidSuffix {
+		return 0, fmt.Errorf("invalid resource suffix")
+	}
+	return 0, nil
+}
+
+// validateDebugPDBConfig validates PodDisruptionBudget configuration.
+func validateDebugPDBConfig(cfg *DebugPDBConfig, fieldPath *field.Path) field.ErrorList {
+	if cfg == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// At most one of minAvailable or maxUnavailable can be set
+	if cfg.MinAvailable != nil && cfg.MaxUnavailable != nil {
+		errs = append(errs, field.Invalid(fieldPath, nil,
+			"only one of minAvailable or maxUnavailable can be set"))
+	}
+
+	// Values must be positive
+	if cfg.MinAvailable != nil && *cfg.MinAvailable < 0 {
+		errs = append(errs, field.Invalid(fieldPath.Child("minAvailable"), *cfg.MinAvailable,
+			"minAvailable must be non-negative"))
+	}
+	if cfg.MaxUnavailable != nil && *cfg.MaxUnavailable < 0 {
+		errs = append(errs, field.Invalid(fieldPath.Child("maxUnavailable"), *cfg.MaxUnavailable,
+			"maxUnavailable must be non-negative"))
+	}
+
+	return errs
+}
+
+// validateBindingTimeWindow validates expiresAt and effectiveFrom fields.
+func validateBindingTimeWindow(effectiveFrom, expiresAt *metav1.Time, fieldPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+
+	if effectiveFrom != nil && expiresAt != nil {
+		if !effectiveFrom.Before(expiresAt) {
+			errs = append(errs, field.Invalid(fieldPath.Child("expiresAt"), expiresAt,
+				"expiresAt must be after effectiveFrom"))
 		}
 	}
 

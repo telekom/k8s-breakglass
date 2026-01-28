@@ -943,6 +943,9 @@ GET /api/debugSessions/templates
 
 Returns templates the current user has access to (based on group membership).
 
+**Query Parameters:**
+- `includeHidden` (optional, boolean): When `true`, includes templates marked `hidden`.
+
 **Response:**
 
 ```json
@@ -965,6 +968,10 @@ Returns templates the current user has access to (based on group membership).
       "allowedClusters": ["production-*", "staging-*"],
       "allowedGroups": ["sre-team"],
       "requiresApproval": true,
+      "priority": 10,
+      "hidden": false,
+      "deprecated": false,
+      "deprecationMessage": "",
       "schedulingOptions": {
         "required": false,
         "options": [

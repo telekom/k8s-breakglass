@@ -36,6 +36,8 @@ mode: workload
 workloadType: DaemonSet  # or Deployment
 ```
 
+**Labels & annotations**: `spec.labels`/`spec.annotations` from the template (and binding overrides) are applied to created workloads, pod templates, and supporting resources (e.g., PDBs and ResourceQuotas). Session-level labels/annotations are also propagated.
+
 **Use cases:**
 - Node-level debugging requiring host namespaces
 - Running debug tools on all or selected nodes
@@ -218,6 +220,28 @@ spec:
   # Optional: Terminal sharing
   terminalSharing:
     enabled: true
+
+  # Optional: Notifications and expiry behavior
+  notification:
+    enabled: true
+    notifyOnRequest: true
+    notifyOnApproval: true
+    notifyOnExpiry: true
+    notifyOnTermination: true
+  expirationBehavior: terminate   # or notify-only
+  gracePeriodBeforeExpiry: 15m
+
+  # Optional: Resource controls
+  resourceQuota:
+    maxPods: 5
+    maxCPU: "2"
+    maxMemory: "2Gi"
+    maxStorage: "5Gi"
+    enforceResourceRequests: true
+    enforceResourceLimits: true
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
     method: tmux
   
   # Optional: Audit logging

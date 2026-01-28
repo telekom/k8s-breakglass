@@ -1,0 +1,236 @@
+# Test values for DebugSessionClusterBinding configuration
+cluster:
+  tenant: test-tenant
+  clusterID: test-cluster
+  environment: development
+  kubeconfigSecretRef:
+    name: test-kubeconfig
+    namespace: default
+  blockSelfApproval: false
+
+escalations: []
+
+debugSessionBindings:
+  # Basic binding with templateRef
+  - name: basic-debug-binding
+    displayName: "Basic Debug Access"
+    description: "Basic debug session binding for testing"
+    templateRef:
+      name: standard-debug-template
+    clusters:
+      - test-cluster
+      - staging-cluster
+    allowed:
+      groups:
+        - dev
+        - sre
+    approvers:
+      groups:
+        - senior-sre
+      # autoApproveFor allows auto-approval for specific groups/clusters
+      # autoApproveFor:
+      #   groups:
+      #     - oncall-sre
+    requestReason:
+      mandatory: true
+      description: "Please provide a ticket ID"
+    constraints:
+      maxDuration: "2h"
+      defaultDuration: "30m"
+    disabled: false
+    priority: 10
+
+  # Binding with scheduling constraints
+  - name: scheduled-debug-binding
+    displayName: "Scheduled Debug Access"
+    templateRef:
+      name: node-debug-template
+    clusters:
+      - prod-cluster
+    schedulingConstraints:
+      nodeSelector:
+        node-pool: debug-nodes
+        kubernetes.io/os: linux
+      tolerations:
+        - key: "dedicated"
+          value: "debug"
+          effect: NoSchedule
+          operator: Equal
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: debug-session
+      deniedNodes:
+        - "control-plane-*"
+        - "etcd-*"
+      deniedNodeLabels:
+        node-role.kubernetes.io/control-plane: "*"
+    allowed:
+      groups:
+        - platform-team
+
+  # Binding with namespace constraints
+  - name: namespace-restricted-binding
+    displayName: "Namespace Restricted Debug"
+    templateRef:
+      name: restricted-template
+    clusters:
+      - secure-cluster
+    namespaceConstraints:
+      defaultNamespace: debug-workloads
+      allowUserNamespace: true
+      createIfNotExists: false
+      allowedNamespaces:
+        patterns:
+          - "debug-*"
+          - "breakglass-*"
+      namespaceLabels:
+        managed-by: breakglass
+
+  # Binding with impersonation
+  - name: impersonated-binding
+    displayName: "Impersonated Debug Access"
+    templateRef:
+      name: privileged-template
+    clusters:
+      - privileged-cluster
+    impersonation:
+      serviceAccountRef:
+        name: debug-deployer
+        namespace: breakglass-system
+    requiredAuxiliaryResourceCategories:
+      - network-policy
+      - rbac
+    auxiliaryResourceOverrides:
+      logging: true
+      monitoring: false
+
+  # Binding with template selector
+  - name: dev-all-templates
+    displayName: "All Dev Templates"
+    templateSelector:
+      matchLabels:
+        tier: development
+    clusters:
+      - dev-cluster
+    displayNamePrefix: "[DEV] "
+    constraints:
+      maxDuration: "4h"
+    maxActiveSessionsPerUser: 2
+    maxActiveSessionsTotal: 10
+
+  # Binding with scheduling options
+  - name: multi-option-binding
+    displayName: "Multi-Node Pool Debug"
+    templateRef:
+      name: flexible-template
+    clusters:
+      - multi-pool-cluster
+    schedulingOptions:
+      required: true
+      options:
+        - name: standard
+          displayName: "Standard Nodes"
+          schedulingConstraints:
+            nodeSelector:
+              node-type: standard
+        - name: high-memory
+          displayName: "High Memory Nodes"
+          schedulingConstraints:
+            nodeSelector:
+              node-type: high-memory
+        - name: gpu
+          displayName: "GPU Nodes"
+          schedulingConstraints:
+            nodeSelector:
+              node-type: gpu
+            tolerations:
+              - key: "nvidia.com/gpu"
+                operator: Exists
+                effect: NoSchedule
+
+  # Binding with cluster selector
+  - name: env-based-binding
+    displayName: "Environment-Based Debug"
+    templateRef:
+      name: env-template
+    clusterSelector:
+      matchLabels:
+        environment: staging
+      matchExpressions:
+        - key: region
+          operator: In
+          values:
+            - eu-west
+            - eu-central
+
+  # Binding with full configuration
+  - name: full-config-binding
+    displayName: "Full Configuration Example"
+    description: "Demonstrates all binding options"
+    templateRef:
+      name: complete-template
+    clusters:
+      - full-test-cluster
+    allowed:
+      groups:
+        - admin-team
+      users:
+        - special-user@example.com
+    approvers:
+      groups:
+        - security-team
+      users:
+        - ciso@example.com
+    schedulingConstraints:
+      nodeSelector:
+        zone: us-east-1a
+      requiredNodeAffinity:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                  - debug
+                  - general
+      preferredNodeAffinity:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: spot
+                operator: DoesNotExist
+      requiredPodAntiAffinity:
+        - labelSelector:
+            matchLabels:
+              app: debug-session
+          topologyKey: kubernetes.io/hostname
+    constraints:
+      maxDuration: "1h"
+      defaultDuration: "15m"
+      maxRenewals: 3
+      allowRenewal: true
+      maxConcurrentSessions: 2
+    namespaceConstraints:
+      defaultNamespace: debug-ns
+      allowUserNamespace: false
+    requestReason:
+      mandatory: true
+      description: "Provide incident ticket number"
+    approvalReason:
+      mandatory: true
+      description: "Explain approval justification"
+    notification:
+      enabled: true
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 3
+    priority: 1
+    disabled: false
+    hidden: false
+    labels:
+      environment: test
+      managed-by: helm
+    annotations:
+      helm.sh/chart: escalation-config

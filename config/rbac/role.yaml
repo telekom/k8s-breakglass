@@ -86,6 +86,7 @@ rules:
   - auditconfigs/finalizers
   - breakglassescalations/finalizers
   - breakglasssessions/finalizers
+  - clusterconfigs/finalizers
   - debugsessions/finalizers
   - identityproviders/finalizers
   - mailproviders/finalizers
@@ -127,6 +128,15 @@ rules:
   - breakglass.t-caas.telekom.com
   resources:
   - clusterconfigs
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
   - debugpodtemplates
   - debugsessionclusterbindings
   - debugsessiontemplates

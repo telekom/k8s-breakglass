@@ -74,8 +74,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.ClusterConfigStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("CopiedPodRef"):
 		return &apiv1alpha1.CopiedPodRefApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugApprovalReasonConfig"):
+		return &apiv1alpha1.DebugApprovalReasonConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugContainerOverride"):
 		return &apiv1alpha1.DebugContainerOverrideApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugPDBConfig"):
+		return &apiv1alpha1.DebugPDBConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodMetadata"):
 		return &apiv1alpha1.DebugPodMetadataApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodOverrides"):
@@ -94,6 +98,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugPodTemplateSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugPodTemplateStatus"):
 		return &apiv1alpha1.DebugPodTemplateStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugRequestReasonConfig"):
+		return &apiv1alpha1.DebugRequestReasonConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugResourceQuotaConfig"):
+		return &apiv1alpha1.DebugResourceQuotaConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSession"):
 		return &apiv1alpha1.DebugSessionApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAllowed"):
@@ -112,6 +120,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionClusterBindingStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionConstraints"):
 		return &apiv1alpha1.DebugSessionConstraintsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionNotificationConfig"):
+		return &apiv1alpha1.DebugSessionNotificationConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionParticipant"):
 		return &apiv1alpha1.DebugSessionParticipantApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionSpec"):
