@@ -719,6 +719,21 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		}
 	}
 
+	// Validate schedulingOptions if specified
+	if template.Spec.SchedulingOptions != nil {
+		result.Errors = append(result.Errors, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
+	}
+
+	// Validate namespaceConstraints if specified
+	if template.Spec.NamespaceConstraints != nil {
+		result.Errors = append(result.Errors, validateNamespaceConstraints(template.Spec.NamespaceConstraints, specPath.Child("namespaceConstraints"))...)
+	}
+
+	// Validate impersonation config if specified
+	if template.Spec.Impersonation != nil {
+		result.Errors = append(result.Errors, validateImpersonationConfig(template.Spec.Impersonation, specPath.Child("impersonation"))...)
+	}
+
 	return result
 }
 

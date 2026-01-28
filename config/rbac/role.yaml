@@ -99,6 +99,7 @@ rules:
   - breakglasssessions/status
   - clusterconfigs/status
   - debugpodtemplates/status
+  - debugsessionclusterbindings/status
   - debugsessions/status
   - debugsessiontemplates/status
   - denypolicies/status
@@ -127,6 +128,7 @@ rules:
   resources:
   - clusterconfigs
   - debugpodtemplates
+  - debugsessionclusterbindings
   - debugsessiontemplates
   - denypolicies
   verbs:

@@ -294,7 +294,7 @@ func TestMultipleApproversScenario(t *testing.T) {
 			WithMaxValidFor("2h").
 			WithApprovalTimeout("1h").
 			WithAllowedClusters(helpers.GetTestClusterName()).
-			WithApproverUsers("approver1@example.com", "approver2@example.com", helpers.GetTestApproverEmail()).
+			WithApproverUsers(helpers.TestUsers.Approver.Email, helpers.TestUsers.SeniorApprover.Email, helpers.TestUsers.ApproverInternal.Email).
 			WithApproverGroups("security-team").
 			Build()
 

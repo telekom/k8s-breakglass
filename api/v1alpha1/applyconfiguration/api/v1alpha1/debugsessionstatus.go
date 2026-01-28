@@ -47,6 +47,10 @@ type DebugSessionStatusApplyConfiguration struct {
 	// resolvedTemplate caches the resolved DebugSessionTemplate spec.
 	// Used to ensure consistent behavior even if template changes.
 	ResolvedTemplate *DebugSessionTemplateSpecApplyConfiguration `json:"resolvedTemplate,omitempty"`
+	// resolvedBinding caches information about the binding used (if any).
+	ResolvedBinding *ResolvedBindingRefApplyConfiguration `json:"resolvedBinding,omitempty"`
+	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
+	AuxiliaryResourceStatuses []AuxiliaryResourceStatusApplyConfiguration `json:"auxiliaryResourceStatuses,omitempty"`
 }
 
 // DebugSessionStatusApplyConfiguration constructs a declarative configuration of the DebugSessionStatus type for use with
@@ -176,5 +180,26 @@ func (b *DebugSessionStatusApplyConfiguration) WithMessage(value string) *DebugS
 // If called multiple times, the ResolvedTemplate field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplate(value *DebugSessionTemplateSpecApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.ResolvedTemplate = value
+	return b
+}
+
+// WithResolvedBinding sets the ResolvedBinding field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ResolvedBinding field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedBinding(value *ResolvedBindingRefApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	b.ResolvedBinding = value
+	return b
+}
+
+// WithAuxiliaryResourceStatuses adds the given value to the AuxiliaryResourceStatuses field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the AuxiliaryResourceStatuses field.
+func (b *DebugSessionStatusApplyConfiguration) WithAuxiliaryResourceStatuses(values ...*AuxiliaryResourceStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithAuxiliaryResourceStatuses")
+		}
+		b.AuxiliaryResourceStatuses = append(b.AuxiliaryResourceStatuses, *values[i])
+	}
 	return b
 }

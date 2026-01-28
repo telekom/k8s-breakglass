@@ -155,6 +155,12 @@ type Server struct {
 	TLSKeyFile     string   `yaml:"tlsKeyFile"`
 	TrustedProxies []string `yaml:"trustedProxies"` // IPs/CIDRS to trust for X-Forwarded-For headers (e.g., ["10.0.0.0/8", "127.0.0.1"])
 	AllowedOrigins []string `yaml:"allowedOrigins"` // Explicit list of origins permitted for credentialed browser calls
+	// HardenedIDPHints when true, prevents disclosure of available identity providers in error messages.
+	// By default (false), users see helpful hints about which IDPs are available when their token issuer
+	// doesn't match. When enabled, only generic error messages are returned to prevent attackers from
+	// enumerating valid IDP configurations.
+	// +optional
+	HardenedIDPHints bool `yaml:"hardenedIDPHints"`
 }
 
 type Kubernetes struct {

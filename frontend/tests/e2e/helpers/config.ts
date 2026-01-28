@@ -28,9 +28,13 @@ export interface E2EConfig {
 
 /**
  * Default configuration values for local development.
+ *
+ * NOTE: For e2e tests running against the backend-served UI (not Vite dev server),
+ * frontendUrl should match backendUrl since the backend serves both API and UI.
+ * The Vite dev server (5173) is only used for local development, not e2e tests.
  */
 const DEFAULTS: E2EConfig = {
-  frontendUrl: "http://localhost:5173",
+  frontendUrl: "http://localhost:8080", // Backend serves the frontend in e2e mode
   backendUrl: "http://localhost:8080",
   mailhogUrl: "http://localhost:8025",
   keycloakUrl: "http://localhost:8081",

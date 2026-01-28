@@ -14,12 +14,14 @@ import { AuthKey } from "@/keys";
 // Define mock functions at module level
 const mockListTemplates = vi.fn();
 const mockCreateSession = vi.fn();
+const mockGetTemplateClusters = vi.fn();
 
 // Mock debug session service at module level
 vi.mock("@/services/debugSession", () => ({
   default: class MockDebugSessionService {
     listTemplates = mockListTemplates;
     createSession = mockCreateSession;
+    getTemplateClusters = mockGetTemplateClusters;
   },
 }));
 
@@ -54,6 +56,7 @@ describe("DebugSessionCreate", () => {
   beforeEach(() => {
     mockListTemplates.mockReset();
     mockCreateSession.mockReset();
+    mockGetTemplateClusters.mockReset();
 
     router = createRouter({
       history: createMemoryHistory(),
@@ -79,6 +82,10 @@ describe("DebugSessionCreate", () => {
         requiresApproval: false,
         allowedClusters: ["prod-east", "prod-west", "staging-1"],
         allowedGroups: ["developers"],
+        constraints: {
+          maxDuration: "4h",
+          defaultDuration: "1h",
+        },
       },
       {
         name: "elevated-debug",
@@ -89,6 +96,45 @@ describe("DebugSessionCreate", () => {
         requiresApproval: true,
         allowedClusters: ["prod-east", "prod-west"],
         allowedGroups: ["admins"],
+        schedulingOptions: {
+          required: true,
+          options: [
+            { name: "sriov", displayName: "SRIOV Nodes", description: "High-performance network nodes", default: true },
+            { name: "standard", displayName: "Standard Nodes", description: "Regular worker nodes" },
+          ],
+        },
+        namespaceConstraints: {
+          allowedPatterns: ["debug-*", "test-*"],
+          allowedLabelSelectors: [{ matchLabels: { "debug-enabled": "true" } }],
+          defaultNamespace: "debug-default",
+          allowUserNamespace: true,
+        },
+      },
+      {
+        name: "network-debug",
+        displayName: "Network Debug",
+        description: "Network debugging with special scheduling",
+        mode: "workload",
+        workloadType: "daemonset",
+        requiresApproval: true,
+        allowedClusters: ["prod-east"],
+        allowedGroups: ["netops"],
+        schedulingOptions: {
+          required: false,
+          options: [
+            { name: "sriov", displayName: "SRIOV Nodes" },
+            { name: "dpdk", displayName: "DPDK Nodes" },
+          ],
+        },
+        namespaceConstraints: {
+          allowedPatterns: ["network-*"],
+          allowedLabelSelectors: [
+            { matchLabels: { team: "network" } },
+            { matchExpressions: [{ key: "environment", operator: "In", values: ["prod", "staging"] }] },
+          ],
+          defaultNamespace: "network-debug",
+          allowUserNamespace: true,
+        },
       },
     ];
   }
@@ -171,7 +217,50 @@ describe("DebugSessionCreate", () => {
       expect(mockListTemplates).toHaveBeenCalled();
     });
 
-    it("shows warning when template has no available clusters", async () => {
+    it("starts on step 1 (template selection)", async () => {
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as { currentStep: number };
+      expect(vm.currentStep).toBe(1);
+    });
+
+    it("moves to step 2 when clicking Next", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          { name: "prod-east", displayName: "Production East" },
+          { name: "prod-west", displayName: "Production West" },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        currentStep: number;
+        form: { templateRef: string };
+      };
+
+      // First template is auto-selected
+      expect(vm.form.templateRef).toBe("standard-debug");
+
+      // Click Next button
+      const nextButton = wrapper.find('[data-testid="next-button"]');
+      await nextButton.trigger("click");
+      await flushPromises();
+
+      // Should be on step 2 and have fetched cluster details
+      expect(vm.currentStep).toBe(2);
+      expect(mockGetTemplateClusters).toHaveBeenCalledWith("standard-debug");
+    });
+
+    it("shows warning when template has no available clusters in step 2", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "no-clusters-template",
+        templateDisplayName: "No Clusters",
+        clusters: [], // Empty clusters
+      });
+
       const templates = [
         {
           name: "no-clusters-template",
@@ -180,98 +269,288 @@ describe("DebugSessionCreate", () => {
           mode: "workload",
           workloadType: "deployment",
           requiresApproval: false,
-          allowedClusters: [] as string[], // Empty clusters - patterns didn't resolve
+          allowedClusters: [],
           allowedGroups: ["developers"],
+          constraints: { maxDuration: "4h", defaultDuration: "1h" },
         },
       ];
 
       const wrapper = await createWrapper(templates);
+
+      const vm = wrapper.vm as unknown as { currentStep: number; goToStep2: () => void };
+
+      // Go to step 2
+      vm.goToStep2();
+      await flushPromises();
 
       // Should show warning about no clusters
       const warningText = wrapper.find(".warning-text");
       expect(warningText.exists()).toBe(true);
       expect(warningText.text()).toContain("No clusters are available");
     });
-
-    it("disables cluster dropdown when no clusters available", async () => {
-      const templates = [
-        {
-          name: "no-clusters-template",
-          displayName: "No Clusters",
-          description: "Template with no available clusters",
-          mode: "workload",
-          workloadType: "deployment",
-          requiresApproval: false,
-          allowedClusters: [] as string[],
-          allowedGroups: ["developers"],
-        },
-      ];
-
-      const wrapper = await createWrapper(templates);
-
-      const clusterSelect = wrapper.find('[data-testid="cluster-select"]');
-      expect(clusterSelect.attributes("disabled")).toBeDefined();
-    });
-
-    it("renders cluster options from template allowedClusters", async () => {
-      const wrapper = await createWrapper();
-
-      // Verify the component exists
-      const createForm = wrapper.find(".create-form");
-      expect(createForm.exists()).toBe(true);
-
-      // Verify the vm computed property has the expected clusters
-      const vm = wrapper.vm as unknown as { availableClusters: string[] };
-      expect(vm.availableClusters).toEqual(["prod-east", "prod-west", "staging-1"]);
-    });
   });
 
   describe("form validation", () => {
-    it("computed availableClusters reflects selected template", async () => {
+    it("auto-selects first template on mount", async () => {
       const wrapper = await createWrapper();
 
       const vm = wrapper.vm as unknown as {
-        availableClusters: string[];
         form: { templateRef: string };
       };
 
       // Initially first template is auto-selected
       expect(vm.form.templateRef).toBe("standard-debug");
-      expect(vm.availableClusters).toEqual(["prod-east", "prod-west", "staging-1"]);
     });
   });
 
-  describe("cluster name display", () => {
-    it("displays resolved cluster names not patterns", async () => {
-      // This test verifies the fix for the cluster pattern resolution issue
-      // The backend now resolves patterns like "*" or "prod-*" to actual cluster names
-      const templates = [
-        {
-          name: "resolved-template",
-          displayName: "Resolved Clusters",
-          description: "Template with resolved cluster names",
-          mode: "workload",
-          workloadType: "deployment",
-          requiresApproval: false,
-          // These should be actual cluster names, not patterns like "*" or "prod-*"
-          allowedClusters: ["prod-east", "prod-west", "ship-lab-1", "ship-lab-2"],
-          allowedGroups: ["developers"],
-        },
-      ];
+  describe("cluster details display", () => {
+    it("displays cluster cards with resolved constraints in step 2", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            environment: "production",
+            constraints: { maxDuration: "2h" },
+            approval: { required: true },
+          },
+          {
+            name: "prod-west",
+            displayName: "Production West",
+            environment: "production",
+            constraints: { maxDuration: "4h" },
+            approval: { required: false },
+          },
+        ],
+      });
 
-      const wrapper = await createWrapper(templates);
+      const wrapper = await createWrapper();
 
-      const vm = wrapper.vm as unknown as { availableClusters: string[] };
+      const vm = wrapper.vm as unknown as { goToStep2: () => void };
+      vm.goToStep2();
+      await flushPromises();
 
-      // Verify we have actual cluster names, not patterns
-      expect(vm.availableClusters).toHaveLength(4);
-      expect(vm.availableClusters).not.toContain("*");
-      expect(vm.availableClusters).not.toContain("prod-*");
-      expect(vm.availableClusters).not.toContain("ship-lab-*");
-      expect(vm.availableClusters).toContain("prod-east");
-      expect(vm.availableClusters).toContain("prod-west");
-      expect(vm.availableClusters).toContain("ship-lab-1");
-      expect(vm.availableClusters).toContain("ship-lab-2");
+      // Should display cluster grid with cards
+      const clusterGrid = wrapper.find('[data-testid="cluster-grid"]');
+      expect(clusterGrid.exists()).toBe(true);
+
+      const clusterCards = wrapper.findAll('[data-testid="cluster-card"]');
+      expect(clusterCards).toHaveLength(2);
+    });
+  });
+
+  describe("namespace editability", () => {
+    it("allows namespace editing when allowUserNamespace is true and patterns allow it", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            namespaceConstraints: {
+              defaultNamespace: "debug-default",
+              allowUserNamespace: true,
+              allowedPatterns: ["debug-*", "test-*"],
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        isNamespaceEditable: boolean;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select the cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Namespace should be editable because allowUserNamespace is true and there are wildcard patterns
+      expect(vm.isNamespaceEditable).toBe(true);
+    });
+
+    it("prevents namespace editing when there is a single exact pattern", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            namespaceConstraints: {
+              defaultNamespace: "debug-only",
+              allowUserNamespace: true,
+              allowedPatterns: ["debug-only"], // Exact match, no wildcards
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        isNamespaceEditable: boolean;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select the cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Namespace should NOT be editable because there's only one exact pattern
+      expect(vm.isNamespaceEditable).toBe(false);
+    });
+
+    it("prevents namespace editing when there is a hardcoded default with no patterns", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            namespaceConstraints: {
+              defaultNamespace: "fixed-namespace",
+              allowUserNamespace: true,
+              allowedPatterns: [], // No patterns
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        isNamespaceEditable: boolean;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select the cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Namespace should NOT be editable because there's a hardcoded default with no patterns
+      expect(vm.isNamespaceEditable).toBe(false);
+    });
+  });
+
+  describe("session info summary", () => {
+    it("displays approval requirement warning when approval is required", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            approval: {
+              required: true,
+              approverGroups: ["admin-approvers"],
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        approvalInfo: { required: boolean; approverGroups?: string[] };
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select the cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Approval should be required
+      expect(vm.approvalInfo.required).toBe(true);
+      expect(vm.approvalInfo.approverGroups).toContain("admin-approvers");
+    });
+
+    it("displays impersonation info when impersonation is enabled", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            impersonation: {
+              enabled: true,
+              serviceAccount: "debug-sa",
+              namespace: "system",
+            },
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        impersonationInfo: { enabled: boolean; serviceAccount: string; namespace: string } | null;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select the cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Impersonation info should be available
+      expect(vm.impersonationInfo).toBeTruthy();
+      expect(vm.impersonationInfo?.enabled).toBe(true);
+      expect(vm.impersonationInfo?.serviceAccount).toBe("debug-sa");
+    });
+
+    it("displays required auxiliary resources", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            requiredAuxiliaryResourceCategories: ["logging", "monitoring"],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        requiredAuxiliaryResources: string[];
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select the cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Required auxiliary resources should be available
+      expect(vm.requiredAuxiliaryResources).toContain("logging");
+      expect(vm.requiredAuxiliaryResources).toContain("monitoring");
     });
   });
 });

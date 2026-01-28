@@ -2,6 +2,10 @@ server:
   listenAddress: :8080
   tlsCertFile: /some/file.crt # optional
   tlsKeyFile: /some/file.key # optional for https
+  # hardenedIDPHints controls whether identity provider names are exposed in error messages.
+  # When false (default): Error messages list available IDPs to help users troubleshoot.
+  # When true: Error messages are generic to prevent IDP reconnaissance attacks.
+  # hardenedIDPHints: true
   allowedOrigins:
     - https://breakglass.example.com
     - https://admin.example.net

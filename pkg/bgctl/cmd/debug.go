@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -227,16 +228,26 @@ func newDebugSessionGetCommand() *cobra.Command {
 
 func newDebugSessionCreateCommand() *cobra.Command {
 	var (
-		templateRef string
-		cluster     string
-		duration    string
-		namespace   string
-		reason      string
-		invitees    []string
+		templateRef              string
+		cluster                  string
+		bindingRef               string
+		duration                 string
+		namespace                string
+		reason                   string
+		invitees                 []string
+		targetNamespace          string
+		selectedSchedulingOption string
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a debug session",
+		Long: `Create a new debug session.
+
+When multiple bindings are available for a cluster, use --binding to select
+which binding configuration to use. You can list available bindings with:
+  bgctl debug template clusters <template-name> -o wide
+
+The --binding flag accepts the format "namespace/name" or just "name".`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -247,13 +258,22 @@ func newDebugSessionCreateCommand() *cobra.Command {
 				return err
 			}
 			req := client.CreateDebugSessionRequest{
-				TemplateRef:         templateRef,
-				Cluster:             cluster,
-				RequestedDuration:   duration,
-				Namespace:           namespace,
-				Reason:              reason,
-				InvitedParticipants: invitees,
+				TemplateRef:              templateRef,
+				Cluster:                  cluster,
+				BindingRef:               bindingRef, // Format: "namespace/name" or just "name" (defaults to breakglass/name)
+				RequestedDuration:        duration,
+				Namespace:                namespace,
+				Reason:                   reason,
+				InvitedParticipants:      invitees,
+				TargetNamespace:          targetNamespace,
+				SelectedSchedulingOption: selectedSchedulingOption,
 			}
+
+			// Normalize binding reference to namespace/name format if only name provided
+			if bindingRef != "" && !strings.Contains(bindingRef, "/") {
+				req.BindingRef = "breakglass/" + bindingRef // Default namespace
+			}
+
 			session, err := apiClient.DebugSessions().Create(context.Background(), req)
 			if err != nil {
 				return err
@@ -263,10 +283,13 @@ func newDebugSessionCreateCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&templateRef, "template", "", "Debug session template name")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Target cluster")
+	cmd.Flags().StringVar(&bindingRef, "binding", "", "Binding reference (namespace/name or name) when multiple bindings exist")
 	cmd.Flags().StringVar(&duration, "duration", "", "Requested duration (e.g. 1h)")
-	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace to deploy debug pods")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace to deploy debug pods (legacy, use --target-namespace)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Reason for debug session")
 	cmd.Flags().StringSliceVar(&invitees, "invite", nil, "Invite participants")
+	cmd.Flags().StringVar(&targetNamespace, "target-namespace", "", "Target namespace for debug pods")
+	cmd.Flags().StringVar(&selectedSchedulingOption, "scheduling-option", "", "Scheduling option name (from template)")
 	_ = cmd.MarkFlagRequired("template")
 	_ = cmd.MarkFlagRequired("cluster")
 	return cmd
@@ -450,7 +473,7 @@ func newDebugTemplateCommand() *cobra.Command {
 		Use:   "template",
 		Short: "Manage debug session templates",
 	}
-	cmd.AddCommand(newDebugTemplateListCommand(), newDebugTemplateGetCommand())
+	cmd.AddCommand(newDebugTemplateListCommand(), newDebugTemplateGetCommand(), newDebugTemplateClustersCommand(), newDebugTemplateBindingsCommand())
 	return cmd
 }
 
@@ -505,6 +528,120 @@ func newDebugTemplateGetCommand() *cobra.Command {
 				return err
 			}
 			return output.WriteObject(rt.Writer(), output.Format(rt.OutputFormat()), template)
+		},
+	}
+	return cmd
+}
+
+func newDebugTemplateClustersCommand() *cobra.Command {
+	var (
+		environment string
+		location    string
+		bindingName string
+	)
+	cmd := &cobra.Command{
+		Use:   "clusters NAME",
+		Short: "List available clusters for a debug session template",
+		Long: `List all clusters that are available for the specified debug session template.
+
+This shows cluster-specific details including:
+- Binding references (which ClusterBinding enabled access)
+- Scheduling constraints and options
+- Namespace constraints
+- Impersonation configuration
+- Approval requirements`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := getRuntime(cmd)
+			if err != nil {
+				return err
+			}
+			apiClient, err := buildClient(context.Background(), rt)
+			if err != nil {
+				return err
+			}
+			resp, err := apiClient.DebugTemplates().GetClusters(context.Background(), args[0], client.TemplateClustersOptions{
+				Environment: environment,
+				Location:    location,
+				BindingName: bindingName,
+			})
+			if err != nil {
+				return err
+			}
+			format := output.Format(rt.OutputFormat())
+			switch format {
+			case output.FormatJSON, output.FormatYAML:
+				return output.WriteObject(rt.Writer(), format, resp)
+			case output.FormatTable:
+				output.WriteTemplateClusterTable(rt.Writer(), resp.Clusters)
+				return nil
+			case output.FormatWide:
+				output.WriteTemplateClusterTableWide(rt.Writer(), resp.Clusters)
+				return nil
+			default:
+				return fmt.Errorf("unknown output format: %s", format)
+			}
+		},
+	}
+	cmd.Flags().StringVar(&environment, "environment", "", "Filter by cluster environment")
+	cmd.Flags().StringVar(&location, "location", "", "Filter by cluster location")
+	cmd.Flags().StringVar(&bindingName, "binding", "", "Filter by binding name")
+	return cmd
+}
+
+func newDebugTemplateBindingsCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "bindings TEMPLATE CLUSTER",
+		Short: "List available binding options for a cluster",
+		Long: `List all binding options available for a specific cluster and template.
+
+When multiple ClusterBindings match a cluster, this shows each option with its
+specific configuration including constraints, namespace settings, scheduling
+options, and approval requirements.
+
+Use this to determine which --binding value to pass to 'debug session create'.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rt, err := getRuntime(cmd)
+			if err != nil {
+				return err
+			}
+			apiClient, err := buildClient(context.Background(), rt)
+			if err != nil {
+				return err
+			}
+
+			templateName := args[0]
+			clusterName := args[1]
+
+			resp, err := apiClient.DebugTemplates().GetClusters(context.Background(), templateName, client.TemplateClustersOptions{})
+			if err != nil {
+				return err
+			}
+
+			// Find the requested cluster
+			var clusterDetail *client.AvailableClusterDetail
+			for i := range resp.Clusters {
+				if resp.Clusters[i].Name == clusterName {
+					clusterDetail = &resp.Clusters[i]
+					break
+				}
+			}
+
+			if clusterDetail == nil {
+				return fmt.Errorf("cluster '%s' not found for template '%s'", clusterName, templateName)
+			}
+
+			format := output.Format(rt.OutputFormat())
+			switch format {
+			case output.FormatJSON, output.FormatYAML:
+				return output.WriteObject(rt.Writer(), format, clusterDetail.BindingOptions)
+			case output.FormatTable, output.FormatWide:
+				output.WriteBindingOptionsTable(rt.Writer(), clusterName, clusterDetail.BindingOptions)
+				return nil
+			default:
+				return fmt.Errorf("unknown output format: %s", format)
+			}
 		},
 	}
 	return cmd

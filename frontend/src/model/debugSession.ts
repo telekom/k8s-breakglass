@@ -98,6 +98,44 @@ export interface DebugSessionTemplateResponse {
   allowedClusters?: string[];
   allowedGroups?: string[];
   requiresApproval: boolean;
+  schedulingOptions?: SchedulingOptionsResponse;
+  namespaceConstraints?: NamespaceConstraintsResponse;
+}
+
+// Scheduling options for debug sessions
+export interface SchedulingOptionsResponse {
+  required: boolean;
+  options: SchedulingOptionResponse[];
+}
+
+export interface SchedulingOptionResponse {
+  name: string;
+  displayName: string;
+  description?: string;
+  default?: boolean;
+}
+
+// Namespace constraints for debug sessions
+export interface NamespaceConstraintsResponse {
+  allowedPatterns?: string[];
+  allowedLabelSelectors?: NamespaceSelectorTermResponse[];
+  deniedPatterns?: string[];
+  deniedLabelSelectors?: NamespaceSelectorTermResponse[];
+  defaultNamespace?: string;
+  allowUserNamespace: boolean;
+}
+
+// Label selector term for namespace constraints
+export interface NamespaceSelectorTermResponse {
+  matchLabels?: Record<string, string>;
+  matchExpressions?: NamespaceSelectorRequirementResponse[];
+}
+
+// Label selector requirement
+export interface NamespaceSelectorRequirementResponse {
+  key: string;
+  operator: "In" | "NotIn" | "Exists" | "DoesNotExist";
+  values?: string[];
 }
 
 export interface DebugPodTemplateResponse {
@@ -152,10 +190,13 @@ export interface DebugSession {
 export interface CreateDebugSessionRequest {
   templateRef: string;
   cluster: string;
+  bindingRef?: string; // Optional: explicit binding selection as "namespace/name" when multiple match
   requestedDuration?: string;
   reason?: string;
   nodeSelector?: Record<string, string>;
   scheduledStartTime?: string;
+  targetNamespace?: string;
+  selectedSchedulingOption?: string;
 }
 
 export interface JoinDebugSessionRequest {
@@ -240,4 +281,92 @@ export interface CreateNodeDebugPodRequest {
 export interface CreateNodeDebugPodResponse {
   podName: string;
   namespace: string;
+}
+
+// ============================================================================
+// Template Cluster Details API Types
+// ============================================================================
+
+// Response from GET /debugSessions/templates/:name/clusters
+export interface TemplateClustersResponse {
+  templateName: string;
+  templateDisplayName: string;
+  clusters: AvailableClusterDetail[];
+}
+
+// Detailed cluster availability information for a template.
+// When multiple bindings match a cluster, bindingOptions contains all available options.
+export interface AvailableClusterDetail {
+  name: string;
+  displayName?: string;
+  environment?: string;
+  location?: string;
+  site?: string;
+  tenant?: string;
+  bindingRef?: BindingReference; // Default/primary binding (backward compat)
+  bindingOptions?: BindingOption[]; // All available binding options
+  constraints?: SessionConstraints;
+  schedulingConstraints?: SchedulingConstraintsSummary;
+  schedulingOptions?: SchedulingOptionsResponse;
+  namespaceConstraints?: NamespaceConstraintsResponse;
+  impersonation?: ImpersonationSummary;
+  requiredAuxiliaryResourceCategories?: string[];
+  approval?: ApprovalInfo;
+  status?: ClusterStatusInfo;
+}
+
+// A single binding option with its resolved configuration
+export interface BindingOption {
+  bindingRef: BindingReference;
+  displayName?: string;
+  constraints?: SessionConstraints;
+  schedulingConstraints?: SchedulingConstraintsSummary;
+  schedulingOptions?: SchedulingOptionsResponse;
+  namespaceConstraints?: NamespaceConstraintsResponse;
+  impersonation?: ImpersonationSummary;
+  requiredAuxiliaryResourceCategories?: string[];
+  approval?: ApprovalInfo;
+}
+
+// Reference to the cluster binding that provides access
+export interface BindingReference {
+  name: string;
+  namespace: string;
+  displayName?: string;
+  displayNamePrefix?: string;
+}
+
+// Summary of scheduling constraints from binding/template
+export interface SchedulingConstraintsSummary {
+  nodeSelector?: Record<string, string>;
+  tolerations?: TolerationSummary[];
+  deniedNodes?: string[];
+  deniedNodeLabels?: Record<string, string>;
+}
+
+// Toleration summary
+export interface TolerationSummary {
+  key: string;
+  operator: string;
+  value?: string;
+  effect?: string;
+}
+
+// Impersonation configuration summary
+export interface ImpersonationSummary {
+  enabled: boolean;
+  serviceAccountRef?: string;
+}
+
+// Approval requirements from binding/template
+export interface ApprovalInfo {
+  required: boolean;
+  approverGroups?: string[];
+}
+
+// Cluster health status
+export interface ClusterStatusInfo {
+  healthy: boolean;
+  lastChecked?: string;
+  message?: string;
 }

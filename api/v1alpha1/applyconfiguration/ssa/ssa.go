@@ -144,6 +144,20 @@ func ApplyDebugPodTemplateStatus(ctx context.Context, c client.Client, template 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
 }
 
+// ApplyDebugSessionClusterBindingStatus applies a status update to a DebugSessionClusterBinding using native SSA.
+func ApplyDebugSessionClusterBindingStatus(ctx context.Context, c client.Client, binding *telekomv1alpha1.DebugSessionClusterBinding) error {
+	applyConfig := ac.DebugSessionClusterBinding(binding.Name, binding.Namespace).
+		WithStatus(DebugSessionClusterBindingStatusFrom(&binding.Status))
+
+	return applyStatusViaUnstructured(ctx, c, applyConfig)
+}
+
+// ApplyViaUnstructured exports the internal applyStatusViaUnstructured helper for use by reconcilers
+// that build custom apply configurations.
+func ApplyViaUnstructured(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration) error {
+	return applyStatusViaUnstructured(ctx, c, applyConfig)
+}
+
 // BreakglassSessionStatusFrom converts a BreakglassSessionStatus to its ApplyConfiguration.
 func BreakglassSessionStatusFrom(status *telekomv1alpha1.BreakglassSessionStatus) *ac.BreakglassSessionStatusApplyConfiguration {
 	if status == nil {
@@ -271,6 +285,11 @@ func DebugSessionStatusFrom(status *telekomv1alpha1.DebugSessionStatus) *ac.Debu
 		result.WithResolvedTemplate(DebugSessionTemplateSpecFrom(status.ResolvedTemplate))
 	}
 
+	// Set resolved binding
+	if status.ResolvedBinding != nil {
+		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
+	}
+
 	return result
 }
 
@@ -368,6 +387,59 @@ func DebugPodTemplateStatusFrom(status *telekomv1alpha1.DebugPodTemplateStatus) 
 	// Set usedBy
 	if len(status.UsedBy) > 0 {
 		result.WithUsedBy(status.UsedBy...)
+	}
+
+	return result
+}
+
+// DebugSessionClusterBindingStatusFrom converts a DebugSessionClusterBindingStatus to its ApplyConfiguration.
+func DebugSessionClusterBindingStatusFrom(status *telekomv1alpha1.DebugSessionClusterBindingStatus) *ac.DebugSessionClusterBindingStatusApplyConfiguration {
+	if status == nil {
+		return nil
+	}
+
+	result := ac.DebugSessionClusterBindingStatus()
+
+	// Set conditions
+	for i := range status.Conditions {
+		result.WithConditions(ConditionFrom(&status.Conditions[i]))
+	}
+
+	// Set observed generation
+	if status.ObservedGeneration > 0 {
+		result.WithObservedGeneration(status.ObservedGeneration)
+	}
+
+	// Set resolved templates
+	for i := range status.ResolvedTemplates {
+		tpl := &status.ResolvedTemplates[i]
+		result.WithResolvedTemplates(
+			ac.ResolvedTemplateRef().
+				WithName(tpl.Name).
+				WithDisplayName(tpl.DisplayName).
+				WithReady(tpl.Ready),
+		)
+	}
+
+	// Set resolved clusters
+	for i := range status.ResolvedClusters {
+		cl := &status.ResolvedClusters[i]
+		result.WithResolvedClusters(
+			ac.ResolvedClusterRef().
+				WithName(cl.Name).
+				WithReady(cl.Ready).
+				WithMatchedBy(cl.MatchedBy),
+		)
+	}
+
+	// Set active session count
+	if status.ActiveSessionCount > 0 {
+		result.WithActiveSessionCount(status.ActiveSessionCount)
+	}
+
+	// Set last used
+	if status.LastUsed != nil && !status.LastUsed.IsZero() {
+		result.WithLastUsed(*status.LastUsed)
 	}
 
 	return result
@@ -639,6 +711,20 @@ func DebugPodTemplateReferenceFrom(r *telekomv1alpha1.DebugPodTemplateReference)
 		return nil
 	}
 	return ac.DebugPodTemplateReference().WithName(r.Name)
+}
+
+// ResolvedBindingRefFrom converts a ResolvedBindingRef to its ApplyConfiguration.
+func ResolvedBindingRefFrom(r *telekomv1alpha1.ResolvedBindingRef) *ac.ResolvedBindingRefApplyConfiguration {
+	if r == nil {
+		return nil
+	}
+	result := ac.ResolvedBindingRef().
+		WithName(r.Name).
+		WithNamespace(r.Namespace)
+	if r.DisplayName != "" {
+		result.WithDisplayName(r.DisplayName)
+	}
+	return result
 }
 
 // DebugPodOverridesFrom converts a DebugPodOverrides to its ApplyConfiguration.

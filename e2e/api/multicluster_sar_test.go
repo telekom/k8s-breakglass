@@ -185,7 +185,7 @@ func TestCrossClusterSARAuthorization(t *testing.T) {
 		// Send SAR for a user without an active session
 		sar := &authorizationv1.SubjectAccessReview{
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User: "nonexistent-user@example.com",
+				User: helpers.TestUsers.UnauthorizedUser.Email,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Verb:     "get",
 					Resource: "pods",

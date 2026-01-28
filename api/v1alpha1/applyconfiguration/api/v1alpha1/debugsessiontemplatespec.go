@@ -41,6 +41,12 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	AffinityOverrides *v1.Affinity `json:"affinityOverrides,omitempty"`
 	// additionalTolerations adds tolerations to those defined in the pod template.
 	AdditionalTolerations []v1.Toleration `json:"additionalTolerations,omitempty"`
+	// schedulingConstraints defines mandatory scheduling rules for debug pods.
+	// These constraints are applied AFTER template settings and CANNOT be overridden by users.
+	SchedulingConstraints *SchedulingConstraintsApplyConfiguration `json:"schedulingConstraints,omitempty"`
+	// schedulingOptions offers users a choice of predefined scheduling configurations.
+	// Each option can define different node selectors, affinities, etc.
+	SchedulingOptions *SchedulingOptionsApplyConfiguration `json:"schedulingOptions,omitempty"`
 	// kubectlDebug configures kubectl debug operations.
 	// Required when mode is "kubectl-debug" or "hybrid".
 	KubectlDebug *KubectlDebugConfigApplyConfiguration `json:"kubectlDebug,omitempty"`
@@ -54,6 +60,12 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// targetNamespace specifies the namespace where debug pods are deployed.
 	// Must be pre-created by an administrator.
 	TargetNamespace *string `json:"targetNamespace,omitempty"`
+	// namespaceConstraints defines where debug pods can be deployed.
+	// Allows user choice within administrator-defined boundaries.
+	NamespaceConstraints *NamespaceConstraintsApplyConfiguration `json:"namespaceConstraints,omitempty"`
+	// impersonation controls which identity is used to deploy debug resources.
+	// Enables least-privilege deployment using a constrained ServiceAccount.
+	Impersonation *ImpersonationConfigApplyConfiguration `json:"impersonation,omitempty"`
 	// failMode specifies behavior when namespace doesn't exist or deployment fails.
 	// "closed" (default) denies the session, "open" allows without deployed pods.
 	FailMode *string `json:"failMode,omitempty"`
@@ -61,6 +73,15 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	TerminalSharing *TerminalSharingConfigApplyConfiguration `json:"terminalSharing,omitempty"`
 	// audit configures audit logging for debug sessions.
 	Audit *DebugSessionAuditConfigApplyConfiguration `json:"audit,omitempty"`
+	// auxiliaryResources defines additional Kubernetes resources to deploy with the debug session.
+	// These resources are created/deleted alongside the debug pods.
+	AuxiliaryResources []AuxiliaryResourceApplyConfiguration `json:"auxiliaryResources,omitempty"`
+	// auxiliaryResourceDefaults sets default enabled/disabled state for auxiliary resource categories.
+	// Key is the category name, value is whether it's enabled by default.
+	AuxiliaryResourceDefaults map[string]bool `json:"auxiliaryResourceDefaults,omitempty"`
+	// requiredAuxiliaryResourceCategories lists categories that MUST be enabled.
+	// These cannot be disabled by bindings or users.
+	RequiredAuxiliaryResourceCategories []string `json:"requiredAuxiliaryResourceCategories,omitempty"`
 }
 
 // DebugSessionTemplateSpecApplyConfiguration constructs a declarative configuration of the DebugSessionTemplateSpec type for use with
@@ -143,6 +164,22 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithAdditionalTolerations(v
 	return b
 }
 
+// WithSchedulingConstraints sets the SchedulingConstraints field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SchedulingConstraints field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithSchedulingConstraints(value *SchedulingConstraintsApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.SchedulingConstraints = value
+	return b
+}
+
+// WithSchedulingOptions sets the SchedulingOptions field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SchedulingOptions field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithSchedulingOptions(value *SchedulingOptionsApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.SchedulingOptions = value
+	return b
+}
+
 // WithKubectlDebug sets the KubectlDebug field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the KubectlDebug field is set to the value of the last call.
@@ -183,6 +220,22 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithTargetNamespace(value s
 	return b
 }
 
+// WithNamespaceConstraints sets the NamespaceConstraints field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the NamespaceConstraints field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithNamespaceConstraints(value *NamespaceConstraintsApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.NamespaceConstraints = value
+	return b
+}
+
+// WithImpersonation sets the Impersonation field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Impersonation field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithImpersonation(value *ImpersonationConfigApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.Impersonation = value
+	return b
+}
+
 // WithFailMode sets the FailMode field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the FailMode field is set to the value of the last call.
@@ -204,5 +257,42 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithTerminalSharing(value *
 // If called multiple times, the Audit field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithAudit(value *DebugSessionAuditConfigApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
 	b.Audit = value
+	return b
+}
+
+// WithAuxiliaryResources adds the given value to the AuxiliaryResources field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the AuxiliaryResources field.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithAuxiliaryResources(values ...*AuxiliaryResourceApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithAuxiliaryResources")
+		}
+		b.AuxiliaryResources = append(b.AuxiliaryResources, *values[i])
+	}
+	return b
+}
+
+// WithAuxiliaryResourceDefaults puts the entries into the AuxiliaryResourceDefaults field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the AuxiliaryResourceDefaults field,
+// overwriting an existing map entries in AuxiliaryResourceDefaults field with the same key.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithAuxiliaryResourceDefaults(entries map[string]bool) *DebugSessionTemplateSpecApplyConfiguration {
+	if b.AuxiliaryResourceDefaults == nil && len(entries) > 0 {
+		b.AuxiliaryResourceDefaults = make(map[string]bool, len(entries))
+	}
+	for k, v := range entries {
+		b.AuxiliaryResourceDefaults[k] = v
+	}
+	return b
+}
+
+// WithRequiredAuxiliaryResourceCategories adds the given value to the RequiredAuxiliaryResourceCategories field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the RequiredAuxiliaryResourceCategories field.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithRequiredAuxiliaryResourceCategories(values ...string) *DebugSessionTemplateSpecApplyConfiguration {
+	for i := range values {
+		b.RequiredAuxiliaryResourceCategories = append(b.RequiredAuxiliaryResourceCategories, values[i])
+	}
 	return b
 }

@@ -1798,3 +1798,760 @@ func TestUpdatePodTemplateUsedBy(t *testing.T) {
 		assert.Len(t, updatedPodTemplate.Status.UsedBy, 2)
 	})
 }
+
+func TestDebugSessionController_ResolveImpersonationConfig(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{log: logger}
+
+	t.Run("nil template and binding returns nil", func(t *testing.T) {
+		result := ctrl.resolveImpersonationConfig(nil, nil)
+		assert.Nil(t, result)
+	})
+
+	t.Run("template impersonation only", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "template-sa",
+						Namespace: "template-ns",
+					},
+				},
+			},
+		}
+		result := ctrl.resolveImpersonationConfig(template, nil)
+		require.NotNil(t, result)
+		assert.Equal(t, "template-sa", result.ServiceAccountRef.Name)
+		assert.Equal(t, "template-ns", result.ServiceAccountRef.Namespace)
+	})
+
+	t.Run("binding impersonation only", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "binding-sa",
+						Namespace: "binding-ns",
+					},
+				},
+			},
+		}
+		result := ctrl.resolveImpersonationConfig(nil, binding)
+		require.NotNil(t, result)
+		assert.Equal(t, "binding-sa", result.ServiceAccountRef.Name)
+	})
+
+	t.Run("binding overrides template", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "template-sa",
+						Namespace: "template-ns",
+					},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "binding-sa",
+						Namespace: "binding-ns",
+					},
+				},
+			},
+		}
+		result := ctrl.resolveImpersonationConfig(template, binding)
+		require.NotNil(t, result)
+		// Binding should take precedence
+		assert.Equal(t, "binding-sa", result.ServiceAccountRef.Name)
+		assert.Equal(t, "binding-ns", result.ServiceAccountRef.Namespace)
+	})
+
+	t.Run("binding nil impersonation falls back to template", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "template-sa",
+						Namespace: "template-ns",
+					},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				// No impersonation
+			},
+		}
+		result := ctrl.resolveImpersonationConfig(template, binding)
+		require.NotNil(t, result)
+		assert.Equal(t, "template-sa", result.ServiceAccountRef.Name)
+	})
+}
+
+func TestDebugSessionController_ValidateSpokeServiceAccount(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	t.Run("returns nil when SA exists", func(t *testing.T) {
+		sa := &corev1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-sa",
+				Namespace: "test-ns",
+			},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sa).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		saRef := &telekomv1alpha1.ServiceAccountReference{
+			Name:      "test-sa",
+			Namespace: "test-ns",
+		}
+		err := ctrl.validateSpokeServiceAccount(ctx, fakeClient, saRef)
+		assert.NoError(t, err)
+	})
+
+	t.Run("returns error when SA not found", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		saRef := &telekomv1alpha1.ServiceAccountReference{
+			Name:      "missing-sa",
+			Namespace: "test-ns",
+		}
+		err := ctrl.validateSpokeServiceAccount(ctx, fakeClient, saRef)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+		assert.Contains(t, err.Error(), "missing-sa")
+	})
+}
+
+func TestDebugSessionController_GetBinding(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	t.Run("returns binding when exists", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.getBinding(ctx, "test-binding", "test-ns")
+		require.NoError(t, err)
+		assert.Equal(t, "test-binding", result.Name)
+		assert.Equal(t, "test-ns", result.Namespace)
+	})
+
+	t.Run("returns error when binding not found", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		_, err := ctrl.getBinding(ctx, "missing", "test-ns")
+		require.Error(t, err)
+	})
+}
+
+func TestDebugSessionController_FindBindingForSession(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	t.Run("finds binding by templateRef and explicit cluster", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "test-template"},
+				Clusters:    []string{"target-cluster"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "target-cluster")
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "test-binding", result.Name)
+	})
+
+	t.Run("finds binding by templateSelector", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+				Labels: map[string]string{
+					"category": "debug",
+					"env":      "production",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "selector-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"category": "debug"},
+				},
+				Clusters: []string{"target-cluster"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "target-cluster")
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "selector-binding", result.Name)
+	})
+
+	t.Run("finds binding by clusterSelector", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		clusterConfig := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "prod-cluster",
+				Namespace: "default",
+				Labels: map[string]string{
+					"environment": "production",
+					"region":      "eu-west",
+				},
+			},
+			Spec: telekomv1alpha1.ClusterConfigSpec{},
+		}
+
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "cluster-selector-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "test-template"},
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"environment": "production"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, clusterConfig, binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "prod-cluster")
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "cluster-selector-binding", result.Name)
+	})
+
+	t.Run("returns nil when no binding matches", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		// Binding for different template
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "other-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "other-template"},
+				Clusters:    []string{"target-cluster"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "target-cluster")
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("skips disabled bindings", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "disabled-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "test-template"},
+				Clusters:    []string{"target-cluster"},
+				Disabled:    true, // Disabled
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "target-cluster")
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+}
+
+func TestDebugSessionController_BindingMatchesTemplate(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{log: logger}
+
+	t.Run("matches by templateRef", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-template"},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "my-template"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("does not match different templateRef", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-template"},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "other-template"},
+			},
+		}
+
+		assert.False(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("matches by templateSelector", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "my-template",
+				Labels: map[string]string{"tier": "platform", "team": "sre"},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"tier": "platform"},
+				},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+}
+
+func TestDebugSessionController_BindingMatchesCluster(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{log: logger}
+
+	t.Run("matches explicit cluster name", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Clusters: []string{"cluster-a", "cluster-b"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "cluster-a", nil))
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "cluster-b", nil))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "cluster-c", nil))
+	})
+
+	t.Run("matches by clusterSelector", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"environment": "staging"},
+				},
+			},
+		}
+
+		stagingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"environment": "staging", "region": "eu"},
+			},
+		}
+
+		prodCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"environment": "production", "region": "eu"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "any", stagingCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "any", prodCluster))
+	})
+}
+
+func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+	ctx := context.Background()
+
+	t.Run("returns first matching binding when multiple match", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "shared-template",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Shared Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		// Two bindings that both match
+		binding1 := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-a", // Alphabetically first
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "shared-template"},
+				Clusters:    []string{"target-cluster"},
+			},
+		}
+
+		binding2 := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-b",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "shared-template"},
+				Clusters:    []string{"target-cluster"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding1, binding2).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "target-cluster")
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should return a binding (determinism depends on list order from fake client)
+		assert.Contains(t, []string{"binding-a", "binding-b"}, result.Name)
+	})
+
+	t.Run("handles empty binding list", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "lonely-template",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Template without bindings",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "any-cluster")
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("handles malformed label selector gracefully", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-template",
+				Labels: map[string]string{"app": "test"},
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		// Binding with invalid label selector (empty match expression)
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "malformed-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "invalid",
+							Operator: metav1.LabelSelectorOperator("NotAValidOperator"),
+						},
+					},
+				},
+				Clusters: []string{"target-cluster"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		// Should not panic, just not match
+		result, err := ctrl.findBindingForSession(ctx, template, "target-cluster")
+		require.NoError(t, err)
+		assert.Nil(t, result) // Malformed selector doesn't match
+	})
+
+	t.Run("matches when both explicit clusters and clusterSelector match", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		clusterConfig := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "hybrid-cluster",
+				Labels: map[string]string{"environment": "production"},
+			},
+		}
+
+		// Binding with both explicit clusters AND clusterSelector
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "hybrid-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef:     &telekomv1alpha1.TemplateReference{Name: "test-template"},
+				Clusters:        []string{"explicit-cluster"},
+				ClusterSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"environment": "production"}},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, clusterConfig, binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		// Should match via explicit cluster name
+		result1, err := ctrl.findBindingForSession(ctx, template, "explicit-cluster")
+		require.NoError(t, err)
+		require.NotNil(t, result1)
+		assert.Equal(t, "hybrid-binding", result1.Name)
+
+		// Should match via clusterSelector
+		result2, err := ctrl.findBindingForSession(ctx, template, "hybrid-cluster")
+		require.NoError(t, err)
+		require.NotNil(t, result2)
+		assert.Equal(t, "hybrid-binding", result2.Name)
+	})
+
+	t.Run("does not match cluster without ClusterConfig when using clusterSelector", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			},
+		}
+
+		// Binding only has clusterSelector, no explicit clusters
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "selector-only-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef:     &telekomv1alpha1.TemplateReference{Name: "test-template"},
+				ClusterSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "test"}},
+			},
+		}
+
+		// No ClusterConfig exists for the cluster
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "unknown-cluster")
+		require.NoError(t, err)
+		assert.Nil(t, result) // Can't match via selector without ClusterConfig
+	})
+}
+
+func TestDebugSessionController_BindingMatchesTemplate_EdgeCases(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{log: logger}
+
+	t.Run("does not match when binding has no template reference", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-template"},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				// Neither templateRef nor templateSelector set
+			},
+		}
+
+		assert.False(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("does not match when template has no labels and selector requires labels", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "unlabeled-template",
+				// No labels
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"tier": "platform"},
+				},
+			},
+		}
+
+		assert.False(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("matches when template has extra labels beyond selector requirements", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "multi-label-template",
+				Labels: map[string]string{
+					"tier":        "platform",
+					"team":        "sre",
+					"environment": "production",
+					"extra":       "label",
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"tier": "platform"},
+				},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+}
+
+func TestDebugSessionController_BindingMatchesCluster_EdgeCases(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{log: logger}
+
+	t.Run("does not match when binding has neither clusters nor clusterSelector", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				// Neither clusters nor clusterSelector set
+			},
+		}
+
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "any-cluster", nil))
+	})
+
+	t.Run("empty clusters list does not match", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Clusters: []string{}, // Empty list
+			},
+		}
+
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "any-cluster", nil))
+	})
+
+	t.Run("nil clusterConfig with clusterSelector does not match", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"env": "test"},
+				},
+			},
+		}
+
+		// No clusterConfig provided
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "test-cluster", nil))
+	})
+
+	t.Run("clusterConfig with no labels does not match label selector", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"env": "test"},
+				},
+			},
+		}
+
+		clusterConfig := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "unlabeled-cluster",
+				// No labels
+			},
+		}
+
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "unlabeled-cluster", clusterConfig))
+	})
+
+	t.Run("matches with empty label selector (matches all)", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{}, // Empty selector matches all
+			},
+		}
+
+		clusterConfig := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "any-cluster",
+				Labels: map[string]string{"anything": "here"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "any-cluster", clusterConfig))
+	})
+}

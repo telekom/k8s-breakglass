@@ -45,7 +45,7 @@ var (
 	k8sClient      client.Client
 	apiClient      *helpers.APIClient
 	approverClient *helpers.APIClient
-	testNamespace  = "breakglass"
+	testNamespace  = helpers.GetTestNamespace()
 )
 
 func init() {
@@ -1568,4 +1568,585 @@ func TestDebugSession_E2E_AutoApproveByGroup(t *testing.T) {
 	assert.NotNil(t, fetched.Spec.Approvers.AutoApproveFor)
 	assert.Contains(t, fetched.Spec.Approvers.AutoApproveFor.Groups, "sre-leads")
 	t.Logf("Auto-approve configured for groups: %v", fetched.Spec.Approvers.AutoApproveFor.Groups)
+}
+
+// ============================================================================
+// Scheduling Constraints E2E Tests
+// ============================================================================
+
+// D-020: DebugSession with scheduling constraints (node selector)
+func TestDebugSession_E2E_SchedulingConstraints_NodeSelector(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	cli := setupClient(t)
+	ctx := context.Background()
+
+	// Create pod template
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-scheduling-node-selector-pod",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Scheduling NodeSelector Pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create session template with scheduling constraints
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-scheduling-constraints-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Scheduling Constraints Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:        &replicas,
+			TargetNamespace: "breakglass-debug",
+			SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+				NodeSelector: map[string]string{
+					"kubernetes.io/os": "linux",
+				},
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create scheduling constraints template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Verify template has scheduling constraints
+	var fetched telekomv1alpha1.DebugSessionTemplate
+	err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
+	require.NoError(t, err)
+	assert.NotNil(t, fetched.Spec.SchedulingConstraints)
+	assert.Equal(t, "linux", fetched.Spec.SchedulingConstraints.NodeSelector["kubernetes.io/os"])
+	t.Logf("Scheduling constraints configured with nodeSelector: %v", fetched.Spec.SchedulingConstraints.NodeSelector)
+}
+
+// D-021: DebugSession with scheduling options selection
+func TestDebugSession_E2E_SchedulingOptions(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	cli := setupClient(t)
+	api := setupAPIClient(t)
+	ctx := context.Background()
+
+	// Create pod template
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-scheduling-options-pod",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Scheduling Options Pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create session template with multiple scheduling options
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-scheduling-options-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Scheduling Options Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:        &replicas,
+			TargetNamespace: "breakglass-debug",
+			// Base scheduling constraints applied to all sessions
+			SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+				NodeSelector: map[string]string{
+					"kubernetes.io/os": "linux",
+				},
+			},
+			// Multiple scheduling options the user can choose from
+			SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+				Required: false, // Optional selection
+				Options: []telekomv1alpha1.SchedulingOption{
+					{
+						Name:        "standard",
+						DisplayName: "Standard Workers",
+						Description: "Run on standard worker nodes",
+						Default:     true, // This is the default option
+						SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+							NodeSelector: map[string]string{
+								"node-type": "standard",
+							},
+						},
+					},
+					{
+						Name:        "high-memory",
+						DisplayName: "High Memory Nodes",
+						Description: "Run on high-memory nodes for memory-intensive debugging",
+						SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+							NodeSelector: map[string]string{
+								"node-type": "high-memory",
+							},
+						},
+					},
+				},
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create scheduling options template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Verify template has scheduling options
+	var fetched telekomv1alpha1.DebugSessionTemplate
+	err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
+	require.NoError(t, err)
+	assert.NotNil(t, fetched.Spec.SchedulingOptions)
+	assert.Len(t, fetched.Spec.SchedulingOptions.Options, 2)
+	t.Logf("Scheduling options configured: %v", []string{"standard", "high-memory"})
+
+	// Create session with specific scheduling option selected via API
+	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
+		Cluster:                  "tenant-a",
+		TemplateRef:              template.Name,
+		RequestedDuration:        "30m",
+		Namespace:                testNamespace,
+		Reason:                   "Testing scheduling option selection",
+		SelectedSchedulingOption: "high-memory", // Select high-memory option
+	})
+	defer func() { _ = cli.Delete(ctx, session) }()
+
+	// Wait for session to be processed
+	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
+
+	// Verify the session has resolved scheduling constraints
+	t.Logf("Session state: %s", session.Status.State)
+	t.Logf("Selected scheduling option: %s", session.Spec.SelectedSchedulingOption)
+
+	// The session should have the selected option and resolved constraints
+	assert.Equal(t, "high-memory", session.Spec.SelectedSchedulingOption)
+	if session.Spec.ResolvedSchedulingConstraints != nil {
+		t.Logf("Resolved scheduling constraints: nodeSelector=%v",
+			session.Spec.ResolvedSchedulingConstraints.NodeSelector)
+		// Should have merged constraints: linux OS + high-memory node-type
+		assert.Equal(t, "linux", session.Spec.ResolvedSchedulingConstraints.NodeSelector["kubernetes.io/os"])
+		assert.Equal(t, "high-memory", session.Spec.ResolvedSchedulingConstraints.NodeSelector["node-type"])
+	}
+}
+
+// ============================================================================
+// Namespace Constraints E2E Tests
+// ============================================================================
+
+// D-022: DebugSession with namespace constraints
+func TestDebugSession_E2E_NamespaceConstraints(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	cli := setupClient(t)
+	ctx := context.Background()
+
+	// Create pod template
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-namespace-constraints-pod",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Namespace Constraints Pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create session template with namespace constraints
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-namespace-constraints-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Namespace Constraints Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:        &replicas,
+			TargetNamespace: "breakglass-debug",
+			NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+				AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+					Patterns: []string{"breakglass-*", "debug-*"},
+				},
+				DeniedNamespaces: &telekomv1alpha1.NamespaceFilter{
+					Patterns: []string{"kube-system", "kube-public"},
+				},
+				DefaultNamespace:   "breakglass-debug",
+				AllowUserNamespace: true,
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create namespace constraints template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Verify template has namespace constraints
+	var fetched telekomv1alpha1.DebugSessionTemplate
+	err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
+	require.NoError(t, err)
+	assert.NotNil(t, fetched.Spec.NamespaceConstraints)
+	assert.True(t, fetched.Spec.NamespaceConstraints.AllowUserNamespace)
+	assert.Equal(t, "breakglass-debug", fetched.Spec.NamespaceConstraints.DefaultNamespace)
+	t.Logf("Namespace constraints: allowed=%v, denied=%v, default=%s",
+		fetched.Spec.NamespaceConstraints.AllowedNamespaces.Patterns,
+		fetched.Spec.NamespaceConstraints.DeniedNamespaces.Patterns,
+		fetched.Spec.NamespaceConstraints.DefaultNamespace)
+}
+
+// D-023: DebugSession with user-selected target namespace
+func TestDebugSession_E2E_TargetNamespaceSelection(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	cli := setupClient(t)
+	api := setupAPIClient(t)
+	ctx := context.Background()
+
+	// Create pod template
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-target-namespace-pod",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Target Namespace Pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create session template allowing user namespace selection
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-target-namespace-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Target Namespace Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType: telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:     &replicas,
+			// No fixed TargetNamespace - use namespace constraints instead
+			NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+				AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+					Patterns: []string{"debug-*", "breakglass-*"},
+				},
+				DefaultNamespace:   "debug-default",
+				AllowUserNamespace: true, // User can specify namespace
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create target namespace template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Create the target namespace first
+	targetNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "debug-custom",
+		},
+	}
+	_ = cli.Create(ctx, targetNs)
+	defer func() { _ = cli.Delete(ctx, targetNs) }()
+
+	// Create session with user-selected target namespace
+	session := api.MustCreateDebugSession(t, ctx, helpers.DebugSessionRequest{
+		Cluster:           "tenant-a",
+		TemplateRef:       template.Name,
+		RequestedDuration: "30m",
+		Namespace:         testNamespace,
+		Reason:            "Testing target namespace selection",
+		TargetNamespace:   "debug-custom", // User selects custom namespace
+	})
+	defer func() { _ = cli.Delete(ctx, session) }()
+
+	// Wait for session to be processed
+	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
+
+	// Verify the session has the user-selected target namespace
+	t.Logf("Session state: %s", session.Status.State)
+	t.Logf("Target namespace: %s", session.Spec.TargetNamespace)
+	assert.Equal(t, "debug-custom", session.Spec.TargetNamespace)
+}
+
+// D-024: DebugSession rejects invalid target namespace
+func TestDebugSession_E2E_InvalidTargetNamespaceRejected(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	cli := setupClient(t)
+	api := setupAPIClient(t)
+	ctx := context.Background()
+
+	// Create pod template
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-invalid-ns-pod",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Invalid NS Pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create session template with strict namespace constraints
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-strict-ns-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Strict NS Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType: telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:     &replicas,
+			NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+				AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+					Patterns: []string{"debug-*"}, // Only debug-* namespaces allowed
+				},
+				DeniedNamespaces: &telekomv1alpha1.NamespaceFilter{
+					Patterns: []string{"kube-*"}, // Deny kube-* namespaces
+				},
+				DefaultNamespace:   "debug-default",
+				AllowUserNamespace: true,
+			},
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create strict ns template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Try to create session with an invalid target namespace (not matching allowed pattern)
+	_, err = api.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
+		Cluster:           "tenant-a",
+		TemplateRef:       template.Name,
+		RequestedDuration: "30m",
+		Namespace:         testNamespace,
+		Reason:            "Testing invalid namespace rejection",
+		TargetNamespace:   "production", // This should be rejected (doesn't match debug-*)
+	})
+
+	// Expect an error (400 Bad Request) because namespace doesn't match constraints
+	require.Error(t, err, "Expected error when creating session with invalid namespace")
+	t.Logf("Session creation correctly rejected with error: %v", err)
+	assert.Contains(t, err.Error(), "status=400", "Expected 400 Bad Request for invalid namespace")
+}
+
+// D-025: DebugSession with cluster selector in allowed section
+func TestDebugSession_E2E_ClusterSelector(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	cli := setupClient(t)
+	ctx := context.Background()
+
+	// Create pod template
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-cluster-selector-pod",
+		},
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "E2E Cluster Selector Pod",
+			Template: telekomv1alpha1.DebugPodSpec{
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{
+							Name:    "debug",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "infinity"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, podTemplate)
+	err := cli.Create(ctx, podTemplate)
+	require.NoError(t, err)
+	defer func() { _ = cli.Delete(ctx, podTemplate) }()
+
+	// Create session template with cluster selector (label-based)
+	replicas := int32(1)
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "e2e-cluster-selector-template",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "E2E Cluster Selector Template",
+			Mode:        telekomv1alpha1.DebugSessionModeWorkload,
+			PodTemplateRef: &telekomv1alpha1.DebugPodTemplateReference{
+				Name: podTemplate.Name,
+			},
+			WorkloadType:    telekomv1alpha1.DebugWorkloadDeployment,
+			Replicas:        &replicas,
+			TargetNamespace: "breakglass-debug",
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Groups: []string{"*"},
+				// Use cluster selector instead of explicit cluster names
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"environment": "production",
+						"tier":        "critical",
+					},
+				},
+			},
+			Approvers: &telekomv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Clusters: []string{"*"},
+				},
+			},
+		},
+	}
+
+	_ = cli.Delete(ctx, template)
+	err = cli.Create(ctx, template)
+	require.NoError(t, err, "Failed to create cluster selector template")
+	defer func() { _ = cli.Delete(ctx, template) }()
+
+	// Verify template has cluster selector
+	var fetched telekomv1alpha1.DebugSessionTemplate
+	err = cli.Get(ctx, types.NamespacedName{Name: template.Name}, &fetched)
+	require.NoError(t, err)
+	assert.NotNil(t, fetched.Spec.Allowed)
+	assert.NotNil(t, fetched.Spec.Allowed.ClusterSelector)
+	assert.Equal(t, "production", fetched.Spec.Allowed.ClusterSelector.MatchLabels["environment"])
+	assert.Equal(t, "critical", fetched.Spec.Allowed.ClusterSelector.MatchLabels["tier"])
+	t.Logf("Cluster selector configured: matchLabels=%v", fetched.Spec.Allowed.ClusterSelector.MatchLabels)
 }

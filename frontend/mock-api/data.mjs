@@ -120,6 +120,41 @@ const mockDebugSessionTemplates = [
       allowedGroups: ["sre-team", "platform-oncall", "dtcaas-platform_emergency"],
       requiresApproval: true,
       approverGroups: ["platform-oncall", "security-leads"],
+      // Scheduling options for node selection
+      schedulingOptions: {
+        required: false,
+        options: [
+          {
+            name: "any-worker",
+            displayName: "Any Worker Node",
+            description: "Deploy to any available worker node",
+            default: true,
+          },
+          {
+            name: "dedicated-debug",
+            displayName: "Dedicated Debug Nodes",
+            description: "Deploy to nodes labeled for debugging workloads",
+          },
+          {
+            name: "high-memory",
+            displayName: "High Memory Nodes",
+            description: "Deploy to nodes with extra memory for heap dumps",
+            allowedGroups: ["sre-team"],
+          },
+        ],
+      },
+      // Namespace constraints
+      namespaceConstraints: {
+        defaultNamespace: "breakglass-debug",
+        allowUserNamespace: true,
+        allowedPatterns: ["breakglass-*", "debug-*"],
+        deniedPatterns: ["kube-*", "*-system"],
+        allowedLabelSelectors: [
+          { matchLabels: { "debug-allowed": "true" } },
+          { matchExpressions: [{ key: "environment", operator: "In", values: ["dev", "staging", "test"] }] },
+        ],
+        deniedLabelSelectors: [{ matchLabels: { protected: "true" } }],
+      },
     },
   },
   {
@@ -156,6 +191,34 @@ const mockDebugSessionTemplates = [
       ],
       allowedGroups: ["developers", "sre-team"],
       requiresApproval: false,
+      // Scheduling options
+      schedulingOptions: {
+        required: false,
+        options: [
+          {
+            name: "any-node",
+            displayName: "Any Node",
+            description: "Debug pods on any available node",
+            default: true,
+          },
+          {
+            name: "same-az",
+            displayName: "Same Availability Zone",
+            description: "Deploy debug pods in the same AZ as target workload",
+          },
+        ],
+      },
+      // Namespace constraints for ephemeral debugging
+      namespaceConstraints: {
+        defaultNamespace: "breakglass-debug",
+        allowUserNamespace: true,
+        allowedPatterns: ["breakglass-*", "app-*", "service-*"],
+        deniedPatterns: ["kube-*", "*-system"],
+        allowedLabelSelectors: [
+          { matchLabels: { "ephemeral-debug-allowed": "true" } },
+          { matchExpressions: [{ key: "environment", operator: "NotIn", values: ["production"] }] },
+        ],
+      },
     },
   },
   {
@@ -186,6 +249,34 @@ const mockDebugSessionTemplates = [
       allowedGroups: ["sre-team"],
       requiresApproval: true,
       approverGroups: ["security-leads"],
+      // Scheduling options for node debug (required selection)
+      schedulingOptions: {
+        required: true,
+        options: [
+          {
+            name: "worker-nodes",
+            displayName: "Worker Nodes Only",
+            description: "Debug on worker nodes (safer)",
+            default: true,
+          },
+          {
+            name: "control-plane",
+            displayName: "Control Plane",
+            description: "Debug on control plane nodes (high risk)",
+            allowedGroups: ["sre-leads"],
+          },
+          {
+            name: "infra-nodes",
+            displayName: "Infrastructure Nodes",
+            description: "Debug on infra nodes (ingress, monitoring)",
+          },
+        ],
+      },
+      // Strict namespace constraints for node debug
+      namespaceConstraints: {
+        defaultNamespace: "breakglass-node-debug",
+        allowUserNamespace: false, // Users cannot select namespace
+      },
     },
   },
   {
@@ -210,6 +301,14 @@ const mockDebugSessionTemplates = [
       allowedClusters: ["lab-cluster", "ops-lab", "edge-hub"],
       allowedGroups: ["developers", "qa-team"],
       requiresApproval: false,
+      // Wide-open namespace constraints for lab
+      namespaceConstraints: {
+        defaultNamespace: "debug-sessions",
+        allowUserNamespace: true,
+        allowedPatterns: ["*"], // Allow any namespace
+        deniedPatterns: ["kube-system", "kube-public"],
+        allowedLabelSelectors: [{ matchExpressions: [{ key: "restricted", operator: "DoesNotExist" }] }],
+      },
     },
   },
 ];
@@ -521,6 +620,9 @@ export function listDebugSessionTemplates(_userGroups = []) {
     allowedClusters: t.spec.allowedClusters,
     allowedGroups: t.spec.allowedGroups,
     requiresApproval: t.spec.requiresApproval,
+    // Include scheduling options and namespace constraints
+    schedulingOptions: t.spec.schedulingOptions,
+    namespaceConstraints: t.spec.namespaceConstraints,
   }));
 
   return {
@@ -531,6 +633,152 @@ export function listDebugSessionTemplates(_userGroups = []) {
 
 export function findDebugSessionTemplate(name) {
   return debugSessionTemplates.get(name);
+}
+
+// Mock cluster metadata for more realistic responses
+const mockClusterMetadata = {
+  "t-sec-1st.dtmd11": { displayName: "Production EU", environment: "production", location: "Frankfurt" },
+  "global-platform-eu": { displayName: "Global Platform EU", environment: "production", location: "Amsterdam" },
+  "global-platform-us": { displayName: "Global Platform US", environment: "production", location: "Virginia" },
+  "global-platform-apac": { displayName: "Global Platform APAC", environment: "production", location: "Singapore" },
+  "lab-cluster": { displayName: "Development Lab", environment: "development", location: "Berlin" },
+  "ops-lab": { displayName: "Operations Lab", environment: "staging", location: "Munich" },
+  "edge-hub": { displayName: "Edge Hub", environment: "edge", location: "Multi-Region" },
+};
+
+// Mock cluster bindings for templates
+const mockClusterBindings = {
+  "standard-debug": [
+    {
+      cluster: "t-sec-1st.dtmd11",
+      bindingRef: { name: "sre-prod-binding", namespace: "breakglass", displayName: "SRE Production Access" },
+      constraints: { maxDuration: "2h", defaultDuration: "30m" },
+      schedulingOptions: {
+        required: false,
+        options: [
+          { name: "any-worker", displayName: "Any Worker Node", default: true },
+          { name: "dedicated-debug", displayName: "Dedicated Debug Nodes" },
+        ],
+      },
+      namespaceConstraints: {
+        defaultNamespace: "breakglass-debug",
+        allowUserNamespace: true,
+        allowedPatterns: ["breakglass-*", "debug-*"],
+      },
+      impersonation: { enabled: true, serviceAccountRef: "breakglass/sre-deployer" },
+      approval: { required: true, approverGroups: ["platform-oncall"] },
+    },
+    // Second binding for the same cluster - demonstrates multiple binding options
+    {
+      cluster: "t-sec-1st.dtmd11",
+      bindingRef: { name: "oncall-emergency", namespace: "breakglass", displayName: "On-Call Emergency Access" },
+      constraints: { maxDuration: "4h", defaultDuration: "1h" },
+      schedulingOptions: {
+        required: false,
+        options: [{ name: "any-node", displayName: "Any Node", default: true }],
+      },
+      namespaceConstraints: {
+        defaultNamespace: "emergency-debug",
+        allowUserNamespace: false,
+      },
+      approval: { required: false },
+    },
+    {
+      cluster: "global-platform-eu",
+      bindingRef: { name: "platform-eu-binding", namespace: "breakglass", displayName: "Platform EU Access" },
+      constraints: { maxDuration: "4h", defaultDuration: "1h" },
+      approval: { required: true, approverGroups: ["security-leads"] },
+    },
+    // Multiple bindings for global-platform-eu
+    {
+      cluster: "global-platform-eu",
+      bindingRef: { name: "partner-eu-binding", namespace: "partner-ns", displayName: "Partner EU Access" },
+      constraints: { maxDuration: "1h", defaultDuration: "30m" },
+      approval: { required: true, approverGroups: ["partner-admins"] },
+      impersonation: { enabled: true, serviceAccountRef: "partner-ns/partner-deployer" },
+    },
+  ],
+  "ephemeral-debug": [
+    {
+      cluster: "lab-cluster",
+      bindingRef: { name: "dev-lab-binding", namespace: "breakglass", displayName: "Dev Lab Access" },
+      approval: { required: false },
+    },
+    {
+      cluster: "ops-lab",
+      bindingRef: { name: "ops-lab-binding", namespace: "breakglass", displayName: "Ops Lab Access" },
+      approval: { required: false },
+    },
+  ],
+  "node-debug": [
+    {
+      cluster: "t-sec-1st.dtmd11",
+      bindingRef: { name: "node-debug-prod", namespace: "breakglass", displayName: "Node Debug Production" },
+      constraints: { maxDuration: "1h", defaultDuration: "30m" },
+      impersonation: { enabled: true, serviceAccountRef: "breakglass/node-debugger" },
+      approval: { required: true, approverGroups: ["security-leads", "sre-leads"] },
+    },
+  ],
+};
+
+// Get available clusters for a template with resolved constraints
+export function getTemplateClusters(templateName) {
+  const template = debugSessionTemplates.get(templateName);
+  if (!template) {
+    return null;
+  }
+
+  const bindings = mockClusterBindings[templateName] || [];
+  const allowedClusters = template.spec.allowedClusters || [];
+
+  // Build cluster list from template's allowedClusters, enhanced with binding info
+  const clusters = allowedClusters.map((clusterName) => {
+    // Find ALL bindings for this cluster
+    const clusterBindings = bindings.filter((b) => b.cluster === clusterName);
+    const primaryBinding = clusterBindings[0]; // First one is primary
+    const metadata = mockClusterMetadata[clusterName] || {};
+
+    const clusterDetail = {
+      name: clusterName,
+      displayName: metadata.displayName || clusterName,
+      environment: metadata.environment,
+      location: metadata.location,
+      bindingRef: primaryBinding?.bindingRef,
+      constraints: primaryBinding?.constraints || template.spec.constraints,
+      schedulingOptions: primaryBinding?.schedulingOptions || template.spec.schedulingOptions,
+      namespaceConstraints: primaryBinding?.namespaceConstraints || template.spec.namespaceConstraints,
+      impersonation: primaryBinding?.impersonation || { enabled: false },
+      approval: primaryBinding?.approval || {
+        required: template.spec.requiresApproval,
+        approverGroups: template.spec.approverGroups,
+      },
+      status: { healthy: true, lastChecked: new Date().toISOString() },
+    };
+
+    // If there are multiple bindings, include bindingOptions array
+    if (clusterBindings.length > 1) {
+      clusterDetail.bindingOptions = clusterBindings.map((b) => ({
+        bindingRef: b.bindingRef,
+        displayName: b.bindingRef?.displayName,
+        constraints: b.constraints || template.spec.constraints,
+        schedulingOptions: b.schedulingOptions || template.spec.schedulingOptions,
+        namespaceConstraints: b.namespaceConstraints || template.spec.namespaceConstraints,
+        impersonation: b.impersonation || { enabled: false },
+        approval: b.approval || {
+          required: template.spec.requiresApproval,
+          approverGroups: template.spec.approverGroups,
+        },
+      }));
+    }
+
+    return clusterDetail;
+  });
+
+  return {
+    templateName: template.metadata.name,
+    templateDisplayName: template.spec.displayName,
+    clusters,
+  };
 }
 
 export function listDebugPodTemplates() {

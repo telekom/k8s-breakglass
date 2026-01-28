@@ -77,7 +77,7 @@ func TestUseCasePodShellAccess(t *testing.T) {
 		WithApprovalTimeout("30m").
 		WithAllowedClusters(clusterName).
 		WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
-		WithApproverGroups("team-leads@example.com").
+		WithApproverGroups(helpers.TestUsers.Approver.Groups[0]).
 		WithApproverUsers(helpers.TestUsers.Approver.Email).
 		WithRequestReason(true, "Ticket ID and purpose for pod access").
 		WithLabels(helpers.E2ELabelsWithExtra(map[string]string{"use-case": "pod-shell-access"})).
@@ -245,7 +245,7 @@ func TestUseCaseWorkloadScaling(t *testing.T) {
 		WithApprovalTimeout("30m").
 		WithAllowedClusters(clusterName).
 		WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
-		WithApproverGroups("incident-commanders@example.com").
+		WithApproverGroups(helpers.TestUsers.Approver.Groups[0]).
 		WithApproverUsers(helpers.TestUsers.Approver.Email).
 		WithRequestReason(true, "Incident ticket and scaling justification").
 		WithLabels(helpers.E2ELabelsWithExtra(map[string]string{"use-case": "scaling"})).
@@ -337,7 +337,7 @@ func TestUseCaseResourceDeletion(t *testing.T) {
 		WithApprovalTimeout("30m").
 		WithAllowedClusters(clusterName).
 		WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
-		WithApproverGroups("sre-leads@example.com").
+		WithApproverGroups(helpers.TestUsers.Approver.Groups[0]).
 		WithApproverUsers(helpers.TestUsers.Approver.Email).
 		WithRequestReason(true, "Incident ticket and resources to delete").
 		WithApprovalReason(true, "Confirmation of deletion necessity").
@@ -419,7 +419,7 @@ func TestUseCaseM2MAutomatedAccess(t *testing.T) {
 	t.Run("HappyPath_AutomationSession", func(t *testing.T) {
 		session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 			Cluster: clusterName,
-			User:    "automation-sa@example.com",
+			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "CI/CD pipeline run #1234",
 		}, helpers.WaitForStateTimeout)
@@ -437,7 +437,7 @@ func TestUseCaseM2MAutomatedAccess(t *testing.T) {
 		// Test with duration exceeding max allowed - API should reject this
 		_, err := apiClient.CreateSession(ctx, t, helpers.SessionRequest{
 			Cluster: clusterName,
-			User:    "automation-sa@example.com",
+			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Attempting too long session",
 		})
@@ -477,7 +477,7 @@ func TestUseCaseBISDebugging(t *testing.T) {
 		WithApprovalTimeout("1h").
 		WithAllowedClusters(clusterName).
 		WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
-		WithApproverGroups("bis-developers@example.com").
+		WithApproverGroups(helpers.TestUsers.Approver.Groups[0]).
 		WithApproverUsers(helpers.TestUsers.Approver.Email).
 		WithRequestReason(true, "BIS ticket or work item reference").
 		WithLabels(helpers.E2ELabelsWithExtra(map[string]string{"use-case": "bis-debugging"})).
@@ -634,7 +634,7 @@ func TestUseCasePodSecurityRules(t *testing.T) {
 		WithApprovalTimeout("15m").
 		WithAllowedClusters(clusterName).
 		WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
-		WithApproverGroups("sre-leads@example.com").
+		WithApproverGroups(helpers.TestUsers.Approver.Groups[0]).
 		WithApproverUsers(helpers.TestUsers.Approver.Email).
 		WithDenyPolicyRefs(denyPolicy.Name).
 		WithPodSecurityOverrides(&telekomv1alpha1.PodSecurityOverrides{

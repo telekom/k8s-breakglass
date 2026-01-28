@@ -308,11 +308,11 @@ func TestCrossClusterEscalation(t *testing.T) {
 
 		// Create session via API targeting specific cluster
 		tc := helpers.NewTestContext(t, ctx)
-		apiClient := tc.ClientForUser(helpers.TestUsers.MultiClusterRequester)
+		apiClient := tc.RequesterClient()
 
 		session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 			Cluster: helpers.GetTestClusterName(),
-			User:    helpers.GetTestUserEmail(),
+			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "E2E test - targeting specific cluster",
 		}, helpers.WaitForStateTimeout)

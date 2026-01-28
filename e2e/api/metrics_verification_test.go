@@ -93,11 +93,14 @@ func TestMetricsSessionLifecycleCounters(t *testing.T) {
 	require.NoError(t, cli.Create(ctx, escalation))
 
 	t.Run("SessionCreatedMetricIncrements", func(t *testing.T) {
+		// Filter by the specific cluster to avoid getting metrics from other clusters
+		clusterLabels := map[string]string{"cluster": clusterName}
+
 		// Get baseline metrics
 		beforeMetrics, err := helpers.FetchMetrics(ctx)
 		require.NoError(t, err, "Metrics endpoint should be accessible")
-		beforeValue := getMetricValue(beforeMetrics, "breakglass_session_created_total", nil)
-		t.Logf("Before session creation: breakglass_session_created_total = %s", beforeValue)
+		beforeValue := getMetricValue(beforeMetrics, "breakglass_session_created_total", clusterLabels)
+		t.Logf("Before session creation: breakglass_session_created_total{cluster=%s} = %s", clusterName, beforeValue)
 
 		// Create a session
 		tc := helpers.NewTestContext(t, ctx)
@@ -120,8 +123,8 @@ func TestMetricsSessionLifecycleCounters(t *testing.T) {
 		// Verify metric incremented
 		afterMetrics, err := helpers.FetchMetrics(ctx)
 		require.NoError(t, err, "Metrics endpoint should be accessible after session creation")
-		afterValue := getMetricValue(afterMetrics, "breakglass_session_created_total", nil)
-		t.Logf("After session creation: breakglass_session_created_total = %s", afterValue)
+		afterValue := getMetricValue(afterMetrics, "breakglass_session_created_total", clusterLabels)
+		t.Logf("After session creation: breakglass_session_created_total{cluster=%s} = %s", clusterName, afterValue)
 
 		// If we can parse, verify increment
 		if beforeValue != "" && afterValue != "" {
@@ -147,7 +150,7 @@ func TestMetricsWebhookSARCounters(t *testing.T) {
 
 	t.Run("WebhookRequestMetricsExist", func(t *testing.T) {
 		// Send a SAR request
-		sar := helpers.BuildResourceSAR("test-user@example.com", []string{"test-group"}, "get", "configmaps", "default")
+		sar := helpers.BuildResourceSAR(helpers.TestUsers.Requester.Email, []string{"test-group"}, "get", "configmaps", "default")
 		_, _, err := helpers.SendSARToWebhook(t, ctx, sar, clusterName)
 		require.NoError(t, err)
 

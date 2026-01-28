@@ -334,3 +334,302 @@ func TestFormatTime(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteTemplateClusterTable(t *testing.T) {
+	tests := []struct {
+		name           string
+		clusters       []client.AvailableClusterDetail
+		wantHeaders    []string
+		wantContains   []string
+		wantNotContain []string
+	}{
+		{
+			name:     "empty clusters",
+			clusters: []client.AvailableClusterDetail{},
+			wantHeaders: []string{
+				"NAME", "DISPLAY_NAME", "ENVIRONMENT", "BINDINGS", "MAX_DURATION", "APPROVAL",
+			},
+		},
+		{
+			name: "cluster with binding options",
+			clusters: []client.AvailableClusterDetail{
+				{
+					Name:        "prod-cluster",
+					DisplayName: "Production Cluster",
+					Environment: "production",
+					BindingOptions: []client.BindingOption{
+						{BindingRef: client.BindingReference{Name: "binding-1", Namespace: "ns-1"}},
+						{BindingRef: client.BindingReference{Name: "binding-2", Namespace: "ns-2"}},
+					},
+					Constraints: &v1alpha1.DebugSessionConstraints{MaxDuration: "2h"},
+					Approval:    &client.ApprovalInfo{Required: true},
+				},
+			},
+			wantContains: []string{
+				"prod-cluster", "Production Cluster", "production",
+				"2", // 2 binding options
+				"2h", "yes",
+			},
+		},
+		{
+			name: "cluster with single binding ref",
+			clusters: []client.AvailableClusterDetail{
+				{
+					Name:        "dev-cluster",
+					DisplayName: "Development Cluster",
+					Environment: "development",
+					BindingRef:  &client.BindingReference{Name: "default-binding", Namespace: "ns"},
+					Approval:    &client.ApprovalInfo{Required: false},
+				},
+			},
+			wantContains: []string{
+				"dev-cluster", "Development Cluster", "development",
+				"1", // 1 binding
+				"no",
+			},
+		},
+		{
+			name: "cluster with no constraints",
+			clusters: []client.AvailableClusterDetail{
+				{
+					Name: "test-cluster",
+				},
+			},
+			wantContains: []string{
+				"test-cluster", "-", // dashes for missing values
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			WriteTemplateClusterTable(buf, tt.clusters)
+			output := buf.String()
+
+			for _, header := range tt.wantHeaders {
+				assert.Contains(t, output, header, "missing header: %s", header)
+			}
+			for _, want := range tt.wantContains {
+				assert.Contains(t, output, want, "missing content: %s", want)
+			}
+			for _, notWant := range tt.wantNotContain {
+				assert.NotContains(t, output, notWant, "should not contain: %s", notWant)
+			}
+		})
+	}
+}
+
+func TestWriteTemplateClusterTableWide(t *testing.T) {
+	tests := []struct {
+		name         string
+		clusters     []client.AvailableClusterDetail
+		wantHeaders  []string
+		wantContains []string
+	}{
+		{
+			name:     "empty clusters wide",
+			clusters: []client.AvailableClusterDetail{},
+			wantHeaders: []string{
+				"NAME", "DISPLAY_NAME", "ENVIRONMENT", "BINDINGS", "MAX_DURATION",
+				"NS_DEFAULT", "SCHEDULING", "IMPERSONATION", "APPROVAL", "STATUS",
+			},
+		},
+		{
+			name: "cluster with full details",
+			clusters: []client.AvailableClusterDetail{
+				{
+					Name:        "prod-cluster",
+					DisplayName: "Production Cluster",
+					Environment: "production",
+					BindingOptions: []client.BindingOption{
+						{BindingRef: client.BindingReference{Name: "binding-1", Namespace: "ns-1"}},
+						{BindingRef: client.BindingReference{Name: "binding-2", Namespace: "ns-2"}},
+						{BindingRef: client.BindingReference{Name: "binding-3", Namespace: "ns-3"}},
+					},
+					Constraints:          &v1alpha1.DebugSessionConstraints{MaxDuration: "2h"},
+					NamespaceConstraints: &client.NamespaceConstraintsResponse{DefaultNamespace: "debug-ns"},
+					SchedulingOptions: &client.SchedulingOptionsResponse{
+						Required: true,
+						Options: []client.SchedulingOptionResponse{
+							{Name: "opt1"},
+							{Name: "opt2"},
+						},
+					},
+					Impersonation: &client.ImpersonationSummary{Enabled: true, ServiceAccount: "debug-sa"},
+					Approval:      &client.ApprovalInfo{Required: true},
+					Status:        &client.ClusterStatusInfo{Healthy: true},
+				},
+			},
+			wantContains: []string{
+				"prod-cluster", "Production Cluster", "production",
+				"binding-1, +2 more", // multiple bindings formatted
+				"2h", "debug-ns",
+				"2 options (required)", // scheduling options with required flag
+				"debug-sa", "yes", "healthy",
+			},
+		},
+		{
+			name: "cluster with exactly 2 bindings",
+			clusters: []client.AvailableClusterDetail{
+				{
+					Name: "two-binding-cluster",
+					BindingOptions: []client.BindingOption{
+						{BindingRef: client.BindingReference{Name: "b1", Namespace: "ns"}},
+						{BindingRef: client.BindingReference{Name: "b2", Namespace: "ns"}},
+					},
+				},
+			},
+			wantContains: []string{
+				"b1, b2", // exactly 2 bindings shown together
+			},
+		},
+		{
+			name: "cluster with unhealthy status",
+			clusters: []client.AvailableClusterDetail{
+				{
+					Name:   "unhealthy-cluster",
+					Status: &client.ClusterStatusInfo{Healthy: false},
+				},
+			},
+			wantContains: []string{
+				"unhealthy-cluster", "unhealthy",
+			},
+		},
+		{
+			name: "cluster with single binding ref wide",
+			clusters: []client.AvailableClusterDetail{
+				{
+					Name:       "single-binding-cluster",
+					BindingRef: &client.BindingReference{Name: "my-binding", Namespace: "ns"},
+				},
+			},
+			wantContains: []string{
+				"my-binding",
+			},
+		},
+		{
+			name: "cluster with scheduling options not required",
+			clusters: []client.AvailableClusterDetail{
+				{
+					Name: "sched-cluster",
+					SchedulingOptions: &client.SchedulingOptionsResponse{
+						Required: false,
+						Options: []client.SchedulingOptionResponse{
+							{Name: "opt1"},
+						},
+					},
+				},
+			},
+			wantContains: []string{
+				"1 options",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			WriteTemplateClusterTableWide(buf, tt.clusters)
+			output := buf.String()
+
+			for _, header := range tt.wantHeaders {
+				assert.Contains(t, output, header, "missing header: %s", header)
+			}
+			for _, want := range tt.wantContains {
+				assert.Contains(t, output, want, "missing content: %s", want)
+			}
+		})
+	}
+}
+
+func TestWriteBindingOptionsTable(t *testing.T) {
+	tests := []struct {
+		name         string
+		clusterName  string
+		options      []client.BindingOption
+		wantContains []string
+	}{
+		{
+			name:        "empty options",
+			clusterName: "test-cluster",
+			options:     []client.BindingOption{},
+			wantContains: []string{
+				"No binding options available for cluster 'test-cluster'",
+				"Using template defaults",
+			},
+		},
+		{
+			name:        "single binding option",
+			clusterName: "prod-cluster",
+			options: []client.BindingOption{
+				{
+					BindingRef:           client.BindingReference{Name: "admin-binding", Namespace: "breakglass"},
+					DisplayName:          "Admin Access",
+					Constraints:          &v1alpha1.DebugSessionConstraints{MaxDuration: "1h"},
+					NamespaceConstraints: &client.NamespaceConstraintsResponse{DefaultNamespace: "admin-ns"},
+					SchedulingOptions: &client.SchedulingOptionsResponse{
+						Options: []client.SchedulingOptionResponse{{Name: "opt"}},
+					},
+					Impersonation: &client.ImpersonationSummary{Enabled: true, ServiceAccount: "admin-sa"},
+					Approval:      &client.ApprovalInfo{Required: true},
+				},
+			},
+			wantContains: []string{
+				"Binding options for cluster 'prod-cluster'",
+				"BINDING", "DISPLAY_NAME", "MAX_DURATION", "NAMESPACE", "SCHEDULING", "IMPERSONATION", "APPROVAL",
+				"breakglass/admin-binding", "Admin Access", "1h", "admin-ns", "1 options", "admin-sa", "yes",
+			},
+		},
+		{
+			name:        "binding with auto-approve",
+			clusterName: "dev-cluster",
+			options: []client.BindingOption{
+				{
+					BindingRef: client.BindingReference{Name: "dev-binding", Namespace: "ns"},
+					Approval:   &client.ApprovalInfo{Required: false, CanAutoApprove: true},
+				},
+			},
+			wantContains: []string{
+				"auto", // auto-approve shows as "auto"
+			},
+		},
+		{
+			name:        "binding with impersonation enabled no SA",
+			clusterName: "special-cluster",
+			options: []client.BindingOption{
+				{
+					BindingRef:    client.BindingReference{Name: "binding", Namespace: "ns"},
+					Impersonation: &client.ImpersonationSummary{Enabled: true, ServiceAccount: ""},
+				},
+			},
+			wantContains: []string{
+				"yes", // impersonation enabled without specific SA
+			},
+		},
+		{
+			name:        "binding with minimal fields",
+			clusterName: "minimal-cluster",
+			options: []client.BindingOption{
+				{
+					BindingRef: client.BindingReference{Name: "basic", Namespace: "ns"},
+				},
+			},
+			wantContains: []string{
+				"ns/basic", "-", // dashes for missing values
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			WriteBindingOptionsTable(buf, tt.clusterName, tt.options)
+			output := buf.String()
+
+			for _, want := range tt.wantContains {
+				assert.Contains(t, output, want, "missing content: %s", want)
+			}
+		})
+	}
+}

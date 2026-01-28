@@ -109,6 +109,16 @@ type DebugSessionTemplateSpec struct {
 	// +optional
 	AdditionalTolerations []corev1.Toleration `json:"additionalTolerations,omitempty"`
 
+	// schedulingConstraints defines mandatory scheduling rules for debug pods.
+	// These constraints are applied AFTER template settings and CANNOT be overridden by users.
+	// +optional
+	SchedulingConstraints *SchedulingConstraints `json:"schedulingConstraints,omitempty"`
+
+	// schedulingOptions offers users a choice of predefined scheduling configurations.
+	// Each option can define different node selectors, affinities, etc.
+	// +optional
+	SchedulingOptions *SchedulingOptions `json:"schedulingOptions,omitempty"`
+
 	// kubectlDebug configures kubectl debug operations.
 	// Required when mode is "kubectl-debug" or "hybrid".
 	// +optional
@@ -133,6 +143,16 @@ type DebugSessionTemplateSpec struct {
 	// +kubebuilder:default="breakglass-debug"
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 
+	// namespaceConstraints defines where debug pods can be deployed.
+	// Allows user choice within administrator-defined boundaries.
+	// +optional
+	NamespaceConstraints *NamespaceConstraints `json:"namespaceConstraints,omitempty"`
+
+	// impersonation controls which identity is used to deploy debug resources.
+	// Enables least-privilege deployment using a constrained ServiceAccount.
+	// +optional
+	Impersonation *ImpersonationConfig `json:"impersonation,omitempty"`
+
 	// failMode specifies behavior when namespace doesn't exist or deployment fails.
 	// "closed" (default) denies the session, "open" allows without deployed pods.
 	// +optional
@@ -147,6 +167,21 @@ type DebugSessionTemplateSpec struct {
 	// audit configures audit logging for debug sessions.
 	// +optional
 	Audit *DebugSessionAuditConfig `json:"audit,omitempty"`
+
+	// auxiliaryResources defines additional Kubernetes resources to deploy with the debug session.
+	// These resources are created/deleted alongside the debug pods.
+	// +optional
+	AuxiliaryResources []AuxiliaryResource `json:"auxiliaryResources,omitempty"`
+
+	// auxiliaryResourceDefaults sets default enabled/disabled state for auxiliary resource categories.
+	// Key is the category name, value is whether it's enabled by default.
+	// +optional
+	AuxiliaryResourceDefaults map[string]bool `json:"auxiliaryResourceDefaults,omitempty"`
+
+	// requiredAuxiliaryResourceCategories lists categories that MUST be enabled.
+	// These cannot be disabled by bindings or users.
+	// +optional
+	RequiredAuxiliaryResourceCategories []string `json:"requiredAuxiliaryResourceCategories,omitempty"`
 }
 
 // DebugPodTemplateReference references a DebugPodTemplate.
@@ -334,6 +369,11 @@ type DebugSessionAllowed struct {
 	// Supports glob patterns.
 	// +optional
 	Clusters []string `json:"clusters,omitempty"`
+
+	// clusterSelector allows selecting clusters by labels.
+	// Matched clusters are added to the allowed list (OR logic with clusters field).
+	// +optional
+	ClusterSelector *metav1.LabelSelector `json:"clusterSelector,omitempty"`
 }
 
 // DebugSessionApprovers configures the approval workflow.
@@ -394,6 +434,164 @@ type DebugSessionConstraints struct {
 	// +optional
 	// +kubebuilder:default=2
 	MaxConcurrentSessions int32 `json:"maxConcurrentSessions,omitempty"`
+}
+
+// SchedulingConstraints defines mandatory scheduling rules for debug pods.
+// These constraints are applied AFTER template/user settings and CANNOT be overridden.
+type SchedulingConstraints struct {
+	// requiredNodeAffinity specifies hard node affinity requirements.
+	// Merged with template's affinity using AND logic.
+	// +optional
+	RequiredNodeAffinity *corev1.NodeSelector `json:"requiredNodeAffinity,omitempty"`
+
+	// preferredNodeAffinity specifies soft node affinity preferences.
+	// Added to template's preferred affinities.
+	// +optional
+	PreferredNodeAffinity []corev1.PreferredSchedulingTerm `json:"preferredNodeAffinity,omitempty"`
+
+	// requiredPodAntiAffinity specifies hard pod anti-affinity rules.
+	// Ensures debug pods don't co-locate inappropriately.
+	// +optional
+	RequiredPodAntiAffinity []corev1.PodAffinityTerm `json:"requiredPodAntiAffinity,omitempty"`
+
+	// preferredPodAntiAffinity specifies soft pod anti-affinity preferences.
+	// +optional
+	PreferredPodAntiAffinity []corev1.WeightedPodAffinityTerm `json:"preferredPodAntiAffinity,omitempty"`
+
+	// nodeSelector adds mandatory node labels for scheduling.
+	// Merged with template's nodeSelector (constraints take precedence on conflicts).
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// tolerations adds tolerations for debug pods.
+	// Merged with template's tolerations.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// topologySpreadConstraints controls how debug pods are spread.
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+
+	// deniedNodes is a list of node name patterns that MUST NOT run debug pods.
+	// Evaluated as glob patterns.
+	// +optional
+	DeniedNodes []string `json:"deniedNodes,omitempty"`
+
+	// deniedNodeLabels blocks nodes with any of these labels.
+	// Key-value pairs where value can be "*" for any value.
+	// +optional
+	DeniedNodeLabels map[string]string `json:"deniedNodeLabels,omitempty"`
+}
+
+// SchedulingOptions allows users to choose from predefined scheduling configurations.
+// This reduces the need for multiple bindings/templates for the same cluster.
+type SchedulingOptions struct {
+	// required specifies whether the user MUST select an option.
+	// If false and no option is selected, base schedulingConstraints are used alone.
+	// +optional
+	// +kubebuilder:default=false
+	Required bool `json:"required,omitempty"`
+
+	// options is the list of available scheduling configurations.
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	Options []SchedulingOption `json:"options"`
+}
+
+// SchedulingOption represents a single scheduling configuration choice.
+type SchedulingOption struct {
+	// name is a unique identifier for this option (used in API requests).
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// displayName is the human-readable name shown in UI.
+	// +required
+	DisplayName string `json:"displayName"`
+
+	// description explains what this option does.
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// default marks this option as the pre-selected choice.
+	// Only one option can be marked as default.
+	// +optional
+	Default bool `json:"default,omitempty"`
+
+	// schedulingConstraints are merged with the base constraints.
+	// These are ADDITIVE - they cannot remove base constraints.
+	// +optional
+	SchedulingConstraints *SchedulingConstraints `json:"schedulingConstraints,omitempty"`
+
+	// allowedGroups restricts this option to specific groups.
+	// If empty, all users with access to the template can use this option.
+	// +optional
+	AllowedGroups []string `json:"allowedGroups,omitempty"`
+
+	// allowedUsers restricts this option to specific users.
+	// +optional
+	AllowedUsers []string `json:"allowedUsers,omitempty"`
+}
+
+// NamespaceConstraints defines where debug pods can be deployed.
+// This allows user choice within administrator-defined boundaries.
+type NamespaceConstraints struct {
+	// allowedNamespaces specifies namespaces where debug pods can be deployed.
+	// Uses NamespaceFilter for pattern and label-based selection.
+	// If empty, only defaultNamespace is allowed.
+	// +optional
+	AllowedNamespaces *NamespaceFilter `json:"allowedNamespaces,omitempty"`
+
+	// deniedNamespaces specifies namespaces that are never allowed.
+	// Evaluated AFTER allowedNamespaces (deny takes precedence).
+	// +optional
+	DeniedNamespaces *NamespaceFilter `json:"deniedNamespaces,omitempty"`
+
+	// defaultNamespace is used when user doesn't specify a namespace.
+	// Must be within allowedNamespaces if specified.
+	// +optional
+	// +kubebuilder:default="breakglass-debug"
+	DefaultNamespace string `json:"defaultNamespace,omitempty"`
+
+	// allowUserNamespace allows users to request a specific namespace.
+	// If false, only defaultNamespace is used.
+	// +optional
+	// +kubebuilder:default=false
+	AllowUserNamespace bool `json:"allowUserNamespace,omitempty"`
+
+	// createIfNotExists creates the target namespace if it doesn't exist.
+	// Requires appropriate RBAC permissions.
+	// +optional
+	// +kubebuilder:default=false
+	CreateIfNotExists bool `json:"createIfNotExists,omitempty"`
+
+	// namespaceLabels are labels applied to created namespaces.
+	// Only used when createIfNotExists=true.
+	// +optional
+	NamespaceLabels map[string]string `json:"namespaceLabels,omitempty"`
+}
+
+// ImpersonationConfig controls which identity is used to deploy debug resources.
+// This enables least-privilege deployment where the controller impersonates
+// a constrained ServiceAccount rather than using its own permissions.
+type ImpersonationConfig struct {
+	// serviceAccountRef references an existing ServiceAccount to impersonate.
+	// The breakglass controller must have impersonation permissions for this SA.
+	// +optional
+	ServiceAccountRef *ServiceAccountReference `json:"serviceAccountRef,omitempty"`
+}
+
+// ServiceAccountReference references a ServiceAccount in a specific namespace.
+type ServiceAccountReference struct {
+	// name is the ServiceAccount name.
+	// +required
+	Name string `json:"name"`
+
+	// namespace is the ServiceAccount namespace.
+	// +required
+	Namespace string `json:"namespace"`
 }
 
 // TerminalSharingConfig configures collaborative terminal sessions.
@@ -570,6 +768,26 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 		if template.Spec.Constraints.DefaultDuration != "" {
 			allErrs = append(allErrs, validateDurationFormat(template.Spec.Constraints.DefaultDuration, specPath.Child("constraints").Child("defaultDuration"))...)
 		}
+	}
+
+	// Validate schedulingOptions if specified
+	if template.Spec.SchedulingOptions != nil {
+		allErrs = append(allErrs, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
+	}
+
+	// Validate impersonation if specified
+	if template.Spec.Impersonation != nil {
+		allErrs = append(allErrs, validateImpersonationConfig(template.Spec.Impersonation, specPath.Child("impersonation"))...)
+	}
+
+	// Validate namespaceConstraints if specified
+	if template.Spec.NamespaceConstraints != nil {
+		allErrs = append(allErrs, validateNamespaceConstraints(template.Spec.NamespaceConstraints, specPath.Child("namespaceConstraints"))...)
+	}
+
+	// Validate auxiliary resources if specified
+	if len(template.Spec.AuxiliaryResources) > 0 {
+		allErrs = append(allErrs, validateAuxiliaryResources(template.Spec.AuxiliaryResources, specPath.Child("auxiliaryResources"))...)
 	}
 
 	return allErrs

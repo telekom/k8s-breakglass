@@ -251,7 +251,7 @@ func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs v1alpha1
 	zap.S().Infow("Updating BreakglassSession", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	if err := c.Update(ctx, &bs); err != nil {
 		zap.S().Errorw("Failed to update BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-		return errors.Wrapf(err, "failed to update new BreakglassSession")
+		return errors.Wrapf(err, "failed to update BreakglassSession %s/%s", bs.Namespace, bs.Name)
 	}
 	zap.S().Infow("BreakglassSession updated successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	metrics.SessionUpdated.WithLabelValues(bs.Spec.Cluster).Inc()
@@ -264,14 +264,14 @@ func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1
 		current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
 		if err != nil {
 			zap.S().Errorw("Failed to resolve BreakglassSession before status update", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-			return errors.Wrapf(err, "failed to update new BreakglassSession")
+			return errors.Wrapf(err, "failed to resolve BreakglassSession %s before status update", bs.Name)
 		}
 		bs.Namespace = current.Namespace
 		bs.ResourceVersion = current.ResourceVersion
 	}
 	if err := applyBreakglassSessionStatus(ctx, c, &bs); err != nil {
 		zap.S().Errorw("Failed to update BreakglassSession status", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-		return errors.Wrapf(err, "failed to update new BreakglassSession")
+		return errors.Wrapf(err, "failed to update BreakglassSession status %s/%s", bs.Namespace, bs.Name)
 	}
 	zap.S().Infow("BreakglassSession status updated successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	return nil

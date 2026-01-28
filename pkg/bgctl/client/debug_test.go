@@ -488,3 +488,212 @@ func TestCreateNodeDebugPod(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result["success"].(bool))
 }
+
+func TestDebugTemplatesGetClusters(t *testing.T) {
+	tests := []struct {
+		name        string
+		templateID  string
+		opts        TemplateClustersOptions
+		wantPath    string
+		wantQuery   map[string]string
+		response    TemplateClustersResponse
+		expectError bool
+	}{
+		{
+			name:       "basic request without options",
+			templateID: "debug-template",
+			opts:       TemplateClustersOptions{},
+			wantPath:   "/api/debugSessions/templates/debug-template/clusters",
+			wantQuery:  nil,
+			response: TemplateClustersResponse{
+				TemplateName:        "debug-template",
+				TemplateDisplayName: "Debug Template",
+				Clusters: []AvailableClusterDetail{
+					{Name: "prod-cluster", DisplayName: "Production", Environment: "production"},
+					{Name: "dev-cluster", DisplayName: "Development", Environment: "development"},
+				},
+			},
+		},
+		{
+			name:       "with environment filter",
+			templateID: "debug-template",
+			opts:       TemplateClustersOptions{Environment: "production"},
+			wantPath:   "/api/debugSessions/templates/debug-template/clusters",
+			wantQuery:  map[string]string{"environment": "production"},
+			response: TemplateClustersResponse{
+				TemplateName: "debug-template",
+				Clusters: []AvailableClusterDetail{
+					{Name: "prod-cluster", DisplayName: "Production", Environment: "production"},
+				},
+			},
+		},
+		{
+			name:       "with location filter",
+			templateID: "debug-template",
+			opts:       TemplateClustersOptions{Location: "eu-west"},
+			wantPath:   "/api/debugSessions/templates/debug-template/clusters",
+			wantQuery:  map[string]string{"location": "eu-west"},
+			response: TemplateClustersResponse{
+				TemplateName: "debug-template",
+				Clusters:     []AvailableClusterDetail{},
+			},
+		},
+		{
+			name:       "with binding filter",
+			templateID: "debug-template",
+			opts:       TemplateClustersOptions{BindingName: "admin-binding"},
+			wantPath:   "/api/debugSessions/templates/debug-template/clusters",
+			wantQuery:  map[string]string{"bindingName": "admin-binding"},
+			response: TemplateClustersResponse{
+				TemplateName: "debug-template",
+				Clusters: []AvailableClusterDetail{
+					{
+						Name:       "prod-cluster",
+						BindingRef: &BindingReference{Name: "admin-binding", Namespace: "default"},
+					},
+				},
+			},
+		},
+		{
+			name:       "with all filters",
+			templateID: "special-template",
+			opts: TemplateClustersOptions{
+				Environment: "staging",
+				Location:    "us-east",
+				BindingName: "dev-binding",
+			},
+			wantPath: "/api/debugSessions/templates/special-template/clusters",
+			wantQuery: map[string]string{
+				"environment": "staging",
+				"location":    "us-east",
+				"bindingName": "dev-binding",
+			},
+			response: TemplateClustersResponse{
+				TemplateName: "special-template",
+				Clusters:     []AvailableClusterDetail{},
+			},
+		},
+		{
+			name:       "cluster with binding options",
+			templateID: "multi-binding-template",
+			opts:       TemplateClustersOptions{},
+			wantPath:   "/api/debugSessions/templates/multi-binding-template/clusters",
+			response: TemplateClustersResponse{
+				TemplateName: "multi-binding-template",
+				Clusters: []AvailableClusterDetail{
+					{
+						Name: "prod-cluster",
+						BindingOptions: []BindingOption{
+							{
+								BindingRef:  BindingReference{Name: "admin-binding", Namespace: "ns1"},
+								DisplayName: "Admin Access",
+							},
+							{
+								BindingRef:  BindingReference{Name: "dev-binding", Namespace: "ns1"},
+								DisplayName: "Dev Access",
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:       "cluster with full details",
+			templateID: "full-details-template",
+			opts:       TemplateClustersOptions{},
+			wantPath:   "/api/debugSessions/templates/full-details-template/clusters",
+			response: TemplateClustersResponse{
+				TemplateName: "full-details-template",
+				Clusters: []AvailableClusterDetail{
+					{
+						Name:        "detailed-cluster",
+						DisplayName: "Detailed Cluster",
+						Environment: "production",
+						Location:    "eu-west",
+						Site:        "datacenter-1",
+						Tenant:      "acme-corp",
+						Constraints: &v1alpha1.DebugSessionConstraints{
+							MaxDuration:     "2h",
+							DefaultDuration: "30m",
+						},
+						SchedulingOptions: &SchedulingOptionsResponse{
+							Required: true,
+							Options: []SchedulingOptionResponse{
+								{Name: "high-priority", DisplayName: "High Priority", Default: true},
+							},
+						},
+						NamespaceConstraints: &NamespaceConstraintsResponse{
+							DefaultNamespace:   "debug-ns",
+							AllowUserNamespace: true,
+						},
+						Impersonation: &ImpersonationSummary{
+							Enabled:        true,
+							ServiceAccount: "debug-sa",
+							Namespace:      "debug-ns",
+						},
+						Approval: &ApprovalInfo{Required: true, ApproverGroups: []string{"admins"}},
+						Status:   &ClusterStatusInfo{Healthy: true},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, tt.wantPath, r.URL.Path)
+				require.Equal(t, http.MethodGet, r.Method)
+
+				// Verify query params
+				query := r.URL.Query()
+				if tt.wantQuery != nil {
+					for key, want := range tt.wantQuery {
+						got := query.Get(key)
+						assert.Equal(t, want, got, "query param %s mismatch", key)
+					}
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(tt.response)
+			}))
+			defer server.Close()
+
+			client, err := New(WithServer(server.URL))
+			require.NoError(t, err)
+
+			result, err := client.DebugTemplates().GetClusters(context.Background(), tt.templateID, tt.opts)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			assert.Equal(t, tt.response.TemplateName, result.TemplateName)
+			assert.Equal(t, len(tt.response.Clusters), len(result.Clusters))
+
+			for i, wantCluster := range tt.response.Clusters {
+				gotCluster := result.Clusters[i]
+				assert.Equal(t, wantCluster.Name, gotCluster.Name)
+				assert.Equal(t, wantCluster.DisplayName, gotCluster.DisplayName)
+				assert.Equal(t, wantCluster.Environment, gotCluster.Environment)
+			}
+		})
+	}
+}
+
+func TestDebugTemplatesGetClusters_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error": "template not found"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+
+	result, err := client.DebugTemplates().GetClusters(context.Background(), "nonexistent", TemplateClustersOptions{})
+	require.Error(t, err)
+	assert.Nil(t, result)
+}

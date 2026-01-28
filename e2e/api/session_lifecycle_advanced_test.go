@@ -89,7 +89,7 @@ func TestSessionIDPMismatchHandling(t *testing.T) {
 	t.Run("SessionSpecContainsIDPFields", func(t *testing.T) {
 		spec := telekomv1alpha1.BreakglassSessionSpec{
 			Cluster:                "test-cluster",
-			User:                   "test@example.com",
+			User:                   helpers.TestUsers.Requester.Email,
 			GrantedGroup:           "test-group",
 			IdentityProviderName:   "corporate-idp",
 			IdentityProviderIssuer: "https://auth.example.com",
@@ -170,7 +170,7 @@ func TestSessionClusterConfigRefTracking(t *testing.T) {
 	t.Run("ClusterConfigRefFieldExists", func(t *testing.T) {
 		spec := telekomv1alpha1.BreakglassSessionSpec{
 			Cluster:          "my-cluster",
-			User:             "test@example.com",
+			User:             helpers.TestUsers.Requester.Email,
 			GrantedGroup:     "test-group",
 			ClusterConfigRef: "my-cluster-config",
 		}

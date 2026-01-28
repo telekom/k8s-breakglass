@@ -22,6 +22,7 @@ import type {
   CreatePodCopyResponse,
   CreateNodeDebugPodRequest,
   CreateNodeDebugPodResponse,
+  TemplateClustersResponse,
 } from "@/model/debugSession";
 
 export default class DebugSessionService {
@@ -198,6 +199,22 @@ export default class DebugSessionService {
       return response.data;
     } catch (e) {
       handleAxiosError("DebugSessionService.getTemplate", e, "Failed to get debug session template");
+      throw e;
+    }
+  }
+
+  /**
+   * Get available clusters for a template with resolved constraints.
+   * Returns detailed cluster information including bindings, constraints, and availability.
+   */
+  public async getTemplateClusters(templateName: string): Promise<TemplateClustersResponse> {
+    try {
+      const response = await this.client.get<TemplateClustersResponse>(
+        `/debugSessions/templates/${encodeURIComponent(templateName)}/clusters`,
+      );
+      return response.data;
+    } catch (e) {
+      handleAxiosError("DebugSessionService.getTemplateClusters", e, "Failed to get template clusters");
       throw e;
     }
   }

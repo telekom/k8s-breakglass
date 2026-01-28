@@ -22,6 +22,7 @@ import {
   findDebugSessionTemplate,
   listDebugPodTemplates,
   findDebugPodTemplate,
+  getTemplateClusters,
 } from "./data.mjs";
 
 const app = express();
@@ -136,6 +137,15 @@ app.get("/api/debugSessions/templates/:name", (req, res) => {
     return res.status(404).json({ message: "template not found" });
   }
   res.json(template);
+});
+
+// Get available clusters for a template with resolved constraints
+app.get("/api/debugSessions/templates/:name/clusters", (req, res) => {
+  const result = getTemplateClusters(req.params.name);
+  if (!result) {
+    return res.status(404).json({ message: "template not found" });
+  }
+  res.json(result);
 });
 
 // List debug pod templates

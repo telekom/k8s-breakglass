@@ -168,3 +168,12 @@ func RespondCreated(c *gin.Context, data interface{}) {
 func RespondNoContent(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
+
+// RespondUnprocessableEntity sends a 422 Unprocessable Entity response.
+// Use this when the request body is syntactically correct but semantically invalid.
+func RespondUnprocessableEntity(c *gin.Context, message string) {
+	c.JSON(http.StatusUnprocessableEntity, APIError{
+		Error: message,
+		Code:  "UNPROCESSABLE_ENTITY",
+	})
+}

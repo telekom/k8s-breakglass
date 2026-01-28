@@ -213,7 +213,8 @@
       "publicClient": false,
       "protocol": "openid-connect",
       "attributes": {
-        "access.token.lifespan": "300"
+        "access.token.lifespan": "300",
+        "token.exchange.standard.enabled": "true"
       },
       "fullScopeAllowed": true,
       "protocolMappers": [

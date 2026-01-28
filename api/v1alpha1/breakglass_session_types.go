@@ -270,6 +270,23 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, newObj.Name, allErrs)
 }
 
+// isValidBreakglassSessionStateTransition validates state transitions for BreakglassSession.
+// The state machine follows this flow:
+//
+//	(initial) --> Pending --> Approved --> Expired
+//	                  |          |
+//	                  |          └--> (terminal)
+//	                  |
+//	                  +--> WaitingForScheduledTime --> Approved --> Expired
+//	                  |                    |
+//	                  |                    └--> Withdrawn (terminal)
+//	                  |
+//	                  +--> Rejected (terminal)
+//	                  +--> Withdrawn (terminal)
+//	                  +--> Timeout (terminal)
+//
+// Terminal states (Rejected, Withdrawn, Expired, Timeout) cannot transition to any other state.
+// Same-state transitions are allowed for idempotent reconciliation.
 func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bool {
 	if from == to {
 		return true

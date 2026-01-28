@@ -3,6 +3,7 @@ package ratelimit
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -130,7 +131,23 @@ func (rl *IPRateLimiter) Allow(ip string) bool {
 
 // Middleware returns a Gin middleware that applies per-IP rate limiting
 func (rl *IPRateLimiter) Middleware() gin.HandlerFunc {
+	return rl.MiddlewareWithExclusions(nil)
+}
+
+// MiddlewareWithExclusions returns a Gin middleware that applies per-IP rate limiting
+// but skips requests matching any of the excluded path prefixes.
+// This is useful for excluding static assets which don't need rate limiting.
+func (rl *IPRateLimiter) MiddlewareWithExclusions(excludedPrefixes []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Skip rate limiting for excluded paths (e.g., static assets)
+		path := c.Request.URL.Path
+		for _, prefix := range excludedPrefixes {
+			if strings.HasPrefix(path, prefix) {
+				c.Next()
+				return
+			}
+		}
+
 		ip := c.ClientIP()
 		if !rl.Allow(ip) {
 			c.JSON(http.StatusTooManyRequests, gin.H{

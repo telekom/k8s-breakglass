@@ -61,6 +61,43 @@ spec:
     maxRenewals: 3
     maxConcurrentSessions: 5
   
+  # Scheduling options for developers
+  schedulingOptions:
+    required: false
+    options:
+      - name: any-worker
+        displayName: "Any Worker Node"
+        description: "Deploy to any available worker node"
+        default: true
+      - name: team-nodes
+        displayName: "Team Dedicated Nodes"
+        description: "Deploy to nodes reserved for your team"
+        schedulingConstraints:
+          nodeSelector:
+            node-pool: development
+  
+  # Namespace constraints for developer debugging
+  namespaceConstraints:
+    defaultNamespace: breakglass-debug
+    allowUserNamespace: true
+    allowedNamespaces:
+      patterns:
+        - "breakglass-*"
+        - "dev-*"
+        - "sandbox-*"
+      selectorTerms:
+        - matchLabels:
+            environment: development
+        - matchLabels:
+            debug-allowed: "true"
+    deniedNamespaces:
+      patterns:
+        - "kube-*"
+        - "*-system"
+      selectorTerms:
+        - matchLabels:
+            protected: "true"
+  
   audit:
     enabled: true
     enableShellHistory: true
@@ -148,6 +185,63 @@ spec:
   
   additionalTolerations:
     - operator: Exists
+  
+  # Base scheduling constraints for SRE
+  schedulingConstraints:
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
+    deniedNodes:
+      - "control-plane-*"
+  
+  # Scheduling options by environment
+  schedulingOptions:
+    required: false
+    options:
+      - name: any-worker
+        displayName: "Any Worker Node"
+        description: "Deploy to any worker node"
+        default: true
+      - name: infra-nodes
+        displayName: "Infrastructure Nodes"
+        description: "Deploy to infrastructure nodes for system debugging"
+        allowedGroups:
+          - sre-leads
+        schedulingConstraints:
+          nodeSelector:
+            node-role.kubernetes.io/infra: ""
+      - name: edge-nodes
+        displayName: "Edge Nodes"
+        description: "Deploy to edge/ingress nodes"
+        schedulingConstraints:
+          nodeSelector:
+            node-role.kubernetes.io/edge: ""
+  
+  # Flexible namespace constraints for SRE
+  namespaceConstraints:
+    defaultNamespace: breakglass-debug
+    allowUserNamespace: true
+    createIfNotExists: true
+    namespaceLabels:
+      managed-by: breakglass
+      team: sre
+    allowedNamespaces:
+      patterns:
+        - "breakglass-*"
+        - "debug-*"
+        - "monitoring-*"
+      selectorTerms:
+        - matchLabels:
+            sre-access: "true"
+        - matchExpressions:
+            - key: environment
+              operator: In
+              values: ["dev", "staging", "test"]
+    deniedNamespaces:
+      patterns:
+        - "kube-*"
+      selectorTerms:
+        - matchLabels:
+            compliance: pci-dss
       effect: NoSchedule
   
   constraints:

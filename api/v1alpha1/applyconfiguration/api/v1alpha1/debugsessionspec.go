@@ -38,6 +38,24 @@ type DebugSessionSpecApplyConfiguration struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// invitedParticipants lists users invited to join the session.
 	InvitedParticipants []string `json:"invitedParticipants,omitempty"`
+	// targetNamespace is the namespace where debug pods will be deployed.
+	// This is resolved at session creation time from template's namespaceConstraints.
+	// If empty, the controller uses the template's defaultNamespace.
+	TargetNamespace *string `json:"targetNamespace,omitempty"`
+	// selectedSchedulingOption is the name of the scheduling option selected by the user.
+	// Must match one of the options defined in the template's schedulingOptions.
+	// If empty and template has options, the default option is used.
+	SelectedSchedulingOption *string `json:"selectedSchedulingOption,omitempty"`
+	// resolvedSchedulingConstraints contains the merged scheduling constraints
+	// from the template's base constraints and the selected scheduling option.
+	// This is computed at session creation time and used by the controller.
+	ResolvedSchedulingConstraints *SchedulingConstraintsApplyConfiguration `json:"resolvedSchedulingConstraints,omitempty"`
+	// bindingRef references the DebugSessionClusterBinding used to create this session.
+	// If set, indicates this session was created via a binding rather than direct template reference.
+	BindingRef *BindingReferenceApplyConfiguration `json:"bindingRef,omitempty"`
+	// selectedAuxiliaryResources lists auxiliary resource categories that are enabled for this session.
+	// Merged from template defaults and binding overrides at session creation time.
+	SelectedAuxiliaryResources []string `json:"selectedAuxiliaryResources,omitempty"`
 }
 
 // DebugSessionSpecApplyConfiguration constructs a declarative configuration of the DebugSessionSpec type for use with
@@ -132,6 +150,48 @@ func (b *DebugSessionSpecApplyConfiguration) WithNodeSelector(entries map[string
 func (b *DebugSessionSpecApplyConfiguration) WithInvitedParticipants(values ...string) *DebugSessionSpecApplyConfiguration {
 	for i := range values {
 		b.InvitedParticipants = append(b.InvitedParticipants, values[i])
+	}
+	return b
+}
+
+// WithTargetNamespace sets the TargetNamespace field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TargetNamespace field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithTargetNamespace(value string) *DebugSessionSpecApplyConfiguration {
+	b.TargetNamespace = &value
+	return b
+}
+
+// WithSelectedSchedulingOption sets the SelectedSchedulingOption field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SelectedSchedulingOption field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithSelectedSchedulingOption(value string) *DebugSessionSpecApplyConfiguration {
+	b.SelectedSchedulingOption = &value
+	return b
+}
+
+// WithResolvedSchedulingConstraints sets the ResolvedSchedulingConstraints field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ResolvedSchedulingConstraints field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithResolvedSchedulingConstraints(value *SchedulingConstraintsApplyConfiguration) *DebugSessionSpecApplyConfiguration {
+	b.ResolvedSchedulingConstraints = value
+	return b
+}
+
+// WithBindingRef sets the BindingRef field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the BindingRef field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithBindingRef(value *BindingReferenceApplyConfiguration) *DebugSessionSpecApplyConfiguration {
+	b.BindingRef = value
+	return b
+}
+
+// WithSelectedAuxiliaryResources adds the given value to the SelectedAuxiliaryResources field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the SelectedAuxiliaryResources field.
+func (b *DebugSessionSpecApplyConfiguration) WithSelectedAuxiliaryResources(values ...string) *DebugSessionSpecApplyConfiguration {
+	for i := range values {
+		b.SelectedAuxiliaryResources = append(b.SelectedAuxiliaryResources, values[i])
 	}
 	return b
 }

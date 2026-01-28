@@ -19,6 +19,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -58,7 +59,7 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 					Clusters: []string{"test-cluster"},
 				},
 				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"approver@example.com"},
+					Users: []string{helpers.TestUsers.Approver.Email},
 				},
 			},
 		}
@@ -85,7 +86,7 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 					Clusters: []string{"test-cluster"},
 				},
 				Approvers: telekomv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"approver@example.com"},
+					Users: []string{helpers.TestUsers.Approver.Email},
 				},
 			},
 		}
@@ -100,7 +101,7 @@ func TestErrorHandlingInvalidResourceCreation(t *testing.T) {
 	t.Run("CreateSessionWithMissingCluster", func(t *testing.T) {
 		session := helpers.NewSessionBuilder("e2e-error-missing-cluster", namespace).
 			WithCluster(""). // Empty cluster - should fail validation
-			WithUser("test@example.com").
+			WithUser(helpers.TestUsers.Requester.Email).
 			WithGrantedGroup("test-group").
 			WithMaxValidFor("1h").
 			WithRequestReason("Testing").
@@ -261,7 +262,7 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 		// Create session via API
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 			Cluster: clusterName,
-			User:    "expireduser@example.com",
+			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Testing approve expired",
 		})
@@ -305,7 +306,7 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 		// Create session via API
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 			Cluster: clusterName,
-			User:    "rejectapproved@example.com",
+			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Testing reject approved",
 		})
@@ -362,7 +363,7 @@ func TestErrorHandlingConcurrentModification(t *testing.T) {
 		// Create session via API
 		session, err := requesterClient.CreateSession(ctx, t, helpers.SessionRequest{
 			Cluster: clusterName,
-			User:    "concurrent@example.com",
+			User:    helpers.TestUsers.Requester.Email,
 			Group:   escalation.Spec.EscalatedGroup,
 			Reason:  "Testing concurrent modification",
 		})
@@ -381,13 +382,13 @@ func TestErrorHandlingConcurrentModification(t *testing.T) {
 
 		// First update should succeed
 		session1.Status.State = telekomv1alpha1.SessionStateApproved
-		session1.Status.Approver = "approver1@example.com"
+		session1.Status.Approver = helpers.TestUsers.Approver.Email
 		err1 := cli.Status().Update(ctx, &session1)
 		require.NoError(t, err1)
 
 		// Second update with stale resource version should fail
 		session2.Status.State = telekomv1alpha1.SessionStateRejected
-		session2.Status.Approver = "approver2@example.com"
+		session2.Status.Approver = helpers.TestUsers.SeniorApprover.Email
 		err2 := cli.Status().Update(ctx, &session2)
 
 		t.Logf("First update error: %v", err1)
@@ -412,7 +413,7 @@ func TestErrorHandlingWebhookErrors(t *testing.T) {
 		clusterName := helpers.GetTestClusterName()
 		webhookPath := helpers.GetWebhookAuthorizePath(clusterName)
 
-		sarJSON := `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","spec":{"user":"test@example.com"}}`
+		sarJSON := fmt.Sprintf(`{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","spec":{"user":"%s"}}`, helpers.TestUsers.Requester.Email)
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookPath, bytes.NewReader([]byte(sarJSON)))
 		require.NoError(t, err)
@@ -447,7 +448,7 @@ func TestErrorHandlingWebhookErrors(t *testing.T) {
 	t.Run("WebhookToNonExistentCluster", func(t *testing.T) {
 		webhookPath := helpers.GetWebhookAuthorizePath("definitely-not-a-real-cluster-name-12345")
 
-		sarJSON := `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","spec":{"user":"test@example.com","resourceAttributes":{"verb":"get","resource":"pods"}}}`
+		sarJSON := fmt.Sprintf(`{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","spec":{"user":"%s","resourceAttributes":{"verb":"get","resource":"pods"}}}`, helpers.TestUsers.Requester.Email)
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookPath, bytes.NewReader([]byte(sarJSON)))
 		require.NoError(t, err)

@@ -167,8 +167,12 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// This applies to all requests before authentication (e.g., /api/config, /api/identity-provider)
 	// Uses a moderate limit: 20 req/s per IP, burst of 50
 	// Authenticated endpoints have separate, more generous per-user limits applied in their handlers
+	// Static assets are excluded from rate limiting as they are immutable cached resources
 	publicRateLimiter := ratelimit.New(ratelimit.DefaultAPIConfig())
-	engine.Use(publicRateLimiter.Middleware())
+	engine.Use(publicRateLimiter.MiddlewareWithExclusions([]string{
+		"/assets/", // Static assets (JS, CSS, fonts)
+		"/favicon", // Favicon files
+	}))
 
 	// Configure trusted proxies for X-Forwarded-For headers
 	// Only trust proxies that are explicitly configured (typically the ingress/load balancer)
@@ -1050,6 +1054,12 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 		tlsConfig = &tls.Config{RootCAs: roots}
 		mode = tlsModeCustomCA
 	case idpCfg.InsecureSkipVerify, idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify:
+		// WARNING: InsecureSkipVerify disables TLS certificate verification.
+		// This is a security risk and should only be used in development/testing.
+		s.log.Sugar().Warnw("SECURITY WARNING: TLS certificate verification is disabled for identity provider",
+			"idpName", idpCfg.Name,
+			"authority", idpCfg.Authority,
+			"warning", "This setting should NOT be used in production environments")
 		tlsConfig = &tls.Config{InsecureSkipVerify: true}
 		mode = tlsModeInsecure
 	default:
@@ -1157,6 +1167,9 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 			apiControllers = append(apiControllers, debugSessionCtrl)
 			log.Infow("Debug session API controller enabled")
 		}
+		// Note: ClusterBindingAPIController is NOT registered as a public API.
+		// Cluster bindings are internal resources aggregated through the unified
+		// template/clusters endpoint (GET /templates/:name/clusters).
 		log.Infow("API controllers enabled", "components", "BreakglassSession, BreakglassEscalation")
 	}
 

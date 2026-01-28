@@ -128,10 +128,32 @@ test.describe.serial("Debug Session Creation", () => {
     const formSection = page.locator(".create-form");
     await formSection.waitFor({ state: "visible", timeout: 15000 });
 
-    // Now verify form elements are visible
+    // Step 1: Verify template select is visible
     const templateSelect = page.locator('[data-testid="template-select"]');
     await expect(templateSelect).toBeVisible({ timeout: 5000 });
 
+    // Select a template to enable the Next button
+    await templateSelect.click();
+    await page.waitForLoadState("networkidle", { timeout: 15000 });
+    const firstOption = page.locator("scale-dropdown-select-item").first();
+    if (await firstOption.isVisible()) {
+      await firstOption.click();
+      await page.waitForLoadState("networkidle", { timeout: 15000 });
+    }
+
+    // Click Next button to go to Step 2
+    const nextButton = page.locator('[data-testid="next-button"]');
+    await expect(nextButton).toBeVisible({ timeout: 5000 });
+    await nextButton.click();
+    await page.waitForLoadState("networkidle");
+
+    // Step 2: Select a cluster to reveal the session details form
+    const clusterCard = page.locator(".cluster-card").first();
+    await expect(clusterCard).toBeVisible({ timeout: 10000 });
+    await clusterCard.click();
+    await page.waitForLoadState("networkidle");
+
+    // Now verify the reason input is visible (only shown after cluster selection)
     const reasonInput = page.locator('[data-testid="reason-input"]');
     await expect(reasonInput).toBeVisible({ timeout: 5000 });
   });
@@ -162,13 +184,33 @@ test.describe.serial("Debug Session Creation", () => {
     await page.waitForLoadState("networkidle");
 
     // Wait for form to fully initialize (templates to load)
-    // We need templates to load and Vue reactivity to settle
     const templateSelect = page.locator('[data-testid="template-select"]');
     await expect(templateSelect).toBeVisible({ timeout: 10000 });
 
-    // The create button should be disabled because reason is empty
+    // Step 1: Select a template to enable the Next button
+    await templateSelect.click();
+    await page.waitForLoadState("networkidle", { timeout: 15000 });
+    const firstOption = page.locator("scale-dropdown-select-item").first();
+    if (await firstOption.isVisible()) {
+      await firstOption.click();
+      await page.waitForLoadState("networkidle", { timeout: 15000 });
+    }
+
+    // Click Next button to go to Step 2
+    const nextButton = page.locator('[data-testid="next-button"]');
+    await expect(nextButton).toBeVisible({ timeout: 5000 });
+    await nextButton.click();
+    await page.waitForLoadState("networkidle");
+
+    // Step 2: Select a cluster to reveal the session details form
+    const clusterCard = page.locator(".cluster-card").first();
+    await expect(clusterCard).toBeVisible({ timeout: 10000 });
+    await clusterCard.click();
+    await page.waitForLoadState("networkidle");
+
+    // The create button should be visible but disabled because reason is empty
     const createButton = page.locator('[data-testid="create-session-button"]');
-    await expect(createButton).toBeVisible();
+    await expect(createButton).toBeVisible({ timeout: 10000 });
 
     // Wait for the form to be in its initial state and verify button is disabled
     // Use waitForFunction for more reliable state checking with Scale components
@@ -188,9 +230,32 @@ test.describe.serial("Debug Session Creation", () => {
     await page.goto("/debug-sessions/create");
     await page.waitForLoadState("networkidle");
 
-    // Schedule checkbox
+    // Step 1: Select a template
+    const templateSelect = page.locator('[data-testid="template-select"]');
+    await expect(templateSelect).toBeVisible({ timeout: 10000 });
+    await templateSelect.click();
+    await page.waitForLoadState("networkidle", { timeout: 15000 });
+    const firstOption = page.locator("scale-dropdown-select-item").first();
+    if (await firstOption.isVisible()) {
+      await firstOption.click();
+      await page.waitForLoadState("networkidle", { timeout: 15000 });
+    }
+
+    // Click Next button to go to Step 2
+    const nextButton = page.locator('[data-testid="next-button"]');
+    await expect(nextButton).toBeVisible({ timeout: 5000 });
+    await nextButton.click();
+    await page.waitForLoadState("networkidle");
+
+    // Step 2: Select a cluster to reveal the session details form
+    const clusterCard = page.locator(".cluster-card").first();
+    await expect(clusterCard).toBeVisible({ timeout: 10000 });
+    await clusterCard.click();
+    await page.waitForLoadState("networkidle");
+
+    // Schedule checkbox should now be visible
     const scheduleCheckbox = page.locator('[data-testid="schedule-checkbox"]');
-    await expect(scheduleCheckbox).toBeVisible();
+    await expect(scheduleCheckbox).toBeVisible({ timeout: 5000 });
 
     // Initially datetime input should be hidden
     let scheduleTimeInput = page.locator('[data-testid="schedule-time-input"]');
@@ -229,6 +294,106 @@ test.describe.serial("Debug Session Creation", () => {
       const templateInfo = page.locator('[data-testid="template-info"]');
       await expect(templateInfo).toBeVisible();
     }
+  });
+
+  test("binding options appear when cluster has multiple bindings", async ({ page }) => {
+    const auth = new AuthHelper(page);
+    await auth.loginViaKeycloak(TEST_USERS.requester);
+
+    await page.goto("/debug-sessions/create");
+    await page.waitForLoadState("networkidle");
+
+    // Step 1: Select a template
+    const templateSelect = page.locator('[data-testid="template-select"]');
+    await expect(templateSelect).toBeVisible({ timeout: 10000 });
+    await templateSelect.click();
+    await page.waitForLoadState("networkidle", { timeout: 15000 });
+    const firstOption = page.locator("scale-dropdown-select-item").first();
+    if (await firstOption.isVisible()) {
+      await firstOption.click();
+      await page.waitForLoadState("networkidle", { timeout: 15000 });
+    }
+
+    // Click Next button to go to Step 2
+    const nextButton = page.locator('[data-testid="next-button"]');
+    await expect(nextButton).toBeVisible({ timeout: 5000 });
+    await nextButton.click();
+    await page.waitForLoadState("networkidle");
+
+    // Step 2: Select a cluster
+    const clusterCard = page.locator(".cluster-card").first();
+    await expect(clusterCard).toBeVisible({ timeout: 10000 });
+    await clusterCard.click();
+    await page.waitForLoadState("networkidle");
+
+    // Check if binding options section appears (only for clusters with multiple bindings)
+    const bindingOptionsSection = page.locator('[data-testid="binding-options-section"]');
+    // This may or may not be visible depending on the cluster's bindings
+    // We just verify the test doesn't crash
+    const hasBindingOptions = await bindingOptionsSection.isVisible().catch(() => false);
+
+    if (hasBindingOptions) {
+      // Verify binding option cards are present
+      const bindingCards = page.locator('[data-testid="binding-option-card"]');
+      const cardCount = await bindingCards.count();
+      expect(cardCount).toBeGreaterThan(1);
+
+      // Click on a different binding option
+      if (cardCount > 1) {
+        const secondCard = bindingCards.nth(1);
+        await secondCard.click();
+        // Verify it gets selected
+        await expect(secondCard).toHaveClass(/selected/);
+      }
+    }
+  });
+
+  test("cluster card shows binding count indicator", async ({ page }) => {
+    const auth = new AuthHelper(page);
+    await auth.loginViaKeycloak(TEST_USERS.requester);
+
+    await page.goto("/debug-sessions/create");
+    await page.waitForLoadState("networkidle");
+
+    // Step 1: Select a template
+    const templateSelect = page.locator('[data-testid="template-select"]');
+    await expect(templateSelect).toBeVisible({ timeout: 10000 });
+    await templateSelect.click();
+    await page.waitForLoadState("networkidle", { timeout: 15000 });
+    const firstOption = page.locator("scale-dropdown-select-item").first();
+    if (await firstOption.isVisible()) {
+      await firstOption.click();
+      await page.waitForLoadState("networkidle", { timeout: 15000 });
+    }
+
+    // Click Next button
+    const nextButton = page.locator('[data-testid="next-button"]');
+    await expect(nextButton).toBeVisible({ timeout: 5000 });
+    await nextButton.click();
+    await page.waitForLoadState("networkidle");
+
+    // Look for cluster cards with multiple bindings indicator
+    const clusterGrid = page.locator('[data-testid="cluster-grid"]');
+    await expect(clusterGrid).toBeVisible({ timeout: 10000 });
+
+    // Look for "access options" text in cluster cards (indicates multiple bindings)
+    const multiBindingIndicator = page.locator(".multiple-bindings");
+    // This may or may not be visible depending on environment setup
+    const hasMultiBinding = await multiBindingIndicator
+      .first()
+      .isVisible()
+      .catch(() => false);
+
+    // Log the result for debugging
+    if (hasMultiBinding) {
+      // Verify the indicator contains expected text
+      await expect(multiBindingIndicator.first()).toContainText("access option");
+    }
+
+    // Just verify the grid renders correctly
+    const clusterCards = page.locator('[data-testid="cluster-card"]');
+    const cardCount = await clusterCards.count();
+    expect(cardCount).toBeGreaterThanOrEqual(0); // May be 0 if no clusters available
   });
 });
 

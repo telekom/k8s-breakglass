@@ -3090,3 +3090,148 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		assert.Equal(t, 404, w.Code)
 	})
 }
+
+func TestConvertSelectorTerms(t *testing.T) {
+	tests := []struct {
+		name     string
+		terms    []telekomv1alpha1.NamespaceSelectorTerm
+		expected []NamespaceSelectorTermResponse
+	}{
+		{
+			name:     "nil input returns nil",
+			terms:    nil,
+			expected: nil,
+		},
+		{
+			name:     "empty input returns nil",
+			terms:    []telekomv1alpha1.NamespaceSelectorTerm{},
+			expected: nil,
+		},
+		{
+			name: "matchLabels only",
+			terms: []telekomv1alpha1.NamespaceSelectorTerm{
+				{
+					MatchLabels: map[string]string{
+						"environment": "production",
+						"team":        "sre",
+					},
+				},
+			},
+			expected: []NamespaceSelectorTermResponse{
+				{
+					MatchLabels: map[string]string{
+						"environment": "production",
+						"team":        "sre",
+					},
+				},
+			},
+		},
+		{
+			name: "matchExpressions only",
+			terms: []telekomv1alpha1.NamespaceSelectorTerm{
+				{
+					MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{
+						{
+							Key:      "env",
+							Operator: telekomv1alpha1.NamespaceSelectorOpIn,
+							Values:   []string{"dev", "test", "staging"},
+						},
+						{
+							Key:      "restricted",
+							Operator: telekomv1alpha1.NamespaceSelectorOpDoesNotExist,
+						},
+					},
+				},
+			},
+			expected: []NamespaceSelectorTermResponse{
+				{
+					MatchExpressions: []NamespaceSelectorRequirementResponse{
+						{
+							Key:      "env",
+							Operator: "In",
+							Values:   []string{"dev", "test", "staging"},
+						},
+						{
+							Key:      "restricted",
+							Operator: "DoesNotExist",
+							Values:   nil,
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "matchLabels and matchExpressions combined",
+			terms: []telekomv1alpha1.NamespaceSelectorTerm{
+				{
+					MatchLabels: map[string]string{
+						"debug-allowed": "true",
+					},
+					MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{
+						{
+							Key:      "tier",
+							Operator: telekomv1alpha1.NamespaceSelectorOpNotIn,
+							Values:   []string{"critical"},
+						},
+					},
+				},
+			},
+			expected: []NamespaceSelectorTermResponse{
+				{
+					MatchLabels: map[string]string{
+						"debug-allowed": "true",
+					},
+					MatchExpressions: []NamespaceSelectorRequirementResponse{
+						{
+							Key:      "tier",
+							Operator: "NotIn",
+							Values:   []string{"critical"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "multiple selector terms",
+			terms: []telekomv1alpha1.NamespaceSelectorTerm{
+				{
+					MatchLabels: map[string]string{"env": "dev"},
+				},
+				{
+					MatchLabels: map[string]string{"env": "test"},
+				},
+				{
+					MatchExpressions: []telekomv1alpha1.NamespaceSelectorRequirement{
+						{
+							Key:      "env",
+							Operator: telekomv1alpha1.NamespaceSelectorOpExists,
+						},
+					},
+				},
+			},
+			expected: []NamespaceSelectorTermResponse{
+				{
+					MatchLabels: map[string]string{"env": "dev"},
+				},
+				{
+					MatchLabels: map[string]string{"env": "test"},
+				},
+				{
+					MatchExpressions: []NamespaceSelectorRequirementResponse{
+						{
+							Key:      "env",
+							Operator: "Exists",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertSelectorTerms(tt.terms)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

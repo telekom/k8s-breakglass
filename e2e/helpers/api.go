@@ -583,13 +583,15 @@ const debugSessionsBasePath = "/api/debugSessions"
 
 // DebugSessionRequest is the request body for creating a debug session via the API
 type DebugSessionRequest struct {
-	TemplateRef         string            `json:"templateRef"`
-	Cluster             string            `json:"cluster"`
-	RequestedDuration   string            `json:"requestedDuration,omitempty"`
-	NodeSelector        map[string]string `json:"nodeSelector,omitempty"`
-	Namespace           string            `json:"namespace,omitempty"`
-	Reason              string            `json:"reason,omitempty"`
-	InvitedParticipants []string          `json:"invitedParticipants,omitempty"`
+	TemplateRef              string            `json:"templateRef"`
+	Cluster                  string            `json:"cluster"`
+	RequestedDuration        string            `json:"requestedDuration,omitempty"`
+	NodeSelector             map[string]string `json:"nodeSelector,omitempty"`
+	Namespace                string            `json:"namespace,omitempty"`
+	Reason                   string            `json:"reason,omitempty"`
+	InvitedParticipants      []string          `json:"invitedParticipants,omitempty"`
+	TargetNamespace          string            `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
+	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
 }
 
 // CreateDebugSession creates a debug session via the REST API.

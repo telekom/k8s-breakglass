@@ -48,6 +48,41 @@ spec:
     maxRenewals: 5
     maxConcurrentSessions: 10
   
+  # Scheduling options for dev environments
+  schedulingOptions:
+    required: false
+    options:
+      - name: any-worker
+        displayName: "Any Worker Node"
+        description: "Deploy to any available worker node"
+        default: true
+      - name: debug-nodes
+        displayName: "Debug-Enabled Nodes"
+        description: "Deploy to nodes with debug label"
+        schedulingConstraints:
+          nodeSelector:
+            debug-enabled: "true"
+  
+  # Namespace constraints for dev debugging
+  namespaceConstraints:
+    defaultNamespace: breakglass-debug
+    allowUserNamespace: true
+    createIfNotExists: true
+    allowedNamespaces:
+      patterns:
+        - "breakglass-*"
+        - "debug-*"
+        - "dev-*"
+      selectorTerms:
+        - matchLabels:
+            debug-allowed: "true"
+        - matchLabels:
+            environment: development
+    deniedNamespaces:
+      patterns:
+        - "kube-*"
+        - "*-system"
+  
   audit:
     enabled: true
     enableShellHistory: true

@@ -35,6 +35,9 @@ const (
 
 	// ConditionTypeSynced indicates the resource has been synced.
 	ConditionTypeSynced = "Synced"
+
+	// ConditionTypeFailed indicates the resource has failed.
+	ConditionTypeFailed = "Failed"
 )
 
 // Common condition reasons.

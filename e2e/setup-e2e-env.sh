@@ -174,7 +174,7 @@ export_env_vars() {
     export E2E_TEST=true
     export E2E_NAMESPACE="${E2E_NAMESPACE:-default}"
     export E2E_CLUSTER_NAME="${E2E_CLUSTER_NAME:-tenant-a}"
-    export E2E_TEST_USER="${E2E_TEST_USER:-testuser@example.com}"
+    export E2E_TEST_USER="${E2E_TEST_USER:-test-user@example.com}"
     export E2E_TEST_APPROVER="${E2E_TEST_APPROVER:-approver@example.com}"
     export BREAKGLASS_API_URL="http://localhost:$API_PORT"
     export BREAKGLASS_WEBHOOK_URL="http://localhost:$WEBHOOK_PORT"

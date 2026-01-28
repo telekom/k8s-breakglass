@@ -623,6 +623,49 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		assert.Equal(t, tmplName, tmpl.Name)
 	})
 
+	t.Run("debug template clusters", func(t *testing.T) {
+		// First get a template name
+		output, err := tc.runCommandWithToken("debug", "template", "list", "-o", "json")
+		require.NoError(t, err)
+
+		var templates []debugTemplateSummary
+		err = json.Unmarshal([]byte(output), &templates)
+		require.NoError(t, err)
+
+		require.NotEmpty(t, templates, "DebugSessionTemplates must exist in E2E environment")
+
+		tmplName := templates[0].Name
+
+		// Get clusters for the template
+		output, err = tc.runCommandWithToken("debug", "template", "clusters", tmplName, "-o", "json")
+		require.NoError(t, err)
+
+		// Parse the response
+		var resp struct {
+			TemplateName        string `json:"templateName"`
+			TemplateDisplayName string `json:"templateDisplayName"`
+			Clusters            []struct {
+				Name                 string `json:"name"`
+				DisplayName          string `json:"displayName"`
+				Environment          string `json:"environment"`
+				BindingRef           any    `json:"bindingRef,omitempty"`
+				Constraints          any    `json:"constraints,omitempty"`
+				NamespaceConstraints any    `json:"namespaceConstraints,omitempty"`
+				Impersonation        any    `json:"impersonation,omitempty"`
+				Approval             any    `json:"approval,omitempty"`
+			} `json:"clusters"`
+		}
+		err = json.Unmarshal([]byte(output), &resp)
+		require.NoError(t, err)
+
+		assert.Equal(t, tmplName, resp.TemplateName)
+		t.Logf("Template %s has %d clusters available", tmplName, len(resp.Clusters))
+
+		for _, cluster := range resp.Clusters {
+			t.Logf("  - %s (env: %s)", cluster.Name, cluster.Environment)
+		}
+	})
+
 	t.Run("debug pod-template list", func(t *testing.T) {
 		output, err := tc.runCommandWithToken("debug", "pod-template", "list", "-o", "json")
 		require.NoError(t, err)
@@ -653,7 +696,19 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 
 		require.NotEmpty(t, templates, "DebugSessionTemplates must exist in E2E environment - check that fixtures are loaded")
 
-		tmplName := templates[0].Name
+		// Find a template that allows the hub cluster (avoid test-created templates that may only allow tenant-a)
+		var tmplName string
+		for _, tmpl := range templates {
+			// Prefer breakglass-dev-debug-template which allows breakglass-* pattern
+			if tmpl.Name == "breakglass-dev-debug-template" {
+				tmplName = tmpl.Name
+				break
+			}
+		}
+		if tmplName == "" {
+			// Fallback to first template if preferred not found
+			tmplName = templates[0].Name
+		}
 		require.NotEmpty(t, tmplName, "Template name should not be empty")
 
 		// Create debug session

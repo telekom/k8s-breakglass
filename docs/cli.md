@@ -98,8 +98,59 @@ bgctl debug session create \
   --duration 1h \
   --reason "Investigate outage"
 
+# Create with scheduling option and custom namespace
+bgctl debug session create \
+  --template network-debug \
+  --cluster prod-1 \
+  --duration 2h \
+  --reason "Network analysis" \
+  --scheduling-option sriov \
+  --target-namespace debug-netops
+
 # Approve a debug session
 bgctl debug session approve SESSION_NAME --reason "Approved"
+```
+
+## Debug Templates and Bindings
+
+Manage debug session templates and their cluster bindings:
+
+```bash
+# List available templates
+bgctl debug template list
+
+# Get template details
+bgctl debug template get standard-debug
+
+# List available clusters for a template
+bgctl debug template clusters standard-debug
+
+# Filter by environment or location
+bgctl debug template clusters standard-debug --environment production
+bgctl debug template clusters standard-debug --location eu-west-1
+
+# Wide output with constraints
+bgctl debug template clusters standard-debug -o wide
+```
+
+### Cluster Bindings
+
+ClusterBindings control which templates are available on which clusters with what constraints:
+
+```bash
+# List all cluster bindings
+bgctl debug binding list
+
+# Filter by namespace, template, or cluster
+bgctl debug binding list -n debug-system
+bgctl debug binding list --template standard-debug
+bgctl debug binding list --cluster prod-1
+
+# Get binding details
+bgctl debug binding get my-binding -n debug-system
+
+# List bindings that apply to a specific cluster
+bgctl debug binding for-cluster prod-1
 ```
 
 ## Kubectl Debug Operations
@@ -287,6 +338,15 @@ bgctl debug session create \
   --duration 1h \
   --reason "Investigate memory leak in api-server"
 
+# Create debug session with specific scheduling and namespace
+bgctl debug session create \
+  --template network-debug \
+  --cluster prod-1 \
+  --duration 2h \
+  --reason "Network analysis" \
+  --scheduling-option sriov-nodes \
+  --target-namespace debug-netops
+
 # Approve (if required)
 bgctl debug session approve DEBUG_SESSION_NAME
 
@@ -300,6 +360,18 @@ bgctl debug kubectl inject DEBUG_SESSION_NAME \
 # Then use kubectl exec to attach
 kubectl exec -it api-7d9c4f8b-xkj2p -c debug -n production -- sh
 ```
+
+### Debug Session Create Flags
+
+| Flag | Description |
+|------|-------------|
+| `--template` | (Required) Debug session template name |
+| `--cluster` | (Required) Target cluster name |
+| `--duration` | Requested duration (e.g., `1h`, `2h`, `1d`) |
+| `--reason` | Reason for the debug session request |
+| `--scheduling-option` | Scheduling option name from template (e.g., `sriov`, `standard`) |
+| `--target-namespace` | Namespace where debug pods will be deployed |
+| `--invite` | Users to invite as participants (can be repeated) |
 
 ### Automation with JSON Output
 

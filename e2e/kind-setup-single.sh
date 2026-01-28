@@ -391,11 +391,12 @@ apply_cr_with_retry() {
     # Apply directly with kubectl, transforming namespace and name prefix using sed
     # This avoids kustomize's restriction on absolute paths
     # Also transform podTemplateRef.name to match the prefixed DebugPodTemplate names
+    # Note: Using awk for the podTemplateRef transformation for macOS/BSD compatibility
     if sed -e 's/namespace: default/namespace: breakglass-system/g' \
            -e 's/namespace: breakglass$/namespace: breakglass-system/g' \
            -e '/^  name:/s/name: /name: breakglass-/g' \
-           -e '/podTemplateRef:/,/^[^ ]/{s/name: /name: breakglass-/}' \
            "$cr_file" | \
+       awk '/podTemplateRef:/{in_ref=1} in_ref && /name:/{sub(/name: /, "name: breakglass-"); in_ref=0} {print}' | \
        KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -n breakglass-system -f - 2>&1; then
       return 0
     fi
@@ -2168,8 +2169,8 @@ cat > "$E2E_ENV_FILE" <<EOF
 export E2E_TEST=true
 export E2E_NAMESPACE=default
 export E2E_CLUSTER_NAME=tenant-a
-export E2E_TEST_USER=testuser@example.com
-export E2E_TEST_APPROVER=approver@example.com
+export E2E_TEST_USER=test-user@example.com
+export E2E_TEST_APPROVER=approver@example.org
 export BREAKGLASS_API_URL=http://localhost:$API_PORT
 export BREAKGLASS_WEBHOOK_URL=http://localhost:$API_PORT
 export BREAKGLASS_METRICS_URL=http://localhost:${METRICS_FORWARD_PORT}/metrics

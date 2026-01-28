@@ -44,6 +44,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.AuditSinkStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AutoApproveConfig"):
 		return &apiv1alpha1.AutoApproveConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AuxiliaryResource"):
+		return &apiv1alpha1.AuxiliaryResourceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AuxiliaryResourceStatus"):
+		return &apiv1alpha1.AuxiliaryResourceStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("BindingReference"):
+		return &apiv1alpha1.BindingReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalation"):
 		return &apiv1alpha1.BreakglassEscalationApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("BreakglassEscalationAllowed"):
@@ -98,6 +104,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionApproversApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAuditConfig"):
 		return &apiv1alpha1.DebugSessionAuditConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBinding"):
+		return &apiv1alpha1.DebugSessionClusterBindingApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingSpec"):
+		return &apiv1alpha1.DebugSessionClusterBindingSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingStatus"):
+		return &apiv1alpha1.DebugSessionClusterBindingStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionConstraints"):
 		return &apiv1alpha1.DebugSessionConstraintsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionParticipant"):
@@ -136,6 +148,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.IdentityProviderSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("IdentityProviderStatus"):
 		return &apiv1alpha1.IdentityProviderStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ImpersonationConfig"):
+		return &apiv1alpha1.ImpersonationConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KafkaSASLSpec"):
 		return &apiv1alpha1.KafkaSASLSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KafkaSinkSpec"):
@@ -158,6 +172,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.MailProviderSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MailProviderStatus"):
 		return &apiv1alpha1.MailProviderStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NameCollision"):
+		return &apiv1alpha1.NameCollisionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceConstraints"):
+		return &apiv1alpha1.NamespaceConstraintsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceFilter"):
 		return &apiv1alpha1.NamespaceFilterApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceSelectorRequirement"):
@@ -190,20 +208,36 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.PodSecurityScopeApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ReasonConfig"):
 		return &apiv1alpha1.ReasonConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ResolvedBindingRef"):
+		return &apiv1alpha1.ResolvedBindingRefApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ResolvedClusterRef"):
+		return &apiv1alpha1.ResolvedClusterRefApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ResolvedTemplateRef"):
+		return &apiv1alpha1.ResolvedTemplateRefApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("RetryConfig"):
 		return &apiv1alpha1.RetryConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("RiskFactors"):
 		return &apiv1alpha1.RiskFactorsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("RiskThreshold"):
 		return &apiv1alpha1.RiskThresholdApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingConstraints"):
+		return &apiv1alpha1.SchedulingConstraintsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingOption"):
+		return &apiv1alpha1.SchedulingOptionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("SchedulingOptions"):
+		return &apiv1alpha1.SchedulingOptionsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SecretKeyReference"):
 		return &apiv1alpha1.SecretKeyReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SecretKeySelector"):
 		return &apiv1alpha1.SecretKeySelectorApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SenderConfig"):
 		return &apiv1alpha1.SenderConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ServiceAccountReference"):
+		return &apiv1alpha1.ServiceAccountReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SMTPConfig"):
 		return &apiv1alpha1.SMTPConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TemplateReference"):
+		return &apiv1alpha1.TemplateReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TerminalSharingConfig"):
 		return &apiv1alpha1.TerminalSharingConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TerminalSharingStatus"):

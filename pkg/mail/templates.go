@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"log"
 )
 
 type RequestMailParams struct {
@@ -206,17 +207,13 @@ type RequestBreakglassSessionMailParams struct {
 	BrandingName string
 }
 
-// MustParseTemplate parses a template and logs a fatal error if parsing fails.
-// This provides better error messages than panic() during startup.
-func MustParseTemplate(name, content string) *template.Template {
+// parseTemplate parses a template and returns a descriptive error on failure.
+func parseTemplate(name, content string) (*template.Template, error) {
 	t, err := template.New(name).Parse(content)
 	if err != nil {
-		// Log the error with context before panicking.
-		// This is acceptable in init() because template parsing errors indicate
-		// a bug in the embedded template files that must be fixed before deployment.
-		panic(fmt.Sprintf("failed to parse email template %q: %v", name, err))
+		return nil, fmt.Errorf("failed to parse email template %q: %w", name, err)
 	}
-	return t
+	return t, nil
 }
 
 var (
@@ -262,27 +259,97 @@ var (
 	debugSessionFailedTemplateRaw string
 )
 
+var templateInitErr error
+
 func init() {
-	// Parse all email templates at startup using MustParseTemplate.
-	// Any parsing errors will panic with a descriptive error message.
-	// This is acceptable because template errors indicate bugs in embedded files
-	// that must be fixed before deployment.
-	requestTemplate = MustParseTemplate("request", requestTemplateRaw)
-	approvedTempate = MustParseTemplate("approved", approvedTemplateRaw)
-	rejectedTemplate = MustParseTemplate("rejected", rejectedTemplateRaw)
-	breakglassSessionTemplate = MustParseTemplate("breakglassSessionRequest", breakglassSessionReqTemplateRaw)
-	breakglassNotificationTemplate = MustParseTemplate("breakglassSessionNotification", breakglassSessionNotifiTemplateRaw)
-	debugSessionRequestTemplate = MustParseTemplate("debugSessionRequest", debugSessionRequestTemplateRaw)
-	debugSessionApprovedTemplate = MustParseTemplate("debugSessionApproved", debugSessionApprovedTemplateRaw)
-	debugSessionRejectedTemplate = MustParseTemplate("debugSessionRejected", debugSessionRejectedTemplateRaw)
-	sessionExpiredTemplate = MustParseTemplate("sessionExpired", sessionExpiredTemplateRaw)
-	sessionActivatedTemplate = MustParseTemplate("sessionActivated", sessionActivatedTemplateRaw)
-	debugSessionExpiredTemplate = MustParseTemplate("debugSessionExpired", debugSessionExpiredTemplateRaw)
-	debugSessionCreatedTemplate = MustParseTemplate("debugSessionCreated", debugSessionCreatedTemplateRaw)
-	debugSessionFailedTemplate = MustParseTemplate("debugSessionFailed", debugSessionFailedTemplateRaw)
+	var err error
+	requestTemplate, err = parseTemplate("request", requestTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	approvedTempate, err = parseTemplate("approved", approvedTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	rejectedTemplate, err = parseTemplate("rejected", rejectedTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	breakglassSessionTemplate, err = parseTemplate("breakglassSessionRequest", breakglassSessionReqTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	breakglassNotificationTemplate, err = parseTemplate("breakglassSessionNotification", breakglassSessionNotifiTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	debugSessionRequestTemplate, err = parseTemplate("debugSessionRequest", debugSessionRequestTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	debugSessionApprovedTemplate, err = parseTemplate("debugSessionApproved", debugSessionApprovedTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	debugSessionRejectedTemplate, err = parseTemplate("debugSessionRejected", debugSessionRejectedTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	sessionExpiredTemplate, err = parseTemplate("sessionExpired", sessionExpiredTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	sessionActivatedTemplate, err = parseTemplate("sessionActivated", sessionActivatedTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	debugSessionExpiredTemplate, err = parseTemplate("debugSessionExpired", debugSessionExpiredTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	debugSessionCreatedTemplate, err = parseTemplate("debugSessionCreated", debugSessionCreatedTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
+	debugSessionFailedTemplate, err = parseTemplate("debugSessionFailed", debugSessionFailedTemplateRaw)
+	if err != nil {
+		templateInitErr = err
+		log.Printf("mail template init failed: %v", err)
+		return
+	}
 }
 
 func render(t *template.Template, p any) (string, error) {
+	if templateInitErr != nil {
+		return "", templateInitErr
+	}
+	if t == nil {
+		return "", fmt.Errorf("email template not initialized")
+	}
 	b := bytes.Buffer{}
 	err := t.Execute(&b, p)
 	return b.String(), err

@@ -218,6 +218,7 @@ Authorization: Bearer <token>
 
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 1024 characters after trimming.
+- `user` must match the authenticated identity in the request token; mismatches are rejected.
 
 **Status Code:** `201 Created`
 
@@ -819,15 +820,34 @@ POST /api/debugSessions
 {
   "templateRef": "standard-debug",
   "cluster": "production",
+  "bindingRef": "breakglass/sre-access",
   "requestedDuration": "2h",
   "nodeSelector": {
     "zone": "us-east-1a"
   },
-  "reason": "Investigating issue #12345"
+  "reason": "Investigating issue #12345",
+  "targetNamespace": "debug-team-sre",
+  "selectedSchedulingOption": "sriov"
 }
 ```
 
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `templateRef` | string | Yes | Name of the DebugSessionTemplate to use |
+| `cluster` | string | Yes | Name of the target cluster |
+| `bindingRef` | string | No | Binding reference as "namespace/name" (when multiple bindings match cluster) |
+| `requestedDuration` | string | No | Desired session duration (e.g., "2h") |
+| `nodeSelector` | object | No | Additional node selector labels |
+| `reason` | string | No | Explanation for the debug session request |
+| `targetNamespace` | string | No | Target namespace for debug pods (if allowed by template's `namespaceConstraints`) |
+| `selectedSchedulingOption` | string | No | Name of a scheduling option from template's `schedulingOptions` |
+| `invitedParticipants` | array | No | List of users to invite to the session |
+
 **Response:** Created `DebugSession` object (201 Created).
+
+**Error Responses:**
+- `400 Bad Request`: Invalid template, cluster not allowed, or invalid scheduling option
+- `403 Forbidden`: Namespace not allowed by template constraints
 
 ### Join Debug Session
 
@@ -944,12 +964,63 @@ Returns templates the current user has access to (based on group membership).
       },
       "allowedClusters": ["production-*", "staging-*"],
       "allowedGroups": ["sre-team"],
-      "requiresApproval": true
+      "requiresApproval": true,
+      "schedulingOptions": {
+        "required": false,
+        "options": [
+          {
+            "name": "any-worker",
+            "displayName": "Any Worker Node",
+            "description": "Deploy to any available worker",
+            "default": true
+          },
+          {
+            "name": "dedicated-debug",
+            "displayName": "Dedicated Debug Nodes",
+            "description": "Deploy to nodes labeled for debugging",
+            "allowedGroups": ["sre-team"]
+          }
+        ]
+      },
+      "namespaceConstraints": {
+        "defaultNamespace": "breakglass-debug",
+        "allowUserNamespace": true,
+        "allowedPatterns": ["breakglass-*", "debug-*"],
+        "deniedPatterns": ["kube-*", "*-system"],
+        "allowedLabelSelectors": [
+          {
+            "matchLabels": {"debug-allowed": "true"}
+          },
+          {
+            "matchExpressions": [
+              {"key": "environment", "operator": "In", "values": ["dev", "staging"]}
+            ]
+          }
+        ],
+        "deniedLabelSelectors": [
+          {
+            "matchLabels": {"protected": "true"}
+          }
+        ]
+      }
     }
   ],
   "total": 1
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schedulingOptions` | object | Available scheduling options for the template |
+| `schedulingOptions.required` | boolean | Whether user must select a scheduling option |
+| `schedulingOptions.options` | array | List of available scheduling configurations |
+| `namespaceConstraints` | object | Namespace selection constraints |
+| `namespaceConstraints.defaultNamespace` | string | Default namespace if user doesn't specify |
+| `namespaceConstraints.allowUserNamespace` | boolean | Whether user can specify a custom namespace |
+| `namespaceConstraints.allowedPatterns` | array | Glob patterns for allowed namespaces |
+| `namespaceConstraints.deniedPatterns` | array | Glob patterns for denied namespaces |
+| `namespaceConstraints.allowedLabelSelectors` | array | Label selectors for allowed namespaces |
+| `namespaceConstraints.deniedLabelSelectors` | array | Label selectors for denied namespaces |
 
 ### Get Debug Session Template
 
@@ -958,6 +1029,90 @@ GET /api/debugSessions/templates/:name
 ```
 
 Returns full `DebugSessionTemplate` CRD object.
+
+### Get Template Clusters
+
+```http
+GET /api/debugSessions/templates/:name/clusters
+```
+
+Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options.
+
+**Response (200 OK):**
+
+```json
+{
+  "templateName": "network-debug",
+  "templateDisplayName": "Network Debug Access",
+  "clusters": [
+    {
+      "name": "production-eu",
+      "displayName": "Production EU",
+      "environment": "production",
+      "location": "Frankfurt",
+      "bindingRef": {
+        "name": "sre-production-binding",
+        "namespace": "breakglass",
+        "displayName": "SRE Production Access"
+      },
+      "constraints": {
+        "maxDuration": "2h",
+        "defaultDuration": "30m",
+        "maxRenewals": 2
+      },
+      "schedulingOptions": {
+        "required": false,
+        "options": [
+          {
+            "name": "any-worker",
+            "displayName": "Any Worker Node",
+            "description": "Deploy to any available worker node",
+            "default": true
+          }
+        ]
+      },
+      "namespaceConstraints": {
+        "defaultNamespace": "breakglass-debug",
+        "allowUserNamespace": true,
+        "allowedPatterns": ["breakglass-*", "debug-*"]
+      },
+      "impersonation": {
+        "enabled": true,
+        "serviceAccountRef": "breakglass/debug-deployer"
+      },
+      "approval": {
+        "required": true,
+        "approverGroups": ["security-leads"]
+      },
+      "status": {
+        "healthy": true,
+        "lastChecked": "2024-01-15T10:30:00Z"
+      }
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `templateName` | string | Template resource name |
+| `templateDisplayName` | string | Human-readable template name |
+| `clusters` | array | Available clusters with resolved constraints |
+| `clusters[].name` | string | Cluster identifier |
+| `clusters[].displayName` | string | Human-readable cluster name |
+| `clusters[].environment` | string | Cluster environment (production, staging, etc.) |
+| `clusters[].bindingRef` | object | Reference to the `DebugSessionClusterBinding` providing access |
+| `clusters[].constraints` | object | Resolved session constraints (from binding or template) |
+| `clusters[].schedulingOptions` | object | Available scheduling options for node selection |
+| `clusters[].namespaceConstraints` | object | Namespace restrictions and defaults |
+| `clusters[].impersonation` | object | Impersonation configuration |
+| `clusters[].approval` | object | Approval requirements |
+| `clusters[].status` | object | Cluster health status |
+
+**Error Responses:**
+
+- `404 Not Found`: Template does not exist
+- `401 Unauthorized`: Missing or invalid authentication
 
 ### List Debug Pod Templates
 

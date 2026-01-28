@@ -119,6 +119,12 @@ spec:
 
 #### 3. API Gateway Rate Limiting
 
+## Authentication Token Handling
+
+The API validates JWTs using an **explicit allowlist of signing algorithms** (RS/PS/ES families). This helps prevent algorithm-confusion attacks if an IdP ever misconfigures supported algorithms.
+
+To reduce accidental credential exposure, the API middleware **strips the Authorization header** after extracting token data, so downstream logs or error handlers do not emit bearer tokens.
+
 If using an API gateway (Kong, Ambassador, etc.), configure rate limiting there.
 
 ### Recommended Rate Limits
