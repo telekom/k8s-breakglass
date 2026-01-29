@@ -136,6 +136,38 @@ spec:
                       type: string
                     type: array
                 type: object
+              annotations:
+                additionalProperties:
+                  type: string
+                description: |-
+                  annotations are additional annotations applied to resources created via this binding.
+                  Merged with template annotations.
+                type: object
+              approvalReason:
+                description: approvalReason overrides approval reason requirements
+                  from the template.
+                properties:
+                  description:
+                    description: description is help text displayed to approvers.
+                    type: string
+                  mandatory:
+                    default: false
+                    description: mandatory requires a reason for all approval/rejection
+                      actions.
+                    type: boolean
+                  mandatoryForRejection:
+                    default: true
+                    description: mandatoryForRejection requires a reason specifically
+                      for rejections.
+                    type: boolean
+                  minLength:
+                    default: 10
+                    description: minLength is the minimum character length for the
+                      reason.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
               approvers:
                 description: |-
                   approvers specifies who can approve sessions created via this binding.
@@ -287,6 +319,23 @@ spec:
                   displayNamePrefix is prepended to template display names when using templateSelector.
                   Only used with templateSelector, ignored with templateRef.
                 type: string
+              effectiveFrom:
+                description: |-
+                  effectiveFrom optionally sets when this binding becomes active.
+                  Before this time, the binding cannot be used.
+                format: date-time
+                type: string
+              expiresAt:
+                description: |-
+                  expiresAt optionally sets an expiry time for this binding.
+                  After this time, the binding becomes inactive automatically.
+                format: date-time
+                type: string
+              hidden:
+                default: false
+                description: hidden hides this binding from the UI but allows API
+                  usage.
+                type: boolean
               impersonation:
                 description: |-
                   impersonation configures ServiceAccount impersonation for deployment.
@@ -308,6 +357,25 @@ spec:
                     - namespace
                     type: object
                 type: object
+              labels:
+                additionalProperties:
+                  type: string
+                description: |-
+                  labels are additional labels applied to resources created via this binding.
+                  Merged with template labels.
+                type: object
+              maxActiveSessionsPerUser:
+                description: maxActiveSessionsPerUser limits concurrent sessions per
+                  user via this binding.
+                format: int32
+                minimum: 1
+                type: integer
+              maxActiveSessionsTotal:
+                description: maxActiveSessionsTotal limits total concurrent sessions
+                  via this binding.
+                format: int32
+                minimum: 1
+                type: integer
               namespaceConstraints:
                 description: |-
                   namespaceConstraints defines where debug pods can be deployed.
@@ -495,6 +563,97 @@ spec:
                       namespaceLabels are labels applied to created namespaces.
                       Only used when createIfNotExists=true.
                     type: object
+                type: object
+              notification:
+                description: notification overrides notification settings from the
+                  template.
+                properties:
+                  additionalRecipients:
+                    description: additionalRecipients are extra email addresses to
+                      notify (beyond requester/approvers).
+                    items:
+                      type: string
+                    type: array
+                  enabled:
+                    default: true
+                    description: enabled enables/disables notifications for debug
+                      sessions.
+                    type: boolean
+                  excludedRecipients:
+                    description: |-
+                      excludedRecipients are users/groups that should never receive notifications.
+                      Uses the same NotificationExclusions type as BreakglassEscalation for consistency.
+                    properties:
+                      groups:
+                        description: groups is a list of approver groups to exclude
+                          from notifications
+                        items:
+                          type: string
+                        type: array
+                      users:
+                        description: users is a list of user emails/usernames to exclude
+                          from notifications
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  notifyOnApproval:
+                    default: true
+                    description: notifyOnApproval sends notifications when a session
+                      is approved/rejected.
+                    type: boolean
+                  notifyOnExpiry:
+                    default: true
+                    description: notifyOnExpiry sends notifications when a session
+                      is about to expire.
+                    type: boolean
+                  notifyOnRequest:
+                    default: true
+                    description: notifyOnRequest sends notifications when a session
+                      is requested.
+                    type: boolean
+                  notifyOnTermination:
+                    default: true
+                    description: notifyOnTermination sends notifications when a session
+                      is terminated.
+                    type: boolean
+                type: object
+              priority:
+                description: priority overrides the template's priority for UI ordering.
+                format: int32
+                type: integer
+              requestReason:
+                description: requestReason overrides reason requirements from the
+                  template.
+                properties:
+                  description:
+                    description: description is help text displayed to users when
+                      entering a reason.
+                    type: string
+                  mandatory:
+                    default: false
+                    description: mandatory requires a reason for all session requests.
+                    type: boolean
+                  maxLength:
+                    default: 1000
+                    description: maxLength is the maximum character length for the
+                      reason.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minLength:
+                    default: 10
+                    description: minLength is the minimum character length for the
+                      reason.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  suggestedReasons:
+                    description: suggestedReasons is a list of pre-defined reason
+                      options for quick selection.
+                    items:
+                      type: string
+                    type: array
                 type: object
               requiredAuxiliaryResourceCategories:
                 description: |-
@@ -2151,6 +2310,14 @@ spec:
             description: DebugSessionClusterBindingStatus defines the observed state
               of DebugSessionClusterBinding.
             properties:
+              activeByUser:
+                additionalProperties:
+                  format: int32
+                  type: integer
+                description: |-
+                  activeByUser tracks active session counts per user.
+                  Key is user email, value is active session count.
+                type: object
               activeSessionCount:
                 description: activeSessionCount is the number of active debug sessions
                   using this binding.
@@ -2217,6 +2384,14 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              effectiveDisplayName:
+                description: effectiveDisplayName shows the computed display name
+                  for this binding.
+                type: string
+              isActive:
+                description: isActive indicates if this binding is currently active
+                  (not disabled, not expired, after effectiveFrom).
+                type: boolean
               lastUsed:
                 description: lastUsed is the timestamp of the last session created
                   using this binding.
@@ -2262,6 +2437,11 @@ spec:
                   the controller.
                 format: int64
                 type: integer
+              pendingSessionCount:
+                description: pendingSessionCount is the number of sessions pending
+                  approval.
+                format: int32
+                type: integer
               resolvedClusters:
                 description: resolvedClusters lists the clusters matched by this binding.
                 items:
@@ -2303,6 +2483,11 @@ spec:
                   - name
                   type: object
                 type: array
+              totalSessionCount:
+                description: totalSessionCount is the total number of sessions ever
+                  created via this binding.
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

@@ -339,6 +339,13 @@ func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds telekomv1alpha1.De
 		return
 	}
 
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.Notification != nil {
+		cfg := ds.Status.ResolvedTemplate.Notification
+		if !cfg.Enabled || !cfg.NotifyOnExpiry {
+			return
+		}
+	}
+
 	startedAt := ""
 	if ds.Status.StartsAt != nil {
 		startedAt = ds.Status.StartsAt.Time.Format("2006-01-02 15:04:05 UTC")
@@ -369,8 +376,63 @@ func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds telekomv1alpha1.De
 	}
 
 	subject := fmt.Sprintf("[%s] Debug Session Expired: %s", routine.BrandingName, ds.Name)
-	if err := routine.MailService.Enqueue(ds.Name, []string{ds.Spec.RequestedBy}, subject, body); err != nil {
+	recipients := buildDebugSessionNotificationRecipients(ds)
+	if len(recipients) == 0 {
+		routine.Log.Debugw("Skipping debug session expired email: no recipients",
+			append(system.NamespacedFields(ds.Name, ds.Namespace), "cluster", ds.Spec.Cluster)...)
+		return
+	}
+	if err := routine.MailService.Enqueue(ds.Name, recipients, subject, body); err != nil {
 		routine.Log.Errorw("failed to enqueue debug session expired email",
 			append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 	}
+}
+
+func buildDebugSessionNotificationRecipients(ds telekomv1alpha1.DebugSession) []string {
+	base := []string{ds.Spec.RequestedBy}
+	if ds.Spec.RequestedByEmail != "" {
+		base = []string{ds.Spec.RequestedByEmail}
+	}
+
+	cfg := (*telekomv1alpha1.DebugSessionNotificationConfig)(nil)
+	if ds.Status.ResolvedTemplate != nil {
+		cfg = ds.Status.ResolvedTemplate.Notification
+	}
+	if cfg == nil {
+		return base
+	}
+
+	seen := make(map[string]struct{}, len(base))
+	var recipients []string
+	add := func(addr string) {
+		if addr == "" {
+			return
+		}
+		if _, ok := seen[addr]; ok {
+			return
+		}
+		seen[addr] = struct{}{}
+		recipients = append(recipients, addr)
+	}
+	for _, addr := range base {
+		add(addr)
+	}
+	for _, addr := range cfg.AdditionalRecipients {
+		add(addr)
+	}
+	if cfg.ExcludedRecipients != nil && len(cfg.ExcludedRecipients.Users) > 0 {
+		excluded := make(map[string]struct{}, len(cfg.ExcludedRecipients.Users))
+		for _, u := range cfg.ExcludedRecipients.Users {
+			excluded[u] = struct{}{}
+		}
+		filtered := recipients[:0]
+		for _, addr := range recipients {
+			if _, blocked := excluded[addr]; blocked {
+				continue
+			}
+			filtered = append(filtered, addr)
+		}
+		recipients = filtered
+	}
+	return recipients
 }

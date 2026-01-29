@@ -8,13 +8,14 @@ This chart simplifies the configuration of privilege escalation policies by prov
 
 - **ClusterConfig** - Defines tenant cluster connections (kubeconfig or OIDC auth)
 - **BreakglassEscalation** - Defines escalation policies with allowed groups, approvers, and settings
+- **DebugSessionClusterBinding** - Connects debug session templates to specific clusters with optional overrides
 
 ## Prerequisites
 
 - Kubernetes 1.24+
 - Helm 3.0+
 - Breakglass controller installed and running
-- CRDs installed (BreakglassEscalation, ClusterConfig)
+- CRDs installed (BreakglassEscalation, ClusterConfig, DebugSessionClusterBinding)
 
 ## Installation
 
@@ -55,7 +56,7 @@ cluster:
   kubeconfigSecretRef:
     name: cluster-kubeconfig
     namespace: default
-    key: kubeconfig  # Optional, defaults to "kubeconfig"
+    key: value  # Optional, defaults to "value" for Cluster API compatibility
 ```
 
 #### OIDC Authentication
@@ -204,6 +205,144 @@ escalations:
       approvers:
         groups:
           - security-team
+```
+
+### Debug Session Cluster Bindings
+
+The `debugSessionBindings` array connects DebugSessionTemplates to specific clusters with optional overrides:
+
+```yaml
+debugSessionBindings:
+  - name: production-debug-access
+    displayName: "Production Debug Access"
+    description: "Debug sessions for production clusters"
+    
+    # Reference a template by name
+    templateRef:
+      name: standard-debug-template
+    
+    # Target specific clusters
+    clusters:
+      - prod-cluster-1
+      - prod-cluster-2
+    
+    # Override access control
+    allowed:
+      groups:
+        - sre-team
+    approvers:
+      groups:
+        - senior-sre
+      # Auto-approve for specific groups/clusters
+      # autoApproveFor:
+      #   groups:
+      #     - oncall-sre
+      #   clusters:
+      #     - dev-*
+    
+    # Add scheduling constraints
+    schedulingConstraints:
+      nodeSelector:
+        node-pool: debug-nodes
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+    
+    # Session constraints
+    constraints:
+      maxDuration: "2h"
+      defaultDuration: "30m"
+    
+    # Namespace constraints
+    namespaceConstraints:
+      defaultNamespace: debug-workloads
+      allowUserNamespace: false
+    
+    # Reason requirements
+    requestReason:
+      mandatory: true
+      description: "Provide incident ticket"
+    
+    # Session limits
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 5
+```
+
+### Debug Session Binding Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `name` | Unique binding name | Required |
+| `displayName` | Human-readable name for UI | - |
+| `description` | Description of this binding | - |
+| `templateRef.name` | Reference to a DebugSessionTemplate | - |
+| `templateSelector` | Label selector for multiple templates | - |
+| `clusters` | List of target cluster names | - |
+| `clusterSelector` | Label selector for clusters | - |
+| `allowed.groups` | Groups allowed to use this binding | - |
+| `allowed.users` | Individual users allowed | - |
+| `approvers.groups` | Groups that can approve | - |
+| `approvers.users` | Individual approvers | - |
+| `approvers.autoApproveFor` | Auto-approve config for specific groups/clusters | - |
+| `schedulingConstraints` | Node scheduling rules | - |
+| `schedulingOptions` | User-selectable scheduling options | - |
+| `constraints.maxDuration` | Maximum session duration | - |
+| `constraints.defaultDuration` | Default session duration | - |
+| `namespaceConstraints` | Namespace deployment rules | - |
+| `impersonation` | ServiceAccount impersonation config | - |
+| `requiredAuxiliaryResourceCategories` | Required auxiliary resources | - |
+| `auxiliaryResourceOverrides` | Enable/disable auxiliary resources | - |
+| `requestReason.mandatory` | Require reason for requests | `false` |
+| `maxActiveSessionsPerUser` | Max concurrent sessions per user | - |
+| `maxActiveSessionsTotal` | Max total concurrent sessions | - |
+| `priority` | UI ordering priority | - |
+| `disabled` | Temporarily disable binding | `false` |
+| `hidden` | Hide from UI | `false` |
+| `effectiveFrom` | When binding becomes active | - |
+| `expiresAt` | When binding expires | - |
+
+### Template Selector Example
+
+To apply a binding to multiple templates:
+
+```yaml
+debugSessionBindings:
+  - name: all-dev-templates
+    templateSelector:
+      matchLabels:
+        tier: development
+    displayNamePrefix: "[DEV] "
+    clusters:
+      - dev-cluster
+    constraints:
+      maxDuration: "4h"  # More permissive for dev
+```
+
+### Scheduling Options Example
+
+Offer users a choice of node pools:
+
+```yaml
+debugSessionBindings:
+  - name: multi-pool-binding
+    templateRef:
+      name: flexible-template
+    clusters:
+      - multi-pool-cluster
+    schedulingOptions:
+      required: true
+      options:
+        - name: standard
+          displayName: "Standard Nodes"
+          schedulingConstraints:
+            nodeSelector:
+              node-type: standard
+        - name: high-memory
+          displayName: "High Memory Nodes"
+          schedulingConstraints:
+            nodeSelector:
+              node-type: high-memory
 ```
 
 ## Examples

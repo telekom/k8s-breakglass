@@ -82,6 +82,40 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// requiredAuxiliaryResourceCategories lists categories that MUST be enabled.
 	// These cannot be disabled by bindings or users.
 	RequiredAuxiliaryResourceCategories []string `json:"requiredAuxiliaryResourceCategories,omitempty"`
+	// notification configures notification settings for debug sessions using this template.
+	Notification *DebugSessionNotificationConfigApplyConfiguration `json:"notification,omitempty"`
+	// requestReason configures reason requirements for debug session requests.
+	RequestReason *DebugRequestReasonConfigApplyConfiguration `json:"requestReason,omitempty"`
+	// approvalReason configures reason requirements for approval/rejection actions.
+	ApprovalReason *DebugApprovalReasonConfigApplyConfiguration `json:"approvalReason,omitempty"`
+	// resourceQuota specifies resource limits for debug sessions using this template.
+	// Helps prevent resource exhaustion on target clusters.
+	ResourceQuota *DebugResourceQuotaConfigApplyConfiguration `json:"resourceQuota,omitempty"`
+	// podDisruptionBudget configures disruption tolerance for debug pods.
+	// Useful for long-running debug sessions that shouldn't be evicted.
+	PodDisruptionBudget *DebugPDBConfigApplyConfiguration `json:"podDisruptionBudget,omitempty"`
+	// labels are additional labels applied to all resources created by this template.
+	Labels map[string]string `json:"labels,omitempty"`
+	// annotations are additional annotations applied to all resources created by this template.
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// priority controls the order in which templates are displayed in the UI.
+	// Higher values appear first. Defaults to 0.
+	Priority *int32 `json:"priority,omitempty"`
+	// hidden hides this template from the UI but allows API usage.
+	// Useful for templates used by automation or internal tools.
+	Hidden *bool `json:"hidden,omitempty"`
+	// deprecated marks this template as deprecated.
+	// Deprecated templates show a warning but can still be used.
+	Deprecated *bool `json:"deprecated,omitempty"`
+	// deprecationMessage explains why this template is deprecated and suggests alternatives.
+	// Only displayed when deprecated is true.
+	DeprecationMessage *string `json:"deprecationMessage,omitempty"`
+	// expirationBehavior controls what happens when a session expires.
+	// Options: "terminate" (default) or "notify-only".
+	ExpirationBehavior *string `json:"expirationBehavior,omitempty"`
+	// gracePeriodBeforeExpiry is the duration before expiry when users are notified.
+	// Users will receive a warning notification at this interval before session expires.
+	GracePeriodBeforeExpiry *string `json:"gracePeriodBeforeExpiry,omitempty"`
 }
 
 // DebugSessionTemplateSpecApplyConfiguration constructs a declarative configuration of the DebugSessionTemplateSpec type for use with
@@ -294,5 +328,121 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithRequiredAuxiliaryResour
 	for i := range values {
 		b.RequiredAuxiliaryResourceCategories = append(b.RequiredAuxiliaryResourceCategories, values[i])
 	}
+	return b
+}
+
+// WithNotification sets the Notification field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Notification field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithNotification(value *DebugSessionNotificationConfigApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.Notification = value
+	return b
+}
+
+// WithRequestReason sets the RequestReason field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequestReason field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithRequestReason(value *DebugRequestReasonConfigApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.RequestReason = value
+	return b
+}
+
+// WithApprovalReason sets the ApprovalReason field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ApprovalReason field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithApprovalReason(value *DebugApprovalReasonConfigApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.ApprovalReason = value
+	return b
+}
+
+// WithResourceQuota sets the ResourceQuota field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ResourceQuota field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithResourceQuota(value *DebugResourceQuotaConfigApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.ResourceQuota = value
+	return b
+}
+
+// WithPodDisruptionBudget sets the PodDisruptionBudget field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PodDisruptionBudget field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithPodDisruptionBudget(value *DebugPDBConfigApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.PodDisruptionBudget = value
+	return b
+}
+
+// WithLabels puts the entries into the Labels field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the Labels field,
+// overwriting an existing map entries in Labels field with the same key.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithLabels(entries map[string]string) *DebugSessionTemplateSpecApplyConfiguration {
+	if b.Labels == nil && len(entries) > 0 {
+		b.Labels = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.Labels[k] = v
+	}
+	return b
+}
+
+// WithAnnotations puts the entries into the Annotations field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the Annotations field,
+// overwriting an existing map entries in Annotations field with the same key.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithAnnotations(entries map[string]string) *DebugSessionTemplateSpecApplyConfiguration {
+	if b.Annotations == nil && len(entries) > 0 {
+		b.Annotations = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.Annotations[k] = v
+	}
+	return b
+}
+
+// WithPriority sets the Priority field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Priority field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithPriority(value int32) *DebugSessionTemplateSpecApplyConfiguration {
+	b.Priority = &value
+	return b
+}
+
+// WithHidden sets the Hidden field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Hidden field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithHidden(value bool) *DebugSessionTemplateSpecApplyConfiguration {
+	b.Hidden = &value
+	return b
+}
+
+// WithDeprecated sets the Deprecated field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Deprecated field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithDeprecated(value bool) *DebugSessionTemplateSpecApplyConfiguration {
+	b.Deprecated = &value
+	return b
+}
+
+// WithDeprecationMessage sets the DeprecationMessage field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DeprecationMessage field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithDeprecationMessage(value string) *DebugSessionTemplateSpecApplyConfiguration {
+	b.DeprecationMessage = &value
+	return b
+}
+
+// WithExpirationBehavior sets the ExpirationBehavior field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ExpirationBehavior field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithExpirationBehavior(value string) *DebugSessionTemplateSpecApplyConfiguration {
+	b.ExpirationBehavior = &value
+	return b
+}
+
+// WithGracePeriodBeforeExpiry sets the GracePeriodBeforeExpiry field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the GracePeriodBeforeExpiry field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithGracePeriodBeforeExpiry(value string) *DebugSessionTemplateSpecApplyConfiguration {
+	b.GracePeriodBeforeExpiry = &value
 	return b
 }

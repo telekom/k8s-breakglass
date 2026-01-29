@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **DebugSessionClusterBinding Advanced Features**: Full implementation of binding lifecycle and session control fields
+  - Time-bounded bindings: `expiresAt` and `effectiveFrom` fields control when bindings are active
+  - Session limits: `maxActiveSessionsPerUser` and `maxActiveSessionsTotal` prevent resource exhaustion
+  - UI control: `hidden` field hides bindings from UI, `priority` controls display ordering
+  - Session metadata: `labels` and `annotations` propagated to created sessions and workloads
+  - Reason configuration: `requestReason` and `approvalReason` with mandatory flags, length constraints, and suggested reasons
+  - Notification configuration: `notification` field overrides template notification settings
+  - API returns `isActive` status and time fields in binding list responses
+  - `IsBindingActive()` function validates disabled state, expiry, and effective dates
+
+- **DebugPodSpec Extended Fields**: All corev1.PodSpec scheduling and runtime fields now supported
+  - `priorityClassName`, `runtimeClassName`, `preemptionPolicy` for resource priority
+  - `topologySpreadConstraints` for pod distribution across failure domains
+  - `shareProcessNamespace` for container process visibility
+  - `hostAliases` for custom /etc/hosts entries
+  - `imagePullSecrets` for private registry authentication
+  - `enableServiceLinks` for service environment variable control
+  - `schedulerName` for custom scheduler selection
+  - `overhead` for pod resource overhead
+
+- **ClusterConfig Deletion Session Cleanup**: Finalizer-based session cleanup when clusters are deleted
+  - Adds `breakglass.t-caas.telekom.com/cluster-cleanup` finalizer to ClusterConfig resources
+  - Automatically expires active BreakglassSessions targeting deleted clusters
+  - Automatically fails active DebugSessions targeting deleted clusters
+  - Preserves already-terminal session states (Expired, Rejected, etc.)
+  - New `breakglass_cluster_configs_deleted_total` Prometheus metric
+  - Prevents orphaned sessions when clusters are removed
+
 - **Multiple Binding Options Support**: When multiple DebugSessionClusterBindings match the same cluster, all options are now presented to users
   - API returns `bindingOptions[]` array in cluster details with each binding's resolved configuration
   - Frontend displays binding selection cards only when multiple bindings are available
@@ -70,6 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enables least-privilege deployment patterns via pre-configured ServiceAccounts
 - **Cluster Selector for DebugSessionTemplate**: Select clusters by labels (in addition to patterns)
   - `allowed.clusterSelector`: Label selector for dynamic cluster matching
+
   - Combined with `allowed.clusters` patterns (OR logic)
 - **Resolved Fields in DebugSession**: Session stores resolved configuration at creation time
   - `spec.targetNamespace`: Resolved target namespace for debug pods
@@ -145,13 +174,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Additional unit tests for `pkg/bgctl/cmd` runtime helpers
 - Unit tests for `cmd/bgctl` entrypoint
 - Additional unit tests for `pkg/config` IdentityProvider reconciler
+- Full integration test for `ScheduledSessionActivator.ActivateScheduledSessions()` covering session state transitions, email notifications, and edge cases
 
 ### Fixed
 
+- **Helm chart documentation**: Fixed incorrect `kubeconfigSecretRef.key` default value in `charts/escalation-config/values.yaml` and `README.md` (was "kubeconfig", now correctly documents "value" for Cluster API compatibility)
 - Align session ownership checks with configured user identifier claims to avoid duplicate or missing sessions.
 - Guard against zero `retainedUntil` timestamps so sessions are not treated as retained immediately.
 - Avoid startup panics on malformed email templates by returning controlled render errors.
 - Ensure JWKS HTTP clients use timeouts to prevent auth verification hangs.
+- Debug session notification settings now gate request/approval/expiry emails and honor additional/excluded recipients.
+- Debug session template/binding labels and annotations now propagate to workloads and related resources.
+- Debug session resource quotas and pod disruption budgets are now created and cleaned up when configured.
 
 ### Security
 

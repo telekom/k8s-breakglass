@@ -1,0 +1,259 @@
+{{- range $i, $binding := .Values.debugSessionBindings }}
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: {{ required "debugSessionBindings[].name is required" $binding.name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $.Release.Namespace }}
+  {{- if $binding.labels }}
+  labels:
+{{ toYaml $binding.labels | indent 4 }}
+  {{- end }}
+  {{- if $binding.annotations }}
+  annotations:
+{{ toYaml $binding.annotations | indent 4 }}
+  {{- end }}
+spec:
+  {{- /* Display name and description */}}
+  {{- if $binding.displayName }}
+  displayName: {{ $binding.displayName | quote }}
+  {{- end }}
+  {{- if $binding.displayNamePrefix }}
+  displayNamePrefix: {{ $binding.displayNamePrefix | quote }}
+  {{- end }}
+  {{- if $binding.description }}
+  description: {{ $binding.description | quote }}
+  {{- end }}
+
+  {{- /* Template reference (mutually exclusive with templateSelector) */}}
+  {{- if $binding.templateRef }}
+  templateRef:
+    name: {{ $binding.templateRef.name }}
+  {{- end }}
+
+  {{- /* Template selector (mutually exclusive with templateRef) */}}
+  {{- if $binding.templateSelector }}
+  templateSelector:
+{{ toYaml $binding.templateSelector | indent 4 }}
+  {{- end }}
+
+  {{- /* Cluster targeting */}}
+  {{- if $binding.clusters }}
+  clusters:
+{{ toYaml $binding.clusters | indent 4 }}
+  {{- end }}
+  {{- if $binding.clusterSelector }}
+  clusterSelector:
+{{ toYaml $binding.clusterSelector | indent 4 }}
+  {{- end }}
+
+  {{- /* Access control */}}
+  {{- if $binding.allowed }}
+  allowed:
+    {{- if $binding.allowed.groups }}
+    groups:
+{{ toYaml $binding.allowed.groups | indent 6 }}
+    {{- end }}
+    {{- if $binding.allowed.users }}
+    users:
+{{ toYaml $binding.allowed.users | indent 6 }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Approvers */}}
+  {{- if $binding.approvers }}
+  approvers:
+    {{- if $binding.approvers.groups }}
+    groups:
+{{ toYaml $binding.approvers.groups | indent 6 }}
+    {{- end }}
+    {{- if $binding.approvers.users }}
+    users:
+{{ toYaml $binding.approvers.users | indent 6 }}
+    {{- end }}
+    {{- if $binding.approvers.autoApproveFor }}
+    autoApproveFor:
+{{ toYaml $binding.approvers.autoApproveFor | indent 6 }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Scheduling constraints */}}
+  {{- if $binding.schedulingConstraints }}
+  schedulingConstraints:
+    {{- if $binding.schedulingConstraints.nodeSelector }}
+    nodeSelector:
+{{ toYaml $binding.schedulingConstraints.nodeSelector | indent 6 }}
+    {{- end }}
+    {{- if $binding.schedulingConstraints.tolerations }}
+    tolerations:
+{{ toYaml $binding.schedulingConstraints.tolerations | indent 6 }}
+    {{- end }}
+    {{- if $binding.schedulingConstraints.requiredNodeAffinity }}
+    requiredNodeAffinity:
+{{ toYaml $binding.schedulingConstraints.requiredNodeAffinity | indent 6 }}
+    {{- end }}
+    {{- if $binding.schedulingConstraints.preferredNodeAffinity }}
+    preferredNodeAffinity:
+{{ toYaml $binding.schedulingConstraints.preferredNodeAffinity | indent 6 }}
+    {{- end }}
+    {{- if $binding.schedulingConstraints.requiredPodAntiAffinity }}
+    requiredPodAntiAffinity:
+{{ toYaml $binding.schedulingConstraints.requiredPodAntiAffinity | indent 6 }}
+    {{- end }}
+    {{- if $binding.schedulingConstraints.preferredPodAntiAffinity }}
+    preferredPodAntiAffinity:
+{{ toYaml $binding.schedulingConstraints.preferredPodAntiAffinity | indent 6 }}
+    {{- end }}
+    {{- if $binding.schedulingConstraints.topologySpreadConstraints }}
+    topologySpreadConstraints:
+{{ toYaml $binding.schedulingConstraints.topologySpreadConstraints | indent 6 }}
+    {{- end }}
+    {{- if $binding.schedulingConstraints.deniedNodes }}
+    deniedNodes:
+{{ toYaml $binding.schedulingConstraints.deniedNodes | indent 6 }}
+    {{- end }}
+    {{- if $binding.schedulingConstraints.deniedNodeLabels }}
+    deniedNodeLabels:
+{{ toYaml $binding.schedulingConstraints.deniedNodeLabels | indent 6 }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Scheduling options */}}
+  {{- if $binding.schedulingOptions }}
+  schedulingOptions:
+    {{- if hasKey $binding.schedulingOptions "required" }}
+    required: {{ $binding.schedulingOptions.required }}
+    {{- end }}
+    {{- if $binding.schedulingOptions.options }}
+    options:
+{{ toYaml $binding.schedulingOptions.options | indent 6 }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Session constraints */}}
+  {{- if $binding.constraints }}
+  constraints:
+    {{- if $binding.constraints.maxDuration }}
+    maxDuration: {{ $binding.constraints.maxDuration }}
+    {{- end }}
+    {{- if $binding.constraints.defaultDuration }}
+    defaultDuration: {{ $binding.constraints.defaultDuration }}
+    {{- end }}
+    {{- if hasKey $binding.constraints "allowRenewal" }}
+    allowRenewal: {{ $binding.constraints.allowRenewal }}
+    {{- end }}
+    {{- if $binding.constraints.maxRenewals }}
+    maxRenewals: {{ $binding.constraints.maxRenewals }}
+    {{- end }}
+    {{- if $binding.constraints.maxConcurrentSessions }}
+    maxConcurrentSessions: {{ $binding.constraints.maxConcurrentSessions }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Namespace constraints */}}
+  {{- if $binding.namespaceConstraints }}
+  namespaceConstraints:
+    {{- if $binding.namespaceConstraints.defaultNamespace }}
+    defaultNamespace: {{ $binding.namespaceConstraints.defaultNamespace }}
+    {{- end }}
+    {{- if hasKey $binding.namespaceConstraints "allowUserNamespace" }}
+    allowUserNamespace: {{ $binding.namespaceConstraints.allowUserNamespace }}
+    {{- end }}
+    {{- if hasKey $binding.namespaceConstraints "createIfNotExists" }}
+    createIfNotExists: {{ $binding.namespaceConstraints.createIfNotExists }}
+    {{- end }}
+    {{- if $binding.namespaceConstraints.allowedNamespaces }}
+    allowedNamespaces:
+{{ toYaml $binding.namespaceConstraints.allowedNamespaces | indent 6 }}
+    {{- end }}
+    {{- if $binding.namespaceConstraints.deniedNamespaces }}
+    deniedNamespaces:
+{{ toYaml $binding.namespaceConstraints.deniedNamespaces | indent 6 }}
+    {{- end }}
+    {{- if $binding.namespaceConstraints.namespaceLabels }}
+    namespaceLabels:
+{{ toYaml $binding.namespaceConstraints.namespaceLabels | indent 6 }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Impersonation config */}}
+  {{- if $binding.impersonation }}
+  impersonation:
+    {{- if $binding.impersonation.serviceAccountRef }}
+    serviceAccountRef:
+      name: {{ $binding.impersonation.serviceAccountRef.name }}
+      namespace: {{ $binding.impersonation.serviceAccountRef.namespace }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Auxiliary resources */}}
+  {{- if $binding.requiredAuxiliaryResourceCategories }}
+  requiredAuxiliaryResourceCategories:
+{{ toYaml $binding.requiredAuxiliaryResourceCategories | indent 4 }}
+  {{- end }}
+  {{- if $binding.auxiliaryResourceOverrides }}
+  auxiliaryResourceOverrides:
+{{ toYaml $binding.auxiliaryResourceOverrides | indent 4 }}
+  {{- end }}
+
+  {{- /* State flags */}}
+  {{- if hasKey $binding "disabled" }}
+  disabled: {{ $binding.disabled }}
+  {{- end }}
+  {{- if hasKey $binding "hidden" }}
+  hidden: {{ $binding.hidden }}
+  {{- end }}
+
+  {{- /* Notification config */}}
+  {{- if $binding.notification }}
+  notification:
+    {{- if hasKey $binding.notification "enabled" }}
+    enabled: {{ $binding.notification.enabled }}
+    {{- end }}
+    {{- if $binding.notification.channels }}
+    channels:
+{{ toYaml $binding.notification.channels | indent 6 }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Reason configuration */}}
+  {{- if $binding.requestReason }}
+  requestReason:
+    {{- if hasKey $binding.requestReason "mandatory" }}
+    mandatory: {{ $binding.requestReason.mandatory }}
+    {{- end }}
+    {{- if $binding.requestReason.description }}
+    description: {{ $binding.requestReason.description | quote }}
+    {{- end }}
+  {{- end }}
+  {{- if $binding.approvalReason }}
+  approvalReason:
+    {{- if hasKey $binding.approvalReason "mandatory" }}
+    mandatory: {{ $binding.approvalReason.mandatory }}
+    {{- end }}
+    {{- if $binding.approvalReason.description }}
+    description: {{ $binding.approvalReason.description | quote }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Priority and ordering */}}
+  {{- if $binding.priority }}
+  priority: {{ $binding.priority }}
+  {{- end }}
+
+  {{- /* Time-based activation */}}
+  {{- if $binding.effectiveFrom }}
+  effectiveFrom: {{ $binding.effectiveFrom }}
+  {{- end }}
+  {{- if $binding.expiresAt }}
+  expiresAt: {{ $binding.expiresAt }}
+  {{- end }}
+
+  {{- /* Session limits */}}
+  {{- if $binding.maxActiveSessionsPerUser }}
+  maxActiveSessionsPerUser: {{ $binding.maxActiveSessionsPerUser }}
+  {{- end }}
+  {{- if $binding.maxActiveSessionsTotal }}
+  maxActiveSessionsTotal: {{ $binding.maxActiveSessionsTotal }}
+  {{- end }}
+---
+{{- end }}

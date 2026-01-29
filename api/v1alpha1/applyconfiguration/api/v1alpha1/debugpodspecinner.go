@@ -49,6 +49,34 @@ type DebugPodSpecInnerApplyConfiguration struct {
 	RestartPolicy *v1.RestartPolicy `json:"restartPolicy,omitempty"`
 	// terminationGracePeriodSeconds specifies the duration in seconds for graceful termination.
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
+	// priorityClassName is the name of the PriorityClass for this pod.
+	// Use this to control scheduling priority of debug pods.
+	PriorityClassName *string `json:"priorityClassName,omitempty"`
+	// runtimeClassName refers to a RuntimeClass for running this pod.
+	// Useful for running debug pods with specific container runtimes (e.g., gVisor, Kata).
+	RuntimeClassName *string `json:"runtimeClassName,omitempty"`
+	// preemptionPolicy controls whether this pod can preempt lower-priority pods.
+	// Valid values: "PreemptLowerPriority" (default) or "Never".
+	PreemptionPolicy *v1.PreemptionPolicy `json:"preemptionPolicy,omitempty"`
+	// topologySpreadConstraints describe how debug pods should be spread across topology domains.
+	TopologySpreadConstraints []v1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+	// dnsConfig specifies additional DNS configuration for the pod.
+	DNSConfig *v1.PodDNSConfig `json:"dnsConfig,omitempty"`
+	// shareProcessNamespace enables sharing the process namespace between containers.
+	// Useful for debugging when you need to see processes in other containers.
+	ShareProcessNamespace *bool `json:"shareProcessNamespace,omitempty"`
+	// hostAliases adds entries to the pod's /etc/hosts file.
+	HostAliases []v1.HostAlias `json:"hostAliases,omitempty"`
+	// imagePullSecrets references secrets for pulling container images.
+	ImagePullSecrets []v1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+	// enableServiceLinks specifies whether to inject service environment variables.
+	// Defaults to false for security - debug pods should be isolated.
+	EnableServiceLinks *bool `json:"enableServiceLinks,omitempty"`
+	// schedulerName specifies the scheduler to use for this pod.
+	SchedulerName *string `json:"schedulerName,omitempty"`
+	// overhead represents the resource overhead associated with the pod.
+	// Used for RuntimeClass overhead accounting.
+	Overhead *v1.ResourceList `json:"overhead,omitempty"`
 }
 
 // DebugPodSpecInnerApplyConfiguration constructs a declarative configuration of the DebugPodSpecInner type for use with
@@ -188,5 +216,99 @@ func (b *DebugPodSpecInnerApplyConfiguration) WithRestartPolicy(value v1.Restart
 // If called multiple times, the TerminationGracePeriodSeconds field is set to the value of the last call.
 func (b *DebugPodSpecInnerApplyConfiguration) WithTerminationGracePeriodSeconds(value int64) *DebugPodSpecInnerApplyConfiguration {
 	b.TerminationGracePeriodSeconds = &value
+	return b
+}
+
+// WithPriorityClassName sets the PriorityClassName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PriorityClassName field is set to the value of the last call.
+func (b *DebugPodSpecInnerApplyConfiguration) WithPriorityClassName(value string) *DebugPodSpecInnerApplyConfiguration {
+	b.PriorityClassName = &value
+	return b
+}
+
+// WithRuntimeClassName sets the RuntimeClassName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RuntimeClassName field is set to the value of the last call.
+func (b *DebugPodSpecInnerApplyConfiguration) WithRuntimeClassName(value string) *DebugPodSpecInnerApplyConfiguration {
+	b.RuntimeClassName = &value
+	return b
+}
+
+// WithPreemptionPolicy sets the PreemptionPolicy field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PreemptionPolicy field is set to the value of the last call.
+func (b *DebugPodSpecInnerApplyConfiguration) WithPreemptionPolicy(value v1.PreemptionPolicy) *DebugPodSpecInnerApplyConfiguration {
+	b.PreemptionPolicy = &value
+	return b
+}
+
+// WithTopologySpreadConstraints adds the given value to the TopologySpreadConstraints field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the TopologySpreadConstraints field.
+func (b *DebugPodSpecInnerApplyConfiguration) WithTopologySpreadConstraints(values ...v1.TopologySpreadConstraint) *DebugPodSpecInnerApplyConfiguration {
+	for i := range values {
+		b.TopologySpreadConstraints = append(b.TopologySpreadConstraints, values[i])
+	}
+	return b
+}
+
+// WithDNSConfig sets the DNSConfig field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DNSConfig field is set to the value of the last call.
+func (b *DebugPodSpecInnerApplyConfiguration) WithDNSConfig(value v1.PodDNSConfig) *DebugPodSpecInnerApplyConfiguration {
+	b.DNSConfig = &value
+	return b
+}
+
+// WithShareProcessNamespace sets the ShareProcessNamespace field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ShareProcessNamespace field is set to the value of the last call.
+func (b *DebugPodSpecInnerApplyConfiguration) WithShareProcessNamespace(value bool) *DebugPodSpecInnerApplyConfiguration {
+	b.ShareProcessNamespace = &value
+	return b
+}
+
+// WithHostAliases adds the given value to the HostAliases field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the HostAliases field.
+func (b *DebugPodSpecInnerApplyConfiguration) WithHostAliases(values ...v1.HostAlias) *DebugPodSpecInnerApplyConfiguration {
+	for i := range values {
+		b.HostAliases = append(b.HostAliases, values[i])
+	}
+	return b
+}
+
+// WithImagePullSecrets adds the given value to the ImagePullSecrets field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ImagePullSecrets field.
+func (b *DebugPodSpecInnerApplyConfiguration) WithImagePullSecrets(values ...v1.LocalObjectReference) *DebugPodSpecInnerApplyConfiguration {
+	for i := range values {
+		b.ImagePullSecrets = append(b.ImagePullSecrets, values[i])
+	}
+	return b
+}
+
+// WithEnableServiceLinks sets the EnableServiceLinks field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the EnableServiceLinks field is set to the value of the last call.
+func (b *DebugPodSpecInnerApplyConfiguration) WithEnableServiceLinks(value bool) *DebugPodSpecInnerApplyConfiguration {
+	b.EnableServiceLinks = &value
+	return b
+}
+
+// WithSchedulerName sets the SchedulerName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SchedulerName field is set to the value of the last call.
+func (b *DebugPodSpecInnerApplyConfiguration) WithSchedulerName(value string) *DebugPodSpecInnerApplyConfiguration {
+	b.SchedulerName = &value
+	return b
+}
+
+// WithOverhead sets the Overhead field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Overhead field is set to the value of the last call.
+func (b *DebugPodSpecInnerApplyConfiguration) WithOverhead(value v1.ResourceList) *DebugPodSpecInnerApplyConfiguration {
+	b.Overhead = &value
 	return b
 }

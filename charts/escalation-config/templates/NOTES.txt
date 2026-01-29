@@ -1,6 +1,9 @@
 Breakglass escalation-config chart
 
-This chart renders one or more BreakglassEscalation CRs and a ClusterConfig CR using values from `values.yaml`.
+This chart renders the following CRs using values from `values.yaml`:
+- ClusterConfig - Cluster connection configuration
+- BreakglassEscalation - Privilege escalation policies
+- DebugSessionClusterBinding - Debug session template bindings
 
 To render templates locally:
 
@@ -10,3 +13,13 @@ To install to a cluster:
 
   helm install escalation-config ./charts/escalation-config --namespace breakglass --create-namespace
 
+Resources created:
+{{- if .Values.cluster.clusterID }}
+- ClusterConfig: {{ .Values.cluster.clusterID }}
+{{- end }}
+{{- if .Values.escalations }}
+- Escalations: {{ len .Values.escalations }}
+{{- end }}
+{{- if .Values.debugSessionBindings }}
+- DebugSessionClusterBindings: {{ len .Values.debugSessionBindings }}
+{{- end }}

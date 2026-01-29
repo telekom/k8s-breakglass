@@ -490,6 +490,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Set explicit binding reference if provided (format: "namespace/name")
+	var resolvedBinding *v1alpha1.DebugSessionClusterBinding
 	if req.BindingRef != "" {
 		parts := strings.SplitN(req.BindingRef, "/", 2)
 		if len(parts) == 2 {
@@ -497,8 +498,50 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				Name:      parts[1],
 				Namespace: parts[0],
 			}
+			// Fetch the binding for limit checking
+			resolvedBinding = &v1alpha1.DebugSessionClusterBinding{}
+			if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: parts[1], Namespace: parts[0]}, resolvedBinding); err != nil {
+				if apierrors.IsNotFound(err) {
+					ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("binding '%s' not found", req.BindingRef)})
+					return
+				}
+				reqLog.Errorw("Failed to get binding", "binding", req.BindingRef, "error", err)
+				ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate binding"})
+				return
+			}
+
+			// Check if binding is active
+			if !IsBindingActive(resolvedBinding) {
+				ctx.JSON(http.StatusForbidden, gin.H{"error": "binding is not active (disabled, expired, or not yet effective)"})
+				return
+			}
 		} else {
 			reqLog.Warnw("Invalid bindingRef format, expected namespace/name", "bindingRef", req.BindingRef)
+		}
+	}
+
+	// Check binding session limits if a binding is resolved
+	if resolvedBinding != nil {
+		if err := c.checkBindingSessionLimits(apiCtx, resolvedBinding, userEmail); err != nil {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Apply binding labels to the session
+		if len(resolvedBinding.Spec.Labels) > 0 {
+			for k, v := range resolvedBinding.Spec.Labels {
+				session.Labels[k] = v
+			}
+		}
+
+		// Apply binding annotations to the session
+		if len(resolvedBinding.Spec.Annotations) > 0 {
+			if session.Annotations == nil {
+				session.Annotations = make(map[string]string)
+			}
+			for k, v := range resolvedBinding.Spec.Annotations {
+				session.Annotations[k] = v
+			}
 		}
 	}
 
@@ -513,10 +556,10 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Send request email to approvers
-	c.sendDebugSessionRequestEmail(apiCtx, session, template)
+	c.sendDebugSessionRequestEmail(apiCtx, session, template, resolvedBinding)
 
 	// Send confirmation email to requester
-	c.sendDebugSessionCreatedEmail(session, template)
+	c.sendDebugSessionCreatedEmail(apiCtx, session, template, resolvedBinding)
 
 	// Emit audit event for session creation
 	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionCreated, session, currentUser.(string), "Debug session created")
@@ -877,7 +920,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 
 	// Send approval email to requester
-	c.sendDebugSessionApprovalEmail(session)
+	c.sendDebugSessionApprovalEmail(apiCtx, session)
 
 	// Emit audit event for session approval
 	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, currentUser.(string), "Debug session approved")
@@ -962,7 +1005,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	}
 
 	// Send rejection email to requester
-	c.sendDebugSessionRejectionEmail(session)
+	c.sendDebugSessionRejectionEmail(apiCtx, session)
 
 	// Emit audit event for session rejection
 	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser.(string), fmt.Sprintf("Debug session rejected: %s", req.Reason))
@@ -1058,6 +1101,10 @@ type DebugSessionTemplateResponse struct {
 	RequiresApproval     bool                              `json:"requiresApproval"`
 	SchedulingOptions    *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
 	NamespaceConstraints *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+	Priority             int32                             `json:"priority,omitempty"`
+	Hidden               bool                              `json:"hidden,omitempty"`
+	Deprecated           bool                              `json:"deprecated,omitempty"`
+	DeprecationMessage   string                            `json:"deprecationMessage,omitempty"`
 }
 
 // SchedulingOptionsResponse represents scheduling options in API responses
@@ -1131,6 +1178,9 @@ type AvailableClusterDetail struct {
 	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
 	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
 	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
+	RequestReason                 *ReasonConfigInfo                 `json:"requestReason,omitempty"`
+	ApprovalReason                *ReasonConfigInfo                 `json:"approvalReason,omitempty"`
+	Notification                  *NotificationConfigInfo           `json:"notification,omitempty"`
 	Status                        *ClusterStatusInfo                `json:"status,omitempty"`
 }
 
@@ -1146,6 +1196,9 @@ type BindingOption struct {
 	Impersonation                 *ImpersonationSummary             `json:"impersonation,omitempty"`
 	RequiredAuxResourceCategories []string                          `json:"requiredAuxiliaryResourceCategories,omitempty"`
 	Approval                      *ApprovalInfo                     `json:"approval,omitempty"`
+	RequestReason                 *ReasonConfigInfo                 `json:"requestReason,omitempty"`
+	ApprovalReason                *ReasonConfigInfo                 `json:"approvalReason,omitempty"`
+	Notification                  *NotificationConfigInfo           `json:"notification,omitempty"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -1183,6 +1236,20 @@ type ClusterStatusInfo struct {
 	LastChecked string `json:"lastChecked,omitempty"`
 }
 
+// ReasonConfigInfo contains reason configuration for API responses
+type ReasonConfigInfo struct {
+	Mandatory        bool     `json:"mandatory"`
+	Description      string   `json:"description,omitempty"`
+	MinLength        int32    `json:"minLength,omitempty"`
+	MaxLength        int32    `json:"maxLength,omitempty"`
+	SuggestedReasons []string `json:"suggestedReasons,omitempty"`
+}
+
+// NotificationConfigInfo contains notification configuration for API responses
+type NotificationConfigInfo struct {
+	Enabled bool `json:"enabled"`
+}
+
 // handleListTemplates returns available debug session templates
 func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
@@ -1217,9 +1284,14 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		}
 	}
 
+	includeHidden := ctx.Query("includeHidden") == "true"
+
 	// Filter and transform
 	var templates []DebugSessionTemplateResponse
 	for _, t := range templateList.Items {
+		if t.Spec.Hidden && !includeHidden {
+			continue
+		}
 		// Check if user has access to this template
 		if t.Spec.Allowed != nil && len(t.Spec.Allowed.Groups) > 0 {
 			hasAccess := false
@@ -1244,14 +1316,18 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		}
 
 		resp := DebugSessionTemplateResponse{
-			Name:             t.Name,
-			DisplayName:      t.Spec.DisplayName,
-			Description:      t.Spec.Description,
-			Mode:             t.Spec.Mode,
-			WorkloadType:     t.Spec.WorkloadType,
-			TargetNamespace:  t.Spec.TargetNamespace,
-			Constraints:      t.Spec.Constraints,
-			RequiresApproval: t.Spec.Approvers != nil && len(t.Spec.Approvers.Groups) > 0,
+			Name:               t.Name,
+			DisplayName:        t.Spec.DisplayName,
+			Description:        t.Spec.Description,
+			Mode:               t.Spec.Mode,
+			WorkloadType:       t.Spec.WorkloadType,
+			TargetNamespace:    t.Spec.TargetNamespace,
+			Constraints:        t.Spec.Constraints,
+			RequiresApproval:   t.Spec.Approvers != nil && len(t.Spec.Approvers.Groups) > 0,
+			Priority:           t.Spec.Priority,
+			Hidden:             t.Spec.Hidden,
+			Deprecated:         t.Spec.Deprecated,
+			DeprecationMessage: t.Spec.DeprecationMessage,
 		}
 
 		if t.Spec.PodTemplateRef != nil {
@@ -1297,6 +1373,13 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 
 		templates = append(templates, resp)
 	}
+
+	sort.Slice(templates, func(i, j int) bool {
+		if templates[i].Priority != templates[j].Priority {
+			return templates[i].Priority > templates[j].Priority
+		}
+		return templates[i].Name < templates[j].Name
+	})
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"templates": templates,
@@ -1466,13 +1549,14 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 // findBindingsForTemplate returns all bindings that reference the given template
 func (c *DebugSessionAPIController) findBindingsForTemplate(template *v1alpha1.DebugSessionTemplate, bindings []v1alpha1.DebugSessionClusterBinding) []v1alpha1.DebugSessionClusterBinding {
 	var result []v1alpha1.DebugSessionClusterBinding
-	for _, binding := range bindings {
-		if binding.Spec.Disabled {
+	for i := range bindings {
+		binding := &bindings[i]
+		if !IsBindingActive(binding) {
 			continue
 		}
 		// Check templateRef
 		if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
-			result = append(result, binding)
+			result = append(result, *binding)
 			continue
 		}
 		// Check templateSelector
@@ -1481,7 +1565,7 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *v1alpha1.D
 			if err == nil {
 				labelSet := labelSetFromMap(template.Labels)
 				if selector.Matches(labelSet) {
-					result = append(result, binding)
+					result = append(result, *binding)
 				}
 			}
 		}
@@ -1595,6 +1679,9 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1a
 			Impersonation:                 c.resolveImpersonation(template, binding),
 			RequiredAuxResourceCategories: c.resolveRequiredAuxResourceCategories(template, binding),
 			Approval:                      c.resolveApproval(template, binding, cc),
+			RequestReason:                 c.resolveRequestReason(template, binding),
+			ApprovalReason:                c.resolveApprovalReason(template, binding),
+			Notification:                  c.resolveNotification(template, binding),
 		}
 		detail.BindingOptions = append(detail.BindingOptions, option)
 	}
@@ -1615,6 +1702,9 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1a
 		detail.Impersonation = c.resolveImpersonation(template, primaryBinding)
 		detail.Approval = c.resolveApproval(template, primaryBinding, cc)
 		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, primaryBinding)
+		detail.RequestReason = c.resolveRequestReason(template, primaryBinding)
+		detail.ApprovalReason = c.resolveApprovalReason(template, primaryBinding)
+		detail.Notification = c.resolveNotification(template, primaryBinding)
 	}
 
 	return detail
@@ -1873,6 +1963,181 @@ func (c *DebugSessionAPIController) resolveRequiredAuxResourceCategories(templat
 		result = append(result, cat)
 	}
 	return result
+}
+
+// resolveRequestReason resolves request reason configuration from binding or template
+func (c *DebugSessionAPIController) resolveRequestReason(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *ReasonConfigInfo {
+	// Binding overrides template
+	if binding != nil && binding.Spec.RequestReason != nil {
+		return &ReasonConfigInfo{
+			Mandatory:        binding.Spec.RequestReason.Mandatory,
+			Description:      binding.Spec.RequestReason.Description,
+			MinLength:        binding.Spec.RequestReason.MinLength,
+			MaxLength:        binding.Spec.RequestReason.MaxLength,
+			SuggestedReasons: binding.Spec.RequestReason.SuggestedReasons,
+		}
+	}
+
+	// Fall back to template
+	if template.Spec.RequestReason != nil {
+		return &ReasonConfigInfo{
+			Mandatory:        template.Spec.RequestReason.Mandatory,
+			Description:      template.Spec.RequestReason.Description,
+			MinLength:        template.Spec.RequestReason.MinLength,
+			MaxLength:        template.Spec.RequestReason.MaxLength,
+			SuggestedReasons: template.Spec.RequestReason.SuggestedReasons,
+		}
+	}
+
+	return nil
+}
+
+// resolveApprovalReason resolves approval reason configuration from binding or template
+func (c *DebugSessionAPIController) resolveApprovalReason(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *ReasonConfigInfo {
+	// Binding overrides template
+	if binding != nil && binding.Spec.ApprovalReason != nil {
+		return &ReasonConfigInfo{
+			Mandatory:   binding.Spec.ApprovalReason.Mandatory,
+			Description: binding.Spec.ApprovalReason.Description,
+		}
+	}
+
+	// Fall back to template
+	if template.Spec.ApprovalReason != nil {
+		return &ReasonConfigInfo{
+			Mandatory:   template.Spec.ApprovalReason.Mandatory,
+			Description: template.Spec.ApprovalReason.Description,
+		}
+	}
+
+	return nil
+}
+
+// resolveNotification resolves notification configuration from binding or template
+func (c *DebugSessionAPIController) resolveNotification(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *NotificationConfigInfo {
+	// Binding overrides template
+	if binding != nil && binding.Spec.Notification != nil {
+		return &NotificationConfigInfo{
+			Enabled: binding.Spec.Notification.Enabled,
+		}
+	}
+
+	// Fall back to template
+	if template.Spec.Notification != nil {
+		return &NotificationConfigInfo{
+			Enabled: template.Spec.Notification.Enabled,
+		}
+	}
+
+	return nil
+}
+
+type notificationEvent string
+
+const (
+	notificationEventRequest  notificationEvent = "request"
+	notificationEventApproval notificationEvent = "approval"
+	notificationEventExpiry   notificationEvent = "expiry"
+)
+
+func resolveNotificationConfig(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) *v1alpha1.DebugSessionNotificationConfig {
+	if binding != nil && binding.Spec.Notification != nil {
+		return binding.Spec.Notification
+	}
+	return template.Spec.Notification
+}
+
+func shouldSendNotification(cfg *v1alpha1.DebugSessionNotificationConfig, event notificationEvent) bool {
+	if cfg == nil {
+		return true
+	}
+	if !cfg.Enabled {
+		return false
+	}
+	switch event {
+	case notificationEventRequest:
+		return cfg.NotifyOnRequest
+	case notificationEventApproval:
+		return cfg.NotifyOnApproval
+	case notificationEventExpiry:
+		return cfg.NotifyOnExpiry
+	default:
+		return true
+	}
+}
+
+func buildNotificationRecipients(base []string, cfg *v1alpha1.DebugSessionNotificationConfig) []string {
+	if cfg == nil && len(base) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(base))
+	var recipients []string
+	add := func(addr string) {
+		if addr == "" {
+			return
+		}
+		if _, ok := seen[addr]; ok {
+			return
+		}
+		seen[addr] = struct{}{}
+		recipients = append(recipients, addr)
+	}
+
+	for _, addr := range base {
+		add(addr)
+	}
+	if cfg != nil {
+		for _, addr := range cfg.AdditionalRecipients {
+			add(addr)
+		}
+		if cfg.ExcludedRecipients != nil && len(cfg.ExcludedRecipients.Users) > 0 {
+			excluded := make(map[string]struct{}, len(cfg.ExcludedRecipients.Users))
+			for _, u := range cfg.ExcludedRecipients.Users {
+				excluded[u] = struct{}{}
+			}
+			filtered := recipients[:0]
+			for _, addr := range recipients {
+				if _, blocked := excluded[addr]; blocked {
+					continue
+				}
+				filtered = append(filtered, addr)
+			}
+			recipients = filtered
+		}
+	}
+
+	return recipients
+}
+
+func (c *DebugSessionAPIController) resolveNotificationConfigForSession(ctx context.Context, session *v1alpha1.DebugSession) *v1alpha1.DebugSessionNotificationConfig {
+	if session == nil {
+		return nil
+	}
+
+	if session.Spec.TemplateRef == "" {
+		return nil
+	}
+
+	// Resolve template
+	template := &v1alpha1.DebugSessionTemplate{}
+	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+		c.log.Debugw("Failed to load template for notification config", "template", session.Spec.TemplateRef, "error", err)
+		return nil
+	}
+
+	// Resolve binding if referenced
+	var binding *v1alpha1.DebugSessionClusterBinding
+	if session.Spec.BindingRef != nil {
+		resolved := &v1alpha1.DebugSessionClusterBinding{}
+		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}, resolved); err != nil {
+			c.log.Debugw("Failed to load binding for notification config", "binding", session.Spec.BindingRef.Name, "error", err)
+		} else {
+			binding = resolved
+		}
+	}
+
+	return resolveNotificationConfig(template, binding)
 }
 
 // labelSetFromMap creates a labels.Set from a map for selector matching
@@ -2279,8 +2544,14 @@ func resolveClusterPatterns(patterns []string, allClusters []string) []string {
 }
 
 // sendDebugSessionRequestEmail sends email notification to approvers when a debug session is created
-func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Context, session *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) {
+func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Context, session *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	notificationCfg := resolveNotificationConfig(template, binding)
+	if !shouldSendNotification(notificationCfg, notificationEventRequest) {
+		c.log.Debugw("Debug session request email disabled by notification settings", "session", session.Name)
 		return
 	}
 
@@ -2289,6 +2560,8 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 	if template.Spec.Approvers != nil {
 		approverEmails = append(approverEmails, template.Spec.Approvers.Users...)
 	}
+
+	approverEmails = buildNotificationRecipients(approverEmails, notificationCfg)
 
 	if len(approverEmails) == 0 {
 		c.log.Debugw("No approvers configured for debug session template, skipping request email", "session", session.Name, "template", template.Name)
@@ -2336,8 +2609,14 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 }
 
 // sendDebugSessionApprovalEmail sends email notification to requester when a debug session is approved
-func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(session *v1alpha1.DebugSession) {
+func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(ctx context.Context, session *v1alpha1.DebugSession) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	notificationCfg := c.resolveNotificationConfigForSession(ctx, session)
+	if !shouldSendNotification(notificationCfg, notificationEventApproval) {
+		c.log.Debugw("Debug session approval email disabled by notification settings", "session", session.Name)
 		return
 	}
 
@@ -2351,7 +2630,7 @@ func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(session *v1alp
 		c.log.Warnw("Skipping approval email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := []string{recipientEmail}
+	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
 
 	approvedAt := ""
 	expiresAt := ""
@@ -2405,8 +2684,14 @@ func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(session *v1alp
 }
 
 // sendDebugSessionRejectionEmail sends email notification to requester when a debug session is rejected
-func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(session *v1alpha1.DebugSession) {
+func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(ctx context.Context, session *v1alpha1.DebugSession) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	notificationCfg := c.resolveNotificationConfigForSession(ctx, session)
+	if !shouldSendNotification(notificationCfg, notificationEventApproval) {
+		c.log.Debugw("Debug session rejection email disabled by notification settings", "session", session.Name)
 		return
 	}
 
@@ -2420,7 +2705,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(session *v1al
 		c.log.Warnw("Skipping rejection email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := []string{recipientEmail}
+	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
 
 	rejectedAt := ""
 	rejectorName := ""
@@ -2468,8 +2753,14 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(session *v1al
 }
 
 // sendDebugSessionCreatedEmail sends email confirmation to requester when a debug session is created
-func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(session *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) {
+func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Context, session *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	notificationCfg := resolveNotificationConfig(template, binding)
+	if !shouldSendNotification(notificationCfg, notificationEventRequest) {
+		c.log.Debugw("Debug session created email disabled by notification settings", "session", session.Name)
 		return
 	}
 
@@ -2483,7 +2774,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(session *v1alph
 		c.log.Warnw("Skipping session created email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := []string{recipientEmail}
+	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
 
 	// Use display name if available, fallback to username
 	requesterName := session.Spec.RequestedByDisplayName
@@ -2854,4 +3145,59 @@ func extractRunAsNonRoot(sc *corev1.SecurityContext) bool {
 		return false
 	}
 	return *sc.RunAsNonRoot
+}
+
+// checkBindingSessionLimits verifies that creating a new session won't exceed the binding's session limits.
+// Returns nil if the session can be created, or an error describing the limit violation.
+func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *v1alpha1.DebugSessionClusterBinding, userEmail string) error {
+	if binding == nil {
+		return nil
+	}
+
+	// Get current active sessions for this binding
+	sessionList := &v1alpha1.DebugSessionList{}
+	if err := c.client.List(ctx, sessionList); err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	// Count active sessions for this binding
+	var totalActive int32
+	var userActive int32
+	for i := range sessionList.Items {
+		session := &sessionList.Items[i]
+		// Check if session uses this binding
+		if session.Spec.BindingRef == nil ||
+			session.Spec.BindingRef.Name != binding.Name ||
+			session.Spec.BindingRef.Namespace != binding.Namespace {
+			continue
+		}
+
+		// Check if session is active (pending or approved, not expired/terminated/failed)
+		if session.Status.State == v1alpha1.DebugSessionStateTerminated ||
+			session.Status.State == v1alpha1.DebugSessionStateExpired ||
+			session.Status.State == v1alpha1.DebugSessionStateFailed {
+			continue
+		}
+
+		totalActive++
+		if session.Spec.RequestedByEmail == userEmail || session.Spec.RequestedBy == userEmail {
+			userActive++
+		}
+	}
+
+	// Check per-user limit
+	if binding.Spec.MaxActiveSessionsPerUser != nil {
+		if userActive >= *binding.Spec.MaxActiveSessionsPerUser {
+			return fmt.Errorf("session limit reached: maximum %d active sessions per user allowed via this binding", *binding.Spec.MaxActiveSessionsPerUser)
+		}
+	}
+
+	// Check total limit
+	if binding.Spec.MaxActiveSessionsTotal != nil {
+		if totalActive >= *binding.Spec.MaxActiveSessionsTotal {
+			return fmt.Errorf("session limit reached: maximum %d total active sessions allowed via this binding", *binding.Spec.MaxActiveSessionsTotal)
+		}
+	}
+
+	return nil
 }

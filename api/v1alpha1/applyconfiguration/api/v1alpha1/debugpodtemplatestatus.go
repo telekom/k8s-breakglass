@@ -9,6 +9,7 @@ Here we can add license
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -19,8 +20,14 @@ import (
 type DebugPodTemplateStatusApplyConfiguration struct {
 	// conditions represent the latest available observations of the template's state.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
+	// observedGeneration is the generation last observed by the controller.
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// usedBy lists DebugSessionTemplates that reference this pod template.
 	UsedBy []string `json:"usedBy,omitempty"`
+	// usageCount tracks how many active debug sessions use this template.
+	UsageCount *int32 `json:"usageCount,omitempty"`
+	// lastUsedAt records when this template was last used to create a debug session.
+	LastUsedAt *metav1.Time `json:"lastUsedAt,omitempty"`
 }
 
 // DebugPodTemplateStatusApplyConfiguration constructs a declarative configuration of the DebugPodTemplateStatus type for use with
@@ -42,6 +49,14 @@ func (b *DebugPodTemplateStatusApplyConfiguration) WithConditions(values ...*v1.
 	return b
 }
 
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *DebugPodTemplateStatusApplyConfiguration) WithObservedGeneration(value int64) *DebugPodTemplateStatusApplyConfiguration {
+	b.ObservedGeneration = &value
+	return b
+}
+
 // WithUsedBy adds the given value to the UsedBy field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the UsedBy field.
@@ -49,5 +64,21 @@ func (b *DebugPodTemplateStatusApplyConfiguration) WithUsedBy(values ...string) 
 	for i := range values {
 		b.UsedBy = append(b.UsedBy, values[i])
 	}
+	return b
+}
+
+// WithUsageCount sets the UsageCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UsageCount field is set to the value of the last call.
+func (b *DebugPodTemplateStatusApplyConfiguration) WithUsageCount(value int32) *DebugPodTemplateStatusApplyConfiguration {
+	b.UsageCount = &value
+	return b
+}
+
+// WithLastUsedAt sets the LastUsedAt field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LastUsedAt field is set to the value of the last call.
+func (b *DebugPodTemplateStatusApplyConfiguration) WithLastUsedAt(value metav1.Time) *DebugPodTemplateStatusApplyConfiguration {
+	b.LastUsedAt = &value
 	return b
 }

@@ -326,6 +326,9 @@ export interface BindingOption {
   impersonation?: ImpersonationSummary;
   requiredAuxiliaryResourceCategories?: string[];
   approval?: ApprovalInfo;
+  requestReason?: ReasonConfigInfo;
+  approvalReason?: ReasonConfigInfo;
+  notification?: NotificationConfigInfo;
 }
 
 // Reference to the cluster binding that provides access
@@ -369,4 +372,18 @@ export interface ClusterStatusInfo {
   healthy: boolean;
   lastChecked?: string;
   message?: string;
+}
+
+// Reason configuration for request/approval
+export interface ReasonConfigInfo {
+  mandatory: boolean;
+  description?: string;
+  minLength?: number;
+  maxLength?: number;
+  suggestedReasons?: string[];
+}
+
+// Notification configuration
+export interface NotificationConfigInfo {
+  enabled: boolean;
 }

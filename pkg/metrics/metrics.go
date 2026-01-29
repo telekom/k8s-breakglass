@@ -17,6 +17,10 @@ var (
 		Name: "breakglass_clusterconfigs_failed_total",
 		Help: "Total number of ClusterConfig validations that failed",
 	}, []string{"cluster"})
+	ClusterConfigsDeleted = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_clusterconfigs_deleted_total",
+		Help: "Total number of ClusterConfigs deleted (after session cleanup)",
+	}, []string{"cluster"})
 	// Cluster cache metrics
 	ClusterCacheHits = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_cluster_cache_hits_total",
@@ -534,6 +538,7 @@ func init() {
 	// on the same metrics endpoint (port 8081 by default).
 	ctrlmetrics.Registry.MustRegister(ClusterConfigsChecked)
 	ctrlmetrics.Registry.MustRegister(ClusterConfigsFailed)
+	ctrlmetrics.Registry.MustRegister(ClusterConfigsDeleted)
 	ctrlmetrics.Registry.MustRegister(ClusterCacheHits)
 	ctrlmetrics.Registry.MustRegister(ClusterCacheMisses)
 	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigLoaded)

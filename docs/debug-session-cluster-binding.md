@@ -224,6 +224,127 @@ auxiliaryResourceOverrides:
 
 > **Note:** Categories in `requiredAuxiliaryResourceCategories` cannot be disabled.
 
+### Time-Bounded Access
+
+Control when the binding is active:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `expiresAt` | metav1.Time | When the binding expires and becomes inactive |
+| `effectiveFrom` | metav1.Time | When the binding becomes effective |
+
+```yaml
+# Temporary access during maintenance window
+spec:
+  effectiveFrom: "2026-02-01T00:00:00Z"
+  expiresAt: "2026-02-07T23:59:59Z"
+  # ... other fields
+```
+
+### Session Limits
+
+Control the number of concurrent sessions:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `maxActiveSessionsPerUser` | int32 | Maximum active sessions per user via this binding |
+| `maxActiveSessionsTotal` | int32 | Maximum total active sessions via this binding |
+
+```yaml
+spec:
+  maxActiveSessionsPerUser: 2  # Each user can have at most 2 active sessions
+  maxActiveSessionsTotal: 10   # Total of 10 sessions across all users
+```
+
+### UI Display Options
+
+Control how the binding appears in the UI:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `displayName` | string | Human-readable name for the binding |
+| `hidden` | bool | Hide this binding from UI (still usable via API/CLI) |
+| `priority` | int32 | UI display ordering (lower values appear first) |
+| `disabled` | bool | Disable the binding entirely |
+
+```yaml
+spec:
+  displayName: "Emergency Production Access"
+  priority: 10
+  hidden: false
+  disabled: false
+```
+
+### Session Metadata
+
+Labels and annotations to apply to created sessions:
+
+```yaml
+spec:
+  labels:
+    team: platform-sre
+    access-type: emergency
+  annotations:
+    breakglass.example.com/ticket: "required"
+```
+
+These labels and annotations are propagated to:
+- The DebugSession resource
+- The deployed workloads (Deployment/Job)
+- The pod templates
+
+### Request Reason Configuration
+
+Configure reason requirements for session requests:
+
+```yaml
+spec:
+  requestReason:
+    mandatory: true
+    description: "Please provide a ticket number and brief description"
+    minLength: 20
+    maxLength: 500
+    suggestedReasons:
+      - "Incident investigation - TICKET-"
+      - "Performance debugging"
+      - "Configuration verification"
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mandatory` | bool | Whether a reason is required |
+| `description` | string | Help text shown to users |
+| `minLength` | int32 | Minimum character length |
+| `maxLength` | int32 | Maximum character length |
+| `suggestedReasons` | string[] | Pre-defined reason options |
+
+### Approval Reason Configuration
+
+Configure reason requirements for approvals/rejections:
+
+```yaml
+spec:
+  approvalReason:
+    mandatory: true
+    mandatoryForRejection: true
+    description: "Explain why this access is approved or rejected"
+```
+
+### Notification Configuration
+
+Override template notification settings:
+
+```yaml
+spec:
+  notification:
+    enabled: true
+    channels:
+      - email
+      - slack
+    recipients:
+      - security@example.com
+```
+
 ## Status
 
 The controller populates status fields:
