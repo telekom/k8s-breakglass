@@ -1096,6 +1096,51 @@ func validateNamespaceConstraints(nc *NamespaceConstraints, fieldPath *field.Pat
 	return errs
 }
 
+// warnNamespaceConstraintIssues returns warnings for potential namespace constraint configuration issues.
+// These are not errors but could lead to unexpected behavior at runtime.
+func warnNamespaceConstraintIssues(nc *NamespaceConstraints, targetNamespace string) []string {
+	if nc == nil {
+		return nil
+	}
+
+	var warnings []string
+
+	// Warn if allowUserNamespace is false but no defaultNamespace is set
+	// This means users can't specify a namespace and there's no default,
+	// so the API will fall back to "breakglass-debug"
+	if !nc.AllowUserNamespace && nc.DefaultNamespace == "" {
+		warnings = append(warnings,
+			"namespaceConstraints.allowUserNamespace is false but no defaultNamespace is set; "+
+				"sessions will use 'breakglass-debug' as fallback. Consider setting an explicit defaultNamespace.")
+	}
+
+	// Warn if allowUserNamespace is false but allowedNamespaces patterns are set
+	// This is confusing configuration - patterns are useless if users can't specify namespaces
+	if !nc.AllowUserNamespace && nc.AllowedNamespaces != nil && nc.AllowedNamespaces.HasPatterns() {
+		warnings = append(warnings,
+			"namespaceConstraints.allowedNamespaces patterns are set but allowUserNamespace is false; "+
+				"the patterns will be ignored since users cannot specify namespaces.")
+	}
+
+	// Warn if allowUserNamespace is true but no defaultNamespace is set
+	// If a user doesn't specify a namespace, what happens?
+	if nc.AllowUserNamespace && nc.DefaultNamespace == "" {
+		warnings = append(warnings,
+			"namespaceConstraints.allowUserNamespace is true but no defaultNamespace is set; "+
+				"sessions without an explicit namespace will use 'breakglass-debug' as fallback.")
+	}
+
+	// Warn if there's a targetNamespace at spec level but also namespaceConstraints
+	// This could be confusing about which takes precedence
+	if targetNamespace != "" && nc.DefaultNamespace != "" && targetNamespace != nc.DefaultNamespace {
+		warnings = append(warnings,
+			"Both spec.targetNamespace and namespaceConstraints.defaultNamespace are set with different values; "+
+				"namespaceConstraints.defaultNamespace takes precedence when namespaceConstraints is configured.")
+	}
+
+	return warnings
+}
+
 // validateImpersonationConfig validates the ImpersonationConfig configuration.
 func validateImpersonationConfig(ic *ImpersonationConfig, fieldPath *field.Path) field.ErrorList {
 	if ic == nil {

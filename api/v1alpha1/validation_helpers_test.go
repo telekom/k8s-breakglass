@@ -1999,3 +1999,116 @@ func TestValidateOIDCAuthConfig_DuplicateScopes(t *testing.T) {
 	errStr := errs.ToAggregate().Error()
 	assert.Contains(t, errStr, "Duplicate")
 }
+
+// TestWarnNamespaceConstraintIssues_NilConstraints tests nil handling
+func TestWarnNamespaceConstraintIssues_NilConstraints(t *testing.T) {
+	warnings := warnNamespaceConstraintIssues(nil, "")
+	assert.Nil(t, warnings, "nil constraints should return nil warnings")
+}
+
+// TestWarnNamespaceConstraintIssues_ValidConfig tests a properly configured constraint
+func TestWarnNamespaceConstraintIssues_ValidConfig(t *testing.T) {
+	nc := &NamespaceConstraints{
+		AllowUserNamespace: false,
+		DefaultNamespace:   "breakglass-debug",
+	}
+	warnings := warnNamespaceConstraintIssues(nc, "")
+	assert.Empty(t, warnings, "valid config with allowUserNamespace=false and defaultNamespace should have no warnings")
+}
+
+// TestWarnNamespaceConstraintIssues_AllowUserNoDefault tests allowUserNamespace=true without defaultNamespace
+func TestWarnNamespaceConstraintIssues_AllowUserNoDefault(t *testing.T) {
+	nc := &NamespaceConstraints{
+		AllowUserNamespace: true,
+		DefaultNamespace:   "",
+	}
+	warnings := warnNamespaceConstraintIssues(nc, "")
+	assert.NotEmpty(t, warnings, "allowUserNamespace=true without defaultNamespace should warn")
+	assert.Contains(t, warnings[0], "allowUserNamespace is true but no defaultNamespace")
+}
+
+// TestWarnNamespaceConstraintIssues_DisallowUserNoDefault tests allowUserNamespace=false without defaultNamespace
+func TestWarnNamespaceConstraintIssues_DisallowUserNoDefault(t *testing.T) {
+	nc := &NamespaceConstraints{
+		AllowUserNamespace: false,
+		DefaultNamespace:   "",
+	}
+	warnings := warnNamespaceConstraintIssues(nc, "")
+	assert.NotEmpty(t, warnings, "allowUserNamespace=false without defaultNamespace should warn")
+	assert.Contains(t, warnings[0], "allowUserNamespace is false but no defaultNamespace")
+}
+
+// TestWarnNamespaceConstraintIssues_PatternsIgnored tests warning when patterns are set but users can't specify namespaces
+func TestWarnNamespaceConstraintIssues_PatternsIgnored(t *testing.T) {
+	nc := &NamespaceConstraints{
+		AllowUserNamespace: false,
+		DefaultNamespace:   "breakglass-debug",
+		AllowedNamespaces: &NamespaceFilter{
+			Patterns: []string{"debug-*", "test-*"},
+		},
+	}
+	warnings := warnNamespaceConstraintIssues(nc, "")
+	assert.NotEmpty(t, warnings, "patterns with allowUserNamespace=false should warn")
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "patterns will be ignored") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "should warn about patterns being ignored")
+}
+
+// TestWarnNamespaceConstraintIssues_ConflictingNamespaces tests conflicting targetNamespace and defaultNamespace
+func TestWarnNamespaceConstraintIssues_ConflictingNamespaces(t *testing.T) {
+	nc := &NamespaceConstraints{
+		AllowUserNamespace: false,
+		DefaultNamespace:   "debug-namespace",
+	}
+	warnings := warnNamespaceConstraintIssues(nc, "different-namespace")
+	assert.NotEmpty(t, warnings, "conflicting targetNamespace and defaultNamespace should warn")
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "different values") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "should warn about conflicting namespace values")
+}
+
+// TestWarnNamespaceConstraintIssues_MatchingNamespaces tests matching targetNamespace and defaultNamespace (no warning)
+func TestWarnNamespaceConstraintIssues_MatchingNamespaces(t *testing.T) {
+	nc := &NamespaceConstraints{
+		AllowUserNamespace: false,
+		DefaultNamespace:   "debug-namespace",
+	}
+	warnings := warnNamespaceConstraintIssues(nc, "debug-namespace")
+	assert.Empty(t, warnings, "matching targetNamespace and defaultNamespace should not warn")
+}
+
+// TestWarnNamespaceConstraintIssues_MultipleWarnings tests multiple warnings can be returned
+func TestWarnNamespaceConstraintIssues_MultipleWarnings(t *testing.T) {
+	nc := &NamespaceConstraints{
+		AllowUserNamespace: false,
+		DefaultNamespace:   "", // Missing default (warning 1)
+		AllowedNamespaces: &NamespaceFilter{
+			Patterns: []string{"debug-*"}, // Patterns ignored (warning 2)
+		},
+	}
+	warnings := warnNamespaceConstraintIssues(nc, "")
+	assert.GreaterOrEqual(t, len(warnings), 2, "should return multiple warnings when multiple issues exist")
+}
+
+// TestWarnNamespaceConstraintIssues_AllowUserWithDefault tests no warning for proper config
+func TestWarnNamespaceConstraintIssues_AllowUserWithDefault(t *testing.T) {
+	nc := &NamespaceConstraints{
+		AllowUserNamespace: true,
+		DefaultNamespace:   "breakglass-debug",
+		AllowedNamespaces: &NamespaceFilter{
+			Patterns: []string{"debug-*", "test-*"},
+		},
+	}
+	warnings := warnNamespaceConstraintIssues(nc, "")
+	assert.Empty(t, warnings, "properly configured allowUserNamespace=true with patterns and default should have no warnings")
+}

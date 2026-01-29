@@ -384,9 +384,9 @@ func (b *DebugSessionClusterBinding) ValidateCreate(ctx context.Context, obj *De
 	}
 
 	if result.IsValid() {
-		return nil, nil
+		return result.Warnings, nil
 	}
-	return nil, apierrors.NewInvalid(
+	return result.Warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionClusterBinding"},
 		obj.Name,
 		result.Errors,
@@ -422,9 +422,9 @@ func (b *DebugSessionClusterBinding) ValidateUpdate(ctx context.Context, oldObj,
 	}
 
 	if result.IsValid() {
-		return nil, nil
+		return result.Warnings, nil
 	}
-	return nil, apierrors.NewInvalid(
+	return result.Warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionClusterBinding"},
 		newObj.Name,
 		result.Errors,
@@ -498,6 +498,8 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 	// Validate namespaceConstraints if specified
 	if spec.NamespaceConstraints != nil {
 		result.Errors = append(result.Errors, validateNamespaceConstraints(spec.NamespaceConstraints, specPath.Child("namespaceConstraints"))...)
+		// Bindings don't have a targetNamespace field, so pass empty string
+		result.Warnings = append(result.Warnings, warnNamespaceConstraintIssues(spec.NamespaceConstraints, "")...)
 	}
 
 	// Validate impersonation config if specified

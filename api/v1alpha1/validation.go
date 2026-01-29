@@ -727,6 +727,7 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	// Validate namespaceConstraints if specified
 	if template.Spec.NamespaceConstraints != nil {
 		result.Errors = append(result.Errors, validateNamespaceConstraints(template.Spec.NamespaceConstraints, specPath.Child("namespaceConstraints"))...)
+		result.Warnings = append(result.Warnings, warnNamespaceConstraintIssues(template.Spec.NamespaceConstraints, template.Spec.TargetNamespace)...)
 	}
 
 	// Validate impersonation config if specified

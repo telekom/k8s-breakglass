@@ -936,9 +936,9 @@ func (dst *DebugSessionTemplate) ValidateCreate(ctx context.Context, obj *DebugS
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSessionTemplate(obj)
 	if result.IsValid() {
-		return nil, nil
+		return result.Warnings, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, obj.Name, result.Errors)
+	return result.Warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, obj.Name, result.Errors)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
@@ -946,9 +946,9 @@ func (dst *DebugSessionTemplate) ValidateUpdate(ctx context.Context, oldObj, new
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSessionTemplate(newObj)
 	if result.IsValid() {
-		return nil, nil
+		return result.Warnings, nil
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, newObj.Name, result.Errors)
+	return result.Warnings, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSessionTemplate"}, newObj.Name, result.Errors)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type

@@ -344,9 +344,19 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	var req CreateDebugSessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		reqLog.Warnw("Failed to parse CreateDebugSession request", "error", err)
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	reqLog.Debugw("Received CreateDebugSession request",
+		"templateRef", req.TemplateRef,
+		"cluster", req.Cluster,
+		"bindingRef", req.BindingRef,
+		"targetNamespace", req.TargetNamespace,
+		"selectedSchedulingOption", req.SelectedSchedulingOption,
+		"requestedDuration", req.RequestedDuration,
+	)
 
 	// Sanitize reason to prevent injection attacks
 	if req.Reason != "" {
@@ -366,6 +376,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
 		if apierrors.IsNotFound(err) {
+			reqLog.Warnw("Template not found", "templateRef", req.TemplateRef)
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("template '%s' not found", req.TemplateRef)})
 			return
 		}
@@ -384,6 +395,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			}
 		}
 		if !allowed {
+			reqLog.Warnw("Cluster not allowed by template",
+				"templateRef", req.TemplateRef,
+				"requestedCluster", req.Cluster,
+				"allowedClusters", template.Spec.Allowed.Clusters,
+			)
 			ctx.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("cluster '%s' is not allowed by template", req.Cluster)})
 			return
 		}
@@ -392,6 +408,18 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Validate and resolve target namespace
 	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace)
 	if err != nil {
+		reqLog.Warnw("Target namespace validation failed",
+			"templateRef", req.TemplateRef,
+			"requestedNamespace", req.TargetNamespace,
+			"allowUserNamespace", template.Spec.NamespaceConstraints != nil && template.Spec.NamespaceConstraints.AllowUserNamespace,
+			"defaultNamespace", func() string {
+				if template.Spec.NamespaceConstraints != nil {
+					return template.Spec.NamespaceConstraints.DefaultNamespace
+				}
+				return ""
+			}(),
+			"error", err,
+		)
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -399,6 +427,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Validate and resolve scheduling option
 	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption)
 	if err != nil {
+		reqLog.Warnw("Scheduling option validation failed",
+			"templateRef", req.TemplateRef,
+			"selectedSchedulingOption", req.SelectedSchedulingOption,
+			"error", err,
+		)
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -502,6 +535,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			resolvedBinding = &v1alpha1.DebugSessionClusterBinding{}
 			if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: parts[1], Namespace: parts[0]}, resolvedBinding); err != nil {
 				if apierrors.IsNotFound(err) {
+					reqLog.Warnw("Binding not found", "bindingRef", req.BindingRef)
 					ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("binding '%s' not found", req.BindingRef)})
 					return
 				}
@@ -512,6 +546,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 			// Check if binding is active
 			if !IsBindingActive(resolvedBinding) {
+				reqLog.Warnw("Binding is not active",
+					"bindingRef", req.BindingRef,
+					"disabled", resolvedBinding.Spec.Disabled,
+					"effectiveFrom", resolvedBinding.Spec.EffectiveFrom,
+					"expiresAt", resolvedBinding.Spec.ExpiresAt,
+				)
 				ctx.JSON(http.StatusForbidden, gin.H{"error": "binding is not active (disabled, expired, or not yet effective)"})
 				return
 			}
@@ -523,6 +563,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Check binding session limits if a binding is resolved
 	if resolvedBinding != nil {
 		if err := c.checkBindingSessionLimits(apiCtx, resolvedBinding, userEmail); err != nil {
+			reqLog.Warnw("Binding session limits exceeded",
+				"bindingRef", req.BindingRef,
+				"userEmail", userEmail,
+				"error", err,
+			)
 			ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
@@ -2317,30 +2362,70 @@ func convertSelectorTerms(terms []v1alpha1.NamespaceSelectorTerm) []NamespaceSel
 func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.DebugSessionTemplate, requestedNamespace string) (string, error) {
 	nc := template.Spec.NamespaceConstraints
 
+	c.log.Debugw("Resolving target namespace",
+		"template", template.Name,
+		"requestedNamespace", requestedNamespace,
+		"hasNamespaceConstraints", nc != nil,
+	)
+
 	// If no namespace constraints, use default behavior
 	if nc == nil {
 		if requestedNamespace != "" {
+			c.log.Debugw("No namespace constraints, using requested namespace",
+				"template", template.Name,
+				"resolvedNamespace", requestedNamespace,
+			)
 			return requestedNamespace, nil
 		}
+		c.log.Debugw("No namespace constraints, using default",
+			"template", template.Name,
+			"resolvedNamespace", "breakglass-debug",
+		)
 		return "breakglass-debug", nil // Default namespace
 	}
+
+	c.log.Debugw("Namespace constraints found",
+		"template", template.Name,
+		"allowUserNamespace", nc.AllowUserNamespace,
+		"defaultNamespace", nc.DefaultNamespace,
+		"hasAllowedNamespaces", nc.AllowedNamespaces != nil && !nc.AllowedNamespaces.IsEmpty(),
+		"hasDeniedNamespaces", nc.DeniedNamespaces != nil && !nc.DeniedNamespaces.IsEmpty(),
+	)
 
 	// If user didn't request a specific namespace, use the default
 	if requestedNamespace == "" {
 		if nc.DefaultNamespace != "" {
+			c.log.Debugw("No namespace requested, using template default",
+				"template", template.Name,
+				"resolvedNamespace", nc.DefaultNamespace,
+			)
 			return nc.DefaultNamespace, nil
 		}
+		c.log.Debugw("No namespace requested and no template default, using fallback",
+			"template", template.Name,
+			"resolvedNamespace", "breakglass-debug",
+		)
 		return "breakglass-debug", nil
 	}
 
 	// Check if user is allowed to specify a namespace
 	if !nc.AllowUserNamespace {
+		c.log.Debugw("User-specified namespace not allowed by template",
+			"template", template.Name,
+			"requestedNamespace", requestedNamespace,
+			"allowUserNamespace", nc.AllowUserNamespace,
+		)
 		return "", fmt.Errorf("template does not allow user-specified namespaces")
 	}
 
 	// Validate against allowed namespaces
 	if nc.AllowedNamespaces != nil && !nc.AllowedNamespaces.IsEmpty() {
 		if !matchNamespaceFilter(requestedNamespace, nc.AllowedNamespaces) {
+			c.log.Debugw("Namespace not in allowed list",
+				"template", template.Name,
+				"requestedNamespace", requestedNamespace,
+				"allowedPatterns", nc.AllowedNamespaces.Patterns,
+			)
 			return "", fmt.Errorf("namespace '%s' is not in the allowed namespaces", requestedNamespace)
 		}
 	}
@@ -2348,6 +2433,11 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.De
 	// Validate against denied namespaces
 	if nc.DeniedNamespaces != nil && !nc.DeniedNamespaces.IsEmpty() {
 		if matchNamespaceFilter(requestedNamespace, nc.DeniedNamespaces) {
+			c.log.Debugw("Namespace is in denied list",
+				"template", template.Name,
+				"requestedNamespace", requestedNamespace,
+				"deniedPatterns", nc.DeniedNamespaces.Patterns,
+			)
 			return "", fmt.Errorf("namespace '%s' is explicitly denied", requestedNamespace)
 		}
 	}
