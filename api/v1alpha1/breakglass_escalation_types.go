@@ -56,7 +56,7 @@ type BreakglassEscalationSpec struct {
 	Approvers BreakglassEscalationApprovers `json:"approvers,omitempty"`
 	// escalatedGroup is the group to be granted by this escalation.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Pattern="^[a-zA-Z0-9._-]+$"
+	// +kubebuilder:validation:Pattern="^[a-zA-Z0-9._:-]+$"
 	EscalatedGroup string `json:"escalatedGroup,omitempty"`
 
 	// maxValidFor is the maximum amount of time a session for this escalation will be active for after it is approved.

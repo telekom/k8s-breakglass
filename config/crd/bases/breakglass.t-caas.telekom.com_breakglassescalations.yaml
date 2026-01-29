@@ -188,7 +188,7 @@ spec:
               escalatedGroup:
                 description: escalatedGroup is the group to be granted by this escalation.
                 minLength: 1
-                pattern: ^[a-zA-Z0-9._-]+$
+                pattern: ^[a-zA-Z0-9._:-]+$
                 type: string
               mailProvider:
                 description: |-

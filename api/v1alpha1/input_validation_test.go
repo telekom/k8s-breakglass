@@ -21,6 +21,8 @@ func TestValidateIdentifierFormat(t *testing.T) {
 		{name: "with dot", value: "admin.group", shouldFail: false},
 		{name: "email format", value: "admin@example.com", shouldFail: false},
 		{name: "k8s resource name", value: "escalation-config", shouldFail: false},
+		{name: "with colon separator", value: "breakglass:platform:emergency", shouldFail: false},
+		{name: "with colon and tenant", value: "breakglass:tenant:myapp:poweruser", shouldFail: false},
 
 		// Invalid cases
 		{name: "with space", value: "admin group", shouldFail: true},

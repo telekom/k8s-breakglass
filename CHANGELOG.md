@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **EscalatedGroup Pattern**: Allow colons (`:`) in `escalatedGroup` field to support breakglass group naming convention `breakglass:persona:scope:level` (e.g., `breakglass:platform:emergency`, `breakglass:tenant:myapp:poweruser`)
+
 ### Added
 
 - **DebugSessionClusterBinding Advanced Features**: Full implementation of binding lifecycle and session control fields
