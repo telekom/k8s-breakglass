@@ -154,8 +154,8 @@ async function handleJoin() {
     await debugSessionService.joinSession(sessionName.value, { role: "participant" });
     pushSuccess("Joined session successfully");
     await fetchSession();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to join session");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   }
 }
 
@@ -165,8 +165,8 @@ async function _handleLeave() {
     await debugSessionService.leaveSession(sessionName.value);
     pushSuccess("Left session successfully");
     await fetchSession();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to leave session");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   }
 }
 
@@ -175,8 +175,8 @@ async function handleTerminate() {
     await debugSessionService.terminateSession(sessionName.value);
     pushSuccess("Session terminated");
     await fetchSession();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to terminate session");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   }
 }
 
@@ -191,8 +191,8 @@ async function confirmRenew() {
     pushSuccess(`Session renewed by ${renewDuration.value}`);
     renewDialogOpen.value = false;
     await fetchSession();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to renew session");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   }
 }
 
@@ -201,8 +201,8 @@ async function handleApprove() {
     await debugSessionService.approveSession(sessionName.value);
     pushSuccess("Session approved");
     await fetchSession();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to approve session");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   }
 }
 
@@ -218,8 +218,8 @@ async function confirmReject() {
     pushSuccess("Session rejected");
     rejectDialogOpen.value = false;
     await fetchSession();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to reject session");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   }
 }
 
@@ -245,8 +245,8 @@ async function handleInjectEphemeralContainer() {
     showKubectlDebugForm.value = false;
     // Reset form
     ephemeralForm.value = { namespace: "", podName: "", containerName: "debug", image: "busybox:latest", command: "" };
-  } catch (e: any) {
-    pushError(e?.message || "Failed to inject ephemeral container");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   } finally {
     kubectlDebugLoading.value = false;
   }
@@ -269,8 +269,8 @@ async function handleCreatePodCopy() {
     showKubectlDebugForm.value = false;
     podCopyForm.value = { namespace: "", podName: "", debugImage: "" };
     await fetchSession();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to create pod copy");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   } finally {
     kubectlDebugLoading.value = false;
   }
@@ -291,8 +291,8 @@ async function handleCreateNodeDebugPod() {
     showKubectlDebugForm.value = false;
     nodeDebugForm.value = { nodeName: "" };
     await fetchSession();
-  } catch (e: any) {
-    pushError(e?.message || "Failed to create node debug pod");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   } finally {
     kubectlDebugLoading.value = false;
   }

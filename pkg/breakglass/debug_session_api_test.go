@@ -3461,3 +3461,207 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		})
 	}
 }
+
+// TestMatchPattern_MiddleWildcards tests glob patterns with wildcards in the middle
+// These patterns are used in templates like "*.tst.*", "*.dev.*"
+func TestMatchPattern_MiddleWildcards(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		value    string
+		expected bool
+	}{
+		// Middle wildcard patterns (*.xxx.*)
+		{"middle wildcard exact segment match", "*.tst.*", "cluster.tst.region", true},
+		{"middle wildcard tst no match", "*.tst.*", "schiff-canary-1.tsttmdc.bn", false}, // tsttmdc is not .tst.
+		{"middle wildcard dev matches", "*.dev.*", "my.dev.cluster", true},
+		{"middle wildcard dev no match", "*.dev.*", "mydevcluster", false},
+		{"middle wildcard ref matches", "*.ref.*", "app.ref.east", true},
+
+		// Multiple wildcards
+		{"asterisk in middle", "*middle*", "leftmiddleright", true},
+		{"asterisk prefix and suffix", "*cluster*", "my-cluster-name", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchPattern(tt.pattern, tt.value)
+			assert.Equal(t, tt.expected, result, "pattern=%q value=%q", tt.pattern, tt.value)
+		})
+	}
+}
+
+// TestMatchPattern_RealClusterPatterns tests real-world cluster patterns from DebugSessionTemplates
+func TestMatchPattern_RealClusterPatterns(t *testing.T) {
+	// Real cluster name from the error
+	clusterName := "schiff-canary-1.tsttmdc.bn"
+
+	tests := []struct {
+		pattern  string
+		expected bool
+		reason   string
+	}{
+		{"*", true, "wildcard should match any cluster"},
+		{"schiff-*", true, "prefix should match schiff clusters"},
+		{"*.bn", true, "suffix should match .bn clusters"},
+		{"dev-*", false, "dev prefix should not match schiff cluster"},
+		{"*.tst.*", false, "tsttmdc does not have .tst. segment"},
+		{"*tsttmdc*", true, "should match substring tsttmdc"},
+		{"schiff-canary-*", true, "should match schiff-canary prefix"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern, func(t *testing.T) {
+			result := matchPattern(tt.pattern, clusterName)
+			assert.Equal(t, tt.expected, result, "pattern=%q cluster=%q reason=%s", tt.pattern, clusterName, tt.reason)
+		})
+	}
+}
+
+// TestIsClusterAllowedByTemplateOrBinding tests the combined template + binding cluster validation
+func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	// Create a mock controller with a fake client
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	controller := NewDebugSessionAPIController(log, fakeClient, nil, nil)
+
+	clusterConfigs := map[string]*telekomv1alpha1.ClusterConfig{
+		"prod-cluster": {
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-cluster"},
+		},
+		"test-cluster": {
+			ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
+		},
+		"dev-cluster": {
+			ObjectMeta: metav1.ObjectMeta{Name: "dev-cluster", Labels: map[string]string{"env": "dev"}},
+		},
+	}
+
+	tests := []struct {
+		name          string
+		template      *telekomv1alpha1.DebugSessionTemplate
+		clusterName   string
+		bindings      []telekomv1alpha1.DebugSessionClusterBinding
+		expectAllowed bool
+		expectSource  string // "template" or "binding:*"
+	}{
+		{
+			name: "allowed by template pattern",
+			template: &telekomv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "template1"},
+				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+						Clusters: []string{"prod-*"},
+					},
+				},
+			},
+			clusterName:   "prod-cluster",
+			bindings:      nil,
+			expectAllowed: true,
+			expectSource:  "template",
+		},
+		{
+			name: "not allowed by template, no bindings",
+			template: &telekomv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "template1"},
+				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+						Clusters: []string{"prod-*"},
+					},
+				},
+			},
+			clusterName:   "test-cluster",
+			bindings:      nil,
+			expectAllowed: false,
+			expectSource:  "",
+		},
+		{
+			name: "not allowed by template, allowed by binding",
+			template: &telekomv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "template1"},
+				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+						Clusters: []string{"prod-*"},
+					},
+				},
+			},
+			clusterName: "test-cluster",
+			bindings: []telekomv1alpha1.DebugSessionClusterBinding{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template1"},
+						Clusters:    []string{"test-cluster"},
+					},
+				},
+			},
+			expectAllowed: true,
+			expectSource:  "binding:default/binding1",
+		},
+		{
+			name: "template has no allowed clusters, binding provides access",
+			template: &telekomv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "template2"},
+				Spec:       telekomv1alpha1.DebugSessionTemplateSpec{},
+			},
+			clusterName: "dev-cluster",
+			bindings: []telekomv1alpha1.DebugSessionClusterBinding{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "dev-binding", Namespace: "team-ns"},
+					Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template2"},
+						Clusters:    []string{"dev-cluster"},
+					},
+				},
+			},
+			expectAllowed: true,
+			expectSource:  "binding:team-ns/dev-binding",
+		},
+		{
+			name: "binding references wrong template",
+			template: &telekomv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "template1"},
+				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+						Clusters: []string{"prod-*"},
+					},
+				},
+			},
+			clusterName: "test-cluster",
+			bindings: []telekomv1alpha1.DebugSessionClusterBinding{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &telekomv1alpha1.TemplateReference{Name: "other-template"}, // Wrong template!
+						Clusters:    []string{"test-cluster"},
+					},
+				},
+			},
+			expectAllowed: false,
+			expectSource:  "",
+		},
+		{
+			name: "no restrictions and no bindings - implicit allow for backward compatibility",
+			template: &telekomv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "open-template"},
+				Spec:       telekomv1alpha1.DebugSessionTemplateSpec{}, // No Allowed field
+			},
+			clusterName:   "any-cluster",
+			bindings:      nil, // No bindings
+			expectAllowed: true,
+			expectSource:  "implicit (no restrictions)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := controller.isClusterAllowedByTemplateOrBinding(tt.template, tt.clusterName, tt.bindings, clusterConfigs)
+			assert.Equal(t, tt.expectAllowed, result.Allowed, "expected Allowed=%v, got %v", tt.expectAllowed, result.Allowed)
+			if tt.expectSource != "" {
+				assert.Equal(t, tt.expectSource, result.AllowedBySource, "expected source=%q, got %q", tt.expectSource, result.AllowedBySource)
+			}
+		})
+	}
+}

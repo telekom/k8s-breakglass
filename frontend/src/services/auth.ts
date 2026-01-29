@@ -548,11 +548,110 @@ export default class AuthService {
     }
     const data = await this.userManager.getUser();
     const token = data?.access_token || "";
+    const expiresAt = data?.expires_at;
+    const now = Math.floor(Date.now() / 1000);
+    const isExpired = expiresAt ? now >= expiresAt : false;
+    const expiresIn = expiresAt ? expiresAt - now : undefined;
+
     console.debug("[AuthService] Retrieved access token", {
       hasToken: !!token,
       tokenLength: token.length,
+      expiresAt: expiresAt ? new Date(expiresAt * 1000).toISOString() : undefined,
+      expiresIn: expiresIn !== undefined ? `${expiresIn}s` : undefined,
+      isExpired,
     });
+
+    if (isExpired) {
+      console.warn("[AuthService] Token is expired, API calls will likely fail with 401");
+      logError("AuthService", "Returning expired token - user needs to re-authenticate");
+    }
+
     return token;
+  }
+
+  /**
+   * Check if the current token is expired
+   */
+  public async isTokenExpired(): Promise<boolean> {
+    if (this.mockMode) {
+      const expiresAt = this.mockUser?.expires_at;
+      if (!expiresAt) return true;
+      return Math.floor(Date.now() / 1000) >= expiresAt;
+    }
+    const data = await this.userManager.getUser();
+    if (!data?.expires_at) return true;
+    return Math.floor(Date.now() / 1000) >= data.expires_at;
+  }
+
+  /**
+   * Try to silently renew the token. Returns true if successful.
+   * This can be called manually if the automatic silent renew failed.
+   *
+   * Strategy:
+   * 1. First try signinSilent() which uses iframe by default
+   * 2. If iframe fails (e.g., CSP frame-ancestors blocks it), try using refresh_token directly
+   *    via signinSilent with silentRequestTimeoutInSeconds set low to fail fast
+   */
+  public async trySilentRenew(): Promise<boolean> {
+    if (this.mockMode) {
+      console.debug("[AuthService] Silent renew skipped in mock mode");
+      return true;
+    }
+
+    // First, check if we have a valid user with a refresh token
+    const currentUser = await this.userManager.getUser();
+    if (!currentUser) {
+      console.warn("[AuthService] No user found for silent renew");
+      return false;
+    }
+
+    try {
+      console.debug("[AuthService] Attempting silent renew (iframe method)");
+      const renewedUser = await this.userManager.signinSilent();
+      if (renewedUser) {
+        console.debug("[AuthService] Silent renew successful (iframe)", {
+          email: renewedUser.profile?.email,
+          expiresAt: renewedUser.expires_at,
+        });
+        user.value = renewedUser;
+        return true;
+      }
+      console.warn("[AuthService] Silent renew returned no user");
+      return false;
+    } catch (iframeError) {
+      // iframe method failed - likely CSP blocking
+      console.warn("[AuthService] Silent renew via iframe failed, trying refresh token fallback", iframeError);
+
+      // Check if we have a refresh token to try
+      if (!currentUser.refresh_token) {
+        console.error("[AuthService] No refresh token available for fallback");
+        logError("AuthService", "Silent renew failed and no refresh token available", iframeError);
+        return false;
+      }
+
+      try {
+        console.debug("[AuthService] Attempting token refresh via refresh_token");
+        // Use the token endpoint directly via signinSilent with refresh token
+        // oidc-client-ts will use the refresh_token if available when signinSilent fails
+        const renewedUser = await this.userManager.signinSilent({
+          silentRequestTimeoutInSeconds: 5,
+          extraTokenParams: { grant_type: "refresh_token" },
+        });
+        if (renewedUser) {
+          console.debug("[AuthService] Refresh token renewal successful", {
+            email: renewedUser.profile?.email,
+            expiresAt: renewedUser.expires_at,
+          });
+          user.value = renewedUser;
+          return true;
+        }
+      } catch (refreshError) {
+        console.error("[AuthService] Refresh token fallback also failed", refreshError);
+        logError("AuthService", "Both iframe and refresh token renewal failed", refreshError);
+      }
+
+      return false;
+    }
   }
 
   public async getUserEmail(): Promise<string> {
@@ -736,11 +835,14 @@ export default class AuthService {
       redirect_uri: this.baseURL + AuthRedirect,
       silent_redirect_uri: this.baseURL + AuthSilentRedirect,
       response_type: "code",
-      scope: "openid profile email",
+      // Include offline_access to get refresh tokens for CSP-blocked iframe fallback
+      scope: "openid profile email offline_access",
       post_logout_redirect_uri: this.baseURL,
       filterProtocolClaims: true,
       automaticSilentRenew: true,
       accessTokenExpiringNotificationTimeInSeconds: 60,
+      // Prefer refresh tokens over iframe when available (works around CSP frame-ancestors issues)
+      revokeTokensOnSignout: true,
     };
 
     settings.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -759,9 +861,70 @@ export default class AuthService {
   }
 
   private registerUserManagerEvents(manager: UserManager) {
-    manager.events.addUserLoaded((loadedUser) => {
-      user.value = loadedUser;
-    });
+    // Guard: Some mock/test managers may not have all event methods
+    const events = manager.events;
+    if (!events) {
+      console.debug("[AuthService] No events object on manager, skipping event registration");
+      return;
+    }
+
+    // User loaded (after login or silent renew)
+    if (typeof events.addUserLoaded === "function") {
+      events.addUserLoaded((loadedUser) => {
+        console.debug("[AuthService] User loaded event", {
+          sub: loadedUser.profile?.sub,
+          email: loadedUser.profile?.email,
+          expiresAt: loadedUser.expires_at,
+          expiresIn: loadedUser.expires_in,
+        });
+        user.value = loadedUser;
+      });
+    }
+
+    // User unloaded (logout or session expired)
+    if (typeof events.addUserUnloaded === "function") {
+      events.addUserUnloaded(() => {
+        console.debug("[AuthService] User unloaded event - session cleared");
+        user.value = undefined;
+      });
+    }
+
+    // Token about to expire
+    if (typeof events.addAccessTokenExpiring === "function") {
+      events.addAccessTokenExpiring(() => {
+        console.debug("[AuthService] Access token expiring soon, silent renew should trigger");
+      });
+    }
+
+    // Token expired (silent renew didn't work)
+    if (typeof events.addAccessTokenExpired === "function") {
+      events.addAccessTokenExpired(() => {
+        console.warn("[AuthService] Access token expired - silent renew failed or not configured");
+        logError("AuthService", "Access token expired, user needs to re-authenticate");
+      });
+    }
+
+    // Silent renew error
+    if (typeof events.addSilentRenewError === "function") {
+      events.addSilentRenewError((error) => {
+        console.error("[AuthService] Silent renew error", {
+          message: error.message,
+          name: error.name,
+          stack: error.stack,
+        });
+        logError("AuthService", "Silent renew failed", error.message);
+        // If silent renew fails (e.g., due to CSP frame-ancestors), the user will need to re-authenticate
+        // The next API call will get 401 and the error handling should redirect to login
+      });
+    }
+
+    // User session changed (e.g., another tab logged out)
+    if (typeof events.addUserSignedOut === "function") {
+      events.addUserSignedOut(() => {
+        console.debug("[AuthService] User signed out event (possibly from another tab)");
+        user.value = undefined;
+      });
+    }
   }
 
   private reinitializeDefaultManager() {

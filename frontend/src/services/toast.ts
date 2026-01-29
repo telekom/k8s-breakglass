@@ -5,6 +5,7 @@ export interface AppError {
   message: string;
   status?: number;
   cid?: string; // correlation id from backend
+  source?: string; // origin/source of the error (e.g., "DebugSessionService", "HttpClient")
   ts: number;
   type?: "error" | "success";
   autoHideDuration?: number;
@@ -16,14 +17,36 @@ const SUCCESS_AUTO_HIDE_MS = 6000;
 
 const state = reactive<{ errors: AppError[] }>({ errors: [] });
 
-export function pushError(message: string, status?: number, cid?: string) {
+export interface PushErrorOptions {
+  status?: number;
+  cid?: string;
+  source?: string;
+}
+
+export function pushError(message: string, statusOrOptions?: number | PushErrorOptions, cid?: string) {
   const id = Math.random().toString(36).slice(2);
+
+  // Support both old signature (message, status, cid) and new options object
+  let status: number | undefined;
+  let correlationId: string | undefined;
+  let source: string | undefined;
+
+  if (typeof statusOrOptions === "object") {
+    status = statusOrOptions.status;
+    correlationId = statusOrOptions.cid;
+    source = statusOrOptions.source;
+  } else {
+    status = statusOrOptions;
+    correlationId = cid;
+  }
+
   const isSuccessLike = !!status && status >= 200 && status < 300;
   state.errors.push({
     id,
     message,
     status,
-    cid,
+    cid: correlationId,
+    source,
     ts: Date.now(),
     type: isSuccessLike ? "success" : "error",
     autoHideDuration: isSuccessLike ? SUCCESS_AUTO_HIDE_MS : ERROR_AUTO_HIDE_MS,

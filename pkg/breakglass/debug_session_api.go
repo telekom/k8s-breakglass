@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -385,25 +386,56 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	// Validate cluster is allowed by template
-	if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
-		allowed := false
-		for _, pattern := range template.Spec.Allowed.Clusters {
-			if matchPattern(pattern, req.Cluster) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			reqLog.Warnw("Cluster not allowed by template",
-				"templateRef", req.TemplateRef,
-				"requestedCluster", req.Cluster,
-				"allowedClusters", template.Spec.Allowed.Clusters,
-			)
-			ctx.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("cluster '%s' is not allowed by template", req.Cluster)})
-			return
-		}
+	// Fetch bindings and cluster configs to check if cluster is allowed via template or binding
+	var bindingList v1alpha1.DebugSessionClusterBindingList
+	var clusterConfigList v1alpha1.ClusterConfigList
+	if err := c.client.List(apiCtx, &bindingList); err != nil {
+		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate cluster access"})
+		return
 	}
+	if err := c.client.List(apiCtx, &clusterConfigList); err != nil {
+		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate cluster access"})
+		return
+	}
+
+	// Build cluster name -> ClusterConfig map for binding resolution
+	clusterMap := make(map[string]*v1alpha1.ClusterConfig, len(clusterConfigList.Items))
+	for i := range clusterConfigList.Items {
+		cc := &clusterConfigList.Items[i]
+		clusterMap[cc.Name] = cc
+	}
+
+	// Check if cluster is allowed by template or any binding
+	allowedResult := c.isClusterAllowedByTemplateOrBinding(template, req.Cluster, bindingList.Items, clusterMap)
+	if !allowedResult.Allowed {
+		var errDetails string
+		if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+			errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
+				req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters)
+		} else {
+			errDetails = fmt.Sprintf("cluster '%s' is not allowed. Template '%s' has no allowed cluster patterns and no bindings grant access to this cluster.",
+				req.Cluster, req.TemplateRef)
+		}
+		reqLog.Warnw("Cluster not allowed by template or binding",
+			"templateRef", req.TemplateRef,
+			"requestedCluster", req.Cluster,
+			"templateAllowedClusters", func() []string {
+				if template.Spec.Allowed != nil {
+					return template.Spec.Allowed.Clusters
+				}
+				return nil
+			}(),
+			"bindingsChecked", len(bindingList.Items),
+		)
+		ctx.JSON(http.StatusForbidden, gin.H{"error": errDetails})
+		return
+	}
+	reqLog.Debugw("Cluster access validated",
+		"requestedCluster", req.Cluster,
+		"allowedBySource", allowedResult.AllowedBySource,
+	)
 
 	// Validate and resolve target namespace
 	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace)
@@ -2316,19 +2348,32 @@ func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *v1alph
 	return false
 }
 
-// matchPattern checks if a string matches a glob pattern (simplified)
+// matchPattern checks if a string matches a glob pattern.
+// Supports patterns like:
+//   - "*" matches everything
+//   - "prefix*" matches strings starting with prefix
+//   - "*suffix" matches strings ending with suffix
+//   - "*.tst.*" matches strings containing ".tst."
+//   - "dev-*" matches "dev-cluster1"
+//
+// Uses path.Match for full glob support when pattern contains wildcards in the middle.
 func matchPattern(pattern, value string) bool {
 	if pattern == "*" {
 		return true
 	}
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(value, prefix)
+
+	// Use path.Match for patterns with wildcards in the middle (e.g., "*.tst.*")
+	// This handles complex glob patterns that simple prefix/suffix matching can't
+	if strings.Contains(pattern, "*") {
+		matched, err := path.Match(pattern, value)
+		if err != nil {
+			// Invalid pattern - fall back to exact match
+			return pattern == value
+		}
+		return matched
 	}
-	if strings.HasPrefix(pattern, "*") {
-		suffix := strings.TrimPrefix(pattern, "*")
-		return strings.HasSuffix(value, suffix)
-	}
+
+	// No wildcards - exact match
 	return pattern == value
 }
 
@@ -3290,4 +3335,65 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 	}
 
 	return nil
+}
+
+// ClusterAllowedResult contains the result of checking if a cluster is allowed
+type ClusterAllowedResult struct {
+	Allowed         bool
+	AllowedBySource string                                // "template" or "binding:<ns>/<name>"
+	MatchingBinding *v1alpha1.DebugSessionClusterBinding  // Non-nil if allowed by binding
+	AllBindings     []v1alpha1.DebugSessionClusterBinding // All bindings that allow this cluster
+}
+
+// isClusterAllowedByTemplateOrBinding checks if a cluster is allowed by the template's allowed.clusters
+// or by any active binding that references this template.
+// This function requires the caller to pass in the bindings and clusterConfigs.
+// If the template has no allowed.clusters, cluster access depends on bindings.
+// If there are no bindings either, access is implicitly allowed (backward compatibility).
+func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
+	template *v1alpha1.DebugSessionTemplate,
+	clusterName string,
+	bindings []v1alpha1.DebugSessionClusterBinding,
+	clusterConfigs map[string]*v1alpha1.ClusterConfig,
+) ClusterAllowedResult {
+	result := ClusterAllowedResult{}
+
+	hasTemplateClusterRestriction := template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0
+
+	// 1. Check if allowed by template's allowed.clusters
+	if hasTemplateClusterRestriction {
+		for _, pattern := range template.Spec.Allowed.Clusters {
+			if matchPattern(pattern, clusterName) {
+				result.Allowed = true
+				result.AllowedBySource = "template"
+				return result
+			}
+		}
+	}
+
+	// 2. Check if allowed by any binding that references this template
+	applicableBindings := c.findBindingsForTemplate(template, bindings)
+	for i := range applicableBindings {
+		binding := &applicableBindings[i]
+		bindingClusters := c.resolveClustersFromBinding(binding, clusterConfigs)
+		for _, bc := range bindingClusters {
+			if bc == clusterName {
+				result.AllBindings = append(result.AllBindings, *binding)
+				if !result.Allowed {
+					result.Allowed = true
+					result.AllowedBySource = fmt.Sprintf("binding:%s/%s", binding.Namespace, binding.Name)
+					result.MatchingBinding = binding
+				}
+			}
+		}
+	}
+
+	// 3. If template has no cluster restriction and no bindings provide explicit access,
+	// fall back to allowing all clusters (backward compatibility)
+	if !result.Allowed && !hasTemplateClusterRestriction && len(applicableBindings) == 0 {
+		result.Allowed = true
+		result.AllowedBySource = "implicit (no restrictions)"
+	}
+
+	return result
 }

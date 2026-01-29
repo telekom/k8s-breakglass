@@ -42,15 +42,9 @@ export default class BreakglassService {
     this.auth = auth;
     debug("BreakglassService", "Initializing authenticated API client");
     this.client = createAuthenticatedApiClient(this.auth);
-
-    this.client.interceptors.response.use(
-      (resp) => resp,
-      (error) => {
-        handleAxiosError("BreakglassService", error);
-        debug("BreakglassService", "HTTP error intercepted", { status: error?.response?.status });
-        return Promise.reject(error);
-      },
-    );
+    // Note: Error handling is done in individual methods to provide context-specific messages.
+    // Do NOT add a response interceptor that calls handleAxiosError here, as it would cause
+    // duplicate error toasts (interceptor + method catch block).
   }
 
   // Backend endpoints:

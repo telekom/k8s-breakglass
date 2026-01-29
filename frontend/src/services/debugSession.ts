@@ -32,14 +32,9 @@ export default class DebugSessionService {
   constructor(auth: AuthService) {
     this.auth = auth;
     this.client = createAuthenticatedApiClient(this.auth, { enableDevTokenLogging: true });
-
-    this.client.interceptors.response.use(
-      (resp) => resp,
-      (error) => {
-        handleAxiosError("DebugSessionService", error);
-        return Promise.reject(error);
-      },
-    );
+    // Note: Error handling is done in individual methods to provide context-specific messages.
+    // Do NOT add a response interceptor that calls handleAxiosError here, as it would cause
+    // duplicate error toasts (interceptor + method catch block + component catch block).
   }
 
   /**

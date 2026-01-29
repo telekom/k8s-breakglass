@@ -384,8 +384,9 @@ async function handleSubmit() {
     const session = await debugSessionService.createSession(request);
     pushSuccess(`Debug session ${session.metadata.name} created successfully`);
     router.push({ name: "debugSessionBrowser" });
-  } catch (e: any) {
-    pushError(e?.message || "Failed to create debug session");
+  } catch {
+    // Error already handled by debugSessionService.createSession (pushError with CID)
+    // Do not push another error here to avoid duplicates
   } finally {
     submitting.value = false;
   }
@@ -533,6 +534,22 @@ function handleDurationChange(ev: Event) {
             <div class="cluster-meta">
               <span v-if="cluster.environment" class="meta-item">{{ cluster.environment }}</span>
               <span v-if="cluster.location" class="meta-item">{{ cluster.location }}</span>
+            </div>
+
+            <!-- Access Source Indicator -->
+            <div class="cluster-access-source">
+              <span
+                v-if="cluster.bindingRef"
+                class="source-badge binding"
+                :title="`Via binding: ${cluster.bindingRef.namespace}/${cluster.bindingRef.name}`"
+              >
+                <scale-icon-content-link size="12"></scale-icon-content-link>
+                via Binding: <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
+              </span>
+              <span v-else class="source-badge direct" title="Direct access from template allowed.clusters">
+                <scale-icon-action-success size="12"></scale-icon-action-success>
+                Direct
+              </span>
             </div>
 
             <div class="cluster-constraints">
@@ -971,6 +988,40 @@ function handleDurationChange(ev: Event) {
   padding: 0.125rem 0.375rem;
   background: var(--telekom-color-background-surface-subtle);
   border-radius: var(--radius-xs);
+}
+
+/* Access Source Indicator */
+.cluster-access-source {
+  margin-bottom: var(--space-sm);
+}
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-xs);
+}
+
+.source-badge.direct {
+  background: var(--telekom-color-functional-success-subtle);
+  color: var(--telekom-color-functional-success-standard);
+  border: 1px solid var(--telekom-color-functional-success-standard);
+}
+
+.source-badge.binding {
+  background: var(--telekom-color-background-surface-highlight);
+  color: var(--telekom-color-primary-standard);
+  border: 1px solid var(--telekom-color-primary-standard);
+}
+
+.source-badge .binding-name {
+  font-weight: 600;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cluster-constraints {

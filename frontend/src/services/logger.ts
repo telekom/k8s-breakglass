@@ -122,8 +122,9 @@ export function error(tag: string, ...args: any[]) {
   console.error(ts(), formatTag(tag), ...args);
 }
 
-// Normalize axios errors and push to UI error state
-export function handleAxiosError(tag: string, err: any, userMessage?: string) {
+// Normalize axios errors and optionally push to UI error state
+// When pushToUI is false, just logs and returns normalized error info without displaying a toast
+export function handleAxiosError(tag: string, err: any, userMessage?: string, pushToUI = true) {
   const r = err?.response;
   const cid = r?.data?.cid || r?.headers?.["x-request-id"] || r?.headers?.["X-Request-ID"];
   const msg =
@@ -132,11 +133,13 @@ export function handleAxiosError(tag: string, err: any, userMessage?: string) {
     err.message ||
     userMessage ||
     "Request failed";
-  // Push sanitized message to global error UI
-  try {
-    pushError(String(msg), r?.status, cid);
-  } catch (e) {
-    console.error(ts(), "[logger.handleAxiosError] pushError failed", e);
+  // Push sanitized message to global error UI if enabled
+  if (pushToUI) {
+    try {
+      pushError(String(msg), r?.status, cid);
+    } catch (e) {
+      console.error(ts(), "[logger.handleAxiosError] pushError failed", e);
+    }
   }
   console.error(ts(), formatTag(tag), msg, err);
   return { message: String(msg), status: r?.status, cid };
