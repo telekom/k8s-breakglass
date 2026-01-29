@@ -24,7 +24,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -2554,4 +2556,774 @@ func TestDebugSessionController_BindingMatchesCluster_EdgeCases(t *testing.T) {
 
 		assert.True(t, ctrl.bindingMatchesCluster(binding, "any-cluster", clusterConfig))
 	})
+}
+func TestApplySchedulingConstraints(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{
+		log: logger,
+	}
+
+	t.Run("nil constraints does nothing", func(t *testing.T) {
+		spec := &corev1.PodSpec{
+			NodeSelector: map[string]string{"existing": "selector"},
+		}
+		ctrl.applySchedulingConstraints(spec, nil)
+		assert.Equal(t, map[string]string{"existing": "selector"}, spec.NodeSelector)
+	})
+
+	t.Run("applies node selector", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{
+				"node-pool": "debug",
+				"zone":      "us-east-1a",
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		assert.Equal(t, map[string]string{
+			"node-pool": "debug",
+			"zone":      "us-east-1a",
+		}, spec.NodeSelector)
+	})
+
+	t.Run("merges node selector with existing", func(t *testing.T) {
+		spec := &corev1.PodSpec{
+			NodeSelector: map[string]string{"existing": "value"},
+		}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"constraint": "value"},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		assert.Equal(t, map[string]string{
+			"existing":   "value",
+			"constraint": "value",
+		}, spec.NodeSelector)
+	})
+
+	t.Run("constraint node selector overrides existing", func(t *testing.T) {
+		spec := &corev1.PodSpec{
+			NodeSelector: map[string]string{"key": "old-value"},
+		}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"key": "new-value"},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		assert.Equal(t, map[string]string{"key": "new-value"}, spec.NodeSelector)
+	})
+
+	t.Run("applies tolerations additively", func(t *testing.T) {
+		spec := &corev1.PodSpec{
+			Tolerations: []corev1.Toleration{
+				{Key: "existing", Operator: corev1.TolerationOpExists},
+			},
+		}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			Tolerations: []corev1.Toleration{
+				{Key: "new", Value: "value", Effect: corev1.TaintEffectNoSchedule},
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		assert.Len(t, spec.Tolerations, 2)
+		assert.Equal(t, "existing", spec.Tolerations[0].Key)
+		assert.Equal(t, "new", spec.Tolerations[1].Key)
+	})
+
+	t.Run("applies required node affinity to empty affinity", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"us-east"}},
+						},
+					},
+				},
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution)
+		assert.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, 1)
+	})
+
+	t.Run("merges required node affinity with existing using AND logic", func(t *testing.T) {
+		spec := &corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+						NodeSelectorTerms: []corev1.NodeSelectorTerm{
+							{
+								MatchExpressions: []corev1.NodeSelectorRequirement{
+									{Key: "existing", Operator: corev1.NodeSelectorOpIn, Values: []string{"value"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{Key: "new", Operator: corev1.NodeSelectorOpIn, Values: []string{"value"}},
+						},
+					},
+				},
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		// Both terms should be present (AND logic via multiple terms)
+		assert.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, 2)
+	})
+
+	t.Run("applies preferred node affinity", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			PreferredNodeAffinity: []corev1.PreferredSchedulingTerm{
+				{
+					Weight: 100,
+					Preference: corev1.NodeSelectorTerm{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{Key: "preferred-zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"zone-a"}},
+						},
+					},
+				},
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity)
+		assert.Len(t, spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
+		assert.Equal(t, int32(100), spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight)
+	})
+
+	t.Run("applies required pod anti-affinity", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			RequiredPodAntiAffinity: []corev1.PodAffinityTerm{
+				{
+					LabelSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "debug"},
+					},
+					TopologyKey: "kubernetes.io/hostname",
+				},
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.PodAntiAffinity)
+		assert.Len(t, spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution, 1)
+		assert.Equal(t, "kubernetes.io/hostname",
+			spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].TopologyKey)
+	})
+
+	t.Run("applies preferred pod anti-affinity", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			PreferredPodAntiAffinity: []corev1.WeightedPodAffinityTerm{
+				{
+					Weight: 50,
+					PodAffinityTerm: corev1.PodAffinityTerm{
+						LabelSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"type": "debug"},
+						},
+						TopologyKey: "topology.kubernetes.io/zone",
+					},
+				},
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.PodAntiAffinity)
+		assert.Len(t, spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
+		assert.Equal(t, int32(50),
+			spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight)
+	})
+
+	t.Run("applies all constraints together", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"pool": "debug"},
+			Tolerations: []corev1.Toleration{
+				{Key: "debug", Effect: corev1.TaintEffectNoSchedule, Operator: corev1.TolerationOpExists},
+			},
+			RequiredNodeAffinity: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"us-east"}},
+						},
+					},
+				},
+			},
+			PreferredNodeAffinity: []corev1.PreferredSchedulingTerm{
+				{Weight: 100, Preference: corev1.NodeSelectorTerm{
+					MatchExpressions: []corev1.NodeSelectorRequirement{
+						{Key: "preferred", Operator: corev1.NodeSelectorOpIn, Values: []string{"yes"}},
+					},
+				}},
+			},
+			RequiredPodAntiAffinity: []corev1.PodAffinityTerm{
+				{TopologyKey: "kubernetes.io/hostname", LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "debug"}}},
+			},
+			PreferredPodAntiAffinity: []corev1.WeightedPodAffinityTerm{
+				{Weight: 50, PodAffinityTerm: corev1.PodAffinityTerm{TopologyKey: "zone", LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"type": "debug"}}}},
+			},
+			DeniedNodes:      []string{"node-1"},
+			DeniedNodeLabels: map[string]string{"exclude": "true"},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+
+		// Verify all constraints applied
+		assert.Equal(t, map[string]string{"pool": "debug"}, spec.NodeSelector)
+		assert.Len(t, spec.Tolerations, 1)
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution)
+		assert.Len(t, spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
+		require.NotNil(t, spec.Affinity.PodAntiAffinity)
+		assert.Len(t, spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution, 1)
+		assert.Len(t, spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
+	})
+
+	t.Run("handles denied nodes logging", func(t *testing.T) {
+		// This test ensures the code path for denied nodes is covered
+		spec := &corev1.PodSpec{}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			DeniedNodes:      []string{"bad-node-1", "bad-node-2"},
+			DeniedNodeLabels: map[string]string{"tainted": "true"},
+		}
+		// Should not panic, just log
+		ctrl.applySchedulingConstraints(spec, constraints)
+		// No assertions needed - just verifying no panic
+	})
+
+	t.Run("applies topology spread constraints", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{
+				{
+					MaxSkew:           1,
+					TopologyKey:       "topology.kubernetes.io/zone",
+					WhenUnsatisfiable: corev1.DoNotSchedule,
+					LabelSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "debug"},
+					},
+				},
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		assert.Len(t, spec.TopologySpreadConstraints, 1)
+		assert.Equal(t, int32(1), spec.TopologySpreadConstraints[0].MaxSkew)
+		assert.Equal(t, "topology.kubernetes.io/zone", spec.TopologySpreadConstraints[0].TopologyKey)
+		assert.Equal(t, corev1.DoNotSchedule, spec.TopologySpreadConstraints[0].WhenUnsatisfiable)
+	})
+
+	t.Run("adds topology spread constraints to existing", func(t *testing.T) {
+		spec := &corev1.PodSpec{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{
+				{
+					MaxSkew:           2,
+					TopologyKey:       "kubernetes.io/hostname",
+					WhenUnsatisfiable: corev1.ScheduleAnyway,
+				},
+			},
+		}
+		constraints := &telekomv1alpha1.SchedulingConstraints{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{
+				{
+					MaxSkew:           1,
+					TopologyKey:       "topology.kubernetes.io/zone",
+					WhenUnsatisfiable: corev1.DoNotSchedule,
+				},
+			},
+		}
+		ctrl.applySchedulingConstraints(spec, constraints)
+		assert.Len(t, spec.TopologySpreadConstraints, 2)
+		assert.Equal(t, "kubernetes.io/hostname", spec.TopologySpreadConstraints[0].TopologyKey)
+		assert.Equal(t, "topology.kubernetes.io/zone", spec.TopologySpreadConstraints[1].TopologyKey)
+	})
+}
+
+func TestConvertDebugPodSpec(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{
+		log: logger,
+	}
+
+	t.Run("converts basic pod spec", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{
+					Name:  "debug",
+					Image: "busybox:latest",
+				},
+			},
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		assert.Len(t, spec.Containers, 1)
+		assert.Equal(t, "debug", spec.Containers[0].Name)
+		assert.Equal(t, "busybox:latest", spec.Containers[0].Image)
+	})
+
+	t.Run("converts pod spec with init containers", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "main", Image: "main:v1"},
+			},
+			InitContainers: []corev1.Container{
+				{Name: "init", Image: "init:v1"},
+			},
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		assert.Len(t, spec.Containers, 1)
+		assert.Len(t, spec.InitContainers, 1)
+		assert.Equal(t, "init", spec.InitContainers[0].Name)
+	})
+
+	t.Run("converts pod spec with volumes", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "debug", Image: "debug:v1"},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "config",
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "debug-config"},
+						},
+					},
+				},
+			},
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		assert.Len(t, spec.Volumes, 1)
+		assert.Equal(t, "config", spec.Volumes[0].Name)
+	})
+
+	t.Run("converts pod spec with node selector", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "debug", Image: "debug:v1"},
+			},
+			NodeSelector: map[string]string{
+				"node-pool": "debug",
+			},
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		assert.Equal(t, map[string]string{"node-pool": "debug"}, spec.NodeSelector)
+	})
+
+	t.Run("converts pod spec with tolerations", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "debug", Image: "debug:v1"},
+			},
+			Tolerations: []corev1.Toleration{
+				{Key: "debug", Operator: corev1.TolerationOpExists},
+			},
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		assert.Len(t, spec.Tolerations, 1)
+		assert.Equal(t, "debug", spec.Tolerations[0].Key)
+	})
+
+	t.Run("converts pod spec with affinity", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "debug", Image: "debug:v1"},
+			},
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+						NodeSelectorTerms: []corev1.NodeSelectorTerm{
+							{
+								MatchExpressions: []corev1.NodeSelectorRequirement{
+									{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"us-east"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity)
+	})
+
+	t.Run("converts pod spec with service account", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "debug", Image: "debug:v1"},
+			},
+			ServiceAccountName: "debug-sa",
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		assert.Equal(t, "debug-sa", spec.ServiceAccountName)
+	})
+
+	t.Run("converts pod spec with security context", func(t *testing.T) {
+		runAsUser := int64(1000)
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "debug", Image: "debug:v1"},
+			},
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsUser: &runAsUser,
+			},
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		require.NotNil(t, spec.SecurityContext)
+		assert.Equal(t, int64(1000), *spec.SecurityContext.RunAsUser)
+	})
+
+	t.Run("converts pod spec with DNS config", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "debug", Image: "debug:v1"},
+			},
+			DNSPolicy: corev1.DNSClusterFirst,
+			DNSConfig: &corev1.PodDNSConfig{
+				Nameservers: []string{"8.8.8.8"},
+			},
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		assert.Equal(t, corev1.DNSClusterFirst, spec.DNSPolicy)
+		require.NotNil(t, spec.DNSConfig)
+		assert.Contains(t, spec.DNSConfig.Nameservers, "8.8.8.8")
+	})
+
+	t.Run("converts pod spec with host network", func(t *testing.T) {
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "debug", Image: "debug:v1"},
+			},
+			HostNetwork: true,
+			HostPID:     true,
+			HostIPC:     true,
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+		assert.True(t, spec.HostNetwork)
+		assert.True(t, spec.HostPID)
+		assert.True(t, spec.HostIPC)
+	})
+
+	t.Run("converts complete pod spec", func(t *testing.T) {
+		runAsUser := int64(1000)
+		terminationGracePeriod := int64(30)
+		dps := telekomv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{Name: "main", Image: "main:v1"},
+			},
+			InitContainers: []corev1.Container{
+				{Name: "init", Image: "init:v1"},
+			},
+			Volumes: []corev1.Volume{
+				{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			},
+			NodeSelector:                  map[string]string{"pool": "debug"},
+			ServiceAccountName:            "debug-sa",
+			TerminationGracePeriodSeconds: &terminationGracePeriod,
+			Tolerations: []corev1.Toleration{
+				{Key: "debug", Operator: corev1.TolerationOpExists},
+			},
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsUser: &runAsUser,
+			},
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{},
+			},
+			DNSPolicy:   corev1.DNSClusterFirst,
+			HostNetwork: false,
+		}
+		spec := ctrl.convertDebugPodSpec(dps)
+
+		assert.Len(t, spec.Containers, 1)
+		assert.Len(t, spec.InitContainers, 1)
+		assert.Len(t, spec.Volumes, 1)
+		assert.Equal(t, map[string]string{"pool": "debug"}, spec.NodeSelector)
+		assert.Equal(t, "debug-sa", spec.ServiceAccountName)
+		assert.Equal(t, int64(30), *spec.TerminationGracePeriodSeconds)
+		assert.Len(t, spec.Tolerations, 1)
+		require.NotNil(t, spec.SecurityContext)
+		require.NotNil(t, spec.Affinity)
+		assert.Equal(t, corev1.DNSClusterFirst, spec.DNSPolicy)
+	})
+}
+
+func TestParseDuration(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{
+		log: logger,
+	}
+
+	t.Run("empty string returns default", func(t *testing.T) {
+		constraints := &telekomv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "30m",
+			MaxDuration:     "4h",
+		}
+		result := ctrl.parseDuration("", constraints)
+		assert.Equal(t, 30*time.Minute, result)
+	})
+
+	t.Run("respects requested duration", func(t *testing.T) {
+		constraints := &telekomv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "30m",
+			MaxDuration:     "4h",
+		}
+		result := ctrl.parseDuration("2h", constraints)
+		assert.Equal(t, 2*time.Hour, result)
+	})
+
+	t.Run("caps at max duration", func(t *testing.T) {
+		constraints := &telekomv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "30m",
+			MaxDuration:     "1h",
+		}
+		result := ctrl.parseDuration("2h", constraints)
+		assert.Equal(t, 1*time.Hour, result)
+	})
+
+	t.Run("uses defaults when constraints nil", func(t *testing.T) {
+		result := ctrl.parseDuration("2h", nil)
+		assert.Equal(t, 2*time.Hour, result)
+	})
+
+	t.Run("empty requested with nil constraints uses default", func(t *testing.T) {
+		result := ctrl.parseDuration("", nil)
+		// Default is 1 hour when no constraints
+		assert.Equal(t, time.Hour, result)
+	})
+
+	t.Run("invalid duration returns default", func(t *testing.T) {
+		constraints := &telekomv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "30m",
+			MaxDuration:     "4h",
+		}
+		result := ctrl.parseDuration("invalid", constraints)
+		assert.Equal(t, 30*time.Minute, result)
+	})
+
+	t.Run("supports day units", func(t *testing.T) {
+		constraints := &telekomv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "1h",
+			MaxDuration:     "7d",
+		}
+		result := ctrl.parseDuration("1d", constraints)
+		assert.Equal(t, 24*time.Hour, result)
+	})
+}
+
+func TestResolveImpersonationConfig(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{
+		log: logger,
+	}
+
+	t.Run("binding impersonation overrides template", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "template-sa",
+						Namespace: "template-ns",
+					},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "binding-sa",
+						Namespace: "binding-ns",
+					},
+				},
+			},
+		}
+
+		result := ctrl.resolveImpersonationConfig(template, binding)
+		require.NotNil(t, result)
+		require.NotNil(t, result.ServiceAccountRef)
+		assert.Equal(t, "binding-sa", result.ServiceAccountRef.Name)
+		assert.Equal(t, "binding-ns", result.ServiceAccountRef.Namespace)
+	})
+
+	t.Run("template impersonation used when binding is nil", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "template-sa",
+						Namespace: "template-ns",
+					},
+				},
+			},
+		}
+
+		result := ctrl.resolveImpersonationConfig(template, nil)
+		require.NotNil(t, result)
+		require.NotNil(t, result.ServiceAccountRef)
+		assert.Equal(t, "template-sa", result.ServiceAccountRef.Name)
+	})
+
+	t.Run("template impersonation used when binding has no impersonation", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Impersonation: &telekomv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &telekomv1alpha1.ServiceAccountReference{
+						Name:      "template-sa",
+						Namespace: "template-ns",
+					},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{},
+		}
+
+		result := ctrl.resolveImpersonationConfig(template, binding)
+		require.NotNil(t, result)
+		require.NotNil(t, result.ServiceAccountRef)
+		assert.Equal(t, "template-sa", result.ServiceAccountRef.Name)
+	})
+
+	t.Run("returns nil when neither has impersonation", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{},
+		}
+
+		result := ctrl.resolveImpersonationConfig(template, nil)
+		assert.Nil(t, result)
+	})
+}
+
+func TestDebugSessionReconciler_WorkloadLabelsAndAnnotations(t *testing.T) {
+	controller := &DebugSessionController{log: zap.NewExample().Sugar()}
+
+	session := newTestDebugSession("merge-session", "template-merge", "cluster-1", "user@example.com")
+	session.Labels = map[string]string{
+		"session-label": "true",
+		"override":      "session",
+	}
+	session.Annotations = map[string]string{
+		"session-annotation": "yes",
+		"override-anno":      "session",
+	}
+
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
+			Labels: map[string]string{
+				"template-label": "true",
+				"override":       "template",
+			},
+			Annotations: map[string]string{
+				"template-annotation": "yes",
+				"override-anno":       "template",
+			},
+		},
+	}
+
+	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			Labels: map[string]string{
+				"binding-label": "true",
+				"override":      "binding",
+			},
+			Annotations: map[string]string{
+				"binding-annotation": "yes",
+				"override-anno":      "binding",
+			},
+		},
+	}
+
+	podTemplate := &telekomv1alpha1.DebugPodTemplate{
+		Spec: telekomv1alpha1.DebugPodTemplateSpec{
+			Template: telekomv1alpha1.DebugPodSpec{
+				Metadata: &telekomv1alpha1.DebugPodMetadata{
+					Labels: map[string]string{
+						"pod-label": "true",
+						"override":  "pod",
+					},
+					Annotations: map[string]string{
+						"pod-annotation": "yes",
+						"override-anno":  "pod",
+					},
+				},
+				Spec: telekomv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{{Name: "debug", Image: "alpine"}},
+				},
+			},
+		},
+	}
+
+	workload, err := controller.buildWorkload(session, template, binding, podTemplate, "breakglass-debug")
+	require.NoError(t, err)
+
+	daemonSet, ok := workload.(*appsv1.DaemonSet)
+	require.True(t, ok, "expected DaemonSet")
+
+	assert.Equal(t, "true", daemonSet.Labels["template-label"])
+	assert.Equal(t, "true", daemonSet.Labels["binding-label"])
+	assert.Equal(t, "true", daemonSet.Labels["pod-label"])
+	assert.Equal(t, "true", daemonSet.Labels["session-label"])
+	assert.Equal(t, "session", daemonSet.Labels["override"])
+
+	assert.Equal(t, "yes", daemonSet.Annotations["template-annotation"])
+	assert.Equal(t, "yes", daemonSet.Annotations["binding-annotation"])
+	assert.Equal(t, "yes", daemonSet.Annotations["pod-annotation"])
+	assert.Equal(t, "yes", daemonSet.Annotations["session-annotation"])
+	assert.Equal(t, "session", daemonSet.Annotations["override-anno"])
+}
+
+func TestDebugSessionReconciler_BuildResourceQuotaAndPDB(t *testing.T) {
+	controller := &DebugSessionController{log: zap.NewExample().Sugar()}
+	session := newTestDebugSession("quota-session", "template-quota", "cluster-1", "user@example.com")
+
+	template := &telekomv1alpha1.DebugSessionTemplate{
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			ResourceQuota: &telekomv1alpha1.DebugResourceQuotaConfig{
+				MaxPods:                 int32Ptr(3),
+				MaxCPU:                  "500m",
+				MaxMemory:               "256Mi",
+				MaxStorage:              "1Gi",
+				EnforceResourceLimits:   true,
+				EnforceResourceRequests: true,
+			},
+			PodDisruptionBudget: &telekomv1alpha1.DebugPDBConfig{
+				Enabled:      true,
+				MinAvailable: int32Ptr(1),
+			},
+		},
+	}
+
+	rq, err := controller.buildResourceQuota(session, template, nil, "breakglass-debug")
+	require.NoError(t, err)
+	require.NotNil(t, rq)
+	assert.True(t, resource.MustParse("3").Equal(rq.Spec.Hard[corev1.ResourcePods]), "pods should be 3")
+	assert.True(t, resource.MustParse("500m").Equal(rq.Spec.Hard[corev1.ResourceRequestsCPU]), "CPU should be 500m")
+	assert.True(t, resource.MustParse("256Mi").Equal(rq.Spec.Hard[corev1.ResourceRequestsMemory]), "memory should be 256Mi")
+	assert.True(t, resource.MustParse("1Gi").Equal(rq.Spec.Hard[corev1.ResourceRequestsEphemeralStorage]), "ephemeral storage should be 1Gi")
+
+	pdb, err := controller.buildPodDisruptionBudget(session, template, nil, "breakglass-debug")
+	require.NoError(t, err)
+	require.NotNil(t, pdb)
+	assert.Equal(t, "debug-quota-session-pdb", pdb.Name)
+	assert.NotNil(t, pdb.Spec.MinAvailable)
+	assert.Equal(t, int32(1), pdb.Spec.MinAvailable.IntVal)
+
+	// Ensure PDB selector targets debug session pods
+	require.NotNil(t, pdb.Spec.Selector)
+	assert.Equal(t, session.Name, pdb.Spec.Selector.MatchLabels[DebugSessionLabelKey])
+}
+
+func int32Ptr(v int32) *int32 {
+	return &v
 }

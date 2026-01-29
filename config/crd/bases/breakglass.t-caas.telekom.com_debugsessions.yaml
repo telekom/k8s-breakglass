@@ -2316,6 +2316,37 @@ spec:
                           type: string
                         type: array
                     type: object
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: annotations are additional annotations applied to
+                      all resources created by this template.
+                    type: object
+                  approvalReason:
+                    description: approvalReason configures reason requirements for
+                      approval/rejection actions.
+                    properties:
+                      description:
+                        description: description is help text displayed to approvers.
+                        type: string
+                      mandatory:
+                        default: false
+                        description: mandatory requires a reason for all approval/rejection
+                          actions.
+                        type: boolean
+                      mandatoryForRejection:
+                        default: true
+                        description: mandatoryForRejection requires a reason specifically
+                          for rejections.
+                        type: boolean
+                      minLength:
+                        default: 10
+                        description: minLength is the minimum character length for
+                          the reason.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
                   approvers:
                     description: |-
                       approvers configures approval workflow for debug session requests.
@@ -2506,12 +2537,32 @@ spec:
                         format: int32
                         type: integer
                     type: object
+                  deprecated:
+                    default: false
+                    description: |-
+                      deprecated marks this template as deprecated.
+                      Deprecated templates show a warning but can still be used.
+                    type: boolean
+                  deprecationMessage:
+                    description: |-
+                      deprecationMessage explains why this template is deprecated and suggests alternatives.
+                      Only displayed when deprecated is true.
+                    type: string
                   description:
                     description: description provides detailed information about what
                       this template does.
                     type: string
                   displayName:
                     description: displayName is a human-readable name for this template.
+                    type: string
+                  expirationBehavior:
+                    default: terminate
+                    description: |-
+                      expirationBehavior controls what happens when a session expires.
+                      Options: "terminate" (default) or "notify-only".
+                    enum:
+                    - terminate
+                    - notify-only
                     type: string
                   failMode:
                     default: closed
@@ -2522,6 +2573,18 @@ spec:
                     - open
                     - closed
                     type: string
+                  gracePeriodBeforeExpiry:
+                    default: 15m
+                    description: |-
+                      gracePeriodBeforeExpiry is the duration before expiry when users are notified.
+                      Users will receive a warning notification at this interval before session expires.
+                    type: string
+                  hidden:
+                    default: false
+                    description: |-
+                      hidden hides this template from the UI but allows API usage.
+                      Useful for templates used by automation or internal tools.
+                    type: boolean
                   impersonation:
                     description: |-
                       impersonation controls which identity is used to deploy debug resources.
@@ -2805,6 +2868,12 @@ spec:
                             type: string
                         type: object
                     type: object
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: labels are additional labels applied to all resources
+                      created by this template.
+                    type: object
                   mode:
                     default: workload
                     description: |-
@@ -3002,6 +3071,80 @@ spec:
                           namespaceLabels are labels applied to created namespaces.
                           Only used when createIfNotExists=true.
                         type: object
+                    type: object
+                  notification:
+                    description: notification configures notification settings for
+                      debug sessions using this template.
+                    properties:
+                      additionalRecipients:
+                        description: additionalRecipients are extra email addresses
+                          to notify (beyond requester/approvers).
+                        items:
+                          type: string
+                        type: array
+                      enabled:
+                        default: true
+                        description: enabled enables/disables notifications for debug
+                          sessions.
+                        type: boolean
+                      excludedRecipients:
+                        description: |-
+                          excludedRecipients are users/groups that should never receive notifications.
+                          Uses the same NotificationExclusions type as BreakglassEscalation for consistency.
+                        properties:
+                          groups:
+                            description: groups is a list of approver groups to exclude
+                              from notifications
+                            items:
+                              type: string
+                            type: array
+                          users:
+                            description: users is a list of user emails/usernames
+                              to exclude from notifications
+                            items:
+                              type: string
+                            type: array
+                        type: object
+                      notifyOnApproval:
+                        default: true
+                        description: notifyOnApproval sends notifications when a session
+                          is approved/rejected.
+                        type: boolean
+                      notifyOnExpiry:
+                        default: true
+                        description: notifyOnExpiry sends notifications when a session
+                          is about to expire.
+                        type: boolean
+                      notifyOnRequest:
+                        default: true
+                        description: notifyOnRequest sends notifications when a session
+                          is requested.
+                        type: boolean
+                      notifyOnTermination:
+                        default: true
+                        description: notifyOnTermination sends notifications when
+                          a session is terminated.
+                        type: boolean
+                    type: object
+                  podDisruptionBudget:
+                    description: |-
+                      podDisruptionBudget configures disruption tolerance for debug pods.
+                      Useful for long-running debug sessions that shouldn't be evicted.
+                    properties:
+                      enabled:
+                        default: false
+                        description: enabled creates a PDB for debug pods.
+                        type: boolean
+                      maxUnavailable:
+                        description: maxUnavailable specifies the maximum number of
+                          debug pods that can be unavailable.
+                        format: int32
+                        type: integer
+                      minAvailable:
+                        description: minAvailable specifies the minimum number of
+                          debug pods that must be available.
+                        format: int32
+                        type: integer
                     type: object
                   podOverrides:
                     description: |-
@@ -3464,6 +3607,13 @@ spec:
                     required:
                     - name
                     type: object
+                  priority:
+                    default: 0
+                    description: |-
+                      priority controls the order in which templates are displayed in the UI.
+                      Higher values appear first. Defaults to 0.
+                    format: int32
+                    type: integer
                   replicas:
                     default: 1
                     description: |-
@@ -3472,6 +3622,39 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  requestReason:
+                    description: requestReason configures reason requirements for
+                      debug session requests.
+                    properties:
+                      description:
+                        description: description is help text displayed to users when
+                          entering a reason.
+                        type: string
+                      mandatory:
+                        default: false
+                        description: mandatory requires a reason for all session requests.
+                        type: boolean
+                      maxLength:
+                        default: 1000
+                        description: maxLength is the maximum character length for
+                          the reason.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      minLength:
+                        default: 10
+                        description: minLength is the minimum character length for
+                          the reason.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      suggestedReasons:
+                        description: suggestedReasons is a list of pre-defined reason
+                          options for quick selection.
+                        items:
+                          type: string
+                        type: array
+                    type: object
                   requiredAuxiliaryResourceCategories:
                     description: |-
                       requiredAuxiliaryResourceCategories lists categories that MUST be enabled.
@@ -3479,6 +3662,42 @@ spec:
                     items:
                       type: string
                     type: array
+                  resourceQuota:
+                    description: |-
+                      resourceQuota specifies resource limits for debug sessions using this template.
+                      Helps prevent resource exhaustion on target clusters.
+                    properties:
+                      enforceResourceLimits:
+                        default: true
+                        description: enforceResourceLimits requires resource limits
+                          on all containers.
+                        type: boolean
+                      enforceResourceRequests:
+                        default: true
+                        description: enforceResourceRequests requires resource requests
+                          on all containers.
+                        type: boolean
+                      maxCPU:
+                        description: |-
+                          maxCPU limits the total CPU across all debug pods.
+                          Uses Kubernetes resource quantity format (e.g., "2", "500m").
+                        type: string
+                      maxMemory:
+                        description: |-
+                          maxMemory limits the total memory across all debug pods.
+                          Uses Kubernetes resource quantity format (e.g., "1Gi", "512Mi").
+                        type: string
+                      maxPods:
+                        description: maxPods limits the maximum number of debug pods
+                          per session.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      maxStorage:
+                        description: maxStorage limits ephemeral storage for debug
+                          pods.
+                        type: string
+                    type: object
                   schedulingConstraints:
                     description: |-
                       schedulingConstraints defines mandatory scheduling rules for debug pods.

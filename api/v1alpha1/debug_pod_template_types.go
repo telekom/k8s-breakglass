@@ -148,17 +148,84 @@ type DebugPodSpecInner struct {
 	// terminationGracePeriodSeconds specifies the duration in seconds for graceful termination.
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
+
+	// priorityClassName is the name of the PriorityClass for this pod.
+	// Use this to control scheduling priority of debug pods.
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+
+	// runtimeClassName refers to a RuntimeClass for running this pod.
+	// Useful for running debug pods with specific container runtimes (e.g., gVisor, Kata).
+	// +optional
+	RuntimeClassName *string `json:"runtimeClassName,omitempty"`
+
+	// preemptionPolicy controls whether this pod can preempt lower-priority pods.
+	// Valid values: "PreemptLowerPriority" (default) or "Never".
+	// +optional
+	// +kubebuilder:validation:Enum=PreemptLowerPriority;Never
+	PreemptionPolicy *corev1.PreemptionPolicy `json:"preemptionPolicy,omitempty"`
+
+	// topologySpreadConstraints describe how debug pods should be spread across topology domains.
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+
+	// dnsConfig specifies additional DNS configuration for the pod.
+	// +optional
+	DNSConfig *corev1.PodDNSConfig `json:"dnsConfig,omitempty"`
+
+	// shareProcessNamespace enables sharing the process namespace between containers.
+	// Useful for debugging when you need to see processes in other containers.
+	// +optional
+	// +kubebuilder:default=false
+	ShareProcessNamespace *bool `json:"shareProcessNamespace,omitempty"`
+
+	// hostAliases adds entries to the pod's /etc/hosts file.
+	// +optional
+	HostAliases []corev1.HostAlias `json:"hostAliases,omitempty"`
+
+	// imagePullSecrets references secrets for pulling container images.
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// enableServiceLinks specifies whether to inject service environment variables.
+	// Defaults to false for security - debug pods should be isolated.
+	// +optional
+	// +kubebuilder:default=false
+	EnableServiceLinks *bool `json:"enableServiceLinks,omitempty"`
+
+	// schedulerName specifies the scheduler to use for this pod.
+	// +optional
+	SchedulerName string `json:"schedulerName,omitempty"`
+
+	// overhead represents the resource overhead associated with the pod.
+	// Used for RuntimeClass overhead accounting.
+	// +optional
+	Overhead corev1.ResourceList `json:"overhead,omitempty"`
 }
 
 // DebugPodTemplateStatus defines the observed state of DebugPodTemplate.
 type DebugPodTemplateStatus struct {
 	// conditions represent the latest available observations of the template's state.
 	// +optional
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// observedGeneration is the generation last observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// usedBy lists DebugSessionTemplates that reference this pod template.
 	// +optional
 	UsedBy []string `json:"usedBy,omitempty"`
+
+	// usageCount tracks how many active debug sessions use this template.
+	// +optional
+	UsageCount int32 `json:"usageCount,omitempty"`
+
+	// lastUsedAt records when this template was last used to create a debug session.
+	// +optional
+	LastUsedAt *metav1.Time `json:"lastUsedAt,omitempty"`
 }
 
 // +kubebuilder:resource:scope=Cluster,shortName=dpt

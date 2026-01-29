@@ -33,6 +33,17 @@ type DebugSessionClusterBindingStatusApplyConfiguration struct {
 	// nameCollisions lists any detected name collisions with other bindings.
 	// A collision occurs when the same template+cluster produces the same effective name.
 	NameCollisions []NameCollisionApplyConfiguration `json:"nameCollisions,omitempty"`
+	// pendingSessionCount is the number of sessions pending approval.
+	PendingSessionCount *int32 `json:"pendingSessionCount,omitempty"`
+	// totalSessionCount is the total number of sessions ever created via this binding.
+	TotalSessionCount *int64 `json:"totalSessionCount,omitempty"`
+	// activeByUser tracks active session counts per user.
+	// Key is user email, value is active session count.
+	ActiveByUser map[string]int32 `json:"activeByUser,omitempty"`
+	// isActive indicates if this binding is currently active (not disabled, not expired, after effectiveFrom).
+	IsActive *bool `json:"isActive,omitempty"`
+	// effectiveDisplayName shows the computed display name for this binding.
+	EffectiveDisplayName *string `json:"effectiveDisplayName,omitempty"`
 }
 
 // DebugSessionClusterBindingStatusApplyConfiguration constructs a declarative configuration of the DebugSessionClusterBindingStatus type for use with
@@ -114,5 +125,51 @@ func (b *DebugSessionClusterBindingStatusApplyConfiguration) WithNameCollisions(
 		}
 		b.NameCollisions = append(b.NameCollisions, *values[i])
 	}
+	return b
+}
+
+// WithPendingSessionCount sets the PendingSessionCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PendingSessionCount field is set to the value of the last call.
+func (b *DebugSessionClusterBindingStatusApplyConfiguration) WithPendingSessionCount(value int32) *DebugSessionClusterBindingStatusApplyConfiguration {
+	b.PendingSessionCount = &value
+	return b
+}
+
+// WithTotalSessionCount sets the TotalSessionCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TotalSessionCount field is set to the value of the last call.
+func (b *DebugSessionClusterBindingStatusApplyConfiguration) WithTotalSessionCount(value int64) *DebugSessionClusterBindingStatusApplyConfiguration {
+	b.TotalSessionCount = &value
+	return b
+}
+
+// WithActiveByUser puts the entries into the ActiveByUser field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the ActiveByUser field,
+// overwriting an existing map entries in ActiveByUser field with the same key.
+func (b *DebugSessionClusterBindingStatusApplyConfiguration) WithActiveByUser(entries map[string]int32) *DebugSessionClusterBindingStatusApplyConfiguration {
+	if b.ActiveByUser == nil && len(entries) > 0 {
+		b.ActiveByUser = make(map[string]int32, len(entries))
+	}
+	for k, v := range entries {
+		b.ActiveByUser[k] = v
+	}
+	return b
+}
+
+// WithIsActive sets the IsActive field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IsActive field is set to the value of the last call.
+func (b *DebugSessionClusterBindingStatusApplyConfiguration) WithIsActive(value bool) *DebugSessionClusterBindingStatusApplyConfiguration {
+	b.IsActive = &value
+	return b
+}
+
+// WithEffectiveDisplayName sets the EffectiveDisplayName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the EffectiveDisplayName field is set to the value of the last call.
+func (b *DebugSessionClusterBindingStatusApplyConfiguration) WithEffectiveDisplayName(value string) *DebugSessionClusterBindingStatusApplyConfiguration {
+	b.EffectiveDisplayName = &value
 	return b
 }

@@ -9,6 +9,7 @@ Here we can add license
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -68,6 +69,32 @@ type DebugSessionClusterBindingSpecApplyConfiguration struct {
 	// disabled temporarily disables this binding.
 	// Sessions cannot be created using this binding while disabled.
 	Disabled *bool `json:"disabled,omitempty"`
+	// notification overrides notification settings from the template.
+	Notification *DebugSessionNotificationConfigApplyConfiguration `json:"notification,omitempty"`
+	// requestReason overrides reason requirements from the template.
+	RequestReason *DebugRequestReasonConfigApplyConfiguration `json:"requestReason,omitempty"`
+	// approvalReason overrides approval reason requirements from the template.
+	ApprovalReason *DebugApprovalReasonConfigApplyConfiguration `json:"approvalReason,omitempty"`
+	// labels are additional labels applied to resources created via this binding.
+	// Merged with template labels.
+	Labels map[string]string `json:"labels,omitempty"`
+	// annotations are additional annotations applied to resources created via this binding.
+	// Merged with template annotations.
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// priority overrides the template's priority for UI ordering.
+	Priority *int32 `json:"priority,omitempty"`
+	// hidden hides this binding from the UI but allows API usage.
+	Hidden *bool `json:"hidden,omitempty"`
+	// expiresAt optionally sets an expiry time for this binding.
+	// After this time, the binding becomes inactive automatically.
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+	// effectiveFrom optionally sets when this binding becomes active.
+	// Before this time, the binding cannot be used.
+	EffectiveFrom *metav1.Time `json:"effectiveFrom,omitempty"`
+	// maxActiveSessionsPerUser limits concurrent sessions per user via this binding.
+	MaxActiveSessionsPerUser *int32 `json:"maxActiveSessionsPerUser,omitempty"`
+	// maxActiveSessionsTotal limits total concurrent sessions via this binding.
+	MaxActiveSessionsTotal *int32 `json:"maxActiveSessionsTotal,omitempty"`
 }
 
 // DebugSessionClusterBindingSpecApplyConfiguration constructs a declarative configuration of the DebugSessionClusterBindingSpec type for use with
@@ -219,5 +246,105 @@ func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithAuxiliaryResource
 // If called multiple times, the Disabled field is set to the value of the last call.
 func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithDisabled(value bool) *DebugSessionClusterBindingSpecApplyConfiguration {
 	b.Disabled = &value
+	return b
+}
+
+// WithNotification sets the Notification field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Notification field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithNotification(value *DebugSessionNotificationConfigApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.Notification = value
+	return b
+}
+
+// WithRequestReason sets the RequestReason field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequestReason field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithRequestReason(value *DebugRequestReasonConfigApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.RequestReason = value
+	return b
+}
+
+// WithApprovalReason sets the ApprovalReason field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ApprovalReason field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithApprovalReason(value *DebugApprovalReasonConfigApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.ApprovalReason = value
+	return b
+}
+
+// WithLabels puts the entries into the Labels field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the Labels field,
+// overwriting an existing map entries in Labels field with the same key.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithLabels(entries map[string]string) *DebugSessionClusterBindingSpecApplyConfiguration {
+	if b.Labels == nil && len(entries) > 0 {
+		b.Labels = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.Labels[k] = v
+	}
+	return b
+}
+
+// WithAnnotations puts the entries into the Annotations field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the Annotations field,
+// overwriting an existing map entries in Annotations field with the same key.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithAnnotations(entries map[string]string) *DebugSessionClusterBindingSpecApplyConfiguration {
+	if b.Annotations == nil && len(entries) > 0 {
+		b.Annotations = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.Annotations[k] = v
+	}
+	return b
+}
+
+// WithPriority sets the Priority field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Priority field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithPriority(value int32) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.Priority = &value
+	return b
+}
+
+// WithHidden sets the Hidden field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Hidden field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithHidden(value bool) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.Hidden = &value
+	return b
+}
+
+// WithExpiresAt sets the ExpiresAt field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ExpiresAt field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithExpiresAt(value metav1.Time) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.ExpiresAt = &value
+	return b
+}
+
+// WithEffectiveFrom sets the EffectiveFrom field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the EffectiveFrom field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithEffectiveFrom(value metav1.Time) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.EffectiveFrom = &value
+	return b
+}
+
+// WithMaxActiveSessionsPerUser sets the MaxActiveSessionsPerUser field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MaxActiveSessionsPerUser field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithMaxActiveSessionsPerUser(value int32) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.MaxActiveSessionsPerUser = &value
+	return b
+}
+
+// WithMaxActiveSessionsTotal sets the MaxActiveSessionsTotal field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MaxActiveSessionsTotal field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithMaxActiveSessionsTotal(value int32) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.MaxActiveSessionsTotal = &value
 	return b
 }

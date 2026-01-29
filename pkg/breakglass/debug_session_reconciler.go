@@ -23,14 +23,18 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -226,9 +230,31 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 func (c *DebugSessionController) handleActive(ctx context.Context, ds *v1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
+	// Emit expiring-soon status message when within grace period
+	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
+		grace, err := time.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
+		if err == nil {
+			until := time.Until(ds.Status.ExpiresAt.Time)
+			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {
+				ds.Status.Message = "Session expiring soon"
+				if err := applyDebugSessionStatus(ctx, c.client, ds); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		}
+	}
+
 	// Check expiration
 	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
 		log.Info("Debug session expired")
+		if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
+			ds.Status.Message = "Session expired (notify-only)"
+			ds.Status.ExpiresAt = nil
+			if err := applyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
 		ds.Status.State = v1alpha1.DebugSessionStateExpired
 		ds.Status.Message = "Session expired"
 		if err := applyDebugSessionStatus(ctx, c.client, ds); err != nil {
@@ -555,7 +581,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 
 	for i := range bindingList.Items {
 		binding := &bindingList.Items[i]
-		if binding.Spec.Disabled {
+		if !IsBindingActive(binding) {
 			continue
 		}
 
@@ -849,8 +875,56 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 		return fmt.Errorf("failed to check namespace: %w", err)
 	}
 
+	// Deploy ResourceQuota if configured
+	if template.Spec.ResourceQuota != nil {
+		rq, rqErr := c.buildResourceQuota(ds, template, binding, targetNs)
+		if rqErr != nil {
+			return fmt.Errorf("failed to build resource quota: %w", rqErr)
+		}
+		if rq != nil {
+			gvk := rq.GetObjectKind().GroupVersionKind()
+			if err := targetClient.Create(ctx, rq); err != nil {
+				if !apierrors.IsAlreadyExists(err) {
+					return fmt.Errorf("failed to create resource quota: %w", err)
+				}
+				log.Infow("ResourceQuota already exists", "name", rq.Name)
+			}
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
+				APIVersion: gvk.GroupVersion().String(),
+				Kind:       gvk.Kind,
+				Name:       rq.Name,
+				Namespace:  rq.Namespace,
+				Source:     "debug-resourcequota",
+			})
+		}
+	}
+
+	// Deploy PodDisruptionBudget if configured
+	if template.Spec.PodDisruptionBudget != nil && template.Spec.PodDisruptionBudget.Enabled {
+		pdb, pdbErr := c.buildPodDisruptionBudget(ds, template, binding, targetNs)
+		if pdbErr != nil {
+			return fmt.Errorf("failed to build pod disruption budget: %w", pdbErr)
+		}
+		if pdb != nil {
+			gvk := pdb.GetObjectKind().GroupVersionKind()
+			if err := targetClient.Create(ctx, pdb); err != nil {
+				if !apierrors.IsAlreadyExists(err) {
+					return fmt.Errorf("failed to create pod disruption budget: %w", err)
+				}
+				log.Infow("PodDisruptionBudget already exists", "name", pdb.Name)
+			}
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
+				APIVersion: gvk.GroupVersion().String(),
+				Kind:       gvk.Kind,
+				Name:       pdb.Name,
+				Namespace:  pdb.Namespace,
+				Source:     "debug-pdb",
+			})
+		}
+	}
+
 	// Build and deploy workload
-	workload, err := c.buildWorkload(ds, template, podTemplate, targetNs)
+	workload, err := c.buildWorkload(ds, template, binding, podTemplate, targetNs)
 	if err != nil {
 		return fmt.Errorf("failed to build workload: %w", err)
 	}
@@ -896,9 +970,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods
-func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, error) {
+func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, podTemplate *v1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, error) {
 	workloadName := fmt.Sprintf("debug-%s", ds.Name)
-	podSpec := c.buildPodSpec(ds, template, podTemplate)
+	podSpec, err := c.buildPodSpec(ds, template, podTemplate)
+	if err != nil {
+		return nil, err
+	}
 
 	labels := map[string]string{
 		DebugSessionLabelKey:  ds.Name,
@@ -906,10 +983,21 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 		DebugClusterLabelKey:  ds.Spec.Cluster,
 	}
 
-	// Add pod template labels if present
-	if podTemplate != nil && podTemplate.Spec.Template.Metadata != nil {
-		for k, v := range podTemplate.Spec.Template.Metadata.Labels {
-			labels[k] = v
+	labels = mergeStringMaps(labels, template.Spec.Labels, bindingLabels(binding), podTemplateLabels(podTemplate))
+	for k, v := range ds.Labels {
+		if k == DebugSessionLabelKey || k == DebugTemplateLabelKey || k == DebugClusterLabelKey {
+			continue
+		}
+		labels[k] = v
+	}
+
+	annotations := mergeStringMaps(nil, template.Spec.Annotations, bindingAnnotations(binding), podTemplateAnnotations(podTemplate))
+	if len(ds.Annotations) > 0 {
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		for k, v := range ds.Annotations {
+			annotations[k] = v
 		}
 	}
 
@@ -939,9 +1027,10 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 				Kind:       "DaemonSet",
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      workloadName,
-				Namespace: targetNs,
-				Labels:    labels,
+				Name:        workloadName,
+				Namespace:   targetNs,
+				Labels:      labels,
+				Annotations: annotations,
 			},
 			Spec: appsv1.DaemonSetSpec{
 				Selector: &metav1.LabelSelector{
@@ -951,7 +1040,8 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
-						Labels: labels,
+						Labels:      labels,
+						Annotations: annotations,
 					},
 					Spec: podSpec,
 				},
@@ -963,15 +1053,19 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 		if template.Spec.Replicas != nil {
 			replicas = *template.Spec.Replicas
 		}
+		if template.Spec.ResourceQuota != nil && template.Spec.ResourceQuota.MaxPods != nil && replicas > *template.Spec.ResourceQuota.MaxPods {
+			return nil, fmt.Errorf("replicas (%d) exceed resourceQuota.maxPods (%d)", replicas, *template.Spec.ResourceQuota.MaxPods)
+		}
 		return &appsv1.Deployment{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      workloadName,
-				Namespace: targetNs,
-				Labels:    labels,
+				Name:        workloadName,
+				Namespace:   targetNs,
+				Labels:      labels,
+				Annotations: annotations,
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: &replicas,
@@ -982,7 +1076,8 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
-						Labels: labels,
+						Labels:      labels,
+						Annotations: annotations,
 					},
 					Spec: podSpec,
 				},
@@ -995,7 +1090,7 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 }
 
 // buildPodSpec creates the pod spec from templates and overrides
-func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate) corev1.PodSpec {
+func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate) (corev1.PodSpec, error) {
 	var spec corev1.PodSpec
 
 	// Start with pod template if available
@@ -1046,6 +1141,12 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 		c.applySchedulingConstraints(&spec, template.Spec.SchedulingConstraints)
 	}
 
+	if template.Spec.ResourceQuota != nil {
+		if err := enforceContainerResources(template.Spec.ResourceQuota, spec.Containers, spec.InitContainers); err != nil {
+			return corev1.PodSpec{}, err
+		}
+	}
+
 	// Verify if terminal sharing is enabled and inject multiplexer command
 	if template.Spec.TerminalSharing != nil && template.Spec.TerminalSharing.Enabled && len(spec.Containers) > 0 {
 		container := &spec.Containers[0]
@@ -1081,7 +1182,224 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 		}
 	}
 
-	return spec
+	return spec, nil
+}
+
+func mergeStringMaps(base map[string]string, maps ...map[string]string) map[string]string {
+	var merged map[string]string
+	if len(base) > 0 {
+		merged = make(map[string]string, len(base))
+		for k, v := range base {
+			merged[k] = v
+		}
+	}
+	for _, m := range maps {
+		if len(m) == 0 {
+			continue
+		}
+		if merged == nil {
+			merged = make(map[string]string)
+		}
+		for k, v := range m {
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+func bindingLabels(binding *v1alpha1.DebugSessionClusterBinding) map[string]string {
+	if binding == nil {
+		return nil
+	}
+	return binding.Spec.Labels
+}
+
+func bindingAnnotations(binding *v1alpha1.DebugSessionClusterBinding) map[string]string {
+	if binding == nil {
+		return nil
+	}
+	return binding.Spec.Annotations
+}
+
+func podTemplateLabels(podTemplate *v1alpha1.DebugPodTemplate) map[string]string {
+	if podTemplate == nil || podTemplate.Spec.Template.Metadata == nil {
+		return nil
+	}
+	return podTemplate.Spec.Template.Metadata.Labels
+}
+
+func podTemplateAnnotations(podTemplate *v1alpha1.DebugPodTemplate) map[string]string {
+	if podTemplate == nil || podTemplate.Spec.Template.Metadata == nil {
+		return nil
+	}
+	return podTemplate.Spec.Template.Metadata.Annotations
+}
+
+func enforceContainerResources(cfg *v1alpha1.DebugResourceQuotaConfig, containers []corev1.Container, initContainers []corev1.Container) error {
+	if cfg == nil {
+		return nil
+	}
+	needsRequests := cfg.EnforceResourceRequests
+	needsLimits := cfg.EnforceResourceLimits
+	if !needsRequests && !needsLimits {
+		return nil
+	}
+
+	requiredResources := []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory}
+	if cfg.MaxStorage != "" {
+		requiredResources = append(requiredResources, corev1.ResourceEphemeralStorage)
+	}
+
+	check := func(c corev1.Container) error {
+		if needsRequests {
+			for _, r := range requiredResources {
+				if c.Resources.Requests == nil {
+					return fmt.Errorf("container %s is missing resource requests", c.Name)
+				}
+				if _, ok := c.Resources.Requests[r]; !ok {
+					return fmt.Errorf("container %s is missing request for %s", c.Name, r)
+				}
+			}
+		}
+		if needsLimits {
+			for _, r := range requiredResources {
+				if c.Resources.Limits == nil {
+					return fmt.Errorf("container %s is missing resource limits", c.Name)
+				}
+				if _, ok := c.Resources.Limits[r]; !ok {
+					return fmt.Errorf("container %s is missing limit for %s", c.Name, r)
+				}
+			}
+		}
+		return nil
+	}
+
+	for _, c := range containers {
+		if err := check(c); err != nil {
+			return err
+		}
+	}
+	for _, c := range initContainers {
+		if err := check(c); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *DebugSessionController) buildResourceQuota(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, targetNs string) (*corev1.ResourceQuota, error) {
+	if template.Spec.ResourceQuota == nil {
+		return nil, nil
+	}
+
+	hard := corev1.ResourceList{}
+	if template.Spec.ResourceQuota.MaxPods != nil {
+		hard[corev1.ResourcePods] = *resource.NewQuantity(int64(*template.Spec.ResourceQuota.MaxPods), resource.DecimalSI)
+	}
+	if template.Spec.ResourceQuota.MaxCPU != "" {
+		qty, err := resource.ParseQuantity(template.Spec.ResourceQuota.MaxCPU)
+		if err != nil {
+			return nil, fmt.Errorf("invalid maxCPU: %w", err)
+		}
+		hard[corev1.ResourceRequestsCPU] = qty
+		hard[corev1.ResourceLimitsCPU] = qty
+	}
+	if template.Spec.ResourceQuota.MaxMemory != "" {
+		qty, err := resource.ParseQuantity(template.Spec.ResourceQuota.MaxMemory)
+		if err != nil {
+			return nil, fmt.Errorf("invalid maxMemory: %w", err)
+		}
+		hard[corev1.ResourceRequestsMemory] = qty
+		hard[corev1.ResourceLimitsMemory] = qty
+	}
+	if template.Spec.ResourceQuota.MaxStorage != "" {
+		qty, err := resource.ParseQuantity(template.Spec.ResourceQuota.MaxStorage)
+		if err != nil {
+			return nil, fmt.Errorf("invalid maxStorage: %w", err)
+		}
+		hard[corev1.ResourceRequestsEphemeralStorage] = qty
+		hard[corev1.ResourceLimitsEphemeralStorage] = qty
+	}
+	if len(hard) == 0 {
+		return nil, nil
+	}
+
+	labels := map[string]string{
+		DebugSessionLabelKey:  ds.Name,
+		DebugTemplateLabelKey: ds.Spec.TemplateRef,
+		DebugClusterLabelKey:  ds.Spec.Cluster,
+	}
+	labels = mergeStringMaps(labels, template.Spec.Labels, bindingLabels(binding), ds.Labels)
+
+	annotations := mergeStringMaps(nil, template.Spec.Annotations, bindingAnnotations(binding))
+	if len(ds.Annotations) > 0 {
+		annotations = mergeStringMaps(annotations, ds.Annotations)
+	}
+
+	return &corev1.ResourceQuota{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "ResourceQuota",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        fmt.Sprintf("debug-%s-rq", ds.Name),
+			Namespace:   targetNs,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: corev1.ResourceQuotaSpec{Hard: hard},
+	}, nil
+}
+
+func (c *DebugSessionController) buildPodDisruptionBudget(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, targetNs string) (*policyv1.PodDisruptionBudget, error) {
+	if template.Spec.PodDisruptionBudget == nil || !template.Spec.PodDisruptionBudget.Enabled {
+		return nil, nil
+	}
+	if template.Spec.PodDisruptionBudget.MinAvailable == nil && template.Spec.PodDisruptionBudget.MaxUnavailable == nil {
+		return nil, nil
+	}
+
+	labels := map[string]string{
+		DebugSessionLabelKey:  ds.Name,
+		DebugTemplateLabelKey: ds.Spec.TemplateRef,
+		DebugClusterLabelKey:  ds.Spec.Cluster,
+	}
+	labels = mergeStringMaps(labels, template.Spec.Labels, bindingLabels(binding), ds.Labels)
+
+	annotations := mergeStringMaps(nil, template.Spec.Annotations, bindingAnnotations(binding))
+	if len(ds.Annotations) > 0 {
+		annotations = mergeStringMaps(annotations, ds.Annotations)
+	}
+
+	pdb := &policyv1.PodDisruptionBudget{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "policy/v1",
+			Kind:       "PodDisruptionBudget",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        fmt.Sprintf("debug-%s-pdb", ds.Name),
+			Namespace:   targetNs,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					DebugSessionLabelKey: ds.Name,
+				},
+			},
+		},
+	}
+
+	if template.Spec.PodDisruptionBudget.MinAvailable != nil {
+		pdb.Spec.MinAvailable = &intstr.IntOrString{Type: intstr.Int, IntVal: *template.Spec.PodDisruptionBudget.MinAvailable}
+	}
+	if template.Spec.PodDisruptionBudget.MaxUnavailable != nil {
+		pdb.Spec.MaxUnavailable = &intstr.IntOrString{Type: intstr.Int, IntVal: *template.Spec.PodDisruptionBudget.MaxUnavailable}
+	}
+
+	return pdb, nil
 }
 
 // applySchedulingConstraints applies SchedulingConstraints to a PodSpec.
@@ -1160,6 +1478,11 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 		}
 	}
 
+	// Apply topology spread constraints (additive)
+	if len(constraints.TopologySpreadConstraints) > 0 {
+		spec.TopologySpreadConstraints = append(spec.TopologySpreadConstraints, constraints.TopologySpreadConstraints...)
+	}
+
 	// Note: deniedNodes and deniedNodeLabels are advisory constraints
 	// They should be enforced via admission webhooks or node anti-affinity rules
 	// Here we convert them to node anti-affinity expressions
@@ -1175,17 +1498,22 @@ func (c *DebugSessionController) applySchedulingConstraints(spec *corev1.PodSpec
 // convertDebugPodSpec converts our DebugPodSpecInner to corev1.PodSpec
 func (c *DebugSessionController) convertDebugPodSpec(dps v1alpha1.DebugPodSpecInner) corev1.PodSpec {
 	spec := corev1.PodSpec{
-		Containers:     dps.Containers,
-		InitContainers: dps.InitContainers,
-		Volumes:        dps.Volumes,
-		Tolerations:    dps.Tolerations,
-		Affinity:       dps.Affinity,
-		NodeSelector:   dps.NodeSelector,
-		HostNetwork:    dps.HostNetwork,
-		HostPID:        dps.HostPID,
-		HostIPC:        dps.HostIPC,
-		DNSPolicy:      dps.DNSPolicy,
-		RestartPolicy:  dps.RestartPolicy,
+		Containers:                dps.Containers,
+		InitContainers:            dps.InitContainers,
+		Volumes:                   dps.Volumes,
+		Tolerations:               dps.Tolerations,
+		Affinity:                  dps.Affinity,
+		NodeSelector:              dps.NodeSelector,
+		HostNetwork:               dps.HostNetwork,
+		HostPID:                   dps.HostPID,
+		HostIPC:                   dps.HostIPC,
+		DNSPolicy:                 dps.DNSPolicy,
+		DNSConfig:                 dps.DNSConfig,
+		RestartPolicy:             dps.RestartPolicy,
+		TopologySpreadConstraints: dps.TopologySpreadConstraints,
+		HostAliases:               dps.HostAliases,
+		ImagePullSecrets:          dps.ImagePullSecrets,
+		Overhead:                  dps.Overhead,
 	}
 
 	if dps.SecurityContext != nil {
@@ -1199,6 +1527,24 @@ func (c *DebugSessionController) convertDebugPodSpec(dps v1alpha1.DebugPodSpecIn
 	}
 	if dps.TerminationGracePeriodSeconds != nil {
 		spec.TerminationGracePeriodSeconds = dps.TerminationGracePeriodSeconds
+	}
+	if dps.PriorityClassName != "" {
+		spec.PriorityClassName = dps.PriorityClassName
+	}
+	if dps.RuntimeClassName != nil {
+		spec.RuntimeClassName = dps.RuntimeClassName
+	}
+	if dps.PreemptionPolicy != nil {
+		spec.PreemptionPolicy = dps.PreemptionPolicy
+	}
+	if dps.ShareProcessNamespace != nil {
+		spec.ShareProcessNamespace = dps.ShareProcessNamespace
+	}
+	if dps.EnableServiceLinks != nil {
+		spec.EnableServiceLinks = dps.EnableServiceLinks
+	}
+	if dps.SchedulerName != "" {
+		spec.SchedulerName = dps.SchedulerName
 	}
 
 	return spec
@@ -1458,7 +1804,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	// Cleanup main workloads (DaemonSet/Deployment)
 	for _, ref := range ds.Status.DeployedResources {
 		// Skip auxiliary resources - already cleaned up by manager
-		if ref.Source != "" && ref.Source != "debug-pod" {
+		if strings.HasPrefix(ref.Source, "auxiliary:") {
 			continue
 		}
 
@@ -1474,6 +1820,20 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 			}
 		case "Deployment":
 			obj = &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				},
+			}
+		case "ResourceQuota":
+			obj = &corev1.ResourceQuota{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				},
+			}
+		case "PodDisruptionBudget":
+			obj = &policyv1.PodDisruptionBudget{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ref.Name,
 					Namespace: ref.Namespace,

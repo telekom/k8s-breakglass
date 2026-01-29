@@ -12,6 +12,36 @@ The `ClusterConfig` custom resource enables the breakglass hub cluster to manage
 - Perform authorization checks (Subject Access Reviews)
 - Validate breakglass session permissions
 
+## Lifecycle and Cleanup
+
+### Finalizer-Based Session Cleanup
+
+When a `ClusterConfig` is created, the controller automatically adds a finalizer (`breakglass.t-caas.telekom.com/cluster-cleanup`) to ensure proper cleanup when the cluster is deleted.
+
+**What happens when a ClusterConfig is deleted:**
+
+1. The finalizer prevents immediate deletion
+2. All active `BreakglassSession` resources targeting this cluster are marked as **Expired**
+3. All active `DebugSession` resources targeting this cluster are marked as **Failed**
+4. The finalizer is removed, allowing the `ClusterConfig` to be deleted
+
+This ensures that:
+- Users don't retain privileges to a cluster that no longer exists
+- Debug pods are cleaned up properly
+- Session state is accurately reflected in the UI
+
+**Terminal states that are preserved:**
+- BreakglassSessions in `Expired`, `Rejected`, `Withdrawn`, or `ApprovalTimeout` states are not modified
+- DebugSessions in `Failed`, `Terminated`, or `Expired` states are not modified
+
+### Metrics
+
+The following Prometheus metrics are updated during cluster deletion:
+
+- `breakglass_cluster_configs_deleted_total{cluster}` - Counter for deleted ClusterConfigs
+- `breakglass_sessions_expired_total{cluster}` - Incremented for each session expired due to cluster deletion
+- `breakglass_debug_sessions_failed_total{cluster,reason="cluster_deleted"}` - Incremented for each debug session failed due to cluster deletion
+
 ## Authentication Methods
 
 ClusterConfig supports two authentication methods for connecting to managed clusters:

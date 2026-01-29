@@ -158,7 +158,7 @@ The following tests in `e2e/api/use_cases_test.go` cover real-world scenarios do
 - Steps: Create BreakglassEscalation with `podSecurityOverrides.maxAllowedScore: 200`. Exec into privileged pod (score=100).
 - Expected: Request allowed (override raises threshold from 50 to 200).
 - Priority: Low
-- Implemented: Skipped (webhook doesn't wire PodSecurityOverrides to Action yet)
+- Implemented: pkg/api/api_end_to_end_test.go:TestEndToEndSARPodSecurityWithEscalationOverride
 
 [PS-011] Capability scoring blocks SYS_ADMIN containers
 - Steps: Create DenyPolicy with `capabilities: {SYS_ADMIN: 100}` and threshold 80. Exec into pod with SYS_ADMIN capability.
@@ -1306,7 +1306,7 @@ This section documents the current E2E test coverage status based on a comprehen
 
 | Gap | Code Location | Missing Test | Risk |
 |-----|--------------|--------------|------|
-| Scheduled session activation | `cleanup_task.go:activateScheduledSessions()` | Create scheduled session, verify activation at time | Scheduled sessions never activate |
+| Scheduled session activation | `scheduled_activation.go:ActivateScheduledSessions()` | ✅ Unit tests added in `scheduled_session_test.go` - E2E needed for full integration | Scheduled sessions never activate |
 | Session retention expiry | `cleanup_task.go:cleanupExpiredSessions()` | Session past retention, verify deleted | Storage leaks |
 | Background task startup | `cleanup_task.go:Start()` | Verify task running in controller | Silent failures |
 

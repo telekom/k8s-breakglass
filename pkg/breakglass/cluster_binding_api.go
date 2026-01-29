@@ -82,6 +82,11 @@ type ClusterBindingResponse struct {
 	Clusters           []string               `json:"clusters,omitempty"`
 	ClusterSelector    map[string]string      `json:"clusterSelector,omitempty"`
 	Disabled           bool                   `json:"disabled"`
+	Hidden             bool                   `json:"hidden"`
+	IsActive           bool                   `json:"isActive"`
+	ExpiresAt          *metav1.Time           `json:"expiresAt,omitempty"`
+	EffectiveFrom      *metav1.Time           `json:"effectiveFrom,omitempty"`
+	Priority           *int32                 `json:"priority,omitempty"`
 	Ready              bool                   `json:"ready"`
 	ResolvedTemplates  []ResolvedTemplateInfo `json:"resolvedTemplates,omitempty"`
 	ResolvedClusters   []ResolvedClusterInfo  `json:"resolvedClusters,omitempty"`
@@ -117,14 +122,42 @@ func (c *ClusterBindingAPIController) handleListClusterBindings(ctx *gin.Context
 		return
 	}
 
+	// Check for filtering options
+	includeHidden := ctx.Query("includeHidden") == "true"
+	activeOnly := ctx.Query("activeOnly") == "true"
+
 	// Convert to API responses
 	responses := make([]ClusterBindingResponse, 0, len(bindingList.Items))
-	for _, binding := range bindingList.Items {
-		responses = append(responses, c.bindingToResponse(&binding))
+	for i := range bindingList.Items {
+		binding := &bindingList.Items[i]
+
+		// Skip hidden bindings unless explicitly requested
+		if !includeHidden && binding.Spec.Hidden {
+			continue
+		}
+
+		// Skip inactive bindings if only active requested
+		if activeOnly && !IsBindingActive(binding) {
+			continue
+		}
+
+		responses = append(responses, c.bindingToResponse(binding))
 	}
 
-	// Sort by namespace then name
+	// Sort by priority (if set), then namespace, then name
 	sort.Slice(responses, func(i, j int) bool {
+		// Higher priority comes first
+		pi := int32(0)
+		pj := int32(0)
+		if responses[i].Priority != nil {
+			pi = *responses[i].Priority
+		}
+		if responses[j].Priority != nil {
+			pj = *responses[j].Priority
+		}
+		if pi != pj {
+			return pi > pj
+		}
 		if responses[i].Namespace != responses[j].Namespace {
 			return responses[i].Namespace < responses[j].Namespace
 		}
@@ -238,6 +271,11 @@ func (c *ClusterBindingAPIController) bindingToResponse(binding *v1alpha1.DebugS
 		Description:        binding.Spec.Description,
 		Clusters:           binding.Spec.Clusters,
 		Disabled:           binding.Spec.Disabled,
+		Hidden:             binding.Spec.Hidden,
+		IsActive:           IsBindingActive(binding),
+		ExpiresAt:          binding.Spec.ExpiresAt,
+		EffectiveFrom:      binding.Spec.EffectiveFrom,
+		Priority:           binding.Spec.Priority,
 		Ready:              binding.IsReady(),
 		ActiveSessionCount: binding.Status.ActiveSessionCount,
 		CreatedAt:          binding.CreationTimestamp,
@@ -302,4 +340,29 @@ func (c *ClusterBindingAPIController) GetBindingsForCluster(ctx context.Context,
 	}
 
 	return matching, nil
+}
+
+// IsBindingActive checks if a binding is currently active.
+// A binding is active if:
+// - It is not disabled
+// - It has not expired (expiresAt is nil or in the future)
+// - It is effective (effectiveFrom is nil or in the past)
+func IsBindingActive(binding *v1alpha1.DebugSessionClusterBinding) bool {
+	if binding.Spec.Disabled {
+		return false
+	}
+
+	now := metav1.Now()
+
+	// Check if binding has expired
+	if binding.Spec.ExpiresAt != nil && binding.Spec.ExpiresAt.Before(&now) {
+		return false
+	}
+
+	// Check if binding is not yet effective
+	if binding.Spec.EffectiveFrom != nil && now.Before(binding.Spec.EffectiveFrom) {
+		return false
+	}
+
+	return true
 }

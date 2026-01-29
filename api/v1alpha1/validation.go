@@ -734,6 +734,50 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		result.Errors = append(result.Errors, validateImpersonationConfig(template.Spec.Impersonation, specPath.Child("impersonation"))...)
 	}
 
+	// Validate notification config if specified
+	if template.Spec.Notification != nil {
+		result.Errors = append(result.Errors, validateDebugSessionNotificationConfig(template.Spec.Notification, specPath.Child("notification"))...)
+	}
+
+	// Validate request reason config if specified
+	if template.Spec.RequestReason != nil {
+		result.Errors = append(result.Errors, validateDebugRequestReasonConfig(template.Spec.RequestReason, specPath.Child("requestReason"))...)
+	}
+
+	// Validate approval reason config if specified
+	if template.Spec.ApprovalReason != nil {
+		result.Errors = append(result.Errors, validateDebugApprovalReasonConfig(template.Spec.ApprovalReason, specPath.Child("approvalReason"))...)
+	}
+
+	// Validate resource quota config if specified
+	if template.Spec.ResourceQuota != nil {
+		result.Errors = append(result.Errors, validateDebugResourceQuotaConfig(template.Spec.ResourceQuota, specPath.Child("resourceQuota"))...)
+	}
+
+	// Validate PDB config if specified
+	if template.Spec.PodDisruptionBudget != nil {
+		result.Errors = append(result.Errors, validateDebugPDBConfig(template.Spec.PodDisruptionBudget, specPath.Child("podDisruptionBudget"))...)
+	}
+
+	// Validate gracePeriodBeforeExpiry is a valid duration
+	if template.Spec.GracePeriodBeforeExpiry != "" {
+		result.Errors = append(result.Errors, validateDurationFormat(template.Spec.GracePeriodBeforeExpiry, specPath.Child("gracePeriodBeforeExpiry"))...)
+	}
+
+	// Validate auxiliary resources
+	if len(template.Spec.AuxiliaryResources) > 0 {
+		result.Errors = append(result.Errors, validateAuxiliaryResources(template.Spec.AuxiliaryResources, specPath.Child("auxiliaryResources"))...)
+	}
+
+	// Add deprecation warning if template is deprecated
+	if template.Spec.Deprecated {
+		msg := "This template is deprecated"
+		if template.Spec.DeprecationMessage != "" {
+			msg = template.Spec.DeprecationMessage
+		}
+		result.Warnings = append(result.Warnings, msg)
+	}
+
 	return result
 }
 

@@ -2239,3 +2239,459 @@ func TestDebugSessionTemplate_WithImpersonation(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "namespace is required")
 	})
 }
+
+// ==================== Debug Session Template New Features Tests ====================
+
+func TestValidateDebugSessionNotificationConfig(t *testing.T) {
+	fldPath := field.NewPath("spec", "notification")
+
+	t.Run("nil config is valid", func(t *testing.T) {
+		errs := validateDebugSessionNotificationConfig(nil, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid enabled config", func(t *testing.T) {
+		config := &DebugSessionNotificationConfig{
+			Enabled: true,
+		}
+		errs := validateDebugSessionNotificationConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid config with excluded recipients", func(t *testing.T) {
+		config := &DebugSessionNotificationConfig{
+			ExcludedRecipients: &NotificationExclusions{
+				Users:  []string{"bot@example.com"},
+				Groups: []string{"bots"},
+			},
+		}
+		errs := validateDebugSessionNotificationConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("empty user in excluded recipients", func(t *testing.T) {
+		config := &DebugSessionNotificationConfig{
+			ExcludedRecipients: &NotificationExclusions{
+				Users: []string{""},
+			},
+		}
+		errs := validateDebugSessionNotificationConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+	})
+
+	t.Run("empty group in excluded recipients", func(t *testing.T) {
+		config := &DebugSessionNotificationConfig{
+			ExcludedRecipients: &NotificationExclusions{
+				Groups: []string{""},
+			},
+		}
+		errs := validateDebugSessionNotificationConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+	})
+
+	t.Run("valid additional recipients", func(t *testing.T) {
+		config := &DebugSessionNotificationConfig{
+			AdditionalRecipients: []string{"admin@example.com", "ops@example.com"},
+		}
+		errs := validateDebugSessionNotificationConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("invalid email in additional recipients", func(t *testing.T) {
+		config := &DebugSessionNotificationConfig{
+			AdditionalRecipients: []string{"not-an-email"},
+		}
+		errs := validateDebugSessionNotificationConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "email")
+	})
+
+	t.Run("empty email in additional recipients", func(t *testing.T) {
+		config := &DebugSessionNotificationConfig{
+			AdditionalRecipients: []string{""},
+		}
+		errs := validateDebugSessionNotificationConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+	})
+}
+
+func TestValidateDebugRequestReasonConfig(t *testing.T) {
+	fldPath := field.NewPath("spec", "requestReason")
+
+	t.Run("nil config is valid", func(t *testing.T) {
+		errs := validateDebugRequestReasonConfig(nil, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid mandatory config", func(t *testing.T) {
+		config := &DebugRequestReasonConfig{
+			Mandatory: true,
+			MinLength: 10,
+			MaxLength: 500,
+		}
+		errs := validateDebugRequestReasonConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid optional config with description", func(t *testing.T) {
+		config := &DebugRequestReasonConfig{
+			Mandatory:   false,
+			Description: "Please describe the issue:",
+		}
+		errs := validateDebugRequestReasonConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("minLength greater than maxLength", func(t *testing.T) {
+		config := &DebugRequestReasonConfig{
+			Mandatory: true,
+			MinLength: 100,
+			MaxLength: 50,
+		}
+		errs := validateDebugRequestReasonConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "minLength")
+	})
+
+	t.Run("valid suggested reasons", func(t *testing.T) {
+		config := &DebugRequestReasonConfig{
+			SuggestedReasons: []string{"Bug investigation", "Performance tuning"},
+		}
+		errs := validateDebugRequestReasonConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("empty suggested reason", func(t *testing.T) {
+		config := &DebugRequestReasonConfig{
+			SuggestedReasons: []string{"Valid reason", ""},
+		}
+		errs := validateDebugRequestReasonConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+	})
+
+	t.Run("duplicate suggested reasons", func(t *testing.T) {
+		config := &DebugRequestReasonConfig{
+			SuggestedReasons: []string{"Bug investigation", "Bug investigation"},
+		}
+		errs := validateDebugRequestReasonConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "Duplicate")
+	})
+}
+
+func TestValidateDebugApprovalReasonConfig(t *testing.T) {
+	fldPath := field.NewPath("spec", "approvalReason")
+
+	t.Run("nil config is valid", func(t *testing.T) {
+		errs := validateDebugApprovalReasonConfig(nil, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid mandatory config", func(t *testing.T) {
+		config := &DebugApprovalReasonConfig{
+			Mandatory: true,
+			MinLength: 5,
+		}
+		errs := validateDebugApprovalReasonConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("negative minLength", func(t *testing.T) {
+		config := &DebugApprovalReasonConfig{
+			Mandatory: true,
+			MinLength: -1,
+		}
+		errs := validateDebugApprovalReasonConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "minLength")
+	})
+}
+
+func TestValidateDebugResourceQuotaConfig(t *testing.T) {
+	fldPath := field.NewPath("spec", "resourceQuota")
+
+	t.Run("nil config is valid", func(t *testing.T) {
+		errs := validateDebugResourceQuotaConfig(nil, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid limits config", func(t *testing.T) {
+		config := &DebugResourceQuotaConfig{
+			MaxCPU:    "2",
+			MaxMemory: "4Gi",
+		}
+		errs := validateDebugResourceQuotaConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid limits with storage", func(t *testing.T) {
+		config := &DebugResourceQuotaConfig{
+			MaxCPU:     "4",
+			MaxMemory:  "8Gi",
+			MaxStorage: "10Gi",
+		}
+		errs := validateDebugResourceQuotaConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("invalid CPU format", func(t *testing.T) {
+		config := &DebugResourceQuotaConfig{
+			MaxCPU: "invalid",
+		}
+		errs := validateDebugResourceQuotaConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "maxCPU")
+	})
+
+	t.Run("invalid memory format", func(t *testing.T) {
+		config := &DebugResourceQuotaConfig{
+			MaxMemory: "not-a-quantity",
+		}
+		errs := validateDebugResourceQuotaConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "maxMemory")
+	})
+
+	t.Run("invalid storage format", func(t *testing.T) {
+		config := &DebugResourceQuotaConfig{
+			MaxStorage: "bad",
+		}
+		errs := validateDebugResourceQuotaConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "maxStorage")
+	})
+}
+
+func TestValidateDebugPDBConfig(t *testing.T) {
+	fldPath := field.NewPath("spec", "podDisruptionBudget")
+
+	t.Run("nil config is valid", func(t *testing.T) {
+		errs := validateDebugPDBConfig(nil, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid minAvailable", func(t *testing.T) {
+		minAvailable := int32(1)
+		config := &DebugPDBConfig{
+			MinAvailable: &minAvailable,
+		}
+		errs := validateDebugPDBConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid maxUnavailable", func(t *testing.T) {
+		maxUnavailable := int32(2)
+		config := &DebugPDBConfig{
+			MaxUnavailable: &maxUnavailable,
+		}
+		errs := validateDebugPDBConfig(config, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("both minAvailable and maxUnavailable specified", func(t *testing.T) {
+		minAvailable := int32(1)
+		maxUnavailable := int32(1)
+		config := &DebugPDBConfig{
+			MinAvailable:   &minAvailable,
+			MaxUnavailable: &maxUnavailable,
+		}
+		errs := validateDebugPDBConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "only one of")
+	})
+
+	t.Run("negative minAvailable", func(t *testing.T) {
+		minAvailable := int32(-1)
+		config := &DebugPDBConfig{
+			MinAvailable: &minAvailable,
+		}
+		errs := validateDebugPDBConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "minAvailable")
+	})
+
+	t.Run("negative maxUnavailable", func(t *testing.T) {
+		maxUnavailable := int32(-1)
+		config := &DebugPDBConfig{
+			MaxUnavailable: &maxUnavailable,
+		}
+		errs := validateDebugPDBConfig(config, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "maxUnavailable")
+	})
+}
+
+func TestValidateBindingTimeWindow(t *testing.T) {
+	fldPath := field.NewPath("spec")
+
+	t.Run("both nil is valid", func(t *testing.T) {
+		errs := validateBindingTimeWindow(nil, nil, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("only effectiveFrom is valid", func(t *testing.T) {
+		now := metav1.Now()
+		errs := validateBindingTimeWindow(&now, nil, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("only expiresAt is valid", func(t *testing.T) {
+		now := metav1.Now()
+		errs := validateBindingTimeWindow(nil, &now, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid time window", func(t *testing.T) {
+		now := metav1.Now()
+		later := metav1.NewTime(now.Add(24 * 60 * 60 * 1_000_000_000)) // 24 hours later
+		errs := validateBindingTimeWindow(&now, &later, fldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("expiresAt before effectiveFrom is invalid", func(t *testing.T) {
+		now := metav1.Now()
+		earlier := metav1.NewTime(now.Add(-24 * 60 * 60 * 1_000_000_000)) // 24 hours earlier
+		errs := validateBindingTimeWindow(&now, &earlier, fldPath)
+		assert.NotEmpty(t, errs)
+		assert.Contains(t, errs[0].Error(), "expiresAt must be after effectiveFrom")
+	})
+}
+
+func TestDebugSessionTemplate_WithNewFeatures(t *testing.T) {
+	t.Run("valid template with notification config", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Notification: &DebugSessionNotificationConfig{
+					Enabled: true,
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("valid template with request reason config", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				RequestReason: &DebugRequestReasonConfig{
+					Mandatory: true,
+					MinLength: 10,
+					MaxLength: 500,
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("valid template with resource quota", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				ResourceQuota: &DebugResourceQuotaConfig{
+					MaxCPU:    "2",
+					MaxMemory: "4Gi",
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("valid template with grace period", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				GracePeriodBeforeExpiry: "10m",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("invalid grace period format", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				GracePeriodBeforeExpiry: "invalid",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "gracePeriodBeforeExpiry")
+	})
+
+	t.Run("deprecated template generates warning", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Deprecated:         true,
+				DeprecationMessage: "Use new-template instead",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "deprecated template should still be valid, got errors: %s", result.ErrorMessage())
+		assert.NotEmpty(t, result.Warnings, "expected deprecation warning")
+	})
+
+	t.Run("valid template with labels and annotations", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Labels: map[string]string{
+					"env":  "production",
+					"team": "platform",
+				},
+				Annotations: map[string]string{
+					"description": "Production debug template",
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+}

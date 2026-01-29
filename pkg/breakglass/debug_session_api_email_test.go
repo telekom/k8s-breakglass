@@ -72,7 +72,7 @@ func TestSendDebugSessionApprovalEmail_HappyPath(t *testing.T) {
 		},
 	}
 
-	ctrl.sendDebugSessionApprovalEmail(session)
+	ctrl.sendDebugSessionApprovalEmail(context.Background(), session)
 
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1, "expected exactly one email to be enqueued")
@@ -99,7 +99,7 @@ func TestSendDebugSessionApprovalEmail_DisabledEmail(t *testing.T) {
 		Spec:       telekomv1alpha1.DebugSessionSpec{RequestedBy: "user@example.com"},
 	}
 
-	ctrl.sendDebugSessionApprovalEmail(session)
+	ctrl.sendDebugSessionApprovalEmail(context.Background(), session)
 
 	messages := mockMail.GetMessages()
 	assert.Empty(t, messages, "no email should be sent when disabled")
@@ -121,7 +121,7 @@ func TestSendDebugSessionApprovalEmail_NilMailService(t *testing.T) {
 	}
 
 	// Should not panic
-	ctrl.sendDebugSessionApprovalEmail(session)
+	ctrl.sendDebugSessionApprovalEmail(context.Background(), session)
 }
 
 func TestSendDebugSessionApprovalEmail_MailServiceNotEnabled(t *testing.T) {
@@ -140,7 +140,7 @@ func TestSendDebugSessionApprovalEmail_MailServiceNotEnabled(t *testing.T) {
 		Spec:       telekomv1alpha1.DebugSessionSpec{RequestedBy: "user@example.com"},
 	}
 
-	ctrl.sendDebugSessionApprovalEmail(session)
+	ctrl.sendDebugSessionApprovalEmail(context.Background(), session)
 
 	messages := mockMail.GetMessages()
 	assert.Empty(t, messages, "no email should be sent when mail service is not enabled")
@@ -172,7 +172,7 @@ func TestSendDebugSessionApprovalEmail_NilApprovalStatus(t *testing.T) {
 	}
 
 	// Should not panic
-	ctrl.sendDebugSessionApprovalEmail(session)
+	ctrl.sendDebugSessionApprovalEmail(context.Background(), session)
 
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1, "email should still be sent")
@@ -196,7 +196,7 @@ func TestSendDebugSessionApprovalEmail_EnqueueError(t *testing.T) {
 	}
 
 	// Should not panic despite error
-	ctrl.sendDebugSessionApprovalEmail(session)
+	ctrl.sendDebugSessionApprovalEmail(context.Background(), session)
 }
 
 // ============================================================================
@@ -240,7 +240,7 @@ func TestSendDebugSessionRejectionEmail_HappyPath(t *testing.T) {
 		},
 	}
 
-	ctrl.sendDebugSessionRejectionEmail(session)
+	ctrl.sendDebugSessionRejectionEmail(context.Background(), session)
 
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1, "expected exactly one email to be enqueued")
@@ -267,7 +267,7 @@ func TestSendDebugSessionRejectionEmail_DisabledEmail(t *testing.T) {
 		Spec:       telekomv1alpha1.DebugSessionSpec{RequestedBy: "user@example.com"},
 	}
 
-	ctrl.sendDebugSessionRejectionEmail(session)
+	ctrl.sendDebugSessionRejectionEmail(context.Background(), session)
 
 	messages := mockMail.GetMessages()
 	assert.Empty(t, messages, "no email should be sent when disabled")
@@ -288,7 +288,7 @@ func TestSendDebugSessionRejectionEmail_NilMailService(t *testing.T) {
 	}
 
 	// Should not panic
-	ctrl.sendDebugSessionRejectionEmail(session)
+	ctrl.sendDebugSessionRejectionEmail(context.Background(), session)
 }
 
 func TestSendDebugSessionRejectionEmail_MailServiceNotEnabled(t *testing.T) {
@@ -307,7 +307,7 @@ func TestSendDebugSessionRejectionEmail_MailServiceNotEnabled(t *testing.T) {
 		Spec:       telekomv1alpha1.DebugSessionSpec{RequestedBy: "user@example.com"},
 	}
 
-	ctrl.sendDebugSessionRejectionEmail(session)
+	ctrl.sendDebugSessionRejectionEmail(context.Background(), session)
 
 	messages := mockMail.GetMessages()
 	assert.Empty(t, messages, "no email should be sent when mail service is not enabled")
@@ -339,7 +339,7 @@ func TestSendDebugSessionRejectionEmail_NilApprovalStatus(t *testing.T) {
 	}
 
 	// Should not panic
-	ctrl.sendDebugSessionRejectionEmail(session)
+	ctrl.sendDebugSessionRejectionEmail(context.Background(), session)
 
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1, "email should still be sent")
@@ -363,7 +363,7 @@ func TestSendDebugSessionRejectionEmail_EnqueueError(t *testing.T) {
 	}
 
 	// Should not panic despite error
-	ctrl.sendDebugSessionRejectionEmail(session)
+	ctrl.sendDebugSessionRejectionEmail(context.Background(), session)
 }
 
 // ============================================================================
@@ -410,7 +410,7 @@ func TestSendDebugSessionRequestEmail_HappyPath(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ctrl.sendDebugSessionRequestEmail(ctx, session, template)
+	ctrl.sendDebugSessionRequestEmail(ctx, session, template, nil)
 
 	messages := mockMail.GetMessages()
 	require.Len(t, messages, 1, "expected exactly one email to be enqueued")
@@ -444,7 +444,7 @@ func TestSendDebugSessionRequestEmail_NoApprovers(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ctrl.sendDebugSessionRequestEmail(ctx, session, template)
+	ctrl.sendDebugSessionRequestEmail(ctx, session, template, nil)
 
 	messages := mockMail.GetMessages()
 	assert.Empty(t, messages, "no email should be sent when no approvers configured")
@@ -476,7 +476,7 @@ func TestSendDebugSessionRequestEmail_EmptyApproversList(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ctrl.sendDebugSessionRequestEmail(ctx, session, template)
+	ctrl.sendDebugSessionRequestEmail(ctx, session, template, nil)
 
 	messages := mockMail.GetMessages()
 	assert.Empty(t, messages, "no email should be sent when approvers list is empty")
@@ -509,7 +509,7 @@ func TestSendDebugSessionRequestEmail_DisabledEmail(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ctrl.sendDebugSessionRequestEmail(ctx, session, template)
+	ctrl.sendDebugSessionRequestEmail(ctx, session, template, nil)
 
 	messages := mockMail.GetMessages()
 	assert.Empty(t, messages, "no email should be sent when disabled")
@@ -539,7 +539,7 @@ func TestSendDebugSessionRequestEmail_NilMailService(t *testing.T) {
 
 	ctx := context.Background()
 	// Should not panic
-	ctrl.sendDebugSessionRequestEmail(ctx, session, template)
+	ctrl.sendDebugSessionRequestEmail(ctx, session, template, nil)
 }
 
 func TestSendDebugSessionRequestEmail_EnqueueError(t *testing.T) {
@@ -570,5 +570,5 @@ func TestSendDebugSessionRequestEmail_EnqueueError(t *testing.T) {
 
 	ctx := context.Background()
 	// Should not panic despite error
-	ctrl.sendDebugSessionRequestEmail(ctx, session, template)
+	ctrl.sendDebugSessionRequestEmail(ctx, session, template, nil)
 }

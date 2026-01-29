@@ -18,7 +18,7 @@ cluster:
   kubeconfigSecretRef:
     name: tenant-b-admin
     namespace: default
-    # key: kubeconfig  # Optional, defaults to "kubeconfig"
+    # key: value  # Optional, defaults to "value" for Cluster API compatibility
   
   # ==========================================
   # OIDC Authentication (when authType=OIDC)
@@ -249,3 +249,154 @@ escalations: []
 #       secretRef:
 #         name: keycloak-secret
 #     disabled: false
+
+# ==========================================
+# Debug Session Cluster Bindings
+# ==========================================
+# DebugSessionClusterBindings connect DebugSessionTemplates to specific clusters,
+# allowing fine-grained control over which templates are available on which clusters.
+# Bindings can also override template settings for specific clusters.
+
+debugSessionBindings: []
+  # Example: Basic binding connecting a template to specific clusters
+  # - name: production-debug-binding
+  #   displayName: "Production Debug Access"
+  #   description: "Debug access for production clusters"
+  #   
+  #   # Reference a single template by name (mutually exclusive with templateSelector)
+  #   templateRef:
+  #     name: standard-debug-template
+  #   
+  #   # Target specific clusters by name
+  #   clusters:
+  #     - prod-cluster-1
+  #     - prod-cluster-2
+  #   
+  #   # Or target clusters by labels (combined with clusters using OR)
+  #   # clusterSelector:
+  #   #   matchLabels:
+  #   #     environment: production
+  #   
+  #   # Override who can use this binding (replaces template's allowed)
+  #   allowed:
+  #     groups:
+  #       - sre-team
+  #       - platform-engineers
+  #     users:
+  #       - oncall@example.com
+  #   
+  #   # Override approvers for this binding
+  #   approvers:
+  #     groups:
+  #       - senior-sre
+  #     users:
+  #       - security-lead@example.com
+  #     # autoApproveFor specifies conditions for auto-approval
+  #     # autoApproveFor:
+  #     #   groups:
+  #     #     - oncall-sre
+  #     #   clusters:
+  #     #     - dev-*
+  #   
+  #   # Add scheduling constraints (additive with template constraints)
+  #   schedulingConstraints:
+  #     nodeSelector:
+  #       node-pool: debug-nodes
+  #     tolerations:
+  #       - key: "dedicated"
+  #         value: "debug"
+  #         effect: NoSchedule
+  #     # Topology spread constraints
+  #     topologySpreadConstraints:
+  #       - maxSkew: 1
+  #         topologyKey: topology.kubernetes.io/zone
+  #         whenUnsatisfiable: ScheduleAnyway
+  #     # Block specific nodes
+  #     deniedNodes:
+  #       - "control-plane-*"
+  #     deniedNodeLabels:
+  #       node-role.kubernetes.io/control-plane: "*"
+  #   
+  #   # Scheduling options - offer users predefined choices
+  #   # schedulingOptions:
+  #   #   required: true
+  #   #   options:
+  #   #     - name: standard
+  #   #       displayName: "Standard Nodes"
+  #   #       schedulingConstraints:
+  #   #         nodeSelector:
+  #   #           node-type: standard
+  #   #     - name: high-memory
+  #   #       displayName: "High Memory Nodes"
+  #   #       schedulingConstraints:
+  #   #         nodeSelector:
+  #   #           node-type: high-memory
+  #   
+  #   # Session constraints (can only be MORE restrictive than template)
+  #   constraints:
+  #     maxDuration: "2h"
+  #     defaultDuration: "30m"
+  #     allowRenewal: true
+  #     maxRenewals: 2
+  #     maxConcurrentSessions: 2
+  #   
+  #   # Namespace constraints
+  #   namespaceConstraints:
+  #     defaultNamespace: breakglass-debug
+  #     allowUserNamespace: false
+  #     # createIfNotExists: false
+  #     # allowedNamespaces:
+  #     #   patterns:
+  #     #     - "debug-*"
+  #     #     - "breakglass-*"
+  #   
+  #   # Impersonation - deploy debug pods as specific ServiceAccount
+  #   # impersonation:
+  #   #   serviceAccountRef:
+  #   #     name: debug-deployer
+  #   #     namespace: breakglass-system
+  #   
+  #   # Auxiliary resources
+  #   requiredAuxiliaryResourceCategories:
+  #     - network-policy
+  #   auxiliaryResourceOverrides:
+  #     logging: true
+  #     monitoring: false
+  #   
+  #   # Reason requirements
+  #   requestReason:
+  #     mandatory: true
+  #     description: "Please provide ticket ID and justification"
+  #   
+  #   # Session limits
+  #   maxActiveSessionsPerUser: 1
+  #   maxActiveSessionsTotal: 5
+  #   
+  #   # Priority for UI ordering (lower = higher priority)
+  #   priority: 10
+  #   
+  #   # Time-based activation
+  #   # effectiveFrom: "2024-01-01T00:00:00Z"
+  #   # expiresAt: "2024-12-31T23:59:59Z"
+  #   
+  #   # State flags
+  #   disabled: false
+  #   hidden: false
+  #   
+  #   # Labels and annotations for the binding resource itself
+  #   labels:
+  #     team: sre
+  #   annotations:
+  #     description: "Production debug binding"
+
+  # Example: Binding using template selector (matches multiple templates)
+  # - name: all-templates-dev-clusters
+  #   templateSelector:
+  #     matchLabels:
+  #       tier: standard
+  #   clusters:
+  #     - dev-cluster
+  #   displayNamePrefix: "[DEV] "
+  #   constraints:
+  #     maxDuration: "4h"  # More permissive for dev
+

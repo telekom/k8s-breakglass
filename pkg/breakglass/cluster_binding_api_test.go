@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -931,5 +932,104 @@ func BenchmarkClusterBindingAPIController_ListBindings(b *testing.B) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings", nil)
 		ctrl.handleListClusterBindings(c)
+	}
+}
+
+func TestIsBindingActive(t *testing.T) {
+	now := metav1.Now()
+	pastTime := metav1.NewTime(now.Add(-1 * time.Hour))
+	futureTime := metav1.NewTime(now.Add(1 * time.Hour))
+
+	tests := []struct {
+		name     string
+		binding  *telekomv1alpha1.DebugSessionClusterBinding
+		expected bool
+	}{
+		{
+			name: "active binding - no constraints",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Disabled: false,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "disabled binding",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Disabled: true,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "expired binding",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Disabled:  false,
+					ExpiresAt: &pastTime,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "not yet effective binding",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Disabled:      false,
+					EffectiveFrom: &futureTime,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "future expiry - still active",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Disabled:  false,
+					ExpiresAt: &futureTime,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "past effective from - active",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Disabled:      false,
+					EffectiveFrom: &pastTime,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "within time window - active",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Disabled:      false,
+					EffectiveFrom: &pastTime,
+					ExpiresAt:     &futureTime,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "expired but not disabled",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Disabled:  false,
+					ExpiresAt: &pastTime,
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsBindingActive(tt.binding)
+			assert.Equal(t, tt.expected, result)
+		})
 	}
 }

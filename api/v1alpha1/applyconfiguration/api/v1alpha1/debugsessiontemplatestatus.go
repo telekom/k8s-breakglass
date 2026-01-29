@@ -20,10 +20,22 @@ import (
 type DebugSessionTemplateStatusApplyConfiguration struct {
 	// conditions represent the latest available observations.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
+	// observedGeneration is the generation last observed by the controller.
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// activeSessionCount tracks active sessions using this template.
 	ActiveSessionCount *int32 `json:"activeSessionCount,omitempty"`
+	// pendingSessionCount tracks sessions pending approval.
+	PendingSessionCount *int32 `json:"pendingSessionCount,omitempty"`
+	// totalSessionCount tracks total sessions ever created using this template.
+	TotalSessionCount *int64 `json:"totalSessionCount,omitempty"`
 	// lastUsedAt records when this template was last used.
 	LastUsedAt *metav1.Time `json:"lastUsedAt,omitempty"`
+	// podTemplateResolved indicates if the referenced DebugPodTemplate exists.
+	PodTemplateResolved *bool `json:"podTemplateResolved,omitempty"`
+	// boundClusters lists clusters where this template is available via bindings.
+	BoundClusters []string `json:"boundClusters,omitempty"`
+	// bindingCount tracks how many DebugSessionClusterBindings reference this template.
+	BindingCount *int32 `json:"bindingCount,omitempty"`
 }
 
 // DebugSessionTemplateStatusApplyConfiguration constructs a declarative configuration of the DebugSessionTemplateStatus type for use with
@@ -45,6 +57,14 @@ func (b *DebugSessionTemplateStatusApplyConfiguration) WithConditions(values ...
 	return b
 }
 
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *DebugSessionTemplateStatusApplyConfiguration) WithObservedGeneration(value int64) *DebugSessionTemplateStatusApplyConfiguration {
+	b.ObservedGeneration = &value
+	return b
+}
+
 // WithActiveSessionCount sets the ActiveSessionCount field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the ActiveSessionCount field is set to the value of the last call.
@@ -53,10 +73,52 @@ func (b *DebugSessionTemplateStatusApplyConfiguration) WithActiveSessionCount(va
 	return b
 }
 
+// WithPendingSessionCount sets the PendingSessionCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PendingSessionCount field is set to the value of the last call.
+func (b *DebugSessionTemplateStatusApplyConfiguration) WithPendingSessionCount(value int32) *DebugSessionTemplateStatusApplyConfiguration {
+	b.PendingSessionCount = &value
+	return b
+}
+
+// WithTotalSessionCount sets the TotalSessionCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TotalSessionCount field is set to the value of the last call.
+func (b *DebugSessionTemplateStatusApplyConfiguration) WithTotalSessionCount(value int64) *DebugSessionTemplateStatusApplyConfiguration {
+	b.TotalSessionCount = &value
+	return b
+}
+
 // WithLastUsedAt sets the LastUsedAt field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the LastUsedAt field is set to the value of the last call.
 func (b *DebugSessionTemplateStatusApplyConfiguration) WithLastUsedAt(value metav1.Time) *DebugSessionTemplateStatusApplyConfiguration {
 	b.LastUsedAt = &value
+	return b
+}
+
+// WithPodTemplateResolved sets the PodTemplateResolved field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PodTemplateResolved field is set to the value of the last call.
+func (b *DebugSessionTemplateStatusApplyConfiguration) WithPodTemplateResolved(value bool) *DebugSessionTemplateStatusApplyConfiguration {
+	b.PodTemplateResolved = &value
+	return b
+}
+
+// WithBoundClusters adds the given value to the BoundClusters field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the BoundClusters field.
+func (b *DebugSessionTemplateStatusApplyConfiguration) WithBoundClusters(values ...string) *DebugSessionTemplateStatusApplyConfiguration {
+	for i := range values {
+		b.BoundClusters = append(b.BoundClusters, values[i])
+	}
+	return b
+}
+
+// WithBindingCount sets the BindingCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the BindingCount field is set to the value of the last call.
+func (b *DebugSessionTemplateStatusApplyConfiguration) WithBindingCount(value int32) *DebugSessionTemplateStatusApplyConfiguration {
+	b.BindingCount = &value
 	return b
 }

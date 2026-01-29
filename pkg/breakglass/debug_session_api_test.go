@@ -3235,3 +3235,229 @@ func TestConvertSelectorTerms(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckBindingSessionLimits(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+
+	tests := []struct {
+		name             string
+		binding          *telekomv1alpha1.DebugSessionClusterBinding
+		existingSessions []telekomv1alpha1.DebugSession
+		userEmail        string
+		expectError      bool
+		expectedErrMsg   string
+	}{
+		{
+			name: "no limits set - should pass",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters: []string{"cluster1"},
+				},
+			},
+			existingSessions: nil,
+			userEmail:        "user@example.com",
+			expectError:      false,
+		},
+		{
+			name: "within per-user limit - should pass",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:                 []string{"cluster1"},
+					MaxActiveSessionsPerUser: ptrInt32(2),
+				},
+			},
+			existingSessions: []telekomv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user@example.com",
+						RequestedByEmail: "user@example.com",
+						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:   "user@example.com",
+			expectError: false,
+		},
+		{
+			name: "per-user limit exceeded - should fail",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:                 []string{"cluster1"},
+					MaxActiveSessionsPerUser: ptrInt32(1),
+				},
+			},
+			existingSessions: []telekomv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user@example.com",
+						RequestedByEmail: "user@example.com",
+						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:      "user@example.com",
+			expectError:    true,
+			expectedErrMsg: "per user",
+		},
+		{
+			name: "within total limit - should pass",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:               []string{"cluster1"},
+					MaxActiveSessionsTotal: ptrInt32(3),
+				},
+			},
+			existingSessions: []telekomv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session2", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user2@example.com",
+						RequestedByEmail: "user2@example.com",
+						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:   "user3@example.com",
+			expectError: false,
+		},
+		{
+			name: "total limit exceeded - should fail",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:               []string{"cluster1"},
+					MaxActiveSessionsTotal: ptrInt32(2),
+				},
+			},
+			existingSessions: []telekomv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateActive},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session2", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user2@example.com",
+						RequestedByEmail: "user2@example.com",
+						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStatePending},
+				},
+			},
+			userEmail:      "user3@example.com",
+			expectError:    true,
+			expectedErrMsg: "total",
+		},
+		{
+			name: "completed sessions don't count - should pass",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:                 []string{"cluster1"},
+					MaxActiveSessionsPerUser: ptrInt32(1),
+				},
+			},
+			existingSessions: []telekomv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user@example.com",
+						RequestedByEmail: "user@example.com",
+						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateExpired},
+				},
+			},
+			userEmail:   "user@example.com",
+			expectError: false,
+		},
+		{
+			name: "failed sessions don't count - should pass",
+			binding: &telekomv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+					Clusters:               []string{"cluster1"},
+					MaxActiveSessionsTotal: ptrInt32(1),
+				},
+			},
+			existingSessions: []telekomv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: telekomv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &telekomv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: telekomv1alpha1.DebugSessionStatus{State: telekomv1alpha1.DebugSessionStateFailed},
+				},
+			},
+			userEmail:   "user2@example.com",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := []client.Object{tt.binding}
+			for i := range tt.existingSessions {
+				objects = append(objects, &tt.existingSessions[i])
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(objects...).
+				Build()
+
+			log := zap.NewNop().Sugar()
+			ctrl := NewDebugSessionAPIController(log, fakeClient, nil, nil)
+			err := ctrl.checkBindingSessionLimits(ctx, tt.binding, tt.userEmail)
+
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedErrMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
