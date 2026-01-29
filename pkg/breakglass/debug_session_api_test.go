@@ -1429,6 +1429,40 @@ func TestNewDebugSessionAPIController(t *testing.T) {
 	})
 }
 
+// TestDebugSessionAPIController_WithAPIReader tests the WithAPIReader method
+func TestDebugSessionAPIController_WithAPIReader(t *testing.T) {
+	scheme := newTestScheme()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	fakeReader := fake.NewClientBuilder().WithScheme(scheme).Build()
+	logger := zap.NewNop().Sugar()
+
+	t.Run("sets API reader and returns self for chaining", func(t *testing.T) {
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		result := ctrl.WithAPIReader(fakeReader)
+
+		// Verify returns self for chaining
+		assert.Same(t, ctrl, result)
+
+		// Verify reader is set
+		assert.Equal(t, fakeReader, ctrl.apiReader)
+	})
+
+	t.Run("reader returns apiReader when set", func(t *testing.T) {
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		ctrl.WithAPIReader(fakeReader)
+
+		reader := ctrl.reader()
+		assert.Equal(t, fakeReader, reader)
+	})
+
+	t.Run("reader falls back to client when apiReader is nil", func(t *testing.T) {
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		reader := ctrl.reader()
+		assert.Equal(t, fakeClient, reader)
+	})
+}
+
 // TestDebugSessionAPIController_BasePath tests the BasePath method
 func TestDebugSessionAPIController_BasePath(t *testing.T) {
 	ctrl := &DebugSessionAPIController{}
@@ -3652,6 +3686,59 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 			bindings:      nil, // No bindings
 			expectAllowed: true,
 			expectSource:  "implicit (no restrictions)",
+		},
+		{
+			name: "binding with templateSelector matches template labels - grants cluster access",
+			template: &telekomv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "developer-basic",
+					Labels: map[string]string{
+						"breakglass.t-caas.telekom.com/persona":    "developer",
+						"breakglass.t-caas.telekom.com/risk-level": "low",
+						"breakglass.t-caas.telekom.com/scope":      "pod",
+					},
+				},
+				Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+					Allowed: &telekomv1alpha1.DebugSessionAllowed{
+						// Template patterns do NOT match "schiff-canary-1.tsttmdc.bn"
+						Clusters: []string{"dev-*", "staging-*", "test-*", "ref-*", "lab-*"},
+					},
+				},
+			},
+			clusterName: "schiff-canary-1.tsttmdc.bn", // Doesn't match template patterns!
+			bindings: []telekomv1alpha1.DebugSessionClusterBinding{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "schiff-canary-1.tsttmdc.bn-developer-workload", Namespace: "vsphere-tsttmdc-bn"},
+					Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+						// Uses templateSelector instead of templateRef
+						TemplateSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"breakglass.t-caas.telekom.com/persona":    "developer",
+								"breakglass.t-caas.telekom.com/risk-level": "low",
+								"breakglass.t-caas.telekom.com/scope":      "pod",
+							},
+						},
+						// Uses clusterSelector instead of explicit Clusters list
+						ClusterSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"breakglass.t-caas.telekom.com/cluster": "schiff-canary-1.tsttmdc.bn",
+							},
+						},
+					},
+				},
+			},
+			expectAllowed: true,
+			expectSource:  "binding:vsphere-tsttmdc-bn/schiff-canary-1.tsttmdc.bn-developer-workload",
+		},
+	}
+
+	// Add cluster config that matches the binding's clusterSelector for the new test case
+	clusterConfigs["schiff-canary-1.tsttmdc.bn"] = &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "schiff-canary-1.tsttmdc.bn",
+			Labels: map[string]string{
+				"breakglass.t-caas.telekom.com/cluster": "schiff-canary-1.tsttmdc.bn",
+			},
 		},
 	}
 

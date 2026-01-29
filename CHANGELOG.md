@@ -9,7 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Approval Denial Responses**: Improved HTTP status codes and error messages for session approval denials
+  - Return 403 Forbidden (not 401) when user is authenticated but not authorized to approve
+  - Specific error messages for each denial reason: self-approval blocked, domain not allowed, not an approver
+  - Frontend now receives actionable messages explaining why approval was denied
+
+- **DebugSession Namespace Constraints**: Bindings can now override template namespace constraints
+  - Binding's `namespaceConstraints.allowUserNamespace: true` overrides template's `false`
+  - Binding's `allowedNamespaces` patterns are merged with template's patterns
+  - Enables bindings to grant more namespace access than the base template allows
+
 - **EscalatedGroup Pattern**: Allow colons (`:`) in `escalatedGroup` field to support breakglass group naming convention `breakglass:persona:scope:level` (e.g., `breakglass:platform:emergency`, `breakglass:tenant:myapp:poweruser`)
+
+- **Self-Approval Block UI Enhancement**: Improved frontend indication for self-approval blocked scenarios
+  - Dedicated warning notification with yellow styling instead of generic error
+  - User-friendly message explaining security policy and next steps
+  - Uses warning icon and styling to differentiate from other errors
 
 ### Added
 
@@ -22,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Notification configuration: `notification` field overrides template notification settings
   - API returns `isActive` status and time fields in binding list responses
   - `IsBindingActive()` function validates disabled state, expiry, and effective dates
+
+- **Comprehensive Binding Matching Tests**: Added extensive test coverage for template and cluster matching
+  - Tests for `matchExpressions` with In, NotIn, Exists, DoesNotExist operators
+  - Tests for combined `matchLabels` and `matchExpressions`
+  - Tests verifying precedence behavior when both explicit clusters and clusterSelector are set
+
+- **Binding Resolution Documentation**: Enhanced documentation for binding discovery and constraint merging
+  - Detailed explanation of template matching (templateRef vs templateSelector)
+  - Detailed explanation of cluster matching (clusters vs clusterSelector)
+  - Namespace constraints merge behavior now correctly documented as field-level merge
+  - Examples of production patterns from schiff templates
 
 - **DebugPodSpec Extended Fields**: All corev1.PodSpec scheduling and runtime fields now supported
   - `priorityClassName`, `runtimeClassName`, `preemptionPolicy` for resource priority
