@@ -544,7 +544,8 @@ function handleDurationChange(ev: Event) {
                 :title="`Via binding: ${cluster.bindingRef.namespace}/${cluster.bindingRef.name}`"
               >
                 <scale-icon-content-link size="12"></scale-icon-content-link>
-                via Binding: <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
+                via Binding:
+                <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
               </span>
               <span v-else class="source-badge direct" title="Direct access from template allowed.clusters">
                 <scale-icon-action-success size="12"></scale-icon-action-success>
