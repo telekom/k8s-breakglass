@@ -111,7 +111,53 @@ app.get("/api/breakglassSessions/:name", (req, res) => {
   if (!session) {
     return res.status(404).json({ message: "session not found" });
   }
-  res.json(session);
+  // Build approvalMeta based on session state and mock scenarios
+  const isRequester = session.spec.user === CURRENT_USER_EMAIL;
+  const sessionState = session.status?.state || "Pending";
+  const isPending = sessionState === "Pending";
+
+  // Simulate different approval scenarios based on session name patterns
+  let approvalMeta = {
+    canApprove: false,
+    canReject: false,
+    isRequester,
+    isApprover: false,
+    sessionState,
+    stateMessage: null,
+    denialReason: null,
+  };
+
+  if (!isPending) {
+    // Non-pending sessions cannot be approved/rejected
+    approvalMeta.stateMessage = `Session is in ${sessionState} state and cannot be approved or rejected`;
+  } else if (session.metadata?.name?.includes("self-approval")) {
+    // Mock scenario: self-approval blocked
+    approvalMeta.isApprover = false;
+    approvalMeta.denialReason =
+      "Self-approval is not allowed for this cluster/escalation. Please ask another approver to approve your request.";
+  } else if (session.metadata?.name?.includes("domain-blocked")) {
+    // Mock scenario: domain not allowed
+    approvalMeta.isApprover = false;
+    approvalMeta.denialReason =
+      "Your email domain is not in the list of allowed approver domains: [internal.telekom.de]";
+  } else if (session.metadata?.name?.includes("not-approver")) {
+    // Mock scenario: not in approver group
+    approvalMeta.isApprover = false;
+    approvalMeta.denialReason = "You are not in an approver group for this escalation";
+  } else if (isRequester) {
+    // Default: requester can reject (withdraw) but not approve their own session
+    approvalMeta.canReject = true;
+    approvalMeta.isApprover = false;
+    approvalMeta.denialReason =
+      "Self-approval is not allowed for this cluster/escalation. Please ask another approver to approve your request.";
+  } else {
+    // User is an approver
+    approvalMeta.canApprove = true;
+    approvalMeta.canReject = true;
+    approvalMeta.isApprover = true;
+  }
+
+  res.json({ session, approvalMeta });
 });
 
 // ============================================================================

@@ -45,6 +45,18 @@ func TestNewAuxiliaryResourceManager(t *testing.T) {
 	assert.Nil(t, mgr.client) // client can be nil
 }
 
+func TestSetAuditManager(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	// Initially nil
+	assert.Nil(t, mgr.auditManager)
+
+	// After setting - note: we can't create a real audit.Manager without dependencies
+	// so we're testing that the method exists and can be called
+	mgr.SetAuditManager(nil) // SetAuditManager(nil) should work
+	assert.Nil(t, mgr.auditManager)
+}
+
 func TestFilterEnabledResources_NoneEnabledByDefault(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
@@ -564,4 +576,183 @@ data:
 	assert.Equal(t, "test-config", status.Name)
 	assert.Equal(t, "ConfigMap", status.Kind)
 	assert.Equal(t, "debug-test-session-config", status.ResourceName)
+}
+
+// ============================================================================
+// Tests for toMap helper function
+// ============================================================================
+
+func TestToMap_ValidStruct(t *testing.T) {
+	input := struct {
+		Name  string `json:"name"`
+		Value int    `json:"value"`
+	}{
+		Name:  "test",
+		Value: 42,
+	}
+
+	result, err := toMap(input)
+	require.NoError(t, err)
+	assert.Equal(t, "test", result["name"])
+	assert.Equal(t, float64(42), result["value"]) // JSON numbers become float64
+}
+
+func TestToMap_NestedStruct(t *testing.T) {
+	input := struct {
+		Outer string `json:"outer"`
+		Inner struct {
+			Name string `json:"name"`
+		} `json:"inner"`
+	}{
+		Outer: "outer-value",
+		Inner: struct {
+			Name string `json:"name"`
+		}{Name: "inner-name"},
+	}
+
+	result, err := toMap(input)
+	require.NoError(t, err)
+	assert.Equal(t, "outer-value", result["outer"])
+	inner, ok := result["inner"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "inner-name", inner["name"])
+}
+
+func TestToMap_EmptyStruct(t *testing.T) {
+	input := struct{}{}
+
+	result, err := toMap(input)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Empty(t, result)
+}
+
+// ============================================================================
+// Edge Case and Failure Tests for toMap
+// ============================================================================
+
+func TestToMap_NilInput(t *testing.T) {
+	result, err := toMap(nil)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestToMap_ChannelFailsToMarshal(t *testing.T) {
+	// Channels cannot be marshaled to JSON
+	ch := make(chan int)
+	_, err := toMap(ch)
+	assert.Error(t, err, "channels should fail to marshal")
+}
+
+func TestToMap_FuncFailsToMarshal(t *testing.T) {
+	// Functions cannot be marshaled to JSON
+	fn := func() {}
+	_, err := toMap(fn)
+	assert.Error(t, err, "functions should fail to marshal")
+}
+
+// ============================================================================
+// Edge Case Tests for RenderTemplate
+// ============================================================================
+
+func TestRenderTemplate_EmptyTemplate(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	ctx := v1alpha1.AuxiliaryResourceContext{}
+
+	result, err := mgr.renderTemplate([]byte(""), ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "", string(result))
+}
+
+func TestRenderTemplate_NilTemplate(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	ctx := v1alpha1.AuxiliaryResourceContext{}
+
+	result, err := mgr.renderTemplate(nil, ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "", string(result))
+}
+
+func TestRenderTemplate_MalformedBraces(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	ctx := v1alpha1.AuxiliaryResourceContext{}
+
+	// Unclosed template braces
+	tmpl := []byte(`name: "{{ .session.name"`)
+
+	_, err := mgr.renderTemplate(tmpl, ctx)
+	assert.Error(t, err, "malformed template should fail")
+}
+
+func TestRenderTemplate_NestedInvalidSyntax(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	ctx := v1alpha1.AuxiliaryResourceContext{}
+
+	// Invalid nesting
+	tmpl := []byte(`{{ if .session.name }}{{ end {{ end }}`)
+
+	_, err := mgr.renderTemplate(tmpl, ctx)
+	assert.Error(t, err, "invalid nesting should fail")
+}
+
+// ============================================================================
+// Additional Edge Case Tests for FilterEnabledResources
+// ============================================================================
+
+func TestFilterEnabledResources_BindingAddsRequiredCategory(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	template := &v1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+			{Name: "res1", Category: "cat1", Template: runtime.RawExtension{}},
+			{Name: "res2", Category: "cat2", Template: runtime.RawExtension{}},
+		},
+	}
+	binding := &v1alpha1.DebugSessionClusterBinding{
+		Spec: v1alpha1.DebugSessionClusterBindingSpec{
+			RequiredAuxiliaryResourceCategories: []string{"cat1"},
+		},
+	}
+	result := mgr.filterEnabledResources(template, binding, nil)
+	assert.Len(t, result, 1, "binding required category should be included")
+	assert.Equal(t, "res1", result[0].Name)
+}
+
+func TestFilterEnabledResources_DefaultEnabled(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	template := &v1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+			{Name: "res1", Category: "cat1", Template: runtime.RawExtension{}},
+			{Name: "res2", Category: "cat2", Template: runtime.RawExtension{}},
+		},
+		AuxiliaryResourceDefaults: map[string]bool{
+			"res1": true,
+			"res2": false,
+		},
+	}
+	result := mgr.filterEnabledResources(template, nil, nil)
+	assert.Len(t, result, 1, "only default-enabled resource should be included")
+	assert.Equal(t, "res1", result[0].Name)
+}
+
+func TestFilterEnabledResources_NilBinding(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	template := &v1alpha1.DebugSessionTemplateSpec{
+		RequiredAuxiliaryResourceCategories: []string{"security"},
+		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+			{Name: "net-policy", Category: "security", Template: runtime.RawExtension{}},
+		},
+	}
+	result := mgr.filterEnabledResources(template, nil, nil)
+	assert.Len(t, result, 1, "nil binding should not affect required categories")
+}
+
+func TestFilterEnabledResources_EmptySelectedByUser(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	template := &v1alpha1.DebugSessionTemplateSpec{
+		AuxiliaryResources: []v1alpha1.AuxiliaryResource{
+			{Name: "res1", Category: "optional", Template: runtime.RawExtension{}},
+		},
+	}
+	result := mgr.filterEnabledResources(template, nil, []string{})
+	assert.Empty(t, result, "empty user selection should not include optional resources")
 }

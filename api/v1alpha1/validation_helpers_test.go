@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -2111,4 +2112,456 @@ func TestWarnNamespaceConstraintIssues_AllowUserWithDefault(t *testing.T) {
 	}
 	warnings := warnNamespaceConstraintIssues(nc, "")
 	assert.Empty(t, warnings, "properly configured allowUserNamespace=true with patterns and default should have no warnings")
+}
+
+// TestParseDuration_Empty tests parsing empty string
+func TestParseDuration_Empty(t *testing.T) {
+	d, err := ParseDuration("")
+	assert.NoError(t, err)
+	assert.Equal(t, time.Duration(0), d)
+}
+
+// TestParseDuration_StandardDurations tests standard Go duration formats
+func TestParseDuration_StandardDurations(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected time.Duration
+	}{
+		{"2h", 2 * time.Hour},
+		{"30m", 30 * time.Minute},
+		{"1h30m", 90 * time.Minute},
+		{"2h30m", 150 * time.Minute},
+		{"10s", 10 * time.Second},
+		{"500ms", 500 * time.Millisecond},
+		{"1h15m30s", time.Hour + 15*time.Minute + 30*time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			d, err := ParseDuration(tt.input)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, d)
+		})
+	}
+}
+
+// TestParseDuration_DayDurations tests day-based duration formats
+func TestParseDuration_DayDurations(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected time.Duration
+	}{
+		{"1d", 24 * time.Hour},
+		{"7d", 7 * 24 * time.Hour},
+		{"30d", 30 * 24 * time.Hour},
+		{"90d", 90 * 24 * time.Hour},
+		{"365d", 365 * 24 * time.Hour},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			d, err := ParseDuration(tt.input)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, d)
+		})
+	}
+}
+
+// TestParseDuration_MixedDayHours tests combined day+hour formats
+func TestParseDuration_MixedDayHours(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected time.Duration
+	}{
+		{"1d12h", 36 * time.Hour},
+		{"2d6h", 54 * time.Hour},
+		{"1d1h", 25 * time.Hour},
+		{"7d12h30m", 7*24*time.Hour + 12*time.Hour + 30*time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			d, err := ParseDuration(tt.input)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, d)
+		})
+	}
+}
+
+// TestParseDuration_InvalidFormats tests invalid duration formats
+func TestParseDuration_InvalidFormats(t *testing.T) {
+	tests := []struct {
+		input string
+		desc  string
+	}{
+		{"abc", "non-numeric"},
+		{"1x", "unknown unit"},
+		{"1d1x", "invalid unit after days"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			_, err := ParseDuration(tt.input)
+			assert.Error(t, err)
+		})
+	}
+}
+
+// TestParseResourceQuantity tests the parseResourceQuantity function
+func TestParseResourceQuantity(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+		errMsg  string
+	}{
+		{"empty string", "", false, ""},
+		{"simple integer", "100", false, ""},
+		{"milli units", "100m", false, ""},
+		{"kilobytes", "100k", false, ""},
+		{"megabytes", "100M", false, ""},
+		{"gigabytes", "100G", false, ""},
+		{"terabytes", "100T", false, ""},
+		{"petabytes", "100P", false, ""},
+		{"exabytes", "100E", false, ""},
+		{"kibibytes", "100Ki", false, ""},
+		{"mebibytes", "100Mi", false, ""},
+		{"gibibytes", "100Gi", false, ""},
+		{"tebibytes", "100Ti", false, ""},
+		{"pebibytes", "100Pi", false, ""},
+		{"exbibytes", "100Ei", false, ""},
+		{"float value", "1.5", false, ""},
+		{"float with unit", "1.5Gi", false, ""},
+		{"empty numeric value", "Ki", true, "empty numeric value"},
+		{"invalid numeric", "abcMi", true, "invalid numeric value"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseResourceQuantity(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestValidateAuxiliaryResources tests the validateAuxiliaryResources function
+func TestValidateAuxiliaryResources(t *testing.T) {
+	fieldPath := field.NewPath("spec").Child("auxiliaryResources")
+
+	t.Run("empty resources", func(t *testing.T) {
+		errs := validateAuxiliaryResources(nil, fieldPath)
+		assert.Empty(t, errs)
+
+		errs = validateAuxiliaryResources([]AuxiliaryResource{}, fieldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid resource", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:     "test-resource",
+				Category: "network-policy",
+				Template: runtime.RawExtension{Raw: []byte(`{"kind":"ConfigMap"}`)},
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Empty(t, errs)
+	})
+
+	t.Run("missing name", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:     "",
+				Template: runtime.RawExtension{Raw: []byte(`{"kind":"ConfigMap"}`)},
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "name is required")
+	})
+
+	t.Run("missing template", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:     "test",
+				Template: runtime.RawExtension{},
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "template is required")
+	})
+
+	t.Run("duplicate names", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:     "test",
+				Template: runtime.RawExtension{Raw: []byte(`{}`)},
+			},
+			{
+				Name:     "test",
+				Template: runtime.RawExtension{Raw: []byte(`{}`)},
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "Duplicate")
+	})
+
+	t.Run("category too long", func(t *testing.T) {
+		longCategory := strings.Repeat("a", 64)
+		res := []AuxiliaryResource{
+			{
+				Name:     "test",
+				Category: longCategory,
+				Template: runtime.RawExtension{Raw: []byte(`{}`)},
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "Too long")
+	})
+
+	t.Run("invalid category format uppercase", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:     "test",
+				Category: "NetworkPolicy",
+				Template: runtime.RawExtension{Raw: []byte(`{}`)},
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "lowercase alphanumeric")
+	})
+
+	t.Run("invalid category format underscore", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:     "test",
+				Category: "network_policy",
+				Template: runtime.RawExtension{Raw: []byte(`{}`)},
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "lowercase alphanumeric")
+	})
+
+	t.Run("valid category with hyphen", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:     "test",
+				Category: "network-policy",
+				Template: runtime.RawExtension{Raw: []byte(`{}`)},
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Empty(t, errs)
+	})
+}
+
+// ============================================================================
+// Edge Case and Failure Tests - Explicit Invalid Input Testing
+// ============================================================================
+
+func TestParseDuration_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantErr     bool
+		wantSeconds float64
+	}{
+		{"empty string returns zero", "", false, 0},
+		{"simple days", "1d", false, 86400},
+		{"days with hours", "1d12h", false, 129600},
+		{"large days value", "365d", false, 31536000},
+		{"zero days", "0d", false, 0},
+		{"negative hours are valid in Go", "-1h", false, -3600}, // Go stdlib accepts negative
+		{"invalid unit", "1x", true, 0},
+		{"text only", "invalid", true, 0},
+		{"spaces not allowed", "1 h", true, 0},
+		{"mixed days and negative", "1d-1h", false, 82800}, // 24h - 1h = 23h
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseDuration(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err, "expected error for input: %s", tt.input)
+			} else {
+				assert.NoError(t, err, "unexpected error for input: %s", tt.input)
+				assert.Equal(t, tt.wantSeconds, result.Seconds())
+			}
+		})
+	}
+}
+
+func TestValidateHTTPSURL_EdgeCases(t *testing.T) {
+	fieldPath := field.NewPath("spec").Child("url")
+
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"valid https", "https://example.com", false},
+		{"valid https with path", "https://example.com/path/to/resource", false},
+		{"valid https with port", "https://example.com:8443", false},
+		{"http not allowed", "http://example.com", true},
+		{"ftp not allowed", "ftp://example.com", true},
+		{"no scheme", "example.com", true},
+		{"empty string", "", false}, // Empty is allowed (optional field)
+		{"javascript injection", "javascript:alert(1)", true},
+		{"data uri", "data:text/html,<script>alert(1)</script>", true},
+		{"file uri", "file:///etc/passwd", true},
+		{"malformed url", "https://[invalid", true},
+		{"url with spaces", "https://example .com", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateHTTPSURL(tt.url, fieldPath)
+			if tt.wantErr {
+				assert.NotEmpty(t, errs, "expected error for url: %s", tt.url)
+			} else {
+				assert.Empty(t, errs, "unexpected error for url: %s", tt.url)
+			}
+		})
+	}
+}
+
+func TestValidateStringListNoDuplicates_EdgeCases(t *testing.T) {
+	fieldPath := field.NewPath("spec").Child("list")
+
+	tests := []struct {
+		name    string
+		list    []string
+		wantErr bool
+	}{
+		{"nil list", nil, false},
+		{"empty list", []string{}, false},
+		{"single item", []string{"item"}, false},
+		{"no duplicates", []string{"a", "b", "c"}, false},
+		{"duplicate at start", []string{"a", "a", "b"}, true},
+		{"duplicate at end", []string{"a", "b", "b"}, true},
+		{"duplicate in middle", []string{"a", "b", "b", "c"}, true},
+		{"case sensitive duplicates", []string{"Item", "item"}, false}, // Not duplicates
+		{"multiple different duplicates", []string{"a", "b", "a", "b"}, true},
+		{"empty strings are valid", []string{"", "", ""}, true}, // Empty strings are duplicates
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateStringListNoDuplicates(tt.list, fieldPath)
+			if tt.wantErr {
+				assert.NotEmpty(t, errs, "expected error for list: %v", tt.list)
+			} else {
+				assert.Empty(t, errs, "unexpected error for list: %v", tt.list)
+			}
+		})
+	}
+}
+
+func TestValidateStringListEntriesNotEmpty_EdgeCases(t *testing.T) {
+	fieldPath := field.NewPath("spec").Child("list")
+
+	tests := []struct {
+		name    string
+		list    []string
+		wantErr bool
+	}{
+		{"nil list", nil, false},
+		{"empty list", []string{}, false},
+		{"valid entries", []string{"a", "b"}, false},
+		{"empty entry at start", []string{"", "a"}, true},
+		{"empty entry at end", []string{"a", ""}, true},
+		{"all empty entries", []string{"", "", ""}, true},
+		{"whitespace only is empty", []string{"   "}, true}, // TrimSpace makes it empty
+		{"mixed valid and empty", []string{"a", "", "b"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateStringListEntriesNotEmpty(tt.list, fieldPath)
+			if tt.wantErr {
+				assert.NotEmpty(t, errs, "expected error for list: %v", tt.list)
+			} else {
+				assert.Empty(t, errs, "unexpected error for list: %v", tt.list)
+			}
+		})
+	}
+}
+
+func TestValidateResourceQuantity_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"valid cpu millicores", "100m", false},
+		{"valid memory bytes", "1Gi", false},
+		{"valid memory megabytes", "512Mi", false},
+		{"zero value", "0", false},
+		{"negative value valid", "-100m", false}, // ParseFloat accepts negatives
+		{"invalid format", "abc", true},
+		{"empty string valid", "", false}, // Returns 0, nil for empty
+		{"very large value", "999999999Gi", false},
+		{"decimal value", "1.5", false},
+		{"invalid suffix", "100x", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseResourceQuantity(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err, "expected error for input: %s", tt.input)
+			} else {
+				assert.NoError(t, err, "unexpected error for input: %s", tt.input)
+			}
+		})
+	}
+}
+
+func TestValidateIdentifierFormat_EdgeCases(t *testing.T) {
+	fieldPath := field.NewPath("spec").Child("name")
+
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		{"valid simple name", "my-name", false},
+		{"valid with numbers", "name123", false},
+		{"starts with number valid", "123name", false},     // Numbers allowed
+		{"special chars invalid", "name#$%", true},         // # $ % not allowed
+		{"empty string returns no error", "", false},       // Empty is allowed (no validation)
+		{"too long name", string(make([]byte, 300)), true}, // Over 253 chars
+		{"uppercase valid", "MyName", false},               // Uppercase allowed
+		{"underscore valid", "my_name", false},             // Underscore allowed
+		{"dot valid", "my.name", false},
+		{"leading dash valid", "-name", false},      // Dash allowed anywhere
+		{"trailing dash valid", "name-", false},     // Dash allowed anywhere
+		{"at sign valid", "user@domain.com", false}, // @ allowed for emails
+		{"colon valid", "group:name", false},        // Colon allowed
+		{"slash valid", "path/to/resource", false},  // Slash allowed
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateIdentifierFormat(tt.id, fieldPath)
+			if tt.wantErr {
+				assert.NotEmpty(t, errs, "expected error for id: %s", tt.id)
+			} else {
+				assert.Empty(t, errs, "unexpected error for id: %s", tt.id)
+			}
+		})
+	}
 }

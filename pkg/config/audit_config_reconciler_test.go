@@ -592,6 +592,108 @@ func TestAuditConfigReconciler_ValidateSink_UnknownType(t *testing.T) {
 	assert.Contains(t, errors[0], "unknown sink type")
 }
 
+func TestAuditConfigReconciler_ValidateSink_KafkaMissingConfig(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	sink := breakglassv1alpha1.AuditSinkConfig{
+		Name:  "kafka-sink",
+		Type:  breakglassv1alpha1.AuditSinkTypeKafka,
+		Kafka: nil,
+	}
+
+	errors := r.validateSink(context.Background(), sink, 0)
+	assert.Len(t, errors, 1)
+	assert.Contains(t, errors[0], "kafka config required")
+}
+
+func TestAuditConfigReconciler_ValidateSink_KafkaMissingBrokers(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	sink := breakglassv1alpha1.AuditSinkConfig{
+		Name: "kafka-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeKafka,
+		Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+			Brokers: []string{},
+			Topic:   "test-topic",
+		},
+	}
+
+	errors := r.validateSink(context.Background(), sink, 0)
+	assert.Len(t, errors, 1)
+	assert.Contains(t, errors[0], "at least one broker required")
+}
+
+func TestAuditConfigReconciler_ValidateSink_KafkaMissingTopic(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	sink := breakglassv1alpha1.AuditSinkConfig{
+		Name: "kafka-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeKafka,
+		Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+			Brokers: []string{"localhost:9092"},
+			Topic:   "",
+		},
+	}
+
+	errors := r.validateSink(context.Background(), sink, 0)
+	assert.Len(t, errors, 1)
+	assert.Contains(t, errors[0], "topic required")
+}
+
+func TestAuditConfigReconciler_ValidateSink_WebhookMissingConfig(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	sink := breakglassv1alpha1.AuditSinkConfig{
+		Name:    "webhook-sink",
+		Type:    breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: nil,
+	}
+
+	errors := r.validateSink(context.Background(), sink, 0)
+	assert.Len(t, errors, 1)
+	assert.Contains(t, errors[0], "webhook config required")
+}
+
+func TestAuditConfigReconciler_ValidateSink_WebhookMissingURL(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	sink := breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: "",
+		},
+	}
+
+	errors := r.validateSink(context.Background(), sink, 0)
+	assert.Len(t, errors, 1)
+	assert.Contains(t, errors[0], "URL required")
+}
+
+func TestAuditConfigReconciler_ValidateSink_LogSinkAlwaysValid(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	sink := breakglassv1alpha1.AuditSinkConfig{
+		Name: "log-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeLog,
+	}
+
+	errors := r.validateSink(context.Background(), sink, 0)
+	assert.Empty(t, errors)
+}
+
+func TestAuditConfigReconciler_ValidateSink_KubernetesSinkAlwaysValid(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+
+	sink := breakglassv1alpha1.AuditSinkConfig{
+		Name: "k8s-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeKubernetes,
+	}
+
+	errors := r.validateSink(context.Background(), sink, 0)
+	assert.Empty(t, errors)
+}
+
 func TestNewAuditConfigReconciler_DefaultResyncPeriod(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = breakglassv1alpha1.AddToScheme(scheme)

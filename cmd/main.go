@@ -243,7 +243,9 @@ func main() {
 
 	// Setup debug session API controller with mail and audit services
 	// Uses combined auth + rate limiting middleware
+	// Uses APIReader for consistent reads after writes (avoids cache coherence issues)
 	debugSessionAPICtrl := breakglass.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, auth.MiddlewareWithRateLimiting(apiRateLimiter)).
+		WithAPIReader(reconcilerMgr.GetAPIReader()).
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).
 		WithDisableEmail(cliConfig.DisableEmail)

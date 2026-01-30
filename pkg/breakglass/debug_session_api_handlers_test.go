@@ -1313,7 +1313,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &telekomv1alpha1.DebugSessionTemplate{
 			Spec: telekomv1alpha1.DebugSessionTemplateSpec{},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "")
+		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 	})
@@ -1322,7 +1322,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &telekomv1alpha1.DebugSessionTemplate{
 			Spec: telekomv1alpha1.DebugSessionTemplateSpec{},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "custom-ns")
+		ns, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "custom-ns", ns)
 	})
@@ -1335,7 +1335,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 				},
 			},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "")
+		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "my-debug-ns", ns)
 	})
@@ -1349,9 +1349,25 @@ func TestResolveTargetNamespace(t *testing.T) {
 				},
 			},
 		}
-		_, err := ctrl.resolveTargetNamespace(template, "custom-ns")
+		_, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
+	})
+
+	t.Run("allows requesting default namespace even when AllowUserNamespace is false", func(t *testing.T) {
+		// This handles the case where the frontend sends the default namespace value
+		// in the request, which should be allowed even when user namespace selection is disabled.
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "breakglass-debug",
+					AllowUserNamespace: false,
+				},
+			},
+		}
+		ns, err := ctrl.resolveTargetNamespace(template, "breakglass-debug", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "breakglass-debug", ns)
 	})
 
 	t.Run("validates against allowed patterns", func(t *testing.T) {
@@ -1367,12 +1383,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Allowed namespace
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-my-session")
+		ns, err := ctrl.resolveTargetNamespace(template, "debug-my-session", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-my-session", ns)
 
 		// Not allowed namespace
-		_, err = ctrl.resolveTargetNamespace(template, "prod-ns")
+		_, err = ctrl.resolveTargetNamespace(template, "prod-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
@@ -1390,14 +1406,341 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Allowed namespace
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns")
+		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-ns", ns)
 
 		// Denied namespace
-		_, err = ctrl.resolveTargetNamespace(template, "kube-system")
+		_, err = ctrl.resolveTargetNamespace(template, "kube-system", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
+	})
+
+	t.Run("binding overrides template AllowUserNamespace", func(t *testing.T) {
+		// Template disallows user-specified namespaces
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-restricted"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "default-ns",
+					AllowUserNamespace: false, // Template says NO
+				},
+			},
+		}
+
+		// Binding enables user-specified namespaces
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					AllowUserNamespace: true, // Binding says YES - overrides template
+				},
+			},
+		}
+
+		// Without binding - should reject user namespace
+		_, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
+
+		// With binding override - should allow user namespace
+		ns, err := ctrl.resolveTargetNamespace(template, "custom-ns", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "custom-ns", ns)
+	})
+
+	t.Run("binding merges allowed namespace patterns", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-patterns"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"debug-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		// Binding adds more allowed patterns
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"tenant-*"}, // Additional pattern from binding
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		// Without binding - only debug-* is allowed
+		ns, err := ctrl.resolveTargetNamespace(template, "debug-app", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "debug-app", ns)
+
+		_, err = ctrl.resolveTargetNamespace(template, "tenant-app", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+
+		// With binding - both debug-* and tenant-* are allowed
+		ns, err = ctrl.resolveTargetNamespace(template, "debug-app", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "debug-app", ns)
+
+		ns, err = ctrl.resolveTargetNamespace(template, "tenant-app", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "tenant-app", ns)
+	})
+
+	// =========================================================================
+	// Additional binding override tests - comprehensive edge cases
+	// =========================================================================
+
+	t.Run("binding default namespace overrides template default", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-default-ns"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "template-default",
+					AllowUserNamespace: false,
+				},
+			},
+		}
+
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "override-default-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace: "binding-default", // Override default namespace
+				},
+			},
+		}
+
+		// Without binding - uses template default
+		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "template-default", ns)
+
+		// With binding - uses binding default
+		ns, err = ctrl.resolveTargetNamespace(template, "", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "binding-default", ns)
+	})
+
+	t.Run("binding denied namespaces override template denied", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-denied-ns"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					AllowUserNamespace: true,
+					DeniedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"kube-*", "system-*"}, // Template denies kube-* and system-*
+					},
+				},
+			},
+		}
+
+		// Binding has more permissive denied list (only denies kube-system specifically)
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "permissive-denied-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					AllowUserNamespace: true,
+					DeniedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"kube-system"}, // Only deny kube-system
+					},
+				},
+			},
+		}
+
+		// Without binding - kube-system denied
+		_, err := ctrl.resolveTargetNamespace(template, "kube-system", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+
+		// Without binding - system-test also denied
+		_, err = ctrl.resolveTargetNamespace(template, "system-test", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+
+		// With binding - kube-system still denied
+		_, err = ctrl.resolveTargetNamespace(template, "kube-system", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+
+		// With binding - system-test now allowed (binding overrode denied list)
+		ns, err := ctrl.resolveTargetNamespace(template, "system-test", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "system-test", ns)
+	})
+
+	t.Run("binding with nil namespaceConstraints uses template constraints", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-with-constraints"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "template-ns",
+					AllowUserNamespace: false,
+				},
+			},
+		}
+
+		// Binding has no namespace constraints
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "no-ns-constraints-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				// No NamespaceConstraints - should fallback to template
+			},
+		}
+
+		// With binding that has no constraints - uses template's default
+		ns, err := ctrl.resolveTargetNamespace(template, "", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "template-ns", ns)
+
+		// User namespace still blocked because binding didn't override
+		_, err = ctrl.resolveTargetNamespace(template, "custom-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
+	})
+
+	t.Run("real-world schiff scenario: developer-basic template with developer-workload binding", func(t *testing.T) {
+		// This replicates the exact scenario from schiff-cp:
+		// Template developer-basic has allowUserNamespace: false
+		// Binding has allowUserNamespace: true with allowed patterns [breakglass-*, debug-*]
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "developer-basic",
+				Labels: map[string]string{
+					"breakglass.t-caas.telekom.com/persona":     "developer",
+					"breakglass.t-caas.telekom.com/risk-level":  "low",
+					"breakglass.t-caas.telekom.com/scope":       "pod",
+					"breakglass.t-caas.telekom.com/environment": "non-production",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Developer Basic Debug",
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "breakglass-debug",
+					AllowUserNamespace: false, // Template blocks user namespaces
+				},
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Groups:   []string{"ship-lab_poweruser"},
+					Clusters: []string{"dev-*", "staging-*", "test-*", "ref-*", "lab-*"},
+				},
+			},
+		}
+
+		// Developer workload binding from schiff CLI template
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "schiff-canary-1.tsttmdc.bn-developer-workload",
+				Namespace: "vsphere-tsttmdc-bn",
+				Labels: map[string]string{
+					"breakglass.t-caas.telekom.com/persona":      "developer",
+					"breakglass.t-caas.telekom.com/binding-type": "workload",
+					"breakglass.t-caas.telekom.com/cluster":      "schiff-canary-1.tsttmdc.bn",
+				},
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: "Developer Workload Debug - schiff-canary-1.tsttmdc.bn",
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "breakglass-debug",
+					AllowUserNamespace: true, // Binding enables user namespaces
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"breakglass-*", "debug-*"},
+					},
+				},
+			},
+		}
+
+		// Without binding - user namespace blocked by template
+		_, err := ctrl.resolveTargetNamespace(template, "debug-my-session", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
+
+		// With binding - user namespace allowed via binding override
+		ns, err := ctrl.resolveTargetNamespace(template, "debug-my-session", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "debug-my-session", ns)
+
+		// With binding - namespace matching allowed pattern
+		ns, err = ctrl.resolveTargetNamespace(template, "breakglass-test", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "breakglass-test", ns)
+
+		// With binding - namespace NOT matching allowed pattern should fail
+		_, err = ctrl.resolveTargetNamespace(template, "production-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+
+		// With binding - empty namespace uses default
+		ns, err = ctrl.resolveTargetNamespace(template, "", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "breakglass-debug", ns)
+	})
+
+	t.Run("bad path: binding cannot remove allowed namespaces requirement", func(t *testing.T) {
+		// Template requires namespace to be in allowed list
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-with-allowed"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					AllowUserNamespace: true,
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"safe-*"},
+					},
+				},
+			},
+		}
+
+		// Binding also has an allowed list - they get merged
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "extends-allowed-binding",
+				Namespace: "test-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					AllowUserNamespace: true,
+					AllowedNamespaces: &telekomv1alpha1.NamespaceFilter{
+						Patterns: []string{"extra-*"},
+					},
+				},
+			},
+		}
+
+		// With binding - safe-* still allowed (from template)
+		ns, err := ctrl.resolveTargetNamespace(template, "safe-ns", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "safe-ns", ns)
+
+		// With binding - extra-* now also allowed (from binding)
+		ns, err = ctrl.resolveTargetNamespace(template, "extra-ns", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "extra-ns", ns)
+
+		// With binding - random namespace still blocked
+		_, err = ctrl.resolveTargetNamespace(template, "random-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
 }
 
@@ -1420,6 +1763,24 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "")
 		require.NoError(t, err)
 		assert.Empty(t, selectedOpt)
+		require.NotNil(t, resolved)
+		assert.Equal(t, "debug", resolved.NodeSelector["pool"])
+	})
+
+	t.Run("ignores stale scheduling option when template has no options", func(t *testing.T) {
+		// This handles the case where the frontend sends a stale scheduling option
+		// after switching to a template that doesn't have scheduling options.
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"pool": "debug"},
+				},
+				// No SchedulingOptions defined
+			},
+		}
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "any-worker")
+		require.NoError(t, err, "should not error when stale option is sent")
+		assert.Empty(t, selectedOpt, "selected option should be empty")
 		require.NotNil(t, resolved)
 		assert.Equal(t, "debug", resolved.NodeSelector["pool"])
 	})

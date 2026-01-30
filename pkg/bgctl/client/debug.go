@@ -222,17 +222,19 @@ type DebugTemplateService struct {
 
 // DebugSessionTemplateSummary represents a template summary from the API
 type DebugSessionTemplateSummary struct {
-	Name             string                            `json:"name"`
-	DisplayName      string                            `json:"displayName"`
-	Description      string                            `json:"description,omitempty"`
-	Mode             v1alpha1.DebugSessionTemplateMode `json:"mode"`
-	WorkloadType     v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
-	PodTemplateRef   string                            `json:"podTemplateRef,omitempty"`
-	TargetNamespace  string                            `json:"targetNamespace,omitempty"`
-	Constraints      *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	AllowedClusters  []string                          `json:"allowedClusters,omitempty"`
-	AllowedGroups    []string                          `json:"allowedGroups,omitempty"`
-	RequiresApproval bool                              `json:"requiresApproval"`
+	Name                  string                            `json:"name"`
+	DisplayName           string                            `json:"displayName"`
+	Description           string                            `json:"description,omitempty"`
+	Mode                  v1alpha1.DebugSessionTemplateMode `json:"mode"`
+	WorkloadType          v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
+	PodTemplateRef        string                            `json:"podTemplateRef,omitempty"`
+	TargetNamespace       string                            `json:"targetNamespace,omitempty"`
+	Constraints           *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	AllowedClusters       []string                          `json:"allowedClusters,omitempty"`
+	AllowedGroups         []string                          `json:"allowedGroups,omitempty"`
+	RequiresApproval      bool                              `json:"requiresApproval"`
+	HasAvailableClusters  bool                              `json:"hasAvailableClusters"`            // True if at least one cluster is available
+	AvailableClusterCount int                               `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
 }
 
 // DebugTemplateListResponse represents the API response for template list
@@ -241,12 +243,22 @@ type DebugTemplateListResponse struct {
 	Total     int                           `json:"total"`
 }
 
+// DebugTemplateListOptions represents options for listing templates
+type DebugTemplateListOptions struct {
+	// IncludeUnavailable includes templates with no available clusters
+	IncludeUnavailable bool
+}
+
 func (c *Client) DebugTemplates() *DebugTemplateService {
 	return &DebugTemplateService{client: c}
 }
 
-func (d *DebugTemplateService) List(ctx context.Context) (*DebugTemplateListResponse, error) {
+func (d *DebugTemplateService) List(ctx context.Context, opts ...DebugTemplateListOptions) (*DebugTemplateListResponse, error) {
 	endpoint := "api/debugSessions/templates"
+	// Apply options if provided
+	if len(opts) > 0 && opts[0].IncludeUnavailable {
+		endpoint += "?includeUnavailable=true"
+	}
 	var resp DebugTemplateListResponse
 	if err := d.client.do(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
 		return nil, err

@@ -2556,7 +2556,321 @@ func TestDebugSessionController_BindingMatchesCluster_EdgeCases(t *testing.T) {
 
 		assert.True(t, ctrl.bindingMatchesCluster(binding, "any-cluster", clusterConfig))
 	})
+
+	t.Run("matches with matchExpressions In operator", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "environment",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"staging", "development"},
+						},
+					},
+				},
+			},
+		}
+
+		stagingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "staging-cluster",
+				Labels: map[string]string{"environment": "staging"},
+			},
+		}
+
+		devCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "dev-cluster",
+				Labels: map[string]string{"environment": "development"},
+			},
+		}
+
+		prodCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "prod-cluster",
+				Labels: map[string]string{"environment": "production"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "staging-cluster", stagingCluster))
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "dev-cluster", devCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "prod-cluster", prodCluster))
+	})
+
+	t.Run("matches with matchExpressions NotIn operator", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "environment",
+							Operator: metav1.LabelSelectorOpNotIn,
+							Values:   []string{"production"},
+						},
+					},
+				},
+			},
+		}
+
+		stagingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "staging-cluster",
+				Labels: map[string]string{"environment": "staging"},
+			},
+		}
+
+		prodCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "prod-cluster",
+				Labels: map[string]string{"environment": "production"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "staging-cluster", stagingCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "prod-cluster", prodCluster))
+	})
+
+	t.Run("matches with matchExpressions Exists operator", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "breakglass-enabled",
+							Operator: metav1.LabelSelectorOpExists,
+						},
+					},
+				},
+			},
+		}
+
+		enabledCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "enabled-cluster",
+				Labels: map[string]string{"breakglass-enabled": "true"},
+			},
+		}
+
+		disabledCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "disabled-cluster",
+				Labels: map[string]string{"other-label": "value"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "enabled-cluster", enabledCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "disabled-cluster", disabledCluster))
+	})
+
+	t.Run("matches with matchExpressions DoesNotExist operator", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "deprecated",
+							Operator: metav1.LabelSelectorOpDoesNotExist,
+						},
+					},
+				},
+			},
+		}
+
+		normalCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "normal-cluster",
+				Labels: map[string]string{"environment": "staging"},
+			},
+		}
+
+		deprecatedCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "deprecated-cluster",
+				Labels: map[string]string{"environment": "staging", "deprecated": "true"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "normal-cluster", normalCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "deprecated-cluster", deprecatedCluster))
+	})
+
+	t.Run("matches with combined matchLabels and matchExpressions", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"tier": "platform"},
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "environment",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"staging", "development"},
+						},
+					},
+				},
+			},
+		}
+
+		matchingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "matching-cluster",
+				Labels: map[string]string{"tier": "platform", "environment": "staging"},
+			},
+		}
+
+		wrongTierCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "wrong-tier-cluster",
+				Labels: map[string]string{"tier": "application", "environment": "staging"},
+			},
+		}
+
+		wrongEnvCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "wrong-env-cluster",
+				Labels: map[string]string{"tier": "platform", "environment": "production"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "matching-cluster", matchingCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "wrong-tier-cluster", wrongTierCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "wrong-env-cluster", wrongEnvCluster))
+	})
+
+	t.Run("explicit cluster list takes precedence over clusterSelector", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Clusters: []string{"explicit-cluster"},
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"environment": "staging"},
+				},
+			},
+		}
+
+		stagingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "staging-cluster",
+				Labels: map[string]string{"environment": "staging"},
+			},
+		}
+
+		// Matches via explicit list, not via selector
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "explicit-cluster", nil))
+		// Also matches via selector
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "staging-cluster", stagingCluster))
+	})
 }
+
+// TestBindingMatchesTemplate_MatchExpressions tests templateSelector with matchExpressions
+func TestBindingMatchesTemplate_MatchExpressions(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{log: logger}
+
+	t.Run("matches with In operator", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "developer-template",
+				Labels: map[string]string{"persona": "developer", "risk-level": "low"},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "persona",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"developer", "sre"},
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("does not match with NotIn operator when value present", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "admin-template",
+				Labels: map[string]string{"persona": "admin"},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "persona",
+							Operator: metav1.LabelSelectorOpNotIn,
+							Values:   []string{"admin", "superuser"},
+						},
+					},
+				},
+			},
+		}
+
+		assert.False(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("matches with Exists operator", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "labeled-template",
+				Labels: map[string]string{"breakglass.t-caas.telekom.com/approved": "true"},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "breakglass.t-caas.telekom.com/approved",
+							Operator: metav1.LabelSelectorOpExists,
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("matches with combined matchLabels and matchExpressions", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "platform-debug",
+				Labels: map[string]string{
+					"tier":       "platform",
+					"risk-level": "medium",
+					"scope":      "cluster",
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"tier": "platform"},
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "risk-level",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"low", "medium"},
+						},
+						{
+							Key:      "deprecated",
+							Operator: metav1.LabelSelectorOpDoesNotExist,
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+}
+
 func TestApplySchedulingConstraints(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	ctrl := &DebugSessionController{

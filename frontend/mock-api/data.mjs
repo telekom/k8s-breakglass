@@ -1266,6 +1266,35 @@ const permutationSessions = [
     requestReason: undefined,
     approvalReason: { description: "Approver justification optional" },
   }),
+  // =========================================================================
+  // Approval denial scenario mock sessions (for testing SessionApprovalView)
+  // =========================================================================
+  baseSession({
+    name: "self-approval-blocked-session",
+    cluster: "t-sec-1st.dtmd11",
+    group: "dtcaas-platform_emergency",
+    state: "Pending",
+    requestReason: "Testing self-approval block UI",
+    // Current user is the requester, so self-approval should be blocked
+    user: CURRENT_USER_EMAIL,
+  }),
+  baseSession({
+    name: "domain-blocked-session",
+    cluster: "global-platform-eu",
+    group: "platform-superuser",
+    state: "Pending",
+    user: PARTNER_USER_EMAIL,
+    requestReason: "Testing domain restriction UI - approver domain not in allowed list",
+  }),
+  baseSession({
+    name: "not-approver-session",
+    cluster: "edge-hub",
+    group: "edge-hotfix",
+    state: "Pending",
+    user: PARTNER_USER_EMAIL,
+    requestReason: "Testing not-an-approver UI - user not in approver groups",
+    approverGroups: ["special-approvers-only"],
+  }),
 ];
 
 const STRESS_STATE_ROTATION = [

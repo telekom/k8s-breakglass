@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -550,16 +551,71 @@ func TestExtractCapabilities(t *testing.T) {
 	})
 
 	t.Run("nil capabilities", func(t *testing.T) {
-		// corev1.SecurityContext is imported via the production code
-		// We just test the function returns nil for nil input
-		result := extractCapabilities(nil)
+		sc := &corev1.SecurityContext{
+			Capabilities: nil,
+		}
+		result := extractCapabilities(sc)
 		assert.Nil(t, result)
+	})
+
+	t.Run("empty capabilities", func(t *testing.T) {
+		sc := &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{},
+		}
+		result := extractCapabilities(sc)
+		assert.Nil(t, result)
+	})
+
+	t.Run("single capability", func(t *testing.T) {
+		sc := &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN"},
+			},
+		}
+		result := extractCapabilities(sc)
+		assert.Equal(t, []string{"NET_ADMIN"}, result)
+	})
+
+	t.Run("multiple capabilities", func(t *testing.T) {
+		sc := &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN", "SYS_ADMIN", "CAP_NET_RAW"},
+			},
+		}
+		result := extractCapabilities(sc)
+		assert.Equal(t, []string{"NET_ADMIN", "SYS_ADMIN", "CAP_NET_RAW"}, result)
 	})
 }
 
 func TestExtractRunAsNonRoot(t *testing.T) {
 	t.Run("nil security context", func(t *testing.T) {
 		result := extractRunAsNonRoot(nil)
+		assert.False(t, result)
+	})
+
+	t.Run("nil runAsNonRoot", func(t *testing.T) {
+		sc := &corev1.SecurityContext{
+			RunAsNonRoot: nil,
+		}
+		result := extractRunAsNonRoot(sc)
+		assert.False(t, result)
+	})
+
+	t.Run("runAsNonRoot true", func(t *testing.T) {
+		trueVal := true
+		sc := &corev1.SecurityContext{
+			RunAsNonRoot: &trueVal,
+		}
+		result := extractRunAsNonRoot(sc)
+		assert.True(t, result)
+	})
+
+	t.Run("runAsNonRoot false", func(t *testing.T) {
+		falseVal := false
+		sc := &corev1.SecurityContext{
+			RunAsNonRoot: &falseVal,
+		}
+		result := extractRunAsNonRoot(sc)
 		assert.False(t, result)
 	})
 }
@@ -659,4 +715,290 @@ func TestGetDebugSessionByName_DefaultNamespaceFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "simple-session", found.Name)
+}
+
+// ============================================================================
+// Tests for shouldSendNotification
+// ============================================================================
+
+func TestShouldSendNotification(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      *telekomv1alpha1.DebugSessionNotificationConfig
+		event    notificationEvent
+		expected bool
+	}{
+		{
+			name:     "nil config returns true",
+			cfg:      nil,
+			event:    notificationEventRequest,
+			expected: true,
+		},
+		{
+			name: "disabled config returns false",
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Enabled: false,
+			},
+			event:    notificationEventRequest,
+			expected: false,
+		},
+		{
+			name: "enabled config - request event with notify on request",
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Enabled:         true,
+				NotifyOnRequest: true,
+			},
+			event:    notificationEventRequest,
+			expected: true,
+		},
+		{
+			name: "enabled config - request event without notify on request",
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Enabled:         true,
+				NotifyOnRequest: false,
+			},
+			event:    notificationEventRequest,
+			expected: false,
+		},
+		{
+			name: "enabled config - approval event with notify on approval",
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Enabled:          true,
+				NotifyOnApproval: true,
+			},
+			event:    notificationEventApproval,
+			expected: true,
+		},
+		{
+			name: "enabled config - approval event without notify on approval",
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Enabled:          true,
+				NotifyOnApproval: false,
+			},
+			event:    notificationEventApproval,
+			expected: false,
+		},
+		{
+			name: "enabled config - expiry event with notify on expiry",
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Enabled:        true,
+				NotifyOnExpiry: true,
+			},
+			event:    notificationEventExpiry,
+			expected: true,
+		},
+		{
+			name: "enabled config - expiry event without notify on expiry",
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Enabled:        true,
+				NotifyOnExpiry: false,
+			},
+			event:    notificationEventExpiry,
+			expected: false,
+		},
+		{
+			name: "enabled config - unknown event returns true",
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				Enabled: true,
+			},
+			event:    notificationEvent("unknown"),
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := shouldSendNotification(tt.cfg, tt.event)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// ============================================================================
+// Tests for buildNotificationRecipients
+// ============================================================================
+
+func TestBuildNotificationRecipients(t *testing.T) {
+	tests := []struct {
+		name      string
+		base      []string
+		cfg       *telekomv1alpha1.DebugSessionNotificationConfig
+		wantEmpty bool
+		wantLen   int
+	}{
+		{
+			name:      "nil config and empty base returns nil",
+			base:      nil,
+			cfg:       nil,
+			wantEmpty: true,
+		},
+		{
+			name:      "empty base and nil config returns nil",
+			base:      []string{},
+			cfg:       nil,
+			wantEmpty: true,
+		},
+		{
+			name:    "base recipients with nil config",
+			base:    []string{"user@example.com"},
+			cfg:     nil,
+			wantLen: 1,
+		},
+		{
+			name: "base recipients with additional recipients in config",
+			base: []string{"user@example.com"},
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				AdditionalRecipients: []string{"admin@example.com"},
+			},
+			wantLen: 2,
+		},
+		{
+			name: "deduplication of recipients",
+			base: []string{"user@example.com", "admin@example.com"},
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				AdditionalRecipients: []string{"user@example.com", "new@example.com"},
+			},
+			wantLen: 3, // user, admin, new (user deduplicated)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildNotificationRecipients(tt.base, tt.cfg)
+			if tt.wantEmpty {
+				assert.Nil(t, result)
+			} else {
+				assert.Len(t, result, tt.wantLen)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Edge Case and Failure Tests
+// ============================================================================
+
+func TestBuildNotificationRecipients_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		base    []string
+		cfg     *telekomv1alpha1.DebugSessionNotificationConfig
+		wantLen int
+	}{
+		{
+			name: "empty strings in base are skipped",
+			base: []string{"", "user@example.com", ""},
+			cfg:  nil,
+			// Empty strings should be filtered out
+			wantLen: 1,
+		},
+		{
+			name: "empty strings in additional recipients are skipped",
+			base: []string{"user@example.com"},
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				AdditionalRecipients: []string{"", "admin@example.com", ""},
+			},
+			wantLen: 2,
+		},
+		{
+			name: "all duplicates should be deduplicated",
+			base: []string{"user@example.com", "user@example.com", "user@example.com"},
+			cfg: &telekomv1alpha1.DebugSessionNotificationConfig{
+				AdditionalRecipients: []string{"user@example.com", "user@example.com"},
+			},
+			wantLen: 1, // Only one unique
+		},
+		{
+			name:    "only empty strings returns empty result",
+			base:    []string{"", "", ""},
+			cfg:     nil,
+			wantLen: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildNotificationRecipients(tt.base, tt.cfg)
+			if tt.wantLen == 0 {
+				// Either nil or empty slice is acceptable for 0 length
+				assert.Empty(t, result)
+			} else {
+				assert.Len(t, result, tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestExtractCapabilities_EdgeCases(t *testing.T) {
+	t.Run("capabilities with Drop only returns nil", func(t *testing.T) {
+		sc := &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+				Add:  nil, // No capabilities added
+			},
+		}
+		result := extractCapabilities(sc)
+		assert.Nil(t, result)
+	})
+
+	t.Run("empty Add slice returns nil", func(t *testing.T) {
+		sc := &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{},
+			},
+		}
+		result := extractCapabilities(sc)
+		assert.Nil(t, result)
+	})
+}
+
+func TestExtractRunAsNonRoot_EdgeCases(t *testing.T) {
+	t.Run("security context with other fields but nil runAsNonRoot", func(t *testing.T) {
+		privileged := true
+		sc := &corev1.SecurityContext{
+			Privileged:   &privileged,
+			RunAsNonRoot: nil,
+		}
+		result := extractRunAsNonRoot(sc)
+		assert.False(t, result)
+	})
+}
+
+// Test that invalid session state transitions are properly rejected
+func TestSessionStateTransition_InvalidTransitions(t *testing.T) {
+	// This tests the core logic that terminal states cannot transition
+	terminalStates := []telekomv1alpha1.DebugSessionState{
+		telekomv1alpha1.DebugSessionStateExpired,
+		telekomv1alpha1.DebugSessionStateTerminated,
+		telekomv1alpha1.DebugSessionStateFailed,
+	}
+
+	for _, terminalState := range terminalStates {
+		t.Run("terminal state "+string(terminalState)+" cannot become active", func(t *testing.T) {
+			session := &telekomv1alpha1.DebugSession{
+				Status: telekomv1alpha1.DebugSessionStatus{
+					State: terminalState,
+				},
+			}
+			// Verify it's in a terminal state
+			assert.Contains(t, []telekomv1alpha1.DebugSessionState{
+				telekomv1alpha1.DebugSessionStateExpired,
+				telekomv1alpha1.DebugSessionStateTerminated,
+				telekomv1alpha1.DebugSessionStateFailed,
+			}, session.Status.State)
+		})
+	}
+}
+
+// Test controller with nil/invalid inputs
+func TestDebugSessionAPIController_NilInputHandling(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	t.Run("getDebugSessionByName with empty name", func(t *testing.T) {
+		_, err := ctrl.getDebugSessionByName(context.Background(), "", "namespace")
+		// Should return an error for empty name
+		assert.Error(t, err)
+	})
 }

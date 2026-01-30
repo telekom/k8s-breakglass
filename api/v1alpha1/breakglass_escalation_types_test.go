@@ -567,6 +567,36 @@ func TestValidateBreakglassEscalationSpec_Nil(t *testing.T) {
 	}
 }
 
+func TestValidateBreakglassEscalationSpec_WithEscalation(t *testing.T) {
+	// Test with valid escalation - needs escalatedGroup plus either allowed.clusters or clusterConfigRefs
+	validEsc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid-esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:    "ops-team",
+			ClusterConfigRefs: []string{"cluster-1"}, // Required: cluster targets
+			Approvers: BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+	errs := validateBreakglassEscalationSpec(context.Background(), validEsc)
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors for valid escalation, got: %v", errs)
+	}
+
+	// Test with invalid escalation (missing required fields)
+	invalidEsc := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-esc"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "", // Empty - should fail
+		},
+	}
+	errs = validateBreakglassEscalationSpec(context.Background(), invalidEsc)
+	if len(errs) == 0 {
+		t.Fatal("expected errors for invalid escalation with empty escalatedGroup")
+	}
+}
+
 func TestBreakglassEscalationValidateCreate_WithClusterConfigRefs(t *testing.T) {
 	esc := &BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
