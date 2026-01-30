@@ -175,7 +175,7 @@ func TestUserNotInAllowedGroupRejected(t *testing.T) {
 	})
 
 	require.Error(t, err, "Session creation should fail for user not in allowed group")
-	assert.Contains(t, err.Error(), "401", "Error should indicate unauthorized")
+	assert.Contains(t, err.Error(), "403", "Error should indicate forbidden (user authenticated but not in allowed group)")
 }
 
 // TestGroupBasedApproverCanApprove tests MU-004: Group-based approver can approve session
@@ -321,7 +321,7 @@ func TestBlockSelfApprovalEnabled(t *testing.T) {
 	// Attempt to self-approve - should fail
 	err = client.ApproveSessionViaAPI(ctx, t, session.Name, namespace)
 	require.Error(t, err, "Self-approval should be blocked")
-	assert.Contains(t, err.Error(), "401", "Error should indicate unauthorized")
+	assert.Contains(t, err.Error(), "403", "Error should indicate forbidden (user authenticated but not authorized)")
 }
 
 // TestBlockSelfApprovalDisabled tests MU-007: User in both requester and approver group - blockSelfApproval disabled

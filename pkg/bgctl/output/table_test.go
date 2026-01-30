@@ -248,18 +248,22 @@ func TestWriteDebugSessionTable_NilTimes(t *testing.T) {
 func TestWriteDebugTemplateTable(t *testing.T) {
 	templates := []client.DebugSessionTemplateSummary{
 		{
-			Name:             "template-1",
-			DisplayName:      "Debug Template One",
-			Mode:             "workload",
-			TargetNamespace:  "debug-ns",
-			RequiresApproval: true,
+			Name:                  "template-1",
+			DisplayName:           "Debug Template One",
+			Mode:                  "workload",
+			TargetNamespace:       "debug-ns",
+			RequiresApproval:      true,
+			HasAvailableClusters:  true,
+			AvailableClusterCount: 3,
 		},
 		{
-			Name:             "template-2",
-			DisplayName:      "Debug Template Two",
-			Mode:             "kubectl-debug",
-			TargetNamespace:  "",
-			RequiresApproval: false,
+			Name:                  "template-2",
+			DisplayName:           "Debug Template Two",
+			Mode:                  "kubectl-debug",
+			TargetNamespace:       "",
+			RequiresApproval:      false,
+			HasAvailableClusters:  false,
+			AvailableClusterCount: 0,
 		},
 	}
 
@@ -270,6 +274,7 @@ func TestWriteDebugTemplateTable(t *testing.T) {
 	assert.Contains(t, output, "NAME")
 	assert.Contains(t, output, "DISPLAY_NAME")
 	assert.Contains(t, output, "MODE")
+	assert.Contains(t, output, "CLUSTERS")
 	assert.Contains(t, output, "TARGET_NAMESPACE")
 	assert.Contains(t, output, "REQUIRES_APPROVAL")
 
@@ -278,6 +283,53 @@ func TestWriteDebugTemplateTable(t *testing.T) {
 	assert.Contains(t, output, "workload")
 	assert.Contains(t, output, "debug-ns")
 	assert.Contains(t, output, "true")
+	// Verify cluster count is shown
+	assert.Contains(t, output, "3") // template-1 has 3 clusters
+	assert.Contains(t, output, "0") // template-2 has 0 clusters
+}
+
+func TestWriteDebugTemplateTable_ClusterStatusVariants(t *testing.T) {
+	// Test the three different cluster status display cases:
+	// 1. HasAvailableClusters=true with AvailableClusterCount>0 -> shows count
+	// 2. HasAvailableClusters=true with AvailableClusterCount=0 -> shows "✓" (has clusters but count unknown)
+	// 3. HasAvailableClusters=false -> shows "0"
+	templates := []client.DebugSessionTemplateSummary{
+		{
+			Name:                  "template-with-count",
+			DisplayName:           "Template With Count",
+			Mode:                  "workload",
+			HasAvailableClusters:  true,
+			AvailableClusterCount: 5,
+		},
+		{
+			Name:                  "template-available-no-count",
+			DisplayName:           "Template Available No Count",
+			Mode:                  "workload",
+			HasAvailableClusters:  true,
+			AvailableClusterCount: 0, // Clusters available but count not provided
+		},
+		{
+			Name:                  "template-unavailable",
+			DisplayName:           "Template Unavailable",
+			Mode:                  "workload",
+			HasAvailableClusters:  false,
+			AvailableClusterCount: 0,
+		},
+	}
+
+	buf := &bytes.Buffer{}
+	WriteDebugTemplateTable(buf, templates)
+
+	output := buf.String()
+
+	// template-with-count shows "5"
+	assert.Contains(t, output, "5")
+
+	// template-available-no-count shows "✓" (checkmark for available but unknown count)
+	assert.Contains(t, output, "✓")
+
+	// template-unavailable shows "0"
+	// Already verified in the other test, but also checked here
 }
 
 func TestWriteDebugPodTemplateTable(t *testing.T) {

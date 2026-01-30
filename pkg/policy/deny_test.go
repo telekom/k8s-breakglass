@@ -3418,3 +3418,194 @@ func TestEvaluatorPodSecurityWarnActionReason(t *testing.T) {
 		t.Errorf("expected reason to contain factor 'hostNetwork', got: %s", result.Reason)
 	}
 }
+
+func TestMatchAny(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		value    string
+		want     bool
+	}{
+		{"empty patterns", []string{}, "test", false},
+		{"wildcard star matches all", []string{"*"}, "anything", true},
+		{"exact match", []string{"test"}, "test", true},
+		{"no match", []string{"test"}, "other", false},
+		{"shell pattern match", []string{"test-*"}, "test-123", true},
+		{"shell pattern no match", []string{"test-*"}, "prod-123", false},
+		{"multiple patterns first matches", []string{"test-*", "prod-*"}, "test-123", true},
+		{"multiple patterns second matches", []string{"test-*", "prod-*"}, "prod-456", true},
+		{"multiple patterns none match", []string{"test-*", "prod-*"}, "dev-789", false},
+		{"empty value with star pattern", []string{"foo*"}, "", false},
+		{"empty value with exact star", []string{"*"}, "", true},
+		{"question mark pattern", []string{"test?"}, "test1", true},
+		{"question mark pattern no match", []string{"test?"}, "test12", false},
+		{"bracket pattern", []string{"test[123]"}, "test1", true},
+		{"bracket pattern no match", []string{"test[123]"}, "test4", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchAny(tt.patterns, tt.value)
+			if got != tt.want {
+				t.Errorf("matchAny(%v, %q) = %v, want %v", tt.patterns, tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContains(t *testing.T) {
+	tests := []struct {
+		name  string
+		slice []string
+		value string
+		want  bool
+	}{
+		{"empty slice", []string{}, "test", false},
+		{"exact match", []string{"foo", "bar"}, "foo", true},
+		{"no match", []string{"foo", "bar"}, "baz", false},
+		{"wildcard matches anything", []string{"foo", "*"}, "anything", true},
+		{"only wildcard", []string{"*"}, "test", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := contains(tt.slice, tt.value)
+			if got != tt.want {
+				t.Errorf("contains(%v, %q) = %v, want %v", tt.slice, tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Edge Case and Failure Tests for Policy Evaluation
+// ============================================================================
+
+func TestMatchAny_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		value    string
+		want     bool
+	}{
+		{"nil patterns", nil, "test", false},
+		{"pattern with special regex chars", []string{"test.value"}, "test.value", true},
+		{"pattern with special regex chars no match", []string{"test.value"}, "testXvalue", false},
+		{"unicode pattern", []string{"тест-*"}, "тест-123", true},
+		{"unicode value no match", []string{"test-*"}, "тест-123", false},
+		{"very long pattern", []string{string(make([]byte, 1000))}, "short", false},
+		{"empty pattern in list", []string{""}, "", true},
+		{"empty pattern in list no match", []string{""}, "nonempty", false},
+		{"nested brackets pattern", []string{"test[a-z]"}, "testa", true},
+		{"escape pattern", []string{"test\\*"}, "test*", true},
+		{"case sensitive match", []string{"Test"}, "test", false},
+		{"case sensitive match exact", []string{"Test"}, "Test", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchAny(tt.patterns, tt.value)
+			if got != tt.want {
+				t.Errorf("matchAny(%v, %q) = %v, want %v", tt.patterns, tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContains_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		slice []string
+		value string
+		want  bool
+	}{
+		{"nil slice", nil, "test", false},
+		{"empty string in slice", []string{"", "foo"}, "", true},
+		{"empty string not in slice", []string{"foo", "bar"}, "", false},
+		{"case sensitive check", []string{"Foo"}, "foo", false},
+		{"unicode in slice", []string{"日本語"}, "日本語", true},
+		{"unicode not matching", []string{"日本語"}, "english", false},
+		{"whitespace value", []string{"  "}, "  ", true},
+		{"whitespace value different", []string{"  "}, " ", false},
+		{"single element match", []string{"only"}, "only", true},
+		{"single element no match", []string{"only"}, "other", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := contains(tt.slice, tt.value)
+			if got != tt.want {
+				t.Errorf("contains(%v, %q) = %v, want %v", tt.slice, tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvaluator_NoPolicies(t *testing.T) {
+	// Test when no policies exist - should allow all actions
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	logger := zap.NewNop().Sugar()
+	eval := NewEvaluator(c, logger)
+
+	action := Action{
+		Verb:      "get",
+		Resource:  "pods",
+		Namespace: "default",
+		ClusterID: "test-cluster",
+	}
+
+	denied, policyName, err := eval.Match(context.Background(), action)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if denied {
+		t.Error("expected no denial when no policies exist")
+	}
+	if policyName != "" {
+		t.Errorf("expected empty policy name, got %q", policyName)
+	}
+}
+
+func TestEvaluator_EmptyAction(t *testing.T) {
+	// Empty action with wildcard policy
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	policy := &telekomv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "deny-all-wildcard"},
+		Spec: telekomv1alpha1.DenyPolicySpec{
+			Rules: []telekomv1alpha1.DenyRule{
+				{
+					Verbs:      []string{"*"},
+					APIGroups:  []string{"*"},
+					Resources:  []string{"*"},
+					Namespaces: &telekomv1alpha1.NamespaceFilter{Patterns: []string{"*"}},
+				},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	logger := zap.NewNop().Sugar()
+	eval := NewEvaluator(c, logger)
+
+	// Empty action
+	action := Action{}
+
+	denied, policyName, err := eval.Match(context.Background(), action)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Wildcard should match empty values
+	if !denied {
+		t.Error("expected wildcard policy to match empty action")
+	}
+	if policyName != "deny-all-wildcard" {
+		t.Errorf("expected policy name 'deny-all-wildcard', got %q", policyName)
+	}
+}

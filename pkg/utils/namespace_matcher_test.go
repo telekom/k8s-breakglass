@@ -657,3 +657,86 @@ func TestNamespaceMatcher_NilFilter(t *testing.T) {
 	assert.False(t, m.MatchesWithLabels("any-namespace", map[string]string{"env": "prod"}))
 	assert.True(t, m.MatchesAny())
 }
+
+// TestNamespaceAllowDenyMatcher_IsAllowed tests the IsAllowed method (name-only matching)
+func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
+	tests := []struct {
+		name      string
+		allow     *v1alpha1.NamespaceFilter
+		deny      *v1alpha1.NamespaceFilter
+		namespace string
+		want      bool
+	}{
+		{
+			name:      "nil allow/deny allows all",
+			allow:     nil,
+			deny:      nil,
+			namespace: "any-namespace",
+			want:      true,
+		},
+		{
+			name: "allow pattern matches",
+			allow: &v1alpha1.NamespaceFilter{
+				Patterns: []string{"app-*"},
+			},
+			deny:      nil,
+			namespace: "app-frontend",
+			want:      true,
+		},
+		{
+			name: "allow pattern not matched",
+			allow: &v1alpha1.NamespaceFilter{
+				Patterns: []string{"app-*"},
+			},
+			deny:      nil,
+			namespace: "service-backend",
+			want:      false,
+		},
+		{
+			name:  "deny overrides allow",
+			allow: nil,
+			deny: &v1alpha1.NamespaceFilter{
+				Patterns: []string{"kube-*"},
+			},
+			namespace: "kube-system",
+			want:      false,
+		},
+		{
+			name: "allowed but also denied - deny wins",
+			allow: &v1alpha1.NamespaceFilter{
+				Patterns: []string{"*"},
+			},
+			deny: &v1alpha1.NamespaceFilter{
+				Patterns: []string{"kube-*"},
+			},
+			namespace: "kube-system",
+			want:      false,
+		},
+		{
+			name: "allowed namespace not denied",
+			allow: &v1alpha1.NamespaceFilter{
+				Patterns: []string{"app-*"},
+			},
+			deny: &v1alpha1.NamespaceFilter{
+				Patterns: []string{"kube-*"},
+			},
+			namespace: "app-production",
+			want:      true,
+		},
+		{
+			name:      "empty filters allow all",
+			allow:     &v1alpha1.NamespaceFilter{},
+			deny:      &v1alpha1.NamespaceFilter{},
+			namespace: "random-namespace",
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewNamespaceAllowDenyMatcher(tt.allow, tt.deny)
+			got := m.IsAllowed(tt.namespace)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

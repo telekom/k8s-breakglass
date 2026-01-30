@@ -1838,7 +1838,8 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		// Use includeUnavailable=true to show all templates (including those without clusters)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -1879,7 +1880,8 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		// Use includeUnavailable=true to show all templates (including those without clusters)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -2023,7 +2025,8 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		// Use includeUnavailable=true to show templates without clusters
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -2039,6 +2042,146 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 
 		// Pattern should resolve to empty list when no ClusterConfigs exist
 		assert.Len(t, response.Templates[0].AllowedClusters, 0, "pattern should resolve to empty when no clusters exist")
+		assert.False(t, response.Templates[0].HasAvailableClusters, "template should not have available clusters")
+		assert.Equal(t, 0, response.Templates[0].AvailableClusterCount, "available cluster count should be 0")
+	})
+
+	t.Run("list templates includes cluster availability info", func(t *testing.T) {
+		// Create ClusterConfigs
+		clusterConfigs := []client.Object{
+			&telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+			},
+			&telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "staging-east"},
+			},
+		}
+
+		// Template with matching clusters
+		templateWithClusters := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "with-clusters"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"prod-*"},
+				},
+			},
+		}
+
+		// Template without any clusters (no matches)
+		templateWithoutClusters := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "no-clusters"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"nonexistent-*"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(append(clusterConfigs, &templateWithClusters, &templateWithoutClusters)...).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		// By default, templates without clusters should be filtered out
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Only template with clusters should be returned
+		assert.Equal(t, 1, response.Total, "only templates with available clusters should be returned by default")
+		assert.Equal(t, "with-clusters", response.Templates[0].Name)
+		assert.True(t, response.Templates[0].HasAvailableClusters)
+		assert.Equal(t, 1, response.Templates[0].AvailableClusterCount)
+	})
+
+	t.Run("list templates with includeUnavailable returns all templates", func(t *testing.T) {
+		// Create ClusterConfigs
+		clusterConfigs := []client.Object{
+			&telekomv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+			},
+		}
+
+		// Template with matching clusters
+		templateWithClusters := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "with-clusters"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"prod-*"},
+				},
+			},
+		}
+
+		// Template without any clusters
+		templateWithoutClusters := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "no-clusters"},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"nonexistent-*"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(append(clusterConfigs, &templateWithClusters, &templateWithoutClusters)...).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		// With includeUnavailable=true, all templates should be returned
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Both templates should be returned
+		assert.Equal(t, 2, response.Total, "all templates should be returned with includeUnavailable=true")
+
+		// Find template without clusters and verify its properties
+		var templateNoClusters *DebugSessionTemplateResponse
+		for i := range response.Templates {
+			if response.Templates[i].Name == "no-clusters" {
+				templateNoClusters = &response.Templates[i]
+				break
+			}
+		}
+		require.NotNil(t, templateNoClusters, "should find no-clusters template")
+		assert.False(t, templateNoClusters.HasAvailableClusters)
+		assert.Equal(t, 0, templateNoClusters.AvailableClusterCount)
 	})
 }
 
@@ -2394,7 +2537,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 	t.Run("create session without authentication", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&template).
+			WithObjects(&template). // Include template to avoid 400 from template not found
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -2412,6 +2555,178 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 401, w.Code)
+	})
+
+	t.Run("create session returns warnings when namespace is defaulted", func(t *testing.T) {
+		templateWithNsDefaults := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "template-with-ns",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace: "breakglass-ns",
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithNsDefaults).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		// Create without specifying targetNamespace
+		body := `{"templateRef":"template-with-ns","cluster":"production","reason":"testing"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 201, w.Code)
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Verify warning about namespace defaulting is present
+		require.NotNil(t, response.Warnings)
+		assert.Len(t, response.Warnings, 1)
+		assert.Contains(t, response.Warnings[0], "namespace defaulted")
+		assert.Contains(t, response.Warnings[0], "breakglass-ns")
+	})
+
+	t.Run("create session returns warnings when scheduling option is defaulted", func(t *testing.T) {
+		templateWithScheduling := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "template-with-scheduling",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				// Include namespace constraints to avoid namespace defaulting warning
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace: "test-ns",
+				},
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Required: true,
+					Options: []telekomv1alpha1.SchedulingOption{
+						{Name: "default-option", DisplayName: "Default Option", Default: true},
+						{Name: "other-option", DisplayName: "Other Option"},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithScheduling).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		// Create without specifying scheduling option (should default)
+		// Include targetNamespace that matches default to avoid that warning
+		body := `{"templateRef":"template-with-scheduling","cluster":"production","reason":"testing","targetNamespace":"test-ns"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 201, w.Code)
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Verify warning about scheduling option defaulting is present
+		require.NotNil(t, response.Warnings, "expected warnings in response")
+		// Find the scheduling option warning
+		var foundSchedulingWarning bool
+		for _, warning := range response.Warnings {
+			if strings.Contains(warning, "Scheduling option defaulted") &&
+				strings.Contains(warning, "default-option") {
+				foundSchedulingWarning = true
+				break
+			}
+		}
+		assert.True(t, foundSchedulingWarning, "expected warning about scheduling option defaulting to 'default-option'")
+	})
+
+	t.Run("create session returns warning when scheduling option is ignored", func(t *testing.T) {
+		// Template without scheduling options
+		templateNoScheduling := telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "template-no-scheduling",
+			},
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Mode: telekomv1alpha1.DebugSessionModeWorkload,
+				// Include namespace constraints to avoid namespace defaulting warning
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace: "test-ns",
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateNoScheduling).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		// Create with a scheduling option that will be ignored
+		// Include targetNamespace that matches default to avoid that warning
+		body := `{"templateRef":"template-no-scheduling","cluster":"production","reason":"testing","selectedSchedulingOption":"stale-option","targetNamespace":"test-ns"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 201, w.Code)
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Verify warning about scheduling option being ignored is present
+		require.NotNil(t, response.Warnings, "expected warnings in response")
+		// Find the ignored scheduling option warning
+		var foundIgnoredWarning bool
+		for _, warning := range response.Warnings {
+			if strings.Contains(warning, "ignored") && strings.Contains(warning, "stale-option") {
+				foundIgnoredWarning = true
+				break
+			}
+		}
+		assert.True(t, foundIgnoredWarning, "expected warning about scheduling option being ignored")
 	})
 }
 

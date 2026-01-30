@@ -100,6 +100,8 @@ export interface DebugSessionTemplateResponse {
   requiresApproval: boolean;
   schedulingOptions?: SchedulingOptionsResponse;
   namespaceConstraints?: NamespaceConstraintsResponse;
+  hasAvailableClusters: boolean; // True if at least one cluster is available for deployment
+  availableClusterCount?: number; // Number of clusters user can deploy to
 }
 
 // Scheduling options for debug sessions
@@ -197,6 +199,12 @@ export interface CreateDebugSessionRequest {
   scheduledStartTime?: string;
   targetNamespace?: string;
   selectedSchedulingOption?: string;
+}
+
+// Response from creating/getting a debug session
+export interface DebugSessionDetailResponse extends DebugSession {
+  // Warnings contains non-critical issues or notes about defaults that were applied
+  warnings?: string[];
 }
 
 export interface JoinDebugSessionRequest {

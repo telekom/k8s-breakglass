@@ -84,9 +84,19 @@ func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSumma
 
 func WriteDebugTemplateTable(w io.Writer, templates []client.DebugSessionTemplateSummary) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tMODE\tTARGET_NAMESPACE\tREQUIRES_APPROVAL")
+	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tMODE\tCLUSTERS\tTARGET_NAMESPACE\tREQUIRES_APPROVAL")
 	for _, t := range templates {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%v\n", t.Name, t.DisplayName, t.Mode, t.TargetNamespace, t.RequiresApproval)
+		var clusterStatus string
+		if t.HasAvailableClusters {
+			if t.AvailableClusterCount > 0 {
+				clusterStatus = fmt.Sprintf("%d", t.AvailableClusterCount)
+			} else {
+				clusterStatus = "✓"
+			}
+		} else {
+			clusterStatus = "0"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%v\n", t.Name, t.DisplayName, t.Mode, clusterStatus, t.TargetNamespace, t.RequiresApproval)
 	}
 	_ = tw.Flush()
 }

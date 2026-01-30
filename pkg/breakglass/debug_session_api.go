@@ -248,6 +248,8 @@ type DebugSessionSummary struct {
 // DebugSessionDetailResponse represents the detailed debug session response
 type DebugSessionDetailResponse struct {
 	v1alpha1.DebugSession
+	// Warnings contains non-critical issues or notes about defaults that were applied
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // handleListDebugSessions returns a list of debug sessions
@@ -455,6 +457,9 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		"allowedBySource", allowedResult.AllowedBySource,
 	)
 
+	// Track warnings for defaults that were applied
+	var warnings []string
+
 	// Validate and resolve target namespace (pass binding for constraint override)
 	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace, allowedResult.MatchingBinding)
 	if err != nil {
@@ -479,6 +484,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// Track warning if namespace was defaulted
+	if req.TargetNamespace == "" && targetNamespace != "" {
+		warnings = append(warnings, fmt.Sprintf("Target namespace defaulted to '%s'", targetNamespace))
+		reqLog.Debugw("Namespace defaulted", "defaultedTo", targetNamespace)
+	}
 
 	// Validate and resolve scheduling option
 	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption)
@@ -490,6 +500,17 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		)
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	// Track warning if scheduling option was defaulted
+	if req.SelectedSchedulingOption == "" && selectedOption != "" {
+		warnings = append(warnings, fmt.Sprintf("Scheduling option defaulted to '%s'", selectedOption))
+		reqLog.Debugw("Scheduling option defaulted", "defaultedTo", selectedOption)
+	}
+	// Track warning if scheduling option was ignored (template has no options but client sent one)
+	if req.SelectedSchedulingOption != "" && selectedOption == "" &&
+		(template.Spec.SchedulingOptions == nil || len(template.Spec.SchedulingOptions.Options) == 0) {
+		warnings = append(warnings, fmt.Sprintf("Scheduling option '%s' was ignored (template has no scheduling options)", req.SelectedSchedulingOption))
+		reqLog.Debugw("Scheduling option ignored", "ignoredOption", req.SelectedSchedulingOption)
 	}
 
 	// Get current user from context
@@ -673,7 +694,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	metrics.DebugSessionsCreated.WithLabelValues(req.Cluster, req.TemplateRef).Inc()
 
-	ctx.JSON(http.StatusCreated, DebugSessionDetailResponse{DebugSession: *session})
+	response := DebugSessionDetailResponse{DebugSession: *session}
+	if len(warnings) > 0 {
+		response.Warnings = warnings
+		reqLog.Infow("Session created with warnings", "warnings", warnings)
+	}
+	ctx.JSON(http.StatusCreated, response)
 }
 
 // handleJoinDebugSession allows a user to join an existing debug session
@@ -1189,23 +1215,25 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 
 // DebugSessionTemplateResponse represents a template in API responses
 type DebugSessionTemplateResponse struct {
-	Name                 string                            `json:"name"`
-	DisplayName          string                            `json:"displayName"`
-	Description          string                            `json:"description,omitempty"`
-	Mode                 v1alpha1.DebugSessionTemplateMode `json:"mode"`
-	WorkloadType         v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
-	PodTemplateRef       string                            `json:"podTemplateRef,omitempty"`
-	TargetNamespace      string                            `json:"targetNamespace,omitempty"`
-	Constraints          *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	AllowedClusters      []string                          `json:"allowedClusters,omitempty"`
-	AllowedGroups        []string                          `json:"allowedGroups,omitempty"`
-	RequiresApproval     bool                              `json:"requiresApproval"`
-	SchedulingOptions    *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
-	NamespaceConstraints *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
-	Priority             int32                             `json:"priority,omitempty"`
-	Hidden               bool                              `json:"hidden,omitempty"`
-	Deprecated           bool                              `json:"deprecated,omitempty"`
-	DeprecationMessage   string                            `json:"deprecationMessage,omitempty"`
+	Name                  string                            `json:"name"`
+	DisplayName           string                            `json:"displayName"`
+	Description           string                            `json:"description,omitempty"`
+	Mode                  v1alpha1.DebugSessionTemplateMode `json:"mode"`
+	WorkloadType          v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
+	PodTemplateRef        string                            `json:"podTemplateRef,omitempty"`
+	TargetNamespace       string                            `json:"targetNamespace,omitempty"`
+	Constraints           *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	AllowedClusters       []string                          `json:"allowedClusters,omitempty"`
+	AllowedGroups         []string                          `json:"allowedGroups,omitempty"`
+	RequiresApproval      bool                              `json:"requiresApproval"`
+	SchedulingOptions     *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints  *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+	Priority              int32                             `json:"priority,omitempty"`
+	Hidden                bool                              `json:"hidden,omitempty"`
+	Deprecated            bool                              `json:"deprecated,omitempty"`
+	DeprecationMessage    string                            `json:"deprecationMessage,omitempty"`
+	HasAvailableClusters  bool                              `json:"hasAvailableClusters"`            // True if at least one cluster is available for this template
+	AvailableClusterCount int                               `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
 }
 
 // SchedulingOptionsResponse represents scheduling options in API responses
@@ -1352,6 +1380,7 @@ type NotificationConfigInfo struct {
 }
 
 // handleListTemplates returns available debug session templates
+// Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 
@@ -1359,7 +1388,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.List(apiCtx, templateList); err != nil {
+	if err := c.reader().List(apiCtx, templateList); err != nil {
 		reqLog.Errorw("Failed to list debug session templates", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list templates"})
 		return
@@ -1367,13 +1396,23 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 
 	// Fetch all ClusterConfigs for pattern resolution
 	clusterConfigList := &v1alpha1.ClusterConfigList{}
-	if err := c.client.List(apiCtx, clusterConfigList); err != nil {
+	if err := c.reader().List(apiCtx, clusterConfigList); err != nil {
 		reqLog.Warnw("Failed to list cluster configs for pattern resolution", "error", err)
 		// Continue without pattern resolution - clusters will be empty
 	}
 	allClusterNames := make([]string, 0, len(clusterConfigList.Items))
-	for _, cc := range clusterConfigList.Items {
+	clusterMap := make(map[string]*v1alpha1.ClusterConfig, len(clusterConfigList.Items))
+	for i := range clusterConfigList.Items {
+		cc := &clusterConfigList.Items[i]
 		allClusterNames = append(allClusterNames, cc.Name)
+		clusterMap[cc.Name] = cc
+	}
+
+	// Fetch all bindings to determine which templates have available clusters
+	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
+	if err := c.reader().List(apiCtx, bindingList); err != nil {
+		reqLog.Warnw("Failed to list bindings for template cluster resolution", "error", err)
+		// Continue without binding resolution
 	}
 
 	// Get user's groups for filtering
@@ -1386,6 +1425,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	}
 
 	includeHidden := ctx.Query("includeHidden") == "true"
+	includeUnavailable := ctx.Query("includeUnavailable") == "true"
 
 	// Filter and transform
 	var templates []DebugSessionTemplateResponse
@@ -1416,19 +1456,34 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			}
 		}
 
+		// Calculate available cluster count for this template
+		availableClusterCount := c.countAvailableClustersForTemplate(&t, bindingList.Items, clusterMap, allClusterNames)
+		hasAvailableClusters := availableClusterCount > 0
+
+		// Skip templates without available clusters unless explicitly requested
+		if !hasAvailableClusters && !includeUnavailable {
+			reqLog.Debugw("Skipping template without available clusters",
+				"template", t.Name,
+				"includeUnavailable", includeUnavailable,
+			)
+			continue
+		}
+
 		resp := DebugSessionTemplateResponse{
-			Name:               t.Name,
-			DisplayName:        t.Spec.DisplayName,
-			Description:        t.Spec.Description,
-			Mode:               t.Spec.Mode,
-			WorkloadType:       t.Spec.WorkloadType,
-			TargetNamespace:    t.Spec.TargetNamespace,
-			Constraints:        t.Spec.Constraints,
-			RequiresApproval:   t.Spec.Approvers != nil && len(t.Spec.Approvers.Groups) > 0,
-			Priority:           t.Spec.Priority,
-			Hidden:             t.Spec.Hidden,
-			Deprecated:         t.Spec.Deprecated,
-			DeprecationMessage: t.Spec.DeprecationMessage,
+			Name:                  t.Name,
+			DisplayName:           t.Spec.DisplayName,
+			Description:           t.Spec.Description,
+			Mode:                  t.Spec.Mode,
+			WorkloadType:          t.Spec.WorkloadType,
+			TargetNamespace:       t.Spec.TargetNamespace,
+			Constraints:           t.Spec.Constraints,
+			RequiresApproval:      t.Spec.Approvers != nil && len(t.Spec.Approvers.Groups) > 0,
+			Priority:              t.Spec.Priority,
+			Hidden:                t.Spec.Hidden,
+			Deprecated:            t.Spec.Deprecated,
+			DeprecationMessage:    t.Spec.DeprecationMessage,
+			HasAvailableClusters:  hasAvailableClusters,
+			AvailableClusterCount: availableClusterCount,
 		}
 
 		if t.Spec.PodTemplateRef != nil {
@@ -1489,6 +1544,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 }
 
 // handleGetTemplate returns details for a specific template
+// Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
@@ -1502,7 +1558,7 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "template not found"})
 			return
@@ -1645,6 +1701,43 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	}
 
 	ctx.JSON(http.StatusOK, response)
+}
+
+// countAvailableClustersForTemplate counts how many clusters are available for a template.
+// It considers both bindings and direct template.Spec.Allowed.Clusters patterns.
+func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
+	template *v1alpha1.DebugSessionTemplate,
+	allBindings []v1alpha1.DebugSessionClusterBinding,
+	clusterMap map[string]*v1alpha1.ClusterConfig,
+	allClusterNames []string,
+) int {
+	seenClusters := make(map[string]bool)
+
+	// Find bindings that match this template
+	applicableBindings := c.findBindingsForTemplate(template, allBindings)
+
+	// Collect clusters from bindings
+	for i := range applicableBindings {
+		binding := &applicableBindings[i]
+		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
+		for _, clusterName := range bindingClusters {
+			if clusterMap[clusterName] != nil {
+				seenClusters[clusterName] = true
+			}
+		}
+	}
+
+	// Also check template's direct allowed.clusters patterns
+	if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+		resolvedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
+		for _, clusterName := range resolvedClusters {
+			if clusterMap[clusterName] != nil {
+				seenClusters[clusterName] = true
+			}
+		}
+	}
+
+	return len(seenClusters)
 }
 
 // findBindingsForTemplate returns all bindings that reference the given template
@@ -2301,6 +2394,7 @@ func labelSetFromMap(m map[string]string) labels.Set {
 }
 
 // handleListPodTemplates returns available debug pod templates
+// Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 
@@ -2308,7 +2402,7 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.List(apiCtx, templateList); err != nil {
+	if err := c.reader().List(apiCtx, templateList); err != nil {
 		reqLog.Errorw("Failed to list debug pod templates", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list pod templates"})
 		return
@@ -2331,6 +2425,7 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 }
 
 // handleGetPodTemplate returns details for a specific pod template
+// Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
@@ -2344,7 +2439,7 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "pod template not found"})
 			return
@@ -2548,6 +2643,17 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.De
 		return "breakglass-debug", nil
 	}
 
+	// If the requested namespace matches the default, allow it even when user namespace selection is disabled.
+	// This handles the case where the frontend sends the default namespace value in the request.
+	if nc.DefaultNamespace != "" && requestedNamespace == nc.DefaultNamespace {
+		c.log.Debugw("Requested namespace matches default, allowing",
+			"template", template.Name,
+			"requestedNamespace", requestedNamespace,
+			"defaultNamespace", nc.DefaultNamespace,
+		)
+		return nc.DefaultNamespace, nil
+	}
+
 	// Check if user is allowed to specify a namespace
 	if !nc.AllowUserNamespace {
 		c.log.Debugw("User-specified namespace not allowed by template",
@@ -2679,9 +2785,15 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	baseConstraints := template.Spec.SchedulingConstraints
 
 	// If no scheduling options defined, just return base constraints
+	// Ignore any user-selected option since the template doesn't support them.
+	// This handles cases where the frontend sends a stale scheduling option
+	// after switching to a template that doesn't have scheduling options.
 	if template.Spec.SchedulingOptions == nil || len(template.Spec.SchedulingOptions.Options) == 0 {
 		if selectedOption != "" {
-			return nil, "", fmt.Errorf("template has no scheduling options, but '%s' was requested", selectedOption)
+			c.log.Debugw("Ignoring scheduling option - template has no options defined",
+				"template", template.Name,
+				"selectedOption", selectedOption,
+			)
 		}
 		return baseConstraints, "", nil
 	}

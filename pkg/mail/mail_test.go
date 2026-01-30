@@ -589,3 +589,31 @@ func TestSender_Send_PlainSMTP(t *testing.T) {
 	err := sender.Send([]string{"user1@example.com", "user2@example.com"}, "Test Subject", "<p>Test body for plain SMTP</p>")
 	assert.NoError(t, err, "expected Send with DisableTLS to succeed against test SMTP server")
 }
+
+// TestSender_GetHost tests the GetHost accessor method
+func TestSender_GetHost(t *testing.T) {
+	mpConfig := &config.MailProviderConfig{
+		Name:          "test",
+		Host:          "smtp.example.com",
+		Port:          587,
+		SenderAddress: "sender@example.com",
+	}
+	s := NewSenderFromMailProvider(mpConfig, "")
+
+	host := s.GetHost()
+	assert.Equal(t, "smtp.example.com", host)
+}
+
+// TestSender_GetPort tests the GetPort accessor method
+func TestSender_GetPort(t *testing.T) {
+	mpConfig := &config.MailProviderConfig{
+		Name:          "test",
+		Host:          "smtp.example.com",
+		Port:          465,
+		SenderAddress: "sender@example.com",
+	}
+	s := NewSenderFromMailProvider(mpConfig, "")
+
+	port := s.GetPort()
+	assert.Equal(t, 465, port)
+}

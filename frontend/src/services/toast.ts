@@ -7,7 +7,7 @@ export interface AppError {
   cid?: string; // correlation id from backend
   source?: string; // origin/source of the error (e.g., "DebugSessionService", "HttpClient")
   ts: number;
-  type?: "error" | "success";
+  type?: "error" | "success" | "warning";
   autoHideDuration?: number;
   opened?: boolean;
 }
@@ -66,6 +66,21 @@ export function pushSuccess(message: string) {
     opened: true,
   });
   setTimeout(() => dismissError(id), SUCCESS_AUTO_HIDE_MS + 1000);
+}
+
+const WARNING_AUTO_HIDE_MS = 8000;
+
+export function pushWarning(message: string) {
+  const id = Math.random().toString(36).slice(2);
+  state.errors.push({
+    id,
+    message,
+    ts: Date.now(),
+    type: "warning",
+    autoHideDuration: WARNING_AUTO_HIDE_MS,
+    opened: true,
+  });
+  setTimeout(() => dismissError(id), WARNING_AUTO_HIDE_MS + 1000);
 }
 
 export function dismissError(id: string) {

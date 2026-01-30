@@ -999,3 +999,139 @@ func TestCleanupRoutine_CleanupRoutine(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildDebugSessionNotificationRecipients(t *testing.T) {
+	tests := []struct {
+		name     string
+		session  telekomv1alpha1.DebugSession
+		expected []string
+	}{
+		{
+			name: "only RequestedBy",
+			session: telekomv1alpha1.DebugSession{
+				Spec: telekomv1alpha1.DebugSessionSpec{
+					RequestedBy: "user@example.com",
+				},
+			},
+			expected: []string{"user@example.com"},
+		},
+		{
+			name: "RequestedByEmail overrides RequestedBy",
+			session: telekomv1alpha1.DebugSession{
+				Spec: telekomv1alpha1.DebugSessionSpec{
+					RequestedBy:      "user@example.com",
+					RequestedByEmail: "email@example.com",
+				},
+			},
+			expected: []string{"email@example.com"},
+		},
+		{
+			name: "no notification config returns base",
+			session: telekomv1alpha1.DebugSession{
+				Spec: telekomv1alpha1.DebugSessionSpec{
+					RequestedBy: "user@example.com",
+				},
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: nil,
+				},
+			},
+			expected: []string{"user@example.com"},
+		},
+		{
+			name: "additional recipients are added",
+			session: telekomv1alpha1.DebugSession{
+				Spec: telekomv1alpha1.DebugSessionSpec{
+					RequestedBy: "user@example.com",
+				},
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
+						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+							AdditionalRecipients: []string{"admin@example.com", "ops@example.com"},
+						},
+					},
+				},
+			},
+			expected: []string{"user@example.com", "admin@example.com", "ops@example.com"},
+		},
+		{
+			name: "deduplicates additional recipients",
+			session: telekomv1alpha1.DebugSession{
+				Spec: telekomv1alpha1.DebugSessionSpec{
+					RequestedBy: "user@example.com",
+				},
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
+						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+							AdditionalRecipients: []string{"user@example.com", "admin@example.com"},
+						},
+					},
+				},
+			},
+			expected: []string{"user@example.com", "admin@example.com"},
+		},
+		{
+			name: "excludes recipients in exclusion list",
+			session: telekomv1alpha1.DebugSession{
+				Spec: telekomv1alpha1.DebugSessionSpec{
+					RequestedBy: "user@example.com",
+				},
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
+						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+							AdditionalRecipients: []string{"admin@example.com", "ops@example.com"},
+							ExcludedRecipients: &telekomv1alpha1.NotificationExclusions{
+								Users: []string{"ops@example.com"},
+							},
+						},
+					},
+				},
+			},
+			expected: []string{"user@example.com", "admin@example.com"},
+		},
+		{
+			name: "excludes base requester if in exclusion list",
+			session: telekomv1alpha1.DebugSession{
+				Spec: telekomv1alpha1.DebugSessionSpec{
+					RequestedBy: "user@example.com",
+				},
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
+						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+							AdditionalRecipients: []string{"admin@example.com"},
+							ExcludedRecipients: &telekomv1alpha1.NotificationExclusions{
+								Users: []string{"user@example.com"},
+							},
+						},
+					},
+				},
+			},
+			expected: []string{"admin@example.com"},
+		},
+		{
+			name: "empty exclusion list does nothing",
+			session: telekomv1alpha1.DebugSession{
+				Spec: telekomv1alpha1.DebugSessionSpec{
+					RequestedBy: "user@example.com",
+				},
+				Status: telekomv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &telekomv1alpha1.DebugSessionTemplateSpec{
+						Notification: &telekomv1alpha1.DebugSessionNotificationConfig{
+							AdditionalRecipients: []string{"admin@example.com"},
+							ExcludedRecipients: &telekomv1alpha1.NotificationExclusions{
+								Users: []string{},
+							},
+						},
+					},
+				},
+			},
+			expected: []string{"user@example.com", "admin@example.com"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildDebugSessionNotificationRecipients(tt.session)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

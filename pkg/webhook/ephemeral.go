@@ -10,15 +10,38 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
+
+// DebugSessionHandler defines the interface for debug session operations
+type DebugSessionHandler interface {
+	FindActiveSession(ctx context.Context, user, cluster string) (*v1alpha1.DebugSession, error)
+	ValidateEphemeralContainerRequest(
+		ctx context.Context,
+		ds *v1alpha1.DebugSession,
+		namespace, podName, image string,
+		capabilities []string,
+		runAsNonRoot bool,
+	) error
+}
 
 // EphemeralContainerWebhook handles admission of ephemeral containers
 type EphemeralContainerWebhook struct {
 	Client       client.Client
 	Decoder      admission.Decoder
 	Log          *zap.SugaredLogger
-	DebugHandler *breakglass.KubectlDebugHandler
+	DebugHandler DebugSessionHandler
+}
+
+// NewEphemeralContainerWebhook creates a new webhook with the default handler
+func NewEphemeralContainerWebhook(cli client.Client, decoder admission.Decoder, log *zap.SugaredLogger, handler *breakglass.KubectlDebugHandler) *EphemeralContainerWebhook {
+	return &EphemeralContainerWebhook{
+		Client:       cli,
+		Decoder:      decoder,
+		Log:          log,
+		DebugHandler: handler,
+	}
 }
 
 // Handle handles the admission request
