@@ -420,3 +420,21 @@ func TestCircuitBreakerSink_Close(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, mockSink.closed)
 }
+
+func TestCircuitState_String(t *testing.T) {
+	tests := []struct {
+		state    CircuitState
+		expected string
+	}{
+		{CircuitClosed, "closed"},
+		{CircuitOpen, "open"},
+		{CircuitHalfOpen, "half-open"},
+		{CircuitState(99), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.state.String())
+		})
+	}
+}

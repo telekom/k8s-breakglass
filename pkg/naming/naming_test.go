@@ -30,6 +30,11 @@ func TestToRFC1123Subdomain(t *testing.T) {
 		{"special characters replaced", "hello@world.com", "hello-world.com"},
 		{"numbers preserved", "test123", "test123"},
 		{"email converted", "User@Example.COM", "user-example.com"},
+		{"long string truncated", strings.Repeat("a", 300), strings.Repeat("a", 253)},
+		{"long string ending with hyphen truncated and trimmed", strings.Repeat("a", 252) + "-", strings.Repeat("a", 252)},
+		{"multiple dots collapsed", "hello....world", "hello.world"},
+		{"mixed invalid chars", "hello!@#$%world", "hello-world"},
+		{"unicode converted", "héllo", "h-llo"},
 	}
 
 	for _, tt := range tests {
@@ -60,6 +65,11 @@ func TestToRFC1123Label(t *testing.T) {
 		{"leading special after conversion", "@leading", "leading"},
 		{"trailing special after conversion", "trailing@", "trailing"},
 		{"email converted", "user@example.com", "user-example.com"},
+		{"only special chars", "@@@###", "x"},
+		{"numbers preserved", "test123", "test123"},
+		{"consecutive hyphens collapsed", "hello--world", "hello-world"},
+		{"dots preserved in label value", "hello.world", "hello.world"},
+		{"long ending with hyphen", strings.Repeat("a", 62) + "-", strings.Repeat("a", 62)},
 	}
 
 	for _, tt := range tests {

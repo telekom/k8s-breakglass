@@ -288,7 +288,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			}
 			reqLog.Debugw("Cluster escalations (for visibility)", "cluster", cug.Clustername, "escalations", names)
 		}
-		apiresponses.RespondUnauthorizedWithMessage(c, "user unauthorized for group")
+		// User is authenticated but not authorized for this group - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "user not authorized for requested group")
 		return
 	} else {
 		reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(possibleEscals))
@@ -401,8 +402,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		"requestedGroup", request.GroupName)
 
 	if !slices.Contains(possible, request.GroupName) {
-		reqLog.Warnw("User unauthorized for group", "user", request.Username, "group", request.GroupName)
-		apiresponses.RespondUnauthorizedWithMessage(c, "user unauthorized for group")
+		reqLog.Warnw("User not authorized for group", "user", request.Username, "group", request.GroupName)
+		// User is authenticated but not authorized for this group - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "user not authorized for requested group")
 		return
 	}
 	if matchedEsc != nil && matchedEsc.Spec.RequestReason != nil && matchedEsc.Spec.RequestReason.Mandatory {
@@ -1424,7 +1426,8 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 		return
 	}
 	if bs.Spec.User != requesterEmail {
-		apiresponses.RespondUnauthorized(c)
+		// User is authenticated but not the session owner - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "only the session requester can withdraw")
 		return
 	}
 
@@ -1501,7 +1504,8 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		return
 	}
 	if bs.Spec.User != requesterEmail {
-		apiresponses.RespondUnauthorized(c)
+		// User is authenticated but not the session owner - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "only the session requester can drop")
 		return
 	}
 
@@ -1583,7 +1587,8 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 
 	// Only approvers can cancel via this endpoint
 	if !wc.isSessionApprover(c, bs) {
-		apiresponses.RespondUnauthorized(c)
+		// User is authenticated but not an approver - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "only approvers can cancel sessions")
 		return
 	}
 

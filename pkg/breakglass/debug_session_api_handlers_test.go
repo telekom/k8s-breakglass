@@ -1354,6 +1354,22 @@ func TestResolveTargetNamespace(t *testing.T) {
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
 
+	t.Run("allows requesting default namespace even when AllowUserNamespace is false", func(t *testing.T) {
+		// This handles the case where the frontend sends the default namespace value
+		// in the request, which should be allowed even when user namespace selection is disabled.
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
+					DefaultNamespace:   "breakglass-debug",
+					AllowUserNamespace: false,
+				},
+			},
+		}
+		ns, err := ctrl.resolveTargetNamespace(template, "breakglass-debug", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "breakglass-debug", ns)
+	})
+
 	t.Run("validates against allowed patterns", func(t *testing.T) {
 		template := &telekomv1alpha1.DebugSessionTemplate{
 			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
@@ -1747,6 +1763,24 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "")
 		require.NoError(t, err)
 		assert.Empty(t, selectedOpt)
+		require.NotNil(t, resolved)
+		assert.Equal(t, "debug", resolved.NodeSelector["pool"])
+	})
+
+	t.Run("ignores stale scheduling option when template has no options", func(t *testing.T) {
+		// This handles the case where the frontend sends a stale scheduling option
+		// after switching to a template that doesn't have scheduling options.
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"pool": "debug"},
+				},
+				// No SchedulingOptions defined
+			},
+		}
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "any-worker")
+		require.NoError(t, err, "should not error when stale option is sent")
+		assert.Empty(t, selectedOpt, "selected option should be empty")
 		require.NotNil(t, resolved)
 		assert.Equal(t, "debug", resolved.NodeSelector["pool"])
 	})

@@ -328,3 +328,235 @@ func TestStatusUpdateWithRetry_NonConflictError(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, apierrors.IsNotFound(err))
 }
+
+func TestUpdateWithRetry_ConflictRetry(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster: "test-cluster",
+			User:    "test@example.com",
+		},
+	}
+
+	conflictCount := 0
+	maxConflicts := 2
+
+	// Create a client that returns conflict errors for the first few attempts
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if conflictCount < maxConflicts {
+					conflictCount++
+					return apierrors.NewConflict(
+						schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
+						session.Name,
+						nil,
+					)
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+
+	config := RetryConfig{
+		MaxRetries:        3,
+		InitialBackoff:    1 * time.Millisecond,
+		MaxBackoff:        10 * time.Millisecond,
+		BackoffMultiplier: 2.0,
+	}
+
+	err := UpdateWithRetry(context.Background(), c, session, func(s *v1alpha1.BreakglassSession) error {
+		s.Spec.RequestReason = "Updated reason"
+		return nil
+	}, config)
+
+	require.NoError(t, err)
+	assert.Equal(t, maxConflicts, conflictCount)
+}
+
+func TestUpdateWithRetry_MaxRetriesExceeded(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster: "test-cluster",
+			User:    "test@example.com",
+		},
+	}
+
+	// Always return conflict
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				return apierrors.NewConflict(
+					schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
+					session.Name,
+					nil,
+				)
+			},
+		}).
+		Build()
+
+	config := RetryConfig{
+		MaxRetries:        2,
+		InitialBackoff:    1 * time.Millisecond,
+		MaxBackoff:        10 * time.Millisecond,
+		BackoffMultiplier: 2.0,
+	}
+
+	err := UpdateWithRetry(context.Background(), c, session, func(s *v1alpha1.BreakglassSession) error {
+		s.Spec.RequestReason = "Updated reason"
+		return nil
+	}, config)
+
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err))
+}
+
+func TestUpdateWithRetry_ContextCancelled(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			Cluster: "test-cluster",
+			User:    "test@example.com",
+		},
+	}
+
+	// Always return conflict to trigger retry
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				return apierrors.NewConflict(
+					schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
+					session.Name,
+					nil,
+				)
+			},
+		}).
+		Build()
+
+	config := RetryConfig{
+		MaxRetries:        10,
+		InitialBackoff:    100 * time.Millisecond,
+		MaxBackoff:        1 * time.Second,
+		BackoffMultiplier: 2.0,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := UpdateWithRetry(ctx, c, session, func(s *v1alpha1.BreakglassSession) error {
+		s.Spec.RequestReason = "Updated reason"
+		return nil
+	}, config)
+
+	require.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+}
+
+func TestUpdateWithRetry_ModifyFuncError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+	}
+
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		Build()
+
+	testErr := assert.AnError
+	err := UpdateWithRetry(context.Background(), c, session, func(s *v1alpha1.BreakglassSession) error {
+		return testErr
+	}, DefaultRetryConfig())
+
+	require.Error(t, err)
+	assert.Equal(t, testErr, err)
+}
+
+func TestUpdateWithRetry_NonConflictError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	session := &v1alpha1.BreakglassSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+	}
+
+	// Return a non-conflict error - should not retry
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				return apierrors.NewNotFound(
+					schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
+					session.Name,
+				)
+			},
+		}).
+		Build()
+
+	err := UpdateWithRetry(context.Background(), c, session, func(s *v1alpha1.BreakglassSession) error {
+		s.Spec.RequestReason = "Updated reason"
+		return nil
+	}, DefaultRetryConfig())
+
+	require.Error(t, err)
+	assert.True(t, apierrors.IsNotFound(err))
+}

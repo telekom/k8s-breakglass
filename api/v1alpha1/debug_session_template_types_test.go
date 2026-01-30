@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func TestDebugSessionTemplateMode(t *testing.T) {
@@ -1395,4 +1396,222 @@ func ptrEqual[T comparable](a, b *T) bool {
 		return false
 	}
 	return *a == *b
+}
+
+// TestValidateDebugSessionTemplateSpec_WorkloadModeValid verifies valid workload mode config
+func TestValidateDebugSessionTemplateSpec_WorkloadModeValid(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: DebugSessionModeWorkload,
+			PodTemplateRef: &DebugPodTemplateReference{
+				Name: "basic-pod",
+			},
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors for valid workload mode, got %v", errs)
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_KubectlDebugModeValid verifies valid kubectl-debug mode config
+func TestValidateDebugSessionTemplateSpec_KubectlDebugModeValid(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: DebugSessionModeKubectlDebug,
+			KubectlDebug: &KubectlDebugConfig{
+				EphemeralContainers: &EphemeralContainersConfig{
+					Enabled: true,
+				},
+			},
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors for valid kubectl-debug mode, got %v", errs)
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_KubectlDebugModeMissingConfig
+func TestValidateDebugSessionTemplateSpec_KubectlDebugModeMissingConfig(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode:         DebugSessionModeKubectlDebug,
+			KubectlDebug: nil, // Missing required config
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) == 0 {
+		t.Error("expected error for kubectl-debug mode without kubectlDebug config")
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_DefaultMode tests default mode (workload)
+func TestValidateDebugSessionTemplateSpec_DefaultMode(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: "", // Default should be workload
+			PodTemplateRef: &DebugPodTemplateReference{
+				Name: "basic-pod",
+			},
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors for default mode with podTemplateRef, got %v", errs)
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_SchedulingOptions tests scheduling options validation
+func TestValidateDebugSessionTemplateSpec_SchedulingOptions(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: DebugSessionModeWorkload,
+			PodTemplateRef: &DebugPodTemplateReference{
+				Name: "basic-pod",
+			},
+			SchedulingOptions: &SchedulingOptions{
+				Required: false,
+				Options: []SchedulingOption{
+					{
+						Name:        "default-option",
+						DisplayName: "Default Option",
+						Default:     true,
+					},
+				},
+			},
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors for valid scheduling options, got %v", errs)
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_Impersonation tests impersonation config validation
+func TestValidateDebugSessionTemplateSpec_Impersonation(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: DebugSessionModeWorkload,
+			PodTemplateRef: &DebugPodTemplateReference{
+				Name: "basic-pod",
+			},
+			Impersonation: &ImpersonationConfig{
+				ServiceAccountRef: &ServiceAccountReference{
+					Name:      "debug-sa",
+					Namespace: "debug-system",
+				},
+			},
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors for valid impersonation config, got %v", errs)
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_NamespaceConstraints tests namespace constraints validation
+func TestValidateDebugSessionTemplateSpec_NamespaceConstraints(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: DebugSessionModeWorkload,
+			PodTemplateRef: &DebugPodTemplateReference{
+				Name: "basic-pod",
+			},
+			NamespaceConstraints: &NamespaceConstraints{
+				DefaultNamespace:   "debug-ns",
+				AllowUserNamespace: true,
+				AllowedNamespaces: &NamespaceFilter{
+					Patterns: []string{"dev-*", "test-*"},
+				},
+				DeniedNamespaces: &NamespaceFilter{
+					Patterns: []string{"kube-system", "kube-public"},
+				},
+			},
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors for valid namespace constraints, got %v", errs)
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_AuxiliaryResources tests auxiliary resources validation
+func TestValidateDebugSessionTemplateSpec_AuxiliaryResources(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: DebugSessionModeWorkload,
+			PodTemplateRef: &DebugPodTemplateReference{
+				Name: "basic-pod",
+			},
+			AuxiliaryResources: []AuxiliaryResource{
+				{
+					Name:         "config-map",
+					Description:  "Test config map",
+					CreateBefore: true,
+					DeleteAfter:  true,
+					Template:     runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test"}}`)},
+				},
+			},
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors for valid auxiliary resources, got %v", errs)
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_ConstraintsValidDurations tests valid constraint durations
+func TestValidateDebugSessionTemplateSpec_ConstraintsValidDurations(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: DebugSessionModeWorkload,
+			PodTemplateRef: &DebugPodTemplateReference{
+				Name: "basic-pod",
+			},
+			Constraints: &DebugSessionConstraints{
+				MaxDuration:     "8h",
+				DefaultDuration: "2h",
+			},
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors for valid constraint durations, got %v", errs)
+	}
+}
+
+// TestValidateDebugSessionTemplateSpec_HybridModeBothMissing tests hybrid mode with both configs missing
+func TestValidateDebugSessionTemplateSpec_HybridModeBothMissing(t *testing.T) {
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode:           DebugSessionModeHybrid,
+			PodTemplateRef: nil,
+			KubectlDebug:   nil,
+		},
+	}
+
+	errs := validateDebugSessionTemplateSpec(template)
+	if len(errs) != 2 {
+		t.Errorf("expected 2 errors for hybrid mode with both configs missing, got %d: %v", len(errs), errs)
+	}
 }

@@ -18,6 +18,8 @@ package breakglass
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 )
 
 // mockClientProvider is a test implementation of ClientProviderInterface
@@ -894,5 +897,154 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not match required selector")
+	})
+}
+
+func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
+	scheme := newKubectlTestScheme()
+
+	t.Run("no-op when KubectlDebugStatus is nil", func(t *testing.T) {
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		mockProvider := &mockClientProvider{}
+		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+
+		session := &v1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "breakglass",
+			},
+			Spec: v1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: v1alpha1.DebugSessionStatus{
+				KubectlDebugStatus: nil, // No kubectl debug status
+			},
+		}
+
+		err := handler.CleanupKubectlDebugResources(context.Background(), session)
+		require.NoError(t, err)
+	})
+
+	t.Run("returns error when GetClient fails", func(t *testing.T) {
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		mockProvider := &mockClientProvider{
+			err: assert.AnError,
+		}
+		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+
+		session := &v1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "breakglass",
+			},
+			Spec: v1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: v1alpha1.DebugSessionStatus{
+				KubectlDebugStatus: &v1alpha1.KubectlDebugStatus{
+					CopiedPods: []v1alpha1.CopiedPodRef{
+						{CopyName: "pod-copy", CopyNamespace: "default"},
+					},
+				},
+			},
+		}
+
+		err := handler.CleanupKubectlDebugResources(context.Background(), session)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to get client")
+	})
+
+	t.Run("cleans up copied pods and clears status", func(t *testing.T) {
+		// Create target cluster client with a pod to delete
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod-copy",
+					Namespace: "default",
+				},
+			}).
+			Build()
+
+		session := &v1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "breakglass",
+			},
+			Spec: v1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: v1alpha1.DebugSessionStatus{
+				State: v1alpha1.DebugSessionStateTerminated,
+				KubectlDebugStatus: &v1alpha1.KubectlDebugStatus{
+					CopiedPods: []v1alpha1.CopiedPodRef{
+						{CopyName: "pod-copy", CopyNamespace: "default"},
+					},
+				},
+			},
+		}
+
+		// Create hub client with the session
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		mockProvider := &mockClientProvider{
+			clients: map[string]ctrlclient.Client{
+				"test-cluster": targetClient,
+			},
+		}
+		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+
+		err := handler.CleanupKubectlDebugResources(context.Background(), session)
+		require.NoError(t, err)
+
+		// Verify KubectlDebugStatus is cleared
+		assert.Nil(t, session.Status.KubectlDebugStatus)
+	})
+
+	t.Run("wraps ErrClusterConfigNotFound for reconciler handling", func(t *testing.T) {
+		hubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		// Simulate the error that would come from clusterClientAdapter when ClusterConfig is missing
+		wrappedErr := fmt.Errorf("failed to get REST config: %w", cluster.ErrClusterConfigNotFound)
+		mockProvider := &mockClientProvider{
+			err: wrappedErr,
+		}
+		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+
+		session := &v1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "orphaned-session",
+				Namespace: "breakglass",
+			},
+			Spec: v1alpha1.DebugSessionSpec{
+				Cluster: "deleted-cluster",
+			},
+			Status: v1alpha1.DebugSessionStatus{
+				KubectlDebugStatus: &v1alpha1.KubectlDebugStatus{
+					CopiedPods: []v1alpha1.CopiedPodRef{
+						{CopyName: "pod-copy", CopyNamespace: "default"},
+					},
+				},
+			},
+		}
+
+		err := handler.CleanupKubectlDebugResources(context.Background(), session)
+		require.Error(t, err)
+
+		// Verify that the error wraps ErrClusterConfigNotFound so the reconciler can detect it
+		assert.True(t, errors.Is(err, cluster.ErrClusterConfigNotFound),
+			"error should wrap ErrClusterConfigNotFound for reconciler to handle gracefully")
 	})
 }

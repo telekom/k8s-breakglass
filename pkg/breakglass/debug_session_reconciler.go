@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -1775,6 +1776,15 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	// Clean up kubectl-debug resources (if any)
 	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
+		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
+		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
+			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
+				"cluster", ds.Spec.Cluster)
+			// Clear deployed resources since we can't clean them up anyway
+			ds.Status.DeployedResources = nil
+			ds.Status.AllowedPods = nil
+			return applyDebugSessionStatus(ctx, c.client, ds)
+		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
 		// Continue to clean up deployed resources even if this fails
 	}
@@ -1782,6 +1792,15 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	// Get spoke cluster client for cleanup
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
+		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
+		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
+			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
+				"cluster", ds.Spec.Cluster)
+			// Clear deployed resources since we can't clean them up anyway
+			ds.Status.DeployedResources = nil
+			ds.Status.AllowedPods = nil
+			return applyDebugSessionStatus(ctx, c.client, ds)
+		}
 		return fmt.Errorf("failed to get REST config: %w", err)
 	}
 	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})

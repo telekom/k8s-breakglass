@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Orphaned DebugSession Cleanup**: Fixed infinite retry loop when ClusterConfig is deleted while DebugSessions are still active
+  - `cleanupResources` now gracefully handles `ErrClusterConfigNotFound` error
+  - When target cluster no longer exists, cleanup is treated as complete instead of retrying every 5 seconds indefinitely
+  - Clears `DeployedResources` and `AllowedPods` status fields since resources cannot be cleaned up anyway
+  - Logs a warning to indicate the orphaned session was handled gracefully
+
 ### Changed
 
 - **Approval Denial Responses**: Improved HTTP status codes and error messages for session approval denials

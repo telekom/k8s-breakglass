@@ -908,3 +908,147 @@ func TestDebugPodTemplate_ValidateCreate_EmptyContainerNameTwo(t *testing.T) {
 		t.Error("expected error for empty container name")
 	}
 }
+
+// TestValidateDebugPodTemplateSpec_NoContainers tests validation when no containers are defined
+func TestValidateDebugPodTemplateSpec_NoContainers(t *testing.T) {
+	template := &DebugPodTemplate{
+		Spec: DebugPodTemplateSpec{
+			Template: DebugPodSpec{
+				Spec: DebugPodSpecInner{
+					Containers: []corev1.Container{},
+				},
+			},
+		},
+	}
+	errs := validateDebugPodTemplateSpec(template)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for no containers, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.template.spec.containers" {
+		t.Errorf("expected error field spec.template.spec.containers, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDebugPodTemplateSpec_SingleValidContainer tests a valid single container
+func TestValidateDebugPodTemplateSpec_SingleValidContainer(t *testing.T) {
+	template := &DebugPodTemplate{
+		Spec: DebugPodTemplateSpec{
+			Template: DebugPodSpec{
+				Spec: DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "debug", Image: "busybox"},
+					},
+				},
+			},
+		},
+	}
+	errs := validateDebugPodTemplateSpec(template)
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors for valid container, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDebugPodTemplateSpec_MultipleValidContainers tests multiple valid containers
+func TestValidateDebugPodTemplateSpec_MultipleValidContainers(t *testing.T) {
+	template := &DebugPodTemplate{
+		Spec: DebugPodTemplateSpec{
+			Template: DebugPodSpec{
+				Spec: DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "debug1", Image: "busybox"},
+						{Name: "debug2", Image: "alpine"},
+						{Name: "debug3", Image: "ubuntu"},
+					},
+				},
+			},
+		},
+	}
+	errs := validateDebugPodTemplateSpec(template)
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors for valid containers, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDebugPodTemplateSpec_DuplicateNames tests duplicate container names
+func TestValidateDebugPodTemplateSpec_DuplicateNames(t *testing.T) {
+	template := &DebugPodTemplate{
+		Spec: DebugPodTemplateSpec{
+			Template: DebugPodSpec{
+				Spec: DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "debug", Image: "busybox"},
+						{Name: "debug", Image: "alpine"},
+					},
+				},
+			},
+		},
+	}
+	errs := validateDebugPodTemplateSpec(template)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for duplicate names, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDebugPodTemplateSpec_EmptyName tests empty container name
+func TestValidateDebugPodTemplateSpec_EmptyName(t *testing.T) {
+	template := &DebugPodTemplate{
+		Spec: DebugPodTemplateSpec{
+			Template: DebugPodSpec{
+				Spec: DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "", Image: "busybox"},
+					},
+				},
+			},
+		},
+	}
+	errs := validateDebugPodTemplateSpec(template)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for empty name, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.template.spec.containers[0].name" {
+		t.Errorf("expected error field spec.template.spec.containers[0].name, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDebugPodTemplateSpec_MultipleEmptyNames tests multiple empty container names
+func TestValidateDebugPodTemplateSpec_MultipleEmptyNames(t *testing.T) {
+	template := &DebugPodTemplate{
+		Spec: DebugPodTemplateSpec{
+			Template: DebugPodSpec{
+				Spec: DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "", Image: "busybox"},
+						{Name: "", Image: "alpine"},
+					},
+				},
+			},
+		},
+	}
+	errs := validateDebugPodTemplateSpec(template)
+	// Should get errors for both empty names, plus possibly duplicates
+	if len(errs) < 2 {
+		t.Errorf("expected at least 2 errors for multiple empty names, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDebugPodTemplateSpec_MixedErrors tests combination of empty name and duplicate
+func TestValidateDebugPodTemplateSpec_MixedErrors(t *testing.T) {
+	template := &DebugPodTemplate{
+		Spec: DebugPodTemplateSpec{
+			Template: DebugPodSpec{
+				Spec: DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "debug", Image: "busybox"},
+						{Name: "", Image: "alpine"},
+						{Name: "debug", Image: "ubuntu"}, // duplicate
+					},
+				},
+			},
+		},
+	}
+	errs := validateDebugPodTemplateSpec(template)
+	if len(errs) != 2 {
+		t.Errorf("expected 2 errors (empty name and duplicate), got %d: %v", len(errs), errs)
+	}
+}

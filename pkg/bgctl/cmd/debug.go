@@ -478,9 +478,15 @@ func newDebugTemplateCommand() *cobra.Command {
 }
 
 func newDebugTemplateListCommand() *cobra.Command {
+	var includeUnavailable bool
+
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List debug session templates",
+		Long: `List debug session templates available to the user.
+
+By default, only templates with available clusters are shown. Use --all to include
+templates without any available clusters.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -490,7 +496,9 @@ func newDebugTemplateListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := apiClient.DebugTemplates().List(context.Background())
+			resp, err := apiClient.DebugTemplates().List(context.Background(), client.DebugTemplateListOptions{
+				IncludeUnavailable: includeUnavailable,
+			})
 			if err != nil {
 				return err
 			}
@@ -500,12 +508,19 @@ func newDebugTemplateListCommand() *cobra.Command {
 				return output.WriteObject(rt.Writer(), format, resp.Templates)
 			case output.FormatTable:
 				output.WriteDebugTemplateTable(rt.Writer(), resp.Templates)
+				// Show notice if templates were filtered
+				if !includeUnavailable {
+					_, _ = fmt.Fprintln(rt.Writer(), "\nNote: Only templates with available clusters are shown. Use --all to see all templates.")
+				}
 				return nil
 			default:
 				return fmt.Errorf("unknown output format: %s", format)
 			}
 		},
 	}
+
+	cmd.Flags().BoolVarP(&includeUnavailable, "all", "a", false, "Include templates without available clusters")
+
 	return cmd
 }
 
