@@ -184,9 +184,7 @@ test.describe.serial("Debug Session Creation", () => {
     const noAvailableTemplatesMessage = page.locator('[data-testid="no-available-templates-message"]');
 
     // Wait for either the form or the no-templates message to appear
-    await expect(
-      cancelButton.or(noTemplatesMessage).or(noAvailableTemplatesMessage)
-    ).toBeVisible({ timeout: 10000 });
+    await expect(cancelButton.or(noTemplatesMessage).or(noAvailableTemplatesMessage)).toBeVisible({ timeout: 10000 });
 
     if (await cancelButton.isVisible()) {
       // Templates available - click cancel button

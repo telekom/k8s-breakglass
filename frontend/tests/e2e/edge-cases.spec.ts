@@ -319,12 +319,12 @@ test.describe("Accessibility", () => {
           // Scale textarea renders a visible "Reason" label inside the component
           // Check that the label is rendered in the page (not as an attribute)
           const reasonLabel = page.getByText("Reason", { exact: true });
-          const hasLabel = await reasonLabel.count() > 0;
-          
+          const hasLabel = (await reasonLabel.count()) > 0;
+
           // Also check for accessible textbox by role
           const accessibleTextbox = page.getByRole("textbox", { name: /reason/i });
-          const hasAccessibleTextbox = await accessibleTextbox.count() > 0;
-          
+          const hasAccessibleTextbox = (await accessibleTextbox.count()) > 0;
+
           // Either visible label or ARIA-accessible textbox should exist
           expect(hasLabel || hasAccessibleTextbox).toBeTruthy();
         }
