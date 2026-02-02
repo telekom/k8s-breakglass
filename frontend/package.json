@@ -37,7 +37,7 @@
     "oidc-client-ts": "^3.4.1",
     "pinia": "^3.0.4",
     "vue": "^3.5.27",
-    "vue-router": "^4.6.3"
+    "vue-router": "^5.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",
