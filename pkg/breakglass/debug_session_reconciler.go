@@ -185,8 +185,29 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *v1alpha1
 	// Cache the resolved template in status
 	ds.Status.ResolvedTemplate = &template.Spec
 
-	// Check if approval is required
-	requiresApproval := c.requiresApproval(template, ds)
+	// Find binding early so we can check its approvers for the approval decision
+	// This ensures bindings with approvers properly trigger approval workflow
+	var binding *v1alpha1.DebugSessionClusterBinding
+	if ds.Spec.BindingRef != nil {
+		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
+		if err != nil {
+			log.Warnw("Failed to get binding by ref, will try auto-discovery",
+				"binding", ds.Spec.BindingRef.Name,
+				"namespace", ds.Spec.BindingRef.Namespace,
+				"error", err)
+		}
+	}
+	if binding == nil {
+		binding, _ = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		if binding != nil {
+			log.Infow("Auto-discovered binding for session",
+				"binding", binding.Name,
+				"namespace", binding.Namespace)
+		}
+	}
+
+	// Check if approval is required (checks both template and binding approvers)
+	requiresApproval := c.requiresApproval(template, binding, ds)
 	ds.Status.Approval = &v1alpha1.DebugSessionApproval{
 		Required: requiresApproval,
 	}
@@ -715,44 +736,77 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 	return nil
 }
 
-// requiresApproval checks if the session requires approval
-func (c *DebugSessionController) requiresApproval(template *v1alpha1.DebugSessionTemplate, ds *v1alpha1.DebugSession) bool {
+// requiresApproval checks if the session requires approval.
+// It checks both the template and the binding for approvers configuration.
+// Approval is required if either the template or binding specifies approvers
+// (unless auto-approve conditions are met).
+func (c *DebugSessionController) requiresApproval(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, ds *v1alpha1.DebugSession) bool {
+	// Check if binding has approvers configured (takes precedence)
+	if binding != nil && binding.Spec.Approvers != nil {
+		if len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0 {
+			c.log.Infow("Approval required by binding",
+				"session", ds.Name,
+				"binding", binding.Name,
+				"bindingNamespace", binding.Namespace)
+			// Check binding auto-approve conditions
+			if binding.Spec.Approvers.AutoApproveFor != nil {
+				if c.checkAutoApprove(binding.Spec.Approvers.AutoApproveFor, ds) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+
+	// Check if template has approvers configured
 	if template.Spec.Approvers == nil {
 		return false // No approvers configured = auto-approve
 	}
 
-	// Check auto-approve conditions
+	// Check if template has actual approvers (not just auto-approve rules)
+	if len(template.Spec.Approvers.Users) == 0 && len(template.Spec.Approvers.Groups) == 0 {
+		return false // No actual approvers configured
+	}
+
+	// Check template auto-approve conditions
 	if template.Spec.Approvers.AutoApproveFor != nil {
-		autoApprove := template.Spec.Approvers.AutoApproveFor
-
-		// Auto-approve for specific clusters
-		for _, pattern := range autoApprove.Clusters {
-			if matched, _ := filepath.Match(pattern, ds.Spec.Cluster); matched {
-				c.log.Infow("Auto-approving debug session based on cluster match",
-					"session", ds.Name,
-					"cluster", ds.Spec.Cluster,
-					"pattern", pattern)
-				return false
-			}
+		if c.checkAutoApprove(template.Spec.Approvers.AutoApproveFor, ds) {
+			return false
 		}
+	}
 
-		// Auto-approve for specific groups
-		if len(autoApprove.Groups) > 0 && len(ds.Spec.UserGroups) > 0 {
-			for _, autoApproveGroup := range autoApprove.Groups {
-				for _, userGroup := range ds.Spec.UserGroups {
-					if userGroup == autoApproveGroup {
-						c.log.Infow("Auto-approving debug session based on group match",
-							"session", ds.Name,
-							"user", ds.Spec.RequestedBy,
-							"matchedGroup", userGroup)
-						return false
-					}
+	return true
+}
+
+// checkAutoApprove checks if auto-approve conditions are met for the session
+func (c *DebugSessionController) checkAutoApprove(autoApprove *v1alpha1.AutoApproveConfig, ds *v1alpha1.DebugSession) bool {
+	// Auto-approve for specific clusters
+	for _, pattern := range autoApprove.Clusters {
+		if matched, _ := filepath.Match(pattern, ds.Spec.Cluster); matched {
+			c.log.Infow("Auto-approving debug session based on cluster match",
+				"session", ds.Name,
+				"cluster", ds.Spec.Cluster,
+				"pattern", pattern)
+			return true
+		}
+	}
+
+	// Auto-approve for specific groups
+	if len(autoApprove.Groups) > 0 && len(ds.Spec.UserGroups) > 0 {
+		for _, autoApproveGroup := range autoApprove.Groups {
+			for _, userGroup := range ds.Spec.UserGroups {
+				if userGroup == autoApproveGroup {
+					c.log.Infow("Auto-approving debug session based on group match",
+						"session", ds.Name,
+						"user", ds.Spec.RequestedBy,
+						"matchedGroup", userGroup)
+					return true
 				}
 			}
 		}
 	}
 
-	return true
+	return false
 }
 
 // deployDebugResources creates the debug workload on the target cluster

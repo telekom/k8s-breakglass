@@ -3641,3 +3641,305 @@ func TestDebugSessionReconciler_BuildResourceQuotaAndPDB(t *testing.T) {
 func int32Ptr(v int32) *int32 {
 	return &v
 }
+
+// TestRequiresApproval tests the requiresApproval function with various scenarios
+func TestRequiresApproval(t *testing.T) {
+	controller := &DebugSessionController{log: zap.NewExample().Sugar()}
+
+	baseSession := &telekomv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: telekomv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+			UserGroups:  []string{"developers", "testers"},
+		},
+	}
+
+	t.Run("no_approvers_on_template_or_binding_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should not require approval when no approvers are configured")
+	})
+
+	t.Run("template_with_approver_groups_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.True(t, result, "Should require approval when template has approver groups")
+	})
+
+	t.Run("template_with_approver_users_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.True(t, result, "Should require approval when template has approver users")
+	})
+
+	t.Run("binding_with_approver_groups_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.True(t, result, "Should require approval when binding has approver groups")
+	})
+
+	t.Run("binding_with_approver_users_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.True(t, result, "Should require approval when binding has approver users")
+	})
+
+	t.Run("binding_approvers_take_precedence_over_template", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				// Template has no approvers
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"binding-approvers"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.True(t, result, "Should require approval from binding even when template has no approvers")
+	})
+
+	t.Run("template_auto_approve_for_matching_cluster_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"test-cluster"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should auto-approve when cluster matches auto-approve pattern")
+	})
+
+	t.Run("template_auto_approve_for_matching_group_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Groups: []string{"developers"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should auto-approve when user is in auto-approve group")
+	})
+
+	t.Run("binding_auto_approve_for_matching_cluster_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"binding-approvers"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"test-*"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.False(t, result, "Should auto-approve via binding when cluster matches pattern")
+	})
+
+	t.Run("binding_auto_approve_for_matching_group_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"binding-approvers"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Groups: []string{"testers"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.False(t, result, "Should auto-approve via binding when user is in auto-approve group")
+	})
+
+	t.Run("template_with_empty_approvers_struct_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					// No users or groups configured
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should not require approval when approvers struct exists but has no users/groups")
+	})
+
+	t.Run("binding_with_empty_approvers_struct_falls_through_to_template", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"template-approvers"},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					// Empty - no users or groups
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		// Binding approvers is empty, so it falls through to template check
+		assert.True(t, result, "Should fall through to template when binding has empty approvers")
+	})
+
+	t.Run("wildcard_cluster_pattern_auto_approve", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"*-cluster"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should auto-approve with wildcard pattern matching")
+	})
+
+	t.Run("non_matching_auto_approve_still_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"prod-*"},
+						Groups:   []string{"admins"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.True(t, result, "Should still require approval when auto-approve patterns don't match")
+	})
+}
+
+// TestCheckAutoApprove tests the checkAutoApprove helper function
+func TestCheckAutoApprove(t *testing.T) {
+	controller := &DebugSessionController{log: zap.NewExample().Sugar()}
+
+	t.Run("matches_exact_cluster_name", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{Cluster: "prod-cluster"},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{
+			Clusters: []string{"prod-cluster"},
+		}
+		assert.True(t, controller.checkAutoApprove(autoApprove, session))
+	})
+
+	t.Run("matches_wildcard_pattern", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{Cluster: "dev-cluster-1"},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{
+			Clusters: []string{"dev-*"},
+		}
+		assert.True(t, controller.checkAutoApprove(autoApprove, session))
+	})
+
+	t.Run("matches_user_group", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:    "any-cluster",
+				UserGroups: []string{"sre-team", "platform-team"},
+			},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{
+			Groups: []string{"sre-team"},
+		}
+		assert.True(t, controller.checkAutoApprove(autoApprove, session))
+	})
+
+	t.Run("no_match_returns_false", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:    "test-cluster",
+				UserGroups: []string{"developers"},
+			},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{
+			Clusters: []string{"prod-*"},
+			Groups:   []string{"admins"},
+		}
+		assert.False(t, controller.checkAutoApprove(autoApprove, session))
+	})
+
+	t.Run("empty_auto_approve_config_returns_false", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:    "test-cluster",
+				UserGroups: []string{"developers"},
+			},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{}
+		assert.False(t, controller.checkAutoApprove(autoApprove, session))
+	})
+}

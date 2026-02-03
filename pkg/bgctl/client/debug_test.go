@@ -375,11 +375,10 @@ func TestDebugTemplatesListWithIncludeUnavailable(t *testing.T) {
 }
 
 func TestDebugTemplatesGet(t *testing.T) {
-	template := v1alpha1.DebugSessionTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "template-1"},
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			DisplayName: "Debug Template",
-		},
+	// The API returns a flat DebugSessionTemplateSummary structure, not the full K8s object
+	template := DebugSessionTemplateSummary{
+		Name:        "template-1",
+		DisplayName: "Debug Template",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

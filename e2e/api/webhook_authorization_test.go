@@ -523,6 +523,23 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	cleanup.Add(sessionTemplate)
 	require.NoError(t, cli.Create(ctx, sessionTemplate))
 
+	// Create binding to allow the template on this cluster
+	bindingName := helpers.GenerateUniqueName("e2e-webhook-bind")
+	binding := &telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      bindingName,
+			Namespace: namespace,
+			Labels:    helpers.E2ETestLabels(),
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &telekomv1alpha1.TemplateReference{Name: sessionTemplateName},
+			Clusters:    []string{clusterName},
+			Allowed:     &telekomv1alpha1.DebugSessionAllowed{Groups: []string{"*"}},
+		},
+	}
+	cleanup.Add(binding)
+	require.NoError(t, cli.Create(ctx, binding))
+
 	// Create debug session via API (not direct client)
 	session, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,

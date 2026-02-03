@@ -42,6 +42,10 @@ export interface SessionSpec {
   cluster?: string;
   user?: string;
   denyPolicyRefs?: string[];
+  requestReason?: string;
+  // Snapshots of escalation config at session creation time
+  requestReasonConfig?: { mandatory?: boolean; description?: string };
+  approvalReasonConfig?: { mandatory?: boolean; description?: string };
   [key: string]: any;
 }
 

@@ -266,9 +266,9 @@ func (d *DebugTemplateService) List(ctx context.Context, opts ...DebugTemplateLi
 	return &resp, nil
 }
 
-func (d *DebugTemplateService) Get(ctx context.Context, name string) (*v1alpha1.DebugSessionTemplate, error) {
+func (d *DebugTemplateService) Get(ctx context.Context, name string) (*DebugSessionTemplateSummary, error) {
 	endpoint := fmt.Sprintf("api/debugSessions/templates/%s", url.PathEscape(name))
-	var template v1alpha1.DebugSessionTemplate
+	var template DebugSessionTemplateSummary
 	if err := d.client.do(ctx, http.MethodGet, endpoint, nil, &template); err != nil {
 		return nil, err
 	}

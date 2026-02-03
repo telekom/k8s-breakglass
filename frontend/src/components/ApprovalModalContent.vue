@@ -56,7 +56,12 @@
       <scale-button data-testid="approve-button" :disabled="isApproving" @click="$emit('approve')">
         Confirm Approve
       </scale-button>
-      <scale-button data-testid="reject-button" variant="danger" :disabled="isApproving" @click="$emit('reject')">
+      <scale-button
+        data-testid="reject-button"
+        variant="danger"
+        :disabled="isApproving || (isNoteRequired && !approverNote.trim())"
+        @click="$emit('reject')"
+      >
         Reject
       </scale-button>
       <scale-button variant="secondary" @click="$emit('cancel')"> Cancel </scale-button>
@@ -98,7 +103,13 @@ const requestReason = computed(() => {
 
 const approvalReason = computed(() => {
   const sessionAny = props.session as Record<string, unknown>;
-  return sessionAny.approvalReason as { mandatory?: boolean; description?: string } | undefined;
+  // Prefer top-level approvalReason (from enriched API response) for backward compat
+  // Fall back to spec.approvalReasonConfig (snapshot stored in session at creation time)
+  if (sessionAny.approvalReason) {
+    return sessionAny.approvalReason as { mandatory?: boolean; description?: string };
+  }
+  const spec = sessionAny.spec as Record<string, unknown> | undefined;
+  return spec?.approvalReasonConfig as { mandatory?: boolean; description?: string } | undefined;
 });
 
 const isNoteRequired = computed(() => approvalReason.value?.mandatory ?? false);

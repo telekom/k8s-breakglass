@@ -10,7 +10,9 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
@@ -151,8 +153,8 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 	}
 
 	if len(bsl.Items) == 0 {
-		zap.S().Errorw("BreakglassSession not found by name across namespaces", "name", name)
-		return bs, errors.Wrapf(errors.New("not found"), "failed to get BreakglassSession by name: %s", name)
+		zap.S().Debugw("BreakglassSession not found by name across namespaces", "name", name)
+		return bs, apierrors.NewNotFound(schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"}, name)
 	}
 
 	if len(bsl.Items) > 1 {

@@ -127,7 +127,28 @@ export default class BreakglassService {
       });
       const data = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
       debug("BreakglassService.fetchPendingSessionsForApproval", "Fetched pending sessions", { count: data.length });
-      // Fetch available escalations to enrich pending sessions with approvalReason config (if any)
+
+      // Backend now returns sessions with approvalReason populated from session.spec.approvalReasonConfig
+      // For backward compatibility with older sessions that don't have the config stored,
+      // fall back to enriching from escalations if approvalReason is missing
+      const sessionsNeedingEnrichment = data.filter(
+        (p: SessionCR) => !(p as any).approvalReason && !(p.spec as any)?.approvalReasonConfig,
+      );
+
+      if (sessionsNeedingEnrichment.length === 0) {
+        // All sessions have approvalReason from backend, no enrichment needed
+        return data.map((p: SessionCR) => {
+          // Normalize: if approvalReason is at top level (backend enriched), use it
+          // Otherwise, fall back to spec.approvalReasonConfig
+          const out = { ...p } as SessionCR & { approvalReason?: any };
+          if (!(p as any).approvalReason && (p.spec as any)?.approvalReasonConfig) {
+            out.approvalReason = (p.spec as any).approvalReasonConfig;
+          }
+          return out;
+        });
+      }
+
+      // Fetch available escalations to enrich older sessions that lack approvalReason config
       let escalations: AvailableBreakglass[] = [];
       try {
         escalations = await this.fetchAvailableEscalations();
@@ -137,13 +158,22 @@ export default class BreakglassService {
       }
       // Map pending sessions to include approvalReason based on cluster+grantedGroup
       return data.map((p: SessionCR) => {
+        // Use backend-provided approvalReason or spec.approvalReasonConfig if available
+        if ((p as any).approvalReason) {
+          return p;
+        }
+        if ((p.spec as any)?.approvalReasonConfig) {
+          const out = { ...p } as SessionCR & { approvalReason?: any };
+          out.approvalReason = (p.spec as any).approvalReasonConfig;
+          return out;
+        }
+        // Fallback: look up from escalations (for old sessions without stored config)
         const cluster = (p.spec && p.spec.cluster) || p.cluster || "";
         const group = (p.spec && p.spec.grantedGroup) || p.group || "";
         const match = escalations.find(
           (e: AvailableBreakglass) => e.cluster === cluster && (e.to === group || (e as any).group === group),
         );
         if (match && match.approvalReason) {
-          // augment copy with approvalReason
           const out = { ...p } as SessionCR & { approvalReason?: any };
           out.approvalReason = match.approvalReason;
           return out;

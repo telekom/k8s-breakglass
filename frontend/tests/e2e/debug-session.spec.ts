@@ -218,11 +218,10 @@ test.describe.serial("Debug Session Creation", () => {
     // Wait for either template select or no-templates message
     await expect(templateSelect.or(noTemplatesMessage)).toBeVisible({ timeout: 10000 });
 
-    // Skip test if no templates available - can't test form validation without templates
-    if (await noTemplatesMessage.isVisible()) {
-      test.skip(true, "No debug session templates available in this environment");
-      return;
-    }
+    // E2E environment must have templates - fail if not available
+    expect(await noTemplatesMessage.isVisible(), "E2E environment must have debug session templates configured").toBe(
+      false,
+    );
 
     // Step 1: Select a template to enable the Next button
     await templateSelect.click();
@@ -275,11 +274,10 @@ test.describe.serial("Debug Session Creation", () => {
 
     await expect(templateSelect.or(noTemplatesMessage)).toBeVisible({ timeout: 10000 });
 
-    // Skip test if no templates available
-    if (await noTemplatesMessage.isVisible()) {
-      test.skip(true, "No debug session templates available in this environment");
-      return;
-    }
+    // E2E environment must have templates - fail if not available
+    expect(await noTemplatesMessage.isVisible(), "E2E environment must have debug session templates configured").toBe(
+      false,
+    );
 
     // Step 1: Select a template
     await templateSelect.click();
@@ -333,11 +331,10 @@ test.describe.serial("Debug Session Creation", () => {
 
     await expect(templateSelect.or(noTemplatesMessage)).toBeVisible({ timeout: 10000 });
 
-    // Skip test if no templates available
-    if (await noTemplatesMessage.isVisible()) {
-      test.skip(true, "No debug session templates available in this environment");
-      return;
-    }
+    // E2E environment must have templates - fail if not available
+    expect(await noTemplatesMessage.isVisible(), "E2E environment must have debug session templates configured").toBe(
+      false,
+    );
 
     // Click the template dropdown
     await templateSelect.click();
@@ -370,11 +367,10 @@ test.describe.serial("Debug Session Creation", () => {
 
     await expect(templateSelect.or(noTemplatesMessage)).toBeVisible({ timeout: 10000 });
 
-    // Skip test if no templates available
-    if (await noTemplatesMessage.isVisible()) {
-      test.skip(true, "No debug session templates available in this environment");
-      return;
-    }
+    // E2E environment must have templates - fail if not available
+    expect(await noTemplatesMessage.isVisible(), "E2E environment must have debug session templates configured").toBe(
+      false,
+    );
 
     // Step 1: Select a template
     await templateSelect.click();
@@ -434,11 +430,10 @@ test.describe.serial("Debug Session Creation", () => {
 
     await expect(templateSelect.or(noTemplatesMessage)).toBeVisible({ timeout: 10000 });
 
-    // Skip test if no templates available
-    if (await noTemplatesMessage.isVisible()) {
-      test.skip(true, "No debug session templates available in this environment");
-      return;
-    }
+    // E2E environment must have templates - fail if not available
+    expect(await noTemplatesMessage.isVisible(), "E2E environment must have debug session templates configured").toBe(
+      false,
+    );
 
     // Step 1: Select a template
     await templateSelect.click();

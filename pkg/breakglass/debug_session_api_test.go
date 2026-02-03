@@ -2223,12 +2223,12 @@ func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
 
 		assert.Equal(t, 200, w.Code)
 
-		// handleGetTemplate returns the full template CRD, not DebugSessionTemplateResponse
-		var response telekomv1alpha1.DebugSessionTemplate
+		// handleGetTemplate returns DebugSessionTemplateResponse (flat format matching list endpoint)
+		var response DebugSessionTemplateResponse
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, "standard-debug", response.Name)
-		assert.Equal(t, telekomv1alpha1.DebugSessionModeWorkload, response.Spec.Mode)
+		assert.Equal(t, telekomv1alpha1.DebugSessionModeWorkload, response.Mode)
 	})
 
 	t.Run("get non-existent template", func(t *testing.T) {
@@ -2362,12 +2362,12 @@ func TestDebugSessionAPIController_HandleGetPodTemplate(t *testing.T) {
 
 		assert.Equal(t, 200, w.Code)
 
-		// handleGetPodTemplate returns the full template CRD, not DebugPodTemplateResponse
-		var response telekomv1alpha1.DebugPodTemplate
+		// handleGetPodTemplate returns DebugPodTemplateResponse (consistent with list endpoint)
+		var response DebugPodTemplateResponse
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 		assert.Equal(t, "ubuntu-debug", response.Name)
-		assert.Equal(t, "Ubuntu Debug", response.Spec.DisplayName)
+		assert.Equal(t, "Ubuntu Debug", response.DisplayName)
 	})
 
 	t.Run("get non-existent pod template", func(t *testing.T) {
@@ -2405,6 +2405,10 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			Constraints: &telekomv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "4h",
 				DefaultDuration: "1h",
+			},
+			// Templates must have explicit cluster restrictions
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Clusters: []string{"production", "staging", "development"},
 			},
 		},
 	}
@@ -2567,6 +2571,10 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
 					DefaultNamespace: "breakglass-ns",
 				},
+				// Templates must have explicit cluster restrictions
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"production", "staging"},
+				},
 			},
 		}
 
@@ -2616,6 +2624,10 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 				// Include namespace constraints to avoid namespace defaulting warning
 				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
 					DefaultNamespace: "test-ns",
+				},
+				// Templates must have explicit cluster restrictions
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"production", "staging"},
 				},
 				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
 					Required: true,
@@ -2682,6 +2694,10 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 				// Include namespace constraints to avoid namespace defaulting warning
 				NamespaceConstraints: &telekomv1alpha1.NamespaceConstraints{
 					DefaultNamespace: "test-ns",
+				},
+				// Templates must have explicit cluster restrictions
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"production", "staging"},
 				},
 			},
 		}
@@ -3317,6 +3333,11 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
 		router := gin.New()
+		// Add middleware to set username matching the session owner
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
@@ -3362,6 +3383,11 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
 		router := gin.New()
+		// Add middleware to set username
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
@@ -3405,6 +3431,11 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
 		router := gin.New()
+		// Add middleware to set username
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
@@ -3426,6 +3457,11 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
 
 		router := gin.New()
+		// Add middleware to set username
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
@@ -3992,15 +4028,15 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 			expectSource:  "",
 		},
 		{
-			name: "no restrictions and no bindings - implicit allow for backward compatibility",
+			name: "no restrictions and no bindings - denied (require explicit cluster allowlist or binding)",
 			template: &telekomv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "open-template"},
 				Spec:       telekomv1alpha1.DebugSessionTemplateSpec{}, // No Allowed field
 			},
 			clusterName:   "any-cluster",
 			bindings:      nil, // No bindings
-			expectAllowed: true,
-			expectSource:  "implicit (no restrictions)",
+			expectAllowed: false,
+			expectSource:  "",
 		},
 		{
 			name: "binding with templateSelector matches template labels - grants cluster access",

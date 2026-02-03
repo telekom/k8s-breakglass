@@ -150,7 +150,8 @@ func ensureTestSessionTemplate(t *testing.T, cli client.Client, ctx context.Cont
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -262,7 +263,8 @@ func TestDebugSession_E2E_DebugSessionTemplateCreation(t *testing.T) {
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -484,7 +486,8 @@ func TestDebugSession_E2E_KubectlDebugMode(t *testing.T) {
 				},
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Constraints: &telekomv1alpha1.DebugSessionConstraints{
 				MaxDuration:     "2h",
@@ -566,7 +569,8 @@ func TestDebugSession_E2E_HybridMode(t *testing.T) {
 				},
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 		},
 	}
@@ -649,7 +653,8 @@ func TestDebugSession_E2E_ManualApprovalWorkflow(t *testing.T) {
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			// Note: No autoApproveFor, so approval is required
 			// Use senior-ops group which TestUsers.Approver has
@@ -743,7 +748,8 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			// Use senior-ops group which TestUsers.Approver has
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
@@ -921,7 +927,8 @@ func TestDebugSession_E2E_ConstraintsEnforcement(t *testing.T) {
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -1136,7 +1143,8 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 				},
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -1258,7 +1266,8 @@ func TestDebugSession_E2E_PodCopy(t *testing.T) {
 				},
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -1360,7 +1369,8 @@ func TestDebugSession_E2E_NodeDebugPod(t *testing.T) {
 				},
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -1469,7 +1479,8 @@ func TestDebugSession_E2E_TerminalSharing(t *testing.T) {
 				MaxParticipants: 5,
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -1543,7 +1554,8 @@ func TestDebugSession_E2E_AutoApproveByGroup(t *testing.T) {
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				Groups: []string{"sre-leads"},
@@ -1628,7 +1640,8 @@ func TestDebugSession_E2E_SchedulingConstraints_NodeSelector(t *testing.T) {
 				},
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -1735,7 +1748,8 @@ func TestDebugSession_E2E_SchedulingOptions(t *testing.T) {
 				},
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -1850,7 +1864,8 @@ func TestDebugSession_E2E_NamespaceConstraints(t *testing.T) {
 				AllowUserNamespace: true,
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -1935,7 +1950,8 @@ func TestDebugSession_E2E_TargetNamespaceSelection(t *testing.T) {
 				AllowUserNamespace: true, // User can specify namespace
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -2038,7 +2054,8 @@ func TestDebugSession_E2E_InvalidTargetNamespaceRejected(t *testing.T) {
 				AllowUserNamespace: true,
 			},
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 			},
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
@@ -2118,7 +2135,8 @@ func TestDebugSession_E2E_ClusterSelector(t *testing.T) {
 			Replicas:        &replicas,
 			TargetNamespace: "breakglass-debug",
 			Allowed: &telekomv1alpha1.DebugSessionAllowed{
-				Groups: []string{"*"},
+				Clusters: []string{"*"},
+				Groups:   []string{"*"},
 				// Use cluster selector instead of explicit cluster names
 				ClusterSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{

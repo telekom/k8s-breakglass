@@ -599,6 +599,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		},
 	}
 
+	// Copy reason configurations as snapshots so session is self-contained
+	// This avoids needing to look up the template later
+	if template.Spec.RequestReason != nil {
+		session.Spec.RequestReasonConfig = template.Spec.RequestReason.DeepCopy()
+	}
+	if template.Spec.ApprovalReason != nil {
+		session.Spec.ApprovalReasonConfig = template.Spec.ApprovalReason.DeepCopy()
+	}
+
 	// Set explicit binding reference if provided (format: "namespace/name")
 	var resolvedBinding *v1alpha1.DebugSessionClusterBinding
 	if req.BindingRef != "" {
@@ -813,6 +822,14 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
+	// Get current user for authorization check
+	currentUser, exists := ctx.Get("username")
+	if !exists || currentUser == nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+	username := currentUser.(string)
+
 	var req RenewDebugSessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -823,6 +840,12 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	extendBy, err := v1alpha1.ParseDuration(req.ExtendBy)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid duration format"})
+		return
+	}
+
+	// Validate duration is positive
+	if extendBy <= 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "extension duration must be positive"})
 		return
 	}
 
@@ -837,6 +860,21 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		return
+	}
+
+	// Check if user is owner or participant
+	isOwnerOrParticipant := session.Spec.RequestedBy == username
+	if !isOwnerOrParticipant {
+		for _, p := range session.Status.Participants {
+			if p.User == username {
+				isOwnerOrParticipant = true
+				break
+			}
+		}
+	}
+	if !isOwnerOrParticipant {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "only session owner or participants can renew"})
 		return
 	}
 
@@ -1545,6 +1583,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 
 // handleGetTemplate returns details for a specific template
 // Uses the uncached apiReader if configured, for consistent reads after writes.
+// Returns the same flat response format as the list endpoint.
 func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
@@ -1568,7 +1607,31 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, template)
+	// Build response using same format as list endpoint
+	resp := DebugSessionTemplateResponse{
+		Name:               template.Name,
+		DisplayName:        template.Spec.DisplayName,
+		Description:        template.Spec.Description,
+		Mode:               template.Spec.Mode,
+		WorkloadType:       template.Spec.WorkloadType,
+		TargetNamespace:    template.Spec.TargetNamespace,
+		Constraints:        template.Spec.Constraints,
+		RequiresApproval:   template.Spec.Approvers != nil && len(template.Spec.Approvers.Groups) > 0,
+		Priority:           template.Spec.Priority,
+		Hidden:             template.Spec.Hidden,
+		Deprecated:         template.Spec.Deprecated,
+		DeprecationMessage: template.Spec.DeprecationMessage,
+	}
+
+	if template.Spec.PodTemplateRef != nil {
+		resp.PodTemplateRef = template.Spec.PodTemplateRef.Name
+	}
+	if template.Spec.Allowed != nil {
+		resp.AllowedClusters = template.Spec.Allowed.Clusters
+		resp.AllowedGroups = template.Spec.Allowed.Groups
+	}
+
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // handleGetTemplateClusters returns cluster-specific details for a template
@@ -2449,12 +2512,53 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, template)
+	// Build response using same flat format as list endpoint
+	containerCount := 0
+	if template.Spec.Template.Spec.Containers != nil {
+		containerCount = len(template.Spec.Template.Spec.Containers)
+	}
+	resp := DebugPodTemplateResponse{
+		Name:        template.Name,
+		DisplayName: template.Spec.DisplayName,
+		Description: template.Spec.Description,
+		Containers:  containerCount,
+	}
+
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // isUserAuthorizedToApprove checks if the user is authorized to approve/reject a debug session
-// The user must be in one of the approver groups/users defined in the session's template
+// The user must be in one of the approver groups/users defined in the session's template or binding.
+// Additionally, the requester of the session is not allowed to self-approve.
 func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Context, session *v1alpha1.DebugSession, username string, userGroupsInterface interface{}) bool {
+	// Block self-approval: the user who requested the session cannot approve it
+	if session.Spec.RequestedBy == username {
+		c.log.Infow("Blocking self-approval attempt",
+			"session", session.Name, "requester", session.Spec.RequestedBy, "approver", username)
+		return false
+	}
+
+	// First try to find the binding that granted this session - it may have its own approvers
+	bindings := &v1alpha1.DebugSessionClusterBindingList{}
+	if err := c.client.List(ctx, bindings); err == nil {
+		for i := range bindings.Items {
+			binding := &bindings.Items[i]
+			// Check if this binding applies to this session
+			if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == session.Spec.TemplateRef {
+				// Check if this binding covers the session's cluster
+				for _, cluster := range binding.Spec.Clusters {
+					if matchPattern(cluster, session.Spec.Cluster) {
+						// Found a matching binding - check if it has approvers
+						if binding.Spec.Approvers != nil && (len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0) {
+							return c.checkApproverAuthorization(binding.Spec.Approvers, username, userGroupsInterface)
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// If template has no resolved approvers info in status, fall back to fetching template
 	if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Approvers == nil {
 		// Fetch the template to check approvers
@@ -3706,11 +3810,14 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	}
 
 	// 3. If template has no cluster restriction and no bindings provide explicit access,
-	// fall back to allowing all clusters (backward compatibility)
+	// the template is effectively unavailable (no clusters can be deployed to).
+	// This is different from the old "backward compatibility" behavior that allowed all clusters.
 	if !result.Allowed && !hasTemplateClusterRestriction && len(applicableBindings) == 0 {
-		result.Allowed = true
-		result.AllowedBySource = "implicit (no restrictions)"
-		c.log.Debugw("Cluster allowed implicitly (no restrictions)")
+		c.log.Debugw("Cluster denied - template has no cluster restrictions and no bindings (unavailable template)",
+			"cluster", clusterName,
+			"template", template.Name,
+		)
+		// result.Allowed remains false
 	}
 
 	c.log.Debugw("isClusterAllowedByTemplateOrBinding result",

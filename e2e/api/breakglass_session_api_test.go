@@ -139,7 +139,8 @@ func (c *BreakglassSessionAPIClient) ListSessions(ctx context.Context, t *testin
 
 // GetSession retrieves a specific breakglass session
 func (c *BreakglassSessionAPIClient) GetSession(ctx context.Context, t *testing.T, name, namespace string) (*telekomv1alpha1.BreakglassSession, int, error) {
-	path := fmt.Sprintf("%s/%s/%s", sessionsAPIBasePath, namespace, name)
+	// Note: The API uses just :name, not :namespace/:name
+	path := fmt.Sprintf("%s/%s", sessionsAPIBasePath, name)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -156,12 +157,21 @@ func (c *BreakglassSessionAPIClient) GetSession(ctx context.Context, t *testing.
 		return nil, resp.StatusCode, fmt.Errorf("failed to get session: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	var session telekomv1alpha1.BreakglassSession
-	if err := json.Unmarshal(body, &session); err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("failed to parse session: %w", err)
+	// The API returns an envelope with session and approvalMeta
+	var envelope struct {
+		Session      telekomv1alpha1.BreakglassSession `json:"session"`
+		ApprovalMeta interface{}                       `json:"approvalMeta"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		// Fallback: try parsing as bare session object
+		var session telekomv1alpha1.BreakglassSession
+		if err2 := json.Unmarshal(body, &session); err2 != nil {
+			return nil, resp.StatusCode, fmt.Errorf("failed to parse session: %w", err)
+		}
+		return &session, resp.StatusCode, nil
 	}
 
-	return &session, resp.StatusCode, nil
+	return &envelope.Session, resp.StatusCode, nil
 }
 
 // CreateSession creates a new breakglass session
@@ -192,7 +202,8 @@ func (c *BreakglassSessionAPIClient) CreateSession(ctx context.Context, t *testi
 
 // ApproveSession approves a pending session
 func (c *BreakglassSessionAPIClient) ApproveSession(ctx context.Context, t *testing.T, name, namespace string) (int, error) {
-	path := fmt.Sprintf("%s/%s/%s/approve", sessionsAPIBasePath, namespace, name)
+	// Note: The API uses just :name, not :namespace/:name
+	path := fmt.Sprintf("%s/%s/approve", sessionsAPIBasePath, name)
 
 	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
@@ -214,7 +225,8 @@ func (c *BreakglassSessionAPIClient) ApproveSession(ctx context.Context, t *test
 
 // RejectSession rejects a pending session
 func (c *BreakglassSessionAPIClient) RejectSession(ctx context.Context, t *testing.T, name, namespace, reason string) (int, error) {
-	path := fmt.Sprintf("%s/%s/%s/reject", sessionsAPIBasePath, namespace, name)
+	// Note: The API uses just :name, not :namespace/:name
+	path := fmt.Sprintf("%s/%s/reject", sessionsAPIBasePath, name)
 
 	reqBody := map[string]string{}
 	if reason != "" {
@@ -241,7 +253,8 @@ func (c *BreakglassSessionAPIClient) RejectSession(ctx context.Context, t *testi
 
 // WithdrawSession allows the requester to withdraw their pending session
 func (c *BreakglassSessionAPIClient) WithdrawSession(ctx context.Context, t *testing.T, name, namespace string) (int, error) {
-	path := fmt.Sprintf("%s/%s/%s/withdraw", sessionsAPIBasePath, namespace, name)
+	// Note: The API uses just :name, not :namespace/:name
+	path := fmt.Sprintf("%s/%s/withdraw", sessionsAPIBasePath, name)
 
 	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
@@ -263,7 +276,8 @@ func (c *BreakglassSessionAPIClient) WithdrawSession(ctx context.Context, t *tes
 
 // DropSession allows the owner to drop their active session
 func (c *BreakglassSessionAPIClient) DropSession(ctx context.Context, t *testing.T, name, namespace string) (int, error) {
-	path := fmt.Sprintf("%s/%s/%s/drop", sessionsAPIBasePath, namespace, name)
+	// Note: The API uses just :name, not :namespace/:name
+	path := fmt.Sprintf("%s/%s/drop", sessionsAPIBasePath, name)
 
 	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
@@ -285,7 +299,8 @@ func (c *BreakglassSessionAPIClient) DropSession(ctx context.Context, t *testing
 
 // CancelSession allows an admin/approver to cancel an active session
 func (c *BreakglassSessionAPIClient) CancelSession(ctx context.Context, t *testing.T, name, namespace string) (int, error) {
-	path := fmt.Sprintf("%s/%s/%s/cancel", sessionsAPIBasePath, namespace, name)
+	// Note: The API uses just :name, not :namespace/:name
+	path := fmt.Sprintf("%s/%s/cancel", sessionsAPIBasePath, name)
 
 	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
@@ -513,11 +528,23 @@ func TestBreakglassSessionAPIApproveReject(t *testing.T) {
 	})
 
 	t.Run("RejectSession", func(t *testing.T) {
-		// Create another session
+		// Create a separate escalation with a unique group to avoid conflict with ApproveSession
+		rejectEscalationName := helpers.GenerateUniqueName("e2e-reject-esc")
+		rejectEscalation := helpers.NewEscalationBuilder(rejectEscalationName, namespace).
+			WithAllowedClusters(clusterName).
+			WithEscalatedGroup("system:e2e-reject-admins").
+			WithApproverUsers(helpers.TestUsers.Approver.Email).
+			WithLabels(helpers.E2ELabelsWithFeature("reject-test")).
+			Build()
+		cleanup.Add(rejectEscalation)
+		require.NoError(t, cli.Create(ctx, rejectEscalation), "Failed to create reject escalation")
+		time.Sleep(2 * time.Second)
+
+		// Create another session using the reject escalation's group
 		req := BreakglassSessionRequest{
 			Clustername: clusterName,
 			Username:    helpers.TestUsers.Requester.Email,
-			GroupName:   escalation.Spec.EscalatedGroup,
+			GroupName:   rejectEscalation.Spec.EscalatedGroup,
 			Reason:      "Testing rejection workflow",
 		}
 

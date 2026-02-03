@@ -121,6 +121,18 @@ type BreakglassSessionSpec struct {
 	// can continue to work with any IDP until explicitly migrated.
 	// +optional
 	AllowIDPMismatch bool `json:"allowIDPMismatch,omitempty"`
+
+	// requestReasonConfig is a snapshot of the escalation's requestReason configuration at session creation time.
+	// This stores whether a request reason was mandatory and its description.
+	// Stored as a snapshot so the session remains self-contained and doesn't require escalation lookups.
+	// +optional
+	RequestReasonConfig *ReasonConfig `json:"requestReasonConfig,omitempty"`
+
+	// approvalReasonConfig is a snapshot of the escalation's approvalReason configuration at session creation time.
+	// This stores whether an approval/rejection reason is mandatory and its description.
+	// Stored as a snapshot so the session remains self-contained and doesn't require escalation lookups.
+	// +optional
+	ApprovalReasonConfig *ReasonConfig `json:"approvalReasonConfig,omitempty"`
 }
 
 // BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.

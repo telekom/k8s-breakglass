@@ -67,6 +67,33 @@ spec:
           spec:
             description: DebugSessionSpec defines the desired state of DebugSession.
             properties:
+              approvalReasonConfig:
+                description: |-
+                  approvalReasonConfig is a snapshot of the template's approvalReason configuration at session creation time.
+                  This stores whether an approval/rejection reason is mandatory and its description.
+                  Stored as a snapshot so the session remains self-contained and doesn't require template lookups.
+                properties:
+                  description:
+                    description: description is help text displayed to approvers.
+                    type: string
+                  mandatory:
+                    default: false
+                    description: mandatory requires a reason for all approval/rejection
+                      actions.
+                    type: boolean
+                  mandatoryForRejection:
+                    default: true
+                    description: mandatoryForRejection requires a reason specifically
+                      for rejections.
+                    type: boolean
+                  minLength:
+                    default: 10
+                    description: minLength is the minimum character length for the
+                      reason.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
               bindingRef:
                 description: |-
                   bindingRef references the DebugSessionClusterBinding used to create this session.
@@ -102,6 +129,41 @@ spec:
               reason:
                 description: reason explains why the debug session is needed.
                 type: string
+              requestReasonConfig:
+                description: |-
+                  requestReasonConfig is a snapshot of the template's requestReason configuration at session creation time.
+                  This stores whether a request reason was mandatory, min/max length, and description.
+                  Stored as a snapshot so the session remains self-contained and doesn't require template lookups.
+                properties:
+                  description:
+                    description: description is help text displayed to users when
+                      entering a reason.
+                    type: string
+                  mandatory:
+                    default: false
+                    description: mandatory requires a reason for all session requests.
+                    type: boolean
+                  maxLength:
+                    default: 1000
+                    description: maxLength is the maximum character length for the
+                      reason.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minLength:
+                    default: 10
+                    description: minLength is the minimum character length for the
+                      reason.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  suggestedReasons:
+                    description: suggestedReasons is a list of pre-defined reason
+                      options for quick selection.
+                    items:
+                      type: string
+                    type: array
+                type: object
               requestedBy:
                 description: requestedBy is the email/identifier of the user who requested
                   the session.

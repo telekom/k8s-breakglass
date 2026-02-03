@@ -524,6 +524,15 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		spec.MaxValidFor = matchedEsc.Spec.MaxValidFor
 		spec.RetainFor = matchedEsc.Spec.RetainFor
 
+		// Copy reason configurations as snapshots so session is self-contained
+		// This avoids needing to look up the escalation later
+		if matchedEsc.Spec.RequestReason != nil {
+			spec.RequestReasonConfig = matchedEsc.Spec.RequestReason.DeepCopy()
+		}
+		if matchedEsc.Spec.ApprovalReason != nil {
+			spec.ApprovalReasonConfig = matchedEsc.Spec.ApprovalReason.DeepCopy()
+		}
+
 		// Determine AllowIDPMismatch flag: set to true when neither escalation nor cluster have IDP restrictions
 		// This ensures backward compatibility for single-IDP deployments
 		escalationHasIDPRestriction := len(matchedEsc.Spec.AllowedIdentityProviders) > 0
@@ -1271,8 +1280,11 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		filtered = append(filtered, ses)
 	}
 
-	reqLog.Infow("Returning filtered breakglass sessions", "count", len(filtered))
-	c.JSON(http.StatusOK, dropK8sInternalFieldsSessionList(filtered))
+	// Enrich sessions with approvalReason from matching escalations
+	enriched := wc.enrichSessionsWithApprovalReason(ctx, filtered, reqLog)
+
+	reqLog.Infow("Returning filtered breakglass sessions", "count", len(enriched))
+	c.JSON(http.StatusOK, enriched)
 }
 
 // SessionApprovalMeta contains authorization metadata for a session
@@ -1284,6 +1296,41 @@ type SessionApprovalMeta struct {
 	DenialReason string `json:"denialReason,omitempty"`
 	SessionState string `json:"sessionState"`
 	StateMessage string `json:"stateMessage,omitempty"`
+}
+
+// EnrichedSessionResponse wraps a session with additional metadata from the escalation config
+type EnrichedSessionResponse struct {
+	v1alpha1.BreakglassSession
+	// ApprovalReason contains the escalation's approval reason configuration (if any)
+	// Now sourced from session.Spec.ApprovalReasonConfig (snapshot at creation time)
+	ApprovalReason *ReasonConfigInfo `json:"approvalReason,omitempty"`
+}
+
+// enrichSessionsWithApprovalReason adds the approvalReason config from the session's stored snapshot.
+// Sessions now store reason configs at creation time, so no escalation lookup is needed.
+func (wc *BreakglassSessionController) enrichSessionsWithApprovalReason(_ context.Context, sessions []v1alpha1.BreakglassSession, _ *zap.SugaredLogger) []EnrichedSessionResponse {
+	result := make([]EnrichedSessionResponse, 0, len(sessions))
+
+	for i := range sessions {
+		ses := sessions[i]
+		dropK8sInternalFieldsSession(&ses)
+
+		enriched := EnrichedSessionResponse{
+			BreakglassSession: ses,
+		}
+
+		// Use the session's stored approval reason config (snapshot from escalation at creation time)
+		if ses.Spec.ApprovalReasonConfig != nil {
+			enriched.ApprovalReason = &ReasonConfigInfo{
+				Mandatory:   ses.Spec.ApprovalReasonConfig.Mandatory,
+				Description: ses.Spec.ApprovalReasonConfig.Description,
+			}
+		}
+
+		result = append(result, enriched)
+	}
+
+	return result
 }
 
 // getSessionApprovalMeta determines the user's authorization status for a session

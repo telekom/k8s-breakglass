@@ -617,7 +617,8 @@ func TestCLIDebugSessionCommands(t *testing.T) {
 		output, err = tc.runCommandWithToken("debug", "template", "get", tmplName, "-o", "json")
 		require.NoError(t, err)
 
-		var tmpl v1alpha1.DebugSessionTemplate
+		// The API returns the same flat response format as the list endpoint
+		var tmpl debugTemplateSummary
 		err = json.Unmarshal([]byte(output), &tmpl)
 		require.NoError(t, err)
 		assert.Equal(t, tmplName, tmpl.Name)
