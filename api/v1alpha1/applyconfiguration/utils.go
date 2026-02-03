@@ -150,6 +150,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.EphemeralContainerRefApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EphemeralContainersConfig"):
 		return &apiv1alpha1.EphemeralContainersConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ExtraDeployVariable"):
+		return &apiv1alpha1.ExtraDeployVariableApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HostNamespacesConfig"):
 		return &apiv1alpha1.HostNamespacesConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("IdentityProvider"):
@@ -240,6 +242,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.SecretKeyReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SecretKeySelector"):
 		return &apiv1alpha1.SecretKeySelectorApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("SelectOption"):
+		return &apiv1alpha1.SelectOptionApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SenderConfig"):
 		return &apiv1alpha1.SenderConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ServiceAccountReference"):
@@ -254,6 +258,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.TerminalSharingStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TokenExchangeConfig"):
 		return &apiv1alpha1.TokenExchangeConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("VariableValidation"):
+		return &apiv1alpha1.VariableValidationApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("WebhookSinkSpec"):
 		return &apiv1alpha1.WebhookSinkSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("WebhookTLSSpec"):

@@ -628,7 +628,8 @@ DNS.4 = keycloak.keycloak.svc.cluster.local
 DNS.5 = localhost
 DNS.6 = ${KEYCLOAK_HOST}
 DNS.7 = breakglass-keycloak
-DNS.8 = breakglass.system.svc.cluster.local
+DNS.8 = breakglass-keycloak.breakglass-system
+DNS.9 = breakglass-keycloak.breakglass-system.svc
 EOF
 openssl genrsa -out "$TLS_DIR/ca.key" 2048
 openssl req -x509 -new -nodes -key "$TLS_DIR/ca.key" -subj "/CN=breakglass-keycloak-ca" -days 365 -out "$TLS_DIR/ca.crt"

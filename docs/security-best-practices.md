@@ -273,6 +273,52 @@ See [Audit Configuration](audit-config.md) for details.
 
 ## Session Security
 
+### ExtraDeployVariables Access Control
+
+The `allowedGroups` field on ExtraDeployVariables enables fine-grained access control:
+
+#### Variable-Level Restrictions
+
+Restrict entire variables to specific groups:
+
+```yaml
+extraDeployVariables:
+  - name: hostNetwork
+    displayName: "Host Network Mode"
+    inputType: boolean
+    allowedGroups:  # Only these groups can set this variable
+      - platform_poweruser
+      - schiff-admin
+```
+
+Users not in allowed groups will receive a `403 Forbidden` error when trying to use this variable.
+
+#### Option-Level Restrictions  
+
+Restrict specific options within select/multiSelect variables:
+
+```yaml
+extraDeployVariables:
+  - name: accessLevel
+    inputType: select
+    options:
+      - value: "readonly"
+        displayName: "Read-Only"  # Available to all
+      - value: "privileged"
+        displayName: "Privileged Access"
+        allowedGroups:  # Only available to admins
+          - schiff-admin
+          - platform_emergency
+```
+
+This enables a single template to serve multiple personas with different capability levels.
+
+#### Enforcement
+
+- **Frontend**: Shows only options the user can select
+- **API**: Validates user groups server-side and rejects unauthorized selections with clear error messages
+- **Webhooks**: Admission validation ensures even direct `kubectl` creation respects group restrictions
+
 ### Duration Limits
 
 1. **Set maximum duration** - Configure `maxValidFor` on escalations

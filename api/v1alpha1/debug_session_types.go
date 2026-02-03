@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -158,6 +159,12 @@ type DebugSessionSpec struct {
 	// Stored as a snapshot so the session remains self-contained and doesn't require template lookups.
 	// +optional
 	ApprovalReasonConfig *DebugApprovalReasonConfig `json:"approvalReasonConfig,omitempty"`
+
+	// extraDeployValues contains user-provided values for extraDeployVariables.
+	// Keys must match variable names defined in the template.
+	// Values are validated against the variable's inputType and validation rules.
+	// +optional
+	ExtraDeployValues map[string]apiextensionsv1.JSON `json:"extraDeployValues,omitempty"`
 }
 
 // BindingReference references a DebugSessionClusterBinding.
@@ -553,6 +560,17 @@ func validateDebugSessionSpec(session *DebugSession) field.ErrorList {
 	// Validate duration format if specified
 	if session.Spec.RequestedDuration != "" {
 		allErrs = append(allErrs, validateDurationFormat(session.Spec.RequestedDuration, specPath.Child("requestedDuration"))...)
+	}
+
+	// Validate extraDeployValues keys are valid Go identifiers
+	if len(session.Spec.ExtraDeployValues) > 0 {
+		valuesPath := specPath.Child("extraDeployValues")
+		for key := range session.Spec.ExtraDeployValues {
+			if !isValidGoIdentifier(key) {
+				allErrs = append(allErrs, field.Invalid(valuesPath.Key(key), key,
+					"must be a valid Go identifier (letters, digits, underscores, starting with letter)"))
+			}
+		}
 	}
 
 	return allErrs

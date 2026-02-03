@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -202,13 +203,19 @@ func TestBuildRenderContext(t *testing.T) {
 		},
 	}
 
-	ctx := mgr.buildRenderContext(session, template, binding, "target-ns")
+	enabledResources := []v1alpha1.AuxiliaryResource{
+		{Name: "resource-1", Category: "network"},
+	}
+
+	ctx := mgr.buildRenderContext(session, template, binding, "target-ns", enabledResources)
 
 	assert.Equal(t, "test-session", ctx.Session.Name)
 	assert.Equal(t, "target-ns", ctx.Target.Namespace)
 	assert.Equal(t, "prod-cluster", ctx.Target.ClusterName)
 	assert.Equal(t, "Test Template", ctx.Template.DisplayName)
 	assert.Equal(t, "test-binding", ctx.Binding.Name)
+	assert.Contains(t, ctx.EnabledResources, "resource-1")
+	assert.NotEmpty(t, ctx.Now)
 }
 
 func TestRenderTemplate_SimpleTemplate(t *testing.T) {
@@ -462,7 +469,7 @@ func TestValidateAuxiliaryResources_MissingTemplate(t *testing.T) {
 
 	errs := ValidateAuxiliaryResources(auxResources)
 	require.NotEmpty(t, errs)
-	assert.Contains(t, errs[0].Error(), "template is required")
+	assert.Contains(t, errs[0].Error(), "either template or templateString is required")
 }
 
 func TestValidateAuxiliaryResources_DuplicateNames(t *testing.T) {
@@ -755,4 +762,272 @@ func TestFilterEnabledResources_EmptySelectedByUser(t *testing.T) {
 	}
 	result := mgr.filterEnabledResources(template, nil, []string{})
 	assert.Empty(t, result, "empty user selection should not include optional resources")
+}
+
+func TestValidateAuxiliaryResources_ValidTemplateString(t *testing.T) {
+	auxResources := []v1alpha1.AuxiliaryResource{
+		{
+			Name:     "test-pvc",
+			Category: "storage",
+			TemplateString: `apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-{{ .session.name }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi`,
+		},
+	}
+
+	errs := ValidateAuxiliaryResources(auxResources)
+	assert.Empty(t, errs, "valid templateString should not produce errors")
+}
+
+func TestValidateAuxiliaryResources_TemplateStringWithMultiDoc(t *testing.T) {
+	auxResources := []v1alpha1.AuxiliaryResource{
+		{
+			Name:     "test-resources",
+			Category: "storage",
+			TemplateString: `apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-config
+data:
+  key: value`,
+		},
+	}
+
+	errs := ValidateAuxiliaryResources(auxResources)
+	assert.Empty(t, errs, "multi-document templateString should be valid")
+}
+
+func TestValidateAuxiliaryResources_InvalidTemplateStringSyntax(t *testing.T) {
+	auxResources := []v1alpha1.AuxiliaryResource{
+		{
+			Name:     "test-invalid",
+			Category: "storage",
+			TemplateString: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .session.name`, // Unclosed action
+		},
+	}
+
+	errs := ValidateAuxiliaryResources(auxResources)
+	require.NotEmpty(t, errs)
+	assert.Contains(t, errs[0].Error(), "invalid templateString")
+}
+
+func TestValidateAuxiliaryResources_MutuallyExclusiveTemplates(t *testing.T) {
+	auxResources := []v1alpha1.AuxiliaryResource{
+		{
+			Name:           "test-both",
+			Category:       "storage",
+			Template:       runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap"}`)},
+			TemplateString: `apiVersion: v1\nkind: Secret`,
+		},
+	}
+
+	errs := ValidateAuxiliaryResources(auxResources)
+	require.NotEmpty(t, errs)
+	assert.Contains(t, errs[0].Error(), "mutually exclusive")
+}
+
+func TestBuildVarsFromSession(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	tests := []struct {
+		name     string
+		session  *v1alpha1.DebugSession
+		template *v1alpha1.DebugSessionTemplateSpec
+		expected map[string]string
+	}{
+		{
+			name: "no variables",
+			session: &v1alpha1.DebugSession{
+				Spec: v1alpha1.DebugSessionSpec{},
+			},
+			template: &v1alpha1.DebugSessionTemplateSpec{},
+			expected: map[string]string{},
+		},
+		{
+			name: "user provided values",
+			session: &v1alpha1.DebugSession{
+				Spec: v1alpha1.DebugSessionSpec{
+					ExtraDeployValues: map[string]apiextensionsv1.JSON{
+						"pvcSize":      {Raw: []byte(`"50Gi"`)},
+						"createPvc":    {Raw: []byte(`true`)},
+						"replicaCount": {Raw: []byte(`3`)},
+					},
+				},
+			},
+			template: &v1alpha1.DebugSessionTemplateSpec{},
+			expected: map[string]string{
+				"pvcSize":      "50Gi",
+				"createPvc":    "true",
+				"replicaCount": "3",
+			},
+		},
+		{
+			name: "defaults from template",
+			session: &v1alpha1.DebugSession{
+				Spec: v1alpha1.DebugSessionSpec{},
+			},
+			template: &v1alpha1.DebugSessionTemplateSpec{
+				ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+					{Name: "pvcSize", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
+					{Name: "enabled", Default: &apiextensionsv1.JSON{Raw: []byte(`false`)}},
+				},
+			},
+			expected: map[string]string{
+				"pvcSize": "10Gi",
+				"enabled": "false",
+			},
+		},
+		{
+			name: "user values override defaults",
+			session: &v1alpha1.DebugSession{
+				Spec: v1alpha1.DebugSessionSpec{
+					ExtraDeployValues: map[string]apiextensionsv1.JSON{
+						"pvcSize": {Raw: []byte(`"100Gi"`)}, // Override default
+					},
+				},
+			},
+			template: &v1alpha1.DebugSessionTemplateSpec{
+				ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+					{Name: "pvcSize", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
+					{Name: "enabled", Default: &apiextensionsv1.JSON{Raw: []byte(`true`)}},
+				},
+			},
+			expected: map[string]string{
+				"pvcSize": "100Gi",
+				"enabled": "true",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := mgr.buildVarsFromSession(tt.session, tt.template)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestExtractJSONValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected string
+	}{
+		{
+			name:     "string value",
+			input:    []byte(`"hello world"`),
+			expected: "hello world",
+		},
+		{
+			name:     "boolean true",
+			input:    []byte(`true`),
+			expected: "true",
+		},
+		{
+			name:     "boolean false",
+			input:    []byte(`false`),
+			expected: "false",
+		},
+		{
+			name:     "integer",
+			input:    []byte(`42`),
+			expected: "42",
+		},
+		{
+			name:     "float",
+			input:    []byte(`3.14`),
+			expected: "3.14",
+		},
+		{
+			name:     "string array",
+			input:    []byte(`["a","b","c"]`),
+			expected: "a,b,c",
+		},
+		{
+			name:     "empty string",
+			input:    []byte(`""`),
+			expected: "",
+		},
+		{
+			name:     "empty input",
+			input:    []byte{},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractJSONValue(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestBuildRenderContext_VarsAndMetadata(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "prod-cluster",
+			RequestedBy: "user@example.com",
+			Reason:      "Testing",
+			TemplateRef: "test-template",
+			ExtraDeployValues: map[string]apiextensionsv1.JSON{
+				"pvcSize":      {Raw: []byte(`"50Gi"`)},
+				"storageClass": {Raw: []byte(`"fast-storage"`)},
+			},
+		},
+	}
+
+	template := &v1alpha1.DebugSessionTemplateSpec{
+		DisplayName: "Test Template",
+		ExtraDeployVariables: []v1alpha1.ExtraDeployVariable{
+			{Name: "pvcSize", Default: &apiextensionsv1.JSON{Raw: []byte(`"10Gi"`)}},
+			{Name: "region", Default: &apiextensionsv1.JSON{Raw: []byte(`"eu-west-1"`)}},
+		},
+	}
+
+	enabledResources := []v1alpha1.AuxiliaryResource{
+		{Name: "pvc"},
+		{Name: "config"},
+	}
+
+	ctx := mgr.buildRenderContext(session, template, nil, "target-ns", enabledResources)
+
+	// Verify Vars
+	assert.Equal(t, "50Gi", ctx.Vars["pvcSize"]) // User override
+	assert.Equal(t, "fast-storage", ctx.Vars["storageClass"])
+	assert.Equal(t, "eu-west-1", ctx.Vars["region"]) // Default value
+
+	// Verify EnabledResources
+	assert.Contains(t, ctx.EnabledResources, "pvc")
+	assert.Contains(t, ctx.EnabledResources, "config")
+
+	// Verify Now is set
+	assert.NotEmpty(t, ctx.Now)
 }

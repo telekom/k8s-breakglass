@@ -1,0 +1,108 @@
+# Test Debug Session Template with ExtraDeployVariables
+# Template for testing user-configurable variables in debug sessions
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: test-template-with-variables
+  labels:
+    e2e-test: "true"
+spec:
+  displayName: "Debug Session with Variables"
+  description: "A debug session template with configurable variables"
+  debugPodTemplateRef: test-variable-debug-pod
+  allowedNamespaces:
+    - default
+    - kube-system
+  maxDuration: "2h"
+  extraDeployVariables:
+    # Boolean variable
+    - name: enableDebug
+      displayName: "Enable Debug Mode"
+      description: "Enable verbose debug logging"
+      inputType: boolean
+      default: false
+    # Text variable with validation
+    - name: debugLabel
+      displayName: "Debug Label"
+      description: "Custom label for debug resources"
+      inputType: text
+      required: true
+      validation:
+        minLength: 3
+        maxLength: 50
+        pattern: "^[a-z][a-z0-9-]*$"
+        patternError: "Must start with lowercase letter and contain only lowercase letters, numbers, and hyphens"
+    # Select variable
+    - name: logLevel
+      displayName: "Log Level"
+      description: "Logging verbosity level"
+      inputType: select
+      options:
+        - value: debug
+          displayName: "Debug"
+        - value: info
+          displayName: "Info"
+        - value: warn
+          displayName: "Warning"
+        - value: error
+          displayName: "Error"
+      default: "info"
+    # Number variable
+    - name: replicaCount
+      displayName: "Replica Count"
+      description: "Number of debug pod replicas"
+      inputType: number
+      validation:
+        min: "1"
+        max: "5"
+      default: 1
+    # Storage size variable
+    - name: storageSize
+      displayName: "Storage Size"
+      description: "Size of scratch storage"
+      inputType: storageSize
+      validation:
+        minStorage: "100Mi"
+        maxStorage: "10Gi"
+      default: "1Gi"
+    # Advanced variable (only shown in advanced section)
+    - name: cpuLimit
+      displayName: "CPU Limit"
+      description: "Maximum CPU for debug container"
+      inputType: text
+      advanced: true
+      default: "500m"
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: test-variable-debug-pod
+  labels:
+    e2e-test: "true"
+spec:
+  displayName: "Variable Debug Pod"
+  description: "Debug pod with configurable resources"
+  podOverridesTemplate: |
+    spec:
+      containers:
+        - name: debug
+          resources:
+            limits:
+              cpu: {{ .Vars.cpuLimit | default "500m" }}
+  template:
+    spec:
+      containers:
+        - name: debug
+          image: busybox:latest
+          command: ["sleep", "infinity"]
+          env:
+            - name: DEBUG_MODE
+              value: "{{ .Vars.enableDebug }}"
+            - name: LOG_LEVEL
+              value: "{{ .Vars.logLevel }}"
+          resources:
+            limits:
+              memory: "128Mi"
+            requests:
+              cpu: "50m"
+              memory: "64Mi"

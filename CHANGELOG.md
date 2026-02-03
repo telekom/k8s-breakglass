@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CLI Support for ExtraDeploy Variables**: Added `--set` flag to `bgctl debug session create` command
+  - Use `--set key=value` to provide values for template `extraDeployVariables`
+  - Can be repeated multiple times: `--set logLevel=debug --set enableTracing=true`
+  - Values are passed to the API as `extraDeployValues` in the create request
+
+- **ExtraDeploy Variables (Complete Implementation)**: Full implementation of user-provided variables in debug session templates
+  - **API Types (Phase 1-2)**:
+    - `ExtraDeployVariable` type with support for boolean, text, number, storageSize, select, and multiSelect input types
+    - `DebugSessionTemplateSpec.extraDeployVariables` field for defining template variables
+    - `DebugSessionTemplateSpec.podTemplateString` field for inline templated pod specs
+    - `DebugSessionTemplateSpec.podOverridesTemplate` field for templated pod overrides
+    - `DebugSessionSpec.extraDeployValues` field for user-provided values at session request time
+    - `AuxiliaryResource.templateString` field for multi-document YAML templates with Go templating
+    - Webhook validation for variable names, options, and type-specific validation rules
+  - **Pod Template Rendering (Phase 3)**:
+    - Support for `podTemplateString` - fully templated pod specs with Go template + Sprig functions
+    - Support for `podOverridesTemplate` - templated pod overrides (image, command, args, env)
+    - Template context includes `.Session`, `.Template`, `.Cluster`, `.Namespace`, `.Vars`, and `.Impersonation`
+    - Access user values in templates as `{{ .Vars.variableName }}`
+  - **Value Validation**:
+    - `ValidateExtraDeployValues()` validates user-provided values against template variable definitions
+    - Type-specific validation: pattern/length for text, min/max for numbers, size ranges for storage
+    - Required field validation, select option validation, and multiSelect item count constraints
+  - **Frontend Form Generation (Phase 4)**:
+    - `VariableForm.vue` component dynamically renders forms based on template variable definitions
+    - Support for all input types: boolean, text, number, storageSize, select, multiSelect
+    - Variable grouping by `group` field with collapsible sections
+    - Advanced variable toggle (show/hide `advanced: true` variables)
+    - Group-based visibility filtering via `allowedGroups` field
+    - Client-side validation with inline error messages
+    - Integration with `DebugSessionCreate.vue` workflow
+  - See `docs/proposals/extra-deploy-variables.md` for full design and examples
+
+- **YAML Security Template Functions**: New template functions to prevent YAML injection attacks
+  - `yamlQuote` - safely quotes strings for YAML values, escaping special characters
+  - `yamlSafe` - sanitizes strings by replacing dangerous YAML characters
+  - `isYAMLSpecialWord` - detects YAML keywords (true, false, null, etc.) that need quoting
+  - Documentation: See `docs/extra-deploy-variables.md` for security best practices
+
+### Security
+
+- **AllowedGroups Server-Side Enforcement**: The API now validates `allowedGroups` on both variables and select options
+  - Variable-level `allowedGroups` prevents unauthorized users from setting restricted variables
+  - Option-level `allowedGroups` on `select`/`multiSelect` options restricts high-risk choices
+  - Returns clear error messages indicating which groups are required
+  - Enables persona-based separation of concerns (e.g., tenants see reduced options vs platform admins)
+
+- **YAML Injection Prevention**: User-provided `extraDeployValues` are now properly sanitized when rendered into templates
+  - Template authors should use `{{ .Vars.value | yamlQuote }}` for all user inputs
+  - New functions handle colons, hashes, newlines, quotes, YAML anchors/aliases
+  - Comprehensive test coverage for injection attempts
+
 ### Fixed
 
 - **Orphaned DebugSession Cleanup**: Fixed infinite retry loop when ClusterConfig is deleted while DebugSessions are still active

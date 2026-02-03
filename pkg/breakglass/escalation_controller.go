@@ -10,6 +10,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type BreakglassEscalationController struct {
@@ -57,6 +58,10 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 	reqLog.Info("Processing escalations request")
 	metrics.APIEndpointRequests.WithLabelValues("handleGetEscalations").Inc()
+
+	// Parse query parameters for filtering
+	clusterFilter := c.Query("cluster")
+	activeOnly := parseBoolQuery(c.Query("activeOnly"), false)
 
 	email, err := ec.identityProvider.GetEmail(c)
 	if err != nil {
@@ -116,7 +121,25 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	for _, g := range userGroups {
 		userGroupSet[g] = struct{}{}
 	}
-	filtered = append(filtered, escalations...)
+
+	// Apply cluster and activeOnly filters
+	for _, esc := range escalations {
+		// Filter by cluster if specified
+		if clusterFilter != "" {
+			if !escalationMatchesCluster(esc, clusterFilter) {
+				continue
+			}
+		}
+
+		// Filter by active status if requested
+		if activeOnly {
+			if !isEscalationReady(&esc) {
+				continue
+			}
+		}
+
+		filtered = append(filtered, esc)
+	}
 
 	// Return full objects including (future) status with approverGroupMembers for UI
 	response := make([]v1alpha1.BreakglassEscalation, 0, len(filtered))
@@ -190,4 +213,14 @@ func NewBreakglassEscalationController(log *zap.SugaredLogger,
 
 	log.Debug("BreakglassEscalationController initialization completed successfully")
 	return controller
+}
+
+// isEscalationReady checks if an escalation has Ready=True condition.
+func isEscalationReady(esc *v1alpha1.BreakglassEscalation) bool {
+	for _, cond := range esc.Status.Conditions {
+		if cond.Type == "Ready" && cond.Status == metav1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }

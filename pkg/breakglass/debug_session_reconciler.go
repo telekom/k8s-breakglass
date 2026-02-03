@@ -39,6 +39,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
@@ -1144,16 +1145,37 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 	}
 }
 
-// buildPodSpec creates the pod spec from templates and overrides
+// buildPodSpec creates the pod spec from templates and overrides.
+// Supports both structured podTemplate and Go-templated podTemplateString.
 func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate) (corev1.PodSpec, error) {
 	var spec corev1.PodSpec
 
-	// Start with pod template if available
-	if podTemplate != nil {
+	// Build render context for template rendering (podTemplateString, podOverridesTemplate)
+	renderCtx := c.buildPodRenderContext(ds, template)
+
+	// Determine pod spec source: podTemplateString takes priority over podTemplateRef
+	if template.Spec.PodTemplateString != "" {
+		// Render podTemplateString as Go template
+		renderedSpec, err := c.renderPodTemplateString(template.Spec.PodTemplateString, renderCtx)
+		if err != nil {
+			return corev1.PodSpec{}, fmt.Errorf("failed to render podTemplateString: %w", err)
+		}
+		spec = renderedSpec
+	} else if podTemplate != nil {
+		// Use structured pod template
 		spec = c.convertDebugPodSpec(podTemplate.Spec.Template.Spec)
 	}
 
-	// Apply overrides from session template
+	// Apply podOverridesTemplate if specified (Go template producing overrides YAML)
+	if template.Spec.PodOverridesTemplate != "" {
+		overrides, err := c.renderPodOverridesTemplate(template.Spec.PodOverridesTemplate, renderCtx)
+		if err != nil {
+			return corev1.PodSpec{}, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
+		}
+		c.applyPodOverridesStruct(&spec, overrides)
+	}
+
+	// Apply static overrides from session template (legacy support)
 	if template.Spec.PodOverrides != nil && template.Spec.PodOverrides.Spec != nil {
 		overrides := template.Spec.PodOverrides.Spec
 		if overrides.HostNetwork != nil {
@@ -1238,6 +1260,158 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 	}
 
 	return spec, nil
+}
+
+// buildPodRenderContext creates the render context for pod templates.
+// This is a subset of AuxiliaryResourceContext, focused on pod rendering.
+func (c *DebugSessionController) buildPodRenderContext(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) v1alpha1.AuxiliaryResourceContext {
+	ctx := v1alpha1.AuxiliaryResourceContext{
+		Session: v1alpha1.AuxiliaryResourceSessionContext{
+			Name:        ds.Name,
+			Namespace:   ds.Namespace,
+			Cluster:     ds.Spec.Cluster,
+			RequestedBy: ds.Spec.RequestedBy,
+			Reason:      ds.Spec.Reason,
+		},
+		Target: v1alpha1.AuxiliaryResourceTargetContext{
+			Namespace:   ds.Spec.TargetNamespace,
+			ClusterName: ds.Spec.Cluster,
+		},
+		Template: v1alpha1.AuxiliaryResourceTemplateContext{
+			Name:        ds.Spec.TemplateRef,
+			DisplayName: template.Spec.DisplayName,
+		},
+		Labels: map[string]string{
+			"app.kubernetes.io/managed-by":                  "breakglass",
+			"breakglass.t-caas.telekom.com/session":         ds.Name,
+			"breakglass.t-caas.telekom.com/session-cluster": ds.Spec.Cluster,
+		},
+		Annotations: map[string]string{
+			"breakglass.t-caas.telekom.com/created-by": ds.Spec.RequestedBy,
+		},
+		Now: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if ds.Status.Approval != nil {
+		ctx.Session.ApprovedBy = ds.Status.Approval.ApprovedBy
+	}
+	if ds.Status.ExpiresAt != nil {
+		ctx.Session.ExpiresAt = ds.Status.ExpiresAt.Format(time.RFC3339)
+	}
+	if template.Spec.TargetNamespace != "" && ctx.Target.Namespace == "" {
+		ctx.Target.Namespace = template.Spec.TargetNamespace
+	}
+
+	// Build Vars from extraDeployValues with defaults from template
+	ctx.Vars = c.buildVarsFromSession(ds, &template.Spec)
+
+	return ctx
+}
+
+// buildVarsFromSession extracts user-provided variable values from session spec
+// and applies defaults from template definition.
+func (c *DebugSessionController) buildVarsFromSession(
+	ds *v1alpha1.DebugSession,
+	templateSpec *v1alpha1.DebugSessionTemplateSpec,
+) map[string]string {
+	vars := make(map[string]string)
+
+	// Apply defaults from template variable definitions
+	if templateSpec != nil {
+		for _, varDef := range templateSpec.ExtraDeployVariables {
+			if varDef.Default != nil && len(varDef.Default.Raw) > 0 {
+				vars[varDef.Name] = extractJSONValueForPod(varDef.Default.Raw)
+			}
+		}
+	}
+
+	// Override with user-provided values
+	for name, jsonVal := range ds.Spec.ExtraDeployValues {
+		vars[name] = extractJSONValueForPod(jsonVal.Raw)
+	}
+
+	return vars
+}
+
+// extractJSONValueForPod extracts string representation from JSON.
+// Local copy to avoid import cycles.
+func extractJSONValueForPod(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	var strVal string
+	if err := json.Unmarshal(raw, &strVal); err == nil {
+		return strVal
+	}
+
+	var boolVal bool
+	if err := json.Unmarshal(raw, &boolVal); err == nil {
+		return fmt.Sprintf("%t", boolVal)
+	}
+
+	var numVal float64
+	if err := json.Unmarshal(raw, &numVal); err == nil {
+		if numVal == float64(int64(numVal)) {
+			return fmt.Sprintf("%d", int64(numVal))
+		}
+		return fmt.Sprintf("%g", numVal)
+	}
+
+	var arrVal []string
+	if err := json.Unmarshal(raw, &arrVal); err == nil {
+		return strings.Join(arrVal, ",")
+	}
+
+	return string(raw)
+}
+
+// renderPodTemplateString renders a podTemplateString Go template and returns a PodSpec.
+func (c *DebugSessionController) renderPodTemplateString(templateStr string, ctx v1alpha1.AuxiliaryResourceContext) (corev1.PodSpec, error) {
+	renderer := NewTemplateRenderer()
+	rendered, err := renderer.RenderTemplateString(templateStr, ctx)
+	if err != nil {
+		return corev1.PodSpec{}, fmt.Errorf("template rendering failed: %w", err)
+	}
+
+	var podSpec corev1.PodSpec
+	if err := yaml.Unmarshal(rendered, &podSpec); err != nil {
+		return corev1.PodSpec{}, fmt.Errorf("failed to parse rendered pod spec YAML: %w", err)
+	}
+
+	return podSpec, nil
+}
+
+// renderPodOverridesTemplate renders podOverridesTemplate and returns structured overrides.
+func (c *DebugSessionController) renderPodOverridesTemplate(templateStr string, ctx v1alpha1.AuxiliaryResourceContext) (*v1alpha1.DebugPodSpecOverrides, error) {
+	renderer := NewTemplateRenderer()
+	rendered, err := renderer.RenderTemplateString(templateStr, ctx)
+	if err != nil {
+		return nil, fmt.Errorf("template rendering failed: %w", err)
+	}
+
+	var overrides v1alpha1.DebugPodSpecOverrides
+	if err := yaml.Unmarshal(rendered, &overrides); err != nil {
+		return nil, fmt.Errorf("failed to parse rendered overrides YAML: %w", err)
+	}
+
+	return &overrides, nil
+}
+
+// applyPodOverridesStruct applies rendered overrides to a pod spec.
+func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, overrides *v1alpha1.DebugPodSpecOverrides) {
+	if overrides == nil {
+		return
+	}
+	if overrides.HostNetwork != nil {
+		spec.HostNetwork = *overrides.HostNetwork
+	}
+	if overrides.HostPID != nil {
+		spec.HostPID = *overrides.HostPID
+	}
+	if overrides.HostIPC != nil {
+		spec.HostIPC = *overrides.HostIPC
+	}
 }
 
 func mergeStringMaps(base map[string]string, maps ...map[string]string) map[string]string {

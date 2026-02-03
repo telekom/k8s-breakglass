@@ -4,12 +4,14 @@ import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState } from "@/components/common";
+import VariableForm from "@/components/debug-session/VariableForm.vue";
 import { pushError, pushSuccess, pushWarning } from "@/services/toast";
 import type {
   DebugSessionTemplateResponse,
   CreateDebugSessionRequest,
   AvailableClusterDetail,
   BindingOption,
+  ExtraDeployValues,
 } from "@/model/debugSession";
 
 const auth = inject(AuthKey);
@@ -40,6 +42,8 @@ const form = reactive<{
   useScheduledStart: boolean;
   targetNamespace: string;
   selectedSchedulingOption: string;
+  extraDeployValues: ExtraDeployValues;
+  showAdvancedOptions: boolean;
 }>({
   templateRef: "",
   cluster: "",
@@ -50,6 +54,8 @@ const form = reactive<{
   useScheduledStart: false,
   targetNamespace: "",
   selectedSchedulingOption: "",
+  extraDeployValues: {},
+  showAdvancedOptions: false,
 });
 
 // Reset cluster and go back to step 1 when template changes
@@ -63,6 +69,8 @@ watch(
       form.requestedDuration = "1h";
       form.targetNamespace = "";
       form.selectedSchedulingOption = "";
+      form.extraDeployValues = {};
+      form.showAdvancedOptions = false;
       clusterDetails.value = [];
       currentStep.value = 1;
     }
@@ -99,6 +107,14 @@ watch(
 const selectedTemplate = computed(() => {
   if (!templates.value || templates.value.length === 0) return undefined;
   return templates.value.find((t) => t.name === form.templateRef);
+});
+
+// User groups for variable visibility filtering
+const userGroups = ref<string[]>([]);
+
+// Check if template has extra deploy variables
+const hasExtraDeployVariables = computed(() => {
+  return selectedTemplate.value?.extraDeployVariables && selectedTemplate.value.extraDeployVariables.length > 0;
 });
 
 // Get the selected cluster's detailed info
@@ -377,8 +393,16 @@ function goBackToStep1() {
   form.cluster = "";
 }
 
-onMounted(() => {
+onMounted(async () => {
   fetchTemplates();
+  // Get user groups from auth for variable visibility filtering
+  const currentUser = await auth.getUser();
+  if (currentUser?.profile) {
+    const groups = (currentUser.profile as Record<string, unknown>).groups;
+    if (Array.isArray(groups)) {
+      userGroups.value = groups as string[];
+    }
+  }
 });
 
 async function handleSubmit() {
@@ -412,6 +436,11 @@ async function handleSubmit() {
     // Include selected scheduling option only if the template/binding has scheduling options
     if (form.selectedSchedulingOption && hasSchedulingOptions.value) {
       request.selectedSchedulingOption = form.selectedSchedulingOption;
+    }
+
+    // Include extraDeployValues if the template has variables and user has provided values
+    if (selectedTemplate.value?.extraDeployVariables?.length && Object.keys(form.extraDeployValues).length > 0) {
+      request.extraDeployValues = form.extraDeployValues;
     }
 
     const session = await debugSessionService.createSession(request);
@@ -866,6 +895,21 @@ function handleDurationChange(ev: Event) {
           required
           @scale-change="form.reason = ($event.target as HTMLTextAreaElement).value"
         ></scale-textarea>
+
+        <!-- Extra Deploy Variables Section -->
+        <div v-if="hasExtraDeployVariables" class="extra-variables-section" data-testid="extra-variables-section">
+          <h4>Configuration Options</h4>
+          <p class="section-description">
+            Configure additional options for your debug session. Some options may be required.
+          </p>
+          <VariableForm
+            v-model="form.extraDeployValues"
+            v-model:show-advanced="form.showAdvancedOptions"
+            :variables="selectedTemplate?.extraDeployVariables || []"
+            :user-groups="userGroups"
+            data-testid="variable-form"
+          />
+        </div>
 
         <div class="schedule-section">
           <scale-checkbox
@@ -1655,5 +1699,27 @@ function handleDurationChange(ev: Event) {
 .aux-categories {
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-additional);
+}
+
+/* Extra Deploy Variables Section */
+.extra-variables-section {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: var(--telekom-color-background-surface-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--telekom-color-ui-border-standard);
+}
+
+.extra-variables-section h4 {
+  margin: 0 0 var(--space-xs) 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--telekom-color-text-and-icon-standard);
+}
+
+.extra-variables-section .section-description {
+  font-size: 0.875rem;
+  color: var(--telekom-color-text-and-icon-additional);
+  margin: 0 0 var(--space-md) 0;
 }
 </style>

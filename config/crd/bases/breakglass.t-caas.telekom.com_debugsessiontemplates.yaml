@@ -1265,11 +1265,18 @@ spec:
                         template is the embedded resource template.
                         Supports Go templating with session context variables using Sprout functions.
                         See documentation for available variables and functions.
+                        Mutually exclusive with templateString. Deprecated: Use templateString for new templates.
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
+                    templateString:
+                      description: |-
+                        templateString is a Go template that produces one or more YAML documents.
+                        Use `---` separator for multiple resources from one definition.
+                        Supports all context variables including {{ .Vars.* }} for user-provided values.
+                        Mutually exclusive with template.
+                      type: string
                   required:
                   - name
-                  - template
                   type: object
                 type: array
               constraints:
@@ -1334,6 +1341,164 @@ spec:
                 - terminate
                 - notify-only
                 type: string
+              extraDeployVariables:
+                description: |-
+                  extraDeployVariables defines user-provided variables for template rendering.
+                  These values are collected from the user at session request time
+                  and made available as {{ .Vars.<name> }} in all templates.
+                items:
+                  description: |-
+                    ExtraDeployVariable defines a user-provided variable for template rendering.
+                    Variables are available as {{ .Vars.<name> }} in all templates.
+                  properties:
+                    advanced:
+                      description: |-
+                        advanced marks this variable as advanced/expert.
+                        Advanced variables may be hidden behind an "Advanced" toggle in UI.
+                      type: boolean
+                    allowedGroups:
+                      description: |-
+                        allowedGroups restricts who can set this variable.
+                        If empty, all users with template access can set it.
+                      items:
+                        type: string
+                      type: array
+                    default:
+                      description: |-
+                        default is the default value if user doesn't provide one.
+                        Type must match inputType.
+                      x-kubernetes-preserve-unknown-fields: true
+                    description:
+                      description: description provides help text for the user.
+                      type: string
+                    displayName:
+                      description: displayName is the human-readable label shown in
+                        the UI.
+                      type: string
+                    group:
+                      description: group organizes variables into collapsible sections
+                        in the UI.
+                      type: string
+                    inputType:
+                      allOf:
+                      - enum:
+                        - boolean
+                        - text
+                        - number
+                        - storageSize
+                        - select
+                        - multiSelect
+                      - enum:
+                        - boolean
+                        - text
+                        - number
+                        - storageSize
+                        - select
+                        - multiSelect
+                      default: text
+                      description: inputType defines the UI input control and value
+                        type.
+                      type: string
+                    name:
+                      description: |-
+                        name is the variable name, used as {{ .Vars.<name> }} in templates.
+                        Must be a valid Go identifier (letters, digits, underscores, starting with letter).
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-zA-Z][a-zA-Z0-9_]*$
+                      type: string
+                    options:
+                      description: |-
+                        options provides choices for select/multiSelect input types.
+                        Required when inputType is select or multiSelect.
+                      items:
+                        description: SelectOption defines a choice for select/multiSelect
+                          inputs.
+                        properties:
+                          allowedGroups:
+                            description: allowedGroups restricts who can select this
+                              option.
+                            items:
+                              type: string
+                            type: array
+                          description:
+                            description: description provides additional context shown
+                              as tooltip/help.
+                            type: string
+                          disabled:
+                            description: |-
+                              disabled prevents this option from being selected.
+                              Useful for showing unavailable options.
+                            type: boolean
+                          displayName:
+                            description: displayName is shown in the UI (defaults
+                              to value if empty).
+                            type: string
+                          value:
+                            description: value is the actual value stored and used
+                              in templates.
+                            minLength: 1
+                            type: string
+                        required:
+                        - value
+                        type: object
+                      type: array
+                    required:
+                      description: |-
+                        required indicates this variable must be provided by the user.
+                        Variables without defaults are implicitly required.
+                      type: boolean
+                    validation:
+                      description: validation defines constraints for the input value.
+                      properties:
+                        max:
+                          description: max is the maximum value for number inputs
+                            (as string).
+                          type: string
+                        maxItems:
+                          description: maxItems is the maximum selections for multiSelect
+                            inputs.
+                          minimum: 1
+                          type: integer
+                        maxLength:
+                          description: maxLength is the maximum string length for
+                            text inputs.
+                          minimum: 1
+                          type: integer
+                        maxStorage:
+                          description: maxStorage is the maximum size for storageSize
+                            inputs (e.g., "1Ti").
+                          type: string
+                        min:
+                          description: min is the minimum value for number inputs
+                            (as string).
+                          type: string
+                        minItems:
+                          description: minItems is the minimum selections for multiSelect
+                            inputs.
+                          minimum: 0
+                          type: integer
+                        minLength:
+                          description: minLength is the minimum string length for
+                            text inputs.
+                          minimum: 0
+                          type: integer
+                        minStorage:
+                          description: minStorage is the minimum size for storageSize
+                            inputs (e.g., "1Gi").
+                          type: string
+                        pattern:
+                          description: pattern is a regex pattern for text inputs.
+                          type: string
+                        patternError:
+                          description: patternError is a custom error message when
+                            pattern fails.
+                          type: string
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
               failMode:
                 default: closed
                 description: |-
@@ -2361,10 +2526,18 @@ spec:
                         type: boolean
                     type: object
                 type: object
+              podOverridesTemplate:
+                description: |-
+                  podOverridesTemplate is a Go template that produces pod override YAML.
+                  Rendered with full context including user variables.
+                  The result is merged with podTemplateRef/podTemplateString output.
+                type: string
               podTemplateRef:
                 description: |-
                   podTemplateRef references a DebugPodTemplate for the pod specification.
                   Required when mode is "workload" or "hybrid".
+                  The referenced template can itself contain {{ .Vars.* }} placeholders.
+                  Mutually exclusive with podTemplateString.
                 properties:
                   name:
                     description: name is the name of the DebugPodTemplate to reference.
@@ -2372,6 +2545,12 @@ spec:
                 required:
                 - name
                 type: object
+              podTemplateString:
+                description: |-
+                  podTemplateString is an inline Go template that produces pod spec YAML.
+                  Use this for fully dynamic pod specifications.
+                  Mutually exclusive with podTemplateRef.
+                type: string
               priority:
                 default: 0
                 description: |-

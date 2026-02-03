@@ -51,6 +51,12 @@ describe("DebugSessionCreate", () => {
     token: ref("test-token"),
     isAuthenticated: ref(true),
     getAccessToken: vi.fn().mockResolvedValue("test-token"),
+    getUser: vi.fn().mockResolvedValue({
+      profile: {
+        email: "test@example.com",
+        groups: ["test-group", "platform-oncall"],
+      },
+    }),
   };
 
   beforeEach(() => {

@@ -27,7 +27,21 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	Mode *apiv1alpha1.DebugSessionTemplateMode `json:"mode,omitempty"`
 	// podTemplateRef references a DebugPodTemplate for the pod specification.
 	// Required when mode is "workload" or "hybrid".
+	// The referenced template can itself contain {{ .Vars.* }} placeholders.
+	// Mutually exclusive with podTemplateString.
 	PodTemplateRef *DebugPodTemplateReferenceApplyConfiguration `json:"podTemplateRef,omitempty"`
+	// podTemplateString is an inline Go template that produces pod spec YAML.
+	// Use this for fully dynamic pod specifications.
+	// Mutually exclusive with podTemplateRef.
+	PodTemplateString *string `json:"podTemplateString,omitempty"`
+	// podOverridesTemplate is a Go template that produces pod override YAML.
+	// Rendered with full context including user variables.
+	// The result is merged with podTemplateRef/podTemplateString output.
+	PodOverridesTemplate *string `json:"podOverridesTemplate,omitempty"`
+	// extraDeployVariables defines user-provided variables for template rendering.
+	// These values are collected from the user at session request time
+	// and made available as {{ .Vars.<name> }} in all templates.
+	ExtraDeployVariables []ExtraDeployVariableApplyConfiguration `json:"extraDeployVariables,omitempty"`
 	// workloadType specifies the type of workload to create (DaemonSet or Deployment).
 	// Required when mode is "workload" or "hybrid".
 	WorkloadType *apiv1alpha1.DebugWorkloadType `json:"workloadType,omitempty"`
@@ -153,6 +167,35 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithMode(value apiv1alpha1.
 // If called multiple times, the PodTemplateRef field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithPodTemplateRef(value *DebugPodTemplateReferenceApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
 	b.PodTemplateRef = value
+	return b
+}
+
+// WithPodTemplateString sets the PodTemplateString field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PodTemplateString field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithPodTemplateString(value string) *DebugSessionTemplateSpecApplyConfiguration {
+	b.PodTemplateString = &value
+	return b
+}
+
+// WithPodOverridesTemplate sets the PodOverridesTemplate field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PodOverridesTemplate field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithPodOverridesTemplate(value string) *DebugSessionTemplateSpecApplyConfiguration {
+	b.PodOverridesTemplate = &value
+	return b
+}
+
+// WithExtraDeployVariables adds the given value to the ExtraDeployVariables field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ExtraDeployVariables field.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithExtraDeployVariables(values ...*ExtraDeployVariableApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithExtraDeployVariables")
+		}
+		b.ExtraDeployVariables = append(b.ExtraDeployVariables, *values[i])
+	}
 	return b
 }
 

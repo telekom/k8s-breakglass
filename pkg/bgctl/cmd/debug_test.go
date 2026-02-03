@@ -537,3 +537,82 @@ func TestDebugTemplateClustersCommand_WideFormat(t *testing.T) {
 	// Wide format shows binding names
 	assert.Contains(t, output, "prod-binding")
 }
+
+func TestDebugSessionCreateCommand_WithSetFlag(t *testing.T) {
+	// Track the received request body
+	var receivedReq client.CreateDebugSessionRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/debugSessions" {
+			// Parse request body
+			err := json.NewDecoder(r.Body).Decode(&receivedReq)
+			if err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			// Return mock session
+			w.Header().Set("Content-Type", "application/json")
+			session := v1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-session",
+					Namespace: "breakglass",
+				},
+			}
+			_ = json.NewEncoder(w).Encode(session)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	configPath := writeTestConfigForDebug(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"debug", "session", "create",
+		"--template", "my-template",
+		"--cluster", "cluster-a",
+		"--set", "logLevel=debug",
+		"--set", "enableTracing=true",
+		"-o", "json",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+
+	// Verify the request contained extraDeployValues
+	assert.Equal(t, "my-template", receivedReq.TemplateRef)
+	assert.Equal(t, "cluster-a", receivedReq.Cluster)
+	require.NotNil(t, receivedReq.ExtraDeployValues)
+	assert.Equal(t, "debug", receivedReq.ExtraDeployValues["logLevel"])
+	assert.Equal(t, "true", receivedReq.ExtraDeployValues["enableTracing"])
+}
+
+func TestDebugSessionCreateCommand_SetFlagInvalidFormat(t *testing.T) {
+	buf := &bytes.Buffer{}
+	errBuf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   "/tmp/nonexistent-test-config.yaml",
+		OutputWriter: buf,
+	})
+	rootCmd.SetErr(errBuf)
+
+	rootCmd.SetArgs([]string{
+		"--server", "http://localhost:8080",
+		"--token", "test-token",
+		"debug", "session", "create",
+		"--template", "my-template",
+		"--cluster", "cluster-a",
+		"--set", "invalidformat", // Missing = sign
+	})
+	err := rootCmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid --set format")
+}

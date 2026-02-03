@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"text/template"
 	"time"
 
@@ -73,11 +74,11 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	log := m.log.With("session", session.Name, "namespace", session.Namespace)
 	log.Info("Deploying auxiliary resources", "count", len(template.AuxiliaryResources))
 
-	// Build context for template rendering
-	renderCtx := m.buildRenderContext(session, template, binding, targetNamespace)
-
 	// Determine which resources are enabled
 	enabledResources := m.filterEnabledResources(template, binding, session.Spec.SelectedAuxiliaryResources)
+
+	// Build context for template rendering (including enabled resources list)
+	renderCtx := m.buildRenderContext(session, template, binding, targetNamespace, enabledResources)
 
 	var statuses []v1alpha1.AuxiliaryResourceStatus
 	var deployErrors []error
@@ -245,6 +246,7 @@ func (m *AuxiliaryResourceManager) buildRenderContext(
 	template *v1alpha1.DebugSessionTemplateSpec,
 	binding *v1alpha1.DebugSessionClusterBinding,
 	targetNamespace string,
+	enabledResources []v1alpha1.AuxiliaryResource,
 ) v1alpha1.AuxiliaryResourceContext {
 	ctx := v1alpha1.AuxiliaryResourceContext{
 		Session: v1alpha1.AuxiliaryResourceSessionContext{
@@ -266,6 +268,7 @@ func (m *AuxiliaryResourceManager) buildRenderContext(
 		Annotations: map[string]string{
 			"breakglass.t-caas.telekom.com/created-by": session.Spec.RequestedBy,
 		},
+		Now: time.Now().UTC().Format(time.RFC3339),
 	}
 
 	if session.Status.Approval != nil {
@@ -290,10 +293,87 @@ func (m *AuxiliaryResourceManager) buildRenderContext(
 		}
 	}
 
+	// Build list of enabled resource names
+	ctx.EnabledResources = make([]string, 0, len(enabledResources))
+	for _, res := range enabledResources {
+		ctx.EnabledResources = append(ctx.EnabledResources, res.Name)
+	}
+
+	// Populate Vars from session's extraDeployValues
+	ctx.Vars = m.buildVarsFromSession(session, template)
+
 	return ctx
 }
 
+// buildVarsFromSession extracts user-provided variable values from session spec
+// and applies defaults from template definition.
+func (m *AuxiliaryResourceManager) buildVarsFromSession(
+	session *v1alpha1.DebugSession,
+	template *v1alpha1.DebugSessionTemplateSpec,
+) map[string]string {
+	vars := make(map[string]string)
+
+	// Apply defaults from template variable definitions
+	if template != nil {
+		for _, varDef := range template.ExtraDeployVariables {
+			if varDef.Default != nil && len(varDef.Default.Raw) > 0 {
+				// Extract default value from JSON
+				defaultVal := extractJSONValue(varDef.Default.Raw)
+				vars[varDef.Name] = defaultVal
+			}
+		}
+	}
+
+	// Override with user-provided values from session
+	for name, jsonVal := range session.Spec.ExtraDeployValues {
+		vars[name] = extractJSONValue(jsonVal.Raw)
+	}
+
+	return vars
+}
+
+// extractJSONValue extracts a string representation from raw JSON.
+// Handles strings, numbers, booleans, and arrays.
+func extractJSONValue(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	// Try to unmarshal as string first (most common case)
+	var strVal string
+	if err := json.Unmarshal(raw, &strVal); err == nil {
+		return strVal
+	}
+
+	// Try as boolean
+	var boolVal bool
+	if err := json.Unmarshal(raw, &boolVal); err == nil {
+		return fmt.Sprintf("%t", boolVal)
+	}
+
+	// Try as number (float64)
+	var numVal float64
+	if err := json.Unmarshal(raw, &numVal); err == nil {
+		// Format without trailing zeros for integers
+		if numVal == float64(int64(numVal)) {
+			return fmt.Sprintf("%d", int64(numVal))
+		}
+		return fmt.Sprintf("%g", numVal)
+	}
+
+	// Try as string array (for multiSelect)
+	var arrVal []string
+	if err := json.Unmarshal(raw, &arrVal); err == nil {
+		return strings.Join(arrVal, ",")
+	}
+
+	// Fall back to raw string
+	return string(raw)
+}
+
 // deployResource renders and deploys a single auxiliary resource.
+// If templateString is used, it may produce multiple K8s resources (multi-doc YAML).
+// Returns statuses for all created resources.
 func (m *AuxiliaryResourceManager) deployResource(
 	ctx context.Context,
 	targetClient client.Client,
@@ -307,98 +387,142 @@ func (m *AuxiliaryResourceManager) deployResource(
 		Category: auxRes.Category,
 	}
 
-	// Render template
-	renderedYAML, err := m.renderTemplate(auxRes.Template.Raw, renderCtx)
-	if err != nil {
-		status.Error = fmt.Sprintf("template rendering failed: %v", err)
-		return status, fmt.Errorf("failed to render template for %s: %w", auxRes.Name, err)
+	// Determine which template source to use
+	var renderedDocuments [][]byte
+	var err error
+
+	if auxRes.TemplateString != "" {
+		// Use templateString with multi-document support
+		renderer := NewTemplateRenderer()
+		renderedDocuments, err = renderer.RenderMultiDocumentTemplate(auxRes.TemplateString, renderCtx)
+		if err != nil {
+			status.Error = fmt.Sprintf("template rendering failed: %v", err)
+			return status, fmt.Errorf("failed to render templateString for %s: %w", auxRes.Name, err)
+		}
+	} else if len(auxRes.Template.Raw) > 0 {
+		// Use legacy template field (single document)
+		renderedYAML, err := m.renderTemplate(auxRes.Template.Raw, renderCtx)
+		if err != nil {
+			status.Error = fmt.Sprintf("template rendering failed: %v", err)
+			return status, fmt.Errorf("failed to render template for %s: %w", auxRes.Name, err)
+		}
+		renderedDocuments = [][]byte{renderedYAML}
+	} else {
+		status.Error = "no template defined (neither templateString nor template)"
+		return status, fmt.Errorf("auxiliary resource %s has no template defined", auxRes.Name)
 	}
 
-	// Parse rendered YAML into unstructured object
-	obj := &unstructured.Unstructured{}
-	if err := yaml.Unmarshal(renderedYAML, &obj.Object); err != nil {
-		status.Error = fmt.Sprintf("YAML parsing failed: %v", err)
-		return status, fmt.Errorf("failed to parse rendered YAML for %s: %w", auxRes.Name, err)
+	// Filter out empty documents (from conditional rendering)
+	var nonEmptyDocs [][]byte
+	for _, doc := range renderedDocuments {
+		trimmed := strings.TrimSpace(string(doc))
+		if trimmed != "" {
+			nonEmptyDocs = append(nonEmptyDocs, doc)
+		}
 	}
 
-	// Extract metadata
-	status.Kind = obj.GetKind()
-	status.APIVersion = obj.GetAPIVersion()
-	status.ResourceName = obj.GetName()
+	// If all documents are empty (conditional rendering excluded everything), return success
+	if len(nonEmptyDocs) == 0 {
+		m.log.Debugw("Auxiliary resource produced no documents (conditional exclusion)",
+			"name", auxRes.Name)
+		return status, nil
+	}
 
-	// Set namespace if not specified and resource is namespaced
-	if obj.GetNamespace() == "" {
-		obj.SetNamespace(targetNamespace)
-	}
-	status.Namespace = obj.GetNamespace()
+	// Deploy each document
+	var deployedResources []string
+	for i, docYAML := range nonEmptyDocs {
+		obj := &unstructured.Unstructured{}
+		if err := yaml.Unmarshal(docYAML, &obj.Object); err != nil {
+			status.Error = fmt.Sprintf("YAML parsing failed for document %d: %v", i+1, err)
+			return status, fmt.Errorf("failed to parse rendered YAML for %s (doc %d): %w", auxRes.Name, i+1, err)
+		}
 
-	// Add standard labels
-	labels := obj.GetLabels()
-	if labels == nil {
-		labels = make(map[string]string)
-	}
-	for k, v := range renderCtx.Labels {
-		labels[k] = v
-	}
-	labels["breakglass.t-caas.telekom.com/auxiliary-resource"] = auxRes.Name
-	obj.SetLabels(labels)
+		// Set namespace if not specified
+		if obj.GetNamespace() == "" {
+			obj.SetNamespace(targetNamespace)
+		}
 
-	// Add annotations
-	annotations := obj.GetAnnotations()
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	for k, v := range renderCtx.Annotations {
-		annotations[k] = v
-	}
-	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", session.Namespace, session.Name)
-	obj.SetAnnotations(annotations)
+		// Apply standard labels
+		labels := obj.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		for k, v := range renderCtx.Labels {
+			labels[k] = v
+		}
+		labels["breakglass.t-caas.telekom.com/auxiliary-resource"] = auxRes.Name
+		obj.SetLabels(labels)
 
-	// Create the resource
-	if err := targetClient.Create(ctx, obj); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			// Resource already exists, try to patch it
-			existingObj := &unstructured.Unstructured{}
-			existingObj.SetGroupVersionKind(obj.GroupVersionKind())
-			key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
-			if getErr := targetClient.Get(ctx, key, existingObj); getErr == nil {
-				// Check if it's ours
-				if existingLabels := existingObj.GetLabels(); existingLabels != nil {
-					if existingLabels["breakglass.t-caas.telekom.com/session"] == session.Name {
-						// It's ours, consider it created
-						status.Created = true
-						now := time.Now().UTC().Format(time.RFC3339)
-						status.CreatedAt = &now
-						return status, nil
+		// Apply standard annotations
+		annotations := obj.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		for k, v := range renderCtx.Annotations {
+			annotations[k] = v
+		}
+		annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", session.Namespace, session.Name)
+		obj.SetAnnotations(annotations)
+
+		// Create the resource
+		if err := targetClient.Create(ctx, obj); err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				// Resource already exists, check if it's ours
+				existingObj := &unstructured.Unstructured{}
+				existingObj.SetGroupVersionKind(obj.GroupVersionKind())
+				key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
+				if getErr := targetClient.Get(ctx, key, existingObj); getErr == nil {
+					if existingLabels := existingObj.GetLabels(); existingLabels != nil {
+						if existingLabels["breakglass.t-caas.telekom.com/session"] == session.Name {
+							// It's ours, consider it created
+							deployedResources = append(deployedResources, fmt.Sprintf("%s/%s", obj.GetKind(), obj.GetName()))
+							continue
+						}
 					}
 				}
 			}
+			status.Error = fmt.Sprintf("creation failed for %s/%s: %v", obj.GetKind(), obj.GetName(), err)
+			return status, fmt.Errorf("failed to create resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
-		status.Error = fmt.Sprintf("creation failed: %v", err)
-		return status, fmt.Errorf("failed to create resource %s: %w", auxRes.Name, err)
+
+		deployedResources = append(deployedResources, fmt.Sprintf("%s/%s", obj.GetKind(), obj.GetName()))
+
+		m.log.Infow("Deployed auxiliary resource document",
+			"auxiliaryResource", auxRes.Name,
+			"kind", obj.GetKind(),
+			"name", obj.GetName(),
+			"namespace", obj.GetNamespace())
+
+		// Emit audit event
+		if m.auditManager != nil {
+			m.auditManager.DebugSessionResourceDeployed(
+				ctx,
+				session.Name,
+				session.Namespace,
+				session.Spec.Cluster,
+				obj.GetKind(),
+				obj.GetName(),
+				obj.GetNamespace(),
+			)
+		}
+
+		// Store first resource's metadata in status
+		if i == 0 {
+			status.Kind = obj.GetKind()
+			status.APIVersion = obj.GetAPIVersion()
+			status.ResourceName = obj.GetName()
+			status.Namespace = obj.GetNamespace()
+		}
 	}
 
 	status.Created = true
 	now := time.Now().UTC().Format(time.RFC3339)
 	status.CreatedAt = &now
 
-	m.log.Infow("Deployed auxiliary resource",
-		"name", auxRes.Name,
-		"kind", status.Kind,
-		"resourceName", status.ResourceName,
-		"namespace", status.Namespace)
-
-	// Emit audit event for resource deployment
-	if m.auditManager != nil {
-		m.auditManager.DebugSessionResourceDeployed(
-			ctx,
-			session.Name,
-			session.Namespace,
-			session.Spec.Cluster,
-			status.Kind,
-			status.ResourceName,
-			status.Namespace,
-		)
+	if len(deployedResources) > 1 {
+		m.log.Infow("Deployed multiple resources from single auxiliary resource",
+			"name", auxRes.Name,
+			"resources", deployedResources)
 	}
 
 	return status, nil
@@ -509,12 +633,46 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 			errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: name is required", i))
 		}
 
-		if len(res.Template.Raw) == 0 {
-			errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: template is required", i))
+		// Must have either template or templateString
+		hasTemplate := len(res.Template.Raw) > 0
+		hasTemplateString := res.TemplateString != ""
+
+		if !hasTemplate && !hasTemplateString {
+			errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: either template or templateString is required", i))
 		}
 
-		// Validate template is valid YAML
-		if len(res.Template.Raw) > 0 {
+		if hasTemplate && hasTemplateString {
+			errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: template and templateString are mutually exclusive", i))
+		}
+
+		// Validate templateString is valid Go template
+		if hasTemplateString {
+			renderer := NewTemplateRenderer()
+			// Use sample context for validation
+			sampleCtx := v1alpha1.AuxiliaryResourceContext{
+				Session: v1alpha1.AuxiliaryResourceSessionContext{
+					Name:        "validation-session",
+					Namespace:   "breakglass-system",
+					Cluster:     "validation-cluster",
+					RequestedBy: "validator@example.com",
+				},
+				Target: v1alpha1.AuxiliaryResourceTargetContext{
+					Namespace:   "breakglass-debug",
+					ClusterName: "validation-cluster",
+				},
+				Labels:           map[string]string{"app.kubernetes.io/managed-by": "breakglass"},
+				Annotations:      map[string]string{},
+				Vars:             map[string]string{},
+				Now:              time.Now().UTC().Format(time.RFC3339),
+				EnabledResources: []string{},
+			}
+			if err := renderer.ValidateTemplate(res.TemplateString, sampleCtx); err != nil {
+				errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: invalid templateString: %v", i, err))
+			}
+		}
+
+		// Validate legacy template is valid YAML
+		if hasTemplate {
 			var obj map[string]interface{}
 			if err := yaml.Unmarshal(res.Template.Raw, &obj); err != nil {
 				errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: invalid YAML template: %v", i, err))
