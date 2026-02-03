@@ -22,6 +22,32 @@ Authorization: Bearer <jwt-token>
 
 Obtain tokens through the configured OIDC provider (e.g., Keycloak).
 
+### Error Response Codes
+
+The API uses standard HTTP status codes with the following conventions:
+
+| Status Code | Meaning | When Returned |
+|-------------|---------|---------------|
+| `401 Unauthorized` | Authentication failure | No token, invalid token format, token from wrong IDP, invalid signature, expired token |
+| `403 Forbidden` | Authorization failure | Authenticated but not authorized for the requested action |
+| `400 Bad Request` | Malformed request | Authenticated user sends invalid request body or parameters |
+| `404 Not Found` | Resource not found | Authenticated user requests a resource that doesn't exist |
+| `429 Too Many Requests` | Rate limit exceeded | Request throttled due to rate limiting |
+| `500 Internal Server Error` | Server error | Unexpected server-side error |
+
+**Key Principle:** All authentication/token issues return `401 Unauthorized`. Once authenticated, the API returns appropriate error codes (`403`, `400`, `404`, etc.) based on the specific issue.
+
+**Error Response Format:**
+
+```json
+{
+  "error": "Human-readable error message",
+  "code": "ERROR_CODE"
+}
+```
+
+Common error codes: `UNAUTHORIZED`, `FORBIDDEN`, `BAD_REQUEST`, `NOT_FOUND`
+
 ## Identity Provider Configuration
 
 ### Overview

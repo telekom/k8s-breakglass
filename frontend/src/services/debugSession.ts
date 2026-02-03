@@ -5,6 +5,7 @@ import { createAuthenticatedApiClient } from "@/services/httpClient";
 import type AuthService from "@/services/auth";
 import type {
   DebugSession,
+  DebugSessionDetailResponse,
   DebugSessionListResponse,
   DebugSessionTemplateListResponse,
   DebugPodTemplateListResponse,
@@ -72,9 +73,9 @@ export default class DebugSessionService {
   /**
    * Create a new debug session
    */
-  public async createSession(request: CreateDebugSessionRequest): Promise<DebugSession> {
+  public async createSession(request: CreateDebugSessionRequest): Promise<DebugSessionDetailResponse> {
     try {
-      const response = await this.client.post<DebugSession>("/debugSessions", request);
+      const response = await this.client.post<DebugSessionDetailResponse>("/debugSessions", request);
       return response.data;
     } catch (e) {
       handleAxiosError("DebugSessionService.createSession", e, "Failed to create debug session");

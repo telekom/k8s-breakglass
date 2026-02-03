@@ -1660,3 +1660,121 @@ func TestDebugSession_ValidateCreate_ValidDuration(t *testing.T) {
 		t.Errorf("expected success with valid duration, got %v", err)
 	}
 }
+
+// TestValidateDebugSessionSpec_AllFieldsMissing tests validation when all required fields are missing
+func TestValidateDebugSessionSpec_AllFieldsMissing(t *testing.T) {
+	session := &DebugSession{
+		Spec: DebugSessionSpec{
+			Cluster:     "",
+			TemplateRef: "",
+			RequestedBy: "",
+		},
+	}
+	errs := validateDebugSessionSpec(session)
+	if len(errs) != 3 {
+		t.Errorf("expected 3 errors for missing cluster, templateRef, and requestedBy, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDebugSessionSpec_MissingCluster tests validation when cluster is missing
+func TestValidateDebugSessionSpec_MissingCluster(t *testing.T) {
+	session := &DebugSession{
+		Spec: DebugSessionSpec{
+			Cluster:     "",
+			TemplateRef: "template",
+			RequestedBy: "user@example.com",
+		},
+	}
+	errs := validateDebugSessionSpec(session)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for missing cluster, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.cluster" {
+		t.Errorf("expected error field spec.cluster, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDebugSessionSpec_MissingTemplateRef tests validation when templateRef is missing
+func TestValidateDebugSessionSpec_MissingTemplateRef(t *testing.T) {
+	session := &DebugSession{
+		Spec: DebugSessionSpec{
+			Cluster:     "cluster",
+			TemplateRef: "",
+			RequestedBy: "user@example.com",
+		},
+	}
+	errs := validateDebugSessionSpec(session)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for missing templateRef, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.templateRef" {
+		t.Errorf("expected error field spec.templateRef, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDebugSessionSpec_MissingRequestedBy tests validation when requestedBy is missing
+func TestValidateDebugSessionSpec_MissingRequestedBy(t *testing.T) {
+	session := &DebugSession{
+		Spec: DebugSessionSpec{
+			Cluster:     "cluster",
+			TemplateRef: "template",
+			RequestedBy: "",
+		},
+	}
+	errs := validateDebugSessionSpec(session)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for missing requestedBy, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.requestedBy" {
+		t.Errorf("expected error field spec.requestedBy, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDebugSessionSpec_InvalidDuration tests validation with an invalid duration format
+func TestValidateDebugSessionSpec_InvalidDuration(t *testing.T) {
+	session := &DebugSession{
+		Spec: DebugSessionSpec{
+			Cluster:           "cluster",
+			TemplateRef:       "template",
+			RequestedBy:       "user@example.com",
+			RequestedDuration: "invalid",
+		},
+	}
+	errs := validateDebugSessionSpec(session)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for invalid duration, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDebugSessionSpec_ValidWithAllFields tests a fully valid session spec
+func TestValidateDebugSessionSpec_ValidWithAllFields(t *testing.T) {
+	session := &DebugSession{
+		Spec: DebugSessionSpec{
+			Cluster:           "production",
+			TemplateRef:       "debug-template",
+			RequestedBy:       "user@example.com",
+			RequestedDuration: "2h30m",
+			Reason:            "Investigating issue #1234",
+		},
+	}
+	errs := validateDebugSessionSpec(session)
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors for valid session, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDebugSessionSpec_DayDuration tests a valid day duration
+func TestValidateDebugSessionSpec_DayDuration(t *testing.T) {
+	session := &DebugSession{
+		Spec: DebugSessionSpec{
+			Cluster:           "cluster",
+			TemplateRef:       "template",
+			RequestedBy:       "user@example.com",
+			RequestedDuration: "1d12h",
+		},
+	}
+	errs := validateDebugSessionSpec(session)
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors for valid day duration, got %d: %v", len(errs), errs)
+	}
+}

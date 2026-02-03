@@ -343,6 +343,60 @@ func TestDebugTemplateListCommand_WithMockServer(t *testing.T) {
 	assert.Equal(t, "template-1", result[0].Name)
 }
 
+func TestDebugTemplateListCommand_TableFormatShowsNote(t *testing.T) {
+	server := setupMockDebugServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForDebug(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	// Table format without --all should show the note about filtered templates
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"debug", "template", "list",
+		"-o", "table",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	output := buf.String()
+	// Should contain the note about using --all to see all templates
+	assert.Contains(t, output, "Note:")
+	assert.Contains(t, output, "--all")
+}
+
+func TestDebugTemplateListCommand_AllFlagNoNote(t *testing.T) {
+	server := setupMockDebugServer(t)
+	defer server.Close()
+
+	configPath := writeTestConfigForDebug(t, server.URL)
+	buf := &bytes.Buffer{}
+	rootCmd := NewRootCommand(Config{
+		ConfigPath:   configPath,
+		OutputWriter: buf,
+	})
+
+	// With --all flag, the note should NOT be shown
+	rootCmd.SetArgs([]string{
+		"--server", server.URL,
+		"--token", "test-token",
+		"debug", "template", "list",
+		"-o", "table",
+		"--all",
+	})
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+	output := buf.String()
+	// Should NOT contain the note when --all is used
+	assert.NotContains(t, output, "Note:")
+}
+
 func TestDebugPodTemplateListCommand_WithMockServer(t *testing.T) {
 	server := setupMockDebugServer(t)
 	defer server.Close()

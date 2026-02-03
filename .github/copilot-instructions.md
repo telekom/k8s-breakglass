@@ -33,8 +33,9 @@ kind load docker-image breakglass:dev
 make install       # Install CRDs
 make deploy_dev    # Deploy with Keycloak + MailHog
 
-# Full e2e environment
-make e2e           # Runs e2e/kind-setup-single.sh
+# Full E2E environment (see "Running E2E Tests Locally" section for details)
+make docker-build IMG=breakglass:e2e UI_FLAVOUR=telekom
+SKIP_BUILD=true SKIP_PROXY=true IMAGE=breakglass:e2e UI_FLAVOUR=telekom ./e2e/kind-setup-single.sh
 
 # Frontend development
 cd frontend
@@ -127,7 +128,75 @@ npm test           # Vitest
 - Unit tests colocated: `*_test.go` alongside source
 - Fuzz tests: `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`
 - Frontend: `frontend/tests/`, `npm test` (Vitest)
-- E2E: `make e2e` sets up kind + deps (manual test execution)
+- E2E: See "Running E2E Tests Locally" section below
+
+### Running E2E Tests Locally (CRITICAL)
+
+The E2E tests require a kind cluster with the full breakglass stack. **Use these exact commands matching CI:**
+
+**Step 1: Build the Docker image**
+```bash
+# Build with UI_FLAVOUR=telekom (or oss for open-source version)
+make docker-build IMG=breakglass:e2e UI_FLAVOUR=telekom
+```
+
+**Step 2: Run the single-cluster E2E setup**
+```bash
+# Required environment variables (match CI exactly):
+SKIP_BUILD=true \
+SKIP_PROXY=true \
+IMAGE=breakglass:e2e \
+UI_FLAVOUR=telekom \
+KIND_NODE_IMAGE=kindest/node:v1.34.3 \
+./e2e/kind-setup-single.sh
+```
+
+**Key environment variables for `kind-setup-single.sh`:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SKIP_BUILD` | `false` | Skip Docker image build (use pre-built `IMAGE`) |
+| `SKIP_PROXY` | `false` | Skip corporate proxy config (set `true` on macOS/local) |
+| `IMAGE` | `breakglass:e2e` | Docker image to deploy |
+| `UI_FLAVOUR` | `oss` | UI theme: `oss` (neutral) or `telekom` (branded) |
+| `KIND_NODE_IMAGE` | `kindest/node:v1.34.0` | Kubernetes version for kind |
+| `KIND_RETAIN_ON_FAILURE` | `false` | Keep cluster on setup failure for debugging |
+| `CLUSTER_NAME` | `breakglass-hub` | Kind cluster name |
+
+**Step 3: Run Go E2E tests**
+```bash
+# Source the environment variables
+source e2e/kind-setup-single-tdir/e2e-env.sh
+
+# Run core E2E tests (audit, metrics, debug sessions)
+E2E_TEST=true go test -v ./e2e -timeout 20m
+
+# Run API E2E tests
+E2E_TEST=true go test -v ./e2e/api/... -timeout 30m
+
+# Run CLI E2E tests
+E2E_TEST=true RUN_SHELL_TESTS=true BGCTL_BIN=./bin/bgctl go test -v ./e2e/cli/... -timeout 15m
+```
+
+**Step 4: Run UI E2E tests (Playwright)**
+```bash
+cd frontend
+
+# Install Playwright browsers (first time only)
+npx playwright install --with-deps chromium
+
+# Source environment and run tests
+source ../e2e/kind-setup-single-tdir/e2e-env.sh
+BREAKGLASS_UI_URL=http://localhost:8080 \
+BREAKGLASS_API_URL=http://localhost:8080 \
+MAILHOG_URL=http://localhost:8025 \
+npx playwright test --config=playwright.e2e.config.ts
+```
+
+**Troubleshooting E2E setup:**
+- If Keycloak connection fails: Check `/etc/hosts` has entry for `breakglass-keycloak.breakglass-system.svc.cluster.local`
+- If proxy errors occur: Set `SKIP_PROXY=true`
+- Check pod status: `kubectl get pods -n breakglass-system`
+- Check controller logs: `kubectl logs -n breakglass-system -l app=breakglass-manager`
 
 ### E2E Test Session Creation (CRITICAL)
 

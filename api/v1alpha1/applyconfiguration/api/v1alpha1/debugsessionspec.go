@@ -56,6 +56,14 @@ type DebugSessionSpecApplyConfiguration struct {
 	// selectedAuxiliaryResources lists auxiliary resource categories that are enabled for this session.
 	// Merged from template defaults and binding overrides at session creation time.
 	SelectedAuxiliaryResources []string `json:"selectedAuxiliaryResources,omitempty"`
+	// requestReasonConfig is a snapshot of the template's requestReason configuration at session creation time.
+	// This stores whether a request reason was mandatory, min/max length, and description.
+	// Stored as a snapshot so the session remains self-contained and doesn't require template lookups.
+	RequestReasonConfig *DebugRequestReasonConfigApplyConfiguration `json:"requestReasonConfig,omitempty"`
+	// approvalReasonConfig is a snapshot of the template's approvalReason configuration at session creation time.
+	// This stores whether an approval/rejection reason is mandatory and its description.
+	// Stored as a snapshot so the session remains self-contained and doesn't require template lookups.
+	ApprovalReasonConfig *DebugApprovalReasonConfigApplyConfiguration `json:"approvalReasonConfig,omitempty"`
 }
 
 // DebugSessionSpecApplyConfiguration constructs a declarative configuration of the DebugSessionSpec type for use with
@@ -193,5 +201,21 @@ func (b *DebugSessionSpecApplyConfiguration) WithSelectedAuxiliaryResources(valu
 	for i := range values {
 		b.SelectedAuxiliaryResources = append(b.SelectedAuxiliaryResources, values[i])
 	}
+	return b
+}
+
+// WithRequestReasonConfig sets the RequestReasonConfig field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequestReasonConfig field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithRequestReasonConfig(value *DebugRequestReasonConfigApplyConfiguration) *DebugSessionSpecApplyConfiguration {
+	b.RequestReasonConfig = value
+	return b
+}
+
+// WithApprovalReasonConfig sets the ApprovalReasonConfig field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ApprovalReasonConfig field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithApprovalReasonConfig(value *DebugApprovalReasonConfigApplyConfiguration) *DebugSessionSpecApplyConfiguration {
+	b.ApprovalReasonConfig = value
 	return b
 }

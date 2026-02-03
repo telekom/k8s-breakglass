@@ -42,26 +42,35 @@ test.describe.serial("Login Flow", () => {
     // Logout - this may trigger OIDC logout redirect or clear local session
     await auth.logout();
 
-    // After logout, either:
-    // 1. We're at a login page (OIDC redirect happened)
-    // 2. We see a login button (local session cleared)
-    // 3. isLoggedIn returns false
-    // Wait for logout to complete and UI to stabilize
+    // After logout, wait longer for logout to complete
+    // Keycloak logout can take time to redirect
+    await page.waitForTimeout(2000);
     await page.waitForLoadState("networkidle", { timeout: 15000 });
 
-    const loggedOut = await auth
-      .isLoggedIn()
-      .then((r) => !r)
-      .catch(() => true);
-    const loginButtonVisible = await page
-      .locator('scale-button:has-text("Log In"), button:has-text("Log In")')
-      .first()
-      .isVisible()
-      .catch(() => false);
-    const onKeycloakPage = page.url().includes("keycloak") || page.url().includes("/auth/");
+    // Check multiple times - logout state may take a moment to settle
+    let logoutSuccessful = false;
+    for (let i = 0; i < 5; i++) {
+      const loggedOut = await auth
+        .isLoggedIn()
+        .then((r) => !r)
+        .catch(() => true);
+      const loginButtonVisible = await page
+        .locator('scale-button:has-text("Log In"), button:has-text("Log In"), [data-testid="login-button"]')
+        .first()
+        .isVisible()
+        .catch(() => false);
+      const onKeycloakPage = page.url().includes("keycloak") || page.url().includes("/auth/");
+      const onAppWithNoSession = page.url().includes("localhost") && loggedOut;
 
-    // At least one of these should be true after logout
-    expect(loggedOut || loginButtonVisible || onKeycloakPage).toBe(true);
+      if (loggedOut || loginButtonVisible || onKeycloakPage || onAppWithNoSession) {
+        logoutSuccessful = true;
+        break;
+      }
+      await page.waitForTimeout(500);
+    }
+
+    // Logout should be successful
+    expect(logoutSuccessful).toBe(true);
   });
 
   test("unauthenticated user sees login button", async ({ page }) => {

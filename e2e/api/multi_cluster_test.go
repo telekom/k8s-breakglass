@@ -47,11 +47,15 @@ func TestMultiClusterConfiguration(t *testing.T) {
 	cleanup := helpers.NewCleanup(t, cli)
 	namespace := helpers.GetTestNamespace()
 
+	// Generate unique names for this test run to avoid collision with other tests
+	spokeClusterName := helpers.GenerateUniqueName("e2e-spoke")
+	idpClusterName := helpers.GenerateUniqueName("e2e-idp")
+
 	t.Run("CreateClusterConfig", func(t *testing.T) {
 		// First create a secret to hold the kubeconfig (even if mock)
 		kubeconfigSecret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-spoke-kubeconfig",
+				Name:      spokeClusterName + "-kubeconfig",
 				Namespace: namespace,
 				Labels: map[string]string{
 					"e2e-test": "true",
@@ -84,7 +88,7 @@ users:
 		require.NoError(t, err, "Failed to create kubeconfig secret")
 
 		// Create ClusterConfig referencing the secret
-		clusterConfig := helpers.NewClusterConfigBuilder("e2e-test-spoke-cluster", namespace).
+		clusterConfig := helpers.NewClusterConfigBuilder(spokeClusterName, namespace).
 			WithClusterID("spoke-cluster").
 			WithTenant("test-tenant").
 			WithEnvironment("e2e-test").
@@ -111,7 +115,7 @@ users:
 
 	t.Run("UpdateClusterConfig", func(t *testing.T) {
 		var clusterConfig telekomv1alpha1.ClusterConfig
-		err := cli.Get(ctx, types.NamespacedName{Name: "e2e-test-spoke-cluster", Namespace: namespace}, &clusterConfig)
+		err := cli.Get(ctx, types.NamespacedName{Name: spokeClusterName, Namespace: namespace}, &clusterConfig)
 		require.NoError(t, err)
 
 		// Use retry to handle conflicts with the ClusterConfigReconciler
@@ -132,9 +136,10 @@ users:
 
 	t.Run("ClusterConfigWithIdentityProviderRefs", func(t *testing.T) {
 		// First create the IdentityProviders that will be referenced
+		primaryIDPName := helpers.GenerateUniqueName("primary-idp")
 		primaryIDP := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "primary-idp",
+				Name:      primaryIDPName,
 				Namespace: namespace,
 				Labels: map[string]string{
 					"e2e-test": "true",
@@ -153,9 +158,10 @@ users:
 		err := cli.Create(ctx, primaryIDP)
 		require.NoError(t, err, "Failed to create primary IDP")
 
+		backupIDPName := helpers.GenerateUniqueName("backup-idp")
 		backupIDP := &telekomv1alpha1.IdentityProvider{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "backup-idp",
+				Name:      backupIDPName,
 				Namespace: namespace,
 				Labels: map[string]string{
 					"e2e-test": "true",
@@ -175,7 +181,7 @@ users:
 
 		kubeconfigSecret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "e2e-test-idp-cluster-kubeconfig",
+				Name:      idpClusterName + "-kubeconfig",
 				Namespace: namespace,
 				Labels: map[string]string{
 					"e2e-test": "true",
@@ -206,10 +212,10 @@ users:
 		err = cli.Create(ctx, kubeconfigSecret)
 		require.NoError(t, err)
 
-		clusterConfig := helpers.NewClusterConfigBuilder("e2e-test-idp-cluster", namespace).
+		clusterConfig := helpers.NewClusterConfigBuilder(idpClusterName, namespace).
 			WithClusterID("idp-cluster").
 			WithKubeconfigSecret(kubeconfigSecret.Name, "kubeconfig").
-			WithIdentityProviderRefs("primary-idp", "backup-idp").
+			WithIdentityProviderRefs(primaryIDPName, backupIDPName).
 			WithBlockSelfApproval(true).
 			Build()
 
@@ -226,7 +232,7 @@ users:
 
 	t.Run("DeleteClusterConfig", func(t *testing.T) {
 		var clusterConfig telekomv1alpha1.ClusterConfig
-		err := cli.Get(ctx, types.NamespacedName{Name: "e2e-test-spoke-cluster", Namespace: namespace}, &clusterConfig)
+		err := cli.Get(ctx, types.NamespacedName{Name: spokeClusterName, Namespace: namespace}, &clusterConfig)
 		require.NoError(t, err)
 
 		err = cli.Delete(ctx, &clusterConfig)

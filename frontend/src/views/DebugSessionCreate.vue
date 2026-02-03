@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState } from "@/components/common";
-import { pushError, pushSuccess } from "@/services/toast";
+import { pushError, pushSuccess, pushWarning } from "@/services/toast";
 import type {
   DebugSessionTemplateResponse,
   CreateDebugSessionRequest,
@@ -74,6 +74,25 @@ watch(
   () => form.cluster,
   () => {
     form.selectedBindingIndex = 0;
+  },
+);
+
+// Reset scheduling option and namespace when binding changes
+watch(
+  () => form.selectedBindingIndex,
+  () => {
+    const binding = selectedBindingOption.value;
+    if (binding) {
+      // Reset scheduling option based on new binding's options
+      if (binding.schedulingOptions && binding.schedulingOptions.options.length > 0) {
+        const defaultOpt = binding.schedulingOptions.options.find((o) => o.default);
+        form.selectedSchedulingOption = defaultOpt?.name || binding.schedulingOptions.options[0]?.name || "";
+      } else {
+        form.selectedSchedulingOption = "";
+      }
+      // Reset namespace to new binding's default
+      form.targetNamespace = binding.namespaceConstraints?.defaultNamespace || "";
+    }
   },
 );
 
@@ -273,6 +292,20 @@ const hasTemplates = computed(() => {
   return templates.value && templates.value.length > 0;
 });
 
+// Templates that have at least one available cluster
+const availableTemplates = computed(() => {
+  return templates.value.filter((t) => t.hasAvailableClusters !== false);
+});
+
+// Templates that have no available clusters (for informational display)
+const unavailableTemplates = computed(() => {
+  return templates.value.filter((t) => t.hasAvailableClusters === false);
+});
+
+const hasAvailableTemplates = computed(() => {
+  return availableTemplates.value.length > 0;
+});
+
 const isValid = computed(() => {
   // Base validation
   const baseValid =
@@ -376,13 +409,17 @@ async function handleSubmit() {
       request.targetNamespace = form.targetNamespace;
     }
 
-    // Include selected scheduling option if template has options
-    if (form.selectedSchedulingOption) {
+    // Include selected scheduling option only if the template/binding has scheduling options
+    if (form.selectedSchedulingOption && hasSchedulingOptions.value) {
       request.selectedSchedulingOption = form.selectedSchedulingOption;
     }
 
     const session = await debugSessionService.createSession(request);
     pushSuccess(`Debug session ${session.metadata.name} created successfully`);
+    // Display any warnings from the API (e.g., defaults applied)
+    if (session.warnings && session.warnings.length > 0) {
+      session.warnings.forEach((warning) => pushWarning(warning));
+    }
     router.push({ name: "debugSessionBrowser" });
   } catch {
     // Error already handled by debugSessionService.createSession (pushError with CID)
@@ -447,6 +484,16 @@ function handleDurationChange(ev: Event) {
       <scale-button variant="secondary" @click="handleCancel">Go Back</scale-button>
     </div>
 
+    <div v-else-if="!hasAvailableTemplates" class="no-templates-message" data-testid="no-available-templates-message">
+      <scale-icon-alert-warning size="48" color="var(--scl-color-warning)"></scale-icon-alert-warning>
+      <h3>No Templates With Available Clusters</h3>
+      <p>
+        {{ templates.length }} template(s) exist, but none have clusters you can access. This may be due to cluster
+        configuration or access restrictions. Please contact your administrator.
+      </p>
+      <scale-button variant="secondary" @click="handleCancel">Go Back</scale-button>
+    </div>
+
     <!-- Step 1: Template Selection -->
     <div v-else-if="currentStep === 1" class="create-form">
       <div class="form-section">
@@ -462,10 +509,22 @@ function handleDurationChange(ev: Event) {
           data-testid="template-select"
           @scale-change="handleTemplateChange"
         >
-          <scale-dropdown-select-item v-for="template in templates" :key="template.name" :value="template.name">
+          <scale-dropdown-select-item
+            v-for="template in availableTemplates"
+            :key="template.name"
+            :value="template.name"
+          >
             {{ template.displayName || template.name }}
+            <template v-if="template.availableClusterCount !== undefined">
+              ({{ template.availableClusterCount }} cluster{{ template.availableClusterCount !== 1 ? "s" : "" }})
+            </template>
           </scale-dropdown-select-item>
         </scale-dropdown-select>
+
+        <!-- Show count of unavailable templates for transparency -->
+        <div v-if="unavailableTemplates.length > 0" class="unavailable-templates-notice">
+          <small> {{ unavailableTemplates.length }} additional template(s) hidden due to no available clusters. </small>
+        </div>
 
         <div v-if="selectedTemplate" class="template-info" data-testid="template-info">
           <p class="template-description">{{ selectedTemplate.description }}</p>
@@ -1463,6 +1522,18 @@ function handleDurationChange(ev: Event) {
   color: var(--telekom-color-text-and-icon-additional);
   font-size: 0.875rem;
   line-height: 1.5;
+}
+
+.unavailable-templates-notice {
+  margin-top: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--telekom-color-background-surface-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--telekom-color-text-and-icon-additional);
+}
+
+.unavailable-templates-notice small {
+  font-size: 0.75rem;
 }
 
 .option-description {

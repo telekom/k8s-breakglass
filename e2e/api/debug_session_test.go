@@ -100,6 +100,10 @@ func TestDebugSessionLifecycle(t *testing.T) {
 					Name: podTemplateName,
 				},
 				TargetNamespace: "default",
+				Allowed: &telekomv1alpha1.DebugSessionAllowed{
+					Clusters: []string{"*"},
+					Groups:   []string{"*"},
+				},
 			},
 		}
 

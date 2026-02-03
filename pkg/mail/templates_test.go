@@ -844,3 +844,95 @@ func TestRenderDebugSessionExpiredWithoutDuration(t *testing.T) {
 	assert.NotEmpty(t, result)
 	// Should not crash or error with empty duration
 }
+
+// TestRenderDebugSessionCreated tests the debug session created email template
+func TestRenderDebugSessionCreated(t *testing.T) {
+	params := DebugSessionCreatedMailParams{
+		RequesterName:     "John Doe",
+		RequesterEmail:    "john.doe@example.com",
+		SessionID:         "debug-session-789",
+		Cluster:           "prod-cluster-01",
+		TemplateName:      "standard-debug",
+		Namespace:         "production",
+		RequestedDuration: "2h",
+		Reason:            "Investigating production issue #1234",
+		RequestedAt:       "2025-01-15 10:30:00 UTC",
+		RequiresApproval:  true,
+		URL:               "https://breakglass.example.com/sessions/debug-session-789",
+		BrandingName:      "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderDebugSessionCreated(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, "debug-session-789")
+	assert.Contains(t, result, "prod-cluster-01")
+	assert.Contains(t, result, "production")
+	assert.Contains(t, result, "standard-debug")
+}
+
+// TestRenderDebugSessionCreatedNoApproval tests template without approval requirement
+func TestRenderDebugSessionCreatedNoApproval(t *testing.T) {
+	params := DebugSessionCreatedMailParams{
+		RequesterName:     "Jane Smith",
+		RequesterEmail:    "jane.smith@example.com",
+		SessionID:         "debug-session-abc",
+		Cluster:           "dev-cluster",
+		TemplateName:      "quick-debug",
+		Namespace:         "development",
+		RequestedDuration: "30m",
+		Reason:            "Quick debugging session",
+		RequestedAt:       "2025-01-15 11:00:00 UTC",
+		RequiresApproval:  false,
+		URL:               "https://breakglass.example.com/sessions/debug-session-abc",
+		BrandingName:      "Breakglass",
+	}
+
+	result, err := RenderDebugSessionCreated(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, "debug-session-abc")
+}
+
+// TestRenderDebugSessionFailed tests the debug session failed email template
+func TestRenderDebugSessionFailed(t *testing.T) {
+	params := DebugSessionFailedMailParams{
+		RequesterName:  "John Doe",
+		RequesterEmail: "john.doe@example.com",
+		SessionID:      "debug-session-fail",
+		Cluster:        "prod-cluster-01",
+		TemplateName:   "emergency-debug",
+		Namespace:      "production",
+		FailedAt:       "2025-01-15 12:30:00 UTC",
+		FailureReason:  "Pod creation failed: quota exceeded",
+		URL:            "https://breakglass.example.com/sessions/debug-session-fail",
+		BrandingName:   "Das SCHIFF Breakglass",
+	}
+
+	result, err := RenderDebugSessionFailed(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, "debug-session-fail")
+	assert.Contains(t, result, "quota exceeded")
+	assert.Contains(t, result, "prod-cluster-01")
+}
+
+// TestRenderDebugSessionFailedMinimalParams tests with minimal parameters
+func TestRenderDebugSessionFailedMinimalParams(t *testing.T) {
+	params := DebugSessionFailedMailParams{
+		RequesterEmail: "user@example.com",
+		SessionID:      "session-min",
+		Cluster:        "cluster",
+		FailedAt:       "2025-01-15",
+		FailureReason:  "Unknown error",
+	}
+
+	result, err := RenderDebugSessionFailed(params)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.Contains(t, result, "session-min")
+}

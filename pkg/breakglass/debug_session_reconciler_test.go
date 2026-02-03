@@ -2556,7 +2556,321 @@ func TestDebugSessionController_BindingMatchesCluster_EdgeCases(t *testing.T) {
 
 		assert.True(t, ctrl.bindingMatchesCluster(binding, "any-cluster", clusterConfig))
 	})
+
+	t.Run("matches with matchExpressions In operator", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "environment",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"staging", "development"},
+						},
+					},
+				},
+			},
+		}
+
+		stagingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "staging-cluster",
+				Labels: map[string]string{"environment": "staging"},
+			},
+		}
+
+		devCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "dev-cluster",
+				Labels: map[string]string{"environment": "development"},
+			},
+		}
+
+		prodCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "prod-cluster",
+				Labels: map[string]string{"environment": "production"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "staging-cluster", stagingCluster))
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "dev-cluster", devCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "prod-cluster", prodCluster))
+	})
+
+	t.Run("matches with matchExpressions NotIn operator", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "environment",
+							Operator: metav1.LabelSelectorOpNotIn,
+							Values:   []string{"production"},
+						},
+					},
+				},
+			},
+		}
+
+		stagingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "staging-cluster",
+				Labels: map[string]string{"environment": "staging"},
+			},
+		}
+
+		prodCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "prod-cluster",
+				Labels: map[string]string{"environment": "production"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "staging-cluster", stagingCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "prod-cluster", prodCluster))
+	})
+
+	t.Run("matches with matchExpressions Exists operator", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "breakglass-enabled",
+							Operator: metav1.LabelSelectorOpExists,
+						},
+					},
+				},
+			},
+		}
+
+		enabledCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "enabled-cluster",
+				Labels: map[string]string{"breakglass-enabled": "true"},
+			},
+		}
+
+		disabledCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "disabled-cluster",
+				Labels: map[string]string{"other-label": "value"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "enabled-cluster", enabledCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "disabled-cluster", disabledCluster))
+	})
+
+	t.Run("matches with matchExpressions DoesNotExist operator", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "deprecated",
+							Operator: metav1.LabelSelectorOpDoesNotExist,
+						},
+					},
+				},
+			},
+		}
+
+		normalCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "normal-cluster",
+				Labels: map[string]string{"environment": "staging"},
+			},
+		}
+
+		deprecatedCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "deprecated-cluster",
+				Labels: map[string]string{"environment": "staging", "deprecated": "true"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "normal-cluster", normalCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "deprecated-cluster", deprecatedCluster))
+	})
+
+	t.Run("matches with combined matchLabels and matchExpressions", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"tier": "platform"},
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "environment",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"staging", "development"},
+						},
+					},
+				},
+			},
+		}
+
+		matchingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "matching-cluster",
+				Labels: map[string]string{"tier": "platform", "environment": "staging"},
+			},
+		}
+
+		wrongTierCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "wrong-tier-cluster",
+				Labels: map[string]string{"tier": "application", "environment": "staging"},
+			},
+		}
+
+		wrongEnvCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "wrong-env-cluster",
+				Labels: map[string]string{"tier": "platform", "environment": "production"},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "matching-cluster", matchingCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "wrong-tier-cluster", wrongTierCluster))
+		assert.False(t, ctrl.bindingMatchesCluster(binding, "wrong-env-cluster", wrongEnvCluster))
+	})
+
+	t.Run("explicit cluster list takes precedence over clusterSelector", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Clusters: []string{"explicit-cluster"},
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"environment": "staging"},
+				},
+			},
+		}
+
+		stagingCluster := &telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "staging-cluster",
+				Labels: map[string]string{"environment": "staging"},
+			},
+		}
+
+		// Matches via explicit list, not via selector
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "explicit-cluster", nil))
+		// Also matches via selector
+		assert.True(t, ctrl.bindingMatchesCluster(binding, "staging-cluster", stagingCluster))
+	})
 }
+
+// TestBindingMatchesTemplate_MatchExpressions tests templateSelector with matchExpressions
+func TestBindingMatchesTemplate_MatchExpressions(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	ctrl := &DebugSessionController{log: logger}
+
+	t.Run("matches with In operator", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "developer-template",
+				Labels: map[string]string{"persona": "developer", "risk-level": "low"},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "persona",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"developer", "sre"},
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("does not match with NotIn operator when value present", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "admin-template",
+				Labels: map[string]string{"persona": "admin"},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "persona",
+							Operator: metav1.LabelSelectorOpNotIn,
+							Values:   []string{"admin", "superuser"},
+						},
+					},
+				},
+			},
+		}
+
+		assert.False(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("matches with Exists operator", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "labeled-template",
+				Labels: map[string]string{"breakglass.t-caas.telekom.com/approved": "true"},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "breakglass.t-caas.telekom.com/approved",
+							Operator: metav1.LabelSelectorOpExists,
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+
+	t.Run("matches with combined matchLabels and matchExpressions", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "platform-debug",
+				Labels: map[string]string{
+					"tier":       "platform",
+					"risk-level": "medium",
+					"scope":      "cluster",
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"tier": "platform"},
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "risk-level",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"low", "medium"},
+						},
+						{
+							Key:      "deprecated",
+							Operator: metav1.LabelSelectorOpDoesNotExist,
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, ctrl.bindingMatchesTemplate(binding, template))
+	})
+}
+
 func TestApplySchedulingConstraints(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	ctrl := &DebugSessionController{
@@ -3326,4 +3640,306 @@ func TestDebugSessionReconciler_BuildResourceQuotaAndPDB(t *testing.T) {
 
 func int32Ptr(v int32) *int32 {
 	return &v
+}
+
+// TestRequiresApproval tests the requiresApproval function with various scenarios
+func TestRequiresApproval(t *testing.T) {
+	controller := &DebugSessionController{log: zap.NewExample().Sugar()}
+
+	baseSession := &telekomv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: telekomv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+			UserGroups:  []string{"developers", "testers"},
+		},
+	}
+
+	t.Run("no_approvers_on_template_or_binding_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should not require approval when no approvers are configured")
+	})
+
+	t.Run("template_with_approver_groups_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.True(t, result, "Should require approval when template has approver groups")
+	})
+
+	t.Run("template_with_approver_users_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.True(t, result, "Should require approval when template has approver users")
+	})
+
+	t.Run("binding_with_approver_groups_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.True(t, result, "Should require approval when binding has approver groups")
+	})
+
+	t.Run("binding_with_approver_users_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.True(t, result, "Should require approval when binding has approver users")
+	})
+
+	t.Run("binding_approvers_take_precedence_over_template", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+				// Template has no approvers
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"binding-approvers"},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.True(t, result, "Should require approval from binding even when template has no approvers")
+	})
+
+	t.Run("template_auto_approve_for_matching_cluster_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"test-cluster"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should auto-approve when cluster matches auto-approve pattern")
+	})
+
+	t.Run("template_auto_approve_for_matching_group_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Groups: []string{"developers"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should auto-approve when user is in auto-approve group")
+	})
+
+	t.Run("binding_auto_approve_for_matching_cluster_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"binding-approvers"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"test-*"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.False(t, result, "Should auto-approve via binding when cluster matches pattern")
+	})
+
+	t.Run("binding_auto_approve_for_matching_group_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				DisplayName: "Test Template",
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"binding-approvers"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Groups: []string{"testers"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.False(t, result, "Should auto-approve via binding when user is in auto-approve group")
+	})
+
+	t.Run("template_with_empty_approvers_struct_returns_false", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					// No users or groups configured
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should not require approval when approvers struct exists but has no users/groups")
+	})
+
+	t.Run("binding_with_empty_approvers_struct_falls_through_to_template", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"template-approvers"},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					// Empty - no users or groups
+				},
+			},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		// Binding approvers is empty, so it falls through to template check
+		assert.True(t, result, "Should fall through to template when binding has empty approvers")
+	})
+
+	t.Run("wildcard_cluster_pattern_auto_approve", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"*-cluster"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.False(t, result, "Should auto-approve with wildcard pattern matching")
+	})
+
+	t.Run("non_matching_auto_approve_still_requires_approval", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approvers-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"prod-*"},
+						Groups:   []string{"admins"},
+					},
+				},
+			},
+		}
+		result := controller.requiresApproval(template, nil, baseSession)
+		assert.True(t, result, "Should still require approval when auto-approve patterns don't match")
+	})
+}
+
+// TestCheckAutoApprove tests the checkAutoApprove helper function
+func TestCheckAutoApprove(t *testing.T) {
+	controller := &DebugSessionController{log: zap.NewExample().Sugar()}
+
+	t.Run("matches_exact_cluster_name", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{Cluster: "prod-cluster"},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{
+			Clusters: []string{"prod-cluster"},
+		}
+		assert.True(t, controller.checkAutoApprove(autoApprove, session))
+	})
+
+	t.Run("matches_wildcard_pattern", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{Cluster: "dev-cluster-1"},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{
+			Clusters: []string{"dev-*"},
+		}
+		assert.True(t, controller.checkAutoApprove(autoApprove, session))
+	})
+
+	t.Run("matches_user_group", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:    "any-cluster",
+				UserGroups: []string{"sre-team", "platform-team"},
+			},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{
+			Groups: []string{"sre-team"},
+		}
+		assert.True(t, controller.checkAutoApprove(autoApprove, session))
+	})
+
+	t.Run("no_match_returns_false", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:    "test-cluster",
+				UserGroups: []string{"developers"},
+			},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{
+			Clusters: []string{"prod-*"},
+			Groups:   []string{"admins"},
+		}
+		assert.False(t, controller.checkAutoApprove(autoApprove, session))
+	})
+
+	t.Run("empty_auto_approve_config_returns_false", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:    "test-cluster",
+				UserGroups: []string{"developers"},
+			},
+		}
+		autoApprove := &telekomv1alpha1.AutoApproveConfig{}
+		assert.False(t, controller.checkAutoApprove(autoApprove, session))
+	})
 }

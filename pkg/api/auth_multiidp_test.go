@@ -442,8 +442,8 @@ func TestMissingBearerToken(t *testing.T) {
 		// No Authorization header
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
-		// Should reject without token (401 or 400)
-		require.True(t, w.Code >= 400 && w.Code < 500, "Should reject request without token")
+		// All authentication failures must return 401 Unauthorized
+		require.Equal(t, http.StatusUnauthorized, w.Code, "Should reject request without token with 401")
 	})
 
 	t.Run("InvalidBearerFormat", func(t *testing.T) {
@@ -451,8 +451,8 @@ func TestMissingBearerToken(t *testing.T) {
 		req.Header.Set("Authorization", "InvalidToken")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
-		// Should reject invalid format (401 or 400)
-		require.True(t, w.Code >= 400 && w.Code < 500, "Should reject invalid bearer format")
+		// All authentication failures must return 401 Unauthorized
+		require.Equal(t, http.StatusUnauthorized, w.Code, "Should reject invalid bearer format with 401")
 	})
 
 	t.Run("EmptyBearerToken", func(t *testing.T) {
@@ -460,9 +460,9 @@ func TestMissingBearerToken(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer ")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
-		// Should reject empty token
-		require.True(t, w.Code >= 400 && w.Code < 500, "Should reject empty bearer token")
+		// All authentication failures must return 401 Unauthorized
+		require.Equal(t, http.StatusUnauthorized, w.Code, "Should reject empty bearer token with 401")
 	})
 
-	t.Logf("✅ Missing/invalid bearer token handling verified")
+	t.Logf("✅ Missing/invalid bearer token handling verified - all return 401")
 }

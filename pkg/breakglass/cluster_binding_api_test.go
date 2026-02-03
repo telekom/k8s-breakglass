@@ -1033,3 +1033,605 @@ func TestIsBindingActive(t *testing.T) {
 		})
 	}
 }
+
+// TestClusterBindingAPIController_handleListClusterBindings_HiddenFilter tests hidden binding filtering
+func TestClusterBindingAPIController_handleListClusterBindings_HiddenFilter(t *testing.T) {
+	scheme := newTestScheme()
+	log := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+
+	visibleBinding := telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "visible-binding",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			DisplayName: "Visible Binding",
+			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-1"},
+			Clusters:    []string{"cluster-a"},
+			Hidden:      false,
+		},
+	}
+
+	hiddenBinding := telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "hidden-binding",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			DisplayName: "Hidden Binding",
+			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-2"},
+			Clusters:    []string{"cluster-b"},
+			Hidden:      true,
+		},
+	}
+
+	t.Run("excludes hidden bindings by default", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&visibleBinding, &hiddenBinding).
+			WithStatusSubresource(&visibleBinding, &hiddenBinding).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings", nil)
+
+		ctrl.handleListClusterBindings(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response []ClusterBindingResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		assert.Len(t, response, 1)
+		assert.Equal(t, "visible-binding", response[0].Name)
+		assert.False(t, response[0].Hidden)
+	})
+
+	t.Run("includes hidden bindings when includeHidden=true", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&visibleBinding, &hiddenBinding).
+			WithStatusSubresource(&visibleBinding, &hiddenBinding).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings?includeHidden=true", nil)
+
+		ctrl.handleListClusterBindings(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response []ClusterBindingResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		assert.Len(t, response, 2)
+		// Check both bindings are present
+		names := []string{response[0].Name, response[1].Name}
+		assert.Contains(t, names, "visible-binding")
+		assert.Contains(t, names, "hidden-binding")
+	})
+
+	t.Run("hidden bindings have Hidden=true in response", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&hiddenBinding).
+			WithStatusSubresource(&hiddenBinding).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings?includeHidden=true", nil)
+
+		ctrl.handleListClusterBindings(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response []ClusterBindingResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		assert.Len(t, response, 1)
+		assert.Equal(t, "hidden-binding", response[0].Name)
+		assert.True(t, response[0].Hidden)
+	})
+}
+
+// TestClusterBindingAPIController_handleListClusterBindings_ActiveOnlyFilter tests activeOnly filtering
+func TestClusterBindingAPIController_handleListClusterBindings_ActiveOnlyFilter(t *testing.T) {
+	scheme := newTestScheme()
+	log := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+	pastTime := metav1.NewTime(time.Now().Add(-24 * time.Hour))
+	futureTime := metav1.NewTime(time.Now().Add(24 * time.Hour))
+
+	activeBinding := telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "active-binding",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			DisplayName: "Active Binding",
+			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-1"},
+			Clusters:    []string{"cluster-a"},
+			Disabled:    false,
+		},
+	}
+
+	disabledBinding := telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "disabled-binding",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			DisplayName: "Disabled Binding",
+			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-2"},
+			Clusters:    []string{"cluster-b"},
+			Disabled:    true,
+		},
+	}
+
+	expiredBinding := telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "expired-binding",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			DisplayName: "Expired Binding",
+			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-3"},
+			Clusters:    []string{"cluster-c"},
+			ExpiresAt:   &pastTime,
+		},
+	}
+
+	futureBinding := telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "future-binding",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			DisplayName:   "Future Binding",
+			TemplateRef:   &telekomv1alpha1.TemplateReference{Name: "template-4"},
+			Clusters:      []string{"cluster-d"},
+			EffectiveFrom: &futureTime,
+		},
+	}
+
+	t.Run("returns all bindings without activeOnly filter", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&activeBinding, &disabledBinding, &expiredBinding, &futureBinding).
+			WithStatusSubresource(&activeBinding, &disabledBinding, &expiredBinding, &futureBinding).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings", nil)
+
+		ctrl.handleListClusterBindings(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response []ClusterBindingResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		assert.Len(t, response, 4)
+	})
+
+	t.Run("filters to active bindings only with activeOnly=true", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&activeBinding, &disabledBinding, &expiredBinding, &futureBinding).
+			WithStatusSubresource(&activeBinding, &disabledBinding, &expiredBinding, &futureBinding).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings?activeOnly=true", nil)
+
+		ctrl.handleListClusterBindings(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response []ClusterBindingResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Only active-binding should be returned
+		assert.Len(t, response, 1)
+		assert.Equal(t, "active-binding", response[0].Name)
+		assert.True(t, response[0].IsActive)
+	})
+
+	t.Run("combines hidden and activeOnly filters", func(t *testing.T) {
+		hiddenActiveBinding := telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "hidden-active-binding",
+				Namespace:         "default",
+				CreationTimestamp: now,
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: "Hidden Active Binding",
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-5"},
+				Clusters:    []string{"cluster-e"},
+				Hidden:      true,
+				Disabled:    false,
+			},
+		}
+
+		hiddenInactiveBinding := telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "hidden-inactive-binding",
+				Namespace:         "default",
+				CreationTimestamp: now,
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: "Hidden Inactive Binding",
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-6"},
+				Clusters:    []string{"cluster-f"},
+				Hidden:      true,
+				Disabled:    true,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&activeBinding, &disabledBinding, &hiddenActiveBinding, &hiddenInactiveBinding).
+			WithStatusSubresource(&activeBinding, &disabledBinding, &hiddenActiveBinding, &hiddenInactiveBinding).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings?includeHidden=true&activeOnly=true", nil)
+
+		ctrl.handleListClusterBindings(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response []ClusterBindingResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Only active bindings (including hidden active)
+		assert.Len(t, response, 2)
+		names := []string{response[0].Name, response[1].Name}
+		assert.Contains(t, names, "active-binding")
+		assert.Contains(t, names, "hidden-active-binding")
+	})
+}
+
+// TestClusterBindingAPIController_handleGetClusterBinding_NotFound tests 404 handling
+func TestClusterBindingAPIController_handleGetClusterBinding_NotFound(t *testing.T) {
+	scheme := newTestScheme()
+	log := zap.NewNop().Sugar()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+	t.Run("returns 404 for nonexistent binding", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings/default/nonexistent", nil)
+		c.Params = gin.Params{
+			{Key: "namespace", Value: "default"},
+			{Key: "name", Value: "nonexistent"},
+		}
+
+		ctrl.handleGetClusterBinding(c)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 404 for binding in wrong namespace", func(t *testing.T) {
+		now := metav1.Now()
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "test-binding",
+				Namespace:         "correct-namespace",
+				CreationTimestamp: now,
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: "Test Binding",
+				TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-1"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(binding).
+			WithStatusSubresource(binding).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings/wrong-namespace/test-binding", nil)
+		c.Params = gin.Params{
+			{Key: "namespace", Value: "wrong-namespace"},
+			{Key: "name", Value: "test-binding"},
+		}
+
+		ctrl.handleGetClusterBinding(c)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+// TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList tests empty cluster results
+func TestClusterBindingAPIController_handleListBindingsForCluster_EmptyList(t *testing.T) {
+	scheme := newTestScheme()
+	log := zap.NewNop().Sugar()
+
+	now := metav1.Now()
+
+	// Create a ClusterConfig for cluster-a
+	clusterConfigA := telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster-a",
+		},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			Tenant: "test-tenant",
+		},
+	}
+
+	binding := telekomv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "cluster-a-binding",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+		Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+			DisplayName: "Cluster A Binding",
+			TemplateRef: &telekomv1alpha1.TemplateReference{Name: "template-1"},
+			Clusters:    []string{"cluster-a"},
+		},
+	}
+
+	t.Run("returns 404 for nonexistent cluster (no ClusterConfig)", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&binding).
+			WithStatusSubresource(&binding).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings/forCluster/nonexistent-cluster", nil)
+		c.Params = gin.Params{
+			{Key: "cluster", Value: "nonexistent-cluster"},
+		}
+
+		ctrl.handleListBindingsForCluster(c)
+
+		// Returns 404 because no ClusterConfig exists for nonexistent-cluster
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns empty list for cluster with no matching bindings", func(t *testing.T) {
+		// Create a ClusterConfig for cluster-b but no bindings reference it
+		clusterConfigB := telekomv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "cluster-b",
+			},
+			Spec: telekomv1alpha1.ClusterConfigSpec{
+				Tenant: "test-tenant",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&binding, &clusterConfigB).
+			WithStatusSubresource(&binding, &clusterConfigB).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings/forCluster/cluster-b", nil)
+		c.Params = gin.Params{
+			{Key: "cluster", Value: "cluster-b"},
+		}
+
+		ctrl.handleListBindingsForCluster(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response []ClusterBindingResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		assert.Len(t, response, 0)
+	})
+
+	t.Run("returns bindings for matching cluster", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&binding, &clusterConfigA).
+			WithStatusSubresource(&binding, &clusterConfigA).
+			Build()
+
+		ctrl := NewClusterBindingAPIController(log, fakeClient, nil, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest(http.MethodGet, "/clusterBindings/forCluster/cluster-a", nil)
+		c.Params = gin.Params{
+			{Key: "cluster", Value: "cluster-a"},
+		}
+
+		ctrl.handleListBindingsForCluster(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response []ClusterBindingResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		assert.Len(t, response, 1)
+		assert.Equal(t, "cluster-a-binding", response[0].Name)
+	})
+}
+
+// TestClusterBindingAPIController_bindingToResponse_EdgeCases tests edge cases in response conversion
+func TestClusterBindingAPIController_bindingToResponse_EdgeCases(t *testing.T) {
+	log := zap.NewNop().Sugar()
+
+	ctrl := NewClusterBindingAPIController(log, nil, nil, nil)
+
+	t.Run("handles binding with priority", func(t *testing.T) {
+		priority := int32(100)
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "priority-binding",
+				Namespace: "default",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: "Priority Binding",
+				Priority:    &priority,
+			},
+		}
+
+		response := ctrl.bindingToResponse(binding)
+
+		assert.NotNil(t, response.Priority)
+		assert.Equal(t, int32(100), *response.Priority)
+	})
+
+	t.Run("handles binding with time constraints", func(t *testing.T) {
+		effectiveFrom := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		expiresAt := metav1.NewTime(time.Now().Add(24 * time.Hour))
+
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "time-constrained-binding",
+				Namespace: "default",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName:   "Time Constrained Binding",
+				EffectiveFrom: &effectiveFrom,
+				ExpiresAt:     &expiresAt,
+			},
+		}
+
+		response := ctrl.bindingToResponse(binding)
+
+		assert.NotNil(t, response.EffectiveFrom)
+		assert.NotNil(t, response.ExpiresAt)
+		assert.True(t, response.IsActive)
+	})
+
+	t.Run("handles binding with resolved status", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "resolved-binding",
+				Namespace: "default",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: "Resolved Binding",
+			},
+			Status: telekomv1alpha1.DebugSessionClusterBindingStatus{
+				ActiveSessionCount: 5,
+				ResolvedTemplates: []telekomv1alpha1.ResolvedTemplateRef{
+					{Name: "template-1", DisplayName: "Template 1"},
+				},
+				ResolvedClusters: []telekomv1alpha1.ResolvedClusterRef{
+					{Name: "cluster-a", MatchedBy: "explicit"},
+				},
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(telekomv1alpha1.DebugSessionClusterBindingConditionReady),
+						Status: metav1.ConditionTrue,
+					},
+				},
+			},
+		}
+
+		response := ctrl.bindingToResponse(binding)
+
+		assert.Equal(t, int32(5), response.ActiveSessionCount)
+		assert.Len(t, response.ResolvedTemplates, 1)
+		assert.Equal(t, "template-1", response.ResolvedTemplates[0].Name)
+		assert.Len(t, response.ResolvedClusters, 1)
+		assert.Equal(t, "cluster-a", response.ResolvedClusters[0].Name)
+		assert.Equal(t, "explicit", response.ResolvedClusters[0].MatchedBy)
+		assert.True(t, response.Ready)
+	})
+
+	t.Run("handles binding with cluster selector", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "selector-binding",
+				Namespace: "default",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: "Selector Binding",
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"env":  "production",
+						"tier": "frontend",
+					},
+				},
+			},
+		}
+
+		response := ctrl.bindingToResponse(binding)
+
+		assert.NotNil(t, response.ClusterSelector)
+		assert.Equal(t, "production", response.ClusterSelector["env"])
+		assert.Equal(t, "frontend", response.ClusterSelector["tier"])
+	})
+
+	t.Run("handles binding with template selector", func(t *testing.T) {
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "template-selector-binding",
+				Namespace: "default",
+			},
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: "Template Selector Binding",
+				TemplateSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"type": "debug",
+					},
+				},
+			},
+		}
+
+		response := ctrl.bindingToResponse(binding)
+
+		assert.NotNil(t, response.TemplateSelector)
+		assert.Equal(t, "debug", response.TemplateSelector["type"])
+	})
+}

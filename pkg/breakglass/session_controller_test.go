@@ -59,6 +59,9 @@ var sessionIndexFunctions = map[string]client.IndexerFunc{
 	"spec.grantedGroup": func(o client.Object) []string {
 		return []string{o.(*v1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
+	"metadata.name": func(o client.Object) []string {
+		return []string{o.GetName()}
+	},
 }
 
 func TestDropK8sInternalFieldsSessionStripsMetadata(t *testing.T) {
@@ -529,7 +532,7 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 	}
 }
 
-// Test that creating a session without a matching escalation returns 401 and no session is created
+// Test that creating a session without a matching escalation returns 403 and no session is created
 func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {
@@ -564,8 +567,9 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	resp := w.Result()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("Expected 401 when no escalation found, got %d", resp.StatusCode)
+	// Returns 403 Forbidden when user is authenticated but no matching escalation exists
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("Expected 403 when no escalation found, got %d", resp.StatusCode)
 	}
 
 	// Verify no sessions exist
@@ -1264,8 +1268,165 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
-	if res.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401 Unauthorized for non-approver, got %d", res.StatusCode)
+	// Non-approvers are authenticated but not authorized - should get 403 Forbidden
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for non-approver, got %d", res.StatusCode)
+	}
+}
+
+// TestApprovalAuthorizationDetailedResponses verifies that approval denials return appropriate
+// HTTP status codes and specific error messages based on the denial reason.
+// - 401 Unauthorized: authentication failures (can't identify user)
+// - 403 Forbidden: authorization failures (user identified but not allowed)
+func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
+	tests := []struct {
+		name               string
+		setupEscalation    func() *v1alpha1.BreakglassEscalation
+		setupClusterConfig func() *v1alpha1.ClusterConfig
+		approverEmail      string
+		requesterEmail     string
+		expectedStatus     int
+		expectedReason     string
+	}{
+		{
+			name: "self-approval blocked returns 403 with specific message",
+			setupEscalation: func() *v1alpha1.BreakglassEscalation {
+				return &v1alpha1.BreakglassEscalation{
+					ObjectMeta: metav1.ObjectMeta{Name: "esc-self-block", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						Allowed:           v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+						EscalatedGroup:    "test-group",
+						Approvers:         v1alpha1.BreakglassEscalationApprovers{Users: []string{"user@example.com"}},
+						BlockSelfApproval: ptrBool(true),
+					},
+				}
+			},
+			setupClusterConfig: nil,
+			approverEmail:      "user@example.com",
+			requesterEmail:     "user@example.com", // Same user - self-approval
+			expectedStatus:     http.StatusForbidden,
+			expectedReason:     "Self-approval is not allowed",
+		},
+		{
+			name: "domain not allowed returns 403 with specific message",
+			setupEscalation: func() *v1alpha1.BreakglassEscalation {
+				return &v1alpha1.BreakglassEscalation{
+					ObjectMeta: metav1.ObjectMeta{Name: "esc-domain-block", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						Allowed:                v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+						EscalatedGroup:         "test-group",
+						Approvers:              v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@external.com"}},
+						AllowedApproverDomains: []string{"internal.com"},
+					},
+				}
+			},
+			setupClusterConfig: nil,
+			approverEmail:      "approver@external.com",
+			requesterEmail:     "requester@example.com",
+			expectedStatus:     http.StatusForbidden,
+			expectedReason:     "email domain is not in the list",
+		},
+		{
+			name: "not an approver returns 403 with specific message",
+			setupEscalation: func() *v1alpha1.BreakglassEscalation {
+				return &v1alpha1.BreakglassEscalation{
+					ObjectMeta: metav1.ObjectMeta{Name: "esc-not-approver", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+						EscalatedGroup: "test-group",
+						Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"real-approver@example.com"}},
+					},
+				}
+			},
+			setupClusterConfig: nil,
+			approverEmail:      "random@example.com",
+			requesterEmail:     "requester@example.com",
+			expectedStatus:     http.StatusForbidden,
+			expectedReason:     "not in an approver group",
+		},
+		{
+			name: "no matching escalation returns 403 with specific message",
+			// Create an escalation with a DIFFERENT group than the session's granted group
+			setupEscalation: func() *v1alpha1.BreakglassEscalation {
+				return &v1alpha1.BreakglassEscalation{
+					ObjectMeta: metav1.ObjectMeta{Name: "esc-different-group", Namespace: "default"},
+					Spec: v1alpha1.BreakglassEscalationSpec{
+						Allowed:        v1alpha1.BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}, Groups: []string{"system:authenticated"}},
+						EscalatedGroup: "different-group", // Does NOT match session's "test-group"
+						Approvers:      v1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+					},
+				}
+			},
+			setupClusterConfig: nil,
+			approverEmail:      "approver@example.com",
+			requesterEmail:     "requester@example.com",
+			expectedStatus:     http.StatusForbidden,
+			expectedReason:     "No matching escalation", // Session's grantedGroup="test-group" has no matching escalation
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+			}
+
+			esc := tt.setupEscalation()
+			builder.WithObjects(esc)
+
+			if tt.setupClusterConfig != nil {
+				builder.WithObjects(tt.setupClusterConfig())
+			}
+
+			// Create a pending session
+			now := metav1.Now()
+			session := &v1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-session", Namespace: esc.Namespace},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      "test-cluster",
+					User:         tt.requesterEmail,
+					GrantedGroup: "test-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State:         v1alpha1.SessionStatePending,
+					TimeoutAt:     now,
+					RetainedUntil: metav1.NewTime(time.Now().Add(MonthDuration)),
+				},
+			}
+			builder.WithObjects(session)
+
+			cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+			sesmanager := SessionManager{Client: cli}
+			escmanager := EscalationManager{Client: cli}
+			ccmanager := NewClusterConfigManager(cli)
+
+			logger, _ := zap.NewDevelopment()
+			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+				func(c *gin.Context) {
+					c.Set("email", tt.approverEmail)
+					c.Set("username", tt.approverEmail)
+					c.Next()
+				}, "/config/config.yaml", nil, cli)
+			ctrl.clusterConfigManager = ccmanager
+			ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+				return []string{"system:authenticated"}, nil
+			}
+
+			engine := gin.New()
+			_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+			req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/test-session/approve", nil)
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+			res := w.Result()
+
+			require.Equal(t, tt.expectedStatus, res.StatusCode, "unexpected status code")
+
+			// Check the error message contains the expected reason
+			body, _ := io.ReadAll(res.Body)
+			require.Contains(t, string(body), tt.expectedReason, "error message should contain expected reason")
+		})
 	}
 }
 
@@ -1634,8 +1795,9 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/cancel", name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
-	if w.Result().StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected cancel by non-approver to be Unauthorized, got %d", w.Result().StatusCode)
+	// Non-approvers are authenticated but not authorized - should get 403 Forbidden
+	if w.Result().StatusCode != http.StatusForbidden {
+		t.Fatalf("expected cancel by non-approver to be Forbidden, got %d", w.Result().StatusCode)
 	}
 }
 
@@ -1898,15 +2060,16 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 		}
 	}
 
-	// 2) Unauthorized withdraw attempt by non-owner
+	// 2) Forbidden withdraw attempt by non-owner
 	{
 		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions/w-approved/withdraw", nil)
 		req.Header.Set("X-Test-Email", "other@example.com")
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		res := w.Result()
-		if res.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("expected 401 Unauthorized for non-owner withdraw, got %d", res.StatusCode)
+		// Non-owners are authenticated but not authorized - should get 403 Forbidden
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("expected 403 Forbidden for non-owner withdraw, got %d", res.StatusCode)
 		}
 	}
 
@@ -4604,5 +4767,59 @@ func TestIsSessionRetained_ZeroTimestamp(t *testing.T) {
 	session := v1alpha1.BreakglassSession{}
 	if IsSessionRetained(session) {
 		t.Fatalf("expected IsSessionRetained to be false when RetainedUntil is zero")
+	}
+}
+
+// TestFirstNonEmpty covers the firstNonEmpty helper function
+func TestFirstNonEmpty(t *testing.T) {
+	tests := []struct {
+		name     string
+		values   []string
+		expected string
+	}{
+		{"all empty", []string{"", "", ""}, ""},
+		{"first non-empty wins", []string{"", "first", "second"}, "first"},
+		{"already first", []string{"first", "second", "third"}, "first"},
+		{"last one", []string{"", "", "last"}, "last"},
+		{"single value", []string{"only"}, "only"},
+		{"single empty", []string{""}, ""},
+		{"no values", []string{}, ""},
+		{"middle one", []string{"", "middle", ""}, "middle"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := firstNonEmpty(tt.values...)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestMatchesAuthIdentifier covers the matchesAuthIdentifier helper function
+func TestMatchesAuthIdentifier(t *testing.T) {
+	tests := []struct {
+		name        string
+		value       string
+		identifiers []string
+		expected    bool
+	}{
+		{"empty value", "", []string{"foo"}, false},
+		{"empty identifiers", "foo", []string{}, false},
+		{"no match", "foo", []string{"bar", "baz"}, false},
+		{"exact match", "foo", []string{"foo"}, true},
+		{"case insensitive match", "Foo", []string{"foo"}, true},
+		{"case insensitive match reverse", "foo", []string{"FOO"}, true},
+		{"mixed case match", "FoO", []string{"fOo"}, true},
+		{"match in list", "user@example.com", []string{"admin@example.com", "user@example.com"}, true},
+		{"skip empty identifier", "foo", []string{"", "foo"}, true},
+		{"all empty identifiers", "foo", []string{"", ""}, false},
+		{"whitespace not matched", " foo", []string{"foo"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesAuthIdentifier(tt.value, tt.identifiers)
+			require.Equal(t, tt.expected, result)
+		})
 	}
 }

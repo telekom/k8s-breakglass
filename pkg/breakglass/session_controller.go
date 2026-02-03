@@ -40,6 +40,35 @@ const (
 
 var ErrSessionNotFound error = errors.New("session not found")
 
+// ApprovalCheckResult encapsulates the result of checking whether a user can approve a session.
+// It provides specific denial reasons to enable proper error responses (401 vs 403) and user-friendly messages.
+type ApprovalCheckResult struct {
+	// Allowed is true if the user is authorized to approve/reject the session.
+	Allowed bool
+	// Reason describes why approval was denied (empty if Allowed is true).
+	Reason ApprovalDenialReason
+	// Message is a human-readable explanation for the denial.
+	Message string
+}
+
+// ApprovalDenialReason categorizes why a user cannot approve a session.
+type ApprovalDenialReason string
+
+const (
+	// ApprovalDenialNone indicates approval is allowed.
+	ApprovalDenialNone ApprovalDenialReason = ""
+	// ApprovalDenialUnauthenticated indicates the user's identity could not be verified.
+	ApprovalDenialUnauthenticated ApprovalDenialReason = "UNAUTHENTICATED"
+	// ApprovalDenialSelfApprovalBlocked indicates self-approval is blocked for this escalation/cluster.
+	ApprovalDenialSelfApprovalBlocked ApprovalDenialReason = "SELF_APPROVAL_BLOCKED"
+	// ApprovalDenialDomainNotAllowed indicates the approver's email domain is not in the allowed list.
+	ApprovalDenialDomainNotAllowed ApprovalDenialReason = "DOMAIN_NOT_ALLOWED"
+	// ApprovalDenialNotAnApprover indicates the user is not in any approver group/list for matching escalations.
+	ApprovalDenialNotAnApprover ApprovalDenialReason = "NOT_AN_APPROVER"
+	// ApprovalDenialNoMatchingEscalation indicates no escalation was found for the session's granted group.
+	ApprovalDenialNoMatchingEscalation ApprovalDenialReason = "NO_MATCHING_ESCALATION"
+)
+
 // BreakglassSessionRequest is defined in clusteruser.go and includes an optional Reason field.
 
 type BreakglassSessionController struct {
@@ -259,7 +288,8 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			}
 			reqLog.Debugw("Cluster escalations (for visibility)", "cluster", cug.Clustername, "escalations", names)
 		}
-		apiresponses.RespondUnauthorizedWithMessage(c, "user unauthorized for group")
+		// User is authenticated but not authorized for this group - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "user not authorized for requested group")
 		return
 	} else {
 		reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(possibleEscals))
@@ -372,8 +402,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		"requestedGroup", request.GroupName)
 
 	if !slices.Contains(possible, request.GroupName) {
-		reqLog.Warnw("User unauthorized for group", "user", request.Username, "group", request.GroupName)
-		apiresponses.RespondUnauthorizedWithMessage(c, "user unauthorized for group")
+		reqLog.Warnw("User not authorized for group", "user", request.Username, "group", request.GroupName)
+		// User is authenticated but not authorized for this group - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "user not authorized for requested group")
 		return
 	}
 	if matchedEsc != nil && matchedEsc.Spec.RequestReason != nil && matchedEsc.Spec.RequestReason.Mandatory {
@@ -492,6 +523,15 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		// copy relevant duration-related fields from escalation spec to session spec
 		spec.MaxValidFor = matchedEsc.Spec.MaxValidFor
 		spec.RetainFor = matchedEsc.Spec.RetainFor
+
+		// Copy reason configurations as snapshots so session is self-contained
+		// This avoids needing to look up the escalation later
+		if matchedEsc.Spec.RequestReason != nil {
+			spec.RequestReasonConfig = matchedEsc.Spec.RequestReason.DeepCopy()
+		}
+		if matchedEsc.Spec.ApprovalReason != nil {
+			spec.ApprovalReasonConfig = matchedEsc.Spec.ApprovalReason.DeepCopy()
+		}
 
 		// Determine AllowIDPMismatch flag: set to true when neither escalation nor cluster have IDP restrictions
 		// This ensures backward compatibility for single-IDP deployments
@@ -875,8 +915,26 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	}
 
 	if !allowOwnerReject {
-		if !wc.isSessionApprover(c, bs) {
-			apiresponses.RespondUnauthorized(c)
+		authResult := wc.checkApprovalAuthorization(c, bs)
+		if !authResult.Allowed {
+			// Use appropriate HTTP status code based on denial reason:
+			// - 401 for authentication failures (can't identify user)
+			// - 403 for authorization failures (user identified but not allowed)
+			switch authResult.Reason {
+			case ApprovalDenialUnauthenticated:
+				apiresponses.RespondUnauthorizedWithMessage(c, authResult.Message)
+			case ApprovalDenialSelfApprovalBlocked:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialDomainNotAllowed:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialNotAnApprover:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialNoMatchingEscalation:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			default:
+				// Fallback for unknown reasons
+				apiresponses.RespondForbidden(c, "Access denied")
+			}
 			return
 		}
 	}
@@ -1222,8 +1280,11 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		filtered = append(filtered, ses)
 	}
 
-	reqLog.Infow("Returning filtered breakglass sessions", "count", len(filtered))
-	c.JSON(http.StatusOK, dropK8sInternalFieldsSessionList(filtered))
+	// Enrich sessions with approvalReason from matching escalations
+	enriched := wc.enrichSessionsWithApprovalReason(ctx, filtered, reqLog)
+
+	reqLog.Infow("Returning filtered breakglass sessions", "count", len(enriched))
+	c.JSON(http.StatusOK, enriched)
 }
 
 // SessionApprovalMeta contains authorization metadata for a session
@@ -1235,6 +1296,41 @@ type SessionApprovalMeta struct {
 	DenialReason string `json:"denialReason,omitempty"`
 	SessionState string `json:"sessionState"`
 	StateMessage string `json:"stateMessage,omitempty"`
+}
+
+// EnrichedSessionResponse wraps a session with additional metadata from the escalation config
+type EnrichedSessionResponse struct {
+	v1alpha1.BreakglassSession
+	// ApprovalReason contains the escalation's approval reason configuration (if any)
+	// Now sourced from session.Spec.ApprovalReasonConfig (snapshot at creation time)
+	ApprovalReason *ReasonConfigInfo `json:"approvalReason,omitempty"`
+}
+
+// enrichSessionsWithApprovalReason adds the approvalReason config from the session's stored snapshot.
+// Sessions now store reason configs at creation time, so no escalation lookup is needed.
+func (wc *BreakglassSessionController) enrichSessionsWithApprovalReason(_ context.Context, sessions []v1alpha1.BreakglassSession, _ *zap.SugaredLogger) []EnrichedSessionResponse {
+	result := make([]EnrichedSessionResponse, 0, len(sessions))
+
+	for i := range sessions {
+		ses := sessions[i]
+		dropK8sInternalFieldsSession(&ses)
+
+		enriched := EnrichedSessionResponse{
+			BreakglassSession: ses,
+		}
+
+		// Use the session's stored approval reason config (snapshot from escalation at creation time)
+		if ses.Spec.ApprovalReasonConfig != nil {
+			enriched.ApprovalReason = &ReasonConfigInfo{
+				Mandatory:   ses.Spec.ApprovalReasonConfig.Mandatory,
+				Description: ses.Spec.ApprovalReasonConfig.Description,
+			}
+		}
+
+		result = append(result, enriched)
+	}
+
+	return result
 }
 
 // getSessionApprovalMeta determines the user's authorization status for a session
@@ -1286,8 +1382,9 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 		return meta
 	}
 
-	// Check if user is an approver (reuse existing logic)
-	meta.IsApprover = wc.isSessionApprover(c, session)
+	// Check if user is an approver (use detailed authorization check for specific denial reasons)
+	authResult := wc.checkApprovalAuthorization(c, session)
+	meta.IsApprover = authResult.Allowed
 
 	if meta.IsApprover {
 		meta.CanApprove = true
@@ -1295,14 +1392,10 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 		reqLog.Debugw("User is authorized to approve/reject session",
 			"session", session.Name, "user", email, "isRequester", meta.IsRequester)
 	} else {
-		// Determine specific reason for denial
-		if meta.IsRequester {
-			meta.DenialReason = "You cannot approve your own session request"
-		} else {
-			meta.DenialReason = "You are not in an approver group for this escalation"
-		}
+		// Use the specific denial reason from the authorization check
+		meta.DenialReason = authResult.Message
 		reqLog.Debugw("User is not authorized to approve session",
-			"session", session.Name, "user", email, "reason", meta.DenialReason)
+			"session", session.Name, "user", email, "reason", authResult.Reason, "message", authResult.Message)
 	}
 
 	// Requester can always reject their own pending session (withdraw equivalent)
@@ -1380,7 +1473,8 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 		return
 	}
 	if bs.Spec.User != requesterEmail {
-		apiresponses.RespondUnauthorized(c)
+		// User is authenticated but not the session owner - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "only the session requester can withdraw")
 		return
 	}
 
@@ -1457,7 +1551,8 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		return
 	}
 	if bs.Spec.User != requesterEmail {
-		apiresponses.RespondUnauthorized(c)
+		// User is authenticated but not the session owner - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "only the session requester can drop")
 		return
 	}
 
@@ -1539,7 +1634,8 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 
 	// Only approvers can cancel via this endpoint
 	if !wc.isSessionApprover(c, bs) {
-		apiresponses.RespondUnauthorized(c)
+		// User is authenticated but not an approver - return 403 Forbidden
+		apiresponses.RespondForbidden(c, "only approvers can cancel sessions")
 		return
 	}
 
@@ -2227,27 +2323,29 @@ func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
 	c.JSON(http.StatusOK, clusters)
 }
 
-func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session v1alpha1.BreakglassSession) bool {
+// checkApprovalAuthorization performs a detailed check of whether the current user can approve/reject a session.
+// It returns an ApprovalCheckResult with specific denial reasons instead of a simple boolean.
+func (wc BreakglassSessionController) checkApprovalAuthorization(c *gin.Context, session v1alpha1.BreakglassSession) ApprovalCheckResult {
 	reqLog := system.GetReqLogger(c, wc.log)
 
 	email, err := wc.identityProvider.GetEmail(c)
 	if err != nil {
 		reqLog.Error("Error getting user identity", zap.Error(err))
-		return false
+		return ApprovalCheckResult{
+			Allowed: false,
+			Reason:  ApprovalDenialUnauthenticated,
+			Message: "Unable to verify user identity",
+		}
 	}
 	reqLog.Debugw("Approver identity verified", "email", email, "cluster", session.Spec.Cluster)
 	ctx := c.Request.Context()
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
 
-	// Base defaults for escalation evaluation. Per-escalation overrides will be applied below.
+	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
 	var baseAllowedApproverDomains []string
-	// Note: To simplify lookup we assume ClusterConfig for an escalation lives in the same namespace
-	// as the BreakglassEscalation. Therefore we will fetch ClusterConfig per-escalation using the
-	// escalation's namespace below. Keep base values empty (defaults) here.
 
-	// Gather approver groups (prefer token groups to avoid cluster SSR dependency)
-	// Cache groups in context to avoid re-fetching for the same user across multiple sessions
+	// Gather approver groups with caching
 	cacheKey := "approverGroups_" + email
 	var approverGroups []string
 	if cached, ok := c.Get(cacheKey); ok {
@@ -2261,36 +2359,42 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 			}
 		} else if gerr != nil {
 			reqLog.Errorw("[E2E-DEBUG] Approver group error", "error", gerr)
-			return false
+			return ApprovalCheckResult{
+				Allowed: false,
+				Reason:  ApprovalDenialUnauthenticated,
+				Message: "Unable to retrieve user groups",
+			}
 		}
 		c.Set(cacheKey, approverGroups)
 	}
 
-	// Note: escalation-level overrides for allowed domains and blockSelfApproval
-	// are applied per-escalation below while evaluating matching escalations.
-
 	escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, session.Spec.Cluster)
 	if err != nil {
 		reqLog.Error("Error listing cluster escalations for approval", zap.Error(err))
-		return false
+		return ApprovalCheckResult{
+			Allowed: false,
+			Reason:  ApprovalDenialNoMatchingEscalation,
+			Message: "Error retrieving escalation configuration",
+		}
 	}
 
-	// Evaluate only escalation(s) that grant the session's GrantedGroup.
+	// Track the most specific denial reason encountered during evaluation.
+	// Priority: SelfApprovalBlocked > DomainNotAllowed > NotAnApprover > NoMatchingEscalation
+	var mostSpecificDenial ApprovalCheckResult
+	foundMatchingEscalation := false
+
 	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGrantedGroup", session.Spec.GrantedGroup, "candidateEscalationCount", len(escalations), "approverEmail", email)
 	for _, esc := range escalations {
 		if esc.Spec.EscalatedGroup != session.Spec.GrantedGroup {
 			continue
 		}
-		// Only log escalation details for escalations that match our granted group
+		foundMatchingEscalation = true
 		reqLog.Debugw("Evaluating matching escalation", "escalation", esc.Name, "users", len(esc.Spec.Approvers.Users), "groups", len(esc.Spec.Approvers.Groups))
-		// Determine effective blockSelfApproval and allowed domains for this escalation
-		// Start with base defaults, then overlay ClusterConfig (if present in escalation's namespace),
-		// and finally apply per-escalation overrides.
+
+		// Determine effective settings for this escalation
 		effectiveBlockSelf := baseBlockSelfApproval
 		effectiveAllowedDomains := baseAllowedApproverDomains
 		if wc.clusterConfigManager != nil {
-			// Try to fetch a ClusterConfig with the name matching the session.Spec.Cluster within the
-			// escalation's namespace. We assume ClusterConfig objects for escalations are colocated.
 			if cc, cerr := wc.clusterConfigManager.GetClusterConfigInNamespace(c.Request.Context(), esc.Namespace, session.Spec.Cluster); cerr == nil && cc != nil {
 				effectiveBlockSelf = cc.Spec.BlockSelfApproval
 				effectiveAllowedDomains = cc.Spec.AllowedApproverDomains
@@ -2298,7 +2402,6 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 				reqLog.Debugw("No ClusterConfig found in escalation namespace, continuing with defaults", "cluster", session.Spec.Cluster, "namespace", esc.Namespace, "error", cerr)
 			}
 		}
-		// Apply explicit escalation-level overrides
 		if esc.Spec.BlockSelfApproval != nil {
 			effectiveBlockSelf = *esc.Spec.BlockSelfApproval
 		}
@@ -2306,14 +2409,19 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 			effectiveAllowedDomains = esc.Spec.AllowedApproverDomains
 		}
 
-		// Enforce blockSelfApproval for this escalation: approver cannot be the session user
+		// Check self-approval restriction
 		if effectiveBlockSelf && email == session.Spec.User {
 			reqLog.Debugw("Self-approval blocked by escalation/cluster setting", "escalation", esc.Name, "approver", email)
-			// This escalation disallows self-approval; continue checking next escalation
+			// Track this as the most specific denial (highest priority)
+			mostSpecificDenial = ApprovalCheckResult{
+				Allowed: false,
+				Reason:  ApprovalDenialSelfApprovalBlocked,
+				Message: "Self-approval is not allowed for this cluster/escalation. Please ask another approver to approve your request.",
+			}
 			continue
 		}
 
-		// Enforce allowedApproverDomains for this escalation: if configured, require approver to match
+		// Check domain restrictions
 		if len(effectiveAllowedDomains) > 0 {
 			allowed := false
 			for _, domain := range effectiveAllowedDomains {
@@ -2324,24 +2432,29 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 			}
 			if !allowed {
 				reqLog.Warnw("Approver email does not match allowed domains for escalation", "escalation", esc.Name, "approver", email, "allowedDomains", effectiveAllowedDomains)
-				// Not allowed for this escalation; continue to next
+				// Only update if we haven't seen a more specific denial (self-approval blocked)
+				if mostSpecificDenial.Reason != ApprovalDenialSelfApprovalBlocked {
+					mostSpecificDenial = ApprovalCheckResult{
+						Allowed: false,
+						Reason:  ApprovalDenialDomainNotAllowed,
+						Message: fmt.Sprintf("Your email domain is not in the list of allowed approver domains: %v", effectiveAllowedDomains),
+					}
+				}
 				continue
 			}
 		}
 
-		// Direct user approver
+		// Direct user approver check
 		if slices.Contains(esc.Spec.Approvers.Users, email) {
 			reqLog.Debugw("User is session approver (direct user)", "session", session.Name, "escalation", esc.Name, "user", email)
-			return true
+			return ApprovalCheckResult{Allowed: true}
 		}
 
-		// Multi-IDP aware group checking: use deduplicated members from status if available
+		// Multi-IDP aware group checking
 		approverGroupsToCheck := esc.Spec.Approvers.Groups
 		var dedupMembers []string
 
-		// If multi-IDP fields are set, use pre-computed deduplicated members from status
 		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 && esc.Status.ApproverGroupMembers != nil {
-			// Multi-IDP mode: check against deduplicated members directly
 			for _, g := range approverGroupsToCheck {
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
@@ -2350,25 +2463,23 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 				}
 			}
 
-			// Check if approver's email is in the deduplicated member list
 			for _, member := range dedupMembers {
 				if strings.EqualFold(member, email) {
 					reqLog.Debugw("User is session approver (multi-IDP deduplicated group member)",
 						"session", session.Name, "escalation", esc.Name, "member", email)
-					return true
+					return ApprovalCheckResult{Allowed: true}
 				}
 			}
 		} else {
-			// Legacy mode: check against user's groups
 			for _, g := range approverGroupsToCheck {
 				if slices.Contains(approverGroups, g) {
 					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", g)
-					return true
+					return ApprovalCheckResult{Allowed: true}
 				}
 			}
 		}
 
-		// This escalation did not grant approver rights to the caller; continue checking other escalations
+		// Not an approver for this escalation
 		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 {
 			reqLog.Debugw("Escalation found but user not in deduplicated approvers (continuing)",
 				"session", session.Name, "escalation", esc.Name, "user", email, "dedupMemberCount", len(dedupMembers))
@@ -2376,11 +2487,34 @@ func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session 
 			reqLog.Debugw("Escalation found but user not in approvers (continuing)",
 				"session", session.Name, "escalation", esc.Name, "user", email, "userGroups", approverGroups, "approverUsers", esc.Spec.Approvers.Users, "approverGroups", esc.Spec.Approvers.Groups)
 		}
-		continue
+		// Track not-an-approver as lowest priority denial
+		if mostSpecificDenial.Reason == ApprovalDenialNone {
+			mostSpecificDenial = ApprovalCheckResult{
+				Allowed: false,
+				Reason:  ApprovalDenialNotAnApprover,
+				Message: "You are not in an approver group for this escalation",
+			}
+		}
 	}
-	// No matching escalation granting approver rights found. Log details for debugging.
-	reqLog.Debugw("No escalation with matching granted group for approval", "session", session.Name, "grantedGroup", session.Spec.GrantedGroup, "approverEmail", email, "approverGroups", approverGroups)
-	return false
+
+	// Return the most specific denial reason found, or no-matching-escalation if none found
+	if !foundMatchingEscalation {
+		reqLog.Debugw("No escalation with matching granted group for approval", "session", session.Name, "grantedGroup", session.Spec.GrantedGroup, "approverEmail", email, "approverGroups", approverGroups)
+		return ApprovalCheckResult{
+			Allowed: false,
+			Reason:  ApprovalDenialNoMatchingEscalation,
+			Message: "No matching escalation found for the session's granted group",
+		}
+	}
+
+	return mostSpecificDenial
+}
+
+// isSessionApprover returns true if the current user is authorized to approve/reject the session.
+// For detailed denial reasons, use checkApprovalAuthorization instead.
+func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session v1alpha1.BreakglassSession) bool {
+	result := wc.checkApprovalAuthorization(c, session)
+	return result.Allowed
 }
 
 // IsSessionRetained checks if a session should be removed (retainedUntil passed)

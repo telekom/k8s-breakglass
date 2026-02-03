@@ -55,6 +55,14 @@ type BreakglassSessionSpecApplyConfiguration struct {
 	// This allows gradual migration to multi-IDP mode: sessions created before IDP tracking
 	// can continue to work with any IDP until explicitly migrated.
 	AllowIDPMismatch *bool `json:"allowIDPMismatch,omitempty"`
+	// requestReasonConfig is a snapshot of the escalation's requestReason configuration at session creation time.
+	// This stores whether a request reason was mandatory and its description.
+	// Stored as a snapshot so the session remains self-contained and doesn't require escalation lookups.
+	RequestReasonConfig *ReasonConfigApplyConfiguration `json:"requestReasonConfig,omitempty"`
+	// approvalReasonConfig is a snapshot of the escalation's approvalReason configuration at session creation time.
+	// This stores whether an approval/rejection reason is mandatory and its description.
+	// Stored as a snapshot so the session remains self-contained and doesn't require escalation lookups.
+	ApprovalReasonConfig *ReasonConfigApplyConfiguration `json:"approvalReasonConfig,omitempty"`
 }
 
 // BreakglassSessionSpecApplyConfiguration constructs a declarative configuration of the BreakglassSessionSpec type for use with
@@ -158,5 +166,21 @@ func (b *BreakglassSessionSpecApplyConfiguration) WithIdentityProviderIssuer(val
 // If called multiple times, the AllowIDPMismatch field is set to the value of the last call.
 func (b *BreakglassSessionSpecApplyConfiguration) WithAllowIDPMismatch(value bool) *BreakglassSessionSpecApplyConfiguration {
 	b.AllowIDPMismatch = &value
+	return b
+}
+
+// WithRequestReasonConfig sets the RequestReasonConfig field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequestReasonConfig field is set to the value of the last call.
+func (b *BreakglassSessionSpecApplyConfiguration) WithRequestReasonConfig(value *ReasonConfigApplyConfiguration) *BreakglassSessionSpecApplyConfiguration {
+	b.RequestReasonConfig = value
+	return b
+}
+
+// WithApprovalReasonConfig sets the ApprovalReasonConfig field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ApprovalReasonConfig field is set to the value of the last call.
+func (b *BreakglassSessionSpecApplyConfiguration) WithApprovalReasonConfig(value *ReasonConfigApplyConfiguration) *BreakglassSessionSpecApplyConfiguration {
+	b.ApprovalReasonConfig = value
 	return b
 }

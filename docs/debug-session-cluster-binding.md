@@ -627,15 +627,197 @@ for _, binding := range allBindings {
 }
 ```
 
+### Template Matching Options
+
+Bindings can match templates using two methods. At least one must be specified:
+
+#### 1. Explicit Template Reference (`templateRef`)
+
+Direct reference to a specific template by name:
+
+```yaml
+spec:
+  templateRef:
+    name: network-debug
+    # namespace: optional, defaults to cluster-scoped templates
+```
+
+**Use when:** You want to bind to exactly one template.
+
+#### 2. Label Selector (`templateSelector`)
+
+Match templates by their metadata labels:
+
+```yaml
+spec:
+  templateSelector:
+    matchLabels:
+      breakglass.t-caas.telekom.com/persona: developer
+      breakglass.t-caas.telekom.com/risk-level: low
+```
+
+**Use when:** You want to bind to multiple templates with common characteristics.
+
+**Supported label selectors:**
+- `matchLabels`: Key-value pairs that must all match
+- `matchExpressions`: Complex expressions (In, NotIn, Exists, DoesNotExist)
+
+```yaml
+spec:
+  templateSelector:
+    matchLabels:
+      breakglass.t-caas.telekom.com/persona: developer
+    matchExpressions:
+      - key: breakglass.t-caas.telekom.com/environment
+        operator: In
+        values:
+          - development
+          - staging
+      - key: breakglass.t-caas.telekom.com/deprecated
+        operator: DoesNotExist
+```
+
+#### Template Matching Priority
+
+If both `templateRef` and `templateSelector` are specified:
+1. `templateRef` is checked first (exact match)
+2. If no match, `templateSelector` is evaluated against template labels
+3. If neither matches, the binding is skipped
+
+### Cluster Matching Options
+
+Bindings can target clusters using three methods:
+
+#### 1. Explicit Cluster List (`clusters`)
+
+List of exact cluster names:
+
+```yaml
+spec:
+  clusters:
+    - production-eu
+    - production-us
+    - staging-eu
+```
+
+**Use when:** You know exactly which clusters should have access.
+
+**Note:** Cluster names must match exactly; glob patterns are NOT supported.
+
+#### 2. Label Selector (`clusterSelector`)
+
+Match clusters by their `ClusterConfig` resource labels:
+
+```yaml
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+      region: eu
+```
+
+**Use when:** You want to target clusters dynamically by their characteristics.
+
+**Prerequisite:** Clusters must have a `ClusterConfig` resource with appropriate labels:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: ClusterConfig
+metadata:
+  name: production-eu           # Must match the cluster name
+  namespace: breakglass
+  labels:
+    environment: production
+    region: eu
+    breakglass.t-caas.telekom.com/cluster: production-eu
+spec:
+  # ... cluster configuration
+```
+
+**Label selector options:**
+
+```yaml
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: production
+    matchExpressions:
+      - key: region
+        operator: In
+        values:
+          - eu
+          - us
+      - key: decommissioned
+        operator: DoesNotExist
+```
+
+#### 3. Template's Allowed Clusters (`allowed.clusters` on template)
+
+Templates can define which clusters they apply to using glob patterns:
+
+```yaml
+# In DebugSessionTemplate
+spec:
+  allowed:
+    clusters:
+      - "production-*"
+      - "staging-*"
+      - "dev-*"
+```
+
+**Note:** This is on the **template**, not the binding. Bindings can further restrict access but cannot expand beyond the template's allowed clusters.
+
+### Matching Combinations
+
+| Template Matching | Cluster Matching | Use Case |
+|------------------|------------------|----------|
+| `templateRef` | `clusters` | Specific template to specific clusters |
+| `templateRef` | `clusterSelector` | Specific template to clusters by labels |
+| `templateSelector` | `clusters` | Templates by label to specific clusters |
+| `templateSelector` | `clusterSelector` | Templates by label to clusters by label |
+
+**Example: Dynamic binding for all developer templates on all dev clusters**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: dev-clusters-developer-access
+spec:
+  templateSelector:
+    matchLabels:
+      breakglass.t-caas.telekom.com/persona: developer
+  clusterSelector:
+    matchLabels:
+      environment: development
+  namespaceConstraints:
+    allowUserNamespace: true
+    allowedNamespaces:
+      patterns: ["*"]  # Full namespace access on dev clusters
+```
+
+### Cluster Name vs ClusterConfig Matching
+
+Understanding the difference between cluster name matching and `ClusterConfig` label matching:
+
+| Aspect | `clusters` (name list) | `clusterSelector` (labels) |
+|--------|----------------------|---------------------------|
+| Matching | Exact string match | Label selector on ClusterConfig |
+| Dynamic | No - must update binding | Yes - new clusters auto-match |
+| Prerequisite | None | ClusterConfig must exist |
+| Glob patterns | Not supported | Use label expressions |
+
+**Important:** If `clusterSelector` is used but no `ClusterConfig` exists for a cluster, that cluster will NOT match the binding (even if it would logically fit the selector).
+
 ### Configuration Merge Rules
 
-When a binding is found (explicit or auto-discovered), its configuration is merged with the template's configuration. The merge follows a **binding-overrides-template** pattern:
+When a binding is found (explicit or auto-discovered), its configuration is merged with the template's configuration. The merge follows a **binding-extends-template** pattern:
 
 | Configuration Area | Merge Behavior |
 |-------------------|----------------|
 | **constraints** | Field-level merge: binding fields override template fields |
 | **schedulingConstraints** | Full replacement: binding takes precedence |
-| **namespaceConstraints** | Full replacement: binding takes precedence |
+| **namespaceConstraints** | Field-level merge with extension: see details below |
 | **schedulingOptions** | Full replacement: binding takes precedence |
 | **impersonation** | Full replacement: binding takes precedence |
 | **approvers** | Full replacement: binding takes precedence |
@@ -670,25 +852,116 @@ constraints:
 
 #### Full Replacement Fields
 
-For scheduling, namespace constraints, impersonation, and approvers, the binding's configuration completely replaces the template's when set:
+For scheduling constraints, impersonation, and approvers, the binding's configuration completely replaces the template's when set:
 
 ```yaml
 # Template
 spec:
-  namespaceConstraints:
-    allowedPatterns: ["*"]
-    defaultNamespace: "debug"
+  schedulingConstraints:
+    nodeSelector:
+      node-type: debug
+    deniedNodeLabels:
+      node-role.kubernetes.io/control-plane: ""
 
 # Binding (completely replaces template)
 spec:
-  namespaceConstraints:
-    allowedPatterns: ["team-alpha-*"]
-    defaultNamespace: "team-alpha-debug"
+  schedulingConstraints:
+    nodeSelector:
+      node-type: team-a
+    # Note: deniedNodeLabels is lost since binding replaces template entirely
 
-# Effective result: binding's namespaceConstraints only
+# Effective result: binding's schedulingConstraints only
+schedulingConstraints:
+  nodeSelector:
+    node-type: team-a
+```
+
+#### Namespace Constraints Merge (Field-Level with Extension)
+
+Namespace constraints use **field-level merging** where the binding can **extend** template permissions. This allows bindings to grant additional access beyond what the template allows:
+
+| Field | Merge Behavior |
+|-------|----------------|
+| `allowUserNamespace` | Binding `true` overrides template `false` (extension) |
+| `defaultNamespace` | Binding value overrides template value |
+| `allowedNamespaces.patterns` | Combined (union) from both template and binding |
+| `deniedNamespaces.patterns` | Binding replaces template (binding can be more permissive) |
+
+```yaml
+# Template: restrictive base
+spec:
+  namespaceConstraints:
+    allowUserNamespace: false        # Users cannot specify namespace
+    defaultNamespace: "debug"
+    allowedNamespaces:
+      patterns: ["debug-*"]          # Only debug-* namespaces allowed
+
+# Binding: extends template permissions
+spec:
+  namespaceConstraints:
+    allowUserNamespace: true         # Enable user-specified namespaces
+    allowedNamespaces:
+      patterns: ["breakglass-*"]     # Add breakglass-* to allowed patterns
+
+# Effective result (merged)
 namespaceConstraints:
-  allowedPatterns: ["team-alpha-*"]
-  defaultNamespace: "team-alpha-debug"
+  allowUserNamespace: true           # From binding (extends access)
+  defaultNamespace: "debug"          # From template (not overridden by binding)
+  allowedNamespaces:
+    patterns:
+      - "debug-*"                    # From template
+      - "breakglass-*"               # From binding (combined)
+```
+
+**Important:** This merge behavior is designed for **least-privilege delegation**:
+- Templates define base security policies (e.g., `allowUserNamespace: false`)
+- Bindings can selectively grant more access per-cluster or per-team
+- Bindings cannot make templates *more* restrictive than defined
+
+**Example: Production vs. Development Access**
+
+```yaml
+# Template: developer-basic (restrictive)
+spec:
+  namespaceConstraints:
+    allowUserNamespace: false
+    allowedNamespaces:
+      patterns: ["breakglass-debug"]
+
+---
+# Binding for development clusters: more permissive
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: dev-cluster-extended-access
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: development
+  templateSelector:
+    matchLabels:
+      breakglass.t-caas.telekom.com/persona: developer
+  namespaceConstraints:
+    allowUserNamespace: true
+    allowedNamespaces:
+      patterns: ["debug-*", "test-*"]
+  # Result: dev clusters allow user-specified namespaces matching
+  # debug-*, test-*, or breakglass-debug
+
+---
+# Binding for production clusters: uses template restrictions
+# (no namespaceConstraints override = inherits from template)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: prod-cluster-standard-access
+spec:
+  clusters:
+    - production-eu
+    - production-us
+  templateRef:
+    name: developer-basic
+  # Result: prod clusters only allow breakglass-debug namespace
 ```
 
 #### Additive Merge (Required Auxiliary Resources)

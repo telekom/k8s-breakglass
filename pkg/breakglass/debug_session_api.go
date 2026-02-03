@@ -47,6 +47,7 @@ import (
 type DebugSessionAPIController struct {
 	log          *zap.SugaredLogger
 	client       ctrlclient.Client
+	apiReader    ctrlclient.Reader // Uncached reader for consistent reads
 	ccProvider   *cluster.ClientProvider
 	middleware   gin.HandlerFunc
 	mailService  MailEnqueuer
@@ -84,6 +85,21 @@ func (c *DebugSessionAPIController) WithAuditService(auditService AuditEmitter) 
 func (c *DebugSessionAPIController) WithDisableEmail(disable bool) *DebugSessionAPIController {
 	c.disableEmail = disable
 	return c
+}
+
+// WithAPIReader sets an uncached reader for consistent reads after writes.
+// If not set, the controller falls back to the cached client for reads.
+func (c *DebugSessionAPIController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionAPIController {
+	c.apiReader = reader
+	return c
+}
+
+// reader returns the appropriate reader - apiReader if set, otherwise the cached client.
+func (c *DebugSessionAPIController) reader() ctrlclient.Reader {
+	if c.apiReader != nil {
+		return c.apiReader
+	}
+	return c.client
 }
 
 // BasePath returns the base path for debug session routes
@@ -127,26 +143,28 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 }
 
 // getDebugSessionByName finds a debug session by name across all namespaces
-// or optionally in a specific namespace if provided via query param
+// or optionally in a specific namespace if provided via query param.
+// Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, name, namespaceHint string) (*v1alpha1.DebugSession, error) {
+	reader := c.reader()
 	// If namespace hint provided, try that first
 	if namespaceHint != "" {
 		session := &v1alpha1.DebugSession{}
-		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespaceHint}, session); err == nil {
+		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespaceHint}, session); err == nil {
 			return session, nil
 		}
 	}
 
 	// Search across all namespaces using label selector
 	sessionList := &v1alpha1.DebugSessionList{}
-	if err := c.client.List(ctx, sessionList, ctrlclient.MatchingLabels{DebugSessionLabelKey: name}); err != nil {
+	if err := reader.List(ctx, sessionList, ctrlclient.MatchingLabels{DebugSessionLabelKey: name}); err != nil {
 		return nil, err
 	}
 
 	if len(sessionList.Items) == 0 {
 		// Fallback: try default namespace
 		session := &v1alpha1.DebugSession{}
-		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: "default"}, session); err != nil {
+		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: "default"}, session); err != nil {
 			return nil, apierrors.NewNotFound(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, name)
 		}
 		return session, nil
@@ -230,6 +248,8 @@ type DebugSessionSummary struct {
 // DebugSessionDetailResponse represents the detailed debug session response
 type DebugSessionDetailResponse struct {
 	v1alpha1.DebugSession
+	// Warnings contains non-critical issues or notes about defaults that were applied
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // handleListDebugSessions returns a list of debug sessions
@@ -259,7 +279,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.List(apiCtx, sessionList, listOpts...); err != nil {
+	if err := c.reader().List(apiCtx, sessionList, listOpts...); err != nil {
 		reqLog.Errorw("Failed to list debug sessions", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list debug sessions"})
 		return
@@ -437,23 +457,37 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		"allowedBySource", allowedResult.AllowedBySource,
 	)
 
-	// Validate and resolve target namespace
-	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace)
+	// Track warnings for defaults that were applied
+	var warnings []string
+
+	// Validate and resolve target namespace (pass binding for constraint override)
+	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace, allowedResult.MatchingBinding)
 	if err != nil {
+		// Provide more context about namespace constraints when validation fails
+		var effectiveAllowUserNs bool
+		var effectiveDefault string
+		if allowedResult.MatchingBinding != nil && allowedResult.MatchingBinding.Spec.NamespaceConstraints != nil {
+			effectiveAllowUserNs = allowedResult.MatchingBinding.Spec.NamespaceConstraints.AllowUserNamespace
+			effectiveDefault = allowedResult.MatchingBinding.Spec.NamespaceConstraints.DefaultNamespace
+		} else if template.Spec.NamespaceConstraints != nil {
+			effectiveAllowUserNs = template.Spec.NamespaceConstraints.AllowUserNamespace
+			effectiveDefault = template.Spec.NamespaceConstraints.DefaultNamespace
+		}
 		reqLog.Warnw("Target namespace validation failed",
 			"templateRef", req.TemplateRef,
 			"requestedNamespace", req.TargetNamespace,
-			"allowUserNamespace", template.Spec.NamespaceConstraints != nil && template.Spec.NamespaceConstraints.AllowUserNamespace,
-			"defaultNamespace", func() string {
-				if template.Spec.NamespaceConstraints != nil {
-					return template.Spec.NamespaceConstraints.DefaultNamespace
-				}
-				return ""
-			}(),
+			"allowUserNamespace", effectiveAllowUserNs,
+			"defaultNamespace", effectiveDefault,
+			"bindingUsed", allowedResult.MatchingBinding != nil,
 			"error", err,
 		)
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	// Track warning if namespace was defaulted
+	if req.TargetNamespace == "" && targetNamespace != "" {
+		warnings = append(warnings, fmt.Sprintf("Target namespace defaulted to '%s'", targetNamespace))
+		reqLog.Debugw("Namespace defaulted", "defaultedTo", targetNamespace)
 	}
 
 	// Validate and resolve scheduling option
@@ -466,6 +500,17 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		)
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	// Track warning if scheduling option was defaulted
+	if req.SelectedSchedulingOption == "" && selectedOption != "" {
+		warnings = append(warnings, fmt.Sprintf("Scheduling option defaulted to '%s'", selectedOption))
+		reqLog.Debugw("Scheduling option defaulted", "defaultedTo", selectedOption)
+	}
+	// Track warning if scheduling option was ignored (template has no options but client sent one)
+	if req.SelectedSchedulingOption != "" && selectedOption == "" &&
+		(template.Spec.SchedulingOptions == nil || len(template.Spec.SchedulingOptions.Options) == 0) {
+		warnings = append(warnings, fmt.Sprintf("Scheduling option '%s' was ignored (template has no scheduling options)", req.SelectedSchedulingOption))
+		reqLog.Debugw("Scheduling option ignored", "ignoredOption", req.SelectedSchedulingOption)
 	}
 
 	// Get current user from context
@@ -552,6 +597,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			SelectedSchedulingOption:      selectedOption,
 			ResolvedSchedulingConstraints: resolvedScheduling,
 		},
+	}
+
+	// Copy reason configurations as snapshots so session is self-contained
+	// This avoids needing to look up the template later
+	if template.Spec.RequestReason != nil {
+		session.Spec.RequestReasonConfig = template.Spec.RequestReason.DeepCopy()
+	}
+	if template.Spec.ApprovalReason != nil {
+		session.Spec.ApprovalReasonConfig = template.Spec.ApprovalReason.DeepCopy()
 	}
 
 	// Set explicit binding reference if provided (format: "namespace/name")
@@ -649,7 +703,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	metrics.DebugSessionsCreated.WithLabelValues(req.Cluster, req.TemplateRef).Inc()
 
-	ctx.JSON(http.StatusCreated, DebugSessionDetailResponse{DebugSession: *session})
+	response := DebugSessionDetailResponse{DebugSession: *session}
+	if len(warnings) > 0 {
+		response.Warnings = warnings
+		reqLog.Infow("Session created with warnings", "warnings", warnings)
+	}
+	ctx.JSON(http.StatusCreated, response)
 }
 
 // handleJoinDebugSession allows a user to join an existing debug session
@@ -763,6 +822,14 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
+	// Get current user for authorization check
+	currentUser, exists := ctx.Get("username")
+	if !exists || currentUser == nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+	username := currentUser.(string)
+
 	var req RenewDebugSessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -773,6 +840,12 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	extendBy, err := v1alpha1.ParseDuration(req.ExtendBy)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid duration format"})
+		return
+	}
+
+	// Validate duration is positive
+	if extendBy <= 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "extension duration must be positive"})
 		return
 	}
 
@@ -787,6 +860,21 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		return
+	}
+
+	// Check if user is owner or participant
+	isOwnerOrParticipant := session.Spec.RequestedBy == username
+	if !isOwnerOrParticipant {
+		for _, p := range session.Status.Participants {
+			if p.User == username {
+				isOwnerOrParticipant = true
+				break
+			}
+		}
+	}
+	if !isOwnerOrParticipant {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "only session owner or participants can renew"})
 		return
 	}
 
@@ -1165,23 +1253,25 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 
 // DebugSessionTemplateResponse represents a template in API responses
 type DebugSessionTemplateResponse struct {
-	Name                 string                            `json:"name"`
-	DisplayName          string                            `json:"displayName"`
-	Description          string                            `json:"description,omitempty"`
-	Mode                 v1alpha1.DebugSessionTemplateMode `json:"mode"`
-	WorkloadType         v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
-	PodTemplateRef       string                            `json:"podTemplateRef,omitempty"`
-	TargetNamespace      string                            `json:"targetNamespace,omitempty"`
-	Constraints          *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
-	AllowedClusters      []string                          `json:"allowedClusters,omitempty"`
-	AllowedGroups        []string                          `json:"allowedGroups,omitempty"`
-	RequiresApproval     bool                              `json:"requiresApproval"`
-	SchedulingOptions    *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
-	NamespaceConstraints *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
-	Priority             int32                             `json:"priority,omitempty"`
-	Hidden               bool                              `json:"hidden,omitempty"`
-	Deprecated           bool                              `json:"deprecated,omitempty"`
-	DeprecationMessage   string                            `json:"deprecationMessage,omitempty"`
+	Name                  string                            `json:"name"`
+	DisplayName           string                            `json:"displayName"`
+	Description           string                            `json:"description,omitempty"`
+	Mode                  v1alpha1.DebugSessionTemplateMode `json:"mode"`
+	WorkloadType          v1alpha1.DebugWorkloadType        `json:"workloadType,omitempty"`
+	PodTemplateRef        string                            `json:"podTemplateRef,omitempty"`
+	TargetNamespace       string                            `json:"targetNamespace,omitempty"`
+	Constraints           *v1alpha1.DebugSessionConstraints `json:"constraints,omitempty"`
+	AllowedClusters       []string                          `json:"allowedClusters,omitempty"`
+	AllowedGroups         []string                          `json:"allowedGroups,omitempty"`
+	RequiresApproval      bool                              `json:"requiresApproval"`
+	SchedulingOptions     *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints  *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+	Priority              int32                             `json:"priority,omitempty"`
+	Hidden                bool                              `json:"hidden,omitempty"`
+	Deprecated            bool                              `json:"deprecated,omitempty"`
+	DeprecationMessage    string                            `json:"deprecationMessage,omitempty"`
+	HasAvailableClusters  bool                              `json:"hasAvailableClusters"`            // True if at least one cluster is available for this template
+	AvailableClusterCount int                               `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
 }
 
 // SchedulingOptionsResponse represents scheduling options in API responses
@@ -1328,6 +1418,7 @@ type NotificationConfigInfo struct {
 }
 
 // handleListTemplates returns available debug session templates
+// Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 
@@ -1335,7 +1426,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.List(apiCtx, templateList); err != nil {
+	if err := c.reader().List(apiCtx, templateList); err != nil {
 		reqLog.Errorw("Failed to list debug session templates", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list templates"})
 		return
@@ -1343,13 +1434,23 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 
 	// Fetch all ClusterConfigs for pattern resolution
 	clusterConfigList := &v1alpha1.ClusterConfigList{}
-	if err := c.client.List(apiCtx, clusterConfigList); err != nil {
+	if err := c.reader().List(apiCtx, clusterConfigList); err != nil {
 		reqLog.Warnw("Failed to list cluster configs for pattern resolution", "error", err)
 		// Continue without pattern resolution - clusters will be empty
 	}
 	allClusterNames := make([]string, 0, len(clusterConfigList.Items))
-	for _, cc := range clusterConfigList.Items {
+	clusterMap := make(map[string]*v1alpha1.ClusterConfig, len(clusterConfigList.Items))
+	for i := range clusterConfigList.Items {
+		cc := &clusterConfigList.Items[i]
 		allClusterNames = append(allClusterNames, cc.Name)
+		clusterMap[cc.Name] = cc
+	}
+
+	// Fetch all bindings to determine which templates have available clusters
+	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
+	if err := c.reader().List(apiCtx, bindingList); err != nil {
+		reqLog.Warnw("Failed to list bindings for template cluster resolution", "error", err)
+		// Continue without binding resolution
 	}
 
 	// Get user's groups for filtering
@@ -1362,6 +1463,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 	}
 
 	includeHidden := ctx.Query("includeHidden") == "true"
+	includeUnavailable := ctx.Query("includeUnavailable") == "true"
 
 	// Filter and transform
 	var templates []DebugSessionTemplateResponse
@@ -1392,19 +1494,34 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			}
 		}
 
+		// Calculate available cluster count for this template
+		availableClusterCount := c.countAvailableClustersForTemplate(&t, bindingList.Items, clusterMap, allClusterNames)
+		hasAvailableClusters := availableClusterCount > 0
+
+		// Skip templates without available clusters unless explicitly requested
+		if !hasAvailableClusters && !includeUnavailable {
+			reqLog.Debugw("Skipping template without available clusters",
+				"template", t.Name,
+				"includeUnavailable", includeUnavailable,
+			)
+			continue
+		}
+
 		resp := DebugSessionTemplateResponse{
-			Name:               t.Name,
-			DisplayName:        t.Spec.DisplayName,
-			Description:        t.Spec.Description,
-			Mode:               t.Spec.Mode,
-			WorkloadType:       t.Spec.WorkloadType,
-			TargetNamespace:    t.Spec.TargetNamespace,
-			Constraints:        t.Spec.Constraints,
-			RequiresApproval:   t.Spec.Approvers != nil && len(t.Spec.Approvers.Groups) > 0,
-			Priority:           t.Spec.Priority,
-			Hidden:             t.Spec.Hidden,
-			Deprecated:         t.Spec.Deprecated,
-			DeprecationMessage: t.Spec.DeprecationMessage,
+			Name:                  t.Name,
+			DisplayName:           t.Spec.DisplayName,
+			Description:           t.Spec.Description,
+			Mode:                  t.Spec.Mode,
+			WorkloadType:          t.Spec.WorkloadType,
+			TargetNamespace:       t.Spec.TargetNamespace,
+			Constraints:           t.Spec.Constraints,
+			RequiresApproval:      t.Spec.Approvers != nil && len(t.Spec.Approvers.Groups) > 0,
+			Priority:              t.Spec.Priority,
+			Hidden:                t.Spec.Hidden,
+			Deprecated:            t.Spec.Deprecated,
+			DeprecationMessage:    t.Spec.DeprecationMessage,
+			HasAvailableClusters:  hasAvailableClusters,
+			AvailableClusterCount: availableClusterCount,
 		}
 
 		if t.Spec.PodTemplateRef != nil {
@@ -1465,6 +1582,8 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 }
 
 // handleGetTemplate returns details for a specific template
+// Uses the uncached apiReader if configured, for consistent reads after writes.
+// Returns the same flat response format as the list endpoint.
 func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
@@ -1478,7 +1597,7 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "template not found"})
 			return
@@ -1488,7 +1607,31 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, template)
+	// Build response using same format as list endpoint
+	resp := DebugSessionTemplateResponse{
+		Name:               template.Name,
+		DisplayName:        template.Spec.DisplayName,
+		Description:        template.Spec.Description,
+		Mode:               template.Spec.Mode,
+		WorkloadType:       template.Spec.WorkloadType,
+		TargetNamespace:    template.Spec.TargetNamespace,
+		Constraints:        template.Spec.Constraints,
+		RequiresApproval:   template.Spec.Approvers != nil && len(template.Spec.Approvers.Groups) > 0,
+		Priority:           template.Spec.Priority,
+		Hidden:             template.Spec.Hidden,
+		Deprecated:         template.Spec.Deprecated,
+		DeprecationMessage: template.Spec.DeprecationMessage,
+	}
+
+	if template.Spec.PodTemplateRef != nil {
+		resp.PodTemplateRef = template.Spec.PodTemplateRef.Name
+	}
+	if template.Spec.Allowed != nil {
+		resp.AllowedClusters = template.Spec.Allowed.Clusters
+		resp.AllowedGroups = template.Spec.Allowed.Groups
+	}
+
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // handleGetTemplateClusters returns cluster-specific details for a template
@@ -1623,25 +1766,84 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	ctx.JSON(http.StatusOK, response)
 }
 
+// countAvailableClustersForTemplate counts how many clusters are available for a template.
+// It considers both bindings and direct template.Spec.Allowed.Clusters patterns.
+func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
+	template *v1alpha1.DebugSessionTemplate,
+	allBindings []v1alpha1.DebugSessionClusterBinding,
+	clusterMap map[string]*v1alpha1.ClusterConfig,
+	allClusterNames []string,
+) int {
+	seenClusters := make(map[string]bool)
+
+	// Find bindings that match this template
+	applicableBindings := c.findBindingsForTemplate(template, allBindings)
+
+	// Collect clusters from bindings
+	for i := range applicableBindings {
+		binding := &applicableBindings[i]
+		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
+		for _, clusterName := range bindingClusters {
+			if clusterMap[clusterName] != nil {
+				seenClusters[clusterName] = true
+			}
+		}
+	}
+
+	// Also check template's direct allowed.clusters patterns
+	if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+		resolvedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
+		for _, clusterName := range resolvedClusters {
+			if clusterMap[clusterName] != nil {
+				seenClusters[clusterName] = true
+			}
+		}
+	}
+
+	return len(seenClusters)
+}
+
 // findBindingsForTemplate returns all bindings that reference the given template
 func (c *DebugSessionAPIController) findBindingsForTemplate(template *v1alpha1.DebugSessionTemplate, bindings []v1alpha1.DebugSessionClusterBinding) []v1alpha1.DebugSessionClusterBinding {
 	var result []v1alpha1.DebugSessionClusterBinding
 	for i := range bindings {
 		binding := &bindings[i]
+		bindingID := fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 		if !IsBindingActive(binding) {
+			c.log.Debugw("findBindingsForTemplate: skipping inactive binding",
+				"template", template.Name,
+				"binding", bindingID,
+			)
 			continue
 		}
 		// Check templateRef
 		if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
+			c.log.Debugw("findBindingsForTemplate: matched by templateRef",
+				"template", template.Name,
+				"binding", bindingID,
+			)
 			result = append(result, *binding)
 			continue
 		}
 		// Check templateSelector
 		if binding.Spec.TemplateSelector != nil {
 			selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
-			if err == nil {
+			if err != nil {
+				c.log.Warnw("findBindingsForTemplate: failed to parse templateSelector",
+					"binding", bindingID,
+					"error", err,
+				)
+			} else {
 				labelSet := labelSetFromMap(template.Labels)
-				if selector.Matches(labelSet) {
+				matches := selector.Matches(labelSet)
+				c.log.Debugw("findBindingsForTemplate: checking templateSelector",
+					"template", template.Name,
+					"templateLabels", template.Labels,
+					"binding", bindingID,
+					"selectorString", selector.String(),
+					"matches", matches,
+				)
+				if matches {
 					result = append(result, *binding)
 				}
 			}
@@ -1790,6 +1992,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1a
 // resolveClustersFromBinding resolves cluster names from a binding's spec
 func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *v1alpha1.DebugSessionClusterBinding, clusterMap map[string]*v1alpha1.ClusterConfig) []string {
 	var result []string
+	bindingID := fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 
 	// Add explicit clusters
 	for _, clusterName := range binding.Spec.Clusters {
@@ -1798,18 +2001,46 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *v1alpha1
 		}
 	}
 
+	c.log.Debugw("resolveClustersFromBinding: explicit clusters",
+		"binding", bindingID,
+		"explicitClusters", binding.Spec.Clusters,
+		"matchedExplicitClusters", result,
+	)
+
 	// Add clusters matching selector
 	if binding.Spec.ClusterSelector != nil {
 		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
-		if err == nil {
+		if err != nil {
+			c.log.Warnw("resolveClustersFromBinding: failed to parse clusterSelector",
+				"binding", bindingID,
+				"error", err,
+			)
+		} else {
+			selectorString := selector.String()
+			c.log.Debugw("resolveClustersFromBinding: checking clusterSelector",
+				"binding", bindingID,
+				"selectorString", selectorString,
+				"clusterMapSize", len(clusterMap),
+			)
 			for name, cc := range clusterMap {
 				labelSet := labelSetFromMap(cc.Labels)
-				if selector.Matches(labelSet) {
+				matches := selector.Matches(labelSet)
+				if matches {
 					result = append(result, name)
+					c.log.Debugw("resolveClustersFromBinding: cluster matched selector",
+						"binding", bindingID,
+						"cluster", name,
+						"clusterLabels", cc.Labels,
+					)
 				}
 			}
 		}
 	}
+
+	c.log.Debugw("resolveClustersFromBinding: final result",
+		"binding", bindingID,
+		"resolvedClusters", result,
+	)
 
 	return result
 }
@@ -2226,6 +2457,7 @@ func labelSetFromMap(m map[string]string) labels.Set {
 }
 
 // handleListPodTemplates returns available debug pod templates
+// Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 
@@ -2233,7 +2465,7 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.List(apiCtx, templateList); err != nil {
+	if err := c.reader().List(apiCtx, templateList); err != nil {
 		reqLog.Errorw("Failed to list debug pod templates", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list pod templates"})
 		return
@@ -2256,6 +2488,7 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 }
 
 // handleGetPodTemplate returns details for a specific pod template
+// Uses the uncached apiReader if configured, for consistent reads after writes.
 func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
@@ -2269,7 +2502,7 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), APIContextTimeout)
 	defer cancel()
 
-	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			ctx.JSON(http.StatusNotFound, gin.H{"error": "pod template not found"})
 			return
@@ -2279,12 +2512,53 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, template)
+	// Build response using same flat format as list endpoint
+	containerCount := 0
+	if template.Spec.Template.Spec.Containers != nil {
+		containerCount = len(template.Spec.Template.Spec.Containers)
+	}
+	resp := DebugPodTemplateResponse{
+		Name:        template.Name,
+		DisplayName: template.Spec.DisplayName,
+		Description: template.Spec.Description,
+		Containers:  containerCount,
+	}
+
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // isUserAuthorizedToApprove checks if the user is authorized to approve/reject a debug session
-// The user must be in one of the approver groups/users defined in the session's template
+// The user must be in one of the approver groups/users defined in the session's template or binding.
+// Additionally, the requester of the session is not allowed to self-approve.
 func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Context, session *v1alpha1.DebugSession, username string, userGroupsInterface interface{}) bool {
+	// Block self-approval: the user who requested the session cannot approve it
+	if session.Spec.RequestedBy == username {
+		c.log.Infow("Blocking self-approval attempt",
+			"session", session.Name, "requester", session.Spec.RequestedBy, "approver", username)
+		return false
+	}
+
+	// First try to find the binding that granted this session - it may have its own approvers
+	bindings := &v1alpha1.DebugSessionClusterBindingList{}
+	if err := c.client.List(ctx, bindings); err == nil {
+		for i := range bindings.Items {
+			binding := &bindings.Items[i]
+			// Check if this binding applies to this session
+			if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == session.Spec.TemplateRef {
+				// Check if this binding covers the session's cluster
+				for _, cluster := range binding.Spec.Clusters {
+					if matchPattern(cluster, session.Spec.Cluster) {
+						// Found a matching binding - check if it has approvers
+						if binding.Spec.Approvers != nil && (len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0) {
+							return c.checkApproverAuthorization(binding.Spec.Approvers, username, userGroupsInterface)
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// If template has no resolved approvers info in status, fall back to fetching template
 	if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Approvers == nil {
 		// Fetch the template to check approvers
@@ -2404,8 +2678,28 @@ func convertSelectorTerms(terms []v1alpha1.NamespaceSelectorTerm) []NamespaceSel
 
 // resolveTargetNamespace validates and resolves the target namespace for debug pods.
 // Returns the resolved namespace or an error if the requested namespace is not allowed.
-func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.DebugSessionTemplate, requestedNamespace string) (string, error) {
+// If a binding is provided and has namespace constraints, those constraints are used to extend
+// or override the template's constraints (e.g., binding.AllowUserNamespace=true overrides template's false).
+func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.DebugSessionTemplate, requestedNamespace string, binding *v1alpha1.DebugSessionClusterBinding) (string, error) {
+	// Start with template's namespace constraints
 	nc := template.Spec.NamespaceConstraints
+
+	// If binding has namespace constraints, use them to extend/override template's
+	if binding != nil && binding.Spec.NamespaceConstraints != nil {
+		nc = c.mergeNamespaceConstraints(template.Spec.NamespaceConstraints, binding.Spec.NamespaceConstraints)
+		c.log.Debugw("Merged namespace constraints from binding",
+			"template", template.Name,
+			"binding", binding.Name,
+			"bindingNamespace", binding.Namespace,
+			"mergedAllowUserNamespace", nc != nil && nc.AllowUserNamespace,
+			"mergedDefaultNamespace", func() string {
+				if nc != nil {
+					return nc.DefaultNamespace
+				}
+				return ""
+			}(),
+		)
+	}
 
 	c.log.Debugw("Resolving target namespace",
 		"template", template.Name,
@@ -2453,6 +2747,17 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.De
 		return "breakglass-debug", nil
 	}
 
+	// If the requested namespace matches the default, allow it even when user namespace selection is disabled.
+	// This handles the case where the frontend sends the default namespace value in the request.
+	if nc.DefaultNamespace != "" && requestedNamespace == nc.DefaultNamespace {
+		c.log.Debugw("Requested namespace matches default, allowing",
+			"template", template.Name,
+			"requestedNamespace", requestedNamespace,
+			"defaultNamespace", nc.DefaultNamespace,
+		)
+		return nc.DefaultNamespace, nil
+	}
+
 	// Check if user is allowed to specify a namespace
 	if !nc.AllowUserNamespace {
 		c.log.Debugw("User-specified namespace not allowed by template",
@@ -2490,6 +2795,65 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *v1alpha1.De
 	return requestedNamespace, nil
 }
 
+// mergeNamespaceConstraints merges template and binding namespace constraints.
+// Binding constraints can extend what template allows (e.g., enable user namespaces).
+// Returns a new NamespaceConstraints with merged values.
+func (c *DebugSessionAPIController) mergeNamespaceConstraints(
+	templateNC, bindingNC *v1alpha1.NamespaceConstraints,
+) *v1alpha1.NamespaceConstraints {
+	// If both are nil, return nil
+	if templateNC == nil && bindingNC == nil {
+		return nil
+	}
+
+	// If only one exists, use it
+	if templateNC == nil {
+		return bindingNC.DeepCopy()
+	}
+	if bindingNC == nil {
+		return templateNC.DeepCopy()
+	}
+
+	// Merge both - binding extends template
+	merged := templateNC.DeepCopy()
+
+	// AllowUserNamespace: binding can enable it even if template disables
+	if bindingNC.AllowUserNamespace {
+		merged.AllowUserNamespace = true
+	}
+
+	// DefaultNamespace: binding can override template's default
+	if bindingNC.DefaultNamespace != "" {
+		merged.DefaultNamespace = bindingNC.DefaultNamespace
+	}
+
+	// AllowedNamespaces: binding can add to allowed list
+	if bindingNC.AllowedNamespaces != nil && !bindingNC.AllowedNamespaces.IsEmpty() {
+		if merged.AllowedNamespaces == nil {
+			merged.AllowedNamespaces = bindingNC.AllowedNamespaces.DeepCopy()
+		} else {
+			// Merge patterns (union)
+			patternSet := make(map[string]bool)
+			for _, p := range merged.AllowedNamespaces.Patterns {
+				patternSet[p] = true
+			}
+			for _, p := range bindingNC.AllowedNamespaces.Patterns {
+				if !patternSet[p] {
+					merged.AllowedNamespaces.Patterns = append(merged.AllowedNamespaces.Patterns, p)
+				}
+			}
+		}
+	}
+
+	// DeniedNamespaces: take the intersection (more permissive for the user)
+	// For simplicity, if binding specifies denied namespaces, use binding's (override)
+	if bindingNC.DeniedNamespaces != nil && !bindingNC.DeniedNamespaces.IsEmpty() {
+		merged.DeniedNamespaces = bindingNC.DeniedNamespaces.DeepCopy()
+	}
+
+	return merged
+}
+
 // matchNamespaceFilter checks if a namespace matches a NamespaceFilter.
 // Only evaluates patterns; label selector matching requires runtime access to namespaces.
 func matchNamespaceFilter(namespace string, filter *v1alpha1.NamespaceFilter) bool {
@@ -2525,9 +2889,15 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	baseConstraints := template.Spec.SchedulingConstraints
 
 	// If no scheduling options defined, just return base constraints
+	// Ignore any user-selected option since the template doesn't support them.
+	// This handles cases where the frontend sends a stale scheduling option
+	// after switching to a template that doesn't have scheduling options.
 	if template.Spec.SchedulingOptions == nil || len(template.Spec.SchedulingOptions.Options) == 0 {
 		if selectedOption != "" {
-			return nil, "", fmt.Errorf("template has no scheduling options, but '%s' was requested", selectedOption)
+			c.log.Debugw("Ignoring scheduling option - template has no options defined",
+				"template", template.Name,
+				"selectedOption", selectedOption,
+			)
 		}
 		return baseConstraints, "", nil
 	}
@@ -3360,22 +3730,69 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 
 	hasTemplateClusterRestriction := template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0
 
+	c.log.Debugw("isClusterAllowedByTemplateOrBinding starting",
+		"template", template.Name,
+		"cluster", clusterName,
+		"hasTemplateClusterRestriction", hasTemplateClusterRestriction,
+		"totalBindingsProvided", len(bindings),
+		"totalClusterConfigs", len(clusterConfigs),
+	)
+
+	// Check if clusterName exists in clusterConfigs
+	if _, exists := clusterConfigs[clusterName]; !exists {
+		c.log.Warnw("Requested cluster not found in ClusterConfig map",
+			"cluster", clusterName,
+			"availableClusters", func() []string {
+				names := make([]string, 0, len(clusterConfigs))
+				for name := range clusterConfigs {
+					names = append(names, name)
+				}
+				return names
+			}(),
+		)
+	}
+
 	// 1. Check if allowed by template's allowed.clusters
 	if hasTemplateClusterRestriction {
 		for _, pattern := range template.Spec.Allowed.Clusters {
 			if matchPattern(pattern, clusterName) {
+				c.log.Debugw("Cluster allowed by template pattern",
+					"cluster", clusterName,
+					"pattern", pattern,
+				)
 				result.Allowed = true
 				result.AllowedBySource = "template"
 				return result
 			}
 		}
+		c.log.Debugw("Cluster not allowed by template patterns",
+			"cluster", clusterName,
+			"templatePatterns", template.Spec.Allowed.Clusters,
+		)
 	}
 
 	// 2. Check if allowed by any binding that references this template
 	applicableBindings := c.findBindingsForTemplate(template, bindings)
+	c.log.Debugw("Found bindings for template",
+		"template", template.Name,
+		"applicableBindingsCount", len(applicableBindings),
+		"applicableBindingNames", func() []string {
+			names := make([]string, len(applicableBindings))
+			for i, b := range applicableBindings {
+				names[i] = fmt.Sprintf("%s/%s", b.Namespace, b.Name)
+			}
+			return names
+		}(),
+	)
+
 	for i := range applicableBindings {
 		binding := &applicableBindings[i]
 		bindingClusters := c.resolveClustersFromBinding(binding, clusterConfigs)
+		c.log.Debugw("Binding cluster resolution",
+			"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
+			"resolvedClusters", bindingClusters,
+			"lookingFor", clusterName,
+		)
 		for _, bc := range bindingClusters {
 			if bc == clusterName {
 				result.AllBindings = append(result.AllBindings, *binding)
@@ -3383,17 +3800,31 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 					result.Allowed = true
 					result.AllowedBySource = fmt.Sprintf("binding:%s/%s", binding.Namespace, binding.Name)
 					result.MatchingBinding = binding
+					c.log.Debugw("Cluster allowed by binding",
+						"cluster", clusterName,
+						"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
+					)
 				}
 			}
 		}
 	}
 
 	// 3. If template has no cluster restriction and no bindings provide explicit access,
-	// fall back to allowing all clusters (backward compatibility)
+	// the template is effectively unavailable (no clusters can be deployed to).
+	// This is different from the old "backward compatibility" behavior that allowed all clusters.
 	if !result.Allowed && !hasTemplateClusterRestriction && len(applicableBindings) == 0 {
-		result.Allowed = true
-		result.AllowedBySource = "implicit (no restrictions)"
+		c.log.Debugw("Cluster denied - template has no cluster restrictions and no bindings (unavailable template)",
+			"cluster", clusterName,
+			"template", template.Name,
+		)
+		// result.Allowed remains false
 	}
+
+	c.log.Debugw("isClusterAllowedByTemplateOrBinding result",
+		"cluster", clusterName,
+		"allowed", result.Allowed,
+		"source", result.AllowedBySource,
+	)
 
 	return result
 }

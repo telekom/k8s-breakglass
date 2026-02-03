@@ -304,3 +304,14 @@ func TestIsolatedMultiSink_FailureIsolation(t *testing.T) {
 	assert.True(t, workingHealth.Healthy, "Working sink should be healthy")
 	assert.True(t, failingHealth.CircuitOpen, "Failing sink circuit should be open")
 }
+
+func TestQueuedSink_Name(t *testing.T) {
+	mockSink := newQueuedMockSink("test-sink")
+	cfg := DefaultQueuedSinkConfig()
+	logger := zap.NewNop()
+
+	qs := NewQueuedSink(mockSink, cfg, logger)
+	defer func() { _ = qs.Close() }()
+
+	assert.Equal(t, "test-sink", qs.Name())
+}

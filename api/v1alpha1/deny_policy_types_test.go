@@ -979,3 +979,189 @@ func TestDenyPolicy_ValidateCreate_ValidPodSecurityRules(t *testing.T) {
 		t.Errorf("unexpected error for valid podSecurityRules: %v", err)
 	}
 }
+
+// TestValidateDenyPolicySpec_EmptyVerbs tests validation when verbs are empty in a rule
+func TestValidateDenyPolicySpec_EmptyVerbs(t *testing.T) {
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for empty verbs, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.rules[0].verbs" {
+		t.Errorf("expected error field spec.rules[0].verbs, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDenyPolicySpec_EmptyAPIGroups tests validation when apiGroups are empty in a rule
+func TestValidateDenyPolicySpec_EmptyAPIGroups(t *testing.T) {
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"get"},
+					APIGroups: []string{},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for empty apiGroups, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.rules[0].apiGroups" {
+		t.Errorf("expected error field spec.rules[0].apiGroups, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDenyPolicySpec_EmptyResources tests validation when resources are empty in a rule
+func TestValidateDenyPolicySpec_EmptyResources(t *testing.T) {
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"get"},
+					APIGroups: []string{""},
+					Resources: []string{},
+				},
+			},
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for empty resources, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.rules[0].resources" {
+		t.Errorf("expected error field spec.rules[0].resources, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDenyPolicySpec_ValidRule tests a valid rule
+func TestValidateDenyPolicySpec_ValidRule(t *testing.T) {
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"get", "list"},
+					APIGroups: []string{""},
+					Resources: []string{"secrets"},
+				},
+			},
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors for valid rule, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDenyPolicySpec_MultipleRulesWithErrors tests multiple rules with different errors
+func TestValidateDenyPolicySpec_MultipleRulesWithErrors(t *testing.T) {
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+				{
+					Verbs:     []string{"get"},
+					APIGroups: []string{},
+					Resources: []string{"pods"},
+				},
+			},
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 2 {
+		t.Errorf("expected 2 errors for multiple invalid rules, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDenyPolicySpec_NegativePrecedence tests negative precedence validation
+func TestValidateDenyPolicySpec_NegativePrecedence(t *testing.T) {
+	negPrec := int32(-1)
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			Precedence: &negPrec,
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error for negative precedence, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Field != "spec.precedence" {
+		t.Errorf("expected error field spec.precedence, got %s", errs[0].Field)
+	}
+}
+
+// TestValidateDenyPolicySpec_NilPrecedence tests nil precedence (no error)
+func TestValidateDenyPolicySpec_NilPrecedence(t *testing.T) {
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"get"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+			Precedence: nil,
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors for nil precedence, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDenyPolicySpec_ZeroPrecedence tests zero precedence (valid)
+func TestValidateDenyPolicySpec_ZeroPrecedence(t *testing.T) {
+	zeroPrec := int32(0)
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			Rules: []DenyRule{
+				{
+					Verbs:     []string{"get"},
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+				},
+			},
+			Precedence: &zeroPrec,
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors for zero precedence, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateDenyPolicySpec_MultipleNegativeThresholds tests multiple negative thresholds
+func TestValidateDenyPolicySpec_MultipleNegativeThresholds(t *testing.T) {
+	policy := &DenyPolicy{
+		Spec: DenyPolicySpec{
+			PodSecurityRules: &PodSecurityRules{
+				Thresholds: []RiskThreshold{
+					{MaxScore: -5, Action: "deny"},
+					{MaxScore: 10, Action: "allow"},
+					{MaxScore: -2, Action: "deny"},
+				},
+			},
+		},
+	}
+	errs := validateDenyPolicySpec(policy)
+	if len(errs) != 2 {
+		t.Errorf("expected 2 errors for multiple negative thresholds, got %d: %v", len(errs), errs)
+	}
+}

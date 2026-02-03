@@ -96,14 +96,39 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 		to      BreakglassSessionState
 		wantErr bool
 	}{
+		// Valid transitions
 		{name: "empty to pending", from: "", to: SessionStatePending, wantErr: false},
 		{name: "pending to approved", from: SessionStatePending, to: SessionStateApproved, wantErr: false},
 		{name: "pending to waiting", from: SessionStatePending, to: SessionStateWaitingForScheduledTime, wantErr: false},
+		{name: "pending to rejected", from: SessionStatePending, to: SessionStateRejected, wantErr: false},
+		{name: "pending to withdrawn", from: SessionStatePending, to: SessionStateWithdrawn, wantErr: false},
+		{name: "pending to timeout", from: SessionStatePending, to: SessionStateTimeout, wantErr: false},
 		{name: "waiting to approved", from: SessionStateWaitingForScheduledTime, to: SessionStateApproved, wantErr: false},
 		{name: "waiting to withdrawn", from: SessionStateWaitingForScheduledTime, to: SessionStateWithdrawn, wantErr: false},
 		{name: "approved to expired", from: SessionStateApproved, to: SessionStateExpired, wantErr: false},
+		// Same-state transitions (idempotent reconciliation)
+		{name: "pending to pending", from: SessionStatePending, to: SessionStatePending, wantErr: false},
+		{name: "approved to approved", from: SessionStateApproved, to: SessionStateApproved, wantErr: false},
+		{name: "rejected to rejected", from: SessionStateRejected, to: SessionStateRejected, wantErr: false},
+		{name: "expired to expired", from: SessionStateExpired, to: SessionStateExpired, wantErr: false},
+		{name: "withdrawn to withdrawn", from: SessionStateWithdrawn, to: SessionStateWithdrawn, wantErr: false},
+		{name: "timeout to timeout", from: SessionStateTimeout, to: SessionStateTimeout, wantErr: false},
+		// Invalid transitions
 		{name: "approved to pending", from: SessionStateApproved, to: SessionStatePending, wantErr: true},
 		{name: "rejected to approved", from: SessionStateRejected, to: SessionStateApproved, wantErr: true},
+		{name: "rejected to pending", from: SessionStateRejected, to: SessionStatePending, wantErr: true},
+		{name: "withdrawn to approved", from: SessionStateWithdrawn, to: SessionStateApproved, wantErr: true},
+		{name: "withdrawn to pending", from: SessionStateWithdrawn, to: SessionStatePending, wantErr: true},
+		{name: "expired to approved", from: SessionStateExpired, to: SessionStateApproved, wantErr: true},
+		{name: "expired to pending", from: SessionStateExpired, to: SessionStatePending, wantErr: true},
+		{name: "timeout to approved", from: SessionStateTimeout, to: SessionStateApproved, wantErr: true},
+		{name: "timeout to pending", from: SessionStateTimeout, to: SessionStatePending, wantErr: true},
+		// Invalid transition from waiting (cannot go to rejected)
+		{name: "waiting to rejected", from: SessionStateWaitingForScheduledTime, to: SessionStateRejected, wantErr: true},
+		{name: "waiting to pending", from: SessionStateWaitingForScheduledTime, to: SessionStatePending, wantErr: true},
+		// Unknown state falls through to default (invalid)
+		{name: "unknown to pending", from: BreakglassSessionState("unknown"), to: SessionStatePending, wantErr: true},
+		{name: "empty to approved", from: "", to: SessionStateApproved, wantErr: true},
 	}
 
 	for _, tc := range cases {

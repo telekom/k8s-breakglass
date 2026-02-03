@@ -144,11 +144,7 @@ test.describe.serial("Reject Session", () => {
     }
   });
 
-  // NOTE: This test is skipped because the frontend doesn't currently validate that a rejection reason is required.
-  // The reject button is enabled even without a reason, which may be intentional design (reasons are optional).
-  // If rejection reasons should be mandatory, the ApprovalModalContent component needs to be updated to
-  // add :disabled="!approverNote.trim()" condition to the reject button when isNoteRequired is true.
-  test.skip("reject button is disabled without reason", async ({ browser }) => {
+  test("reject button is disabled without reason when note is required", async ({ browser }) => {
     // First create a session
     const requesterContext = await browser.newContext({
       ignoreHTTPSErrors: true,

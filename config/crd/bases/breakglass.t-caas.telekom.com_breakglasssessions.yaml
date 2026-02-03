@@ -81,6 +81,21 @@ spec:
                   This allows gradual migration to multi-IDP mode: sessions created before IDP tracking
                   can continue to work with any IDP until explicitly migrated.
                 type: boolean
+              approvalReasonConfig:
+                description: |-
+                  approvalReasonConfig is a snapshot of the escalation's approvalReason configuration at session creation time.
+                  This stores whether an approval/rejection reason is mandatory and its description.
+                  Stored as a snapshot so the session remains self-contained and doesn't require escalation lookups.
+                properties:
+                  description:
+                    description: description describes what to enter in the reason
+                      field (e.g. "CASM TicketID").
+                    type: string
+                  mandatory:
+                    description: mandatory indicates whether the field is required
+                      (true) or optional (false).
+                    type: boolean
+                type: object
               cluster:
                 description: cluster is the name of the cluster the session is valid
                   for.
@@ -122,6 +137,21 @@ spec:
                   requestReason stores the free-text reason supplied by the requester when creating the session.
                   This field is optional and may be populated depending on escalation configuration.
                 type: string
+              requestReasonConfig:
+                description: |-
+                  requestReasonConfig is a snapshot of the escalation's requestReason configuration at session creation time.
+                  This stores whether a request reason was mandatory and its description.
+                  Stored as a snapshot so the session remains self-contained and doesn't require escalation lookups.
+                properties:
+                  description:
+                    description: description describes what to enter in the reason
+                      field (e.g. "CASM TicketID").
+                    type: string
+                  mandatory:
+                    description: mandatory indicates whether the field is required
+                      (true) or optional (false).
+                    type: boolean
+                type: object
               retainFor:
                 default: 720h
                 description: retainFor is the amount of time to wait before removing

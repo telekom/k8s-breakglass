@@ -91,10 +91,13 @@ test.describe.serial("Approve Session via Email Link", () => {
       // === Step 3: Approver logs in and clicks email link ===
       await approverAuth.loginViaKeycloak(TEST_USERS.uiE2eApprover);
 
-      // Verify approver is logged in by navigating to home and checking user menu
+      // Verify approver is logged in by navigating to home and checking user menu exists
       await approverPage.goto("/");
       await approverPage.waitForLoadState("networkidle");
-      await expect(approverPage.getByText(/ui-e2e-approver@example.com/i).first()).toBeVisible({ timeout: 10000 });
+      // User menu element exists with logged-in attribute when authenticated
+      // Use toBeAttached() because Scale component may report as hidden due to internal CSS
+      const userMenu = approverPage.locator('[data-testid="user-menu"][logged-in="true"]');
+      await expect(userMenu).toBeAttached({ timeout: 10000 });
       console.log("Approver logged in successfully");
 
       // Navigate to approval link (now a dedicated page, not a modal)

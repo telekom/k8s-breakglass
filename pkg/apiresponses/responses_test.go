@@ -318,3 +318,18 @@ func TestRespondNoContent(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.Empty(t, w.Body.Bytes())
 }
+
+func TestRespondUnprocessableEntity(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	RespondUnprocessableEntity(c, "Invalid field value")
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+
+	var resp APIError
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "Invalid field value", resp.Error)
+	assert.Equal(t, "UNPROCESSABLE_ENTITY", resp.Code)
+}

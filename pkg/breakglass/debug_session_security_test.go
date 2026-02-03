@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -69,6 +70,7 @@ func TestDebugSessionSecurity_ApprovalAuthorization(t *testing.T) {
 
 	controller := &DebugSessionAPIController{
 		client: fakeClient,
+		log:    zaptest.NewLogger(t).Sugar(),
 	}
 
 	ctx := context.Background()
@@ -114,13 +116,14 @@ func TestDebugSessionSecurity_ApprovalAuthorization(t *testing.T) {
 	})
 
 	t.Run("requester cannot approve their own session", func(t *testing.T) {
+		// Even if the requester is in an approver group (platform-leads), they cannot self-approve
 		authorized := controller.isUserAuthorizedToApprove(
 			ctx,
 			session,
-			"developer@example.com",
-			[]string{"developers"},
+			"developer@example.com",    // RequestedBy is "developer@example.com"
+			[]string{"platform-leads"}, // This group IS an approver group, but self-approval should still be blocked
 		)
-		assert.False(t, authorized, "Session requester should not be able to approve their own session")
+		assert.False(t, authorized, "Session requester should not be able to approve their own session even if in approver group")
 	})
 }
 

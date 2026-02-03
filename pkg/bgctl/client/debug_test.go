@@ -302,11 +302,13 @@ func TestDebugTemplatesList(t *testing.T) {
 	response := DebugTemplateListResponse{
 		Templates: []DebugSessionTemplateSummary{
 			{
-				Name:             "template-1",
-				DisplayName:      "Debug Template",
-				Mode:             "workload",
-				TargetNamespace:  "debug-ns",
-				RequiresApproval: true,
+				Name:                  "template-1",
+				DisplayName:           "Debug Template",
+				Mode:                  "workload",
+				TargetNamespace:       "debug-ns",
+				RequiresApproval:      true,
+				HasAvailableClusters:  true,
+				AvailableClusterCount: 2,
 			},
 		},
 		Total: 1,
@@ -326,14 +328,57 @@ func TestDebugTemplatesList(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Templates, 1)
 	assert.Equal(t, "template-1", result.Templates[0].Name)
+	assert.True(t, result.Templates[0].HasAvailableClusters)
+	assert.Equal(t, 2, result.Templates[0].AvailableClusterCount)
+}
+
+func TestDebugTemplatesListWithIncludeUnavailable(t *testing.T) {
+	response := DebugTemplateListResponse{
+		Templates: []DebugSessionTemplateSummary{
+			{
+				Name:                  "template-1",
+				DisplayName:           "Debug Template",
+				Mode:                  "workload",
+				HasAvailableClusters:  true,
+				AvailableClusterCount: 2,
+			},
+			{
+				Name:                  "template-2",
+				DisplayName:           "Unavailable Template",
+				Mode:                  "kubectl-debug",
+				HasAvailableClusters:  false,
+				AvailableClusterCount: 0,
+			},
+		},
+		Total: 2,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/debugSessions/templates", r.URL.Path)
+		// Verify includeUnavailable query param is passed
+		require.Equal(t, "true", r.URL.Query().Get("includeUnavailable"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+
+	result, err := client.DebugTemplates().List(context.Background(), DebugTemplateListOptions{
+		IncludeUnavailable: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Templates, 2)
+	assert.True(t, result.Templates[0].HasAvailableClusters)
+	assert.False(t, result.Templates[1].HasAvailableClusters)
 }
 
 func TestDebugTemplatesGet(t *testing.T) {
-	template := v1alpha1.DebugSessionTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "template-1"},
-		Spec: v1alpha1.DebugSessionTemplateSpec{
-			DisplayName: "Debug Template",
-		},
+	// The API returns a flat DebugSessionTemplateSummary structure, not the full K8s object
+	template := DebugSessionTemplateSummary{
+		Name:        "template-1",
+		DisplayName: "Debug Template",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

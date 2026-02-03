@@ -146,6 +146,18 @@ type DebugSessionSpec struct {
 	// Merged from template defaults and binding overrides at session creation time.
 	// +optional
 	SelectedAuxiliaryResources []string `json:"selectedAuxiliaryResources,omitempty"`
+
+	// requestReasonConfig is a snapshot of the template's requestReason configuration at session creation time.
+	// This stores whether a request reason was mandatory, min/max length, and description.
+	// Stored as a snapshot so the session remains self-contained and doesn't require template lookups.
+	// +optional
+	RequestReasonConfig *DebugRequestReasonConfig `json:"requestReasonConfig,omitempty"`
+
+	// approvalReasonConfig is a snapshot of the template's approvalReason configuration at session creation time.
+	// This stores whether an approval/rejection reason is mandatory and its description.
+	// Stored as a snapshot so the session remains self-contained and doesn't require template lookups.
+	// +optional
+	ApprovalReasonConfig *DebugApprovalReasonConfig `json:"approvalReasonConfig,omitempty"`
 }
 
 // BindingReference references a DebugSessionClusterBinding.

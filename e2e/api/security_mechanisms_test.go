@@ -131,9 +131,10 @@ func TestSecurityAuthenticationEnforcement(t *testing.T) {
 			require.NoError(t, err)
 			resp.Body.Close()
 
-			// Should be 401 (or 400 for malformed)
-			assert.True(t, resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusBadRequest,
-				"Malformed auth header '%s' should be rejected, got %d", header, resp.StatusCode)
+			// All authentication failures must return 401 Unauthorized
+			// 400 Bad Request is reserved for authenticated users with malformed request bodies
+			assert.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+				"Malformed auth header '%s' should return 401 Unauthorized, got %d", header, resp.StatusCode)
 		}
 		t.Log("SEC-004: All malformed Authorization headers correctly rejected")
 	})

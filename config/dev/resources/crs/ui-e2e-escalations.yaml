@@ -88,6 +88,9 @@ spec:
       - ui-e2e-approver-group
     users:
       - ui-e2e-approver@example.com
+  approvalReason:
+    mandatory: true
+    description: "Reason for approval/rejection (required for this test)"
   maxValidFor: 1h
   retainFor: 24h
 

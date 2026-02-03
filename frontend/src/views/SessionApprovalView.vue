@@ -20,6 +20,27 @@ interface SessionApprovalMeta {
   stateMessage?: string;
 }
 
+// Denial reason categories for specific UI treatment
+type DenialCategory = "self-approval" | "domain-restriction" | "not-approver" | "no-matching-escalation" | "other";
+
+function categorizeDenialReason(reason?: string): DenialCategory {
+  if (!reason) return "other";
+  const lowerReason = reason.toLowerCase();
+  if (lowerReason.includes("self-approval") || lowerReason.includes("cannot approve your own")) {
+    return "self-approval";
+  }
+  if (lowerReason.includes("domain") || lowerReason.includes("email domain")) {
+    return "domain-restriction";
+  }
+  if (lowerReason.includes("not in an approver") || lowerReason.includes("not an approver")) {
+    return "not-approver";
+  }
+  if (lowerReason.includes("no matching escalation") || lowerReason.includes("no escalation")) {
+    return "no-matching-escalation";
+  }
+  return "other";
+}
+
 const route = useRoute();
 const router = useRouter();
 const user = useUser();
@@ -35,6 +56,16 @@ const error = ref<string | null>(null);
 const errorDetails = ref<string | null>(null);
 const approverNote = ref("");
 const isApproving = ref(false);
+
+// Computed: categorize the denial reason for specialized UI treatment
+const denialCategory = computed<DenialCategory>(() => {
+  return categorizeDenialReason(approvalMeta.value?.denialReason);
+});
+
+// Computed: is this a self-approval blocked scenario?
+const isSelfApprovalBlocked = computed(() => {
+  return denialCategory.value === "self-approval" && approvalMeta.value?.isRequester;
+});
 
 const loadSession = async () => {
   loading.value = true;
@@ -76,8 +107,24 @@ const loadSession = async () => {
         error.value = "Cannot Approve Session";
         errorDetails.value = meta.stateMessage;
       } else if (!meta.canApprove && meta.denialReason) {
-        // User is not authorized to approve
-        error.value = "Not Authorized";
+        // User is not authorized to approve - use specific titles based on denial reason
+        const category = categorizeDenialReason(meta.denialReason);
+        switch (category) {
+          case "self-approval":
+            error.value = "Self-Approval Not Allowed";
+            break;
+          case "domain-restriction":
+            error.value = "Domain Restriction";
+            break;
+          case "not-approver":
+            error.value = "Not an Approver";
+            break;
+          case "no-matching-escalation":
+            error.value = "No Matching Escalation";
+            break;
+          default:
+            error.value = "Not Authorized";
+        }
         errorDetails.value = meta.denialReason;
       } else {
         // User can approve - set the session
@@ -233,16 +280,40 @@ onMounted(async () => {
     </div>
 
     <div v-else-if="error" class="error-container">
-      <div class="error-icon">
-        <scale-icon-action-circle-close size="48"></scale-icon-action-circle-close>
+      <div class="error-icon" :class="{ 'self-approval-icon': isSelfApprovalBlocked }">
+        <scale-icon-action-circle-close v-if="!isSelfApprovalBlocked" size="48"></scale-icon-action-circle-close>
+        <scale-icon-user-file-forbidden v-else size="48"></scale-icon-user-file-forbidden>
       </div>
 
-      <h2 class="error-title" data-testid="error-title">{{ error }}</h2>
+      <h2 class="error-title" :class="{ 'self-approval-title': isSelfApprovalBlocked }" data-testid="error-title">
+        {{ error }}
+      </h2>
 
-      <scale-notification variant="danger" :heading="errorDetails" opened data-testid="error-details">
+      <!-- Special UI for self-approval blocked -->
+      <scale-notification
+        v-if="isSelfApprovalBlocked"
+        variant="warning"
+        heading="Self-approval is blocked for this session"
+        opened
+        data-testid="self-approval-warning"
+      >
+        <div class="self-approval-content">
+          <p>
+            Your organization's security policy requires that breakglass sessions be approved by a different person than
+            the requester.
+          </p>
+          <p class="self-approval-action">
+            <strong>Next steps:</strong> Share the approval link with a colleague who has approver permissions, or
+            contact your team lead.
+          </p>
+        </div>
+      </scale-notification>
+
+      <!-- Standard notification for other errors -->
+      <scale-notification v-else variant="danger" :heading="errorDetails" opened data-testid="error-details">
         <!-- Show additional context based on approval metadata -->
         <div v-if="approvalMeta" class="error-meta">
-          <p v-if="approvalMeta.isRequester" class="meta-info">
+          <p v-if="approvalMeta.isRequester && denialCategory !== 'self-approval'" class="meta-info">
             <strong>Note:</strong> You are the requester of this session.
           </p>
           <p v-if="approvalMeta.sessionState && approvalMeta.sessionState !== 'pending'" class="meta-info">
@@ -316,6 +387,28 @@ onMounted(async () => {
   margin-bottom: 1.5rem;
   color: var(--scl-color-danger);
   text-align: center;
+}
+
+.error-title.self-approval-title {
+  color: var(--scl-color-warning);
+}
+
+.error-icon.self-approval-icon {
+  color: var(--scl-color-warning);
+}
+
+.self-approval-content {
+  text-align: left;
+}
+
+.self-approval-content p {
+  margin: 0.5rem 0;
+}
+
+.self-approval-action {
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .error-content {
