@@ -8,6 +8,10 @@ Here we can add license
 
 package v1alpha1
 
+import (
+	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+)
+
 // DebugSessionSpecApplyConfiguration represents a declarative configuration of the DebugSessionSpec type for use
 // with apply.
 //
@@ -64,6 +68,10 @@ type DebugSessionSpecApplyConfiguration struct {
 	// This stores whether an approval/rejection reason is mandatory and its description.
 	// Stored as a snapshot so the session remains self-contained and doesn't require template lookups.
 	ApprovalReasonConfig *DebugApprovalReasonConfigApplyConfiguration `json:"approvalReasonConfig,omitempty"`
+	// extraDeployValues contains user-provided values for extraDeployVariables.
+	// Keys must match variable names defined in the template.
+	// Values are validated against the variable's inputType and validation rules.
+	ExtraDeployValues map[string]v1.JSON `json:"extraDeployValues,omitempty"`
 }
 
 // DebugSessionSpecApplyConfiguration constructs a declarative configuration of the DebugSessionSpec type for use with
@@ -217,5 +225,19 @@ func (b *DebugSessionSpecApplyConfiguration) WithRequestReasonConfig(value *Debu
 // If called multiple times, the ApprovalReasonConfig field is set to the value of the last call.
 func (b *DebugSessionSpecApplyConfiguration) WithApprovalReasonConfig(value *DebugApprovalReasonConfigApplyConfiguration) *DebugSessionSpecApplyConfiguration {
 	b.ApprovalReasonConfig = value
+	return b
+}
+
+// WithExtraDeployValues puts the entries into the ExtraDeployValues field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the ExtraDeployValues field,
+// overwriting an existing map entries in ExtraDeployValues field with the same key.
+func (b *DebugSessionSpecApplyConfiguration) WithExtraDeployValues(entries map[string]v1.JSON) *DebugSessionSpecApplyConfiguration {
+	if b.ExtraDeployValues == nil && len(entries) > 0 {
+		b.ExtraDeployValues = make(map[string]v1.JSON, len(entries))
+	}
+	for k, v := range entries {
+		b.ExtraDeployValues[k] = v
+	}
 	return b
 }

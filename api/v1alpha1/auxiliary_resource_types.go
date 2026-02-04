@@ -53,11 +53,19 @@ type AuxiliaryResource struct {
 	// +optional
 	Category string `json:"category,omitempty"`
 
+	// templateString is a Go template that produces one or more YAML documents.
+	// Use `---` separator for multiple resources from one definition.
+	// Supports all context variables including {{ .Vars.* }} for user-provided values.
+	// Mutually exclusive with template.
+	// +optional
+	TemplateString string `json:"templateString,omitempty"`
+
 	// template is the embedded resource template.
 	// Supports Go templating with session context variables using Sprout functions.
 	// See documentation for available variables and functions.
-	// +required
-	Template runtime.RawExtension `json:"template"`
+	// Mutually exclusive with templateString. Deprecated: Use templateString for new templates.
+	// +optional
+	Template runtime.RawExtension `json:"template,omitempty"`
 
 	// createBefore specifies if this resource should be created before debug pods.
 	// Useful for NetworkPolicies that must exist before pods start.
@@ -137,6 +145,18 @@ type AuxiliaryResourceContext struct {
 
 	// Binding contains information about the DebugSessionClusterBinding (if used).
 	Binding AuxiliaryResourceBindingContext `json:"binding"`
+
+	// Vars contains user-provided extraDeployValues.
+	// Access as {{ .Vars.variableName }} in templates.
+	// +optional
+	Vars map[string]string `json:"vars,omitempty"`
+
+	// Now is the current timestamp for time-based logic.
+	Now string `json:"now"`
+
+	// EnabledResources lists which auxiliary resources will be deployed.
+	// Useful for conditional logic based on what else is being deployed.
+	EnabledResources []string `json:"enabledResources"`
 }
 
 // AuxiliaryResourceSessionContext contains session information for templates.

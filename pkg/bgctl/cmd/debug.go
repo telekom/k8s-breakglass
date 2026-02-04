@@ -237,6 +237,7 @@ func newDebugSessionCreateCommand() *cobra.Command {
 		invitees                 []string
 		targetNamespace          string
 		selectedSchedulingOption string
+		setValues                []string
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -247,7 +248,11 @@ When multiple bindings are available for a cluster, use --binding to select
 which binding configuration to use. You can list available bindings with:
   bgctl debug template clusters <template-name> -o wide
 
-The --binding flag accepts the format "namespace/name" or just "name".`,
+The --binding flag accepts the format "namespace/name" or just "name".
+
+Use --set to provide values for template extraDeployVariables:
+  bgctl debug session create --template my-template --cluster cluster-a \
+    --set logLevel=debug --set enableTracing=true`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -257,6 +262,17 @@ The --binding flag accepts the format "namespace/name" or just "name".`,
 			if err != nil {
 				return err
 			}
+
+			// Parse --set values into extraDeployValues map
+			extraDeployValues := make(map[string]interface{})
+			for _, sv := range setValues {
+				parts := strings.SplitN(sv, "=", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid --set format: %q (expected key=value)", sv)
+				}
+				extraDeployValues[parts[0]] = parts[1]
+			}
+
 			req := client.CreateDebugSessionRequest{
 				TemplateRef:              templateRef,
 				Cluster:                  cluster,
@@ -267,6 +283,11 @@ The --binding flag accepts the format "namespace/name" or just "name".`,
 				InvitedParticipants:      invitees,
 				TargetNamespace:          targetNamespace,
 				SelectedSchedulingOption: selectedSchedulingOption,
+			}
+
+			// Add extraDeployValues if any were provided
+			if len(extraDeployValues) > 0 {
+				req.ExtraDeployValues = extraDeployValues
 			}
 
 			// Normalize binding reference to namespace/name format if only name provided
@@ -290,6 +311,7 @@ The --binding flag accepts the format "namespace/name" or just "name".`,
 	cmd.Flags().StringSliceVar(&invitees, "invite", nil, "Invite participants")
 	cmd.Flags().StringVar(&targetNamespace, "target-namespace", "", "Target namespace for debug pods")
 	cmd.Flags().StringVar(&selectedSchedulingOption, "scheduling-option", "", "Scheduling option name (from template)")
+	cmd.Flags().StringArrayVar(&setValues, "set", nil, "Set template variable (key=value), can be repeated")
 	_ = cmd.MarkFlagRequired("template")
 	_ = cmd.MarkFlagRequired("cluster")
 	return cmd

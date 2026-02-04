@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -4102,4 +4103,372 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDebugSessionAPIController_CreateWithExtraDeployValues tests session creation with extra deploy values
+func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
+	scheme := newTestScheme()
+	logger := zap.NewNop().Sugar()
+
+	// Template with extraDeployVariables
+	templateWithVariables := telekomv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "template-with-vars",
+		},
+		Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+			Mode:         telekomv1alpha1.DebugSessionModeWorkload,
+			WorkloadType: telekomv1alpha1.DebugWorkloadDaemonSet,
+			Allowed: &telekomv1alpha1.DebugSessionAllowed{
+				Clusters: []string{"*"}, // Allow all clusters for this test
+				Groups:   []string{"*"},
+			},
+			Constraints: &telekomv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+			},
+			ExtraDeployVariables: []telekomv1alpha1.ExtraDeployVariable{
+				{
+					Name:        "enableDebug",
+					Description: "Enable debug logging",
+					InputType:   telekomv1alpha1.InputTypeBoolean,
+					Default:     &apiextensionsv1.JSON{Raw: []byte(`false`)},
+				},
+				{
+					Name:        "logLevel",
+					Description: "Log level",
+					InputType:   telekomv1alpha1.InputTypeSelect,
+					Options: []telekomv1alpha1.SelectOption{
+						{Value: "debug", DisplayName: "Debug"},
+						{Value: "info", DisplayName: "Info"},
+						{Value: "warn", DisplayName: "Warning"},
+					},
+					Default: &apiextensionsv1.JSON{Raw: []byte(`"info"`)},
+				},
+				{
+					Name:        "replicaCount",
+					Description: "Number of replicas",
+					InputType:   telekomv1alpha1.InputTypeNumber,
+					Validation: &telekomv1alpha1.VariableValidation{
+						Min: "1",
+						Max: "10",
+					},
+					Default: &apiextensionsv1.JSON{Raw: []byte(`1`)},
+				},
+				{
+					Name:        "storageSize",
+					Description: "Storage size",
+					InputType:   telekomv1alpha1.InputTypeStorageSize,
+					Validation: &telekomv1alpha1.VariableValidation{
+						MinStorage: "1Gi",
+						MaxStorage: "100Gi",
+					},
+				},
+				{
+					Name:        "customName",
+					Description: "Custom name",
+					InputType:   telekomv1alpha1.InputTypeText,
+					Required:    true,
+					Validation: &telekomv1alpha1.VariableValidation{
+						MinLength: ptrInt(3),
+						MaxLength: ptrInt(50),
+						Pattern:   "^[a-z][a-z0-9-]*$",
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("create session with valid extraDeployValues", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithVariables).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"reason": "debugging",
+			"extraDeployValues": {
+				"enableDebug": true,
+				"logLevel": "debug",
+				"replicaCount": 3,
+				"storageSize": "10Gi",
+				"customName": "my-debug-session"
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 201, w.Code, "body: %s", w.Body.String())
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Contains(t, response.Name, "debug-")
+		assert.NotNil(t, response.Spec.ExtraDeployValues)
+		assert.Len(t, response.Spec.ExtraDeployValues, 5)
+	})
+
+	t.Run("create session fails with invalid boolean value", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithVariables).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"enableDebug": "yes",
+				"customName": "valid-name"
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+		assert.Contains(t, w.Body.String(), "validation failed")
+	})
+
+	t.Run("create session fails with missing required variable", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithVariables).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"enableDebug": true
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+		assert.Contains(t, w.Body.String(), "customName")
+		assert.Contains(t, w.Body.String(), "required")
+	})
+
+	t.Run("create session fails with invalid select option", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithVariables).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"logLevel": "error",
+				"customName": "valid-name"
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+		assert.Contains(t, w.Body.String(), "logLevel")
+	})
+
+	t.Run("create session fails with number out of range", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithVariables).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"replicaCount": 100,
+				"customName": "valid-name"
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+		assert.Contains(t, w.Body.String(), "replicaCount")
+		assert.Contains(t, w.Body.String(), "at most")
+	})
+
+	t.Run("create session fails with pattern validation failure", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithVariables).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"customName": "Invalid_Name_123"
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+		assert.Contains(t, w.Body.String(), "customName")
+		assert.Contains(t, w.Body.String(), "pattern")
+	})
+
+	t.Run("create session with defaults for optional variables", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithVariables).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		// Only provide required variable, let others use defaults
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"customName": "my-session"
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 201, w.Code, "body: %s", w.Body.String())
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		// Only the provided value should be in the request
+		assert.Len(t, response.Spec.ExtraDeployValues, 1)
+	})
+
+	t.Run("create session fails with invalid storage size", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templateWithVariables).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"storageSize": "500Gi",
+				"customName": "valid-name"
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 400, w.Code)
+		assert.Contains(t, w.Body.String(), "storageSize")
+		assert.Contains(t, w.Body.String(), "at most")
+	})
+}
+
+// ptrInt returns a pointer to an int
+func ptrInt(i int) *int {
+	return &i
 }

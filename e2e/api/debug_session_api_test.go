@@ -329,6 +329,10 @@ func (c *DebugSessionAPIClient) JoinDebugSession(ctx context.Context, t *testing
 		t.Logf("JoinDebugSession: name=%s, role=%s, status=%d, body=%s", name, role, resp.StatusCode, string(body))
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, fmt.Errorf("failed to join debug session: status=%d, body=%s", resp.StatusCode, string(body))
+	}
+
 	return resp.StatusCode, nil
 }
 
@@ -345,6 +349,10 @@ func (c *DebugSessionAPIClient) LeaveDebugSession(ctx context.Context, t *testin
 	body, _ := io.ReadAll(resp.Body)
 	if t != nil {
 		t.Logf("LeaveDebugSession: name=%s, status=%d, body=%s", name, resp.StatusCode, string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, fmt.Errorf("failed to leave debug session: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
 	return resp.StatusCode, nil
@@ -366,6 +374,10 @@ func (c *DebugSessionAPIClient) RenewDebugSession(ctx context.Context, t *testin
 		t.Logf("RenewDebugSession: name=%s, extendBy=%s, status=%d, body=%s", name, extendBy, resp.StatusCode, string(body))
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, fmt.Errorf("failed to renew debug session: status=%d, body=%s", resp.StatusCode, string(body))
+	}
+
 	return resp.StatusCode, nil
 }
 
@@ -382,6 +394,10 @@ func (c *DebugSessionAPIClient) TerminateDebugSession(ctx context.Context, t *te
 	body, _ := io.ReadAll(resp.Body)
 	if t != nil {
 		t.Logf("TerminateDebugSession: name=%s, status=%d, body=%s", name, resp.StatusCode, string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, fmt.Errorf("failed to terminate debug session: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
 	return resp.StatusCode, nil
@@ -494,7 +510,8 @@ func (c *DebugSessionAPIClient) GetTemplateClusters(ctx context.Context, t *test
 	return &result, resp.StatusCode, nil
 }
 
-// GetTemplate retrieves a specific template by name
+// GetTemplate retrieves a specific template by name.
+// Returns the API response format (DebugSessionTemplateAPIResponse), not the raw CRD.
 func (c *DebugSessionAPIClient) GetTemplate(ctx context.Context, t *testing.T, templateName string) (*DebugSessionTemplateAPIResponse, int, error) {
 	path := fmt.Sprintf("%s/templates/%s", debugSessionsBasePath, templateName)
 
@@ -521,7 +538,8 @@ func (c *DebugSessionAPIClient) GetTemplate(ctx context.Context, t *testing.T, t
 	return &result, resp.StatusCode, nil
 }
 
-// GetPodTemplate retrieves a specific pod template by name
+// GetPodTemplate retrieves a specific pod template by name.
+// Returns the API response format (DebugPodTemplateAPIResponse), not the raw CRD.
 func (c *DebugSessionAPIClient) GetPodTemplate(ctx context.Context, t *testing.T, templateName string) (*DebugPodTemplateAPIResponse, int, error) {
 	path := fmt.Sprintf("%s/podTemplates/%s", debugSessionsBasePath, templateName)
 
@@ -1183,9 +1201,9 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 
 	t.Run("TerminateNonExistentSession", func(t *testing.T) {
 		status, err := requesterClient.TerminateDebugSession(ctx, t, "nonexistent-session")
-		// TerminateDebugSession returns status code and error (error only for connection issues)
-		// A 404 response is a valid HTTP response, not a connection error
-		require.NoError(t, err, "Should not have connection error")
+		// TerminateDebugSession returns status code and error for non-200 responses
+		// A 404 response should return an error with the status code
+		require.Error(t, err, "Should return error for non-existent session")
 		assert.Equal(t, http.StatusNotFound, status, "Should return 404 for non-existent session")
 	})
 }
@@ -1887,25 +1905,29 @@ func TestDebugSessionEdgeCasesAndErrors(t *testing.T) {
 
 	t.Run("JoinNonExistentSession", func(t *testing.T) {
 		status, err := apiClient.JoinDebugSession(ctx, t, "nonexistent-session-xyz", "viewer")
-		require.NoError(t, err, "HTTP call should succeed")
+		// API client returns error for non-200 responses; validate status code is returned
+		require.Error(t, err, "Should return error for nonexistent session")
 		assert.Equal(t, http.StatusNotFound, status, "Should return 404 for nonexistent session")
 	})
 
 	t.Run("LeaveNonExistentSession", func(t *testing.T) {
 		status, err := apiClient.LeaveDebugSession(ctx, t, "nonexistent-session-xyz")
-		require.NoError(t, err, "HTTP call should succeed")
+		// API client returns error for non-200 responses; validate status code is returned
+		require.Error(t, err, "Should return error for nonexistent session")
 		assert.Equal(t, http.StatusNotFound, status, "Should return 404 for nonexistent session")
 	})
 
 	t.Run("TerminateNonExistentSession", func(t *testing.T) {
 		status, err := apiClient.TerminateDebugSession(ctx, t, "nonexistent-session-xyz")
-		require.NoError(t, err, "HTTP call should succeed")
+		// API client returns error for non-200 responses; validate status code is returned
+		require.Error(t, err, "Should return error for nonexistent session")
 		assert.Equal(t, http.StatusNotFound, status, "Should return 404 for nonexistent session")
 	})
 
 	t.Run("RenewNonExistentSession", func(t *testing.T) {
 		status, err := apiClient.RenewDebugSession(ctx, t, "nonexistent-session-xyz", "30m")
-		require.NoError(t, err, "HTTP call should succeed")
+		// API client returns error for non-200 responses; validate status code is returned
+		require.Error(t, err, "Should return error for nonexistent session")
 		assert.Equal(t, http.StatusNotFound, status, "Should return 404 for nonexistent session")
 	})
 
@@ -2265,7 +2287,8 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 
 		// Try to renew with invalid duration
 		status, err := apiClient.RenewDebugSession(ctx, t, session.Name, "invalid-duration")
-		require.NoError(t, err, "HTTP call should succeed")
+		// API client returns error for non-200 responses; validate status code is returned
+		require.Error(t, err, "Should return error for invalid duration")
 		assert.Equal(t, http.StatusBadRequest, status, "Should return 400 for invalid duration")
 	})
 }

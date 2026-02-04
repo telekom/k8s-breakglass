@@ -27,9 +27,15 @@ type AuxiliaryResourceApplyConfiguration struct {
 	// category is the resource category for enable/disable logic.
 	// Common categories: "network-isolation", "rbac", "configuration", "monitoring"
 	Category *string `json:"category,omitempty"`
+	// templateString is a Go template that produces one or more YAML documents.
+	// Use `---` separator for multiple resources from one definition.
+	// Supports all context variables including {{ .Vars.* }} for user-provided values.
+	// Mutually exclusive with template.
+	TemplateString *string `json:"templateString,omitempty"`
 	// template is the embedded resource template.
 	// Supports Go templating with session context variables using Sprout functions.
 	// See documentation for available variables and functions.
+	// Mutually exclusive with templateString. Deprecated: Use templateString for new templates.
 	Template *runtime.RawExtension `json:"template,omitempty"`
 	// createBefore specifies if this resource should be created before debug pods.
 	// Useful for NetworkPolicies that must exist before pods start.
@@ -70,6 +76,14 @@ func (b *AuxiliaryResourceApplyConfiguration) WithDescription(value string) *Aux
 // If called multiple times, the Category field is set to the value of the last call.
 func (b *AuxiliaryResourceApplyConfiguration) WithCategory(value string) *AuxiliaryResourceApplyConfiguration {
 	b.Category = &value
+	return b
+}
+
+// WithTemplateString sets the TemplateString field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TemplateString field is set to the value of the last call.
+func (b *AuxiliaryResourceApplyConfiguration) WithTemplateString(value string) *AuxiliaryResourceApplyConfiguration {
+	b.TemplateString = &value
 	return b
 }
 

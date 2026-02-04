@@ -102,6 +102,7 @@ export interface DebugSessionTemplateResponse {
   namespaceConstraints?: NamespaceConstraintsResponse;
   hasAvailableClusters: boolean; // True if at least one cluster is available for deployment
   availableClusterCount?: number; // Number of clusters user can deploy to
+  extraDeployVariables?: ExtraDeployVariable[]; // User-configurable variables
 }
 
 // Scheduling options for debug sessions
@@ -199,6 +200,7 @@ export interface CreateDebugSessionRequest {
   scheduledStartTime?: string;
   targetNamespace?: string;
   selectedSchedulingOption?: string;
+  extraDeployValues?: ExtraDeployValues; // User-provided variable values
 }
 
 // Response from creating/getting a debug session
@@ -395,3 +397,50 @@ export interface ReasonConfigInfo {
 export interface NotificationConfigInfo {
   enabled: boolean;
 }
+// ============================================================================
+// ExtraDeploy Variables API Types (Template Variables)
+// ============================================================================
+
+// Input types for variable definitions
+export type ExtraDeployInputType = "boolean" | "text" | "number" | "storageSize" | "select" | "multiSelect";
+
+// Option for select/multiSelect inputs
+export interface SelectOption {
+  value: string;
+  displayName?: string;
+  description?: string;
+  disabled?: boolean;
+  allowedGroups?: string[];
+}
+
+// Validation rules for variables
+export interface VariableValidation {
+  pattern?: string;
+  patternError?: string;
+  minLength?: number;
+  maxLength?: number;
+  min?: string;
+  max?: string;
+  minStorage?: string;
+  maxStorage?: string;
+  minItems?: number;
+  maxItems?: number;
+}
+
+// Variable definition from template
+export interface ExtraDeployVariable {
+  name: string;
+  displayName?: string;
+  description?: string;
+  inputType: ExtraDeployInputType;
+  options?: SelectOption[];
+  default?: unknown; // JSON value - can be string, number, boolean, or string[]
+  required?: boolean;
+  validation?: VariableValidation;
+  allowedGroups?: string[];
+  advanced?: boolean;
+  group?: string;
+}
+
+// User-provided values for variables (sent in CreateDebugSessionRequest)
+export type ExtraDeployValues = Record<string, unknown>;

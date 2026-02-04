@@ -372,6 +372,22 @@ kubectl exec -it api-7d9c4f8b-xkj2p -c debug -n production -- sh
 | `--scheduling-option` | Scheduling option name from template (e.g., `sriov`, `standard`) |
 | `--target-namespace` | Namespace where debug pods will be deployed |
 | `--invite` | Users to invite as participants (can be repeated) |
+| `--set` | Set template variable value (key=value), can be repeated |
+| `--binding` | Binding reference (namespace/name or name) when multiple bindings exist |
+
+### Using Template Variables
+
+When a debug session template defines `extraDeployVariables`, you can provide values using the `--set` flag:
+
+```bash
+# Create session with template variables
+bgctl debug session create \
+  --template network-debug \
+  --cluster production \
+  --set logLevel=debug \
+  --set enableTracing=true \
+  --set captureSize=1000
+```
 
 ### Automation with JSON Output
 

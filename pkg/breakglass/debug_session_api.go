@@ -36,10 +36,12 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -175,16 +177,17 @@ func (c *DebugSessionAPIController) getDebugSessionByName(ctx context.Context, n
 
 // CreateDebugSessionRequest represents the request body for creating a debug session
 type CreateDebugSessionRequest struct {
-	TemplateRef              string            `json:"templateRef" binding:"required"`
-	Cluster                  string            `json:"cluster" binding:"required"`
-	BindingRef               string            `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" (when multiple match)
-	RequestedDuration        string            `json:"requestedDuration,omitempty"`
-	NodeSelector             map[string]string `json:"nodeSelector,omitempty"`
-	Namespace                string            `json:"namespace,omitempty"`
-	Reason                   string            `json:"reason,omitempty"`
-	InvitedParticipants      []string          `json:"invitedParticipants,omitempty"`
-	TargetNamespace          string            `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
-	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
+	TemplateRef              string                          `json:"templateRef" binding:"required"`
+	Cluster                  string                          `json:"cluster" binding:"required"`
+	BindingRef               string                          `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" (when multiple match)
+	RequestedDuration        string                          `json:"requestedDuration,omitempty"`
+	NodeSelector             map[string]string               `json:"nodeSelector,omitempty"`
+	Namespace                string                          `json:"namespace,omitempty"`
+	Reason                   string                          `json:"reason,omitempty"`
+	InvitedParticipants      []string                        `json:"invitedParticipants,omitempty"`
+	TargetNamespace          string                          `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
+	SelectedSchedulingOption string                          `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
+	ExtraDeployValues        map[string]apiextensionsv1.JSON `json:"extraDeployValues,omitempty"`        // User-provided values for template variables
 }
 
 // JoinDebugSessionRequest represents the request to join an existing debug session
@@ -536,11 +539,39 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Get user groups from context for auto-approval logic
+	// Get user groups from context for authorization and auto-approval logic
 	var userGroups []string
 	if groups, exists := ctx.Get("groups"); exists && groups != nil {
 		if g, ok := groups.([]string); ok {
 			userGroups = g
+		}
+	}
+
+	// Validate extraDeployValues against template's extraDeployVariables
+	// This includes checking allowedGroups on variables and options
+	if len(req.ExtraDeployValues) > 0 || len(template.Spec.ExtraDeployVariables) > 0 {
+		valErrs := v1alpha1.ValidateExtraDeployValuesWithGroups(
+			req.ExtraDeployValues,
+			template.Spec.ExtraDeployVariables,
+			userGroups,
+			field.NewPath("extraDeployValues"),
+		)
+		if len(valErrs) > 0 {
+			// Format validation errors for API response
+			errMessages := make([]string, 0, len(valErrs))
+			for _, e := range valErrs {
+				errMessages = append(errMessages, e.Error())
+			}
+			reqLog.Warnw("ExtraDeployValues validation failed",
+				"templateRef", req.TemplateRef,
+				"userGroups", userGroups,
+				"errors", errMessages,
+			)
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"error":  "extraDeployValues validation failed",
+				"errors": errMessages,
+			})
+			return
 		}
 	}
 
@@ -596,6 +627,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			TargetNamespace:               targetNamespace,
 			SelectedSchedulingOption:      selectedOption,
 			ResolvedSchedulingConstraints: resolvedScheduling,
+			ExtraDeployValues:             req.ExtraDeployValues,
 		},
 	}
 

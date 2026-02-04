@@ -81,8 +81,28 @@ type DebugSessionTemplateSpec struct {
 
 	// podTemplateRef references a DebugPodTemplate for the pod specification.
 	// Required when mode is "workload" or "hybrid".
+	// The referenced template can itself contain {{ .Vars.* }} placeholders.
+	// Mutually exclusive with podTemplateString.
 	// +optional
 	PodTemplateRef *DebugPodTemplateReference `json:"podTemplateRef,omitempty"`
+
+	// podTemplateString is an inline Go template that produces pod spec YAML.
+	// Use this for fully dynamic pod specifications.
+	// Mutually exclusive with podTemplateRef.
+	// +optional
+	PodTemplateString string `json:"podTemplateString,omitempty"`
+
+	// podOverridesTemplate is a Go template that produces pod override YAML.
+	// Rendered with full context including user variables.
+	// The result is merged with podTemplateRef/podTemplateString output.
+	// +optional
+	PodOverridesTemplate string `json:"podOverridesTemplate,omitempty"`
+
+	// extraDeployVariables defines user-provided variables for template rendering.
+	// These values are collected from the user at session request time
+	// and made available as {{ .Vars.<name> }} in all templates.
+	// +optional
+	ExtraDeployVariables []ExtraDeployVariable `json:"extraDeployVariables,omitempty"`
 
 	// workloadType specifies the type of workload to create (DaemonSet or Deployment).
 	// Required when mode is "workload" or "hybrid".
@@ -1016,6 +1036,17 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 	// Validate auxiliary resources if specified
 	if len(template.Spec.AuxiliaryResources) > 0 {
 		allErrs = append(allErrs, validateAuxiliaryResources(template.Spec.AuxiliaryResources, specPath.Child("auxiliaryResources"))...)
+	}
+
+	// Validate extra deploy variables if specified
+	if len(template.Spec.ExtraDeployVariables) > 0 {
+		allErrs = append(allErrs, validateExtraDeployVariables(template.Spec.ExtraDeployVariables, specPath.Child("extraDeployVariables"))...)
+	}
+
+	// Validate mutual exclusivity of podTemplateRef and podTemplateString
+	if template.Spec.PodTemplateRef != nil && template.Spec.PodTemplateString != "" {
+		allErrs = append(allErrs, field.Invalid(specPath.Child("podTemplateString"), "",
+			"podTemplateString and podTemplateRef are mutually exclusive"))
 	}
 
 	return allErrs

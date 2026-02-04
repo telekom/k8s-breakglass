@@ -118,6 +118,49 @@ const mockDebugSessionTemplates = [
       // Resolved cluster names (no globs)
       allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu", "global-platform-us", "global-platform-apac"],
       allowedGroups: ["sre-team", "platform-oncall", "dtcaas-platform_emergency"],
+      // Extra deploy variables for runtime customization
+      extraDeployVariables: [
+        {
+          name: "networkMode",
+          displayName: "Network Mode",
+          description: "Network namespace configuration",
+          inputType: "select",
+          required: false,
+          default: "pod",
+          options: [
+            { value: "pod", displayName: "Pod Network (standard)", description: "Standard pod networking" },
+            {
+              value: "host",
+              displayName: "Host Network (elevated)",
+              description: "Access host network namespace",
+              allowedGroups: ["sre-team", "platform-oncall"],
+            },
+          ],
+        },
+        {
+          name: "enableTcpdump",
+          displayName: "Enable Packet Capture",
+          description: "Add capabilities for tcpdump/packet capture",
+          inputType: "boolean",
+          default: false,
+        },
+        {
+          name: "captureStorageGi",
+          displayName: "Capture Storage (Gi)",
+          description: "Storage for packet captures (shown when packet capture enabled)",
+          inputType: "number",
+          default: "5",
+          validation: { min: "1", max: "50" },
+        },
+        {
+          name: "debugTarget",
+          displayName: "Debug Target",
+          description: "Target service or pod name to investigate",
+          inputType: "text",
+          required: false,
+          validation: { pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$", patternError: "Must be a valid Kubernetes name" },
+        },
+      ],
       requiresApproval: true,
       approverGroups: ["platform-oncall", "security-leads"],
       // Scheduling options for node selection
@@ -249,6 +292,52 @@ const mockDebugSessionTemplates = [
       allowedGroups: ["sre-team"],
       requiresApproval: true,
       approverGroups: ["security-leads"],
+      // Extra deploy variables for node debugging options
+      extraDeployVariables: [
+        {
+          name: "accessLevel",
+          displayName: "Access Level",
+          description: "Level of node access",
+          inputType: "select",
+          required: true,
+          options: [
+            {
+              value: "readonly",
+              displayName: "Read-Only Filesystem",
+              description: "Mount host filesystem as read-only",
+            },
+            {
+              value: "nsenter",
+              displayName: "Namespace Enter (nsenter)",
+              description: "Use nsenter to enter node namespaces",
+              allowedGroups: ["sre-team"],
+            },
+            {
+              value: "privileged",
+              displayName: "Full Privileged Access",
+              description: "EMERGENCY: Full privileged access",
+              allowedGroups: ["sre-leads"],
+            },
+          ],
+        },
+        {
+          name: "mountContainerd",
+          displayName: "Mount containerd Socket",
+          description: "Mount containerd socket for container management",
+          inputType: "boolean",
+          default: false,
+          allowedGroups: ["sre-leads"],
+        },
+        {
+          name: "nodeSelector",
+          displayName: "Node Selector Label",
+          description: "Optional: target specific nodes by label (e.g., kubernetes.io/hostname=node-1)",
+          inputType: "text",
+          required: false,
+          group: "Advanced",
+          advanced: true,
+        },
+      ],
       // Scheduling options for node debug (required selection)
       schedulingOptions: {
         required: true,
@@ -620,9 +709,12 @@ export function listDebugSessionTemplates(_userGroups = []) {
     allowedClusters: t.spec.allowedClusters,
     allowedGroups: t.spec.allowedGroups,
     requiresApproval: t.spec.requiresApproval,
-    // Include scheduling options and namespace constraints
+    // Include scheduling options, namespace constraints, and extra deploy variables
     schedulingOptions: t.spec.schedulingOptions,
     namespaceConstraints: t.spec.namespaceConstraints,
+    extraDeployVariables: t.spec.extraDeployVariables,
+    hasAvailableClusters: t.spec.allowedClusters?.length > 0,
+    availableClusterCount: t.spec.allowedClusters?.length || 0,
   }));
 
   return {

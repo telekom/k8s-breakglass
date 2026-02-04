@@ -1380,3 +1380,157 @@ func validateBindingTimeWindow(effectiveFrom, expiresAt *metav1.Time, fieldPath 
 
 	return errs
 }
+
+// validateExtraDeployVariables validates extra deploy variables configuration.
+func validateExtraDeployVariables(vars []ExtraDeployVariable, fieldPath *field.Path) field.ErrorList {
+	if len(vars) == 0 {
+		return nil
+	}
+
+	var errs field.ErrorList
+	names := make(map[string]bool)
+
+	for i, v := range vars {
+		varPath := fieldPath.Index(i)
+
+		// Check for duplicate variable names
+		if names[v.Name] {
+			errs = append(errs, field.Duplicate(varPath.Child("name"), v.Name))
+		}
+		names[v.Name] = true
+
+		// Validate name is a valid Go identifier
+		if !isValidGoIdentifier(v.Name) {
+			errs = append(errs, field.Invalid(varPath.Child("name"), v.Name,
+				"must be a valid Go identifier (letters, digits, underscores, starting with letter)"))
+		}
+
+		// Validate options are provided for select/multiSelect types
+		if (v.InputType == InputTypeSelect || v.InputType == InputTypeMultiSelect) && len(v.Options) == 0 {
+			errs = append(errs, field.Required(varPath.Child("options"),
+				"options are required for select and multiSelect input types"))
+		}
+
+		// Validate options have unique values
+		if len(v.Options) > 0 {
+			optionValues := make(map[string]bool)
+			for j, opt := range v.Options {
+				if optionValues[opt.Value] {
+					errs = append(errs, field.Duplicate(varPath.Child("options").Index(j).Child("value"), opt.Value))
+				}
+				optionValues[opt.Value] = true
+			}
+		}
+
+		// Validate validation rules match input type
+		if v.Validation != nil {
+			errs = append(errs, validateVariableValidation(v.Validation, v.InputType, varPath.Child("validation"))...)
+		}
+	}
+
+	return errs
+}
+
+// isValidGoIdentifier checks if a string is a valid Go identifier.
+func isValidGoIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if i == 0 {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_') {
+				return false
+			}
+		} else {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// validateVariableValidation validates validation rules for a variable.
+func validateVariableValidation(v *VariableValidation, inputType ExtraDeployInputType, fieldPath *field.Path) field.ErrorList {
+	if v == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+
+	// Validate pattern is a valid regex for text inputs
+	if v.Pattern != "" {
+		if inputType != InputTypeText {
+			errs = append(errs, field.Invalid(fieldPath.Child("pattern"), v.Pattern,
+				"pattern validation is only valid for text input type"))
+		} else if _, err := regexp.Compile(v.Pattern); err != nil {
+			errs = append(errs, field.Invalid(fieldPath.Child("pattern"), v.Pattern,
+				fmt.Sprintf("invalid regex pattern: %v", err)))
+		}
+	}
+
+	// Validate minLength/maxLength for text inputs
+	if v.MinLength != nil || v.MaxLength != nil {
+		if inputType != InputTypeText {
+			errs = append(errs, field.Invalid(fieldPath, nil,
+				"minLength/maxLength validation is only valid for text input type"))
+		}
+		if v.MinLength != nil && v.MaxLength != nil && *v.MinLength > *v.MaxLength {
+			errs = append(errs, field.Invalid(fieldPath.Child("maxLength"), *v.MaxLength,
+				"maxLength must be greater than or equal to minLength"))
+		}
+	}
+
+	// Validate min/max for number inputs
+	if v.Min != "" || v.Max != "" {
+		if inputType != InputTypeNumber {
+			errs = append(errs, field.Invalid(fieldPath, nil,
+				"min/max validation is only valid for number input type"))
+		} else {
+			// Validate format of min and max individually
+			var minVal, maxVal float64
+			var minErr, maxErr error
+			if v.Min != "" {
+				minVal, minErr = strconv.ParseFloat(v.Min, 64)
+				if minErr != nil {
+					errs = append(errs, field.Invalid(fieldPath.Child("min"), v.Min,
+						fmt.Sprintf("invalid number format: %v", minErr)))
+				}
+			}
+			if v.Max != "" {
+				maxVal, maxErr = strconv.ParseFloat(v.Max, 64)
+				if maxErr != nil {
+					errs = append(errs, field.Invalid(fieldPath.Child("max"), v.Max,
+						fmt.Sprintf("invalid number format: %v", maxErr)))
+				}
+			}
+			// Compare min/max if both are valid
+			if v.Min != "" && v.Max != "" && minErr == nil && maxErr == nil && minVal > maxVal {
+				errs = append(errs, field.Invalid(fieldPath.Child("max"), v.Max,
+					"max must be greater than or equal to min"))
+			}
+		}
+	}
+
+	// Validate minStorage/maxStorage for storageSize inputs
+	if v.MinStorage != "" || v.MaxStorage != "" {
+		if inputType != InputTypeStorageSize {
+			errs = append(errs, field.Invalid(fieldPath, nil,
+				"minStorage/maxStorage validation is only valid for storageSize input type"))
+		}
+	}
+
+	// Validate minItems/maxItems for multiSelect inputs
+	if v.MinItems != nil || v.MaxItems != nil {
+		if inputType != InputTypeMultiSelect {
+			errs = append(errs, field.Invalid(fieldPath, nil,
+				"minItems/maxItems validation is only valid for multiSelect input type"))
+		}
+		if v.MinItems != nil && v.MaxItems != nil && *v.MinItems > *v.MaxItems {
+			errs = append(errs, field.Invalid(fieldPath.Child("maxItems"), *v.MaxItems,
+				"maxItems must be greater than or equal to minItems"))
+		}
+	}
+
+	return errs
+}

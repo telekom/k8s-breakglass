@@ -51,16 +51,17 @@ type DebugSessionDetailResponse struct {
 }
 
 type CreateDebugSessionRequest struct {
-	TemplateRef              string            `json:"templateRef"`
-	Cluster                  string            `json:"cluster"`
-	BindingRef               string            `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" when multiple match
-	RequestedDuration        string            `json:"requestedDuration,omitempty"`
-	NodeSelector             map[string]string `json:"nodeSelector,omitempty"`
-	Namespace                string            `json:"namespace,omitempty"`
-	Reason                   string            `json:"reason,omitempty"`
-	InvitedParticipants      []string          `json:"invitedParticipants,omitempty"`
-	TargetNamespace          string            `json:"targetNamespace,omitempty"`
-	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"`
+	TemplateRef              string                 `json:"templateRef"`
+	Cluster                  string                 `json:"cluster"`
+	BindingRef               string                 `json:"bindingRef,omitempty"` // Optional: explicit binding selection as "namespace/name" when multiple match
+	RequestedDuration        string                 `json:"requestedDuration,omitempty"`
+	NodeSelector             map[string]string      `json:"nodeSelector,omitempty"`
+	Namespace                string                 `json:"namespace,omitempty"`
+	Reason                   string                 `json:"reason,omitempty"`
+	InvitedParticipants      []string               `json:"invitedParticipants,omitempty"`
+	TargetNamespace          string                 `json:"targetNamespace,omitempty"`
+	SelectedSchedulingOption string                 `json:"selectedSchedulingOption,omitempty"`
+	ExtraDeployValues        map[string]interface{} `json:"extraDeployValues,omitempty"` // User-provided variable values for extraDeployVariables
 }
 
 type JoinDebugSessionRequest struct {
