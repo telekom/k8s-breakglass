@@ -3609,3 +3609,82 @@ func TestEvaluator_EmptyAction(t *testing.T) {
 		t.Errorf("expected policy name 'deny-all-wildcard', got %q", policyName)
 	}
 }
+
+// TestEvaluatorMatchWithDetailsWarnThenDeny verifies that when one policy warns
+// but a later policy denies, the denial is correctly returned (not short-circuited by warn).
+func TestEvaluatorMatchWithDetailsWarnThenDeny(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	// First policy: warns at score > 5
+	warnPolicy := &telekomv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "aaa-warn-policy"}, // 'aaa' prefix ensures it's evaluated first alphabetically
+		Spec: telekomv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					HostNetwork: 10, // pod with hostNetwork gets score 10
+				},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 5, Action: "allow"},
+					{MaxScore: 100, Action: "warn", Reason: "elevated risk"},
+				},
+			},
+		},
+	}
+
+	// Second policy: denies at score > 5
+	denyPolicy := &telekomv1alpha1.DenyPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "zzz-deny-policy"}, // 'zzz' prefix ensures it's evaluated after the warn policy
+		Spec: telekomv1alpha1.DenyPolicySpec{
+			PodSecurityRules: &telekomv1alpha1.PodSecurityRules{
+				RiskFactors: telekomv1alpha1.RiskFactors{
+					HostNetwork: 10, // same scoring
+				},
+				Thresholds: []telekomv1alpha1.RiskThreshold{
+					{MaxScore: 5, Action: "allow"},
+					{MaxScore: 100, Action: "deny", Reason: "too risky"},
+				},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(warnPolicy, denyPolicy).Build()
+	eval := NewEvaluator(c, zap.NewNop().Sugar())
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			HostNetwork: true, // triggers both policies
+			Containers:  []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	denied, policyName, result, err := eval.MatchWithDetails(context.Background(), Action{
+		Verb:        "create",
+		Resource:    "pods",
+		Subresource: "exec",
+		Namespace:   "default",
+		Pod:         pod,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The second policy should deny, even though the first policy only warned
+	if !denied {
+		t.Fatal("expected denial from second policy, but was not denied")
+	}
+	if policyName != "zzz-deny-policy" {
+		t.Errorf("expected policy name 'zzz-deny-policy', got %q", policyName)
+	}
+	if result == nil {
+		t.Fatal("expected result to be non-nil for denial")
+	}
+	if !result.Denied {
+		t.Error("expected result.Denied to be true")
+	}
+	if result.Action != "deny" {
+		t.Errorf("expected result.Action to be 'deny', got %q", result.Action)
+	}
+}
