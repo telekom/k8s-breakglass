@@ -113,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Trailing JSON data after the main object is rejected
   - Helps catch client bugs and typos early (e.g., `cluter` instead of `cluster`)
 
+- **API Request Timeout Configuration**: Added configurable request timeout to frontend HTTP client (PR #304)
+  - Default timeout of 30 seconds for all API requests (previously no timeout configured)
+  - `ApiClientOptions.timeout` allows custom timeout configuration in milliseconds
+  - Proper detection of timeout errors using Axios `ECONNABORTED` error code
+  - Enhanced error logging includes timeout value when requests time out
+  - Prevents requests from hanging indefinitely on slow or unresponsive backends
+
 - **Orphaned DebugSession Cleanup**: Fixed infinite retry loop when ClusterConfig is deleted while DebugSessions are still active
   - `cleanupResources` now gracefully handles `ErrClusterConfigNotFound` error
   - When target cluster no longer exists, cleanup is treated as complete instead of retrying every 5 seconds indefinitely

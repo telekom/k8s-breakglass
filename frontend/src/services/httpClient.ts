@@ -7,7 +7,12 @@ export interface ApiClientOptions {
   enableDevTokenLogging?: boolean;
   /** If true, will attempt silent token renew on 401 and retry the request once */
   retryOn401?: boolean;
+  /** Request timeout in milliseconds. Defaults to 30000 (30 seconds). */
+  timeout?: number;
 }
+
+/** Default timeout for HTTP requests (30 seconds) */
+const DEFAULT_TIMEOUT_MS = 30000;
 
 // Track if we're currently retrying to avoid infinite loops
 const RETRY_FLAG = "__authRetried";
@@ -15,6 +20,7 @@ const RETRY_FLAG = "__authRetried";
 export function createAuthenticatedApiClient(auth: AuthService, options?: ApiClientOptions): AxiosInstance {
   const client = axios.create({
     baseURL: options?.baseURL ?? "/api",
+    timeout: options?.timeout ?? DEFAULT_TIMEOUT_MS,
   });
 
   // Request interceptor
@@ -95,10 +101,14 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
           data: error.response.data,
         });
       } else if (error.request) {
-        logger.error("HttpClient", "No response received", error, {
+        // Check if this is a timeout error (axios uses ECONNABORTED for timeouts)
+        const isTimeout = error.code === "ECONNABORTED";
+        const errorType = isTimeout ? "Request timeout" : "No response received";
+        logger.error("HttpClient", errorType, error, {
           method: error.config?.method?.toUpperCase(),
           url: error.config?.url,
           code: error.code,
+          timeout: isTimeout ? (options?.timeout ?? DEFAULT_TIMEOUT_MS) : undefined,
         });
       } else {
         logger.error("HttpClient", "Request setup error", error);
