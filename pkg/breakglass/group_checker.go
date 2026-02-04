@@ -2,10 +2,10 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authenticationv1alpha1 "k8s.io/api/authentication/v1alpha1"
@@ -63,7 +63,7 @@ func CanGroupsDo(ctx context.Context,
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		zap.S().Errorw("Failed to create client for CanGroupsDo", "error", err.Error())
-		return false, errors.Wrap(err, "failed to create client")
+		return false, fmt.Errorf("failed to create client: %w", err)
 	}
 
 	// Build SelfSubjectAccessReview spec based on whether we have resource or non-resource attributes
@@ -152,7 +152,7 @@ func getUserGroupsInternal(ctx context.Context, cug ClusterUserGroup, configPath
 	kubeCfg, err := getConfigForClusterName(cug.Clustername)
 	if err != nil {
 		zap.S().Errorw("GetUserGroups: rest.Config load failed", "cluster", cug.Clustername, "error", err.Error())
-		return nil, errors.Wrap(err, "failed to get config")
+		return nil, fmt.Errorf("failed to get config: %w", err)
 	}
 
 	kubeCfg.Impersonate = rest.ImpersonationConfig{
@@ -162,7 +162,7 @@ func getUserGroupsInternal(ctx context.Context, cug ClusterUserGroup, configPath
 	client, err := kubernetes.NewForConfig(kubeCfg)
 	if err != nil {
 		zap.S().Errorw("GetUserGroups: client construction failed", "cluster", cug.Clustername, "error", err.Error())
-		return nil, errors.Wrap(err, "failed to create client")
+		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
 	var res runtime.Object
@@ -179,13 +179,13 @@ func getUserGroupsInternal(ctx context.Context, cug ClusterUserGroup, configPath
 
 	if err != nil {
 		zap.S().Errorw("Failed to get user's subject review", "error", err.Error())
-		return nil, errors.Wrap(err, "failed to get users subject review")
+		return nil, fmt.Errorf("failed to get users subject review: %w", err)
 	}
 
 	ui, err := getUserInfo(res)
 	if err != nil {
 		zap.S().Errorw("Failed to get user info from response", "error", err.Error())
-		return nil, errors.Wrap(err, "failed to get user info from response")
+		return nil, fmt.Errorf("failed to get user info from response: %w", err)
 	}
 
 	// Apply OIDC prefix stripping if config was loaded successfully

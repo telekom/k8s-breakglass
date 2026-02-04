@@ -2,11 +2,11 @@ package breakglass
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"sync"
 
-	"github.com/pkg/errors"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
@@ -61,7 +61,7 @@ func (em *EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([
 	escal := telekomv1alpha1.BreakglassEscalationList{}
 	if err := em.List(ctx, &escal); err != nil {
 		log.Errorw("Failed to get BreakglassEscalationList", "error", err)
-		return nil, errors.Wrap(err, "failed to get BreakglassEscalationList")
+		return nil, fmt.Errorf("failed to get BreakglassEscalationList: %w", err)
 	}
 	log.Infow("Fetched BreakglassEscalations", "count", len(escal.Items))
 	return escal.Items, nil
@@ -77,7 +77,7 @@ func (em *EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Cont
 
 	if err := em.List(ctx, &ess); err != nil {
 		log.Errorw("Failed to list BreakglassEscalation for filtered get", "error", err)
-		return nil, errors.Wrapf(err, "failed to list BreakglassEscalation for filtered get")
+		return nil, fmt.Errorf("failed to list BreakglassEscalation for filtered get: %w", err)
 	}
 	log.Debugw("Retrieved escalations for filtering", "totalCount", len(ess.Items))
 
@@ -106,7 +106,7 @@ func (em *EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Co
 
 	if err := em.List(ctx, &ess, &client.ListOptions{FieldSelector: fs}); err != nil {
 		log.Errorw("Failed to list BreakglassEscalation with selector", "selector", fs.String(), "error", err)
-		return nil, errors.Wrapf(err, "failed to list BreakglassEscalation with selector")
+		return nil, fmt.Errorf("failed to list BreakglassEscalation with selector: %w", err)
 	}
 
 	log.Infow("Fetched BreakglassEscalations with selector", "count", len(ess.Items), "selector", fs.String())
@@ -126,7 +126,7 @@ func (em *EscalationManager) GetBreakglassEscalation(ctx context.Context, namesp
 			status = "404"
 		}
 		metrics.APIEndpointErrors.WithLabelValues("GetBreakglassEscalation", status).Inc()
-		return nil, errors.Wrapf(err, "failed to get BreakglassEscalation %s/%s", namespace, name)
+		return nil, fmt.Errorf("failed to get BreakglassEscalation %s/%s: %w", namespace, name, err)
 	}
 	return got, nil
 }
@@ -357,7 +357,7 @@ func NewEscalationManager(contextName string, resolver GroupMemberResolver) (Esc
 	cfg, err := config.GetConfigWithContext(contextName)
 	if err != nil {
 		log.Errorw("Failed to get config with context", "context", contextName, "error", err)
-		return EscalationManager{}, errors.Wrapf(err, "failed to get config with context %q", contextName)
+		return EscalationManager{}, fmt.Errorf("failed to get config with context %q: %w", contextName, err)
 	}
 
 	c, err := client.New(cfg, client.Options{
@@ -365,7 +365,7 @@ func NewEscalationManager(contextName string, resolver GroupMemberResolver) (Esc
 	})
 	if err != nil {
 		log.Errorw("Failed to create new client", "error", err)
-		return EscalationManager{}, errors.Wrap(err, "failed to create new client")
+		return EscalationManager{}, fmt.Errorf("failed to create new client: %w", err)
 	}
 
 	log.Info("EscalationManager initialized successfully")
@@ -407,7 +407,7 @@ func (em *EscalationManager) UpdateBreakglassEscalationStatus(ctx context.Contex
 	log.Infow("Updating BreakglassEscalation status", "name", esc.Name)
 	if err := applyBreakglassEscalationStatus(ctx, em, &esc); err != nil {
 		log.Errorw("Failed to update BreakglassEscalation status", "name", esc.Name, "error", err)
-		return errors.Wrapf(err, "failed to update BreakglassEscalation status %s", esc.Name)
+		return fmt.Errorf("failed to update BreakglassEscalation status %s: %w", esc.Name, err)
 	}
 	log.Infow("BreakglassEscalation status updated", "name", esc.Name)
 	return nil

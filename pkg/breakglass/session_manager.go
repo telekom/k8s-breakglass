@@ -2,10 +2,10 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
@@ -29,7 +29,7 @@ func NewSessionManager(contextName string) (SessionManager, error) {
 	cfg, err := config.GetConfigWithContext(contextName)
 	if err != nil {
 		zap.S().Errorw("Failed to get config with context", "context", contextName, "error", err.Error())
-		return SessionManager{}, errors.Wrap(err, fmt.Sprintf("failed to get config with context %q", contextName))
+		return SessionManager{}, fmt.Errorf("failed to get config with context %q: %w", contextName, err)
 	}
 
 	c, err := client.New(cfg, client.Options{
@@ -37,7 +37,7 @@ func NewSessionManager(contextName string) (SessionManager, error) {
 	})
 	if err != nil {
 		zap.S().Errorw("Failed to create new client", "error", err.Error())
-		return SessionManager{}, errors.Wrap(err, "failed to create new client")
+		return SessionManager{}, fmt.Errorf("failed to create new client: %w", err)
 	}
 
 	zap.S().Infow("SessionManager initialized", "context", contextName)
@@ -93,7 +93,7 @@ func (c SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]v1alpha
 	cgal := v1alpha1.BreakglassSessionList{}
 	if err := c.list(ctx, &cgal); err != nil {
 		zap.S().Errorw("Failed to get BreakglassSessionList", "error", err.Error())
-		return nil, errors.Wrap(err, "failed to get BreakglassSessionList")
+		return nil, fmt.Errorf("failed to get BreakglassSessionList: %w", err)
 	}
 	zap.S().Infow("Fetched BreakglassSessions", "count", len(cgal.Items))
 	return cgal.Items, nil
@@ -132,7 +132,7 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 			}
 			msg := fmt.Sprintf("multiple BreakglassSessions with name %q found in namespaces: %s", name, strings.Join(namespaces, ","))
 			zap.S().Errorw("Ambiguous BreakglassSession name across namespaces (field index)", "name", name, "namespaces", namespaces)
-			return bs, errors.Errorf("%s", msg)
+			return bs, fmt.Errorf("%s", msg)
 		}
 	} else {
 		zap.S().Debugw("Field index lookup failed; falling back to selector", "name", name, "error", err.Error())
@@ -143,13 +143,13 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 	fs, ferr := fields.ParseSelector(selector)
 	if ferr != nil {
 		zap.S().Errorw("Failed to parse field selector for fallback lookup", "selector", selector, "error", ferr.Error())
-		return bs, errors.Wrapf(ferr, "failed to create field selector %q", selector)
+		return bs, fmt.Errorf("failed to create field selector %q: %w", selector, ferr)
 	}
 
 	bsl := v1alpha1.BreakglassSessionList{}
 	if err := c.list(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
 		zap.S().Errorw("Failed to list BreakglassSessionList for fallback lookup", "selector", selector, "error", err.Error())
-		return bs, errors.Wrap(err, "failed to list BreakglassSessionList for fallback lookup")
+		return bs, fmt.Errorf("failed to list BreakglassSessionList for fallback lookup: %w", err)
 	}
 
 	if len(bsl.Items) == 0 {
@@ -165,7 +165,7 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 		}
 		msg := fmt.Sprintf("multiple BreakglassSessions with name %q found in namespaces: %s", name, strings.Join(namespaces, ","))
 		zap.S().Errorw("Ambiguous BreakglassSession name across namespaces", "name", name, "namespaces", namespaces)
-		return bs, errors.Errorf("%s", msg)
+		return bs, fmt.Errorf("%s", msg)
 	}
 
 	// Single match: return it
@@ -208,7 +208,7 @@ func (c SessionManager) GetBreakglassSessionsWithSelectorString(ctx context.Cont
 
 	if err := c.list(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
 		zap.S().Errorw("Failed to list BreakglassSessionList with string selector", "selector", selectorString, "error", err.Error())
-		return nil, errors.Wrapf(err, "failed to list BreakglassSessionList with string selector")
+		return nil, fmt.Errorf("failed to list BreakglassSessionList with string selector: %w", err)
 	}
 	zap.S().Infow("Fetched BreakglassSessions with selector string", "count", len(bsl.Items), "selector", selectorString)
 	return bsl.Items, nil
@@ -223,7 +223,7 @@ func (c SessionManager) GetBreakglassSessionsWithSelector(ctx context.Context,
 
 	if err := c.list(ctx, &bsl, &client.ListOptions{FieldSelector: fs}); err != nil {
 		zap.S().Errorw("Failed to list BreakglassSessionList with selector", "selector", fs.String(), "error", err.Error())
-		return nil, errors.Wrapf(err, "failed to list BreakglassSessionList with selector")
+		return nil, fmt.Errorf("failed to list BreakglassSessionList with selector: %w", err)
 	}
 	zap.S().Infow("Fetched BreakglassSessions with selector", "count", len(bsl.Items), "selector", fs.String())
 	return bsl.Items, nil
@@ -234,7 +234,7 @@ func (c SessionManager) AddBreakglassSession(ctx context.Context, bs *v1alpha1.B
 	zap.S().Infow("Adding new BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "user", bs.Spec.User, "cluster", bs.Spec.Cluster)...)
 	if err := c.Create(ctx, bs); err != nil {
 		zap.S().Errorw("Failed to create new BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-		return errors.Wrap(err, "failed to create new BreakglassSession")
+		return fmt.Errorf("failed to create new BreakglassSession: %w", err)
 	}
 	zap.S().Infow("BreakglassSession created successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	// Emit metric for created session (cluster may be in spec)
@@ -253,7 +253,7 @@ func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs v1alpha1
 	zap.S().Infow("Updating BreakglassSession", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	if err := c.Update(ctx, &bs); err != nil {
 		zap.S().Errorw("Failed to update BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-		return errors.Wrapf(err, "failed to update BreakglassSession %s/%s", bs.Namespace, bs.Name)
+		return fmt.Errorf("failed to update BreakglassSession %s/%s: %w", bs.Namespace, bs.Name, err)
 	}
 	zap.S().Infow("BreakglassSession updated successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	metrics.SessionUpdated.WithLabelValues(bs.Spec.Cluster).Inc()
@@ -266,7 +266,7 @@ func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1
 		current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
 		if err != nil {
 			zap.S().Errorw("Failed to resolve BreakglassSession before status update", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-			return errors.Wrapf(err, "failed to resolve BreakglassSession %s before status update", bs.Name)
+			return fmt.Errorf("failed to resolve BreakglassSession %s before status update: %w", bs.Name, err)
 		}
 		bs.Namespace = current.Namespace
 		bs.ResourceVersion = current.ResourceVersion
@@ -283,7 +283,7 @@ func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1
 	}
 	if err := applyBreakglassSessionStatus(ctx, c, &bs); err != nil {
 		zap.S().Errorw("Failed to update BreakglassSession status", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-		return errors.Wrapf(err, "failed to update BreakglassSession status %s/%s", bs.Namespace, bs.Name)
+		return fmt.Errorf("failed to update BreakglassSession status %s/%s: %w", bs.Namespace, bs.Name, err)
 	}
 	zap.S().Infow("BreakglassSession status updated successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	return nil
@@ -293,7 +293,7 @@ func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1
 func (c SessionManager) DeleteBreakglassSession(ctx context.Context, bs *v1alpha1.BreakglassSession) error {
 	if err := c.Delete(ctx, bs); err != nil {
 		zap.S().Errorw("Failed to delete BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-		return errors.Wrap(err, "failed to delete breakglass session")
+		return fmt.Errorf("failed to delete breakglass session: %w", err)
 	}
 	zap.S().Infow("BreakglassSession deleted successfully", system.NamespacedFields(bs.Name, bs.Namespace)...)
 	metrics.SessionDeleted.WithLabelValues(bs.Spec.Cluster).Inc()

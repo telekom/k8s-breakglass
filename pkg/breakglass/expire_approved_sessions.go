@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pkg/errors"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -58,7 +57,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 					wc.emitSessionExpiredAuditEvent(context.Background(), &ses, "timeExpired")
 					break
 				} else {
-					lastErr = errors.Wrapf(err, "status update attempt %d failed", attempt+1)
+					lastErr = fmt.Errorf("status update attempt %d failed: %w", attempt+1, err)
 					wc.log.Warnw("failed to update expired session status (will retry)", "session", ses.Name, "attempt", attempt+1, "error", err)
 
 					// On conflict or other recoverable errors, re-fetch the latest object and reapply status changes

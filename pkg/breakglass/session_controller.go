@@ -3,6 +3,7 @@ package breakglass
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pkg/errors"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -236,7 +236,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		if cfg, cerr := wc.configLoader.Get(); cerr == nil {
 			globalCfg = &cfg
 		} else {
-			reqLog.With("error", errors.Wrap(cerr, "cached config load failed")).Debug("Continuing without global config")
+			reqLog.With("error", fmt.Errorf("cached config load failed: %w", cerr)).Debug("Continuing without global config")
 		}
 	}
 
@@ -1102,7 +1102,7 @@ func (wc BreakglassSessionController) getActiveBreakglassSession(ctx context.Con
 	sessions, err := wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
 	if err != nil {
 		wc.log.Error("Failed to list sessions for getActiveBreakglassSession", zap.Error(err))
-		return v1alpha1.BreakglassSession{}, errors.Wrap(err, "failed to list sessions")
+		return v1alpha1.BreakglassSession{}, fmt.Errorf("failed to list sessions: %w", err)
 	}
 
 	validSessions := make([]v1alpha1.BreakglassSession, 0, len(sessions))
@@ -2689,11 +2689,11 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 				remote.Impersonate = rest.ImpersonationConfig{UserName: cug.Username}
 				client, cerr := kubernetes.NewForConfig(remote)
 				if cerr != nil {
-					return nil, errors.Wrap(cerr, "remote client construction failed")
+					return nil, fmt.Errorf("remote client construction failed: %w", cerr)
 				}
 				res, rerr := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
 				if rerr != nil {
-					return nil, errors.Wrap(rerr, "remote SelfSubjectReview failed")
+					return nil, fmt.Errorf("remote SelfSubjectReview failed: %w", rerr)
 				}
 				ui := res.Status.UserInfo
 				groups := ui.Groups

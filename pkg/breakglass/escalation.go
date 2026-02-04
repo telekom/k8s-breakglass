@@ -2,8 +2,8 @@ package breakglass
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/pkg/errors"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -29,7 +29,7 @@ func (ef EscalationFiltering) FilterForUserPossibleEscalations(ctx context.Conte
 	userGroups, err := ef.UserGroupExtract(ctx, ef.FilterUserData)
 	if err != nil {
 		ef.Log.Errorw("Failed to get user groups for escalation filtering", "error", err)
-		return nil, errors.Wrap(err, "failed to get user groups")
+		return nil, fmt.Errorf("failed to get user groups: %w", err)
 	}
 	ef.Log.Debugw("Retrieved user groups for escalation filtering", "userGroups", userGroups)
 	// Load config to determine OIDC prefixes for normalization
@@ -95,7 +95,7 @@ func (ef EscalationFiltering) FilterSessionsForUserApprovable(ctx context.Contex
 	userGroups, err := ef.UserGroupExtract(ctx, ef.FilterUserData)
 	if err != nil {
 		ef.Log.Errorw("Failed to get user rbac cluster groups for session filtering", "error", err)
-		return nil, errors.Wrap(err, "failed to get user rbac cluster groups")
+		return nil, fmt.Errorf("failed to get user rbac cluster groups: %w", err)
 	}
 	ef.Log.Debugw("Retrieved user groups for session filtering", "userGroups", userGroups)
 
