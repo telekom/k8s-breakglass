@@ -37,8 +37,32 @@ debugSessionBindings:
     constraints:
       maxDuration: "2h"
       defaultDuration: "30m"
+    # Allowed pod operations - controls kubectl commands
+    allowedPodOperations:
+      exec: true
+      attach: true
+      logs: true
+      portForward: true
     disabled: false
     priority: 10
+
+  # Logs-only binding (read-only access)
+  - name: logs-only-binding
+    displayName: "Logs Only Access"
+    description: "Read-only access for viewing logs"
+    templateRef:
+      name: standard-debug-template
+    clusters:
+      - prod-cluster
+    allowed:
+      groups:
+        - developers
+    allowedPodOperations:
+      exec: false
+      attach: false
+      logs: true
+      portForward: false
+    disabled: false
 
   # Binding with scheduling constraints
   - name: scheduled-debug-binding
@@ -219,11 +243,31 @@ debugSessionBindings:
     requestReason:
       mandatory: true
       description: "Provide incident ticket number"
+      minLength: 10
+      maxLength: 500
+      suggestedReasons:
+        - "Production incident investigation"
+        - "Security audit follow-up"
+        - "Customer escalation"
     approvalReason:
       mandatory: true
+      mandatoryForRejection: true
       description: "Explain approval justification"
+      minLength: 20
     notification:
       enabled: true
+      notifyOnRequest: true
+      notifyOnApproval: true
+      notifyOnExpiry: true
+      notifyOnTermination: false
+      additionalRecipients:
+        - oncall@example.com
+        - security-team@example.com
+      excludedRecipients:
+        users:
+          - bot@example.com
+        groups:
+          - automation-group
     maxActiveSessionsPerUser: 1
     maxActiveSessionsTotal: 3
     priority: 1

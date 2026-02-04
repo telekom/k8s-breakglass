@@ -797,6 +797,66 @@ func TestHandleListDebugSessions_FilterByCluster(t *testing.T) {
 	assert.Equal(t, "cluster-1", response.Sessions[0].Cluster)
 }
 
+func TestHandleListDebugSessions_WithAllowedPodOperations(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	sessions := []client.Object{
+		&telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-1", Namespace: "default"},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "cluster-1",
+				RequestedBy: "user1@example.com",
+				TemplateRef: "template-1",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStateActive,
+				AllowedPodOperations: &telekomv1alpha1.AllowedPodOperations{
+					Exec:        &boolTrue,
+					Attach:      &boolFalse,
+					Logs:        &boolTrue,
+					PortForward: &boolTrue,
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(sessions...).
+		WithStatusSubresource(&telekomv1alpha1.DebugSession{}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	_ = ctrl.Register(rg)
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/debugSessions", nil)
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response DebugSessionListResponse
+	err := json.Unmarshal(rr.Body.Bytes(), &response)
+	require.NoError(t, err)
+	assert.Equal(t, 1, response.Total)
+
+	// Verify AllowedPodOperations is included in summary
+	ops := response.Sessions[0].AllowedPodOperations
+	require.NotNil(t, ops)
+	assert.True(t, *ops.Exec)
+	assert.False(t, *ops.Attach)
+	assert.True(t, *ops.Logs)
+	assert.True(t, *ops.PortForward)
+}
+
 // ============================================================================
 // Tests for handleGetDebugSession
 // ============================================================================

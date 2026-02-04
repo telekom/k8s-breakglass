@@ -835,6 +835,191 @@ func TestDebugSessionReconciler_ResolvedTemplate(t *testing.T) {
 	})
 }
 
+func TestDebugSessionReconciler_AllowedPodOperationsStatus(t *testing.T) {
+	scheme := newTestScheme()
+
+	t.Run("AllowedPodOperations cached in status from template", func(t *testing.T) {
+		boolTrue := true
+		boolFalse := false
+
+		session := newTestDebugSession("ops-session", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = telekomv1alpha1.DebugSessionStateActive
+		session.Status.AllowedPodOperations = &telekomv1alpha1.AllowedPodOperations{
+			Exec:        &boolFalse,
+			Attach:      &boolFalse,
+			Logs:        &boolTrue,
+			PortForward: &boolFalse,
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		var fetchedSession telekomv1alpha1.DebugSession
+		err := fakeClient.Get(context.Background(), types.NamespacedName{
+			Name:      "ops-session",
+			Namespace: "breakglass",
+		}, &fetchedSession)
+		require.NoError(t, err)
+
+		require.NotNil(t, fetchedSession.Status.AllowedPodOperations)
+		assert.False(t, *fetchedSession.Status.AllowedPodOperations.Exec)
+		assert.False(t, *fetchedSession.Status.AllowedPodOperations.Attach)
+		assert.True(t, *fetchedSession.Status.AllowedPodOperations.Logs)
+		assert.False(t, *fetchedSession.Status.AllowedPodOperations.PortForward)
+	})
+
+	t.Run("nil AllowedPodOperations uses backward-compatible defaults", func(t *testing.T) {
+		session := newTestDebugSession("default-ops-session", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = telekomv1alpha1.DebugSessionStateActive
+		// AllowedPodOperations is nil (not set)
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		var fetchedSession telekomv1alpha1.DebugSession
+		err := fakeClient.Get(context.Background(), types.NamespacedName{
+			Name:      "default-ops-session",
+			Namespace: "breakglass",
+		}, &fetchedSession)
+		require.NoError(t, err)
+
+		// When AllowedPodOperations is nil, IsOperationAllowed should return backward-compatible defaults
+		assert.Nil(t, fetchedSession.Status.AllowedPodOperations)
+		// Verify the method handles nil correctly
+		assert.True(t, fetchedSession.Status.AllowedPodOperations.IsOperationAllowed("exec"))
+		assert.True(t, fetchedSession.Status.AllowedPodOperations.IsOperationAllowed("attach"))
+		assert.True(t, fetchedSession.Status.AllowedPodOperations.IsOperationAllowed("portforward"))
+		assert.False(t, fetchedSession.Status.AllowedPodOperations.IsOperationAllowed("log"))
+	})
+}
+
+// TestMergeAllowedPodOperations_BindingRestrictsTemplate tests that binding can only restrict template
+func TestMergeAllowedPodOperations_BindingRestrictsTemplate(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	tests := []struct {
+		name       string
+		template   *telekomv1alpha1.AllowedPodOperations
+		binding    *telekomv1alpha1.AllowedPodOperations
+		wantExec   bool
+		wantAttach bool
+		wantLogs   bool
+		wantPF     bool
+	}{
+		{
+			name: "binding disables exec while template allows all",
+			template: &telekomv1alpha1.AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+			binding: &telekomv1alpha1.AllowedPodOperations{
+				Exec: &boolFalse, // only specify exec, others use template
+			},
+			wantExec:   false,
+			wantAttach: true,
+			wantLogs:   true,
+			wantPF:     true,
+		},
+		{
+			name: "logs-only binding pattern",
+			template: &telekomv1alpha1.AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+			binding: &telekomv1alpha1.AllowedPodOperations{
+				Exec:        &boolFalse,
+				Attach:      &boolFalse,
+				Logs:        &boolTrue,
+				PortForward: &boolFalse,
+			},
+			wantExec:   false,
+			wantAttach: false,
+			wantLogs:   true,
+			wantPF:     false,
+		},
+		{
+			name: "binding cannot enable template-disabled ops",
+			template: &telekomv1alpha1.AllowedPodOperations{
+				Exec:        &boolFalse,
+				Attach:      &boolFalse,
+				Logs:        &boolFalse,
+				PortForward: &boolFalse,
+			},
+			binding: &telekomv1alpha1.AllowedPodOperations{
+				Exec:        &boolTrue, // try to enable - should fail
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+			wantExec:   false, // template disabled = stays disabled
+			wantAttach: false,
+			wantLogs:   false,
+			wantPF:     false,
+		},
+		{
+			name:     "nil template uses defaults, binding can restrict",
+			template: nil,
+			binding: &telekomv1alpha1.AllowedPodOperations{
+				Exec:   &boolFalse,
+				Attach: &boolFalse,
+			},
+			wantExec:   false, // binding disabled
+			wantAttach: false, // binding disabled
+			wantLogs:   false, // default is false, binding nil=use template
+			wantPF:     true,  // default is true, binding nil=use template
+		},
+		{
+			name: "nil binding uses template values",
+			template: &telekomv1alpha1.AllowedPodOperations{
+				Exec:        &boolFalse,
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolFalse,
+			},
+			binding:    nil,
+			wantExec:   false,
+			wantAttach: true,
+			wantLogs:   true,
+			wantPF:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := telekomv1alpha1.MergeAllowedPodOperations(tt.template, tt.binding)
+
+			// Handle nil case
+			if tt.template == nil && tt.binding == nil {
+				assert.Nil(t, result)
+				return
+			}
+
+			require.NotNil(t, result)
+
+			gotExec := result.Exec != nil && *result.Exec
+			gotAttach := result.Attach != nil && *result.Attach
+			gotLogs := result.Logs != nil && *result.Logs
+			gotPF := result.PortForward != nil && *result.PortForward
+
+			assert.Equal(t, tt.wantExec, gotExec, "exec mismatch")
+			assert.Equal(t, tt.wantAttach, gotAttach, "attach mismatch")
+			assert.Equal(t, tt.wantLogs, gotLogs, "logs mismatch")
+			assert.Equal(t, tt.wantPF, gotPF, "portforward mismatch")
+		})
+	}
+}
+
 func TestDebugSessionReconciler_ReconcileRequest(t *testing.T) {
 	scheme := newTestScheme()
 

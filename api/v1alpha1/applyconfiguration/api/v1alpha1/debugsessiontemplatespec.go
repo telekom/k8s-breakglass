@@ -132,8 +132,7 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	GracePeriodBeforeExpiry *string `json:"gracePeriodBeforeExpiry,omitempty"`
 	// allowedPodOperations configures which kubectl operations are permitted on debug pods.
 	// When nil, defaults to allowing exec, attach, and portforward (backward compatible).
-	// Use this to grant more restrictive access (e.g., logs-only for read-only debugging,
-	// or cp-only for file extraction from coredump volumes).
+	// Use this to grant more restrictive access (e.g., logs-only for read-only debugging).
 	AllowedPodOperations *AllowedPodOperationsApplyConfiguration `json:"allowedPodOperations,omitempty"`
 }
 

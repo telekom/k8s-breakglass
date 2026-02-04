@@ -350,3 +350,119 @@ describe("Debug Session Binding Options", () => {
     expect(oncallBinding?.approval?.required).toBe(false);
   });
 });
+
+// Tests for AllowedPodOperations functionality
+describe("AllowedPodOperations", () => {
+  interface AllowedPodOperations {
+    exec?: boolean;
+    attach?: boolean;
+    logs?: boolean;
+    portForward?: boolean;
+  }
+
+  // Helper function matching the one in DebugSessionDetails.vue
+  // Note: kubectl cp uses exec internally, so it requires exec: true to function
+  const isOperationAllowed = (
+    ops: AllowedPodOperations | null | undefined,
+    operation: "exec" | "attach" | "logs" | "portForward",
+  ): boolean => {
+    if (!ops) {
+      // Default behavior when not specified: exec, attach, portforward enabled; logs disabled
+      return operation === "exec" || operation === "attach" || operation === "portForward";
+    }
+    const value = ops[operation];
+    if (value === undefined) {
+      // Default per-operation when field not set
+      if (operation === "logs") return false;
+      return true; // exec, attach, portforward default to true
+    }
+    return value;
+  };
+
+  it("returns defaults when operations is null", () => {
+    expect(isOperationAllowed(null, "exec")).toBe(true);
+    expect(isOperationAllowed(null, "attach")).toBe(true);
+    expect(isOperationAllowed(null, "portForward")).toBe(true);
+    expect(isOperationAllowed(null, "logs")).toBe(false);
+  });
+
+  it("returns defaults when operations is undefined", () => {
+    expect(isOperationAllowed(undefined, "exec")).toBe(true);
+    expect(isOperationAllowed(undefined, "attach")).toBe(true);
+    expect(isOperationAllowed(undefined, "logs")).toBe(false);
+  });
+
+  it("returns defaults for empty operations object", () => {
+    const ops: AllowedPodOperations = {};
+    expect(isOperationAllowed(ops, "exec")).toBe(true);
+    expect(isOperationAllowed(ops, "attach")).toBe(true);
+    expect(isOperationAllowed(ops, "portForward")).toBe(true);
+    expect(isOperationAllowed(ops, "logs")).toBe(false);
+  });
+
+  it("respects explicit true values", () => {
+    const ops: AllowedPodOperations = {
+      exec: true,
+      attach: true,
+      logs: true,
+      portForward: true,
+    };
+    expect(isOperationAllowed(ops, "exec")).toBe(true);
+    expect(isOperationAllowed(ops, "attach")).toBe(true);
+    expect(isOperationAllowed(ops, "logs")).toBe(true);
+    expect(isOperationAllowed(ops, "portForward")).toBe(true);
+  });
+
+  it("respects explicit false values", () => {
+    const ops: AllowedPodOperations = {
+      exec: false,
+      attach: false,
+      logs: false,
+      portForward: false,
+    };
+    expect(isOperationAllowed(ops, "exec")).toBe(false);
+    expect(isOperationAllowed(ops, "attach")).toBe(false);
+    expect(isOperationAllowed(ops, "logs")).toBe(false);
+    expect(isOperationAllowed(ops, "portForward")).toBe(false);
+  });
+
+  it("allows partial configuration with defaults for unset fields", () => {
+    const ops: AllowedPodOperations = {
+      exec: true,
+      logs: true,
+      // attach, portForward not set - should use defaults
+    };
+    expect(isOperationAllowed(ops, "exec")).toBe(true);
+    expect(isOperationAllowed(ops, "logs")).toBe(true);
+    expect(isOperationAllowed(ops, "attach")).toBe(true); // default true
+    expect(isOperationAllowed(ops, "portForward")).toBe(true); // default true
+  });
+
+  it("enables all operations when all set to true", () => {
+    const ops: AllowedPodOperations = {
+      exec: true,
+      attach: true,
+      logs: true,
+      portForward: true,
+    };
+
+    const allOps: Array<"exec" | "attach" | "logs" | "portForward"> = ["exec", "attach", "logs", "portForward"];
+    for (const op of allOps) {
+      expect(isOperationAllowed(ops, op)).toBe(true);
+    }
+  });
+
+  it("disables all operations when all set to false", () => {
+    const ops: AllowedPodOperations = {
+      exec: false,
+      attach: false,
+      logs: false,
+      portForward: false,
+    };
+
+    const allOps: Array<"exec" | "attach" | "logs" | "portForward"> = ["exec", "attach", "logs", "portForward"];
+    for (const op of allOps) {
+      expect(isOperationAllowed(ops, op)).toBe(false);
+    }
+  });
+});

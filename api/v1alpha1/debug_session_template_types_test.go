@@ -1632,8 +1632,6 @@ func TestAllowedPodOperations_IsOperationAllowed_NilStruct(t *testing.T) {
 		{"attach", true},
 		{"portforward", true},
 		{"log", false},
-		{"logs", false},
-		{"cp", false},
 		{"unknown", false},
 	}
 
@@ -1659,8 +1657,6 @@ func TestAllowedPodOperations_IsOperationAllowed_EmptyStruct(t *testing.T) {
 		{"attach", true},      // nil defaults to true
 		{"portforward", true}, // nil defaults to true
 		{"log", false},        // nil defaults to false
-		{"logs", false},       // nil defaults to false
-		{"cp", false},         // nil defaults to false
 	}
 
 	for _, tt := range tests {
@@ -1680,7 +1676,6 @@ func TestAllowedPodOperations_IsOperationAllowed_AllEnabled(t *testing.T) {
 		Attach:      &boolTrue,
 		Logs:        &boolTrue,
 		PortForward: &boolTrue,
-		Cp:          &boolTrue,
 	}
 
 	tests := []struct {
@@ -1691,8 +1686,6 @@ func TestAllowedPodOperations_IsOperationAllowed_AllEnabled(t *testing.T) {
 		{"attach", true},
 		{"portforward", true},
 		{"log", true},
-		{"logs", true},
-		{"cp", true},
 	}
 
 	for _, tt := range tests {
@@ -1712,7 +1705,6 @@ func TestAllowedPodOperations_IsOperationAllowed_AllDisabled(t *testing.T) {
 		Attach:      &boolFalse,
 		Logs:        &boolFalse,
 		PortForward: &boolFalse,
-		Cp:          &boolFalse,
 	}
 
 	tests := []struct {
@@ -1723,8 +1715,6 @@ func TestAllowedPodOperations_IsOperationAllowed_AllDisabled(t *testing.T) {
 		{"attach", false},
 		{"portforward", false},
 		{"log", false},
-		{"logs", false},
-		{"cp", false},
 	}
 
 	for _, tt := range tests {
@@ -1746,7 +1736,6 @@ func TestAllowedPodOperations_IsOperationAllowed_LogsOnlyProfile(t *testing.T) {
 		Attach:      &boolFalse,
 		Logs:        &boolTrue,
 		PortForward: &boolFalse,
-		Cp:          &boolFalse,
 	}
 
 	tests := []struct {
@@ -1757,8 +1746,6 @@ func TestAllowedPodOperations_IsOperationAllowed_LogsOnlyProfile(t *testing.T) {
 		{"attach", false},
 		{"portforward", false},
 		{"log", true},
-		{"logs", true},
-		{"cp", false},
 	}
 
 	for _, tt := range tests {
@@ -1771,49 +1758,14 @@ func TestAllowedPodOperations_IsOperationAllowed_LogsOnlyProfile(t *testing.T) {
 	}
 }
 
-func TestAllowedPodOperations_IsOperationAllowed_CoredumpProfile(t *testing.T) {
-	// Use case: Coredump extraction - cp and logs only, no exec
-	boolTrue := true
-	boolFalse := false
-	ops := &AllowedPodOperations{
-		Exec:        &boolFalse,
-		Attach:      &boolFalse,
-		Logs:        &boolTrue,
-		PortForward: &boolFalse,
-		Cp:          &boolTrue,
-	}
-
-	tests := []struct {
-		operation string
-		expected  bool
-	}{
-		{"exec", false},
-		{"attach", false},
-		{"portforward", false},
-		{"log", true},
-		{"logs", true},
-		{"cp", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.operation, func(t *testing.T) {
-			result := ops.IsOperationAllowed(tt.operation)
-			if result != tt.expected {
-				t.Errorf("IsOperationAllowed(%q) coredump profile = %v, want %v", tt.operation, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestAllowedPodOperations_IsOperationAllowed_FullDebugProfile(t *testing.T) {
-	// Use case: Full debug access
+	// Use case: Full debug access (note: kubectl cp requires exec to be enabled)
 	boolTrue := true
 	ops := &AllowedPodOperations{
 		Exec:        &boolTrue,
 		Attach:      &boolTrue,
 		Logs:        &boolTrue,
 		PortForward: &boolTrue,
-		Cp:          &boolTrue,
 	}
 
 	tests := []struct {
@@ -1824,8 +1776,6 @@ func TestAllowedPodOperations_IsOperationAllowed_FullDebugProfile(t *testing.T) 
 		{"attach", true},
 		{"portforward", true},
 		{"log", true},
-		{"logs", true},
-		{"cp", true},
 	}
 
 	for _, tt := range tests {
@@ -1854,7 +1804,6 @@ func TestAllowedPodOperations_InDebugSessionTemplateSpec(t *testing.T) {
 				Attach:      &boolFalse,
 				Logs:        &boolTrue,
 				PortForward: &boolFalse,
-				Cp:          &boolTrue,
 			},
 		},
 	}
@@ -1866,10 +1815,217 @@ func TestAllowedPodOperations_InDebugSessionTemplateSpec(t *testing.T) {
 	if template.Spec.AllowedPodOperations.IsOperationAllowed("exec") {
 		t.Error("exec should be disabled")
 	}
-	if !template.Spec.AllowedPodOperations.IsOperationAllowed("logs") {
-		t.Error("logs should be enabled")
+	// Kubernetes uses "log" (singular) as the subresource name
+	if !template.Spec.AllowedPodOperations.IsOperationAllowed("log") {
+		t.Error("log should be enabled")
 	}
-	if !template.Spec.AllowedPodOperations.IsOperationAllowed("cp") {
-		t.Error("cp should be enabled")
+}
+
+// TestMergeAllowedPodOperations tests the merge function that combines template and binding operations
+func TestMergeAllowedPodOperations(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	tests := []struct {
+		name           string
+		template       *AllowedPodOperations
+		binding        *AllowedPodOperations
+		expectedExec   bool
+		expectedAttach bool
+		expectedLogs   bool
+		expectedPF     bool
+	}{
+		{
+			name:           "both nil - returns nil (defaults apply at runtime)",
+			template:       nil,
+			binding:        nil,
+			expectedExec:   true,  // default
+			expectedAttach: true,  // default
+			expectedLogs:   false, // default
+			expectedPF:     true,  // default
+		},
+		{
+			name: "template only - binding nil - uses template values",
+			template: &AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolFalse,
+				Logs:        &boolTrue,
+				PortForward: &boolFalse,
+			},
+			binding:        nil,
+			expectedExec:   true,
+			expectedAttach: false,
+			expectedLogs:   true,
+			expectedPF:     false,
+		},
+		{
+			name:     "binding only - template nil - binding cannot enable defaults that are disabled",
+			template: nil,
+			binding: &AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+			expectedExec:   true,  // template default is true, binding allows
+			expectedAttach: true,  // template default is true, binding allows
+			expectedLogs:   false, // template default is false, binding cannot enable
+			expectedPF:     true,  // template default is true, binding allows
+		},
+		{
+			name: "binding disables template-enabled operations",
+			template: &AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+			binding: &AllowedPodOperations{
+				Exec:        &boolFalse, // disable exec
+				Attach:      &boolTrue,  // keep attach
+				Logs:        &boolFalse, // disable logs
+				PortForward: &boolTrue,  // keep port-forward
+			},
+			expectedExec:   false,
+			expectedAttach: true,
+			expectedLogs:   false,
+			expectedPF:     true,
+		},
+		{
+			name: "binding cannot enable template-disabled operations",
+			template: &AllowedPodOperations{
+				Exec:        &boolFalse,
+				Attach:      &boolFalse,
+				Logs:        &boolFalse,
+				PortForward: &boolFalse,
+			},
+			binding: &AllowedPodOperations{
+				Exec:        &boolTrue, // try to enable - should fail
+				Attach:      &boolTrue, // try to enable - should fail
+				Logs:        &boolTrue, // try to enable - should fail
+				PortForward: &boolTrue, // try to enable - should fail
+			},
+			expectedExec:   false, // template disabled, binding cannot enable
+			expectedAttach: false,
+			expectedLogs:   false,
+			expectedPF:     false,
+		},
+		{
+			name: "partial binding - only overrides specified fields",
+			template: &AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+			binding: &AllowedPodOperations{
+				Exec: &boolFalse, // only disable exec, others nil
+			},
+			expectedExec:   false, // binding disabled
+			expectedAttach: true,  // template value preserved
+			expectedLogs:   true,  // template value preserved
+			expectedPF:     true,  // template value preserved
+		},
+		{
+			name: "logs-only binding scenario",
+			template: &AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+			binding: &AllowedPodOperations{
+				Exec:        &boolFalse,
+				Attach:      &boolFalse,
+				Logs:        &boolTrue,
+				PortForward: &boolFalse,
+			},
+			expectedExec:   false,
+			expectedAttach: false,
+			expectedLogs:   true,
+			expectedPF:     false,
+		},
+		{
+			name:     "empty template - uses defaults",
+			template: &AllowedPodOperations{},
+			binding: &AllowedPodOperations{
+				Exec: &boolFalse,
+			},
+			expectedExec:   false, // binding disabled
+			expectedAttach: true,  // default
+			expectedLogs:   false, // default
+			expectedPF:     true,  // default
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := MergeAllowedPodOperations(tt.template, tt.binding)
+
+			// If both are nil, result should be nil
+			if tt.template == nil && tt.binding == nil {
+				if result != nil {
+					t.Errorf("Expected nil result when both inputs are nil")
+				}
+				return
+			}
+
+			if result == nil {
+				t.Fatal("Expected non-nil result")
+			}
+
+			// Check each operation
+			actualExec := result.Exec != nil && *result.Exec
+			actualAttach := result.Attach != nil && *result.Attach
+			actualLogs := result.Logs != nil && *result.Logs
+			actualPF := result.PortForward != nil && *result.PortForward
+
+			if actualExec != tt.expectedExec {
+				t.Errorf("Exec: got %v, want %v", actualExec, tt.expectedExec)
+			}
+			if actualAttach != tt.expectedAttach {
+				t.Errorf("Attach: got %v, want %v", actualAttach, tt.expectedAttach)
+			}
+			if actualLogs != tt.expectedLogs {
+				t.Errorf("Logs: got %v, want %v", actualLogs, tt.expectedLogs)
+			}
+			if actualPF != tt.expectedPF {
+				t.Errorf("PortForward: got %v, want %v", actualPF, tt.expectedPF)
+			}
+		})
+	}
+}
+
+// TestMergeAllowedPodOperations_IsOperationAllowed tests that merged operations work with IsOperationAllowed
+func TestMergeAllowedPodOperations_IsOperationAllowed(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	template := &AllowedPodOperations{
+		Exec:        &boolTrue,
+		Attach:      &boolTrue,
+		Logs:        &boolTrue,
+		PortForward: &boolTrue,
+	}
+	binding := &AllowedPodOperations{
+		Exec:   &boolFalse, // disable exec
+		Attach: &boolFalse, // disable attach
+		Logs:   &boolTrue,  // keep logs
+		// PortForward not specified - uses template value
+	}
+
+	result := MergeAllowedPodOperations(template, binding)
+
+	if result.IsOperationAllowed("exec") {
+		t.Error("exec should be disabled after merge")
+	}
+	if result.IsOperationAllowed("attach") {
+		t.Error("attach should be disabled after merge")
+	}
+	if !result.IsOperationAllowed("log") {
+		t.Error("log should be enabled after merge")
+	}
+	if !result.IsOperationAllowed("portforward") {
+		t.Error("portforward should be enabled after merge (template default)")
 	}
 }

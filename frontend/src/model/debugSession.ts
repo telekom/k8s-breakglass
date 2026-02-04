@@ -71,6 +71,16 @@ export interface KubectlDebugSettings {
   };
 }
 
+// Allowed pod operations configuration
+// Controls which kubectl operations are permitted on debug session pods
+// Note: kubectl cp uses exec internally (runs tar), so exec: true is required for cp to work
+export interface AllowedPodOperations {
+  exec?: boolean;
+  attach?: boolean;
+  logs?: boolean;
+  portForward?: boolean;
+}
+
 // API response types
 export interface DebugSessionSummary {
   name: string;
@@ -84,6 +94,7 @@ export interface DebugSessionSummary {
   expiresAt?: string;
   participants: number;
   allowedPods: number;
+  allowedPodOperations?: AllowedPodOperations;
 }
 
 export interface DebugSessionTemplateResponse {
@@ -179,6 +190,7 @@ export interface DebugSession {
     renewalCount?: number;
     participants?: DebugSessionParticipant[];
     allowedPods?: DebugPodInfo[];
+    allowedPodOperations?: AllowedPodOperations;
     approvedBy?: string;
     approvedAt?: string;
     rejectedBy?: string;

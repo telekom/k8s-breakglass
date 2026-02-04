@@ -131,6 +131,12 @@ type DebugSessionClusterBindingSpec struct {
 	// +kubebuilder:default=false
 	Disabled bool `json:"disabled,omitempty"`
 
+	// allowedPodOperations overrides which kubectl operations are permitted on debug pods.
+	// Can only be MORE restrictive than the template (cannot enable operations the template disables).
+	// If nil, uses the template's settings.
+	// +optional
+	AllowedPodOperations *AllowedPodOperations `json:"allowedPodOperations,omitempty"`
+
 	// notification overrides notification settings from the template.
 	// +optional
 	Notification *DebugSessionNotificationConfig `json:"notification,omitempty"`

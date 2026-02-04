@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1070,4 +1071,305 @@ func TestCheckNameCollisions(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, collisions, "different display names should not collide")
 	})
+}
+
+// TestDebugSessionClusterBinding_AllowedPodOperations tests the allowedPodOperations field
+func TestDebugSessionClusterBinding_AllowedPodOperations(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	t.Run("binding with allowedPodOperations set", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+				AllowedPodOperations: &AllowedPodOperations{
+					Exec:        &boolFalse,
+					Attach:      &boolFalse,
+					Logs:        &boolTrue,
+					PortForward: &boolFalse,
+				},
+			},
+		}
+
+		require.NotNil(t, binding.Spec.AllowedPodOperations)
+		assert.False(t, *binding.Spec.AllowedPodOperations.Exec)
+		assert.False(t, *binding.Spec.AllowedPodOperations.Attach)
+		assert.True(t, *binding.Spec.AllowedPodOperations.Logs)
+		assert.False(t, *binding.Spec.AllowedPodOperations.PortForward)
+	})
+
+	t.Run("binding without allowedPodOperations", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+			},
+		}
+
+		assert.Nil(t, binding.Spec.AllowedPodOperations)
+	})
+
+	t.Run("logs-only binding pattern", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "logs-only-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "full-access-template"},
+				Clusters:    []string{"production"},
+				AllowedPodOperations: &AllowedPodOperations{
+					Exec:        &boolFalse,
+					Attach:      &boolFalse,
+					Logs:        &boolTrue,
+					PortForward: &boolFalse,
+				},
+			},
+		}
+
+		ops := binding.Spec.AllowedPodOperations
+		require.NotNil(t, ops)
+
+		// Verify logs-only profile
+		assert.False(t, ops.IsOperationAllowed("exec"), "exec should be disabled")
+		assert.False(t, ops.IsOperationAllowed("attach"), "attach should be disabled")
+		assert.True(t, ops.IsOperationAllowed("log"), "log should be enabled")
+		assert.False(t, ops.IsOperationAllowed("portforward"), "portforward should be disabled")
+	})
+}
+
+// TestDebugSessionClusterBinding_NotificationConfig tests notification settings on bindings
+func TestDebugSessionClusterBinding_NotificationConfig(t *testing.T) {
+	t.Run("binding with full notification config", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+				Notification: &DebugSessionNotificationConfig{
+					Enabled:             true,
+					NotifyOnRequest:     true,
+					NotifyOnApproval:    true,
+					NotifyOnExpiry:      true,
+					NotifyOnTermination: true,
+					AdditionalRecipients: []string{
+						"security@example.com",
+						"ops-team@example.com",
+					},
+					ExcludedRecipients: &NotificationExclusions{
+						Users: []string{"noreply@example.com"},
+					},
+				},
+			},
+		}
+
+		require.NotNil(t, binding.Spec.Notification)
+		assert.True(t, binding.Spec.Notification.Enabled)
+		assert.True(t, binding.Spec.Notification.NotifyOnRequest)
+		assert.True(t, binding.Spec.Notification.NotifyOnApproval)
+		assert.True(t, binding.Spec.Notification.NotifyOnExpiry)
+		assert.True(t, binding.Spec.Notification.NotifyOnTermination)
+		assert.Len(t, binding.Spec.Notification.AdditionalRecipients, 2)
+		assert.Len(t, binding.Spec.Notification.ExcludedRecipients.Users, 1)
+	})
+
+	t.Run("binding with disabled notifications", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+				Notification: &DebugSessionNotificationConfig{
+					Enabled: false,
+				},
+			},
+		}
+
+		require.NotNil(t, binding.Spec.Notification)
+		assert.False(t, binding.Spec.Notification.Enabled)
+	})
+}
+
+// TestDebugSessionClusterBinding_RequestReasonConfig tests requestReason settings on bindings
+func TestDebugSessionClusterBinding_RequestReasonConfig(t *testing.T) {
+	t.Run("binding with mandatory reason", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+				RequestReason: &DebugRequestReasonConfig{
+					Mandatory:   true,
+					MinLength:   10,
+					MaxLength:   500,
+					Description: "Please provide a detailed reason for your debug session request",
+					SuggestedReasons: []string{
+						"Investigating production issue",
+						"Performance analysis",
+						"Log collection",
+					},
+				},
+			},
+		}
+
+		require.NotNil(t, binding.Spec.RequestReason)
+		assert.True(t, binding.Spec.RequestReason.Mandatory)
+		assert.Equal(t, int32(10), binding.Spec.RequestReason.MinLength)
+		assert.Equal(t, int32(500), binding.Spec.RequestReason.MaxLength)
+		assert.NotEmpty(t, binding.Spec.RequestReason.Description)
+		assert.Len(t, binding.Spec.RequestReason.SuggestedReasons, 3)
+	})
+
+	t.Run("binding without reason requirements", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+			},
+		}
+
+		assert.Nil(t, binding.Spec.RequestReason)
+	})
+}
+
+// TestDebugSessionClusterBinding_ApprovalReasonConfig tests approvalReason settings on bindings
+func TestDebugSessionClusterBinding_ApprovalReasonConfig(t *testing.T) {
+	t.Run("binding with mandatory approval reason", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+				ApprovalReason: &DebugApprovalReasonConfig{
+					Mandatory:             true,
+					MandatoryForRejection: true,
+					MinLength:             20,
+					Description:           "Explain your approval/rejection decision",
+				},
+			},
+		}
+
+		require.NotNil(t, binding.Spec.ApprovalReason)
+		assert.True(t, binding.Spec.ApprovalReason.Mandatory)
+		assert.True(t, binding.Spec.ApprovalReason.MandatoryForRejection)
+		assert.Equal(t, int32(20), binding.Spec.ApprovalReason.MinLength)
+	})
+}
+
+// TestDebugSessionClusterBinding_LifecycleFields tests expiresAt, effectiveFrom, and session limits
+func TestDebugSessionClusterBinding_LifecycleFields(t *testing.T) {
+	now := metav1.Now()
+	future := metav1.NewTime(now.Add(24 * time.Hour))
+	past := metav1.NewTime(now.Add(-24 * time.Hour))
+
+	t.Run("binding with time bounds and limits", func(t *testing.T) {
+		maxPerUser := int32(3)
+		maxTotal := int32(10)
+
+		binding := &DebugSessionClusterBinding{
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef:              &TemplateReference{Name: "test-template"},
+				Clusters:                 []string{"cluster-1"},
+				EffectiveFrom:            &past,
+				ExpiresAt:                &future,
+				MaxActiveSessionsPerUser: &maxPerUser,
+				MaxActiveSessionsTotal:   &maxTotal,
+			},
+		}
+
+		assert.NotNil(t, binding.Spec.EffectiveFrom)
+		assert.NotNil(t, binding.Spec.ExpiresAt)
+		assert.Equal(t, int32(3), *binding.Spec.MaxActiveSessionsPerUser)
+		assert.Equal(t, int32(10), *binding.Spec.MaxActiveSessionsTotal)
+
+		// Check IsDisabled method
+		assert.False(t, binding.IsDisabled(), "binding should not be disabled")
+	})
+
+	t.Run("expired binding fields", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+				ExpiresAt:   &past, // Already expired
+			},
+		}
+
+		assert.NotNil(t, binding.Spec.ExpiresAt)
+		assert.True(t, time.Now().After(binding.Spec.ExpiresAt.Time), "binding should be expired")
+	})
+
+	t.Run("not yet effective binding fields", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef:   &TemplateReference{Name: "test-template"},
+				Clusters:      []string{"cluster-1"},
+				EffectiveFrom: &future, // Not yet effective
+			},
+		}
+
+		assert.NotNil(t, binding.Spec.EffectiveFrom)
+		assert.True(t, time.Now().Before(binding.Spec.EffectiveFrom.Time), "binding should not yet be effective")
+	})
+
+	t.Run("disabled binding", func(t *testing.T) {
+		binding := &DebugSessionClusterBinding{
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"cluster-1"},
+				Disabled:    true,
+			},
+		}
+
+		assert.True(t, binding.IsDisabled(), "binding should be disabled")
+	})
+}
+
+// TestDebugSessionClusterBinding_LabelsAnnotations tests labels and annotations on bindings
+func TestDebugSessionClusterBinding_LabelsAnnotations(t *testing.T) {
+	binding := &DebugSessionClusterBinding{
+		Spec: DebugSessionClusterBindingSpec{
+			TemplateRef: &TemplateReference{Name: "test-template"},
+			Clusters:    []string{"cluster-1"},
+			Labels: map[string]string{
+				"team":        "platform",
+				"environment": "production",
+			},
+			Annotations: map[string]string{
+				"description": "Production debug access",
+				"owner":       "platform-team",
+			},
+		},
+	}
+
+	assert.Len(t, binding.Spec.Labels, 2)
+	assert.Equal(t, "platform", binding.Spec.Labels["team"])
+	assert.Len(t, binding.Spec.Annotations, 2)
+	assert.Equal(t, "Production debug access", binding.Spec.Annotations["description"])
+}
+
+// TestDebugSessionClusterBinding_PriorityAndHidden tests UI control fields
+func TestDebugSessionClusterBinding_PriorityAndHidden(t *testing.T) {
+	priority := int32(100)
+
+	binding := &DebugSessionClusterBinding{
+		Spec: DebugSessionClusterBindingSpec{
+			TemplateRef: &TemplateReference{Name: "test-template"},
+			Clusters:    []string{"cluster-1"},
+			Priority:    &priority,
+			Hidden:      true,
+		},
+	}
+
+	assert.Equal(t, int32(100), *binding.Spec.Priority)
+	assert.True(t, binding.Spec.Hidden)
 }

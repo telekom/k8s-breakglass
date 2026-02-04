@@ -115,6 +115,13 @@ const mockDebugSessionTemplates = [
         maxRenewals: 3,
         renewalDuration: "1h",
       },
+      // Full debug access for SRE team
+      allowedPodOperations: {
+        exec: true,
+        attach: true,
+        logs: true,
+        portForward: true,
+      },
       // Resolved cluster names (no globs)
       allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu", "global-platform-us", "global-platform-apac"],
       allowedGroups: ["sre-team", "platform-oncall", "dtcaas-platform_emergency"],
@@ -222,6 +229,13 @@ const mockDebugSessionTemplates = [
         allowRenewal: true,
         maxRenewals: 2,
       },
+      // Observability access: logs and port-forward only
+      allowedPodOperations: {
+        exec: false,
+        attach: false,
+        logs: true,
+        portForward: true,
+      },
       // Wildcard resolved to all clusters
       allowedClusters: [
         "t-sec-1st.dtmd11",
@@ -286,6 +300,13 @@ const mockDebugSessionTemplates = [
         defaultDuration: "30m",
         allowRenewal: false,
         maxRenewals: 0,
+      },
+      // Exec only for file copying (core dumps), no interactive access
+      allowedPodOperations: {
+        exec: true,
+        attach: false,
+        logs: false,
+        portForward: false,
       },
       // Only production clusters
       allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu"],
@@ -386,6 +407,13 @@ const mockDebugSessionTemplates = [
         allowRenewal: true,
         maxRenewals: 5,
       },
+      // Full access for lab environments - no restrictions
+      allowedPodOperations: {
+        exec: true,
+        attach: true,
+        logs: true,
+        portForward: true,
+      },
       // Lab and dev clusters
       allowedClusters: ["lab-cluster", "ops-lab", "edge-hub"],
       allowedGroups: ["developers", "qa-team"],
@@ -398,6 +426,69 @@ const mockDebugSessionTemplates = [
         deniedPatterns: ["kube-system", "kube-public"],
         allowedLabelSelectors: [{ matchExpressions: [{ key: "restricted", operator: "DoesNotExist" }] }],
       },
+    },
+  },
+  // Additional template: Logs-only access for support teams
+  {
+    metadata: {
+      name: "logs-only",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "Logs Only Access",
+      description: "Read-only log access for support and audit teams",
+      mode: "workload",
+      workloadType: "Deployment",
+      podTemplateRef: "alpine-minimal",
+      targetNamespace: "breakglass-debug",
+      constraints: {
+        maxDuration: "4h",
+        defaultDuration: "1h",
+        allowRenewal: true,
+        maxRenewals: 3,
+      },
+      // Logs only - no exec, no attach, no port-forward
+      allowedPodOperations: {
+        exec: false,
+        attach: false,
+        logs: true,
+        portForward: false,
+      },
+      allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu", "global-platform-us"],
+      allowedGroups: ["support-team", "audit-team", "developers"],
+      requiresApproval: false,
+    },
+  },
+  // Additional template: Storage benchmark with exec-only
+  {
+    metadata: {
+      name: "storage-benchmark",
+      creationTimestamp: new Date().toISOString(),
+    },
+    spec: {
+      displayName: "Storage Benchmark",
+      description: "Run storage performance tests (fio, dd) with exec access only",
+      mode: "workload",
+      workloadType: "Deployment",
+      podTemplateRef: "busybox-tools",
+      targetNamespace: "breakglass-debug",
+      constraints: {
+        maxDuration: "2h",
+        defaultDuration: "30m",
+        allowRenewal: false,
+        maxRenewals: 0,
+      },
+      // Exec only for running benchmark commands
+      allowedPodOperations: {
+        exec: true,
+        attach: false,
+        logs: false,
+        portForward: false,
+      },
+      allowedClusters: ["lab-cluster", "ops-lab", "t-sec-1st.dtmd11"],
+      allowedGroups: ["sre-team", "storage-team"],
+      requiresApproval: true,
+      approverGroups: ["sre-leads"],
     },
   },
 ];
@@ -422,6 +513,7 @@ function baseDebugSession({
   expiresInMinutes = 60,
   participants = [],
   allowedPods = [],
+  allowedPodOperations = null, // null uses defaults, or specify { exec, attach, logs, portForward }
   renewalCount = 0,
   approvedBy,
   rejectedBy,
@@ -470,6 +562,7 @@ function baseDebugSession({
         ...participants,
       ],
       allowedPods,
+      ...(allowedPodOperations && { allowedPodOperations }),
       ...(approvedBy && { approvedBy, approvedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString() }),
       ...(rejectedBy && { rejectedBy, rejectedAt: new Date().toISOString(), rejectionReason }),
     },
@@ -488,6 +581,8 @@ const mockDebugSessions = [
     reason: "Investigating pod network connectivity issues in production",
     expiresInMinutes: 45,
     approvedBy: "approver@breakglass.dev",
+    // Full access from standard-debug template
+    allowedPodOperations: { exec: true, attach: true, logs: true, portForward: true },
     allowedPods: [
       { name: "netshoot-abc12", namespace: "breakglass-debug", nodeName: "node-1", ready: true, phase: "Running" },
       { name: "netshoot-def34", namespace: "breakglass-debug", nodeName: "node-2", ready: true, phase: "Running" },
@@ -509,6 +604,8 @@ const mockDebugSessions = [
     state: "PendingApproval",
     reason: "Need node-level access for kernel debugging",
     expiresInMinutes: 120,
+    // Exec only from node-debug template (for copying core dumps)
+    allowedPodOperations: { exec: true, attach: false, logs: false, portForward: false },
   }),
   baseDebugSession({
     name: "debug-ephemeral-002",
@@ -518,6 +615,8 @@ const mockDebugSessions = [
     reason: "Attaching debugger to crashing pod",
     expiresInMinutes: 20,
     renewalCount: 1,
+    // Observability access from ephemeral-debug template
+    allowedPodOperations: { exec: false, attach: false, logs: true, portForward: true },
     allowedPods: [
       { name: "debug-target-pod", namespace: "app-namespace", nodeName: "node-3", ready: true, phase: "Running" },
     ],
@@ -533,6 +632,7 @@ const mockDebugSessions = [
     reason: "Previous debugging session that expired",
     expiresInMinutes: -60,
     approvedBy: CURRENT_USER_EMAIL,
+    allowedPodOperations: { exec: true, attach: true, logs: true, portForward: true },
   }),
   baseDebugSession({
     name: "debug-rejected-001",
@@ -542,6 +642,8 @@ const mockDebugSessions = [
     reason: "Requested node access without proper justification",
     rejectedBy: "security-lead@breakglass.dev",
     rejectionReason: "Insufficient justification for node-level access",
+    // Would have had exec-only if approved
+    allowedPodOperations: { exec: true, attach: false, logs: false, portForward: false },
   }),
   baseDebugSession({
     name: "debug-terminated-001",
@@ -549,6 +651,8 @@ const mockDebugSessions = [
     cluster: "lab-cluster-01",
     state: "Terminated",
     reason: "Lab testing completed early",
+    // Full access from lab-debug template
+    allowedPodOperations: { exec: true, attach: true, logs: true, portForward: true },
   }),
   baseDebugSession({
     name: "debug-scheduled-001",
@@ -557,6 +661,36 @@ const mockDebugSessions = [
     state: "Pending",
     reason: "Scheduled maintenance window debugging",
     scheduledStartTime: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+    allowedPodOperations: { exec: true, attach: true, logs: true, portForward: true },
+  }),
+  // Additional session: Logs-only for support team
+  baseDebugSession({
+    name: "debug-logs-only-001",
+    templateRef: "logs-only",
+    cluster: "t-sec-1st.dtmd11",
+    state: "Active",
+    reason: "Reviewing application logs for support ticket #12345",
+    expiresInMinutes: 180,
+    // Logs only - no interactive access
+    allowedPodOperations: { exec: false, attach: false, logs: true, portForward: false },
+    allowedPods: [
+      { name: "logs-viewer-xyz", namespace: "breakglass-debug", nodeName: "node-1", ready: true, phase: "Running" },
+    ],
+  }),
+  // Additional session: Storage benchmark
+  baseDebugSession({
+    name: "debug-storage-bench-001",
+    templateRef: "storage-benchmark",
+    cluster: "lab-cluster",
+    state: "Active",
+    reason: "Running fio benchmarks for new storage class evaluation",
+    expiresInMinutes: 25,
+    approvedBy: "sre-lead@breakglass.dev",
+    // Exec only for running benchmark commands
+    allowedPodOperations: { exec: true, attach: false, logs: false, portForward: false },
+    allowedPods: [
+      { name: "fio-bench-abc", namespace: "breakglass-debug", nodeName: "node-5", ready: true, phase: "Running" },
+    ],
   }),
 ];
 

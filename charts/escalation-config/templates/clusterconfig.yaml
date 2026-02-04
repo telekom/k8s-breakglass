@@ -157,6 +157,11 @@ spec:
   burst: {{ .Values.cluster.burst }}
   {{- end }}
   
+  {{- /* Optional: Mail Provider for notifications */}}
+  {{- if .Values.cluster.mailProvider }}
+  mailProvider: {{ .Values.cluster.mailProvider }}
+  {{- end }}
+  
   blockSelfApproval: {{ default false .Values.cluster.blockSelfApproval }}
   {{- if .Values.cluster.allowedApproverDomains }}
   allowedApproverDomains:

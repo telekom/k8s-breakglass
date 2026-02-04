@@ -213,15 +213,126 @@ func TestWriteDebugSessionTableWide(t *testing.T) {
 	WriteDebugSessionTableWide(buf, sessions)
 
 	output := buf.String()
-	// Wide format should include TEMPLATE, STARTS, PARTICIPANTS, ALLOWED_PODS
+	// Wide format should include TEMPLATE, STARTS, PARTICIPANTS, ALLOWED_PODS, OPERATIONS
 	assert.Contains(t, output, "TEMPLATE")
 	assert.Contains(t, output, "STARTS")
 	assert.Contains(t, output, "PARTICIPANTS")
 	assert.Contains(t, output, "ALLOWED_PODS")
+	assert.Contains(t, output, "OPERATIONS")
 
 	assert.Contains(t, output, "debug-template")
 	assert.Contains(t, output, "2") // participants
 	assert.Contains(t, output, "5") // allowed pods
+	// Default operations when nil: exec,attach,portforward
+	assert.Contains(t, output, "exec,attach,portforward")
+}
+
+func TestWriteDebugSessionTableWide_WithAllowedPodOperations(t *testing.T) {
+	now := time.Now()
+	startsAt := metav1.NewTime(now)
+	expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
+
+	boolTrue := true
+	boolFalse := false
+
+	sessions := []client.DebugSessionSummary{
+		{
+			Name:         "debug-session-1",
+			TemplateRef:  "debug-template",
+			Cluster:      "dev-cluster",
+			RequestedBy:  "developer@example.com",
+			State:        v1alpha1.DebugSessionStateActive,
+			StartsAt:     &startsAt,
+			ExpiresAt:    &expiresAt,
+			Participants: 2,
+			AllowedPods:  5,
+			AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolFalse,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+		},
+	}
+
+	buf := &bytes.Buffer{}
+	WriteDebugSessionTableWide(buf, sessions)
+
+	output := buf.String()
+	// Should show exec,logs,portforward (not attach)
+	assert.Contains(t, output, "exec")
+	assert.Contains(t, output, "logs")
+	assert.Contains(t, output, "portforward")
+	assert.NotContains(t, output, "attach") // disabled
+}
+
+func TestFormatAllowedPodOperations(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	tests := []struct {
+		name     string
+		ops      *v1alpha1.AllowedPodOperations
+		expected string
+	}{
+		{
+			name:     "nil operations uses defaults",
+			ops:      nil,
+			expected: "exec,attach,portforward",
+		},
+		{
+			name: "all enabled",
+			ops: &v1alpha1.AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolTrue,
+				Logs:        &boolTrue,
+				PortForward: &boolTrue,
+			},
+			expected: "exec,attach,logs,portforward",
+		},
+		{
+			name: "all disabled",
+			ops: &v1alpha1.AllowedPodOperations{
+				Exec:        &boolFalse,
+				Attach:      &boolFalse,
+				Logs:        &boolFalse,
+				PortForward: &boolFalse,
+			},
+			expected: "none",
+		},
+		{
+			name: "only exec enabled",
+			ops: &v1alpha1.AllowedPodOperations{
+				Exec:        &boolTrue,
+				Attach:      &boolFalse,
+				Logs:        &boolFalse,
+				PortForward: &boolFalse,
+			},
+			expected: "exec",
+		},
+		{
+			name: "only logs enabled",
+			ops: &v1alpha1.AllowedPodOperations{
+				Exec:        &boolFalse,
+				Attach:      &boolFalse,
+				Logs:        &boolTrue,
+				PortForward: &boolFalse,
+			},
+			expected: "logs",
+		},
+		{
+			name:     "empty struct uses defaults per field",
+			ops:      &v1alpha1.AllowedPodOperations{},
+			expected: "exec,attach,portforward",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatAllowedPodOperations(tt.ops)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }
 
 func TestWriteDebugSessionTable_NilTimes(t *testing.T) {

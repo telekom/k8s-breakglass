@@ -12,11 +12,15 @@ package v1alpha1
 // with apply.
 //
 // AllowedPodOperations defines which kubectl operations are permitted on debug session pods.
-// Each field controls a specific pod subresource. When the parent struct is nil,
+// Each field controls access to a specific pod subresource. When the parent struct is nil,
 // defaults are exec=true, attach=true, portforward=true for backward compatibility.
+//
+// Note: kubectl cp uses the exec subresource internally (it runs tar in the container).
+// Therefore, kubectl cp only works when exec is enabled. There is no way to allow
+// kubectl cp while blocking other exec commands at the webhook level.
 type AllowedPodOperationsApplyConfiguration struct {
 	// exec allows running commands inside containers via kubectl exec.
-	// Note: kubectl cp uses exec internally (runs tar), so enabling cp implicitly allows exec with tar.
+	// Note: kubectl cp uses exec internally, so disabling exec also prevents kubectl cp.
 	Exec *bool `json:"exec,omitempty"`
 	// attach allows attaching to running container processes via kubectl attach.
 	Attach *bool `json:"attach,omitempty"`
@@ -25,10 +29,6 @@ type AllowedPodOperationsApplyConfiguration struct {
 	Logs *bool `json:"logs,omitempty"`
 	// portForward allows forwarding local ports to pod ports via kubectl port-forward.
 	PortForward *bool `json:"portForward,omitempty"`
-	// cp allows copying files to/from containers via kubectl cp.
-	// Note: kubectl cp uses exec internally (runs tar in the container).
-	// When cp is enabled but exec is disabled, only tar-based file operations are permitted.
-	Cp *bool `json:"cp,omitempty"`
 }
 
 // AllowedPodOperationsApplyConfiguration constructs a declarative configuration of the AllowedPodOperations type for use with
@@ -66,13 +66,5 @@ func (b *AllowedPodOperationsApplyConfiguration) WithLogs(value bool) *AllowedPo
 // If called multiple times, the PortForward field is set to the value of the last call.
 func (b *AllowedPodOperationsApplyConfiguration) WithPortForward(value bool) *AllowedPodOperationsApplyConfiguration {
 	b.PortForward = &value
-	return b
-}
-
-// WithCp sets the Cp field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Cp field is set to the value of the last call.
-func (b *AllowedPodOperationsApplyConfiguration) WithCp(value bool) *AllowedPodOperationsApplyConfiguration {
-	b.Cp = &value
 	return b
 }

@@ -999,18 +999,11 @@ spec:
                     description: attach allows attaching to running container processes
                       via kubectl attach.
                     type: boolean
-                  cp:
-                    default: false
-                    description: |-
-                      cp allows copying files to/from containers via kubectl cp.
-                      Note: kubectl cp uses exec internally (runs tar in the container).
-                      When cp is enabled but exec is disabled, only tar-based file operations are permitted.
-                    type: boolean
                   exec:
                     default: true
                     description: |-
                       exec allows running commands inside containers via kubectl exec.
-                      Note: kubectl cp uses exec internally (runs tar), so enabling cp implicitly allows exec with tar.
+                      Note: kubectl cp uses exec internally, so disabling exec also prevents kubectl cp.
                     type: boolean
                   logs:
                     default: false
@@ -2425,26 +2418,18 @@ spec:
                     description: |-
                       allowedPodOperations configures which kubectl operations are permitted on debug pods.
                       When nil, defaults to allowing exec, attach, and portforward (backward compatible).
-                      Use this to grant more restrictive access (e.g., logs-only for read-only debugging,
-                      or cp-only for file extraction from coredump volumes).
+                      Use this to grant more restrictive access (e.g., logs-only for read-only debugging).
                     properties:
                       attach:
                         default: true
                         description: attach allows attaching to running container
                           processes via kubectl attach.
                         type: boolean
-                      cp:
-                        default: false
-                        description: |-
-                          cp allows copying files to/from containers via kubectl cp.
-                          Note: kubectl cp uses exec internally (runs tar in the container).
-                          When cp is enabled but exec is disabled, only tar-based file operations are permitted.
-                        type: boolean
                       exec:
                         default: true
                         description: |-
                           exec allows running commands inside containers via kubectl exec.
-                          Note: kubectl cp uses exec internally (runs tar), so enabling cp implicitly allows exec with tar.
+                          Note: kubectl cp uses exec internally, so disabling exec also prevents kubectl cp.
                         type: boolean
                       logs:
                         default: false

@@ -67,7 +67,7 @@ func WriteDebugSessionTable(w io.Writer, sessions []client.DebugSessionSummary) 
 // WriteDebugSessionTableWide outputs debug sessions in wide table format with all available fields.
 func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSummary) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tTEMPLATE\tCLUSTER\tREQUESTED_BY\tSTATE\tSTARTS\tEXPIRES\tPARTICIPANTS\tALLOWED_PODS")
+	_, _ = fmt.Fprintln(tw, "NAME\tTEMPLATE\tCLUSTER\tREQUESTED_BY\tSTATE\tSTARTS\tEXPIRES\tPARTICIPANTS\tALLOWED_PODS\tOPERATIONS")
 	for _, s := range sessions {
 		starts := "-"
 		if s.StartsAt != nil {
@@ -77,9 +77,36 @@ func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSumma
 		if s.ExpiresAt != nil {
 			expires = formatTime(s.ExpiresAt.Time)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n", s.Name, s.TemplateRef, s.Cluster, s.RequestedBy, string(s.State), starts, expires, s.Participants, s.AllowedPods)
+		ops := formatAllowedPodOperations(s.AllowedPodOperations)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", s.Name, s.TemplateRef, s.Cluster, s.RequestedBy, string(s.State), starts, expires, s.Participants, s.AllowedPods, ops)
 	}
 	_ = tw.Flush()
+}
+
+// formatAllowedPodOperations returns a short string representation of allowed pod operations.
+// Returns a comma-separated list of enabled operations (e.g., "exec,logs,attach").
+func formatAllowedPodOperations(ops *v1alpha1.AllowedPodOperations) string {
+	if ops == nil {
+		// Default behavior when not specified: exec, attach, portforward enabled
+		return "exec,attach,portforward"
+	}
+	var enabled []string
+	if ops.IsOperationAllowed("exec") {
+		enabled = append(enabled, "exec")
+	}
+	if ops.IsOperationAllowed("attach") {
+		enabled = append(enabled, "attach")
+	}
+	if ops.IsOperationAllowed("log") {
+		enabled = append(enabled, "logs")
+	}
+	if ops.IsOperationAllowed("portforward") {
+		enabled = append(enabled, "portforward")
+	}
+	if len(enabled) == 0 {
+		return "none"
+	}
+	return strings.Join(enabled, ",")
 }
 
 func WriteDebugTemplateTable(w io.Writer, templates []client.DebugSessionTemplateSummary) {
