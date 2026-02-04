@@ -488,14 +488,14 @@ func TestOIDCTokenProvider_RefreshToken(t *testing.T) {
 
 	// Verify token is cached with refresh token
 	provider.mu.RLock()
-	cached := provider.tokens["test-cluster"]
+	cached := provider.tokens["default/test-cluster"]
 	provider.mu.RUnlock()
 	require.NotNil(t, cached)
 	assert.Equal(t, "test-refresh-token", cached.refreshToken)
 
 	// Simulate token expiry by manually modifying the cache
 	provider.mu.Lock()
-	provider.tokens["test-cluster"].expiresAt = provider.tokens["test-cluster"].expiresAt.Add(-2 * time.Hour)
+	provider.tokens["default/test-cluster"].expiresAt = provider.tokens["default/test-cluster"].expiresAt.Add(-2 * time.Hour)
 	provider.mu.Unlock()
 
 	// Second call - should use refresh token
@@ -540,7 +540,8 @@ func TestOIDCTokenProvider_CacheToken(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	// Test caching a token with refresh token
+	// Test caching a token with refresh token - this deprecated method
+	// stores with empty namespace prefix, resulting in "/cluster-name" key
 	token := &tokenResponse{
 		AccessToken:  "test-access",
 		RefreshToken: "test-refresh",
@@ -550,13 +551,125 @@ func TestOIDCTokenProvider_CacheToken(t *testing.T) {
 	provider.cacheToken("test-cluster", token)
 
 	provider.mu.RLock()
-	cached := provider.tokens["test-cluster"]
+	cached := provider.tokens["/test-cluster"]
 	provider.mu.RUnlock()
 
-	require.NotNil(t, cached)
+	require.NotNil(t, cached, "Token should be cached at key '/test-cluster' (empty namespace prefix)")
 	assert.Equal(t, "test-access", cached.accessToken)
 	assert.Equal(t, "test-refresh", cached.refreshToken)
 	assert.WithinDuration(t, time.Now().Add(3600*time.Second), cached.expiresAt, 5*time.Second)
+}
+
+func TestOIDCTokenProvider_CacheTokenWithNamespaceExplicit(t *testing.T) {
+	// This test verifies the primary use case for cacheTokenWithNamespace()
+	// with an explicit namespace, ensuring namespace/name format is used
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	token := &tokenResponse{
+		AccessToken:  "explicit-ns-token",
+		RefreshToken: "explicit-refresh",
+		ExpiresIn:    7200,
+	}
+
+	// Use explicit namespace
+	provider.cacheTokenWithNamespace("production", "my-cluster", token)
+
+	provider.mu.RLock()
+	cached := provider.tokens["production/my-cluster"]
+	provider.mu.RUnlock()
+
+	require.NotNil(t, cached, "Token should be cached at 'production/my-cluster'")
+	assert.Equal(t, "explicit-ns-token", cached.accessToken)
+	assert.Equal(t, "explicit-refresh", cached.refreshToken)
+	assert.WithinDuration(t, time.Now().Add(7200*time.Second), cached.expiresAt, 5*time.Second)
+}
+
+func TestOIDCTokenProvider_CacheTokenWithNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	// Cache tokens for the same cluster name in different namespaces
+	token1 := &tokenResponse{AccessToken: "token-ns1", ExpiresIn: 3600}
+	token2 := &tokenResponse{AccessToken: "token-ns2", ExpiresIn: 3600}
+
+	provider.cacheTokenWithNamespace("namespace1", "cluster", token1)
+	provider.cacheTokenWithNamespace("namespace2", "cluster", token2)
+
+	provider.mu.RLock()
+	cached1 := provider.tokens["namespace1/cluster"]
+	cached2 := provider.tokens["namespace2/cluster"]
+	provider.mu.RUnlock()
+
+	require.NotNil(t, cached1, "Token for namespace1/cluster should exist")
+	require.NotNil(t, cached2, "Token for namespace2/cluster should exist")
+	assert.Equal(t, "token-ns1", cached1.accessToken)
+	assert.Equal(t, "token-ns2", cached2.accessToken)
+}
+
+func TestOIDCTokenProvider_InvalidateDoesNotMatchSimilarNames(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	// Cache tokens for clusters with similar names
+	token := &tokenResponse{AccessToken: "test", ExpiresIn: 3600}
+	provider.cacheTokenWithNamespace("default", "prod", token)
+	provider.cacheTokenWithNamespace("default", "my-prod", token)
+	provider.cacheTokenWithNamespace("default", "test-prod", token)
+
+	// Invalidate "prod" - should NOT affect "my-prod" or "test-prod"
+	provider.Invalidate("prod")
+
+	provider.mu.RLock()
+	_, hasProd := provider.tokens["default/prod"]
+	_, hasMyProd := provider.tokens["default/my-prod"]
+	_, hasTestProd := provider.tokens["default/test-prod"]
+	provider.mu.RUnlock()
+
+	assert.False(t, hasProd, "default/prod should be invalidated")
+	assert.True(t, hasMyProd, "default/my-prod should NOT be invalidated by Invalidate('prod')")
+	assert.True(t, hasTestProd, "default/test-prod should NOT be invalidated by Invalidate('prod')")
+}
+
+func TestOIDCTokenProvider_InvalidateWithNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	log := zap.NewNop().Sugar()
+
+	provider := NewOIDCTokenProvider(k8sClient, log)
+
+	// Cache tokens for the same cluster in different namespaces
+	token := &tokenResponse{AccessToken: "test", ExpiresIn: 3600}
+	provider.cacheTokenWithNamespace("ns1", "cluster", token)
+	provider.cacheTokenWithNamespace("ns2", "cluster", token)
+
+	// Invalidate only ns1/cluster
+	provider.InvalidateWithNamespace("ns1", "cluster")
+
+	provider.mu.RLock()
+	_, hasNs1 := provider.tokens["ns1/cluster"]
+	_, hasNs2 := provider.tokens["ns2/cluster"]
+	provider.mu.RUnlock()
+
+	assert.False(t, hasNs1, "ns1/cluster should be invalidated")
+	assert.True(t, hasNs2, "ns2/cluster should NOT be invalidated")
 }
 
 func TestOIDCTokenProvider_OIDCFromIdentityProvider_NotFound(t *testing.T) {
@@ -781,7 +894,7 @@ func TestOIDCTokenProvider_TokenExchange(t *testing.T) {
 
 	// Verify token is cached
 	provider.mu.RLock()
-	cached := provider.tokens["test-cluster"]
+	cached := provider.tokens["default/test-cluster"]
 	provider.mu.RUnlock()
 	require.NotNil(t, cached)
 	assert.Contains(t, cached.accessToken, "exchanged-access-token")
@@ -926,25 +1039,36 @@ func TestOIDCTokenProvider_Invalidate(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	// Add a token to the cache
+	// Add tokens with both old-style (no namespace) and new-style (namespaced) keys
+	// to verify backward compatibility
 	provider.mu.Lock()
-	provider.tokens["cluster1"] = &cachedToken{accessToken: "test-token"}
-	provider.tokens["cluster2"] = &cachedToken{accessToken: "test-token-2"}
+	// Old-style key (legacy format, no namespace)
+	provider.tokens["cluster1"] = &cachedToken{accessToken: "old-style-token"}
+	// New-style keys (namespace/name format)
+	provider.tokens["ns1/cluster1"] = &cachedToken{accessToken: "ns1-token"}
+	provider.tokens["ns2/cluster1"] = &cachedToken{accessToken: "ns2-token"}
+	// Different cluster to verify no false matches
+	provider.tokens["default/cluster2"] = &cachedToken{accessToken: "cluster2-token"}
 	provider.mu.Unlock()
 
-	// Verify token exists
+	// Verify all tokens exist before invalidation
 	provider.mu.RLock()
 	assert.NotNil(t, provider.tokens["cluster1"])
-	assert.NotNil(t, provider.tokens["cluster2"])
+	assert.NotNil(t, provider.tokens["ns1/cluster1"])
+	assert.NotNil(t, provider.tokens["ns2/cluster1"])
+	assert.NotNil(t, provider.tokens["default/cluster2"])
 	provider.mu.RUnlock()
 
-	// Invalidate one cluster
+	// Invalidate cluster1 - should remove both old-style and all namespaced entries
 	provider.Invalidate("cluster1")
 
-	// Verify cluster1 is gone but cluster2 remains
+	// Verify: old-style "cluster1" and new-style "*/cluster1" entries are gone,
+	// but cluster2 remains
 	provider.mu.RLock()
-	assert.Nil(t, provider.tokens["cluster1"])
-	assert.NotNil(t, provider.tokens["cluster2"])
+	assert.Nil(t, provider.tokens["cluster1"], "Old-style key should be invalidated")
+	assert.Nil(t, provider.tokens["ns1/cluster1"], "Namespaced ns1/cluster1 should be invalidated")
+	assert.Nil(t, provider.tokens["ns2/cluster1"], "Namespaced ns2/cluster1 should be invalidated")
+	assert.NotNil(t, provider.tokens["default/cluster2"], "cluster2 should NOT be affected")
 	provider.mu.RUnlock()
 }
 

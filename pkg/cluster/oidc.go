@@ -82,6 +82,19 @@ func NewOIDCTokenProvider(k8s client.Client, log *zap.SugaredLogger) *OIDCTokenP
 	}
 }
 
+// tokenCacheKey generates a namespaced cache key for OIDC tokens.
+// This ensures tokens from ClusterConfigs with the same name in different namespaces
+// are cached separately and don't collide.
+//
+// When namespace is the empty string, the returned key will have a leading slash,
+// e.g. "/cluster-name". This behavior is intentional and kept for backward
+// compatibility with the deprecated cacheToken() method. Callers must not rely
+// on the presence or absence of a leading slash to infer whether a namespace was
+// set; they should treat the returned value as an opaque cache key.
+func tokenCacheKey(namespace, name string) string {
+	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
 // GetRESTConfig builds a rest.Config using OIDC authentication for the given cluster config.
 // It supports both direct oidcAuth configuration and oidcFromIdentityProvider references.
 // The returned config uses WrapTransport to inject fresh tokens on each request,
@@ -228,27 +241,28 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 // getToken retrieves a valid token, refreshing if necessary using refresh tokens when available.
 // This follows kubelogin's pattern: check cache -> try refresh token -> fall back to full auth
 func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oidc *v1alpha1.OIDCAuthConfig, namespace string) (string, error) {
+	cacheKey := tokenCacheKey(namespace, clusterName)
 	p.mu.RLock()
-	cached, ok := p.tokens[clusterName]
+	cached, ok := p.tokens[cacheKey]
 	p.mu.RUnlock()
 
 	// Return cached token if still valid (with buffer for proactive refresh)
 	if ok && time.Now().Add(TokenRefreshBuffer).Before(cached.expiresAt) {
-		p.log.Debugw("Using cached token", "cluster", clusterName, "expiresAt", cached.expiresAt)
+		p.log.Debugw("Using cached token", "cluster", clusterName, "namespace", namespace, "expiresAt", cached.expiresAt)
 		return cached.accessToken, nil
 	}
 
 	// Try to refresh using refresh token if available
 	if ok && cached.refreshToken != "" {
-		p.log.Debugw("Attempting token refresh", "cluster", clusterName)
+		p.log.Debugw("Attempting token refresh", "cluster", clusterName, "namespace", namespace)
 		token, err := p.refreshToken(ctx, oidc, cached.refreshToken)
 		if err == nil {
-			p.cacheToken(clusterName, token)
-			p.log.Debugw("Token refreshed successfully", "cluster", clusterName, "expiresIn", token.ExpiresIn)
+			p.cacheTokenWithNamespace(namespace, clusterName, token)
+			p.log.Debugw("Token refreshed successfully", "cluster", clusterName, "namespace", namespace, "expiresIn", token.ExpiresIn)
 			return token.AccessToken, nil
 		}
 		// Refresh failed, fall through to full authentication
-		p.log.Warnw("Token refresh failed, will re-authenticate", "cluster", clusterName, "error", err)
+		p.log.Warnw("Token refresh failed, will re-authenticate", "cluster", clusterName, "namespace", namespace, "error", err)
 	}
 
 	// Acquire new token
@@ -270,22 +284,33 @@ func (p *OIDCTokenProvider) getToken(ctx context.Context, clusterName string, oi
 	}
 
 	// Cache the token (including refresh token if provided)
-	p.cacheToken(clusterName, token)
+	p.cacheTokenWithNamespace(namespace, clusterName, token)
 
-	p.log.Debugw("Acquired OIDC token", "cluster", clusterName, "expiresIn", token.ExpiresIn, "hasRefreshToken", token.RefreshToken != "")
+	p.log.Debugw("Acquired OIDC token", "cluster", clusterName, "namespace", namespace, "expiresIn", token.ExpiresIn, "hasRefreshToken", token.RefreshToken != "")
 	return token.AccessToken, nil
 }
 
-// cacheToken stores a token in the cache
-func (p *OIDCTokenProvider) cacheToken(clusterName string, token *tokenResponse) {
+// cacheTokenWithNamespace stores a token in the cache using a namespaced key.
+// This ensures tokens from ClusterConfigs with the same name in different namespaces
+// are cached separately.
+func (p *OIDCTokenProvider) cacheTokenWithNamespace(namespace, clusterName string, token *tokenResponse) {
+	cacheKey := tokenCacheKey(namespace, clusterName)
 	expiresAt := time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	p.mu.Lock()
-	p.tokens[clusterName] = &cachedToken{
+	p.tokens[cacheKey] = &cachedToken{
 		accessToken:  token.AccessToken,
 		refreshToken: token.RefreshToken,
 		expiresAt:    expiresAt,
 	}
 	p.mu.Unlock()
+}
+
+// Deprecated: cacheToken stores a token in the cache using an empty namespace.
+// Use cacheTokenWithNamespace instead for proper namespace isolation.
+// This method is kept for backward compatibility and will be removed in v2.0.
+// Migration: Replace `p.cacheToken(name, token)` with `p.cacheTokenWithNamespace(namespace, name, token)`.
+func (p *OIDCTokenProvider) cacheToken(clusterName string, token *tokenResponse) {
+	p.cacheTokenWithNamespace("", clusterName, token)
 }
 
 // refreshToken attempts to refresh an access token using a refresh token
@@ -1044,10 +1069,28 @@ func (p *OIDCTokenProvider) InvalidateTOFU(apiServerURL string) {
 	p.tofuMu.Unlock()
 }
 
-// Invalidate removes a cached token for the specified cluster
+// Invalidate removes cached tokens for the specified cluster name.
+// Since tokens are now keyed by namespace/name, this will evict all entries
+// ending with "/clusterName" to handle the case where watchers don't know the namespace.
+// The suffix check includes the "/" to prevent false matches (e.g., "prod" won't
+// match "my-prod" because the suffix is "/prod", not "prod").
 func (p *OIDCTokenProvider) Invalidate(clusterName string) {
 	p.mu.Lock()
-	delete(p.tokens, clusterName)
+	defer p.mu.Unlock()
+	// Evict any entry that matches this cluster name (handles both old and new key formats)
+	for key := range p.tokens {
+		if key == clusterName || strings.HasSuffix(key, "/"+clusterName) {
+			delete(p.tokens, key)
+		}
+	}
+}
+
+// InvalidateWithNamespace removes a cached token for the specified namespace/cluster combination.
+// This is the preferred method when the namespace is known.
+func (p *OIDCTokenProvider) InvalidateWithNamespace(namespace, clusterName string) {
+	cacheKey := tokenCacheKey(namespace, clusterName)
+	p.mu.Lock()
+	delete(p.tokens, cacheKey)
 	p.mu.Unlock()
 }
 
