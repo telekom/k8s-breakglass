@@ -989,6 +989,34 @@ spec:
           status:
             description: DebugSessionStatus defines the observed state of DebugSession.
             properties:
+              allowedPodOperations:
+                description: |-
+                  allowedPodOperations caches the resolved pod operations from the template.
+                  Used by the webhook to determine which operations are permitted.
+                properties:
+                  attach:
+                    default: true
+                    description: attach allows attaching to running container processes
+                      via kubectl attach.
+                    type: boolean
+                  exec:
+                    default: true
+                    description: |-
+                      exec allows running commands inside containers via kubectl exec.
+                      Note: kubectl cp uses exec internally, so disabling exec also prevents kubectl cp.
+                    type: boolean
+                  logs:
+                    default: false
+                    description: |-
+                      logs allows viewing container logs via kubectl logs.
+                      This is a read-only operation.
+                    type: boolean
+                  portForward:
+                    default: true
+                    description: portForward allows forwarding local ports to pod
+                      ports via kubectl port-forward.
+                    type: boolean
+                type: object
               allowedPods:
                 description: |-
                   allowedPods lists pods that users can exec into via this session.
@@ -2385,6 +2413,35 @@ spec:
                         items:
                           type: string
                         type: array
+                    type: object
+                  allowedPodOperations:
+                    description: |-
+                      allowedPodOperations configures which kubectl operations are permitted on debug pods.
+                      When nil, defaults to allowing exec, attach, and portforward (backward compatible).
+                      Use this to grant more restrictive access (e.g., logs-only for read-only debugging).
+                    properties:
+                      attach:
+                        default: true
+                        description: attach allows attaching to running container
+                          processes via kubectl attach.
+                        type: boolean
+                      exec:
+                        default: true
+                        description: |-
+                          exec allows running commands inside containers via kubectl exec.
+                          Note: kubectl cp uses exec internally, so disabling exec also prevents kubectl cp.
+                        type: boolean
+                      logs:
+                        default: false
+                        description: |-
+                          logs allows viewing container logs via kubectl logs.
+                          This is a read-only operation.
+                        type: boolean
+                      portForward:
+                        default: true
+                        description: portForward allows forwarding local ports to
+                          pod ports via kubectl port-forward.
+                        type: boolean
                     type: object
                   annotations:
                     additionalProperties:

@@ -6,7 +6,7 @@ import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import { pushError, pushSuccess } from "@/services/toast";
 import { useDateFormatting } from "@/composables";
-import type { DebugSession, DebugSessionParticipant, DebugPodInfo } from "@/model/debugSession";
+import type { DebugSession, DebugSessionParticipant, DebugPodInfo, AllowedPodOperations } from "@/model/debugSession";
 
 const { formatDateTime, formatRelativeTime } = useDateFormatting();
 
@@ -148,6 +148,34 @@ const canUseKubectlDebug = computed(() => {
   const mode = labels["breakglass.telekom.de/mode"] || "workload";
   return mode === "kubectl-debug" || mode === "hybrid";
 });
+
+// Allowed pod operations configuration
+const allowedPodOperations = computed((): AllowedPodOperations | null => {
+  return session.value?.status?.allowedPodOperations || null;
+});
+
+// Check if a specific pod operation is allowed
+// Returns true if the operation is explicitly allowed, or if using default behavior
+// Note: kubectl cp uses exec internally, so it requires exec: true to function
+function isOperationAllowed(operation: "exec" | "attach" | "logs" | "portForward"): boolean {
+  const ops = allowedPodOperations.value;
+  if (!ops) {
+    // Default behavior when not specified: exec, attach, portforward enabled; logs disabled
+    return operation === "exec" || operation === "attach" || operation === "portForward";
+  }
+  const value = ops[operation];
+  if (value === undefined) {
+    // Default per-operation when field not set
+    if (operation === "logs") return false;
+    return true; // exec, attach, portforward default to true
+  }
+  return value;
+}
+
+// Get the status variant for an operation (for visual indication)
+function operationStatusVariant(allowed: boolean): string {
+  return allowed ? "success" : "neutral";
+}
 
 async function handleJoin() {
   try {
@@ -564,6 +592,44 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
           </ul>
         </div>
 
+        <!-- Allowed Pod Operations -->
+        <div class="detail-card" data-testid="allowed-operations-card">
+          <h3>Allowed Pod Operations</h3>
+          <p class="card-description">
+            Operations permitted on debug session pods. These control what kubectl commands can be used.
+          </p>
+          <div class="operations-grid" data-testid="operations-grid">
+            <div class="operation-item" data-testid="operation-exec">
+              <scale-tag :variant="operationStatusVariant(isOperationAllowed('exec'))">
+                {{ isOperationAllowed("exec") ? "✓" : "✗" }}
+              </scale-tag>
+              <span class="operation-name">Exec</span>
+              <span class="operation-desc">kubectl exec</span>
+            </div>
+            <div class="operation-item" data-testid="operation-attach">
+              <scale-tag :variant="operationStatusVariant(isOperationAllowed('attach'))">
+                {{ isOperationAllowed("attach") ? "✓" : "✗" }}
+              </scale-tag>
+              <span class="operation-name">Attach</span>
+              <span class="operation-desc">kubectl attach</span>
+            </div>
+            <div class="operation-item" data-testid="operation-logs">
+              <scale-tag :variant="operationStatusVariant(isOperationAllowed('logs'))">
+                {{ isOperationAllowed("logs") ? "✓" : "✗" }}
+              </scale-tag>
+              <span class="operation-name">Logs</span>
+              <span class="operation-desc">kubectl logs</span>
+            </div>
+            <div class="operation-item" data-testid="operation-portforward">
+              <scale-tag :variant="operationStatusVariant(isOperationAllowed('portForward'))">
+                {{ isOperationAllowed("portForward") ? "✓" : "✗" }}
+              </scale-tag>
+              <span class="operation-name">Port Forward</span>
+              <span class="operation-desc">kubectl port-forward</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Kubectl Debug Operations -->
         <div v-if="canUseKubectlDebug" class="detail-card kubectl-debug-card" data-testid="kubectl-debug-card">
           <h3>Kubectl Debug Operations</h3>
@@ -962,6 +1028,34 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   border-radius: var(--radius-sm);
   font-size: 0.75rem;
   overflow-x: auto;
+}
+
+/* Allowed Pod Operations Section */
+.operations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+.operation-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--telekom-color-background-surface-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.operation-name {
+  font-weight: 500;
+  font-size: 0.875rem;
+}
+
+.operation-desc {
+  font-size: 0.75rem;
+  color: var(--telekom-color-text-and-icon-additional);
+  font-family: var(--telekom-typography-font-family-mono);
 }
 
 /* Kubectl Debug Section */

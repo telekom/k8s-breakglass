@@ -203,15 +203,55 @@ spec:
   hidden: {{ $binding.hidden }}
   {{- end }}
 
+  {{- /* Allowed pod operations (exec, attach, logs, portforward) */}}
+  {{- if $binding.allowedPodOperations }}
+  allowedPodOperations:
+    {{- if hasKey $binding.allowedPodOperations "exec" }}
+    exec: {{ $binding.allowedPodOperations.exec }}
+    {{- end }}
+    {{- if hasKey $binding.allowedPodOperations "attach" }}
+    attach: {{ $binding.allowedPodOperations.attach }}
+    {{- end }}
+    {{- if hasKey $binding.allowedPodOperations "logs" }}
+    logs: {{ $binding.allowedPodOperations.logs }}
+    {{- end }}
+    {{- if hasKey $binding.allowedPodOperations "portForward" }}
+    portForward: {{ $binding.allowedPodOperations.portForward }}
+    {{- end }}
+  {{- end }}
+
   {{- /* Notification config */}}
   {{- if $binding.notification }}
   notification:
     {{- if hasKey $binding.notification "enabled" }}
     enabled: {{ $binding.notification.enabled }}
     {{- end }}
-    {{- if $binding.notification.channels }}
-    channels:
-{{ toYaml $binding.notification.channels | indent 6 }}
+    {{- if hasKey $binding.notification "notifyOnRequest" }}
+    notifyOnRequest: {{ $binding.notification.notifyOnRequest }}
+    {{- end }}
+    {{- if hasKey $binding.notification "notifyOnApproval" }}
+    notifyOnApproval: {{ $binding.notification.notifyOnApproval }}
+    {{- end }}
+    {{- if hasKey $binding.notification "notifyOnExpiry" }}
+    notifyOnExpiry: {{ $binding.notification.notifyOnExpiry }}
+    {{- end }}
+    {{- if hasKey $binding.notification "notifyOnTermination" }}
+    notifyOnTermination: {{ $binding.notification.notifyOnTermination }}
+    {{- end }}
+    {{- if $binding.notification.additionalRecipients }}
+    additionalRecipients:
+{{ toYaml $binding.notification.additionalRecipients | indent 6 }}
+    {{- end }}
+    {{- if $binding.notification.excludedRecipients }}
+    excludedRecipients:
+      {{- if $binding.notification.excludedRecipients.users }}
+      users:
+{{ toYaml $binding.notification.excludedRecipients.users | indent 8 }}
+      {{- end }}
+      {{- if $binding.notification.excludedRecipients.groups }}
+      groups:
+{{ toYaml $binding.notification.excludedRecipients.groups | indent 8 }}
+      {{- end }}
     {{- end }}
   {{- end }}
 
@@ -221,14 +261,30 @@ spec:
     {{- if hasKey $binding.requestReason "mandatory" }}
     mandatory: {{ $binding.requestReason.mandatory }}
     {{- end }}
+    {{- if $binding.requestReason.minLength }}
+    minLength: {{ $binding.requestReason.minLength }}
+    {{- end }}
+    {{- if $binding.requestReason.maxLength }}
+    maxLength: {{ $binding.requestReason.maxLength }}
+    {{- end }}
     {{- if $binding.requestReason.description }}
     description: {{ $binding.requestReason.description | quote }}
+    {{- end }}
+    {{- if $binding.requestReason.suggestedReasons }}
+    suggestedReasons:
+{{ toYaml $binding.requestReason.suggestedReasons | indent 6 }}
     {{- end }}
   {{- end }}
   {{- if $binding.approvalReason }}
   approvalReason:
     {{- if hasKey $binding.approvalReason "mandatory" }}
     mandatory: {{ $binding.approvalReason.mandatory }}
+    {{- end }}
+    {{- if hasKey $binding.approvalReason "mandatoryForRejection" }}
+    mandatoryForRejection: {{ $binding.approvalReason.mandatoryForRejection }}
+    {{- end }}
+    {{- if $binding.approvalReason.minLength }}
+    minLength: {{ $binding.approvalReason.minLength }}
     {{- end }}
     {{- if $binding.approvalReason.description }}
     description: {{ $binding.approvalReason.description | quote }}

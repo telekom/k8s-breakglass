@@ -96,6 +96,10 @@ cluster:
   # qps: 100
   # burst: 200
   
+  # Mail provider for cluster notifications (references a MailProvider CR by name)
+  # If not set, uses the default MailProvider
+  # mailProvider: prod-smtp-relay
+  
   blockSelfApproval: false
   allowedApproverDomains: []
 
@@ -363,10 +367,43 @@ debugSessionBindings: []
   #     logging: true
   #     monitoring: false
   #   
+  #   # Notification settings
+  #   notification:
+  #     enabled: true
+  #     notifyOnRequest: true
+  #     notifyOnApproval: true
+  #     notifyOnExpiry: true
+  #     notifyOnTermination: true
+  #     additionalRecipients:
+  #       - oncall@example.com
+  #     excludedRecipients:
+  #       users:
+  #         - bot@example.com
+  #       groups:
+  #         - automation-group
+  #   
   #   # Reason requirements
   #   requestReason:
   #     mandatory: true
+  #     minLength: 10
+  #     maxLength: 500
   #     description: "Please provide ticket ID and justification"
+  #     suggestedReasons:
+  #       - "Production incident"
+  #       - "Security audit"
+  #   approvalReason:
+  #     mandatory: true
+  #     mandatoryForRejection: true
+  #     minLength: 10
+  #     description: "Explain approval justification"
+  #   
+  #   # Allowed pod operations - restrict what kubectl operations users can perform
+  #   # Can only be MORE restrictive than the template (cannot enable ops template disables)
+  #   allowedPodOperations:
+  #     exec: true       # Allow kubectl exec (also enables kubectl cp)
+  #     attach: true     # Allow kubectl attach
+  #     logs: false      # Allow kubectl logs (read-only)
+  #     portForward: true  # Allow kubectl port-forward
   #   
   #   # Session limits
   #   maxActiveSessionsPerUser: 1
@@ -399,4 +436,117 @@ debugSessionBindings: []
   #   displayNamePrefix: "[DEV] "
   #   constraints:
   #     maxDuration: "4h"  # More permissive for dev
+
+
+# ==========================================
+# Deny Policies (Cluster-Scoped)
+# ==========================================
+# DenyPolicies define rules that block specific actions during breakglass sessions.
+# These policies are cluster-scoped and apply based on the appliesTo scope.
+# Use these to restrict what escalated users can do even with elevated privileges.
+
+denyPolicies: []
+  # Example: Block dangerous operations in production
+  # - name: block-dangerous-ops
+  #   # Scope: which clusters/tenants this policy applies to
+  #   appliesTo:
+  #     clusters:
+  #       - prod-cluster-1
+  #       - prod-cluster-2
+  #     # tenants:
+  #     #   - production
+  #   
+  #   # Deny rules - first matching rule denies the request
+  #   rules:
+  #     # Block deletion of namespaces
+  #     - verbs:
+  #         - delete
+  #       apiGroups:
+  #         - ""
+  #       resources:
+  #         - namespaces
+  #     
+  #     # Block all operations on secrets in kube-system
+  #     - verbs:
+  #         - "*"
+  #       apiGroups:
+  #         - ""
+  #       resources:
+  #         - secrets
+  #       namespaces:
+  #         patterns:
+  #           - kube-system
+  #     
+  #     # Block CRD modifications
+  #     - verbs:
+  #         - create
+  #         - update
+  #         - patch
+  #         - delete
+  #       apiGroups:
+  #         - apiextensions.k8s.io
+  #       resources:
+  #         - customresourcedefinitions
+  #   
+  #   # Precedence (lower wins, default: 100)
+  #   precedence: 50
+
+  # Example: Pod security policy for exec/attach operations
+  # - name: pod-security-policy
+  #   appliesTo:
+  #     clusters:
+  #       - "*"  # All clusters
+  #   
+  #   podSecurityRules:
+  #     # Which subresources trigger this evaluation (default: exec, attach, portforward)
+  #     appliesTo:
+  #       subresources:
+  #         - exec
+  #         - attach
+  #         - portforward
+  #     
+  #     # Risk factors: assign numeric weights to dangerous pod configurations
+  #     # Total score = sum of all detected factors
+  #     riskFactors:
+  #       hostNetwork: 50      # Pod uses host network namespace
+  #       hostPID: 40          # Pod uses host PID namespace
+  #       hostIPC: 30          # Pod uses host IPC namespace
+  #       privilegedContainer: 100  # Container runs privileged
+  #       hostPathWritable: 80      # Writable hostPath mounts
+  #       hostPathReadOnly: 20      # Read-only hostPath mounts
+  #       runAsRoot: 25             # Container runs as root
+  #       # capabilities:          # Linux capabilities risk scores
+  #       #   NET_ADMIN: 50
+  #       #   SYS_ADMIN: 80
+  #       #   SYS_PTRACE: 60
+  #     
+  #     # Thresholds: actions based on cumulative risk score
+  #     thresholds:
+  #       - maxScore: 50
+  #         action: allow      # Low risk - permit
+  #       - maxScore: 100
+  #         action: warn       # Medium risk - permit but log warning
+  #       - maxScore: 1000
+  #         action: deny       # High risk - block
+  #         reason: "Pod risk score {{.Score}} exceeds threshold. Factors: {{.Factors}}"
+  #     
+  #     # Block factors: immediately deny if ANY of these are present
+  #     # blockFactors:
+  #     #   - privilegedContainer
+  #     #   - hostNetwork
+  #     
+  #     # Exemptions: pods/namespaces that skip security evaluation
+  #     exemptions:
+  #       namespaces:
+  #         patterns:
+  #           - kube-system
+  #           - monitoring
+  #       # podLabels:
+  #       #   breakglass.telekom.com/security-exempt: "true"
+  #     
+  #     # Fail mode: behavior when pod spec cannot be fetched
+  #     # "open" = allow if fetch fails, "closed" = deny if fetch fails
+  #     failMode: closed
+  #   
+  #   precedence: 100
 

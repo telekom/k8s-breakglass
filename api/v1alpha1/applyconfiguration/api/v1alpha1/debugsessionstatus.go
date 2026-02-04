@@ -32,6 +32,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// allowedPods lists pods that users can exec into via this session.
 	// Dynamically updated as debug pods start/stop.
 	AllowedPods []AllowedPodRefApplyConfiguration `json:"allowedPods,omitempty"`
+	// allowedPodOperations caches the resolved pod operations from the template.
+	// Used by the webhook to determine which operations are permitted.
+	AllowedPodOperations *AllowedPodOperationsApplyConfiguration `json:"allowedPodOperations,omitempty"`
 	// kubectlDebugStatus tracks kubectl debug operations for kubectl-debug mode.
 	KubectlDebugStatus *KubectlDebugStatusApplyConfiguration `json:"kubectlDebugStatus,omitempty"`
 	// startsAt is when the session became active.
@@ -119,6 +122,14 @@ func (b *DebugSessionStatusApplyConfiguration) WithAllowedPods(values ...*Allowe
 		}
 		b.AllowedPods = append(b.AllowedPods, *values[i])
 	}
+	return b
+}
+
+// WithAllowedPodOperations sets the AllowedPodOperations field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AllowedPodOperations field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithAllowedPodOperations(value *AllowedPodOperationsApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	b.AllowedPodOperations = value
 	return b
 }
 

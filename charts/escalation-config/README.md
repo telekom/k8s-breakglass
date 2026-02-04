@@ -9,13 +9,14 @@ This chart simplifies the configuration of privilege escalation policies by prov
 - **ClusterConfig** - Defines tenant cluster connections (kubeconfig or OIDC auth)
 - **BreakglassEscalation** - Defines escalation policies with allowed groups, approvers, and settings
 - **DebugSessionClusterBinding** - Connects debug session templates to specific clusters with optional overrides
+- **DenyPolicy** - Defines rules that block specific actions during breakglass sessions
 
 ## Prerequisites
 
 - Kubernetes 1.24+
 - Helm 3.0+
 - Breakglass controller installed and running
-- CRDs installed (BreakglassEscalation, ClusterConfig, DebugSessionClusterBinding)
+- CRDs installed (BreakglassEscalation, ClusterConfig, DebugSessionClusterBinding, DenyPolicy)
 
 ## Installation
 
@@ -293,6 +294,10 @@ debugSessionBindings:
 | `impersonation` | ServiceAccount impersonation config | - |
 | `requiredAuxiliaryResourceCategories` | Required auxiliary resources | - |
 | `auxiliaryResourceOverrides` | Enable/disable auxiliary resources | - |
+| `allowedPodOperations.exec` | Allow kubectl exec | `true` |
+| `allowedPodOperations.attach` | Allow kubectl attach | `true` |
+| `allowedPodOperations.logs` | Allow kubectl logs | `false` |
+| `allowedPodOperations.portForward` | Allow kubectl port-forward | `true` |
 | `requestReason.mandatory` | Require reason for requests | `false` |
 | `maxActiveSessionsPerUser` | Max concurrent sessions per user | - |
 | `maxActiveSessionsTotal` | Max total concurrent sessions | - |
@@ -301,6 +306,27 @@ debugSessionBindings:
 | `hidden` | Hide from UI | `false` |
 | `effectiveFrom` | When binding becomes active | - |
 | `expiresAt` | When binding expires | - |
+
+### Allowed Pod Operations Example
+
+Create a read-only binding that only allows viewing logs:
+
+```yaml
+debugSessionBindings:
+  - name: logs-only-access
+    templateRef:
+      name: debug-template
+    clusters:
+      - production-cluster
+    allowedPodOperations:
+      exec: false       # Disable kubectl exec
+      attach: false     # Disable kubectl attach
+      logs: true        # Enable kubectl logs
+      portForward: false # Disable port forwarding
+    allowed:
+      groups:
+        - developers
+```
 
 ### Template Selector Example
 
@@ -343,6 +369,89 @@ debugSessionBindings:
           schedulingConstraints:
             nodeSelector:
               node-type: high-memory
+```
+
+### Deny Policies
+
+The `denyPolicies` array defines rules that block specific actions during breakglass sessions:
+
+```yaml
+denyPolicies:
+  - name: block-dangerous-ops
+    appliesTo:
+      clusters:
+        - prod-cluster-1
+        - prod-cluster-2
+    rules:
+      # Block namespace deletion
+      - verbs:
+          - delete
+        apiGroups:
+          - ""
+        resources:
+          - namespaces
+      # Block secret access in kube-system
+      - verbs:
+          - "*"
+        apiGroups:
+          - ""
+        resources:
+          - secrets
+        namespaces:
+          patterns:
+            - kube-system
+    precedence: 50
+```
+
+### Deny Policy Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `name` | Unique policy name | Required |
+| `appliesTo.clusters` | Clusters this policy applies to | - |
+| `appliesTo.tenants` | Tenants this policy applies to | - |
+| `appliesTo.sessions` | Specific sessions this policy applies to | - |
+| `rules` | Array of deny rules | - |
+| `rules[].verbs` | HTTP verbs to block (get, list, create, delete, etc.) | Required |
+| `rules[].apiGroups` | API groups ("" for core) | Required |
+| `rules[].resources` | Resource types (plural) | Required |
+| `rules[].namespaces` | Namespace filter (patterns/selectorTerms) | - |
+| `rules[].resourceNames` | Specific resource names | - |
+| `rules[].subresources` | Subresources to match | - |
+| `podSecurityRules` | Risk-based pod exec evaluation | - |
+| `precedence` | Policy priority (lower wins) | `100` |
+
+### Pod Security Rules Example
+
+Block exec to high-risk pods based on their security configuration:
+
+```yaml
+denyPolicies:
+  - name: pod-security-policy
+    appliesTo:
+      clusters:
+        - "*"
+    podSecurityRules:
+      riskFactors:
+        hostNetwork: 50
+        hostPID: 40
+        privilegedContainer: 100
+        hostPathWritable: 80
+        runAsRoot: 25
+      thresholds:
+        - maxScore: 50
+          action: allow
+        - maxScore: 100
+          action: warn
+        - maxScore: 1000
+          action: deny
+          reason: "Pod risk score {{.Score}} exceeds threshold"
+      exemptions:
+        namespaces:
+          patterns:
+            - kube-system
+            - monitoring
+      failMode: closed
 ```
 
 ## Examples

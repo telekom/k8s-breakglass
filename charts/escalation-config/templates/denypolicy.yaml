@@ -1,0 +1,144 @@
+{{- range $i, $policy := .Values.denyPolicies }}
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+metadata:
+  name: {{ required "denyPolicies[].name is required" $policy.name | trunc 63 | trimSuffix "-" }}
+  {{- if $policy.labels }}
+  labels:
+{{ toYaml $policy.labels | indent 4 }}
+  {{- end }}
+  {{- if $policy.annotations }}
+  annotations:
+{{ toYaml $policy.annotations | indent 4 }}
+  {{- end }}
+spec:
+  {{- /* Scope: which clusters/tenants/sessions this policy applies to */}}
+  {{- if $policy.appliesTo }}
+  appliesTo:
+    {{- if $policy.appliesTo.clusters }}
+    clusters:
+{{ toYaml $policy.appliesTo.clusters | indent 6 }}
+    {{- end }}
+    {{- if $policy.appliesTo.tenants }}
+    tenants:
+{{ toYaml $policy.appliesTo.tenants | indent 6 }}
+    {{- end }}
+    {{- if $policy.appliesTo.sessions }}
+    sessions:
+{{ toYaml $policy.appliesTo.sessions | indent 6 }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Deny rules */}}
+  {{- if $policy.rules }}
+  rules:
+    {{- range $j, $rule := $policy.rules }}
+    - verbs:
+{{ toYaml $rule.verbs | indent 8 }}
+      apiGroups:
+{{ toYaml $rule.apiGroups | indent 8 }}
+      resources:
+{{ toYaml $rule.resources | indent 8 }}
+      {{- if $rule.namespaces }}
+      namespaces:
+        {{- if $rule.namespaces.patterns }}
+        patterns:
+{{ toYaml $rule.namespaces.patterns | indent 10 }}
+        {{- end }}
+        {{- if $rule.namespaces.selectorTerms }}
+        selectorTerms:
+{{ toYaml $rule.namespaces.selectorTerms | indent 10 }}
+        {{- end }}
+      {{- end }}
+      {{- if $rule.resourceNames }}
+      resourceNames:
+{{ toYaml $rule.resourceNames | indent 8 }}
+      {{- end }}
+      {{- if $rule.subresources }}
+      subresources:
+{{ toYaml $rule.subresources | indent 8 }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Pod security rules */}}
+  {{- if $policy.podSecurityRules }}
+  podSecurityRules:
+    {{- if $policy.podSecurityRules.appliesTo }}
+    appliesTo:
+      {{- if $policy.podSecurityRules.appliesTo.subresources }}
+      subresources:
+{{ toYaml $policy.podSecurityRules.appliesTo.subresources | indent 8 }}
+      {{- end }}
+    {{- end }}
+    {{- if $policy.podSecurityRules.riskFactors }}
+    riskFactors:
+      {{- if $policy.podSecurityRules.riskFactors.hostNetwork }}
+      hostNetwork: {{ $policy.podSecurityRules.riskFactors.hostNetwork }}
+      {{- end }}
+      {{- if $policy.podSecurityRules.riskFactors.hostPID }}
+      hostPID: {{ $policy.podSecurityRules.riskFactors.hostPID }}
+      {{- end }}
+      {{- if $policy.podSecurityRules.riskFactors.hostIPC }}
+      hostIPC: {{ $policy.podSecurityRules.riskFactors.hostIPC }}
+      {{- end }}
+      {{- if $policy.podSecurityRules.riskFactors.privilegedContainer }}
+      privilegedContainer: {{ $policy.podSecurityRules.riskFactors.privilegedContainer }}
+      {{- end }}
+      {{- if $policy.podSecurityRules.riskFactors.hostPathWritable }}
+      hostPathWritable: {{ $policy.podSecurityRules.riskFactors.hostPathWritable }}
+      {{- end }}
+      {{- if $policy.podSecurityRules.riskFactors.hostPathReadOnly }}
+      hostPathReadOnly: {{ $policy.podSecurityRules.riskFactors.hostPathReadOnly }}
+      {{- end }}
+      {{- if $policy.podSecurityRules.riskFactors.runAsRoot }}
+      runAsRoot: {{ $policy.podSecurityRules.riskFactors.runAsRoot }}
+      {{- end }}
+      {{- if $policy.podSecurityRules.riskFactors.capabilities }}
+      capabilities:
+{{ toYaml $policy.podSecurityRules.riskFactors.capabilities | indent 8 }}
+      {{- end }}
+    {{- end }}
+    {{- if $policy.podSecurityRules.thresholds }}
+    thresholds:
+      {{- range $k, $threshold := $policy.podSecurityRules.thresholds }}
+      - maxScore: {{ $threshold.maxScore }}
+        action: {{ $threshold.action }}
+        {{- if $threshold.reason }}
+        reason: {{ $threshold.reason | quote }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if $policy.podSecurityRules.blockFactors }}
+    blockFactors:
+{{ toYaml $policy.podSecurityRules.blockFactors | indent 6 }}
+    {{- end }}
+    {{- if $policy.podSecurityRules.exemptions }}
+    exemptions:
+      {{- if $policy.podSecurityRules.exemptions.namespaces }}
+      namespaces:
+        {{- if $policy.podSecurityRules.exemptions.namespaces.patterns }}
+        patterns:
+{{ toYaml $policy.podSecurityRules.exemptions.namespaces.patterns | indent 10 }}
+        {{- end }}
+        {{- if $policy.podSecurityRules.exemptions.namespaces.selectorTerms }}
+        selectorTerms:
+{{ toYaml $policy.podSecurityRules.exemptions.namespaces.selectorTerms | indent 10 }}
+        {{- end }}
+      {{- end }}
+      {{- if $policy.podSecurityRules.exemptions.podLabels }}
+      podLabels:
+{{ toYaml $policy.podSecurityRules.exemptions.podLabels | indent 8 }}
+      {{- end }}
+    {{- end }}
+    {{- if $policy.podSecurityRules.failMode }}
+    failMode: {{ $policy.podSecurityRules.failMode }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Precedence */}}
+  {{- if $policy.precedence }}
+  precedence: {{ $policy.precedence }}
+  {{- end }}
+---
+{{- end }}

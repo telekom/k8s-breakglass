@@ -69,6 +69,10 @@ type DebugSessionClusterBindingSpecApplyConfiguration struct {
 	// disabled temporarily disables this binding.
 	// Sessions cannot be created using this binding while disabled.
 	Disabled *bool `json:"disabled,omitempty"`
+	// allowedPodOperations overrides which kubectl operations are permitted on debug pods.
+	// Can only be MORE restrictive than the template (cannot enable operations the template disables).
+	// If nil, uses the template's settings.
+	AllowedPodOperations *AllowedPodOperationsApplyConfiguration `json:"allowedPodOperations,omitempty"`
 	// notification overrides notification settings from the template.
 	Notification *DebugSessionNotificationConfigApplyConfiguration `json:"notification,omitempty"`
 	// requestReason overrides reason requirements from the template.
@@ -246,6 +250,14 @@ func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithAuxiliaryResource
 // If called multiple times, the Disabled field is set to the value of the last call.
 func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithDisabled(value bool) *DebugSessionClusterBindingSpecApplyConfiguration {
 	b.Disabled = &value
+	return b
+}
+
+// WithAllowedPodOperations sets the AllowedPodOperations field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AllowedPodOperations field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithAllowedPodOperations(value *AllowedPodOperationsApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.AllowedPodOperations = value
 	return b
 }
 

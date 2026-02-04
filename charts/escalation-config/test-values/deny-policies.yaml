@@ -1,0 +1,229 @@
+# Test values for DenyPolicy configuration
+cluster:
+  tenant: test-tenant
+  clusterID: test-cluster
+  environment: development
+  kubeconfigSecretRef:
+    name: test-kubeconfig
+    namespace: default
+  blockSelfApproval: false
+  # Test mailProvider field
+  mailProvider: test-mail-provider
+
+escalations: []
+debugSessionBindings: []
+
+denyPolicies:
+  # Basic deny policy with simple rules
+  - name: basic-deny-policy
+    appliesTo:
+      clusters:
+        - test-cluster
+        - staging-cluster
+    rules:
+      # Block namespace deletion
+      - verbs:
+          - delete
+        apiGroups:
+          - ""
+        resources:
+          - namespaces
+      # Block all operations on secrets in kube-system
+      - verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        apiGroups:
+          - ""
+        resources:
+          - secrets
+        namespaces:
+          patterns:
+            - kube-system
+      # Block CRD modifications
+      - verbs:
+          - create
+          - update
+          - patch
+          - delete
+        apiGroups:
+          - apiextensions.k8s.io
+        resources:
+          - customresourcedefinitions
+    precedence: 50
+
+  # Deny policy with tenant scoping
+  - name: tenant-scoped-policy
+    appliesTo:
+      tenants:
+        - production
+        - staging
+    rules:
+      # Block node modifications
+      - verbs:
+          - delete
+          - patch
+          - update
+        apiGroups:
+          - ""
+        resources:
+          - nodes
+      # Block cluster role changes
+      - verbs:
+          - create
+          - update
+          - patch
+          - delete
+        apiGroups:
+          - rbac.authorization.k8s.io
+        resources:
+          - clusterroles
+          - clusterrolebindings
+    precedence: 100
+
+  # Policy with namespace patterns
+  - name: namespace-pattern-policy
+    appliesTo:
+      clusters:
+        - "*"  # All clusters
+    rules:
+      # Block pod deletion in system namespaces
+      - verbs:
+          - delete
+        apiGroups:
+          - ""
+        resources:
+          - pods
+        namespaces:
+          patterns:
+            - kube-*
+            - openshift-*
+            - istio-system
+      # Block secret access with resource name patterns
+      - verbs:
+          - "*"
+        apiGroups:
+          - ""
+        resources:
+          - secrets
+        resourceNames:
+          - "*-admin-token*"
+          - "*-credentials"
+        namespaces:
+          patterns:
+            - "*"
+    precedence: 75
+
+  # Policy with subresources
+  - name: subresource-policy
+    appliesTo:
+      clusters:
+        - prod-cluster
+    rules:
+      # Block eviction subresource
+      - verbs:
+          - create
+        apiGroups:
+          - ""
+        resources:
+          - pods
+        subresources:
+          - eviction
+      # Block status updates
+      - verbs:
+          - update
+          - patch
+        apiGroups:
+          - ""
+        resources:
+          - pods
+        subresources:
+          - status
+    precedence: 60
+
+  # Pod security policy with full configuration
+  - name: pod-security-policy
+    appliesTo:
+      clusters:
+        - "*"
+    podSecurityRules:
+      appliesTo:
+        subresources:
+          - exec
+          - attach
+          - portforward
+      riskFactors:
+        hostNetwork: 50
+        hostPID: 40
+        hostIPC: 30
+        privilegedContainer: 100
+        hostPathWritable: 80
+        hostPathReadOnly: 20
+        runAsRoot: 25
+        capabilities:
+          NET_ADMIN: 50
+          SYS_ADMIN: 80
+          SYS_PTRACE: 60
+          NET_RAW: 30
+      thresholds:
+        - maxScore: 50
+          action: allow
+        - maxScore: 100
+          action: warn
+        - maxScore: 1000
+          action: deny
+          reason: "Pod risk score {{.Score}} exceeds threshold. Factors: {{.Factors}}"
+      blockFactors:
+        - privilegedContainer
+      exemptions:
+        namespaces:
+          patterns:
+            - kube-system
+            - monitoring
+            - logging
+        podLabels:
+          breakglass.telekom.com/security-exempt: "true"
+      failMode: closed
+    precedence: 100
+
+  # Pod security policy with label-based namespace selection
+  - name: label-based-ns-policy
+    appliesTo:
+      clusters:
+        - production-*
+    podSecurityRules:
+      riskFactors:
+        hostNetwork: 60
+        privilegedContainer: 100
+      thresholds:
+        - maxScore: 30
+          action: allow
+        - maxScore: 60
+          action: warn
+        - maxScore: 200
+          action: deny
+          reason: "Access to high-risk pod denied in namespace {{.Namespace}}"
+      exemptions:
+        namespaces:
+          selectorTerms:
+            - matchLabels:
+                breakglass-exempt: "true"
+      failMode: open
+    precedence: 80
+
+  # Minimal pod security policy
+  - name: minimal-pod-security
+    podSecurityRules:
+      riskFactors:
+        privilegedContainer: 100
+      thresholds:
+        - maxScore: 50
+          action: allow
+        - maxScore: 1000
+          action: deny
+          reason: "Privileged container access denied"
+    precedence: 200

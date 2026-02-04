@@ -268,6 +268,141 @@ type DebugSessionTemplateSpec struct {
 	// +optional
 	// +kubebuilder:default="15m"
 	GracePeriodBeforeExpiry string `json:"gracePeriodBeforeExpiry,omitempty"`
+
+	// allowedPodOperations configures which kubectl operations are permitted on debug pods.
+	// When nil, defaults to allowing exec, attach, and portforward (backward compatible).
+	// Use this to grant more restrictive access (e.g., logs-only for read-only debugging).
+	// +optional
+	AllowedPodOperations *AllowedPodOperations `json:"allowedPodOperations,omitempty"`
+}
+
+// AllowedPodOperations defines which kubectl operations are permitted on debug session pods.
+// Each field controls access to a specific pod subresource. When the parent struct is nil,
+// defaults are exec=true, attach=true, portforward=true for backward compatibility.
+//
+// Note: kubectl cp uses the exec subresource internally (it runs tar in the container).
+// Therefore, kubectl cp only works when exec is enabled. There is no way to allow
+// kubectl cp while blocking other exec commands at the webhook level.
+type AllowedPodOperations struct {
+	// exec allows running commands inside containers via kubectl exec.
+	// Note: kubectl cp uses exec internally, so disabling exec also prevents kubectl cp.
+	// +optional
+	// +kubebuilder:default=true
+	Exec *bool `json:"exec,omitempty"`
+
+	// attach allows attaching to running container processes via kubectl attach.
+	// +optional
+	// +kubebuilder:default=true
+	Attach *bool `json:"attach,omitempty"`
+
+	// logs allows viewing container logs via kubectl logs.
+	// This is a read-only operation.
+	// +optional
+	// +kubebuilder:default=false
+	Logs *bool `json:"logs,omitempty"`
+
+	// portForward allows forwarding local ports to pod ports via kubectl port-forward.
+	// +optional
+	// +kubebuilder:default=true
+	PortForward *bool `json:"portForward,omitempty"`
+}
+
+// IsOperationAllowed checks if a specific pod operation is allowed.
+// If AllowedPodOperations is nil, returns default values for backward compatibility.
+// The operation parameter should be the Kubernetes subresource name: "exec", "attach", "log", or "portforward".
+func (a *AllowedPodOperations) IsOperationAllowed(operation string) bool {
+	if a == nil {
+		// Backward compatibility: exec, attach, portforward allowed by default
+		switch operation {
+		case "exec", "attach", "portforward":
+			return true
+		default:
+			return false
+		}
+	}
+
+	switch operation {
+	case "exec":
+		return a.Exec == nil || *a.Exec
+	case "attach":
+		return a.Attach == nil || *a.Attach
+	case "log":
+		// Kubernetes uses "log" (singular) as the subresource name
+		return a.Logs != nil && *a.Logs
+	case "portforward":
+		return a.PortForward == nil || *a.PortForward
+	default:
+		return false
+	}
+}
+
+// MergeAllowedPodOperations merges template and binding allowed pod operations.
+// The binding can only be MORE restrictive than the template (disable operations).
+// If an operation is disabled in the template, the binding cannot enable it.
+// Returns a new AllowedPodOperations with the most restrictive settings from both.
+func MergeAllowedPodOperations(template, binding *AllowedPodOperations) *AllowedPodOperations {
+	// If both are nil, return nil (defaults apply)
+	if template == nil && binding == nil {
+		return nil
+	}
+
+	// Helper function to get bool value with default for template (exec, attach, portforward default true; logs default false)
+	getTemplateBool := func(val *bool, defaultVal bool) bool {
+		if val == nil {
+			return defaultVal
+		}
+		return *val
+	}
+
+	// Helper function to get bool value (nil = use template value)
+	getBindingBool := func(val *bool, templateVal bool) bool {
+		if val == nil {
+			return templateVal // Binding doesn't override, use template value
+		}
+		// Binding can only be more restrictive: if template allows and binding disables, result is disabled
+		// If template disables, binding cannot enable (binding request is ignored)
+		if !templateVal {
+			return false // Template disabled, cannot enable
+		}
+		return *val // Template allows, use binding's choice
+	}
+
+	// Get template values (with defaults)
+	templateExec := getTemplateBool(nil, true)
+	templateAttach := getTemplateBool(nil, true)
+	templateLogs := getTemplateBool(nil, false)
+	templatePortForward := getTemplateBool(nil, true)
+	if template != nil {
+		templateExec = getTemplateBool(template.Exec, true)
+		templateAttach = getTemplateBool(template.Attach, true)
+		templateLogs = getTemplateBool(template.Logs, false)
+		templatePortForward = getTemplateBool(template.PortForward, true)
+	}
+
+	// If no binding, just return template values
+	if binding == nil {
+		result := &AllowedPodOperations{}
+		result.Exec = boolPtr(templateExec)
+		result.Attach = boolPtr(templateAttach)
+		result.Logs = boolPtr(templateLogs)
+		result.PortForward = boolPtr(templatePortForward)
+		return result
+	}
+
+	// Merge with binding (binding can only be more restrictive)
+	result := &AllowedPodOperations{
+		Exec:        boolPtr(getBindingBool(binding.Exec, templateExec)),
+		Attach:      boolPtr(getBindingBool(binding.Attach, templateAttach)),
+		Logs:        boolPtr(getBindingBool(binding.Logs, templateLogs)),
+		PortForward: boolPtr(getBindingBool(binding.PortForward, templatePortForward)),
+	}
+
+	return result
+}
+
+// boolPtr returns a pointer to a bool value.
+func boolPtr(b bool) *bool {
+	return &b
 }
 
 // DebugPodTemplateReference references a DebugPodTemplate.

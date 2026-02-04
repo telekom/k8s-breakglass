@@ -136,6 +136,35 @@ spec:
                       type: string
                     type: array
                 type: object
+              allowedPodOperations:
+                description: |-
+                  allowedPodOperations overrides which kubectl operations are permitted on debug pods.
+                  Can only be MORE restrictive than the template (cannot enable operations the template disables).
+                  If nil, uses the template's settings.
+                properties:
+                  attach:
+                    default: true
+                    description: attach allows attaching to running container processes
+                      via kubectl attach.
+                    type: boolean
+                  exec:
+                    default: true
+                    description: |-
+                      exec allows running commands inside containers via kubectl exec.
+                      Note: kubectl cp uses exec internally, so disabling exec also prevents kubectl cp.
+                    type: boolean
+                  logs:
+                    default: false
+                    description: |-
+                      logs allows viewing container logs via kubectl logs.
+                      This is a read-only operation.
+                    type: boolean
+                  portForward:
+                    default: true
+                    description: portForward allows forwarding local ports to pod
+                      ports via kubectl port-forward.
+                    type: boolean
+                type: object
               annotations:
                 additionalProperties:
                   type: string

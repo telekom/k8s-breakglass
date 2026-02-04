@@ -249,7 +249,297 @@ spec:
     logCommands: true
     sidecar:
       image: audit-logger:v1
+
+  # Optional: Granular pod operation controls
+  allowedPodOperations:
+    exec: true        # kubectl exec (also required for kubectl cp)
+    attach: true      # kubectl attach
+    logs: true        # kubectl logs
+    portForward: true # kubectl port-forward
 ```
+
+## Allowed Pod Operations
+
+The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.
+
+### Configuration
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `exec` | bool | true | Allow running commands via `kubectl exec`. Also required for `kubectl cp`. |
+| `attach` | bool | true | Allow attaching to container processes via `kubectl attach` |
+| `logs` | bool | false | Allow viewing container logs via `kubectl logs` |
+| `portForward` | bool | true | Allow port forwarding via `kubectl port-forward` |
+
+### Use Cases
+
+The `allowedPodOperations` field enables least-privilege access patterns for different debugging scenarios. Below are practical examples with security considerations.
+
+#### 1. Logs-Only Access (Read-Only Debugging)
+
+For auditors, support staff, or automated log collection where no interactive access is needed:
+
+```yaml
+# Use case: Application log review without shell access
+# Security: No code execution, file access, or network access possible
+allowedPodOperations:
+  exec: false      # Blocks shell access AND kubectl cp
+  attach: false    # Cannot attach to running processes
+  logs: true       # Can only view stdout/stderr logs
+  portForward: false
+```
+
+**Example scenarios:**
+- L1 support reviewing application errors
+- Auditors examining application behavior
+- Log aggregation scripts needing direct pod log access
+- QA engineers verifying application output
+
+---
+
+#### 2. Core Dump Collection from Host
+
+For collecting crash dumps or memory analysis without interactive shell access:
+
+```yaml
+# Use case: Copy core dumps from debug pod with host filesystem access
+# Security: Exec allowed only for cp operations, no interactive shell
+# Note: kubectl cp requires exec (it runs tar inside the container)
+allowedPodOperations:
+  exec: true       # Required for kubectl cp to work
+  attach: false    # No interactive process attachment
+  logs: false      # Log access not needed
+  portForward: false
+```
+
+Combined with a debug pod template that mounts the host's core dump directory:
+
+```yaml
+kind: DebugPodTemplate
+metadata:
+  name: coredump-collector
+spec:
+  displayName: "Core Dump Collector"
+  description: "Read-only access to host core dumps for collection"
+  template:
+    spec:
+      containers:
+        - name: collector
+          image: busybox:1.36
+          command: ["sleep", "infinity"]
+          volumeMounts:
+            - name: host-coredumps
+              mountPath: /host/coredumps
+              readOnly: true
+      volumes:
+        - name: host-coredumps
+          hostPath:
+            path: /var/lib/systemd/coredump
+            type: Directory
+```
+
+**Usage:**
+```bash
+# Copy core dump from debug pod to local machine
+kubectl cp breakglass-debug/coredump-collector-xyz:/host/coredumps/core.1234 ./core.1234
+```
+
+---
+
+#### 3. Storage Write Benchmark / Functionality Test
+
+For running storage benchmarks without needing logs or network access:
+
+```yaml
+# Use case: Run fio benchmarks or dd write tests
+# Security: Exec only for running test commands
+allowedPodOperations:
+  exec: true       # Run benchmark commands
+  attach: false    # No process attachment needed
+  logs: false      # Test results retrieved via exec
+  portForward: false
+```
+
+Combined with a template that provides benchmark tools and storage access:
+
+```yaml
+kind: DebugPodTemplate
+metadata:
+  name: storage-tester
+spec:
+  displayName: "Storage Benchmark"
+  description: "Run storage performance tests with fio"
+  template:
+    spec:
+      containers:
+        - name: fio
+          image: nixery.dev/shell/fio/sysstat:latest
+          command: ["sleep", "infinity"]
+          volumeMounts:
+            - name: test-storage
+              mountPath: /mnt/test
+      volumes:
+        - name: test-storage
+          emptyDir:
+            sizeLimit: 10Gi
+```
+
+**Usage:**
+```bash
+# Run write benchmark
+kubectl exec debug-storage-xyz -- fio --name=write_test --rw=write \
+  --bs=4k --size=1G --directory=/mnt/test --output-format=json
+
+# Run read benchmark
+kubectl exec debug-storage-xyz -- fio --name=read_test --rw=read \
+  --bs=4k --size=1G --directory=/mnt/test --output-format=json
+```
+
+---
+
+#### 4. Network Debugging with Port Forwarding
+
+For debugging network connectivity issues with local port access:
+
+```yaml
+# Use case: Access internal services via port-forward for testing
+# Security: Network access only, no shell execution
+allowedPodOperations:
+  exec: false      # No shell access
+  attach: false
+  logs: false
+  portForward: true  # Forward internal service ports locally
+```
+
+**Example scenarios:**
+- Accessing internal databases for query testing
+- Testing internal APIs from local development tools
+- Connecting to monitoring endpoints (Prometheus, metrics)
+
+**Usage:**
+```bash
+# Forward internal database port
+kubectl port-forward debug-pod-xyz 5432:5432
+
+# Forward internal API server
+kubectl port-forward debug-pod-xyz 8080:8080
+```
+
+---
+
+#### 5. Process Attachment for Live Debugging
+
+For attaching debuggers (gdb, strace) to running processes:
+
+```yaml
+# Use case: Attach debugger to running process
+# Security: Attach only, cannot execute new commands or copy files
+allowedPodOperations:
+  exec: false      # Cannot run arbitrary commands
+  attach: true     # Can attach to main process
+  logs: false
+  portForward: false
+```
+
+**Note:** This is useful when the debug container runs a process that needs inspection (e.g., a crash loop that you want to catch with gdb), but you don't want to allow arbitrary command execution.
+
+---
+
+#### 6. Full Debug Access (Maximum Privileges)
+
+For SRE/platform engineers who need complete debugging capabilities:
+
+```yaml
+# Use case: Full unrestricted debugging
+# Security: Maximum privileges - use sparingly with proper approval
+allowedPodOperations:
+  exec: true       # Shell access + kubectl cp
+  attach: true     # Process attachment
+  logs: true       # Log viewing
+  portForward: true  # Network access
+```
+
+**When to use:**
+- Complex multi-faceted debugging requiring all tools
+- Incident response where investigation scope is unknown
+- Senior engineers with appropriate approval workflow
+
+---
+
+#### 7. Observability-Only Access
+
+For viewing application state without any interactive access:
+
+```yaml
+# Use case: Read-only observability for monitoring teams
+# Security: Logs and port-forward only - no execution capabilities
+allowedPodOperations:
+  exec: false
+  attach: false
+  logs: true         # View application logs
+  portForward: true  # Access metrics/health endpoints
+```
+
+**Example scenarios:**
+- Monitoring team accessing Prometheus metrics endpoint
+- SRE reviewing application logs and health checks
+- Dashboards requiring direct pod metric access
+
+**Usage:**
+```bash
+# View logs
+kubectl logs debug-pod-xyz -f
+
+# Forward metrics port for Grafana/Prometheus
+kubectl port-forward debug-pod-xyz 9090:9090
+```
+
+---
+
+### Default Behavior Matrix
+
+| Operation | Default When Field Omitted | Rationale |
+|-----------|---------------------------|-----------|
+| `exec` | `true` | Primary debugging mechanism |
+| `attach` | `true` | Process attachment for debuggers |
+| `logs` | `false` | Explicit opt-in for log access |
+| `portForward` | `true` | Common for service access |
+
+### Backward Compatibility
+
+When `allowedPodOperations` is not specified (nil), the system defaults to:
+- `exec: true`
+- `attach: true`  
+- `portForward: true`
+- `logs: false`
+
+This maintains backward compatibility with existing debug session templates.
+
+### Security Notes
+
+- The webhook enforces operation restrictions by checking the pod subresource (`exec`, `attach`, `log`, `portforward`) against the session's `AllowedPodOperations`.
+- `kubectl cp` uses the exec subresource internally (it runs tar in the container). Therefore, `kubectl cp` requires `exec: true` to function. If exec is disabled, all `kubectl cp` operations will be blocked.
+- The webhook operates at the subresource level and cannot distinguish between different commands executed via exec.
+
+### Viewing Allowed Operations
+
+**CLI (`bgctl`)**: Use the wide output format to see allowed operations:
+```bash
+# List sessions with operations column
+bgctl debug session list -o wide
+
+# Example output:
+# NAME              TEMPLATE        CLUSTER    ...  OPERATIONS
+# debug-abc123      standard-debug  prod-1     ...  exec,attach,portforward
+# debug-xyz789      logs-only       staging    ...  logs
+```
+
+The `get` command shows the full session details including `status.allowedPodOperations`:
+```bash
+bgctl debug session get debug-abc123 -o yaml
+```
+
+**Web UI**: The session details page displays an "Allowed Pod Operations" card showing which operations are enabled (✓) or disabled (✗) for the session.
 
 ### DebugSession
 

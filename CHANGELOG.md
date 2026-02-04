@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Granular Pod Operations for Debug Sessions**: Control which kubectl operations are allowed on debug session pods
+  - New `AllowedPodOperations` type with toggles for `exec`, `attach`, `logs`, and `portForward`
+  - `DebugSessionTemplateSpec.allowedPodOperations` field to configure permitted operations at template level
+  - `DebugSessionStatus.allowedPodOperations` caches resolved operations for webhook enforcement
+  - Backward compatible: nil `AllowedPodOperations` defaults to exec, attach, portforward (existing behavior)
+  - Use case: logs-only access for read-only debugging
+  - Webhook now supports `log` subresource in addition to exec, attach, portforward
+  - **CLI**: `bgctl debug session list -o wide` now includes OPERATIONS column showing enabled operations
+  - **UI**: DebugSessionDetails page shows "Allowed Pod Operations" card with visual ✓/✗ indicators
+  - **API**: `DebugSessionSummary` response includes `allowedPodOperations` field for list responses
+  - Example configurations:
+    - Logs-only: `exec: false, attach: false, logs: true, portForward: false`
+    - Full debug: `exec: true, attach: true, logs: true, portForward: true`
+  - Note: `kubectl cp` uses the exec subresource internally, so it requires `exec: true` to function
+
 - **CLI Support for ExtraDeploy Variables**: Added `--set` flag to `bgctl debug session create` command
   - Use `--set key=value` to provide values for template `extraDeployVariables`
   - Can be repeated multiple times: `--set logLevel=debug --set enableTracing=true`
@@ -47,6 +62,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `yamlSafe` - sanitizes strings by replacing dangerous YAML characters
   - `isYAMLSpecialWord` - detects YAML keywords (true, false, null, etc.) that need quoting
   - Documentation: See `docs/extra-deploy-variables.md` for security best practices
+
+- **DebugSessionClusterBinding Pod Operations**: Added `allowedPodOperations` field to bindings
+  - Bindings can now restrict which kubectl operations are allowed on debug session pods
+  - Supports `exec`, `attach`, `logs`, and `portForward` toggles
+  - Binding restrictions are merged with template restrictions (most restrictive wins)
+  - Use case: Create logs-only read access bindings for auditors or developers
+
+- **Helm Chart: DenyPolicy Support**: Added `denyPolicies` section to the escalation-config chart
+  - Full support for cluster-scoped DenyPolicy resources
+  - Configure `appliesTo` (groups/users), `rules` (verbs/resources), `podSecurityRules`
+  - Supports `precedence` field for policy priority ordering
+  - Test values in `test-values/deny-policies.yaml` with 7 example policies
+
+- **Helm Chart: Expanded Binding Configuration**: Extended debugSessionBindings support
+  - `allowedPodOperations` for exec/attach/logs/portForward control
+  - `notification` with `notifyOnRequest`, `notifyOnApproval`, `notifyOnExpiry`, `notifyOnTermination`
+  - `notification.additionalRecipients` and `excludedRecipients` for mail routing
+  - `requestReason` with `mandatory`, `minLength`, `maxLength`, `description`, `suggestedReasons`
+  - `approvalReason` with `mandatory`, `mandatoryForRejection`, `minLength`, `description`
+  - Chart version bumped to 0.3.0
+
+- **Helm Chart: ClusterConfig mailProvider**: Added `mailProvider` field to clusterConfigs
+  - Reference a MailProvider by name for cluster-specific email configuration
 
 ### Security
 

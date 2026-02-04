@@ -224,7 +224,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *v1alpha1
 	}
 
 	// Auto-approved, transition to active
-	return c.activateSession(ctx, ds, template)
+	return c.activateSession(ctx, ds, template, binding)
 }
 
 // handlePendingApproval checks for approval status
@@ -235,7 +235,15 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		if err != nil {
 			return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 		}
-		return c.activateSession(ctx, ds, template)
+		// Find binding for merging allowed pod operations
+		var binding *v1alpha1.DebugSessionClusterBinding
+		if ds.Spec.BindingRef != nil {
+			binding, _ = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
+		}
+		if binding == nil {
+			binding, _ = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		}
+		return c.activateSession(ctx, ds, template, binding)
 	}
 
 	// If rejected, mark as terminated
@@ -335,7 +343,7 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *v1alpha1
 }
 
 // activateSession deploys debug resources and marks session as active
-func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate) (ctrl.Result, error) {
+func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
 	// Only deploy workloads for workload or hybrid mode
@@ -360,6 +368,14 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 	ds.Status.StartsAt = &now
 	ds.Status.ExpiresAt = &expiresAt
 	ds.Status.Message = "Debug session active"
+
+	// Cache AllowedPodOperations merged from template and binding for webhook enforcement
+	// Binding can only be more restrictive than template
+	var bindingOps *v1alpha1.AllowedPodOperations
+	if binding != nil {
+		bindingOps = binding.Spec.AllowedPodOperations
+	}
+	ds.Status.AllowedPodOperations = v1alpha1.MergeAllowedPodOperations(template.Spec.AllowedPodOperations, bindingOps)
 
 	// Add the requesting user as owner participant
 	ds.Status.Participants = []v1alpha1.DebugSessionParticipant{{

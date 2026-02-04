@@ -22,6 +22,8 @@ import (
 func ForKind(kind schema.GroupVersionKind) interface{} {
 	switch kind {
 	// Group=breakglass.t-caas.telekom.com, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodOperations"):
+		return &apiv1alpha1.AllowedPodOperationsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodRef"):
 		return &apiv1alpha1.AllowedPodRefApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AuditConfig"):
