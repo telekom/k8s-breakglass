@@ -242,6 +242,8 @@ Authorization: Bearer <token>
 
 **Request validation:**
 
+- JSON bodies must contain only known field names; requests with unknown or typo'd fields are rejected with `422 Unprocessable Entity`
+- JSON bodies must contain exactly one JSON object; trailing data is rejected
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 1024 characters after trimming.
 - `user` must match the authenticated identity in the request token; mismatches are rejected.

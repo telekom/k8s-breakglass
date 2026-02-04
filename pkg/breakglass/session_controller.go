@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -147,6 +148,31 @@ func (wc *BreakglassSessionController) Register(rg *gin.RouterGroup) error {
 	return nil
 }
 
+// decodeJSONStrict decodes JSON from an io.Reader into dest with DisallowUnknownFields
+// enabled. This ensures that requests with unknown/typo'd field names are rejected
+// rather than silently ignored, helping catch client bugs and typos early.
+// It also ensures that the body contains exactly one JSON value and no trailing
+// non-whitespace content.
+func decodeJSONStrict(r io.Reader, dest interface{}) error {
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(dest); err != nil {
+		return err
+	}
+
+	// Ensure there is no extra non-whitespace data after the first JSON value.
+	var extra struct{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected extra JSON input")
+		}
+		return err
+	}
+
+	return nil
+}
+
 // validateSessionRequest validates the session request input
 func (wc BreakglassSessionController) validateSessionRequest(request BreakglassSessionRequest) error {
 	if request.Clustername == "" {
@@ -178,9 +204,9 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	reqLog.Info("Processing breakglass session request")
 
 	var request BreakglassSessionRequest
-	if err := json.NewDecoder(c.Request.Body).Decode(&request); err != nil {
+	if err := decodeJSONStrict(c.Request.Body, &request); err != nil {
 		reqLog.With("error", err).Error("Failed to decode JSON request body")
-		apiresponses.RespondUnprocessableEntity(c, "failed to decode JSON request body")
+		apiresponses.RespondUnprocessableEntity(c, "failed to decode JSON request body (invalid JSON or unknown fields)")
 		return
 	}
 

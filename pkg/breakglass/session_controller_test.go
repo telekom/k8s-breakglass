@@ -4823,3 +4823,62 @@ func TestMatchesAuthIdentifier(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeJSONStrict(t *testing.T) {
+	t.Run("rejects unknown fields", func(t *testing.T) {
+		// JSON with an unknown field "unknownField"
+		input := `{"cluster":"test","user":"test@example.com","group":"admins","unknownField":"value"}`
+		var req BreakglassSessionRequest
+		err := decodeJSONStrict(strings.NewReader(input), &req)
+		require.Error(t, err, "expected error for unknown field")
+		require.Contains(t, err.Error(), "unknown field", "error should mention unknown field")
+	})
+
+	t.Run("accepts valid fields only", func(t *testing.T) {
+		input := `{"cluster":"test","user":"test@example.com","group":"admins","reason":"emergency"}`
+		var req BreakglassSessionRequest
+		err := decodeJSONStrict(strings.NewReader(input), &req)
+		require.NoError(t, err)
+		require.Equal(t, "test", req.Clustername)
+		require.Equal(t, "test@example.com", req.Username)
+		require.Equal(t, "admins", req.GroupName)
+		require.Equal(t, "emergency", req.Reason)
+	})
+
+	t.Run("catches typos in field names", func(t *testing.T) {
+		// Common typo: "cluter" instead of "cluster"
+		input := `{"cluter":"test","user":"test@example.com","group":"admins"}`
+		var req BreakglassSessionRequest
+		err := decodeJSONStrict(strings.NewReader(input), &req)
+		require.Error(t, err, "expected error for typo'd field name")
+	})
+
+	t.Run("rejects trailing JSON data", func(t *testing.T) {
+		// Input with a valid JSON object followed by extra content
+		input := `{"cluster":"test","user":"test@example.com","group":"admins"}{"extra":"data"}`
+		var req BreakglassSessionRequest
+		err := decodeJSONStrict(strings.NewReader(input), &req)
+		require.Error(t, err, "expected error for trailing JSON data")
+		// The error message can be either "unexpected extra JSON input" or "unknown field"
+		// depending on whether the trailing content is valid JSON with unknown fields
+	})
+
+	t.Run("rejects multiple JSON values", func(t *testing.T) {
+		// Input with two separate valid JSON objects
+		input := `{"cluster":"test1","user":"test@example.com","group":"admins"}
+{"cluster":"test2","user":"test2@example.com","group":"admins"}`
+		var req BreakglassSessionRequest
+		err := decodeJSONStrict(strings.NewReader(input), &req)
+		require.Error(t, err, "expected error for multiple JSON values")
+		// When decoding into an empty struct{}, any fields in the second object
+		// trigger "unknown field" since struct{} has no fields
+	})
+
+	t.Run("allows trailing whitespace only", func(t *testing.T) {
+		// Trailing whitespace should be allowed (io.EOF after consuming whitespace)
+		input := `{"cluster":"test","user":"test@example.com","group":"admins"}   ` + "\n"
+		var req BreakglassSessionRequest
+		err := decodeJSONStrict(strings.NewReader(input), &req)
+		require.NoError(t, err, "trailing whitespace should be allowed")
+	})
+}
