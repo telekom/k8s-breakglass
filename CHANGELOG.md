@@ -113,11 +113,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Trailing JSON data after the main object is rejected
   - Helps catch client bugs and typos early (e.g., `cluter` instead of `cluster`)
 
+- **API Request Timeout Configuration**: Added configurable request timeout to frontend HTTP client (PR #304)
+  - Default timeout of 30 seconds for all API requests (previously no timeout configured)
+  - `ApiClientOptions.timeout` allows custom timeout configuration in milliseconds
+  - Proper detection of timeout errors using Axios `ECONNABORTED` error code
+  - Enhanced error logging includes timeout value when requests time out
+  - Prevents requests from hanging indefinitely on slow or unresponsive backends
+
 - **OIDC Token Cache Namespace Collision**: Fixed a bug where OIDC tokens for ClusterConfigs with the same name in different namespaces would collide in the cache, causing authentication failures or use of tokens for the wrong cluster (PR #301)
   - Tokens are now cached using `namespace/name` format instead of just `name`
   - Added `tokenCacheKey()` helper function for consistent cache key generation
   - `Invalidate()` now handles both old-style and new-style cache keys using suffix matching
   - Added `InvalidateWithNamespace()` for precise invalidation when namespace is known
+
 - **Configurable REST Config Cache TTL**: Added environment variable configuration for REST config cache TTL (PR #295)
   - `BREAKGLASS_REST_CONFIG_CACHE_TTL`: Override default 5-minute TTL for OIDC cluster configs (e.g., "10m", "300s")
   - `BREAKGLASS_KUBECONFIG_CACHE_TTL`: Override default 15-minute TTL for kubeconfig-based configs
