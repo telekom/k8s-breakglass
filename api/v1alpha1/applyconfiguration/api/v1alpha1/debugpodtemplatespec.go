@@ -20,7 +20,12 @@ type DebugPodTemplateSpecApplyConfiguration struct {
 	Description *string `json:"description,omitempty"`
 	// template defines the pod specification that will be used to create debug pods.
 	// This spec is rendered into DaemonSet/Deployment by DebugSessionTemplate.
+	// Mutually exclusive with templateString.
 	Template *DebugPodSpecApplyConfiguration `json:"template,omitempty"`
+	// templateString is an inline Go template that produces pod spec YAML.
+	// Supports Go templating with session context variables using Sprout functions.
+	// Mutually exclusive with template. Use this for dynamic pod specifications.
+	TemplateString *string `json:"templateString,omitempty"`
 }
 
 // DebugPodTemplateSpecApplyConfiguration constructs a declarative configuration of the DebugPodTemplateSpec type for use with
@@ -50,5 +55,13 @@ func (b *DebugPodTemplateSpecApplyConfiguration) WithDescription(value string) *
 // If called multiple times, the Template field is set to the value of the last call.
 func (b *DebugPodTemplateSpecApplyConfiguration) WithTemplate(value *DebugPodSpecApplyConfiguration) *DebugPodTemplateSpecApplyConfiguration {
 	b.Template = value
+	return b
+}
+
+// WithTemplateString sets the TemplateString field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TemplateString field is set to the value of the last call.
+func (b *DebugPodTemplateSpecApplyConfiguration) WithTemplateString(value string) *DebugPodTemplateSpecApplyConfiguration {
+	b.TemplateString = &value
 	return b
 }

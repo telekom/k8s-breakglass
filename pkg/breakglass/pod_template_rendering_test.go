@@ -578,7 +578,7 @@ func TestBuildPodSpec_WithOverridesTemplate(t *testing.T) {
 
 	podTemplate := &v1alpha1.DebugPodTemplate{
 		Spec: v1alpha1.DebugPodTemplateSpec{
-			Template: v1alpha1.DebugPodSpec{
+			Template: &v1alpha1.DebugPodSpec{
 				Spec: v1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -619,6 +619,128 @@ hostPID: true
 	assert.True(t, spec.HostPID)
 }
 
+func TestBuildPodSpec_WithDebugPodTemplateTemplateString(t *testing.T) {
+	// This tests that DebugPodTemplate.Spec.TemplateString is properly used
+	// when the DebugSessionTemplate references a DebugPodTemplate with templateString
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	ds := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:         "production-cluster",
+			TemplateRef:     "dynamic-debug",
+			TargetNamespace: "target-ns",
+			RequestedBy:     "developer@example.com",
+			ExtraDeployValues: map[string]apiextensionsv1.JSON{
+				"image":    {Raw: []byte(`"alpine:3.19"`)},
+				"cpuLimit": {Raw: []byte(`"200m"`)},
+			},
+		},
+	}
+
+	// DebugPodTemplate with templateString instead of structured template
+	podTemplate := &v1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "dynamic-pod-template",
+		},
+		Spec: v1alpha1.DebugPodTemplateSpec{
+			// Template is nil - using templateString instead
+			TemplateString: `
+containers:
+  - name: debug-{{ .session.name | trunc 15 }}
+    image: {{ .vars.image | default "busybox:latest" }}
+    command: ["sleep", "infinity"]
+    env:
+      - name: SESSION_NAMESPACE
+        value: {{ .session.namespace | quote }}
+      - name: CLUSTER
+        value: {{ .session.cluster | quote }}
+      - name: REQUESTED_BY
+        value: {{ .session.requestedBy | quote }}
+    resources:
+      limits:
+        cpu: {{ .vars.cpuLimit | default "100m" }}
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+`,
+		},
+	}
+
+	// DebugSessionTemplate that references the DebugPodTemplate
+	template := &v1alpha1.DebugSessionTemplate{
+		Spec: v1alpha1.DebugSessionTemplateSpec{
+			// No PodTemplateString - will use the referenced podTemplate's templateString
+		},
+	}
+
+	spec, err := controller.buildPodSpec(ds, template, podTemplate)
+	require.NoError(t, err)
+
+	// Verify the template was rendered with session context and vars
+	require.Len(t, spec.Containers, 1, "should have one container")
+	container := spec.Containers[0]
+
+	assert.Equal(t, "debug-test-session", container.Name, "should use session name in container name")
+	assert.Equal(t, "alpine:3.19", container.Image, "should use vars.image")
+
+	// Check environment variables were populated from session context
+	envMap := make(map[string]string)
+	for _, e := range container.Env {
+		envMap[e.Name] = e.Value
+	}
+	assert.Equal(t, "breakglass-system", envMap["SESSION_NAMESPACE"])
+	assert.Equal(t, "production-cluster", envMap["CLUSTER"])
+	assert.Equal(t, "developer@example.com", envMap["REQUESTED_BY"])
+
+	// Check resource limits from vars
+	assert.Equal(t, "200m", container.Resources.Limits.Cpu().String(), "should use vars.cpuLimit")
+}
+
+func TestBuildPodSpec_DebugPodTemplateNeitherTemplateNorTemplateString(t *testing.T) {
+	// Tests that an error is returned when DebugPodTemplate has neither template nor templateString
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	ds := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			TemplateRef: "invalid-template",
+		},
+	}
+
+	// DebugPodTemplate with neither template nor templateString (invalid)
+	podTemplate := &v1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "invalid-pod-template",
+		},
+		Spec: v1alpha1.DebugPodTemplateSpec{
+			// Both Template and TemplateString are nil/empty
+		},
+	}
+
+	template := &v1alpha1.DebugSessionTemplate{
+		Spec: v1alpha1.DebugSessionTemplateSpec{},
+	}
+
+	_, err := controller.buildPodSpec(ds, template, podTemplate)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "neither template nor templateString")
+}
+
 func TestBuildPodSpec_OverridesDisabled(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	controller := &DebugSessionController{
@@ -642,7 +764,7 @@ func TestBuildPodSpec_OverridesDisabled(t *testing.T) {
 
 	podTemplate := &v1alpha1.DebugPodTemplate{
 		Spec: v1alpha1.DebugPodTemplateSpec{
-			Template: v1alpha1.DebugPodSpec{
+			Template: &v1alpha1.DebugPodSpec{
 				Spec: v1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},

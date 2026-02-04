@@ -113,7 +113,9 @@ Debug sessions follow a strict state machine:
 
 ### DebugPodTemplate
 
-Defines the pod specification for debug workloads:
+Defines the pod specification for debug workloads. You can use either a structured `template` or a Go-templated `templateString`:
+
+**Structured Template (recommended for static configurations):**
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -142,6 +144,41 @@ spec:
       tolerations:
         - operator: Exists  # Run on any node
 ```
+
+**templateString (for dynamic configurations with session context):**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: dynamic-debug-pod
+spec:
+  displayName: "Dynamic Debug Pod"
+  description: "Pod with dynamic configuration based on session context"
+  templateString: |
+    containers:
+      - name: debug-{{ .session.name | trunc 15 }}
+        image: {{ .vars.image | default "alpine:latest" }}
+        command: ["sleep", "infinity"]
+        env:
+          - name: SESSION_NAME
+            value: {{ .session.name | quote }}
+          - name: CLUSTER
+            value: {{ .session.cluster | quote }}
+          - name: REQUESTED_BY
+            value: {{ .session.requestedBy | quote }}
+        resources:
+          limits:
+            cpu: {{ .vars.cpuLimit | default "500m" }}
+            memory: {{ .vars.memoryLimit | default "256Mi" }}
+    {{- if eq .vars.hostNetwork "true" }}
+    hostNetwork: true
+    {{- end }}
+```
+
+The `templateString` supports all session context variables (`.session`, `.target`, `.vars`, etc.) using Sprout template functions. See [Template Context Variables](#template-context-variables) for the full list.
+
+> **Note:** `template` and `templateString` are mutually exclusive. The webhook will reject DebugPodTemplates with both fields set.
 
 ### DebugSessionTemplate
 

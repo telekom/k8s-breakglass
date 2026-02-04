@@ -52,8 +52,15 @@ type DebugPodTemplateSpec struct {
 
 	// template defines the pod specification that will be used to create debug pods.
 	// This spec is rendered into DaemonSet/Deployment by DebugSessionTemplate.
-	// +required
-	Template DebugPodSpec `json:"template"`
+	// Mutually exclusive with templateString.
+	// +optional
+	Template *DebugPodSpec `json:"template,omitempty"`
+
+	// templateString is an inline Go template that produces pod spec YAML.
+	// Supports Go templating with session context variables using Sprout functions.
+	// Mutually exclusive with template. Use this for dynamic pod specifications.
+	// +optional
+	TemplateString string `json:"templateString,omitempty"`
 }
 
 // DebugPodSpec defines the pod specification for debug containers.
@@ -300,20 +307,35 @@ func validateDebugPodTemplateSpec(template *DebugPodTemplate) field.ErrorList {
 	specPath := field.NewPath("spec")
 	var allErrs field.ErrorList
 
-	// Validate containers are specified
-	if len(template.Spec.Template.Spec.Containers) == 0 {
-		allErrs = append(allErrs, field.Required(specPath.Child("template").Child("spec").Child("containers"), "at least one container is required"))
+	// Either template or templateString is required (mutually exclusive)
+	hasTemplate := template.Spec.Template != nil
+	hasTemplateString := template.Spec.TemplateString != ""
+
+	if !hasTemplate && !hasTemplateString {
+		allErrs = append(allErrs, field.Required(specPath.Child("template"),
+			"either template or templateString is required"))
+	} else if hasTemplate && hasTemplateString {
+		allErrs = append(allErrs, field.Invalid(specPath.Child("templateString"), "",
+			"template and templateString are mutually exclusive"))
 	}
 
-	// Validate container names are unique
-	containerNames := make(map[string]bool)
-	for i, c := range template.Spec.Template.Spec.Containers {
-		if c.Name == "" {
-			allErrs = append(allErrs, field.Required(specPath.Child("template").Child("spec").Child("containers").Index(i).Child("name"), "container name is required"))
-		} else if containerNames[c.Name] {
-			allErrs = append(allErrs, field.Duplicate(specPath.Child("template").Child("spec").Child("containers").Index(i).Child("name"), c.Name))
-		} else {
-			containerNames[c.Name] = true
+	// Validate template contents if using structured template
+	if hasTemplate && template.Spec.Template != nil {
+		// Validate containers are specified
+		if len(template.Spec.Template.Spec.Containers) == 0 {
+			allErrs = append(allErrs, field.Required(specPath.Child("template").Child("spec").Child("containers"), "at least one container is required"))
+		}
+
+		// Validate container names are unique
+		containerNames := make(map[string]bool)
+		for i, c := range template.Spec.Template.Spec.Containers {
+			if c.Name == "" {
+				allErrs = append(allErrs, field.Required(specPath.Child("template").Child("spec").Child("containers").Index(i).Child("name"), "container name is required"))
+			} else if containerNames[c.Name] {
+				allErrs = append(allErrs, field.Duplicate(specPath.Child("template").Child("spec").Child("containers").Index(i).Child("name"), c.Name))
+			} else {
+				containerNames[c.Name] = true
+			}
 		}
 	}
 

@@ -1434,7 +1434,7 @@ func TestValidateDebugPodTemplate(t *testing.T) {
 				Name: "test-template",
 			},
 			Spec: DebugPodTemplateSpec{
-				Template: DebugPodSpec{
+				Template: &DebugPodSpec{
 					Spec: DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{Name: "debug-container", Image: "busybox"},
@@ -1453,7 +1453,7 @@ func TestValidateDebugPodTemplate(t *testing.T) {
 				Name: "test-template",
 			},
 			Spec: DebugPodTemplateSpec{
-				Template: DebugPodSpec{
+				Template: &DebugPodSpec{
 					Spec: DebugPodSpecInner{
 						Containers: []corev1.Container{},
 					},
@@ -1471,7 +1471,7 @@ func TestValidateDebugPodTemplate(t *testing.T) {
 				Name: "test-template",
 			},
 			Spec: DebugPodTemplateSpec{
-				Template: DebugPodSpec{
+				Template: &DebugPodSpec{
 					Spec: DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{Name: "", Image: "busybox"},
@@ -1491,7 +1491,7 @@ func TestValidateDebugPodTemplate(t *testing.T) {
 				Name: "test-template",
 			},
 			Spec: DebugPodTemplateSpec{
-				Template: DebugPodSpec{
+				Template: &DebugPodSpec{
 					Spec: DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{Name: "debug", Image: "busybox"},

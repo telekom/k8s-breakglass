@@ -2029,3 +2029,120 @@ func TestMergeAllowedPodOperations_IsOperationAllowed(t *testing.T) {
 		t.Error("portforward should be enabled after merge (template default)")
 	}
 }
+
+// TestValidateDebugSessionTemplateSpec_PodTemplateStringAlternative tests podTemplateString as alternative to podTemplateRef
+func TestValidateDebugSessionTemplateSpec_PodTemplateStringAlternative(t *testing.T) {
+	t.Run("podTemplateString is valid alternative to podTemplateRef", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateString: `
+metadata:
+  labels:
+    app: debug
+spec:
+  containers:
+    - name: debug
+      image: busybox
+`,
+			},
+		}
+		errs := validateDebugSessionTemplateSpec(template)
+		if len(errs) != 0 {
+			t.Errorf("expected 0 errors for valid podTemplateString, got %d: %v", len(errs), errs)
+		}
+	})
+
+	t.Run("missing both podTemplateRef and podTemplateString in workload mode fails", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				// No podTemplateRef or podTemplateString
+			},
+		}
+		errs := validateDebugSessionTemplateSpec(template)
+		var foundPodTemplateError bool
+		for _, err := range errs {
+			if err.Field == "spec.podTemplateRef" {
+				foundPodTemplateError = true
+				break
+			}
+		}
+		if !foundPodTemplateError {
+			t.Errorf("expected error for missing podTemplateRef/podTemplateString, got %v", errs)
+		}
+	})
+
+	t.Run("missing both podTemplateRef and podTemplateString in hybrid mode fails", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeHybrid,
+				KubectlDebug: &KubectlDebugConfig{
+					EphemeralContainers: &EphemeralContainersConfig{
+						Enabled: true,
+					},
+				},
+				// No podTemplateRef or podTemplateString
+			},
+		}
+		errs := validateDebugSessionTemplateSpec(template)
+		var foundPodTemplateError bool
+		for _, err := range errs {
+			if err.Field == "spec.podTemplateRef" {
+				foundPodTemplateError = true
+				break
+			}
+		}
+		if !foundPodTemplateError {
+			t.Errorf("expected error for missing podTemplateRef/podTemplateString in hybrid mode, got %v", errs)
+		}
+	})
+
+	t.Run("kubectl-debug mode does not require podTemplateRef or podTemplateString", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeKubectlDebug,
+				KubectlDebug: &KubectlDebugConfig{
+					EphemeralContainers: &EphemeralContainersConfig{
+						Enabled: true,
+					},
+				},
+			},
+		}
+		errs := validateDebugSessionTemplateSpec(template)
+		// Should not have podTemplateRef error
+		for _, err := range errs {
+			if err.Field == "spec.podTemplateRef" {
+				t.Errorf("kubectl-debug mode should not require podTemplateRef, got error: %v", err)
+			}
+		}
+	})
+
+	t.Run("podTemplateRef and podTemplateString are mutually exclusive", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "basic-pod",
+				},
+				PodTemplateString: "spec:\n  containers:\n    - name: debug\n      image: busybox\n",
+			},
+		}
+		errs := validateDebugSessionTemplateSpec(template)
+		var foundMutuallyExclusiveError bool
+		for _, err := range errs {
+			if err.Field == "spec.podTemplateString" {
+				foundMutuallyExclusiveError = true
+				break
+			}
+		}
+		if !foundMutuallyExclusiveError {
+			t.Errorf("expected error for mutually exclusive fields, got %v", errs)
+		}
+	})
+}

@@ -48,7 +48,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_TemplateCreation(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Extra Deploy Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -227,7 +227,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_SessionWithValues(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E EDV Session Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -359,7 +359,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_ValidationRejectsInvalid(t *testi
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E EDV Validation Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -539,7 +539,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_MultiSelect(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E MultiSelect Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -673,7 +673,7 @@ func TestDebugSession_E2E_ExtraDeployVariables_AllowedGroups(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Allowed Groups Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{

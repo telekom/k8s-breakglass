@@ -60,7 +60,7 @@ func TestDebugSessionLifecycle(t *testing.T) {
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "E2E Test Debug Pod",
 				Description: "Debug pod template for E2E testing",
-				Template: telekomv1alpha1.DebugPodSpec{
+				Template: &telekomv1alpha1.DebugPodSpec{
 					Spec: telekomv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{
@@ -127,7 +127,7 @@ func TestDebugSessionLifecycle(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Invalid Template",
-				Template: telekomv1alpha1.DebugPodSpec{
+				Template: &telekomv1alpha1.DebugPodSpec{
 					Spec: telekomv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{}, // Empty containers
 					},
@@ -166,7 +166,7 @@ func TestDebugPodTemplateVariants(t *testing.T) {
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Network Debug Tools",
 				Description: "Pod with network debugging tools",
-				Template: telekomv1alpha1.DebugPodSpec{
+				Template: &telekomv1alpha1.DebugPodSpec{
 					Spec: telekomv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{
@@ -199,7 +199,7 @@ func TestDebugPodTemplateVariants(t *testing.T) {
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Secure Debug Pod",
 				Description: "Debug pod with security constraints",
-				Template: telekomv1alpha1.DebugPodSpec{
+				Template: &telekomv1alpha1.DebugPodSpec{
 					Spec: telekomv1alpha1.DebugPodSpecInner{
 						SecurityContext: &corev1.PodSecurityContext{
 							RunAsNonRoot: &runAsNonRoot,

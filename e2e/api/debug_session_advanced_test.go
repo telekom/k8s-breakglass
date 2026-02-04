@@ -53,7 +53,7 @@ func TestDebugPodTemplateAdvanced(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Security-Hardened Pod",
-				Template: telekomv1alpha1.DebugPodSpec{
+				Template: &telekomv1alpha1.DebugPodSpec{
 					Spec: telekomv1alpha1.DebugPodSpecInner{
 						SecurityContext: &corev1.PodSecurityContext{
 							RunAsNonRoot: &runAsNonRoot,
@@ -91,7 +91,7 @@ func TestDebugPodTemplateAdvanced(t *testing.T) {
 			},
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Pod with Volumes",
-				Template: telekomv1alpha1.DebugPodSpec{
+				Template: &telekomv1alpha1.DebugPodSpec{
 					Spec: telekomv1alpha1.DebugPodSpecInner{
 						Volumes: []corev1.Volume{
 							{
@@ -150,7 +150,7 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Base Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -286,7 +286,7 @@ func TestDebugSessionCRUD(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "CRUD Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{

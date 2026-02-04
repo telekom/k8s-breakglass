@@ -72,6 +72,7 @@ spec:
                 description: |-
                   template defines the pod specification that will be used to create debug pods.
                   This spec is rendered into DaemonSet/Deployment by DebugSessionTemplate.
+                  Mutually exclusive with templateString.
                 properties:
                   metadata:
                     description: metadata contains labels and annotations for the
@@ -6645,8 +6646,12 @@ spec:
                 required:
                 - spec
                 type: object
-            required:
-            - template
+              templateString:
+                description: |-
+                  templateString is an inline Go template that produces pod spec YAML.
+                  Supports Go templating with session context variables using Sprout functions.
+                  Mutually exclusive with template. Use this for dynamic pod specifications.
+                type: string
             type: object
           status:
             description: DebugPodTemplateStatus defines the observed state of DebugPodTemplate.

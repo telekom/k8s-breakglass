@@ -1171,15 +1171,27 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 
 	// Determine pod spec source: podTemplateString takes priority over podTemplateRef
 	if template.Spec.PodTemplateString != "" {
-		// Render podTemplateString as Go template
+		// Render podTemplateString as Go template (from DebugSessionTemplate)
 		renderedSpec, err := c.renderPodTemplateString(template.Spec.PodTemplateString, renderCtx)
 		if err != nil {
 			return corev1.PodSpec{}, fmt.Errorf("failed to render podTemplateString: %w", err)
 		}
 		spec = renderedSpec
 	} else if podTemplate != nil {
-		// Use structured pod template
-		spec = c.convertDebugPodSpec(podTemplate.Spec.Template.Spec)
+		// Use DebugPodTemplate - check for templateString first, then structured template
+		if podTemplate.Spec.TemplateString != "" {
+			// Render DebugPodTemplate's templateString as Go template
+			renderedSpec, err := c.renderPodTemplateString(podTemplate.Spec.TemplateString, renderCtx)
+			if err != nil {
+				return corev1.PodSpec{}, fmt.Errorf("failed to render DebugPodTemplate templateString: %w", err)
+			}
+			spec = renderedSpec
+		} else if podTemplate.Spec.Template != nil {
+			// Use structured pod template
+			spec = c.convertDebugPodSpec(podTemplate.Spec.Template.Spec)
+		} else {
+			return corev1.PodSpec{}, fmt.Errorf("DebugPodTemplate %s has neither template nor templateString", podTemplate.Name)
+		}
 	}
 
 	// Apply podOverridesTemplate if specified (Go template producing overrides YAML)
@@ -1467,14 +1479,14 @@ func bindingAnnotations(binding *v1alpha1.DebugSessionClusterBinding) map[string
 }
 
 func podTemplateLabels(podTemplate *v1alpha1.DebugPodTemplate) map[string]string {
-	if podTemplate == nil || podTemplate.Spec.Template.Metadata == nil {
+	if podTemplate == nil || podTemplate.Spec.Template == nil || podTemplate.Spec.Template.Metadata == nil {
 		return nil
 	}
 	return podTemplate.Spec.Template.Metadata.Labels
 }
 
 func podTemplateAnnotations(podTemplate *v1alpha1.DebugPodTemplate) map[string]string {
-	if podTemplate == nil || podTemplate.Spec.Template.Metadata == nil {
+	if podTemplate == nil || podTemplate.Spec.Template == nil || podTemplate.Spec.Template.Metadata == nil {
 		return nil
 	}
 	return podTemplate.Spec.Template.Metadata.Annotations

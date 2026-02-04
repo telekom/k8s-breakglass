@@ -699,9 +699,12 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		mode = DebugSessionModeWorkload // default
 	}
 
-	// For workload or hybrid mode, podTemplateRef is required
-	if (mode == DebugSessionModeWorkload || mode == DebugSessionModeHybrid) && template.Spec.PodTemplateRef == nil {
-		result.Errors = append(result.Errors, field.Required(specPath.Child("podTemplateRef"), "podTemplateRef is required for workload or hybrid mode"))
+	// For workload or hybrid mode, either podTemplateRef or podTemplateString is required
+	hasPodTemplateRef := template.Spec.PodTemplateRef != nil
+	hasPodTemplateString := template.Spec.PodTemplateString != ""
+	if (mode == DebugSessionModeWorkload || mode == DebugSessionModeHybrid) && !hasPodTemplateRef && !hasPodTemplateString {
+		result.Errors = append(result.Errors, field.Required(specPath.Child("podTemplateRef"),
+			"either podTemplateRef or podTemplateString is required for workload or hybrid mode"))
 	}
 
 	// For kubectl-debug or hybrid mode, kubectlDebug config is required

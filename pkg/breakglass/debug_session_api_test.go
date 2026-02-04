@@ -2265,7 +2265,7 @@ func TestDebugSessionAPIController_HandleListPodTemplates(t *testing.T) {
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Ubuntu Debug",
 				Description: "Ubuntu-based debug pod",
-				Template: telekomv1alpha1.DebugPodSpec{
+				Template: &telekomv1alpha1.DebugPodSpec{
 					Spec: telekomv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{Name: "debug", Image: "ubuntu:22.04"},
@@ -2281,7 +2281,7 @@ func TestDebugSessionAPIController_HandleListPodTemplates(t *testing.T) {
 			Spec: telekomv1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Alpine Debug",
 				Description: "Alpine-based debug pod",
-				Template: telekomv1alpha1.DebugPodSpec{
+				Template: &telekomv1alpha1.DebugPodSpec{
 					Spec: telekomv1alpha1.DebugPodSpecInner{
 						Containers: []corev1.Container{
 							{Name: "debug", Image: "alpine:latest"},
@@ -2334,7 +2334,7 @@ func TestDebugSessionAPIController_HandleGetPodTemplate(t *testing.T) {
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Ubuntu Debug",
 			Description: "Ubuntu-based debug pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "ubuntu:22.04"},
