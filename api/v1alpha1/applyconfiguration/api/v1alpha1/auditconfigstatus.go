@@ -18,6 +18,8 @@ import (
 //
 // AuditConfigStatus defines the observed state of AuditConfig.
 type AuditConfigStatusApplyConfiguration struct {
+	// ObservedGeneration reflects the generation of the most recently observed AuditConfig.
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// Conditions represent the current state of the AuditConfig.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// ActiveSinks lists currently active sink names.
@@ -36,6 +38,14 @@ type AuditConfigStatusApplyConfiguration struct {
 // apply.
 func AuditConfigStatus() *AuditConfigStatusApplyConfiguration {
 	return &AuditConfigStatusApplyConfiguration{}
+}
+
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *AuditConfigStatusApplyConfiguration) WithObservedGeneration(value int64) *AuditConfigStatusApplyConfiguration {
+	b.ObservedGeneration = &value
+	return b
 }
 
 // WithConditions adds the given value to the Conditions field in the declarative configuration

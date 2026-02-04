@@ -139,8 +139,16 @@ type RetryConfig struct {
 
 // MailProviderStatus defines the observed state of MailProvider
 type MailProviderStatus struct {
+	// ObservedGeneration reflects the generation of the most recently observed MailProvider.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// Conditions represent the latest available observations of the MailProvider's state
 	// +optional
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// LastHealthCheck is the timestamp of the last successful health check

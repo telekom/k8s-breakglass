@@ -29,6 +29,9 @@ spec:
     - jsonPath: .status.eventsDropped
       name: Dropped
       type: integer
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -692,6 +695,9 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               eventsDropped:
                 description: EventsDropped is the total number of events dropped.
                 format: int64
@@ -704,6 +710,11 @@ spec:
                 description: LastEventTime is when the last event was processed.
                 format: date-time
                 type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most
+                  recently observed AuditConfig.
+                format: int64
+                type: integer
               sinkStatuses:
                 description: SinkStatuses contains per-sink status information.
                 items:

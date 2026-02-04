@@ -166,6 +166,11 @@ func BreakglassSessionStatusFrom(status *telekomv1alpha1.BreakglassSessionStatus
 
 	result := ac.BreakglassSessionStatus()
 
+	// Set observedGeneration for kstatus compliance
+	if status.ObservedGeneration > 0 {
+		result.WithObservedGeneration(status.ObservedGeneration)
+	}
+
 	// Set conditions
 	for i := range status.Conditions {
 		result.WithConditions(ConditionFrom(&status.Conditions[i]))
@@ -221,6 +226,11 @@ func DebugSessionStatusFrom(status *telekomv1alpha1.DebugSessionStatus) *ac.Debu
 	}
 
 	result := ac.DebugSessionStatus()
+
+	// Set observedGeneration for kstatus compliance
+	if status.ObservedGeneration > 0 {
+		result.WithObservedGeneration(status.ObservedGeneration)
+	}
 
 	// Set state
 	if status.State != "" {

@@ -326,6 +326,9 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 			})
 	}
 
+	// Set observedGeneration for kstatus compliance
+	latest.Status.ObservedGeneration = latest.Generation
+
 	if err := r.applyStatus(ctx, &latest); err != nil {
 		if apierrors.IsConflict(err) {
 			// Another controller likely updated it - this is fine, skip retry
@@ -393,6 +396,9 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 			LastTransitionTime: metav1.Now(),
 		})
 
+	// Set observedGeneration for kstatus compliance
+	latest.Status.ObservedGeneration = latest.Generation
+
 	if err := r.applyStatus(ctx, &latest); err != nil {
 		if apierrors.IsConflict(err) {
 			// Another controller likely updated it - this is fine, skip retry
@@ -448,6 +454,9 @@ func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *b
 			Message:            "MailProvider is disabled",
 			LastTransitionTime: metav1.Now(),
 		})
+
+	// Set observedGeneration for kstatus compliance
+	latest.Status.ObservedGeneration = latest.Generation
 
 	if err := r.applyStatus(ctx, &latest); err != nil {
 		if apierrors.IsConflict(err) {

@@ -19,6 +19,8 @@ import (
 //
 // BreakglassSessionStatus defines the observed state of BreakglassSessionStatus.
 type BreakglassSessionStatusApplyConfiguration struct {
+	// ObservedGeneration reflects the generation of the most recently observed BreakglassSession.
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// conditions is an array of current observed BreakglassSession conditions.
 	// Tracks conditions like Idle, Approved, Rejected, Expired, Canceled, Active, and SessionExpired
 	// Active condition: Set to True when session is approved and within validity window, False otherwise
@@ -63,6 +65,14 @@ type BreakglassSessionStatusApplyConfiguration struct {
 // apply.
 func BreakglassSessionStatus() *BreakglassSessionStatusApplyConfiguration {
 	return &BreakglassSessionStatusApplyConfiguration{}
+}
+
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *BreakglassSessionStatusApplyConfiguration) WithObservedGeneration(value int64) *BreakglassSessionStatusApplyConfiguration {
+	b.ObservedGeneration = &value
+	return b
 }
 
 // WithConditions adds the given value to the Conditions field in the declarative configuration

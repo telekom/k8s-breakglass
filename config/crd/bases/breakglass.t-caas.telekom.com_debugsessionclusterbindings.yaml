@@ -27,7 +27,7 @@ spec:
     - jsonPath: .status.activeSessionCount
       name: Active
       type: integer
-    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
     - jsonPath: .metadata.creationTimestamp

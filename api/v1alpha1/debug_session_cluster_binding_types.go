@@ -300,7 +300,7 @@ type NameCollision struct {
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.spec.templateRef.name`
 // +kubebuilder:printcolumn:name="Clusters",type=integer,JSONPath=`.status.resolvedClusters`
 // +kubebuilder:printcolumn:name="Active",type=integer,JSONPath=`.status.activeSessionCount`
-// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // DebugSessionClusterBinding binds DebugSessionTemplates to specific clusters

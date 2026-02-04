@@ -182,6 +182,10 @@ type BindingReference struct {
 
 // DebugSessionStatus defines the observed state of DebugSession.
 type DebugSessionStatus struct {
+	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// state is the current state of the debug session.
 	// +optional
 	State DebugSessionState `json:"state,omitempty"`
@@ -230,6 +234,10 @@ type DebugSessionStatus struct {
 
 	// conditions provide detailed status information.
 	// +optional
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// message provides human-readable status information.

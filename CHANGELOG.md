@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **kstatus Compliance**: All CRDs now fully comply with [kstatus](https://github.com/kubernetes-sigs/cli-utils/blob/master/pkg/kstatus/README.md) requirements for proper reconciliation status detection
+  - Added `observedGeneration` field to `MailProviderStatus`, `AuditConfigStatus`, `BreakglassSessionStatus`, and `DebugSessionStatus`
+  - Controllers now populate `status.observedGeneration` when updating status to enable generation tracking
+  - Added proper `listType=map` and `listMapKey=type` markers to all condition arrays for strategic merge patch support
+  - Added `Ready` print column to `AuditConfig`, `DebugPodTemplate`, and `DebugSessionTemplate` CRDs
+  - This enables tools like `kubectl wait --for=condition=Ready` and GitOps reconciliation status tracking
+
 - **Granular Pod Operations for Debug Sessions**: Control which kubectl operations are allowed on debug session pods
   - New `AllowedPodOperations` type with toggles for `exec`, `attach`, `logs`, and `portForward`
   - `DebugSessionTemplateSpec.allowedPodOperations` field to configure permitted operations at template level

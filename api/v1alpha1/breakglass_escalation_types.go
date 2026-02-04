@@ -288,7 +288,7 @@ type BreakglassEscalationStatus struct {
 // +kubebuilder:resource:scope=Namespaced,shortName=bge
 // +kubebuilder:printcolumn:name="Clusters",type=string,JSONPath=".spec.allowed.clusters",description="Clusters this escalation applies to"
 // +kubebuilder:printcolumn:name="Groups",type=string,JSONPath=".spec.allowed.groups",description="Groups allowed to request this escalation"
-// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type==\"Ready\")].status",description="Ready status"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`,description="Ready status"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp",description="The age of the escalation"
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
