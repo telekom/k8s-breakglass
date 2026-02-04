@@ -12,6 +12,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// metadataNameIndexerSched indexes objects by their metadata.name for field selector support
+var metadataNameIndexerSched = func(o client.Object) []string {
+	return []string{o.GetName()}
+}
+
 // TestScheduledSessionValidation tests that sessions with scheduled start times are properly validated
 func TestScheduledSessionValidation(t *testing.T) {
 	tests := []struct {
@@ -506,6 +511,7 @@ func TestScheduledSessionActivator_FullActivationFlow(t *testing.T) {
 		WithScheme(Scheme).
 		WithObjects(sessionToActivate, sessionNotReady, sessionAlreadyApproved, sessionMissingScheduledTime).
 		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
+		WithIndex(&v1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
 		Build()
 
 	// Create session manager
@@ -609,6 +615,7 @@ func TestScheduledSessionActivator_NoSessionsToActivate(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(Scheme).
 		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
+		WithIndex(&v1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
 		Build()
 
 	sesManager := NewSessionManagerWithClient(fakeClient)
@@ -656,6 +663,7 @@ func TestScheduledSessionActivator_EmailDisabled(t *testing.T) {
 		WithScheme(Scheme).
 		WithObjects(sessionToActivate).
 		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
+		WithIndex(&v1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerSched).
 		Build()
 
 	sesManager := NewSessionManagerWithClient(fakeClient)

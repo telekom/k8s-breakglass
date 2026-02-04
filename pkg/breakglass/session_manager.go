@@ -262,25 +262,24 @@ func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs v1alpha1
 
 func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1alpha1.BreakglassSession) error {
 	zap.S().Infow("Updating BreakglassSession status", system.NamespacedFields(bs.Name, bs.Namespace)...)
-	if bs.Namespace == "" || bs.ResourceVersion == "" {
-		current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
-		if err != nil {
-			zap.S().Errorw("Failed to resolve BreakglassSession before status update", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-			return fmt.Errorf("failed to resolve BreakglassSession %s before status update: %w", bs.Name, err)
-		}
-		bs.Namespace = current.Namespace
-		bs.ResourceVersion = current.ResourceVersion
-		// Set observedGeneration for kstatus compliance
-		bs.Status.ObservedGeneration = current.Generation
-	} else {
-		// Fetch current to get Generation for kstatus compliance
-		current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
-		if err == nil {
-			bs.Status.ObservedGeneration = current.Generation
-		} else {
-			zap.S().Warnw("Failed to fetch BreakglassSession for observedGeneration", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
-		}
+
+	// Always fetch current state once to get Namespace, ResourceVersion, and Generation
+	// This avoids duplicate API calls while ensuring kstatus compliance
+	current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
+	if err != nil {
+		zap.S().Errorw("Failed to resolve BreakglassSession before status update", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
+		return fmt.Errorf("failed to resolve BreakglassSession %s before status update: %w", bs.Name, err)
 	}
+
+	// Populate missing fields from current state
+	if bs.Namespace == "" {
+		bs.Namespace = current.Namespace
+	}
+	if bs.ResourceVersion == "" {
+		bs.ResourceVersion = current.ResourceVersion
+	}
+	// Set observedGeneration for kstatus compliance
+	bs.Status.ObservedGeneration = current.Generation
 	if err := applyBreakglassSessionStatus(ctx, c, &bs); err != nil {
 		zap.S().Errorw("Failed to update BreakglassSession status", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
 		return fmt.Errorf("failed to update BreakglassSession status %s/%s: %w", bs.Namespace, bs.Name, err)

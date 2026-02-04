@@ -118,6 +118,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `tokenCacheKey()` helper function for consistent cache key generation
   - `Invalidate()` now handles both old-style and new-style cache keys using suffix matching
   - Added `InvalidateWithNamespace()` for precise invalidation when namespace is known
+- **Configurable REST Config Cache TTL**: Added environment variable configuration for REST config cache TTL (PR #295)
+  - `BREAKGLASS_REST_CONFIG_CACHE_TTL`: Override default 5-minute TTL for OIDC cluster configs (e.g., "10m", "300s")
+  - `BREAKGLASS_KUBECONFIG_CACHE_TTL`: Override default 15-minute TTL for kubeconfig-based configs
+  - Logs warning to stderr when invalid duration strings are provided (falls back to default)
+  - Enables tuning cache behavior for different deployment scenarios
 
 - **Orphaned DebugSession Cleanup**: Fixed infinite retry loop when ClusterConfig is deleted while DebugSessions are still active
   - `cleanupResources` now gracefully handles `ErrClusterConfigNotFound` error
