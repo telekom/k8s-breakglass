@@ -23,16 +23,34 @@ import (
 // ClientProvider resolves ClusterConfig objects and caches lightweight metadata.
 var ErrClusterConfigNotFound = errors.New("clusterconfig not found")
 
-// Cache TTL constants
-const (
+// Cache TTL defaults (can be overridden via environment variables)
+var (
 	// RESTConfigCacheTTL is how long cached rest.Config entries remain valid.
 	// OIDC configs use WrapTransport for dynamic token refresh, but we still
 	// expire the cache to pick up TLS/CA changes.
-	RESTConfigCacheTTL = 5 * time.Minute
+	// Override with BREAKGLASS_REST_CONFIG_CACHE_TTL (e.g., "10m", "300s")
+	RESTConfigCacheTTL = getEnvDuration("BREAKGLASS_REST_CONFIG_CACHE_TTL", 5*time.Minute)
 
 	// KubeconfigCacheTTL is longer since kubeconfigs change less frequently.
-	KubeconfigCacheTTL = 15 * time.Minute
+	// Override with BREAKGLASS_KUBECONFIG_CACHE_TTL (e.g., "30m", "900s")
+	KubeconfigCacheTTL = getEnvDuration("BREAKGLASS_KUBECONFIG_CACHE_TTL", 15*time.Minute)
 )
+
+// getEnvDuration reads a duration from an environment variable, falling back to defaultVal.
+// If the environment variable is set but contains an invalid duration string,
+// a warning is printed to stderr and the default value is used.
+func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
+	if val := os.Getenv(key); val != "" {
+		d, err := time.ParseDuration(val)
+		if err == nil {
+			return d
+		}
+		// Log warning about invalid value - using fmt.Fprintf since logger may not
+		// be initialized yet during package init
+		fmt.Fprintf(os.Stderr, "WARNING: invalid duration for %s=%q, using default %v: %v\n", key, val, defaultVal, err)
+	}
+	return defaultVal
+}
 
 // cachedRESTConfig wraps a rest.Config with expiry time for TTL-based eviction.
 type cachedRESTConfig struct {
@@ -67,28 +85,34 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 	}
 }
 
-// Get returns cached ClusterConfig or fetches it (metadata only usage for now).
+// cacheKey generates a namespaced cache key for ClusterConfig or Secret lookups.
+// Both namespace and name are required to avoid cache collisions between resources
+// with the same name in different namespaces.
 func cacheKey(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
 }
 
-func secretCacheKey(namespace, name string) string {
-	return fmt.Sprintf("%s/%s", namespace, name)
-}
-
-// Get returns a ClusterConfig. If namespace is the empty string the method
-// will list across all namespaces and match by metadata.name (backwards
-// compatible behavior). Callers that know the namespace should pass it to
-// avoid the cross-namespace list.
+// GetAcrossAllNamespaces returns a ClusterConfig by name, searching across all namespaces.
+// This method first checks the cache for an exact name match, then falls back to listing
+// all ClusterConfigs if not found. For better performance when the namespace is known,
+// callers should use GetInNamespace instead.
+//
+// Note: This method performs an O(n) scan of cached entries. For high-throughput scenarios
+// with many cached ClusterConfigs, consider using GetInNamespace with a known namespace.
 func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
-	key := cacheKey("", name)
+	// Try exact namespace/name lookup first if we have cached entries
 	p.mu.RLock()
-	cfg, ok := p.data[key]
-	p.mu.RUnlock()
-	if ok {
-		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
-		return cfg, nil
+	// First, try to find a cached entry by scanning for any namespace with this name
+	// We match by the ClusterConfig's Name field to ensure exact match (avoids
+	// issues with similar cluster names like "prod" vs "my-prod").
+	for _, cfg := range p.data {
+		if cfg != nil && cfg.Name == name {
+			p.mu.RUnlock()
+			metrics.ClusterCacheHits.WithLabelValues(name).Inc()
+			return cfg, nil
+		}
 	}
+	p.mu.RUnlock()
 	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
 	// Namespace not provided: preserve legacy behavior and list across namespaces
@@ -252,7 +276,7 @@ func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *te
 	}
 
 	// Track secret reference for cache invalidation
-	secretRefKey := secretCacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
+	secretRefKey := cacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
 
 	p.mu.Lock()
 	p.clusterToSecret[cc.Name] = secretRefKey
@@ -284,7 +308,7 @@ func (p *ClientProvider) Invalidate(name string) {
 
 // InvalidateSecret removes all cached entries (ClusterConfig + rest.Config) that rely on a specific secret.
 func (p *ClientProvider) InvalidateSecret(namespace, name string) {
-	key := secretCacheKey(namespace, name)
+	key := cacheKey(namespace, name)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	clusters, ok := p.secretToClusters[key]
@@ -300,7 +324,7 @@ func (p *ClientProvider) InvalidateSecret(namespace, name string) {
 
 // IsSecretTracked reports whether the provider currently caches any cluster configs referencing the secret.
 func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
-	key := secretCacheKey(namespace, name)
+	key := cacheKey(namespace, name)
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	_, ok := p.secretToClusters[key]
