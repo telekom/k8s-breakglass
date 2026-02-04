@@ -108,6 +108,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Strict JSON Request Validation**: Session creation API now rejects requests with unknown/typo'd fields
+  - Unknown fields in JSON request body now return `422 Unprocessable Entity` instead of being silently ignored
+  - Trailing JSON data after the main object is rejected
+  - Helps catch client bugs and typos early (e.g., `cluter` instead of `cluster`)
+
 - **Orphaned DebugSession Cleanup**: Fixed infinite retry loop when ClusterConfig is deleted while DebugSessions are still active
   - `cleanupResources` now gracefully handles `ErrClusterConfigNotFound` error
   - When target cluster no longer exists, cleanup is treated as complete instead of retrying every 5 seconds indefinitely
