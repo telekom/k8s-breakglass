@@ -1,10 +1,10 @@
 package breakglass
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/pkg/errors"
 )
 
 type ClusterUserGroup struct {
@@ -42,7 +42,7 @@ func (r *BreakglassSessionRequest) SanitizeReason() error {
 		return err
 	}
 	if utf8.RuneCountInString(sanitized) > MaxReasonLength {
-		return errors.Errorf("reason must be at most %d characters", MaxReasonLength)
+		return fmt.Errorf("reason must be at most %d characters", MaxReasonLength)
 	}
 	r.Reason = sanitized
 	return nil
@@ -154,7 +154,7 @@ func (r *BreakglassSessionRequest) ValidateDuration(maxAllowed int64) error {
 
 	// Duration must not exceed maximum allowed
 	if r.Duration > maxAllowed {
-		return errors.Errorf("requested duration %d seconds exceeds maximum allowed %d seconds", r.Duration, maxAllowed)
+		return fmt.Errorf("requested duration %d seconds exceeds maximum allowed %d seconds", r.Duration, maxAllowed)
 	}
 
 	return nil
