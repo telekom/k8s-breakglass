@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Trailing JSON data after the main object is rejected
   - Helps catch client bugs and typos early (e.g., `cluter` instead of `cluster`)
 
+- **Configurable REST Config Cache TTL**: Added environment variable configuration for REST config cache TTL (PR #295)
+  - `BREAKGLASS_REST_CONFIG_CACHE_TTL`: Override default 5-minute TTL for OIDC cluster configs (e.g., "10m", "300s")
+  - `BREAKGLASS_KUBECONFIG_CACHE_TTL`: Override default 15-minute TTL for kubeconfig-based configs
+  - Logs warning to stderr when invalid duration strings are provided (falls back to default)
+  - Enables tuning cache behavior for different deployment scenarios
+
 - **Orphaned DebugSession Cleanup**: Fixed infinite retry loop when ClusterConfig is deleted while DebugSessions are still active
   - `cleanupResources` now gracefully handles `ErrClusterConfigNotFound` error
   - When target cluster no longer exists, cleanup is treated as complete instead of retrying every 5 seconds indefinitely

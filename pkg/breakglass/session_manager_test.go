@@ -208,6 +208,7 @@ func TestSessionManager_UpdateBreakglassSessionStatus(t *testing.T) {
 			WithScheme(Scheme).
 			WithObjects(session).
 			WithStatusSubresource(session).
+			WithIndex(&v1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexer).
 			Build()
 		mgr := NewSessionManagerWithClient(fakeClient)
 

@@ -23,16 +23,34 @@ import (
 // ClientProvider resolves ClusterConfig objects and caches lightweight metadata.
 var ErrClusterConfigNotFound = errors.New("clusterconfig not found")
 
-// Cache TTL constants
-const (
+// Cache TTL defaults (can be overridden via environment variables)
+var (
 	// RESTConfigCacheTTL is how long cached rest.Config entries remain valid.
 	// OIDC configs use WrapTransport for dynamic token refresh, but we still
 	// expire the cache to pick up TLS/CA changes.
-	RESTConfigCacheTTL = 5 * time.Minute
+	// Override with BREAKGLASS_REST_CONFIG_CACHE_TTL (e.g., "10m", "300s")
+	RESTConfigCacheTTL = getEnvDuration("BREAKGLASS_REST_CONFIG_CACHE_TTL", 5*time.Minute)
 
 	// KubeconfigCacheTTL is longer since kubeconfigs change less frequently.
-	KubeconfigCacheTTL = 15 * time.Minute
+	// Override with BREAKGLASS_KUBECONFIG_CACHE_TTL (e.g., "30m", "900s")
+	KubeconfigCacheTTL = getEnvDuration("BREAKGLASS_KUBECONFIG_CACHE_TTL", 15*time.Minute)
 )
+
+// getEnvDuration reads a duration from an environment variable, falling back to defaultVal.
+// If the environment variable is set but contains an invalid duration string,
+// a warning is printed to stderr and the default value is used.
+func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
+	if val := os.Getenv(key); val != "" {
+		d, err := time.ParseDuration(val)
+		if err == nil {
+			return d
+		}
+		// Log warning about invalid value - using fmt.Fprintf since logger may not
+		// be initialized yet during package init
+		fmt.Fprintf(os.Stderr, "WARNING: invalid duration for %s=%q, using default %v: %v\n", key, val, defaultVal, err)
+	}
+	return defaultVal
+}
 
 // cachedRESTConfig wraps a rest.Config with expiry time for TTL-based eviction.
 type cachedRESTConfig struct {

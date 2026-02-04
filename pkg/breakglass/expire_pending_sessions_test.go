@@ -15,6 +15,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// metadataNameIndexerExpire indexes objects by their metadata.name for field selector support
+var metadataNameIndexerExpire = func(o client.Object) []string {
+	return []string{o.GetName()}
+}
+
 func TestExpirePendingSessions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	err := telekomv1alpha1.AddToScheme(scheme)
@@ -45,6 +50,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(pendingSession).
 			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			WithIndex(&telekomv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerExpire).
 			Build()
 
 		mgr := NewSessionManagerWithClient(fakeClient)
@@ -90,6 +96,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(recentSession).
 			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			WithIndex(&telekomv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerExpire).
 			Build()
 
 		mgr := NewSessionManagerWithClient(fakeClient)
@@ -133,6 +140,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(approvedSession).
 			WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+			WithIndex(&telekomv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerExpire).
 			Build()
 
 		mgr := NewSessionManagerWithClient(fakeClient)
