@@ -167,6 +167,10 @@ server:
 - When empty (default), the server uses the direct connection IP for rate limiting and logging.
 - **Security Warning:** Only trust proxies you control. Untrusted proxies can spoof client IPs.
 
+> **⚠️ Important:** Misconfiguring trusted proxies can allow attackers to bypass rate limiting by
+> spoofing the `X-Forwarded-For` header. See [Security Best Practices: Rate Limiting](./security-best-practices.md#rate-limiting)
+> for detailed guidance and best practices.
+
 **Operational Guidance - Trusted Proxies:**
 
 | Deployment | Recommended Configuration |

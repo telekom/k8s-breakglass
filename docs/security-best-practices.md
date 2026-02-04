@@ -21,6 +21,28 @@ The API applies rate limiting in-process:
 
 If you need to tune these limits beyond the defaults, prefer applying ingress/API-gateway limits. (The built-in defaults are defined in code under `pkg/ratelimit/`.)
 
+> **⚠️ Security Warning: Trusted Proxies and Rate Limiter IP Spoofing**
+>
+> The built-in rate limiter uses Gin's `ClientIP()` function to identify clients, which reads the
+> `X-Forwarded-For` header when `trustedProxies` is configured. This creates a **critical security
+> consideration**:
+>
+> - **Without `trustedProxies`**: Rate limiting uses the direct connection IP. This is secure but may
+>   rate-limit your ingress/proxy instead of individual clients.
+> - **With `trustedProxies` misconfigured**: If an attacker's IP is in the trusted range, or if requests
+>   bypass your trusted proxies, attackers can **spoof the `X-Forwarded-For` header** to bypass rate
+>   limits entirely by sending different fake IPs with each request.
+>
+> **Best Practices:**
+> 1. **Only add IPs/CIDRs of proxies you fully control** (your ingress controllers, load balancers).
+> 2. **Never trust public or untrusted network ranges** in `trustedProxies`.
+> 3. **Use network policies** to ensure the breakglass API pod only accepts traffic from your ingress.
+> 4. **Consider defense in depth** - add rate limiting at the ingress layer (see below) where the real
+>    client IP is known.
+>
+> See [configuration-reference.md](./configuration-reference.md#trustedproxies-optional) for trusted proxy
+> configuration details.
+
 #### 1. Ingress Rate Limiting (Recommended)
 
 Configure rate limiting on your ingress controller:
