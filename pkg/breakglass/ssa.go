@@ -27,5 +27,9 @@ func applyDebugSessionStatus(ctx context.Context, c client.Client, session *tele
 }
 
 func applyBreakglassEscalationStatus(ctx context.Context, c client.Client, escalation *telekomv1alpha1.BreakglassEscalation) error {
+	// Set observedGeneration for kstatus compliance
+	if escalation.Generation > 0 {
+		escalation.Status.ObservedGeneration = escalation.Generation
+	}
 	return ssa.ApplyBreakglassEscalationStatus(ctx, c, escalation)
 }

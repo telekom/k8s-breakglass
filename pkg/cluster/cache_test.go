@@ -2,7 +2,9 @@ package cluster
 
 import (
 	"context"
+	"os"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +18,74 @@ import (
 	"go.uber.org/zap/zaptest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestGetEnvDuration(t *testing.T) {
+	tests := []struct {
+		name       string
+		envKey     string
+		envValue   string
+		defaultVal time.Duration
+		expected   time.Duration
+	}{
+		{
+			name:       "valid duration 10m",
+			envKey:     "TEST_DURATION_10M",
+			envValue:   "10m",
+			defaultVal: 5 * time.Minute,
+			expected:   10 * time.Minute,
+		},
+		{
+			name:       "valid duration 300s",
+			envKey:     "TEST_DURATION_300S",
+			envValue:   "300s",
+			defaultVal: 5 * time.Minute,
+			expected:   300 * time.Second,
+		},
+		{
+			name:       "valid duration 1h30m",
+			envKey:     "TEST_DURATION_1H30M",
+			envValue:   "1h30m",
+			defaultVal: time.Hour,
+			expected:   90 * time.Minute,
+		},
+		{
+			name:       "env not set returns default",
+			envKey:     "TEST_DURATION_NOT_SET",
+			envValue:   "", // not set
+			defaultVal: 15 * time.Minute,
+			expected:   15 * time.Minute,
+		},
+		{
+			name:       "invalid duration returns default",
+			envKey:     "TEST_DURATION_INVALID",
+			envValue:   "not-a-duration",
+			defaultVal: 5 * time.Minute,
+			expected:   5 * time.Minute,
+		},
+		{
+			name:       "empty string returns default",
+			envKey:     "TEST_DURATION_EMPTY",
+			envValue:   "",
+			defaultVal: 10 * time.Minute,
+			expected:   10 * time.Minute,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set or unset the env variable
+			if tt.envValue != "" {
+				os.Setenv(tt.envKey, tt.envValue)
+				defer os.Unsetenv(tt.envKey)
+			} else {
+				os.Unsetenv(tt.envKey)
+			}
+
+			result := getEnvDuration(tt.envKey, tt.defaultVal)
+			assert.Equal(t, tt.expected, result, "getEnvDuration should return expected duration")
+		})
+	}
+}
 
 func TestNewClientProvider(t *testing.T) {
 	logger := zaptest.NewLogger(t)
