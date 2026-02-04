@@ -1185,9 +1185,15 @@ func validateAuxiliaryResources(resources []AuxiliaryResource, fieldPath *field.
 			names[res.Name] = true
 		}
 
-		// Template is required (check if RawExtension is empty)
-		if len(res.Template.Raw) == 0 && res.Template.Object == nil {
-			errs = append(errs, field.Required(resPath.Child("template"), "template is required"))
+		// Either template or templateString is required (mutually exclusive)
+		hasTemplate := len(res.Template.Raw) > 0 || res.Template.Object != nil
+		hasTemplateString := res.TemplateString != ""
+		if !hasTemplate && !hasTemplateString {
+			errs = append(errs, field.Required(resPath.Child("template"),
+				"either template or templateString is required"))
+		} else if hasTemplate && hasTemplateString {
+			errs = append(errs, field.Invalid(resPath.Child("templateString"), "",
+				"template and templateString are mutually exclusive"))
 		}
 
 		// Category validation - these are common categories, but others are allowed

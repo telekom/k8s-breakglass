@@ -2296,7 +2296,31 @@ func TestValidateAuxiliaryResources(t *testing.T) {
 		}
 		errs := validateAuxiliaryResources(res, fieldPath)
 		assert.Len(t, errs, 1)
-		assert.Contains(t, errs[0].Error(), "template is required")
+		assert.Contains(t, errs[0].Error(), "either template or templateString is required")
+	})
+
+	t.Run("templateString is valid alternative to template", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:           "test",
+				TemplateString: "kind: ConfigMap\nmetadata:\n  name: {{ .Session.Name }}",
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Len(t, errs, 0, "templateString should be valid without template")
+	})
+
+	t.Run("template and templateString are mutually exclusive", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:           "test",
+				Template:       runtime.RawExtension{Raw: []byte(`{"kind":"ConfigMap"}`)},
+				TemplateString: "kind: ConfigMap",
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Error(), "mutually exclusive")
 	})
 
 	t.Run("duplicate names", func(t *testing.T) {
