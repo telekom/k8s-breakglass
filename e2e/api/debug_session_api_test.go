@@ -669,7 +669,7 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "API Test Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -819,7 +819,7 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Create Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -958,7 +958,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Join Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -1097,7 +1097,7 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Terminate Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -1512,7 +1512,7 @@ func TestDebugSessionAPITemplateAvailability(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Availability Test Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -1722,7 +1722,7 @@ func TestDebugSessionAPIClusterSelectorMatching(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Selector Test Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -1987,7 +1987,7 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Approval Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -2154,7 +2154,7 @@ func TestDebugSessionAPIRenew(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Renew Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -2314,7 +2314,7 @@ func TestDebugSessionAPIGetTemplateAndPodTemplate(t *testing.T) {
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Get Pod Template Test",
 			Description: "Test pod template for retrieval",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -2645,7 +2645,7 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Kubectl Debug Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -2863,7 +2863,7 @@ func TestDebugSessionAPIKubectlDebugModeNotSupported(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Normal Mode Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -3001,7 +3001,7 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Join Perm Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -3174,7 +3174,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Renewal Perm Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -3458,7 +3458,7 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Filter Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -3650,7 +3650,7 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Optional Param Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -3880,7 +3880,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Authorization Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
@@ -4126,7 +4126,7 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Binding Auth Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},

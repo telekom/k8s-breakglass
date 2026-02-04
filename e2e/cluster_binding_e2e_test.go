@@ -665,7 +665,7 @@ func TestClusterBindingFullChain(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Binding Chain Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{

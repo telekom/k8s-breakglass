@@ -4413,7 +4413,7 @@ func TestUseCaseDebugSessionNetworkCapabilities(t *testing.T) {
 			Spec: v1alpha1.DebugPodTemplateSpec{
 				DisplayName: "Network Debug Tools",
 				Description: "Pod with tcpdump, netstat, and network debugging tools",
-				Template: v1alpha1.DebugPodSpec{
+				Template: &v1alpha1.DebugPodSpec{
 					Spec: v1alpha1.DebugPodSpecInner{
 						HostNetwork: true, // Required for network-level debugging
 						Containers: []corev1.Container{

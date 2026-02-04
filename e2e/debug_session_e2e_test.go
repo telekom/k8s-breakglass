@@ -114,7 +114,7 @@ func ensureTestSessionTemplate(t *testing.T, cli client.Client, ctx context.Cont
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Shared Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -183,7 +183,7 @@ func TestDebugSession_E2E_DebugPodTemplateCreation(t *testing.T) {
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Test Pod Template",
 			Description: "Created by E2E tests",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -227,7 +227,7 @@ func TestDebugSession_E2E_DebugSessionTemplateCreation(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Test Pod Template 2",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -526,7 +526,7 @@ func TestDebugSession_E2E_HybridMode(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Hybrid Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -619,7 +619,7 @@ func TestDebugSession_E2E_ManualApprovalWorkflow(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Approval Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -714,7 +714,7 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Rejection Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -893,7 +893,7 @@ func TestDebugSession_E2E_ConstraintsEnforcement(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Constrained Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -980,7 +980,7 @@ func TestDebugSession_E2E_AccessControlAllowedGroups(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Access Control Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -1439,7 +1439,7 @@ func TestDebugSession_E2E_TerminalSharing(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Terminal Sharing Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -1519,7 +1519,7 @@ func TestDebugSession_E2E_AutoApproveByGroup(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Auto-Approve Group Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -1600,7 +1600,7 @@ func TestDebugSession_E2E_SchedulingConstraints_NodeSelector(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Scheduling NodeSelector Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -1680,7 +1680,7 @@ func TestDebugSession_E2E_SchedulingOptions(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Scheduling Options Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -1819,7 +1819,7 @@ func TestDebugSession_E2E_NamespaceConstraints(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Namespace Constraints Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -1908,7 +1908,7 @@ func TestDebugSession_E2E_TargetNamespaceSelection(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Target Namespace Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -2010,7 +2010,7 @@ func TestDebugSession_E2E_InvalidTargetNamespaceRejected(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Invalid NS Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -2100,7 +2100,7 @@ func TestDebugSession_E2E_ClusterSelector(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Cluster Selector Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{

@@ -70,7 +70,7 @@ var _ = func(name string) *telekomv1alpha1.DebugPodTemplate {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Test Debug Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -1830,7 +1830,7 @@ func TestUpdateTemplateStatus(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Test Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest"},
@@ -1921,7 +1921,7 @@ func TestUpdatePodTemplateUsedBy(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Shared Pod Template",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest"},
@@ -3745,7 +3745,7 @@ func TestDebugSessionReconciler_WorkloadLabelsAndAnnotations(t *testing.T) {
 
 	podTemplate := &telekomv1alpha1.DebugPodTemplate{
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Metadata: &telekomv1alpha1.DebugPodMetadata{
 					Labels: map[string]string{
 						"pod-label": "true",

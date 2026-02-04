@@ -497,7 +497,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 		},
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Webhook Test Pod",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},

@@ -197,7 +197,7 @@ func TestDebugSessionModesFeature(t *testing.T) {
 		Spec: telekomv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Debug Modes Test Pod",
 			Description: "Pod template for testing debug session modes",
-			Template: telekomv1alpha1.DebugPodSpec{
+			Template: &telekomv1alpha1.DebugPodSpec{
 				Spec: telekomv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{

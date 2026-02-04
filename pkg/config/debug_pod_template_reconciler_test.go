@@ -44,7 +44,7 @@ func TestDebugPodTemplateReconciler_Reconcile_ValidTemplate(t *testing.T) {
 		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Test Pod Template",
 			Description: "A test pod template",
-			Template: breakglassv1alpha1.DebugPodSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -128,7 +128,7 @@ func TestDebugPodTemplateReconciler_Reconcile_PreservesUsedBy(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Test Pod Template",
-			Template: breakglassv1alpha1.DebugPodSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -188,7 +188,7 @@ func TestDebugPodTemplateReconciler_Reconcile_InvalidTemplate(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "Invalid Pod Template",
-			Template: breakglassv1alpha1.DebugPodSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					// No containers - validation should fail
 					Containers: []corev1.Container{},

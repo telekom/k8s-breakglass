@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -40,7 +41,7 @@ func TestDebugPodTemplate_BasicStructure(t *testing.T) {
 				Spec: DebugPodTemplateSpec{
 					DisplayName: "Basic Debug",
 					Description: "A basic debug container",
-					Template: DebugPodSpec{
+					Template: &DebugPodSpec{
 						Spec: DebugPodSpecInner{
 							Containers: []corev1.Container{
 								{
@@ -61,7 +62,7 @@ func TestDebugPodTemplate_BasicStructure(t *testing.T) {
 					Name: "privileged-debug",
 				},
 				Spec: DebugPodTemplateSpec{
-					Template: DebugPodSpec{
+					Template: &DebugPodSpec{
 						Spec: DebugPodSpecInner{
 							HostNetwork: true,
 							HostPID:     true,
@@ -97,7 +98,7 @@ func TestDebugPodTemplate_WithResources(t *testing.T) {
 		},
 		Spec: DebugPodTemplateSpec{
 			DisplayName: "Resource Limited Debug",
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -139,7 +140,7 @@ func TestDebugPodTemplate_WithVolumes(t *testing.T) {
 			Name: "volume-debug",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -187,7 +188,7 @@ func TestDebugPodTemplate_WithSecurityContext(t *testing.T) {
 			Name: "secure-context-debug",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -232,7 +233,7 @@ func TestDebugPodTemplate_WithTolerations(t *testing.T) {
 			Name: "toleration-debug",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -266,7 +267,7 @@ func TestDebugPodTemplate_WithLabelsAndAnnotations(t *testing.T) {
 			Name: "labeled-debug",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Metadata: &DebugPodMetadata{
 					Labels: map[string]string{
 						"app":     "debug",
@@ -307,7 +308,7 @@ func TestDebugPodTemplate_DeepCopy(t *testing.T) {
 		},
 		Spec: DebugPodTemplateSpec{
 			DisplayName: "Original Template",
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -360,7 +361,7 @@ func TestDebugPodTemplate_InitContainers(t *testing.T) {
 			Name: "init-container-debug",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					InitContainers: []corev1.Container{
 						{
@@ -391,7 +392,7 @@ func TestDebugPodTemplate_InitContainers(t *testing.T) {
 func TestDebugPodTemplate_DNSPolicy(t *testing.T) {
 	template := DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					DNSPolicy: corev1.DNSClusterFirst,
 					Containers: []corev1.Container{
@@ -414,7 +415,7 @@ func TestDebugPodTemplate_ServiceAccount(t *testing.T) {
 	automount := false
 	template := DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					ServiceAccountName:           "debug-sa",
 					AutomountServiceAccountToken: &automount,
@@ -455,7 +456,7 @@ func TestDebugPodTemplate_HostNamespaces(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			template := DebugPodTemplate{
 				Spec: DebugPodTemplateSpec{
-					Template: DebugPodSpec{
+					Template: &DebugPodSpec{
 						Spec: DebugPodSpecInner{
 							HostNetwork: tt.hostNetwork,
 							HostPID:     tt.hostPID,
@@ -484,7 +485,7 @@ func TestDebugPodTemplate_HostNamespaces(t *testing.T) {
 func TestDebugPodTemplate_NodeSelector(t *testing.T) {
 	template := DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					NodeSelector: map[string]string{
 						"node-type": "debug",
@@ -509,7 +510,7 @@ func TestDebugPodTemplate_NodeSelector(t *testing.T) {
 func TestDebugPodTemplate_Affinity(t *testing.T) {
 	template := DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Affinity: &corev1.Affinity{
 						NodeAffinity: &corev1.NodeAffinity{
@@ -554,7 +555,7 @@ func TestDebugPodTemplate_ValidateCreate_Valid(t *testing.T) {
 		},
 		Spec: DebugPodTemplateSpec{
 			DisplayName: "Valid Template",
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
@@ -584,7 +585,7 @@ func TestDebugPodTemplate_ValidateCreate_MissingContainers(t *testing.T) {
 		},
 		Spec: DebugPodTemplateSpec{
 			DisplayName: "Invalid Template",
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{}, // empty
 				},
@@ -605,7 +606,7 @@ func TestDebugPodTemplate_ValidateCreate_DuplicateContainerNames(t *testing.T) {
 			Name: "duplicate-containers",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},
@@ -629,7 +630,7 @@ func TestDebugPodTemplate_ValidateCreate_MissingContainerName(t *testing.T) {
 			Name: "missing-container-name",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "", Image: "busybox"}, // empty name
@@ -652,7 +653,7 @@ func TestDebugPodTemplate_ValidateUpdate(t *testing.T) {
 			Name: "template",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:1.0"},
@@ -666,7 +667,7 @@ func TestDebugPodTemplate_ValidateUpdate(t *testing.T) {
 			Name: "template",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox:2.0"},
@@ -707,7 +708,7 @@ func TestDebugPodTemplate_ValidateCreate_InvalidSpec(t *testing.T) {
 	template := &DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "template"},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{},
 				},
@@ -805,7 +806,7 @@ func TestDebugPodTemplate_ValidateUpdate_Invalid(t *testing.T) {
 	oldTemplate := &DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "test"},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},
@@ -818,7 +819,7 @@ func TestDebugPodTemplate_ValidateUpdate_Invalid(t *testing.T) {
 	newTemplate := &DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "test"},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{}, // empty - invalid
 				},
@@ -839,7 +840,7 @@ func TestDebugPodTemplate_ValidateCreate_MultipleContainers(t *testing.T) {
 			Name: "multi-container",
 		},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "main", Image: "busybox"},
@@ -866,12 +867,72 @@ func TestValidateDebugPodTemplateSpec_Nil(t *testing.T) {
 	}
 }
 
+// TestValidateDebugPodTemplateSpec_TemplateString tests templateString as alternative to template
+func TestValidateDebugPodTemplateSpec_TemplateString(t *testing.T) {
+	t.Run("templateString is valid alternative to template", func(t *testing.T) {
+		template := &DebugPodTemplate{
+			Spec: DebugPodTemplateSpec{
+				TemplateString: `
+spec:
+  containers:
+    - name: debug
+      image: busybox
+`,
+			},
+		}
+		errs := validateDebugPodTemplateSpec(template)
+		if len(errs) != 0 {
+			t.Errorf("expected 0 errors for valid templateString, got %d: %v", len(errs), errs)
+		}
+	})
+
+	t.Run("missing both template and templateString fails", func(t *testing.T) {
+		template := &DebugPodTemplate{
+			Spec: DebugPodTemplateSpec{
+				DisplayName: "empty template",
+			},
+		}
+		errs := validateDebugPodTemplateSpec(template)
+		if len(errs) != 1 {
+			t.Errorf("expected 1 error for missing template, got %d: %v", len(errs), errs)
+		}
+		if len(errs) > 0 && errs[0].Type != "FieldValueRequired" {
+			t.Errorf("expected Required error, got %v", errs[0].Type)
+		}
+	})
+
+	t.Run("template and templateString are mutually exclusive", func(t *testing.T) {
+		template := &DebugPodTemplate{
+			Spec: DebugPodTemplateSpec{
+				Template: &DebugPodSpec{
+					Spec: DebugPodSpecInner{
+						Containers: []corev1.Container{
+							{Name: "debug", Image: "busybox"},
+						},
+					},
+				},
+				TemplateString: "spec:\n  containers:\n    - name: other\n      image: alpine\n",
+			},
+		}
+		errs := validateDebugPodTemplateSpec(template)
+		if len(errs) != 1 {
+			t.Errorf("expected 1 error for mutually exclusive fields, got %d: %v", len(errs), errs)
+		}
+		if len(errs) > 0 {
+			errStr := errs[0].Error()
+			if !strings.Contains(errStr, "mutually exclusive") {
+				t.Errorf("expected 'mutually exclusive' in error, got %s", errStr)
+			}
+		}
+	})
+}
+
 func TestDebugPodTemplate_ValidateCreate_DuplicateContainerNamesTwo(t *testing.T) {
 	ctx := context.Background()
 	template := &DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "dup-containers"},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},
@@ -893,7 +954,7 @@ func TestDebugPodTemplate_ValidateCreate_EmptyContainerNameTwo(t *testing.T) {
 	template := &DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "empty-name"},
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "", Image: "busybox"}, // empty name
@@ -913,7 +974,7 @@ func TestDebugPodTemplate_ValidateCreate_EmptyContainerNameTwo(t *testing.T) {
 func TestValidateDebugPodTemplateSpec_NoContainers(t *testing.T) {
 	template := &DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{},
 				},
@@ -933,7 +994,7 @@ func TestValidateDebugPodTemplateSpec_NoContainers(t *testing.T) {
 func TestValidateDebugPodTemplateSpec_SingleValidContainer(t *testing.T) {
 	template := &DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},
@@ -952,7 +1013,7 @@ func TestValidateDebugPodTemplateSpec_SingleValidContainer(t *testing.T) {
 func TestValidateDebugPodTemplateSpec_MultipleValidContainers(t *testing.T) {
 	template := &DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug1", Image: "busybox"},
@@ -973,7 +1034,7 @@ func TestValidateDebugPodTemplateSpec_MultipleValidContainers(t *testing.T) {
 func TestValidateDebugPodTemplateSpec_DuplicateNames(t *testing.T) {
 	template := &DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},
@@ -993,7 +1054,7 @@ func TestValidateDebugPodTemplateSpec_DuplicateNames(t *testing.T) {
 func TestValidateDebugPodTemplateSpec_EmptyName(t *testing.T) {
 	template := &DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "", Image: "busybox"},
@@ -1015,7 +1076,7 @@ func TestValidateDebugPodTemplateSpec_EmptyName(t *testing.T) {
 func TestValidateDebugPodTemplateSpec_MultipleEmptyNames(t *testing.T) {
 	template := &DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "", Image: "busybox"},
@@ -1036,7 +1097,7 @@ func TestValidateDebugPodTemplateSpec_MultipleEmptyNames(t *testing.T) {
 func TestValidateDebugPodTemplateSpec_MixedErrors(t *testing.T) {
 	template := &DebugPodTemplate{
 		Spec: DebugPodTemplateSpec{
-			Template: DebugPodSpec{
+			Template: &DebugPodSpec{
 				Spec: DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{Name: "debug", Image: "busybox"},
