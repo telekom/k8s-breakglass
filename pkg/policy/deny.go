@@ -104,11 +104,17 @@ func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error)
 }
 
 // MatchWithDetails is like Match but also returns pod security evaluation details.
+// It evaluates all policies and returns denial if any policy denies.
+// Warning results are collected but do not short-circuit policy evaluation.
 func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bool, policyName string, podSecResult *PodSecurityResult, err error) {
 	list := telekomv1alpha1.DenyPolicyList{}
 	if err := e.c.List(ctx, &list); err != nil {
 		return false, "", nil, err
 	}
+
+	// Track the first warning result to return if no denial occurs
+	var warnResult *PodSecurityResult
+
 	for _, pol := range list.Items {
 		if !scopeMatches(pol.Spec.AppliesTo, act) {
 			continue
@@ -141,12 +147,16 @@ func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bo
 			}
 			if result.Action == "warn" {
 				metrics.PodSecurityWarnings.WithLabelValues(act.ClusterID, pol.Name).Inc()
-				// Return result for metrics/logging even if not denied
-				return false, "", &result, nil
+				// Capture warning result but continue checking remaining policies
+				// A later policy might still deny the action
+				if warnResult == nil {
+					warnResult = &result
+				}
 			}
 		}
 	}
-	return false, "", nil, nil
+	// Return warning result (if any) after confirming no policy denied
+	return false, "", warnResult, nil
 }
 
 // evaluatePodSecurity checks if the action should be denied based on pod security rules.
