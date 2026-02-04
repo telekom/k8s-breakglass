@@ -232,6 +232,7 @@ type DebugPodTemplateStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:printcolumn:name="Display Name",type=string,JSONPath=".spec.displayName",description="Human-readable name"
 // +kubebuilder:printcolumn:name="Description",type=string,JSONPath=".spec.description",description="Template description"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`,description="Ready status"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:subresource:status
 

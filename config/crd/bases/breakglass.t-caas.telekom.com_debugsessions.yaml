@@ -1197,6 +1197,9 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               deployedResources:
                 description: deployedResources lists resources created on the target
                   cluster.
@@ -1314,6 +1317,11 @@ spec:
               message:
                 description: message provides human-readable status information.
                 type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most
+                  recently observed DebugSession.
+                format: int64
+                type: integer
               participants:
                 description: participants lists users currently in the session.
                 items:

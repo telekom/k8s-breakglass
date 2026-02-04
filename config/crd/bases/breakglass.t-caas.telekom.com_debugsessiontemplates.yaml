@@ -33,6 +33,10 @@ spec:
       jsonPath: .status.activeSessionCount
       name: Active Sessions
       type: integer
+    - description: Ready status
+      jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

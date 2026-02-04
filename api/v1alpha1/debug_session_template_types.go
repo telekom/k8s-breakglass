@@ -1060,6 +1060,7 @@ type DebugSessionTemplateStatus struct {
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=".spec.mode",description="Session mode"
 // +kubebuilder:printcolumn:name="Workload Type",type=string,JSONPath=".spec.workloadType",description="Workload type"
 // +kubebuilder:printcolumn:name="Active Sessions",type=integer,JSONPath=".status.activeSessionCount",description="Active sessions count"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`,description="Ready status"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:subresource:status
 

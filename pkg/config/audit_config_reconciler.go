@@ -447,6 +447,9 @@ func (r *AuditConfigReconciler) updateStatus(ctx context.Context, config *breakg
 		}
 	}
 
+	// Set observedGeneration for kstatus compliance
+	config.Status.ObservedGeneration = config.Generation
+
 	return r.applyStatus(ctx, config)
 }
 

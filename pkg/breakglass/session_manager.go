@@ -270,6 +270,16 @@ func (c SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs v1
 		}
 		bs.Namespace = current.Namespace
 		bs.ResourceVersion = current.ResourceVersion
+		// Set observedGeneration for kstatus compliance
+		bs.Status.ObservedGeneration = current.Generation
+	} else {
+		// Fetch current to get Generation for kstatus compliance
+		current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
+		if err == nil {
+			bs.Status.ObservedGeneration = current.Generation
+		} else {
+			zap.S().Warnw("Failed to fetch BreakglassSession for observedGeneration", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
+		}
 	}
 	if err := applyBreakglassSessionStatus(ctx, c, &bs); err != nil {
 		zap.S().Errorw("Failed to update BreakglassSession status", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)

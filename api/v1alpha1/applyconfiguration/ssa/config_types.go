@@ -102,6 +102,10 @@ func MailProviderStatusFrom(status *telekomv1alpha1.MailProviderStatus) *ac.Mail
 
 	result := ac.MailProviderStatus()
 
+	if status.ObservedGeneration > 0 {
+		result.WithObservedGeneration(status.ObservedGeneration)
+	}
+
 	for i := range status.Conditions {
 		result.WithConditions(ConditionFrom(&status.Conditions[i]))
 	}
@@ -126,6 +130,10 @@ func AuditConfigStatusFrom(status *telekomv1alpha1.AuditConfigStatus) *ac.AuditC
 	}
 
 	result := ac.AuditConfigStatus()
+
+	if status.ObservedGeneration > 0 {
+		result.WithObservedGeneration(status.ObservedGeneration)
+	}
 
 	for i := range status.Conditions {
 		result.WithConditions(ConditionFrom(&status.Conditions[i]))

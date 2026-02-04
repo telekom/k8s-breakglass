@@ -139,11 +139,19 @@ type BreakglassSessionSpec struct {
 type BreakglassSessionStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
+	// ObservedGeneration reflects the generation of the most recently observed BreakglassSession.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// conditions is an array of current observed BreakglassSession conditions.
 	// Tracks conditions like Idle, Approved, Rejected, Expired, Canceled, Active, and SessionExpired
 	// Active condition: Set to True when session is approved and within validity window, False otherwise
 	// SessionExpired condition: Set to True when session validity period has ended, False while active
 	// +optional
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// approvedAt is the time when the session was approved.

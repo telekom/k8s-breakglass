@@ -18,6 +18,8 @@ import (
 //
 // MailProviderStatus defines the observed state of MailProvider
 type MailProviderStatusApplyConfiguration struct {
+	// ObservedGeneration reflects the generation of the most recently observed MailProvider.
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// Conditions represent the latest available observations of the MailProvider's state
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// LastHealthCheck is the timestamp of the last successful health check
@@ -32,6 +34,14 @@ type MailProviderStatusApplyConfiguration struct {
 // apply.
 func MailProviderStatus() *MailProviderStatusApplyConfiguration {
 	return &MailProviderStatusApplyConfiguration{}
+}
+
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *MailProviderStatusApplyConfiguration) WithObservedGeneration(value int64) *MailProviderStatusApplyConfiguration {
+	b.ObservedGeneration = &value
+	return b
 }
 
 // WithConditions adds the given value to the Conditions field in the declarative configuration

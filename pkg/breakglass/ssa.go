@@ -9,10 +9,20 @@ import (
 )
 
 func applyBreakglassSessionStatus(ctx context.Context, c client.Client, session *telekomv1alpha1.BreakglassSession) error {
+	// Set observedGeneration for kstatus compliance
+	// Note: This is also set in SessionManager.UpdateBreakglassSessionStatus for cases where
+	// the session doesn't have Generation set
+	if session.Generation > 0 {
+		session.Status.ObservedGeneration = session.Generation
+	}
 	return ssa.ApplyBreakglassSessionStatus(ctx, c, session)
 }
 
 func applyDebugSessionStatus(ctx context.Context, c client.Client, session *telekomv1alpha1.DebugSession) error {
+	// Set observedGeneration for kstatus compliance
+	if session.Generation > 0 {
+		session.Status.ObservedGeneration = session.Generation
+	}
 	return ssa.ApplyDebugSessionStatus(ctx, c, session)
 }
 

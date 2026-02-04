@@ -376,8 +376,16 @@ type AuditSamplingConfig struct {
 
 // AuditConfigStatus defines the observed state of AuditConfig.
 type AuditConfigStatus struct {
+	// ObservedGeneration reflects the generation of the most recently observed AuditConfig.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// Conditions represent the current state of the AuditConfig.
 	// +optional
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// ActiveSinks lists currently active sink names.
@@ -429,6 +437,7 @@ type AuditSinkStatus struct {
 // +kubebuilder:printcolumn:name="Sinks",type=string,JSONPath=`.status.activeSinks`
 // +kubebuilder:printcolumn:name="Processed",type=integer,JSONPath=`.status.eventsProcessed`
 // +kubebuilder:printcolumn:name="Dropped",type=integer,JSONPath=`.status.eventsDropped`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // AuditConfig is the Schema for the auditconfigs API.

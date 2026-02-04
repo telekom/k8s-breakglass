@@ -263,12 +263,20 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               expiresAt:
                 description: |-
                   ExpiresAt is the time when the session will expire.
                   This value is set based on spec.MaxValidFor when the session is approved.
                 format: date-time
                 type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most
+                  recently observed BreakglassSession.
+                format: int64
+                type: integer
               reasonEnded:
                 description: |-
                   reasonEnded stores a short reason for why the session ended or entered a terminal state.

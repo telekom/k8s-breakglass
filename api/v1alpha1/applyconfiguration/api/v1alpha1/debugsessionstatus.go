@@ -19,6 +19,8 @@ import (
 //
 // DebugSessionStatus defines the observed state of DebugSession.
 type DebugSessionStatusApplyConfiguration struct {
+	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// state is the current state of the debug session.
 	State *apiv1alpha1.DebugSessionState `json:"state,omitempty"`
 	// approval tracks approval information.
@@ -60,6 +62,14 @@ type DebugSessionStatusApplyConfiguration struct {
 // apply.
 func DebugSessionStatus() *DebugSessionStatusApplyConfiguration {
 	return &DebugSessionStatusApplyConfiguration{}
+}
+
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithObservedGeneration(value int64) *DebugSessionStatusApplyConfiguration {
+	b.ObservedGeneration = &value
+	return b
 }
 
 // WithState sets the State field in the declarative configuration to the given value
