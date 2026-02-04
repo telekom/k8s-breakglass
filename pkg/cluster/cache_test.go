@@ -210,3 +210,49 @@ func TestIsSecretTracked_FalseForUnknownSecret(t *testing.T) {
 	provider := NewClientProvider(fake.NewClientBuilder().Build(), zaptest.NewLogger(t).Sugar())
 	assert.False(t, provider.IsSecretTracked("default", "missing"))
 }
+
+func TestGetAcrossAllNamespaces_DoesNotMatchSimilarNames(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	// Create clusters with similar names
+	ccProd := telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+		},
+	}
+	ccMyProd := telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-prod", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+		},
+	}
+	ccTestProd := telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-prod", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{Name: "s", Namespace: "default"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&ccProd, &ccMyProd, &ccTestProd).Build()
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+
+	ctx := context.Background()
+
+	// Fetch "my-prod" to cache it
+	result, err := provider.GetAcrossAllNamespaces(ctx, "my-prod")
+	assert.NoError(t, err)
+	assert.Equal(t, "my-prod", result.Name, "should return exact match")
+
+	// Now fetch "prod" - should NOT return "my-prod" from cache
+	resultProd, err := provider.GetAcrossAllNamespaces(ctx, "prod")
+	assert.NoError(t, err)
+	assert.Equal(t, "prod", resultProd.Name, "should return exact match for 'prod', not 'my-prod'")
+
+	// Fetch "test-prod" - should NOT return "prod" or "my-prod"
+	resultTestProd, err := provider.GetAcrossAllNamespaces(ctx, "test-prod")
+	assert.NoError(t, err)
+	assert.Equal(t, "test-prod", resultTestProd.Name, "should return exact match for 'test-prod'")
+}
