@@ -130,6 +130,11 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// gracePeriodBeforeExpiry is the duration before expiry when users are notified.
 	// Users will receive a warning notification at this interval before session expires.
 	GracePeriodBeforeExpiry *string `json:"gracePeriodBeforeExpiry,omitempty"`
+	// allowedPodOperations configures which kubectl operations are permitted on debug pods.
+	// When nil, defaults to allowing exec, attach, and portforward (backward compatible).
+	// Use this to grant more restrictive access (e.g., logs-only for read-only debugging,
+	// or cp-only for file extraction from coredump volumes).
+	AllowedPodOperations *AllowedPodOperationsApplyConfiguration `json:"allowedPodOperations,omitempty"`
 }
 
 // DebugSessionTemplateSpecApplyConfiguration constructs a declarative configuration of the DebugSessionTemplateSpec type for use with
@@ -487,5 +492,13 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithExpirationBehavior(valu
 // If called multiple times, the GracePeriodBeforeExpiry field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithGracePeriodBeforeExpiry(value string) *DebugSessionTemplateSpecApplyConfiguration {
 	b.GracePeriodBeforeExpiry = &value
+	return b
+}
+
+// WithAllowedPodOperations sets the AllowedPodOperations field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AllowedPodOperations field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithAllowedPodOperations(value *AllowedPodOperationsApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.AllowedPodOperations = value
 	return b
 }

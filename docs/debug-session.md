@@ -249,7 +249,77 @@ spec:
     logCommands: true
     sidecar:
       image: audit-logger:v1
+
+  # Optional: Granular pod operation controls
+  allowedPodOperations:
+    exec: true        # kubectl exec
+    attach: true      # kubectl attach
+    logs: true        # kubectl logs
+    portForward: true # kubectl port-forward
+    cp: false         # kubectl cp (uses exec internally)
 ```
+
+## Allowed Pod Operations
+
+The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.
+
+### Configuration
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `exec` | bool | true | Allow running commands via `kubectl exec` |
+| `attach` | bool | true | Allow attaching to container processes via `kubectl attach` |
+| `logs` | bool | false | Allow viewing container logs via `kubectl logs` |
+| `portForward` | bool | true | Allow port forwarding via `kubectl port-forward` |
+| `cp` | bool | false | Allow file copy via `kubectl cp` (uses exec internally) |
+
+### Use Cases
+
+**Logs-only access** (read-only debugging):
+```yaml
+allowedPodOperations:
+  exec: false
+  attach: false
+  logs: true
+  portForward: false
+  cp: false
+```
+
+**Coredump extraction** (file extraction without shell access):
+```yaml
+allowedPodOperations:
+  exec: false
+  attach: false
+  logs: true
+  portForward: false
+  cp: true
+```
+
+**Full debug access**:
+```yaml
+allowedPodOperations:
+  exec: true
+  attach: true
+  logs: true
+  portForward: true
+  cp: true
+```
+
+### Backward Compatibility
+
+When `allowedPodOperations` is not specified (nil), the system defaults to:
+- `exec: true`
+- `attach: true`  
+- `portForward: true`
+- `logs: false`
+- `cp: false`
+
+This maintains backward compatibility with existing debug session templates.
+
+### Security Notes
+
+- `kubectl cp` uses `exec` internally (runs `tar` in the container). When `cp` is enabled but `exec` is disabled, only tar-based file operations are permitted.
+- The webhook enforces these restrictions by checking the pod subresource against the session's `AllowedPodOperations`.
 
 ### DebugSession
 

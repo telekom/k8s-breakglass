@@ -259,12 +259,13 @@ type WebhookController struct {
 	rateLimiter            *ratelimit.IPRateLimiter     // per-IP rate limiter for SAR requests
 }
 
-// checkDebugSessionAccess checks if a pod exec request is allowed by an active debug session.
-// Returns (allowed, sessionName, reason) where allowed is true if the user can exec into the pod
-// via a debug session they are participating in.
+// checkDebugSessionAccess checks if a pod operation is allowed by an active debug session.
+// Returns (allowed, sessionName, reason) where allowed is true if the user can perform
+// the requested operation on the pod via a debug session they are participating in.
+// Supports exec, attach, portforward, and log subresources based on AllowedPodOperations config.
 func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (bool, string, string) {
-	// Only check for pods/exec requests
-	if ra == nil || ra.Resource != "pods" || ra.Subresource != "exec" {
+	// Only check for pods with supported subresources
+	if ra == nil || ra.Resource != "pods" || !isDebugSessionSubresource(ra.Subresource) {
 		return false, "", ""
 	}
 
@@ -280,7 +281,7 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 	// List active debug sessions for this cluster
 	debugSessionList := &v1alpha1.DebugSessionList{}
 	if err := wc.escalManager.List(ctx, debugSessionList); err != nil {
-		reqLog.Warnw("Failed to list debug sessions for pod exec check", "error", err)
+		reqLog.Warnw("Failed to list debug sessions for pod operation check", "error", err)
 		return false, "", ""
 	}
 
@@ -303,15 +304,25 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 			continue
 		}
 
+		// Check if the specific operation is allowed by this session's AllowedPodOperations
+		if !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource) {
+			reqLog.Debugw("Debug session found but operation not allowed",
+				"session", ds.Name,
+				"pod", fmt.Sprintf("%s/%s", ra.Namespace, ra.Name),
+				"operation", ra.Subresource)
+			continue
+		}
+
 		// Check if the user is a participant of this session
 		for _, p := range ds.Status.Participants {
 			if p.User == username {
-				reason := fmt.Sprintf("Allowed by debug session %s (role: %s)", ds.Name, p.Role)
-				reqLog.Infow("Debug session pod exec allowed",
+				reason := fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, p.Role, ra.Subresource)
+				reqLog.Infow("Debug session pod operation allowed",
 					"session", ds.Name,
 					"pod", fmt.Sprintf("%s/%s", ra.Namespace, ra.Name),
 					"user", username,
-					"role", p.Role)
+					"role", p.Role,
+					"operation", ra.Subresource)
 				return true, ds.Name, reason
 			}
 		}
@@ -534,15 +545,16 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	}
 	reqLog.With("groups", groups, "sessions", len(sessions), "tenant", tenant, "idpMismatches", len(idpMismatches)).Debug("Retrieved user groups for cluster")
 
-	// EARLY DEBUG SESSION CHECK: For pods/exec requests, debug sessions take precedence over deny policies.
-	// This allows authorized debug sessions to execute commands even when deny policies would normally block.
+	// EARLY DEBUG SESSION CHECK: For pod operations, debug sessions take precedence over deny policies.
+	// This allows authorized debug sessions to perform operations even when deny policies would normally block.
 	// This must be checked BEFORE deny policy evaluation to ensure debug sessions work correctly.
+	// Supports exec, attach, portforward, and log subresources based on AllowedPodOperations config.
 	if sar.Spec.ResourceAttributes != nil {
 		ra := sar.Spec.ResourceAttributes
-		if ra.Resource == "pods" && isExecSubresource(ra.Subresource) && ra.Name != "" {
+		if ra.Resource == "pods" && isDebugSessionSubresource(ra.Subresource) && ra.Name != "" {
 			if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(ctx, username, clusterName, ra, reqLog); debugAllowed {
-				reqLog.Infow("Debug session authorizing pod exec (bypassing deny policies)",
-					"session", debugSession, "pod", ra.Name, "namespace", ra.Namespace)
+				reqLog.Infow("Debug session authorizing pod operation (bypassing deny policies)",
+					"session", debugSession, "pod", ra.Name, "namespace", ra.Namespace, "operation", ra.Subresource)
 				metrics.WebhookSARAllowed.WithLabelValues(clusterName).Inc()
 				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "allowed", "debug-session").Inc()
 				reason := wc.finalizeReason(debugReason, true, clusterName)
@@ -1501,6 +1513,12 @@ func (wc *WebhookController) SetPodFetchFn(f PodFetchFunction) {
 // This is primarily used for testing to inject mock namespace labels.
 func (wc *WebhookController) SetNamespaceLabelsFetchFn(f NamespaceLabelsFetchFunction) {
 	wc.namespaceLabelsFetchFn = f
+}
+
+// isDebugSessionSubresource returns true if the subresource can be controlled by debug sessions.
+// This includes exec, attach, portforward, and log (which are configured via AllowedPodOperations).
+func isDebugSessionSubresource(subresource string) bool {
+	return subresource == "exec" || subresource == "attach" || subresource == "portforward" || subresource == "log"
 }
 
 // isExecSubresource returns true if the subresource is exec, attach, or portforward.

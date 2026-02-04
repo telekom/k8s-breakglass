@@ -1615,3 +1615,261 @@ func TestValidateDebugSessionTemplateSpec_HybridModeBothMissing(t *testing.T) {
 		t.Errorf("expected 2 errors for hybrid mode with both configs missing, got %d: %v", len(errs), errs)
 	}
 }
+
+// =============================================================================
+// AllowedPodOperations Tests
+// =============================================================================
+
+func TestAllowedPodOperations_IsOperationAllowed_NilStruct(t *testing.T) {
+	var ops *AllowedPodOperations
+
+	// Nil struct should return backward-compatible defaults
+	tests := []struct {
+		operation string
+		expected  bool
+	}{
+		{"exec", true},
+		{"attach", true},
+		{"portforward", true},
+		{"log", false},
+		{"logs", false},
+		{"cp", false},
+		{"unknown", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.operation, func(t *testing.T) {
+			result := ops.IsOperationAllowed(tt.operation)
+			if result != tt.expected {
+				t.Errorf("IsOperationAllowed(%q) on nil struct = %v, want %v", tt.operation, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAllowedPodOperations_IsOperationAllowed_EmptyStruct(t *testing.T) {
+	ops := &AllowedPodOperations{}
+
+	// Empty struct with nil fields should use defaults (exec, attach, portforward enabled)
+	tests := []struct {
+		operation string
+		expected  bool
+	}{
+		{"exec", true},        // nil defaults to true
+		{"attach", true},      // nil defaults to true
+		{"portforward", true}, // nil defaults to true
+		{"log", false},        // nil defaults to false
+		{"logs", false},       // nil defaults to false
+		{"cp", false},         // nil defaults to false
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.operation, func(t *testing.T) {
+			result := ops.IsOperationAllowed(tt.operation)
+			if result != tt.expected {
+				t.Errorf("IsOperationAllowed(%q) on empty struct = %v, want %v", tt.operation, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAllowedPodOperations_IsOperationAllowed_AllEnabled(t *testing.T) {
+	boolTrue := true
+	ops := &AllowedPodOperations{
+		Exec:        &boolTrue,
+		Attach:      &boolTrue,
+		Logs:        &boolTrue,
+		PortForward: &boolTrue,
+		Cp:          &boolTrue,
+	}
+
+	tests := []struct {
+		operation string
+		expected  bool
+	}{
+		{"exec", true},
+		{"attach", true},
+		{"portforward", true},
+		{"log", true},
+		{"logs", true},
+		{"cp", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.operation, func(t *testing.T) {
+			result := ops.IsOperationAllowed(tt.operation)
+			if result != tt.expected {
+				t.Errorf("IsOperationAllowed(%q) with all enabled = %v, want %v", tt.operation, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAllowedPodOperations_IsOperationAllowed_AllDisabled(t *testing.T) {
+	boolFalse := false
+	ops := &AllowedPodOperations{
+		Exec:        &boolFalse,
+		Attach:      &boolFalse,
+		Logs:        &boolFalse,
+		PortForward: &boolFalse,
+		Cp:          &boolFalse,
+	}
+
+	tests := []struct {
+		operation string
+		expected  bool
+	}{
+		{"exec", false},
+		{"attach", false},
+		{"portforward", false},
+		{"log", false},
+		{"logs", false},
+		{"cp", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.operation, func(t *testing.T) {
+			result := ops.IsOperationAllowed(tt.operation)
+			if result != tt.expected {
+				t.Errorf("IsOperationAllowed(%q) with all disabled = %v, want %v", tt.operation, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAllowedPodOperations_IsOperationAllowed_LogsOnlyProfile(t *testing.T) {
+	// Use case: Read-only debugging - only logs allowed
+	boolTrue := true
+	boolFalse := false
+	ops := &AllowedPodOperations{
+		Exec:        &boolFalse,
+		Attach:      &boolFalse,
+		Logs:        &boolTrue,
+		PortForward: &boolFalse,
+		Cp:          &boolFalse,
+	}
+
+	tests := []struct {
+		operation string
+		expected  bool
+	}{
+		{"exec", false},
+		{"attach", false},
+		{"portforward", false},
+		{"log", true},
+		{"logs", true},
+		{"cp", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.operation, func(t *testing.T) {
+			result := ops.IsOperationAllowed(tt.operation)
+			if result != tt.expected {
+				t.Errorf("IsOperationAllowed(%q) logs-only profile = %v, want %v", tt.operation, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAllowedPodOperations_IsOperationAllowed_CoredumpProfile(t *testing.T) {
+	// Use case: Coredump extraction - cp and logs only, no exec
+	boolTrue := true
+	boolFalse := false
+	ops := &AllowedPodOperations{
+		Exec:        &boolFalse,
+		Attach:      &boolFalse,
+		Logs:        &boolTrue,
+		PortForward: &boolFalse,
+		Cp:          &boolTrue,
+	}
+
+	tests := []struct {
+		operation string
+		expected  bool
+	}{
+		{"exec", false},
+		{"attach", false},
+		{"portforward", false},
+		{"log", true},
+		{"logs", true},
+		{"cp", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.operation, func(t *testing.T) {
+			result := ops.IsOperationAllowed(tt.operation)
+			if result != tt.expected {
+				t.Errorf("IsOperationAllowed(%q) coredump profile = %v, want %v", tt.operation, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAllowedPodOperations_IsOperationAllowed_FullDebugProfile(t *testing.T) {
+	// Use case: Full debug access
+	boolTrue := true
+	ops := &AllowedPodOperations{
+		Exec:        &boolTrue,
+		Attach:      &boolTrue,
+		Logs:        &boolTrue,
+		PortForward: &boolTrue,
+		Cp:          &boolTrue,
+	}
+
+	tests := []struct {
+		operation string
+		expected  bool
+	}{
+		{"exec", true},
+		{"attach", true},
+		{"portforward", true},
+		{"log", true},
+		{"logs", true},
+		{"cp", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.operation, func(t *testing.T) {
+			result := ops.IsOperationAllowed(tt.operation)
+			if result != tt.expected {
+				t.Errorf("IsOperationAllowed(%q) full debug profile = %v, want %v", tt.operation, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAllowedPodOperations_InDebugSessionTemplateSpec(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	template := &DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Spec: DebugSessionTemplateSpec{
+			Mode: DebugSessionModeWorkload,
+			PodTemplateRef: &DebugPodTemplateReference{
+				Name: "basic-pod",
+			},
+			AllowedPodOperations: &AllowedPodOperations{
+				Exec:        &boolFalse,
+				Attach:      &boolFalse,
+				Logs:        &boolTrue,
+				PortForward: &boolFalse,
+				Cp:          &boolTrue,
+			},
+		},
+	}
+
+	if template.Spec.AllowedPodOperations == nil {
+		t.Fatal("AllowedPodOperations should be set")
+	}
+
+	if template.Spec.AllowedPodOperations.IsOperationAllowed("exec") {
+		t.Error("exec should be disabled")
+	}
+	if !template.Spec.AllowedPodOperations.IsOperationAllowed("logs") {
+		t.Error("logs should be enabled")
+	}
+	if !template.Spec.AllowedPodOperations.IsOperationAllowed("cp") {
+		t.Error("cp should be enabled")
+	}
+}

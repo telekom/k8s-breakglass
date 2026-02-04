@@ -268,6 +268,80 @@ type DebugSessionTemplateSpec struct {
 	// +optional
 	// +kubebuilder:default="15m"
 	GracePeriodBeforeExpiry string `json:"gracePeriodBeforeExpiry,omitempty"`
+
+	// allowedPodOperations configures which kubectl operations are permitted on debug pods.
+	// When nil, defaults to allowing exec, attach, and portforward (backward compatible).
+	// Use this to grant more restrictive access (e.g., logs-only for read-only debugging,
+	// or cp-only for file extraction from coredump volumes).
+	// +optional
+	AllowedPodOperations *AllowedPodOperations `json:"allowedPodOperations,omitempty"`
+}
+
+// AllowedPodOperations defines which kubectl operations are permitted on debug session pods.
+// Each field controls a specific pod subresource. When the parent struct is nil,
+// defaults are exec=true, attach=true, portforward=true for backward compatibility.
+type AllowedPodOperations struct {
+	// exec allows running commands inside containers via kubectl exec.
+	// Note: kubectl cp uses exec internally (runs tar), so enabling cp implicitly allows exec with tar.
+	// +optional
+	// +kubebuilder:default=true
+	Exec *bool `json:"exec,omitempty"`
+
+	// attach allows attaching to running container processes via kubectl attach.
+	// +optional
+	// +kubebuilder:default=true
+	Attach *bool `json:"attach,omitempty"`
+
+	// logs allows viewing container logs via kubectl logs.
+	// This is a read-only operation.
+	// +optional
+	// +kubebuilder:default=false
+	Logs *bool `json:"logs,omitempty"`
+
+	// portForward allows forwarding local ports to pod ports via kubectl port-forward.
+	// +optional
+	// +kubebuilder:default=true
+	PortForward *bool `json:"portForward,omitempty"`
+
+	// cp allows copying files to/from containers via kubectl cp.
+	// Note: kubectl cp uses exec internally (runs tar in the container).
+	// When cp is enabled but exec is disabled, only tar-based file operations are permitted.
+	// +optional
+	// +kubebuilder:default=false
+	Cp *bool `json:"cp,omitempty"`
+}
+
+// IsOperationAllowed checks if a specific pod operation is allowed.
+// If AllowedPodOperations is nil, returns default values for backward compatibility.
+func (a *AllowedPodOperations) IsOperationAllowed(operation string) bool {
+	if a == nil {
+		// Backward compatibility: exec, attach, portforward allowed by default
+		switch operation {
+		case "exec", "attach", "portforward":
+			return true
+		default:
+			return false
+		}
+	}
+
+	switch operation {
+	case "exec":
+		return a.Exec == nil || *a.Exec
+	case "attach":
+		return a.Attach == nil || *a.Attach
+	case "log", "logs":
+		return a.Logs != nil && *a.Logs
+	case "portforward":
+		return a.PortForward == nil || *a.PortForward
+	case "cp":
+		// cp uses exec internally, so check both
+		if a.Cp != nil && *a.Cp {
+			return true
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // DebugPodTemplateReference references a DebugPodTemplate.

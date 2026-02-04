@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Granular Pod Operations for Debug Sessions**: Control which kubectl operations are allowed on debug session pods
+  - New `AllowedPodOperations` type with toggles for `exec`, `attach`, `logs`, `portForward`, and `cp`
+  - `DebugSessionTemplateSpec.allowedPodOperations` field to configure permitted operations at template level
+  - `DebugSessionStatus.allowedPodOperations` caches resolved operations for webhook enforcement
+  - Backward compatible: nil `AllowedPodOperations` defaults to exec, attach, portforward (existing behavior)
+  - Use case: logs-only access for read-only debugging, or cp-only for coredump extraction
+  - Webhook now supports `log` subresource in addition to exec, attach, portforward
+  - Example configurations:
+    - Logs-only: `exec: false, attach: false, logs: true, portForward: false, cp: false`
+    - Coredump extraction: `exec: false, logs: true, cp: true`
+    - Full debug: `exec: true, attach: true, logs: true, portForward: true, cp: true`
+
 - **CLI Support for ExtraDeploy Variables**: Added `--set` flag to `bgctl debug session create` command
   - Use `--set key=value` to provide values for template `extraDeployVariables`
   - Can be repeated multiple times: `--set logLevel=debug --set enableTracing=true`

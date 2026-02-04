@@ -207,6 +207,11 @@ type DebugSessionStatus struct {
 	// +optional
 	AllowedPods []AllowedPodRef `json:"allowedPods,omitempty"`
 
+	// allowedPodOperations caches the resolved pod operations from the template.
+	// Used by the webhook to determine which operations are permitted.
+	// +optional
+	AllowedPodOperations *AllowedPodOperations `json:"allowedPodOperations,omitempty"`
+
 	// kubectlDebugStatus tracks kubectl debug operations for kubectl-debug mode.
 	// +optional
 	KubectlDebugStatus *KubectlDebugStatus `json:"kubectlDebugStatus,omitempty"`

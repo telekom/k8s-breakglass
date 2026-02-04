@@ -969,12 +969,12 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			expectAllowed: false,
 		},
 		{
-			name:        "non-exec request",
+			name:        "unsupported subresource (ephemeralcontainers)",
 			username:    "test-user",
 			clusterName: "test-cluster",
 			ra: &authorizationv1.ResourceAttributes{
 				Resource:    "pods",
-				Subresource: "logs",
+				Subresource: "ephemeralcontainers",
 				Namespace:   "default",
 				Name:        "test-pod",
 			},
@@ -1144,6 +1144,183 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			expectSession:   "ds-1",
 			expectReasonHas: "debug session",
 		},
+		// AllowedPodOperations test cases
+		{
+			name:        "log request allowed when logs enabled in AllowedPodOperations",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "log",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []v1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-logs", Namespace: "default"},
+					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: v1alpha1.DebugSessionStatus{
+						State: v1alpha1.DebugSessionStateActive,
+						AllowedPods: []v1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+							Logs: boolPtr(true),
+						},
+					},
+				},
+			},
+			expectAllowed:   true,
+			expectSession:   "ds-logs",
+			expectReasonHas: "log",
+		},
+		{
+			name:        "log request denied when logs not enabled in AllowedPodOperations",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "log",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []v1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-no-logs", Namespace: "default"},
+					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: v1alpha1.DebugSessionStatus{
+						State: v1alpha1.DebugSessionStateActive,
+						AllowedPods: []v1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+							Logs: boolPtr(false),
+						},
+					},
+				},
+			},
+			expectAllowed: false,
+		},
+		{
+			name:        "exec denied when explicitly disabled in AllowedPodOperations",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "exec",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []v1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-no-exec", Namespace: "default"},
+					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: v1alpha1.DebugSessionStatus{
+						State: v1alpha1.DebugSessionStateActive,
+						AllowedPods: []v1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+							Exec: boolPtr(false),
+							Logs: boolPtr(true),
+						},
+					},
+				},
+			},
+			expectAllowed: false,
+		},
+		{
+			name:        "portforward allowed with nil AllowedPodOperations (backward compat)",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "portforward",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []v1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-compat", Namespace: "default"},
+					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: v1alpha1.DebugSessionStatus{
+						State: v1alpha1.DebugSessionStateActive,
+						AllowedPods: []v1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						// AllowedPodOperations is nil - should use backward-compatible defaults
+					},
+				},
+			},
+			expectAllowed:   true,
+			expectSession:   "ds-compat",
+			expectReasonHas: "portforward",
+		},
+		{
+			name:        "attach allowed when enabled",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "attach",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []v1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-attach", Namespace: "default"},
+					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: v1alpha1.DebugSessionStatus{
+						State: v1alpha1.DebugSessionStateActive,
+						AllowedPods: []v1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+							Attach: boolPtr(true),
+						},
+					},
+				},
+			},
+			expectAllowed:   true,
+			expectSession:   "ds-attach",
+			expectReasonHas: "attach",
+		},
+		{
+			name:        "logs-only profile: logs allowed, exec denied",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "exec",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []v1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-logs-only", Namespace: "default"},
+					Spec:       v1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: v1alpha1.DebugSessionStatus{
+						State: v1alpha1.DebugSessionStateActive,
+						AllowedPods: []v1alpha1.AllowedPodRef{
+							{Namespace: "default", Name: "test-pod"},
+						},
+						Participants: []v1alpha1.DebugSessionParticipant{{User: "test-user", Role: v1alpha1.ParticipantRoleParticipant}},
+						AllowedPodOperations: &v1alpha1.AllowedPodOperations{
+							Exec:        boolPtr(false),
+							Attach:      boolPtr(false),
+							Logs:        boolPtr(true),
+							PortForward: boolPtr(false),
+						},
+					},
+				},
+			},
+			expectAllowed: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1174,6 +1351,11 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			}
 		})
 	}
+}
+
+// boolPtr returns a pointer to a bool value
+func boolPtr(b bool) *bool {
+	return &b
 }
 
 // TestBuildBreakglassLink tests the buildBreakglassLink helper function
@@ -2902,6 +3084,34 @@ func TestIsExecSubresource(t *testing.T) {
 	}
 }
 
+// TestIsDebugSessionSubresource tests the isDebugSessionSubresource helper function
+func TestIsDebugSessionSubresource(t *testing.T) {
+	tests := []struct {
+		subresource string
+		expected    bool
+	}{
+		{"exec", true},
+		{"attach", true},
+		{"portforward", true},
+		{"log", true},   // Now supported for debug sessions
+		{"logs", false}, // The actual Kubernetes subresource is "log" not "logs"
+		{"status", false},
+		{"", false},
+		{"scale", false},
+		{"binding", false},
+		{"ephemeralcontainers", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.subresource, func(t *testing.T) {
+			result := isDebugSessionSubresource(tt.subresource)
+			if result != tt.expected {
+				t.Errorf("isDebugSessionSubresource(%q) = %v, expected %v", tt.subresource, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestEmitAuditWithResourceAndNonResourceAttributes tests audit functions with various SAR configurations
 func TestEmitAuditWithResourceAndNonResourceAttributes(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
@@ -3064,9 +3274,4 @@ func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
 			wc.emitPodSecurityAudit(ctx, "test@example.com", []string{"group1"}, "cluster1", sar, "policy1", tc.result)
 		})
 	}
-}
-
-// boolPtr is a helper function to get a pointer to a bool value
-func boolPtr(b bool) *bool {
-	return &b
 }
