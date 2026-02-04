@@ -85,28 +85,34 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 	}
 }
 
-// Get returns cached ClusterConfig or fetches it (metadata only usage for now).
+// cacheKey generates a namespaced cache key for ClusterConfig or Secret lookups.
+// Both namespace and name are required to avoid cache collisions between resources
+// with the same name in different namespaces.
 func cacheKey(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
 }
 
-func secretCacheKey(namespace, name string) string {
-	return fmt.Sprintf("%s/%s", namespace, name)
-}
-
-// Get returns a ClusterConfig. If namespace is the empty string the method
-// will list across all namespaces and match by metadata.name (backwards
-// compatible behavior). Callers that know the namespace should pass it to
-// avoid the cross-namespace list.
+// GetAcrossAllNamespaces returns a ClusterConfig by name, searching across all namespaces.
+// This method first checks the cache for an exact name match, then falls back to listing
+// all ClusterConfigs if not found. For better performance when the namespace is known,
+// callers should use GetInNamespace instead.
+//
+// Note: This method performs an O(n) scan of cached entries. For high-throughput scenarios
+// with many cached ClusterConfigs, consider using GetInNamespace with a known namespace.
 func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
-	key := cacheKey("", name)
+	// Try exact namespace/name lookup first if we have cached entries
 	p.mu.RLock()
-	cfg, ok := p.data[key]
-	p.mu.RUnlock()
-	if ok {
-		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
-		return cfg, nil
+	// First, try to find a cached entry by scanning for any namespace with this name
+	// We match by the ClusterConfig's Name field to ensure exact match (avoids
+	// issues with similar cluster names like "prod" vs "my-prod").
+	for _, cfg := range p.data {
+		if cfg != nil && cfg.Name == name {
+			p.mu.RUnlock()
+			metrics.ClusterCacheHits.WithLabelValues(name).Inc()
+			return cfg, nil
+		}
 	}
+	p.mu.RUnlock()
 	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
 	// Namespace not provided: preserve legacy behavior and list across namespaces
@@ -270,7 +276,7 @@ func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *te
 	}
 
 	// Track secret reference for cache invalidation
-	secretRefKey := secretCacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
+	secretRefKey := cacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
 
 	p.mu.Lock()
 	p.clusterToSecret[cc.Name] = secretRefKey
@@ -302,7 +308,7 @@ func (p *ClientProvider) Invalidate(name string) {
 
 // InvalidateSecret removes all cached entries (ClusterConfig + rest.Config) that rely on a specific secret.
 func (p *ClientProvider) InvalidateSecret(namespace, name string) {
-	key := secretCacheKey(namespace, name)
+	key := cacheKey(namespace, name)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	clusters, ok := p.secretToClusters[key]
@@ -318,7 +324,7 @@ func (p *ClientProvider) InvalidateSecret(namespace, name string) {
 
 // IsSecretTracked reports whether the provider currently caches any cluster configs referencing the secret.
 func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
-	key := secretCacheKey(namespace, name)
+	key := cacheKey(namespace, name)
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	_, ok := p.secretToClusters[key]
