@@ -128,6 +128,11 @@ type OIDCAuthConfig struct {
 	// +optional
 	InsecureSkipTLSVerify bool `json:"insecureSkipTLSVerify,omitempty"`
 
+	// allowTOFU enables Trust On First Use (TOFU) for cluster or issuer CAs when no CA is provided.
+	// When false (default), the controller relies on system trust or explicit CA configuration.
+	// +optional
+	AllowTOFU bool `json:"allowTOFU,omitempty"`
+
 	// ========================================
 	// Token Exchange Configuration (Optional)
 	// ========================================
@@ -223,6 +228,11 @@ type OIDCFromIdentityProviderConfig struct {
 	// insecureSkipTLSVerify skips TLS verification for the target cluster (NOT recommended for production).
 	// +optional
 	InsecureSkipTLSVerify bool `json:"insecureSkipTLSVerify,omitempty"`
+
+	// allowTOFU enables Trust On First Use (TOFU) for cluster CAs when no CA is provided.
+	// When false (default), the controller relies on system trust or explicit CA configuration.
+	// +optional
+	AllowTOFU bool `json:"allowTOFU,omitempty"`
 }
 
 // ClusterConfigSpec defines metadata and secret reference for a managed tenant cluster.

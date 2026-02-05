@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SAR Processing Phase Metrics**: New Prometheus histogram `breakglass_webhook_sar_phase_duration_seconds` tracks timing for each phase of SubjectAccessReview authorization
+  - Phases tracked: `parse`, `cluster_config`, `sessions`, `debug_session`, `deny_policy`, `rbac_check`, `session_sars`, `escalations`, `total`
+  - Enables bottleneck identification and performance optimization
+  - See [metrics documentation](docs/metrics.md#sar-processing-phase-timing) for PromQL examples
+
+- **Enhanced Test Coverage**: Added comprehensive tests for cluster communication failures and cleanup/finalizer scenarios
+  - `pkg/cluster/communication_failure_test.go`: Tests for `ClientProvider` error handling including secret not found, invalid kubeconfig, network errors, and API error classification
+  - `pkg/config/cluster_config_cleanup_test.go`: Tests for partial cleanup failure, list errors blocking cleanup, mixed session types, multi-namespace cleanup, terminal session handling
+
 - **kstatus Compliance**: All CRDs now fully comply with [kstatus](https://github.com/kubernetes-sigs/cli-utils/blob/master/pkg/kstatus/README.md) requirements for proper reconciliation status detection
   - Added `observedGeneration` field to `MailProviderStatus`, `AuditConfigStatus`, `BreakglassSessionStatus`, and `DebugSessionStatus`
   - Controllers now populate `status.observedGeneration` when updating status to enable generation tracking
@@ -78,6 +87,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Helm Chart: DenyPolicy Support**: Added `denyPolicies` section to the escalation-config chart
   - Full support for cluster-scoped DenyPolicy resources
+
+### Changed
+
+- Hide the Debug Panel UI in production builds unless `VITE_ENABLE_DEBUG_PANEL` is set.
+- Use generated apply-configurations for SSA object updates where available (CRDs and Secrets).
   - Configure `appliesTo` (groups/users), `rules` (verbs/resources), `podSecurityRules`
   - Supports `precedence` field for policy priority ordering
   - Test values in `test-values/deny-policies.yaml` with 7 example policies

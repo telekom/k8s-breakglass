@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -150,7 +151,7 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 
 	// Issuer didn't match any configured IDP - provide helpful guidance
 	// Unless hardened mode is enabled, list available providers to help user identify the right one
-	if wc.config.Server.HardenedIDPHints {
+	if wc.config.HardenedIDPHintsEnabled() {
 		// Hardened mode: don't expose available provider names to prevent reconnaissance
 		return "(Your token issuer is not configured for this cluster)"
 	}
@@ -278,9 +279,14 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 		return false, "", ""
 	}
 
-	// List active debug sessions for this cluster
+	// List active debug sessions for this cluster using indexed fields
 	debugSessionList := &v1alpha1.DebugSessionList{}
-	if err := wc.escalManager.List(ctx, debugSessionList); err != nil {
+	fieldSelector := client.MatchingFields{
+		"spec.cluster":             clusterName,
+		"status.state":             string(v1alpha1.DebugSessionStateActive),
+		"status.participants.user": username,
+	}
+	if err := wc.escalManager.List(ctx, debugSessionList, fieldSelector); err != nil {
 		reqLog.Warnw("Failed to list debug sessions for pod operation check", "error", err)
 		return false, "", ""
 	}
@@ -405,11 +411,16 @@ func (b WebhookController) Handlers() []gin.HandlerFunc {
 }
 
 func (wc *WebhookController) handleAuthorize(c *gin.Context) {
+	startTime := time.Now()
 	clusterName := c.Param("cluster_name")
 	// record incoming SAR request (label by cluster)
 	metrics.WebhookSARRequests.WithLabelValues(clusterName).Inc()
 	ctx := c.Request.Context()
 	wc.log.With("cluster", clusterName).Debug("Processing authorization request for cluster")
+
+	// Initialize phase tracker for SAR performance monitoring
+	phaseTracker := NewSARPhaseTracker(clusterName, wc.log)
+	phaseTracker.StartPhase() // Start parse phase
 
 	sar := authorizationv1.SubjectAccessReview{}
 
@@ -433,21 +444,17 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	// Log raw request body at debug (truncate to 8KB to avoid huge logs)
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
-
-	rawLog := string(bodyBytes)
-	if len(rawLog) > 8192 {
-		rawLog = rawLog[:8192] + "...(truncated)"
-	}
-	reqLog.Debugw("Raw SubjectAccessReview request body", "body", rawLog)
+	reqLog.Debugw("SubjectAccessReview request received", "bodySize", len(bodyBytes))
 
 	// Now that we have an enriched request logger, record handler entry with cluster
 	reqLog.Debugw("handleAuthorize entered", "cluster", clusterName)
 
 	if err := json.Unmarshal(bodyBytes, &sar); err != nil {
-		reqLog.With("error", err.Error()).Errorw("Failed to decode SubjectAccessReview body (raw payload logged)", "raw", rawLog)
+		reqLog.With("error", err.Error()).Errorw("Failed to decode SubjectAccessReview body", "bodySize", len(bodyBytes))
 		c.Status(http.StatusUnprocessableEntity)
 		return
 	}
+	phaseTracker.EndPhase(PhaseParse) // End parse phase
 
 	reqLog.Debug("Received SubjectAccessReview")
 	actionSummary := summarizeAction(&sar)
@@ -455,6 +462,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	username := sar.Spec.User
 	reqLog.Infow("Processing authorization", "username", username, "groupsRequested", sar.Spec.Groups)
 
+	phaseTracker.StartPhase() // Start cluster_config phase
 	var clusterCfg *v1alpha1.ClusterConfig
 	if wc.ccProvider != nil {
 		cfg, cfgErr := wc.getClusterConfigAcrossNamespaces(ctx, clusterName)
@@ -463,6 +471,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				reason := fmt.Sprintf("Cluster %q is not registered with Breakglass, so %s cannot be authorized yet. Ask your platform administrators to onboard the cluster or choose one of the onboarded clusters.", clusterName, actionSummary)
 				reason = wc.finalizeReason(reason, false, clusterName)
 				metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
+				metrics.WebhookSARDuration.WithLabelValues(clusterName, "denied").Observe(time.Since(startTime).Seconds())
 				if sar.Spec.ResourceAttributes != nil {
 					ra := sar.Spec.ResourceAttributes
 					metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "denied", "cluster-missing").Inc()
@@ -484,6 +493,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 		clusterCfg = cfg
 	}
+	phaseTracker.EndPhase(PhaseClusterConfig) // End cluster_config phase
 
 	// Emit the actual requested API action (from SAR) at Info level for observability.
 	// This includes resource attributes (verb, group, resource, namespace, name, subresource)
@@ -537,26 +547,32 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 	}
 
+	phaseTracker.StartPhase() // Start sessions phase
 	groups, sessions, idpMismatches, tenant, err := wc.getUserGroupsAndSessionsWithIDPInfo(ctx, username, clusterName, issuer, clusterCfg)
 	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	phaseTracker.EndPhase(PhaseSessions) // End sessions phase
 	reqLog.With("groups", groups, "sessions", len(sessions), "tenant", tenant, "idpMismatches", len(idpMismatches)).Debug("Retrieved user groups for cluster")
 
 	// EARLY DEBUG SESSION CHECK: For pod operations, debug sessions take precedence over deny policies.
 	// This allows authorized debug sessions to perform operations even when deny policies would normally block.
 	// This must be checked BEFORE deny policy evaluation to ensure debug sessions work correctly.
 	// Supports exec, attach, portforward, and log subresources based on AllowedPodOperations config.
+	phaseTracker.StartPhase() // Start debug_session phase (may be brief if no check needed)
 	if sar.Spec.ResourceAttributes != nil {
 		ra := sar.Spec.ResourceAttributes
 		if ra.Resource == "pods" && isDebugSessionSubresource(ra.Subresource) && ra.Name != "" {
 			if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(ctx, username, clusterName, ra, reqLog); debugAllowed {
+				phaseTracker.EndPhase(PhaseDebugSession) // End debug_session phase
+				phaseTracker.LogSummary()                // Log timing summary
 				reqLog.Infow("Debug session authorizing pod operation (bypassing deny policies)",
 					"session", debugSession, "pod", ra.Name, "namespace", ra.Namespace, "operation", ra.Subresource)
 				metrics.WebhookSARAllowed.WithLabelValues(clusterName).Inc()
 				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "allowed", "debug-session").Inc()
+				metrics.WebhookSARDuration.WithLabelValues(clusterName, "allowed").Observe(time.Since(startTime).Seconds())
 				reason := wc.finalizeReason(debugReason, true, clusterName)
 				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
 					ApiVersion: sar.APIVersion,
@@ -567,8 +583,10 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			}
 		}
 	}
+	phaseTracker.EndPhase(PhaseDebugSession) // End debug_session phase (even if no early return)
 
 	// DENY POLICY EVALUATION (phase 1 - cluster/tenant global)
+	phaseTracker.StartPhase() // Start deny_policy phase
 	if sar.Spec.ResourceAttributes != nil {
 		// Get PodSecurityOverrides from user's active session escalation (if any)
 		podSecurityOverrides := wc.getPodSecurityOverridesFromSessions(ctx, sessions, reqLog)
@@ -636,6 +654,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				// Emit denied metric for global policy short-circuit
 				metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
 				metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "global").Inc()
+				metrics.WebhookSARDuration.WithLabelValues(clusterName, "denied").Observe(time.Since(startTime).Seconds())
 				reqLog.Debugw("Global denyEval matched", "policy", pol, "action", act)
 
 				// Emit audit event for policy denial
@@ -695,6 +714,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 					// Emit denied metric for session-scoped policy short-circuit
 					metrics.WebhookSARDenied.WithLabelValues(clusterName).Inc()
 					metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, act.Verb, act.APIGroup, act.Resource, act.Namespace, act.Subresource, "denied", "session").Inc()
+					metrics.WebhookSARDuration.WithLabelValues(clusterName, "denied").Observe(time.Since(startTime).Seconds())
 					reqLog.Debugw("Session denyEval matched", "policy", pol, "session", s.Name, "action", act)
 
 					// Emit audit event for session-scoped policy denial
@@ -722,17 +742,21 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 						reason = fmt.Sprintf("%s %s", reason, hint)
 					}
 					reason = wc.finalizeReason(reason, false, clusterName)
+					phaseTracker.EndPhase(PhaseDenyPolicy) // End deny_policy phase (early exit)
+					phaseTracker.LogSummary()              // Log timing summary
 					c.JSON(http.StatusOK, &SubjectAccessReviewResponse{ApiVersion: sar.APIVersion, Kind: sar.Kind, Status: SubjectAccessReviewResponseStatus{Allowed: false, Reason: reason}})
 					return
 				}
 			}
 		}
 	}
+	phaseTracker.EndPhase(PhaseDenyPolicy) // End deny_policy phase
 
 	// NOTE: If we want to know specific group that allowed user to perform the operation we would
 	// need to iterate over groups (sessions) and note the first that is ok. Then we could update its
 	// last used parameters and idle value.
 	// Perform standard RBAC check against target cluster (not hub) using its kubeconfig
+	phaseTracker.StartPhase() // Start rbac_check phase
 	var can bool
 	var rbacErr error
 	// Log input to RBAC check for easier debugging
@@ -753,6 +777,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	} else {
 		can, rbacErr = wc.canDoFn(ctx, nil, groups, sar, clusterName)
 	}
+	phaseTracker.EndPhase(PhaseRBAC) // End rbac_check phase
 	if rbacErr != nil {
 		msg := rbacErr.Error()
 		// Treat missing rest config or legacy context absence as denial (not internal error).
@@ -797,6 +822,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 		// Session SAR checks: attempt authorization impersonating each granted group via admin kubeconfig.
 		// This handles both resource and non-resource attributes.
+		phaseTracker.StartPhase() // Start session_sars phase
 		if wc.ccProvider != nil && (sar.Spec.ResourceAttributes != nil || sar.Spec.NonResourceAttributes != nil) {
 			if rc, err := wc.ccProvider.GetRESTConfig(ctx, clusterName); err != nil {
 				reqLog.With("error", err.Error()).Warn("Unable to load target cluster rest.Config for SAR; skipping session SAR checks")
@@ -811,6 +837,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 				reqLog.Infow("Final accepted impersonated group", "username", username, "cluster", clusterName, "grantedGroup", grp, "session", sesName, "impersonatedGroup", impersonated)
 			}
 		}
+		phaseTracker.EndPhase(PhaseSessionSARs) // End session_sars phase
 
 		// Debug session pod exec check: allow exec into debug pods if user is a session participant
 		if !allowed && sar.Spec.ResourceAttributes != nil {
@@ -826,6 +853,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 		// Get user groups from active sessions
 		// Pass empty issuer string since we're just counting available escalations, not filtering by IDP
+		phaseTracker.StartPhase() // Start escalations phase
 		activeUserGroups, _, _, err := wc.getUserGroupsAndSessions(ctx, username, clusterName, "", clusterCfg)
 		if err != nil {
 			reqLog.With("error", err.Error()).Error("Failed to retrieve user groups for cluster")
@@ -883,6 +911,7 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 			reqLog.Debugw("Escalations filtered by requestor IDP", "beforeFilter", len(escals), "afterFilter", len(idpFilteredEscals), "issuer", issuer)
 		}
 		escals = idpFilteredEscals
+		phaseTracker.EndPhase(PhaseEscalations) // End escalations phase
 
 		if len(escals) > 0 {
 			reqLog.Debugw("Escalation paths available", "count", len(escals))
@@ -893,6 +922,9 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		}
 		reqLog.With("escalations", escals).Debug("Available escalation paths for user")
 	}
+
+	// Log timing summary at the end of processing
+	phaseTracker.LogSummary()
 
 	if allowed && reason == "" { // populate positive reason
 		switch allowSource {
@@ -1059,6 +1091,13 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 	// Emit audit event for authorization decisions
 	wc.emitAccessDecisionAudit(ctx, username, sar.Spec.Groups, clusterName, &sar, allowed, allowSource, reason)
+
+	// Record total SAR processing duration
+	decision := "allowed"
+	if !allowed {
+		decision = "denied"
+	}
+	metrics.WebhookSARDuration.WithLabelValues(clusterName, decision).Observe(time.Since(startTime).Seconds())
 
 	// Ensure correlation ID header is present for apiserver correlation
 	if cidv, ok := c.Get("cid"); ok {

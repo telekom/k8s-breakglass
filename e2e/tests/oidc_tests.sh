@@ -426,7 +426,8 @@ cat <<CAEOF
 $(echo "$keycloak_ca" | sed 's/^/      /')
 CAEOF
 fi)
-    # Use TOFU for cluster CA - controller will discover and persist
+    # Enable TOFU and provide caSecretRef for cluster CA - controller will discover and persist
+    allowTOFU: true
     caSecretRef:
       name: ${ca_secret_name}
       namespace: ${NAMESPACE}
@@ -572,7 +573,8 @@ cat <<CAEOF
 $(echo "$keycloak_ca" | sed 's/^/      /')
 CAEOF
 fi)
-    # Use TOFU for cluster CA
+    # Enable TOFU for cluster CA
+    allowTOFU: true
     caSecretRef:
       name: ${ca_secret_name}
       namespace: ${NAMESPACE}
@@ -728,7 +730,8 @@ spec:
       name: ${KEYCLOAK_CLIENT_SECRET_NAME}
       namespace: ${NAMESPACE}
       key: client-secret
-    # Provide caSecretRef for TOFU to persist discovered CA
+    # Enable TOFU and provide caSecretRef for it to persist discovered CA
+    allowTOFU: true
     caSecretRef:
       name: ${ca_secret_name}
       namespace: ${NAMESPACE}
@@ -759,7 +762,8 @@ spec:
     # Provide Keycloak CA for OIDC discovery
     certificateAuthority: |
 $(echo "$keycloak_ca" | sed 's/^/      /')
-    # Provide caSecretRef for TOFU to persist discovered cluster CA
+    # Enable TOFU and provide caSecretRef for it to persist discovered cluster CA
+    allowTOFU: true
     caSecretRef:
       name: ${ca_secret_name}
       namespace: ${NAMESPACE}
@@ -977,7 +981,8 @@ cat <<CAEOF
 $(echo "$keycloak_ca" | sed 's/^/      /')
 CAEOF
 fi)
-    # Use TOFU for cluster CA
+    # Enable TOFU for cluster CA
+    allowTOFU: true
     caSecretRef:
       name: ${ca_secret_name}
       namespace: ${NAMESPACE}

@@ -29,12 +29,22 @@ type AuxiliaryResourceStatusApplyConfiguration struct {
 	Created *bool `json:"created,omitempty"`
 	// createdAt is when the resource was created.
 	CreatedAt *string `json:"createdAt,omitempty"`
+	// ready indicates if the resource has reached its desired state (computed via kstatus).
+	Ready *bool `json:"ready,omitempty"`
+	// readyAt is when the resource became ready.
+	ReadyAt *string `json:"readyAt,omitempty"`
+	// readinessStatus is the kstatus status of the resource (Current, InProgress, Failed, etc.).
+	ReadinessStatus *string `json:"readinessStatus,omitempty"`
 	// deleted indicates if the resource was deleted.
 	Deleted *bool `json:"deleted,omitempty"`
 	// deletedAt is when the resource was deleted.
 	DeletedAt *string `json:"deletedAt,omitempty"`
 	// error contains any error message from creation or deletion.
 	Error *string `json:"error,omitempty"`
+	// additionalResources tracks extra resources from multi-document YAML templates.
+	// When a templateString produces multiple YAML documents, the first document is tracked
+	// in the fields above, and any additional documents are tracked here.
+	AdditionalResources []AdditionalResourceRefApplyConfiguration `json:"additionalResources,omitempty"`
 }
 
 // AuxiliaryResourceStatusApplyConfiguration constructs a declarative configuration of the AuxiliaryResourceStatus type for use with
@@ -107,6 +117,30 @@ func (b *AuxiliaryResourceStatusApplyConfiguration) WithCreatedAt(value string) 
 	return b
 }
 
+// WithReady sets the Ready field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Ready field is set to the value of the last call.
+func (b *AuxiliaryResourceStatusApplyConfiguration) WithReady(value bool) *AuxiliaryResourceStatusApplyConfiguration {
+	b.Ready = &value
+	return b
+}
+
+// WithReadyAt sets the ReadyAt field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ReadyAt field is set to the value of the last call.
+func (b *AuxiliaryResourceStatusApplyConfiguration) WithReadyAt(value string) *AuxiliaryResourceStatusApplyConfiguration {
+	b.ReadyAt = &value
+	return b
+}
+
+// WithReadinessStatus sets the ReadinessStatus field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ReadinessStatus field is set to the value of the last call.
+func (b *AuxiliaryResourceStatusApplyConfiguration) WithReadinessStatus(value string) *AuxiliaryResourceStatusApplyConfiguration {
+	b.ReadinessStatus = &value
+	return b
+}
+
 // WithDeleted sets the Deleted field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Deleted field is set to the value of the last call.
@@ -128,5 +162,18 @@ func (b *AuxiliaryResourceStatusApplyConfiguration) WithDeletedAt(value string) 
 // If called multiple times, the Error field is set to the value of the last call.
 func (b *AuxiliaryResourceStatusApplyConfiguration) WithError(value string) *AuxiliaryResourceStatusApplyConfiguration {
 	b.Error = &value
+	return b
+}
+
+// WithAdditionalResources adds the given value to the AdditionalResources field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the AdditionalResources field.
+func (b *AuxiliaryResourceStatusApplyConfiguration) WithAdditionalResources(values ...*AdditionalResourceRefApplyConfiguration) *AuxiliaryResourceStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithAdditionalResources")
+		}
+		b.AdditionalResources = append(b.AdditionalResources, *values[i])
+	}
 	return b
 }

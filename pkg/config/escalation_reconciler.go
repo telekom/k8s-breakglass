@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -23,17 +22,15 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 )
 
-// EscalationReconciler watches BreakglassEscalation CRs and caches escalation→IDP mappings
-// to enable efficient authorization checks without querying the APIServer on every request.
+// EscalationReconciler watches BreakglassEscalation CRs and validates their configuration.
 //
-// Caching Strategy:
-// - Maintains an in-memory map: { escalationName: [allowedIDP1, allowedIDP2, ...] }
-// - Cache is updated whenever BreakglassEscalation CRs change
-// - API calls use the cache to avoid DDoSing the Kubernetes APIServer
-// - Cache is thread-safe using RWMutex
+// Data Access:
+// - Uses controller-runtime's informer-based cache for reads (automatic sync)
+// - GetEscalationIDPMapping() computes the mapping from the controller-runtime cache directly
+// - No need for manual TTL-based caching - informers are event-driven and always up-to-date
 //
 // Usage:
-// - Call GetCachedEscalationIDPMapping() to retrieve the current mapping
+// - Call GetEscalationIDPMapping(ctx) to retrieve the current mapping
 // - Called by /api/config/idps endpoint to populate escalationIDPMapping response
 type EscalationReconciler struct {
 	client   client.Client
@@ -46,10 +43,6 @@ type EscalationReconciler struct {
 	onError func(ctx context.Context, err error)
 	// resyncPeriod defines the full list reconciliation interval (default 10m)
 	resyncPeriod time.Duration
-
-	// Cache for escalation→IDP mapping to avoid APIServer queries
-	escalationIDPMappingMutex sync.RWMutex
-	escalationIDPMapping      map[string][]string // { escalationName: [idp1, idp2, ...] }
 }
 
 func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
@@ -69,13 +62,12 @@ func NewEscalationReconciler(
 		resyncPeriod = 10 * time.Minute
 	}
 	return &EscalationReconciler{
-		client:               c,
-		logger:               logger,
-		recorder:             recorder,
-		onReload:             onReload,
-		onError:              onError,
-		resyncPeriod:         resyncPeriod,
-		escalationIDPMapping: make(map[string][]string),
+		client:       c,
+		logger:       logger,
+		recorder:     recorder,
+		onReload:     onReload,
+		onError:      onError,
+		resyncPeriod: resyncPeriod,
 	}
 }
 
@@ -99,7 +91,14 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 	if err := r.client.Get(ctx, req.NamespacedName, escalation); err != nil {
 		r.logger.Warnw("Failed to fetch BreakglassEscalation for validation",
 			"error", err)
-		return reconcile.Result{}, client.IgnoreNotFound(err)
+		if apierrors.IsNotFound(err) {
+			// Resource deleted - call onReload to refresh any dependent state
+			if r.onReload != nil {
+				_ = r.onReload(ctx)
+			}
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, err
 	}
 
 	// Validate escalation configuration and references
@@ -218,7 +217,8 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 				"escalation", escalation.Name,
 				"error", err)
 		}
-		return reconcile.Result{}, validationErrors[0].error
+		// Validation errors are persisted to status; avoid requeue storms for invalid resources.
+		return reconcile.Result{}, nil
 	}
 
 	// All validations passed - set all conditions to true
@@ -253,17 +253,6 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		return reconcile.Result{}, err
 	}
 
-	// Update the escalation→IDP mapping cache
-	if err := r.updateEscalationIDPMapping(ctx); err != nil {
-		r.logger.Errorw("Failed to update escalation→IDP mapping cache",
-			"error", err)
-		if r.onError != nil {
-			r.onError(ctx, err)
-		}
-		// Requeue with backoff
-		return reconcile.Result{RequeueAfter: 1 * time.Second}, err
-	}
-
 	// Call optional onReload callback
 	if r.onReload != nil {
 		if err := r.onReload(ctx); err != nil {
@@ -281,51 +270,48 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 	return reconcile.Result{}, nil
 }
 
-// updateEscalationIDPMapping fetches all BreakglassEscalation CRs and builds the escalation→IDP mapping cache.
-func (r *EscalationReconciler) updateEscalationIDPMapping(ctx context.Context) error {
-	escalations := &breakglassv1alpha1.BreakglassEscalationList{}
-	if err := r.client.List(ctx, escalations); err != nil {
-		return fmt.Errorf("failed to list BreakglassEscalation CRs: %w", err)
+// GetEscalationIDPMapping returns the escalation→IDP mapping computed from the current state.
+// This queries the controller-runtime informer cache directly (no APIServer call).
+// The informer cache is automatically synced via watch events, so data is always up-to-date.
+func (r *EscalationReconciler) GetEscalationIDPMapping(ctx context.Context) (map[string][]string, error) {
+	if r.client == nil {
+		return map[string][]string{}, nil
 	}
 
-	// Build the mapping
-	newMapping := make(map[string][]string)
-	for i := range escalations.Items {
-		esc := &escalations.Items[i]
-		if len(esc.Spec.AllowedIdentityProviders) > 0 {
-			// Copy the slice to avoid external modifications
-			idps := make([]string, len(esc.Spec.AllowedIdentityProviders))
-			copy(idps, esc.Spec.AllowedIdentityProviders)
-			newMapping[esc.Name] = idps
+	escalationList := &breakglassv1alpha1.BreakglassEscalationList{}
+	if err := r.client.List(ctx, escalationList); err != nil {
+		r.logger.Errorw("failed to list escalations for IDP mapping", "error", err)
+		return nil, err
+	}
+
+	// Build the mapping from escalation name to allowed IDPs
+	result := make(map[string][]string)
+	for _, escalation := range escalationList.Items {
+		if len(escalation.Spec.AllowedIdentityProviders) > 0 {
+			idps := make([]string, len(escalation.Spec.AllowedIdentityProviders))
+			copy(idps, escalation.Spec.AllowedIdentityProviders)
+			result[escalation.Name] = idps
 		}
 	}
 
-	// Update cache atomically
-	r.escalationIDPMappingMutex.Lock()
-	r.escalationIDPMapping = newMapping
-	r.escalationIDPMappingMutex.Unlock()
-
-	r.logger.Debugw("Updated escalation→IDP mapping cache",
-		"escalationCount", len(newMapping),
-		"mapping", newMapping)
-
-	return nil
+	return result, nil
 }
 
-// GetCachedEscalationIDPMapping returns a copy of the current escalation→IDP mapping.
-// Safe for concurrent access - returns a copy to prevent external modifications.
+// GetCachedEscalationIDPMapping returns the escalation→IDP mapping.
+// Deprecated: Use GetEscalationIDPMapping(ctx) instead. This method exists for backward compatibility.
+// It creates a background context internally which is not ideal for tracing/cancellation.
 func (r *EscalationReconciler) GetCachedEscalationIDPMapping() map[string][]string {
-	r.escalationIDPMappingMutex.RLock()
-	defer r.escalationIDPMappingMutex.RUnlock()
-
-	// Return a copy to prevent external modifications
-	result := make(map[string][]string, len(r.escalationIDPMapping))
-	for k, v := range r.escalationIDPMapping {
-		idps := make([]string, len(v))
-		copy(idps, v)
-		result[k] = idps
+	if r.logger == nil {
+		// Handle case where reconciler was not properly initialized
+		return map[string][]string{}
 	}
-	return result
+	ctx := context.Background()
+	mapping, err := r.GetEscalationIDPMapping(ctx)
+	if err != nil {
+		r.logger.Errorw("failed to get escalation IDP mapping", "error", err)
+		return map[string][]string{}
+	}
+	return mapping
 }
 
 // SetupWithManager registers this reconciler with the controller-runtime manager.

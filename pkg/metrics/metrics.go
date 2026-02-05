@@ -62,6 +62,18 @@ var (
 		Name: "breakglass_webhook_sar_requests_total",
 		Help: "Total number of incoming SubjectAccessReview requests to the webhook",
 	}, []string{"cluster"})
+	// SAR processing duration histogram for performance monitoring
+	WebhookSARDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_webhook_sar_duration_seconds",
+		Help:    "Time taken to process SubjectAccessReview requests",
+		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1},
+	}, []string{"cluster", "decision"})
+	// SAR processing duration by phase for detailed performance analysis
+	WebhookSARPhaseDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "breakglass_webhook_sar_phase_duration_seconds",
+		Help:    "Time taken for each phase of SAR processing",
+		Buckets: []float64{.0001, .0005, .001, .005, .01, .025, .05, .1},
+	}, []string{"cluster", "phase"})
 	// Structured SAR request metric keyed by action components. Be careful with
 	// cardinality; we intentionally omit object name from labels to reduce
 	// cardinality while still capturing the exact request action.
@@ -551,6 +563,8 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(IndexRegistrationTotal)
 
 	ctrlmetrics.Registry.MustRegister(WebhookSARRequests)
+	ctrlmetrics.Registry.MustRegister(WebhookSARDuration)
+	ctrlmetrics.Registry.MustRegister(WebhookSARPhaseDuration)
 	ctrlmetrics.Registry.MustRegister(WebhookSARRequestsByAction)
 	ctrlmetrics.Registry.MustRegister(WebhookSARAllowed)
 	ctrlmetrics.Registry.MustRegister(WebhookSARDenied)

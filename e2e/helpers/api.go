@@ -175,8 +175,6 @@ func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req Session
 				}
 			}
 
-			// Brief pause for API server cache invalidation
-			time.Sleep(100 * time.Millisecond)
 			lastErr = err
 			continue
 		}

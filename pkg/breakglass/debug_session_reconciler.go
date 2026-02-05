@@ -34,6 +34,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
@@ -996,9 +997,22 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 	}
 
 	// Build and deploy workload
-	workload, err := c.buildWorkload(ds, template, binding, podTemplate, targetNs)
+	workload, podTemplateResources, err := c.buildWorkload(ds, template, binding, podTemplate, targetNs)
 	if err != nil {
 		return fmt.Errorf("failed to build workload: %w", err)
+	}
+
+	// Deploy additional resources from multi-document pod templates BEFORE the workload
+	// (e.g., PVCs, ConfigMaps, Secrets that the pod needs)
+	if len(podTemplateResources) > 0 {
+		log.Infow("Deploying pod template resources",
+			"count", len(podTemplateResources),
+			"debugSession", ds.Name)
+		for _, res := range podTemplateResources {
+			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs); err != nil {
+				return fmt.Errorf("failed to deploy pod template resource %s/%s: %w", res.GetKind(), res.GetName(), err)
+			}
+		}
 	}
 
 	// Capture GVK before Create call as Kubernetes client clears TypeMeta after creation
@@ -1041,12 +1055,14 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 	return nil
 }
 
-// buildWorkload creates the DaemonSet or Deployment for debug pods
-func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, podTemplate *v1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, error) {
+// buildWorkload creates the DaemonSet or Deployment for debug pods.
+// It also returns any additional resources from multi-document pod templates
+// that should be deployed alongside the workload.
+func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, podTemplate *v1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	workloadName := fmt.Sprintf("debug-%s", ds.Name)
-	podSpec, err := c.buildPodSpec(ds, template, podTemplate)
+	podSpec, additionalResources, err := c.buildPodSpec(ds, template, podTemplate)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	labels := map[string]string{
@@ -1118,7 +1134,7 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 					Spec: podSpec,
 				},
 			},
-		}, nil
+		}, additionalResources, nil
 
 	case v1alpha1.DebugWorkloadDeployment:
 		replicas := int32(1)
@@ -1126,7 +1142,7 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 			replicas = *template.Spec.Replicas
 		}
 		if template.Spec.ResourceQuota != nil && template.Spec.ResourceQuota.MaxPods != nil && replicas > *template.Spec.ResourceQuota.MaxPods {
-			return nil, fmt.Errorf("replicas (%d) exceed resourceQuota.maxPods (%d)", replicas, *template.Spec.ResourceQuota.MaxPods)
+			return nil, nil, fmt.Errorf("replicas (%d) exceed resourceQuota.maxPods (%d)", replicas, *template.Spec.ResourceQuota.MaxPods)
 		}
 		return &appsv1.Deployment{
 			TypeMeta: metav1.TypeMeta{
@@ -1154,17 +1170,92 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 					Spec: podSpec,
 				},
 			},
-		}, nil
+		}, additionalResources, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported workload type: %s", workloadType)
+		return nil, nil, fmt.Errorf("unsupported workload type: %s", workloadType)
 	}
+}
+
+// deployPodTemplateResource deploys a single resource from a multi-document pod template.
+// It applies standard labels/annotations for tracking and uses Server-Side Apply for idempotency.
+func (c *DebugSessionController) deployPodTemplateResource(
+	ctx context.Context,
+	targetClient ctrlclient.Client,
+	ds *v1alpha1.DebugSession,
+	obj *unstructured.Unstructured,
+	targetNs string,
+) error {
+	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+
+	// Set namespace if not specified
+	if obj.GetNamespace() == "" {
+		obj.SetNamespace(targetNs)
+	}
+
+	// Apply standard labels
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels["app.kubernetes.io/managed-by"] = "breakglass"
+	labels["breakglass.t-caas.telekom.com/session"] = ds.Name
+	labels["breakglass.t-caas.telekom.com/session-cluster"] = ds.Spec.Cluster
+	labels["breakglass.t-caas.telekom.com/pod-template-resource"] = "true"
+	obj.SetLabels(labels)
+
+	// Apply standard annotations
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
+	obj.SetAnnotations(annotations)
+
+	// Deploy using Server-Side Apply for idempotency
+	obj.SetManagedFields(nil)
+	//nolint:staticcheck // SA1019: client.Apply for Patch is still required for unstructured objects
+	if err := targetClient.Patch(ctx, obj, ctrlclient.Apply, ctrlclient.FieldOwner("breakglass-controller"), ctrlclient.ForceOwnership); err != nil {
+		return fmt.Errorf("SSA apply failed: %w", err)
+	}
+
+	// Track in session status
+	status := v1alpha1.PodTemplateResourceStatus{
+		Kind:         obj.GetKind(),
+		APIVersion:   obj.GetAPIVersion(),
+		ResourceName: obj.GetName(),
+		Namespace:    obj.GetNamespace(),
+		Source:       "podTemplateString",
+		Created:      true,
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	status.CreatedAt = &now
+	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
+
+	// Add to deployed resources list
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
+		APIVersion: obj.GetAPIVersion(),
+		Kind:       obj.GetKind(),
+		Name:       obj.GetName(),
+		Namespace:  obj.GetNamespace(),
+		Source:     "pod-template",
+	})
+
+	log.Infow("Deployed pod template resource",
+		"kind", obj.GetKind(),
+		"name", obj.GetName(),
+		"namespace", obj.GetNamespace())
+
+	return nil
 }
 
 // buildPodSpec creates the pod spec from templates and overrides.
 // Supports both structured podTemplate and Go-templated podTemplateString.
-func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate) (corev1.PodSpec, error) {
+// Now supports multi-document YAML where the first document is the PodSpec
+// and subsequent documents are additional K8s resources to deploy.
+func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate) (corev1.PodSpec, []*unstructured.Unstructured, error) {
 	var spec corev1.PodSpec
+	var additionalResources []*unstructured.Unstructured
 
 	// Build render context for template rendering (podTemplateString, podOverridesTemplate)
 	renderCtx := c.buildPodRenderContext(ds, template)
@@ -1172,25 +1263,27 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 	// Determine pod spec source: podTemplateString takes priority over podTemplateRef
 	if template.Spec.PodTemplateString != "" {
 		// Render podTemplateString as Go template (from DebugSessionTemplate)
-		renderedSpec, err := c.renderPodTemplateString(template.Spec.PodTemplateString, renderCtx)
+		result, err := c.renderPodTemplateStringMultiDoc(template.Spec.PodTemplateString, renderCtx)
 		if err != nil {
-			return corev1.PodSpec{}, fmt.Errorf("failed to render podTemplateString: %w", err)
+			return corev1.PodSpec{}, nil, fmt.Errorf("failed to render podTemplateString: %w", err)
 		}
-		spec = renderedSpec
+		spec = result.PodSpec
+		additionalResources = result.AdditionalResources
 	} else if podTemplate != nil {
 		// Use DebugPodTemplate - check for templateString first, then structured template
 		if podTemplate.Spec.TemplateString != "" {
 			// Render DebugPodTemplate's templateString as Go template
-			renderedSpec, err := c.renderPodTemplateString(podTemplate.Spec.TemplateString, renderCtx)
+			result, err := c.renderPodTemplateStringMultiDoc(podTemplate.Spec.TemplateString, renderCtx)
 			if err != nil {
-				return corev1.PodSpec{}, fmt.Errorf("failed to render DebugPodTemplate templateString: %w", err)
+				return corev1.PodSpec{}, nil, fmt.Errorf("failed to render DebugPodTemplate templateString: %w", err)
 			}
-			spec = renderedSpec
+			spec = result.PodSpec
+			additionalResources = result.AdditionalResources
 		} else if podTemplate.Spec.Template != nil {
-			// Use structured pod template
+			// Use structured pod template (no multi-doc support for structured templates)
 			spec = c.convertDebugPodSpec(podTemplate.Spec.Template.Spec)
 		} else {
-			return corev1.PodSpec{}, fmt.Errorf("DebugPodTemplate %s has neither template nor templateString", podTemplate.Name)
+			return corev1.PodSpec{}, nil, fmt.Errorf("DebugPodTemplate %s has neither template nor templateString", podTemplate.Name)
 		}
 	}
 
@@ -1198,7 +1291,7 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 	if template.Spec.PodOverridesTemplate != "" {
 		overrides, err := c.renderPodOverridesTemplate(template.Spec.PodOverridesTemplate, renderCtx)
 		if err != nil {
-			return corev1.PodSpec{}, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
+			return corev1.PodSpec{}, nil, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
 		}
 		c.applyPodOverridesStruct(&spec, overrides)
 	}
@@ -1248,7 +1341,7 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 
 	if template.Spec.ResourceQuota != nil {
 		if err := enforceContainerResources(template.Spec.ResourceQuota, spec.Containers, spec.InitContainers); err != nil {
-			return corev1.PodSpec{}, err
+			return corev1.PodSpec{}, nil, err
 		}
 	}
 
@@ -1287,7 +1380,7 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 		}
 	}
 
-	return spec, nil
+	return spec, additionalResources, nil
 }
 
 // buildPodRenderContext creates the render context for pod templates.
@@ -1394,20 +1487,64 @@ func extractJSONValueForPod(raw []byte) string {
 	return string(raw)
 }
 
+// PodTemplateRenderResult contains the result of rendering a multi-document pod template.
+type PodTemplateRenderResult struct {
+	// PodSpec is the parsed PodSpec from the first YAML document.
+	PodSpec corev1.PodSpec
+
+	// AdditionalResources are parsed K8s resources from subsequent YAML documents.
+	AdditionalResources []*unstructured.Unstructured
+}
+
 // renderPodTemplateString renders a podTemplateString Go template and returns a PodSpec.
+// For backward compatibility, this returns only the PodSpec (first document).
+// Use renderPodTemplateStringMultiDoc for full multi-document support.
 func (c *DebugSessionController) renderPodTemplateString(templateStr string, ctx v1alpha1.AuxiliaryResourceContext) (corev1.PodSpec, error) {
-	renderer := NewTemplateRenderer()
-	rendered, err := renderer.RenderTemplateString(templateStr, ctx)
+	result, err := c.renderPodTemplateStringMultiDoc(templateStr, ctx)
 	if err != nil {
-		return corev1.PodSpec{}, fmt.Errorf("template rendering failed: %w", err)
+		return corev1.PodSpec{}, err
+	}
+	return result.PodSpec, nil
+}
+
+// renderPodTemplateStringMultiDoc renders a podTemplateString Go template with multi-document support.
+// The first YAML document MUST be a PodSpec (required).
+// Subsequent documents can be any Kubernetes resource (ConfigMaps, Secrets, PVCs, etc.)
+// that will be deployed alongside the debug pod.
+func (c *DebugSessionController) renderPodTemplateStringMultiDoc(templateStr string, ctx v1alpha1.AuxiliaryResourceContext) (*PodTemplateRenderResult, error) {
+	renderer := NewTemplateRenderer()
+	documents, err := renderer.RenderMultiDocumentTemplate(templateStr, ctx)
+	if err != nil {
+		return nil, fmt.Errorf("template rendering failed: %w", err)
 	}
 
-	var podSpec corev1.PodSpec
-	if err := yaml.Unmarshal(rendered, &podSpec); err != nil {
-		return corev1.PodSpec{}, fmt.Errorf("failed to parse rendered pod spec YAML: %w", err)
+	if len(documents) == 0 {
+		return nil, fmt.Errorf("pod template produced no documents")
 	}
 
-	return podSpec, nil
+	result := &PodTemplateRenderResult{}
+
+	// First document MUST be a PodSpec
+	if err := yaml.Unmarshal(documents[0], &result.PodSpec); err != nil {
+		return nil, fmt.Errorf("failed to parse first document as PodSpec: %w", err)
+	}
+
+	// Subsequent documents are additional K8s resources
+	for i := 1; i < len(documents); i++ {
+		obj := &unstructured.Unstructured{}
+		if err := yaml.Unmarshal(documents[i], &obj.Object); err != nil {
+			return nil, fmt.Errorf("failed to parse document %d as Kubernetes resource: %w", i+1, err)
+		}
+
+		// Validate it looks like a K8s resource
+		if obj.GetAPIVersion() == "" || obj.GetKind() == "" {
+			return nil, fmt.Errorf("document %d is not a valid Kubernetes resource (missing apiVersion or kind)", i+1)
+		}
+
+		result.AdditionalResources = append(result.AdditionalResources, obj)
+	}
+
+	return result, nil
 }
 
 // renderPodOverridesTemplate renders podOverridesTemplate and returns structured overrides.
@@ -2072,6 +2209,14 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 		}
 	}
 
+	// Cleanup pod template resources (from multi-doc pod templates)
+	if len(ds.Status.PodTemplateResourceStatuses) > 0 {
+		if err := c.cleanupPodTemplateResources(ctx, ds, targetClient); err != nil {
+			log.Warnw("Failed to cleanup pod template resources", "error", err)
+			// Continue to clean up main workloads
+		}
+	}
+
 	if len(ds.Status.DeployedResources) == 0 {
 		return nil
 	}
@@ -2080,6 +2225,10 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	for _, ref := range ds.Status.DeployedResources {
 		// Skip auxiliary resources - already cleaned up by manager
 		if strings.HasPrefix(ref.Source, "auxiliary:") {
+			continue
+		}
+		// Skip pod-template resources - already cleaned up above
+		if ref.Source == "pod-template" {
 			continue
 		}
 
@@ -2129,7 +2278,69 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	// Clear deployed resources from status
 	ds.Status.DeployedResources = nil
 	ds.Status.AllowedPods = nil
+	ds.Status.PodTemplateResourceStatuses = nil
 	return applyDebugSessionStatus(ctx, c.client, ds)
+}
+
+// cleanupPodTemplateResources removes resources deployed from multi-document pod templates.
+func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context, ds *v1alpha1.DebugSession, targetClient ctrlclient.Client) error {
+	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+
+	for i := range ds.Status.PodTemplateResourceStatuses {
+		status := &ds.Status.PodTemplateResourceStatuses[i]
+
+		// Skip if already deleted
+		if status.Deleted {
+			continue
+		}
+
+		// Skip if not created
+		if !status.Created {
+			continue
+		}
+
+		// Create unstructured object for deletion
+		gvk, err := parseGVK(status.APIVersion, status.Kind)
+		if err != nil {
+			log.Warnw("Failed to parse GVK for pod template resource",
+				"apiVersion", status.APIVersion,
+				"kind", status.Kind,
+				"error", err)
+			status.Error = fmt.Sprintf("failed to parse GVK: %v", err)
+			continue
+		}
+
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(gvk)
+		obj.SetName(status.ResourceName)
+		obj.SetNamespace(status.Namespace)
+
+		if err := targetClient.Delete(ctx, obj); err != nil {
+			if apierrors.IsNotFound(err) {
+				log.Debugw("Pod template resource already deleted",
+					"kind", status.Kind,
+					"name", status.ResourceName)
+			} else {
+				log.Warnw("Failed to delete pod template resource",
+					"kind", status.Kind,
+					"name", status.ResourceName,
+					"error", err)
+				status.Error = fmt.Sprintf("delete failed: %v", err)
+				continue
+			}
+		} else {
+			log.Infow("Deleted pod template resource",
+				"kind", status.Kind,
+				"name", status.ResourceName,
+				"namespace", status.Namespace)
+		}
+
+		status.Deleted = true
+		now := time.Now().UTC().Format(time.RFC3339)
+		status.DeletedAt = &now
+	}
+
+	return nil
 }
 
 // parseDuration parses the requested duration with template constraints.

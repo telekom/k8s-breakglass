@@ -42,6 +42,39 @@ var sessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	},
 }
 
+var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
+	"spec.cluster": func(o client.Object) []string {
+		ds := o.(*v1alpha1.DebugSession)
+		if ds.Spec.Cluster == "" {
+			return nil
+		}
+		return []string{ds.Spec.Cluster}
+	},
+	"status.state": func(o client.Object) []string {
+		ds := o.(*v1alpha1.DebugSession)
+		if ds.Status.State == "" {
+			return nil
+		}
+		return []string{string(ds.Status.State)}
+	},
+	"status.participants.user": func(o client.Object) []string {
+		ds := o.(*v1alpha1.DebugSession)
+		if len(ds.Status.Participants) == 0 {
+			return nil
+		}
+		users := make([]string, 0, len(ds.Status.Participants))
+		for _, p := range ds.Status.Participants {
+			if p.User != "" {
+				users = append(users, p.User)
+			}
+		}
+		if len(users) == 0 {
+			return nil
+		}
+		return users
+	},
+}
+
 // Test that when RBAC check (canDoFn) allows the request, the webhook returns allowed=true
 func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
@@ -687,11 +720,13 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 		cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
 		escalMgr := &breakglass.EscalationManager{Client: cli}
 
-		// Test with hardenedIDPHints = false (default - should show provider names)
+		boolPtr := func(v bool) *bool { return &v }
+
+		// Test with hardenedIDPHints = false (explicitly disabled - should show provider names)
 		wcDefault := &WebhookController{
 			log:          logger.Sugar(),
 			escalManager: escalMgr,
-			config:       config.Config{Server: config.Server{HardenedIDPHints: false}},
+			config:       config.Config{Server: config.Server{HardenedIDPHints: boolPtr(false)}},
 		}
 		resultDefault := wcDefault.getIDPHintFromIssuer(context.Background(), sar, logger.Sugar())
 		if !contains(resultDefault, "Keycloak Provider") && !contains(resultDefault, "Azure AD") {
@@ -705,7 +740,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 		wcHardened := &WebhookController{
 			log:          logger.Sugar(),
 			escalManager: escalMgr,
-			config:       config.Config{Server: config.Server{HardenedIDPHints: true}},
+			config:       config.Config{Server: config.Server{HardenedIDPHints: boolPtr(true)}},
 		}
 		resultHardened := wcHardened.getIDPHintFromIssuer(context.Background(), sar, logger.Sugar())
 		if contains(resultHardened, "Keycloak") || contains(resultHardened, "Azure") {
@@ -730,6 +765,7 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 			wc := &WebhookController{
 				log:          logger.Sugar(),
 				escalManager: escalMgr,
+				config:       config.Config{Server: config.Server{HardenedIDPHints: boolPtr(false)}},
 			}
 
 			result := wc.getIDPHintFromIssuer(context.Background(), tt.sar, logger.Sugar())
@@ -1330,7 +1366,11 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 				objs = append(objs, &tt.debugSessions[i])
 			}
 
-			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...)
+			for k, fn := range debugSessionIndexFnsWebhook {
+				builder = builder.WithIndex(&v1alpha1.DebugSession{}, k, fn)
+			}
+			cli := builder.Build()
 			escalMgr := &breakglass.EscalationManager{Client: cli}
 
 			wc := &WebhookController{

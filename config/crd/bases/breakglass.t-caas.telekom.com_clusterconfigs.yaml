@@ -139,6 +139,11 @@ spec:
                   Required when authType is "OIDC" (unless oidcFromIdentityProvider is set).
                   Supports client credentials and token exchange flows.
                 properties:
+                  allowTOFU:
+                    description: |-
+                      allowTOFU enables Trust On First Use (TOFU) for cluster or issuer CAs when no CA is provided.
+                      When false (default), the controller relies on system trust or explicit CA configuration.
+                    type: boolean
                   audience:
                     description: |-
                       audience specifies the intended audience for the token (typically the cluster's API server).
@@ -310,6 +315,11 @@ spec:
                   This is useful when the same OIDC provider is used for both user auth and cluster auth.
                   Mutually exclusive with oidcAuth.issuerURL - if both are set, oidcAuth.issuerURL takes precedence.
                 properties:
+                  allowTOFU:
+                    description: |-
+                      allowTOFU enables Trust On First Use (TOFU) for cluster CAs when no CA is provided.
+                      When false (default), the controller relies on system trust or explicit CA configuration.
+                    type: boolean
                   caSecretRef:
                     description: caSecretRef references a secret containing the CA
                       certificate for the target cluster.

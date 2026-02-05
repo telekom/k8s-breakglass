@@ -793,6 +793,7 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_UsesCachedIssuerTOFU(t *testing.
 
 	oidc := &telekomv1alpha1.OIDCAuthConfig{
 		IssuerURL: issuerURL,
+		AllowTOFU: true, // Must be true to use cached TOFU CA
 		// No InsecureSkipTLSVerify and no CertificateAuthority - should use cached TOFU
 	}
 
@@ -864,7 +865,7 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretDefaultKey(t *testing.T) {
 
 	caSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-ca", Namespace: "default"},
-		Data:       map[string][]byte{"ca.crt": caPEM}, // Default key
+		Data:       map[string][]byte{"value": caPEM}, // Default key is "value"
 	}
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caSecret).Build()
@@ -876,7 +877,7 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretDefaultKey(t *testing.T) {
 		Server: "https://api.example.com:6443",
 		CASecretRef: &telekomv1alpha1.SecretKeyReference{
 			Name: "cluster-ca", Namespace: "default",
-			// Key not specified - should default to "ca.crt"
+			// Key not specified - should default to "value"
 		},
 	}
 
@@ -904,7 +905,8 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretNotFound_UsesTOFUCache(t *testin
 
 	cfg := &rest.Config{}
 	oidc := &telekomv1alpha1.OIDCAuthConfig{
-		Server: serverURL,
+		Server:    serverURL,
+		AllowTOFU: true, // Must be true to use cached TOFU CA
 		CASecretRef: &telekomv1alpha1.SecretKeyReference{
 			Name: "missing-ca", Namespace: "default",
 		},
@@ -939,7 +941,8 @@ func TestOIDCTokenProvider_ConfigureTLS_CAKeyMissing_UsesTOFUCache(t *testing.T)
 
 	cfg := &rest.Config{}
 	oidc := &telekomv1alpha1.OIDCAuthConfig{
-		Server: serverURL,
+		Server:    serverURL,
+		AllowTOFU: true, // Must be true to use cached TOFU CA
 		CASecretRef: &telekomv1alpha1.SecretKeyReference{
 			Name: "cluster-ca", Namespace: "default", Key: "ca.crt",
 		},

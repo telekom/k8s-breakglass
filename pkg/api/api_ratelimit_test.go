@@ -52,7 +52,8 @@ func TestAPIServerRateLimiting(t *testing.T) {
 		logger := zaptest.NewLogger(t)
 		cfg := config.Config{
 			Server: config.Server{
-				ListenAddress: ":8080",
+				ListenAddress:  ":8080",
+				AllowedOrigins: []string{"https://test.example.com"},
 			},
 		}
 
@@ -86,7 +87,8 @@ func TestAPIServerRateLimiting(t *testing.T) {
 		logger := zaptest.NewLogger(t)
 		cfg := config.Config{
 			Server: config.Server{
-				ListenAddress: ":8080",
+				ListenAddress:  ":8080",
+				AllowedOrigins: []string{"https://test.example.com"},
 			},
 		}
 
@@ -125,7 +127,8 @@ func TestAPIServerRateLimiting(t *testing.T) {
 		logger := zaptest.NewLogger(t)
 		cfg := config.Config{
 			Server: config.Server{
-				ListenAddress: ":8080",
+				ListenAddress:  ":8080",
+				AllowedOrigins: []string{"https://test.example.com"},
 			},
 		}
 
@@ -164,7 +167,8 @@ func TestBodySizeLimiting(t *testing.T) {
 		logger := zaptest.NewLogger(t)
 		cfg := config.Config{
 			Server: config.Server{
-				ListenAddress: ":8080",
+				ListenAddress:  ":8080",
+				AllowedOrigins: []string{"https://test.example.com"},
 			},
 		}
 
@@ -202,7 +206,8 @@ func TestBodySizeLimiting(t *testing.T) {
 		logger := zaptest.NewLogger(t)
 		cfg := config.Config{
 			Server: config.Server{
-				ListenAddress: ":8080",
+				ListenAddress:  ":8080",
+				AllowedOrigins: []string{"https://test.example.com"},
 			},
 		}
 
@@ -287,7 +292,8 @@ func TestOptionalAuthRateLimiting(t *testing.T) {
 		logger := zaptest.NewLogger(t)
 		cfg := config.Config{
 			Server: config.Server{
-				ListenAddress: ":8080",
+				ListenAddress:  ":8080",
+				AllowedOrigins: []string{"https://test.example.com"},
 			},
 		}
 

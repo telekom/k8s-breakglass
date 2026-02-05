@@ -18,7 +18,9 @@ package config
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -701,4 +704,133 @@ func TestClusterConfigReconciler_MultipleNamespaces(t *testing.T) {
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "session-ns2", Namespace: "namespace2"}, &s2)
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, s2.Status.State)
+}
+
+// TestClusterConfigReconciler_CleanupFailureBlocksDeletion tests that when session listing
+// fails, the finalizer is NOT removed and deletion is blocked with a requeue.
+// This ensures the ClusterConfig cannot be deleted until all sessions are properly cleaned up.
+// Note: Individual session update failures are logged but don't block deletion (best-effort cleanup).
+func TestClusterConfigReconciler_CleanupFailureBlocksDeletion(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+
+	now := metav1.Now()
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-cluster",
+			Namespace:         "default",
+			Finalizers:        []string{ClusterConfigFinalizer},
+			DeletionTimestamp: &now,
+		},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			ClusterID: "test-cluster-id",
+		},
+	}
+
+	// Create a client that fails List operations to simulate cleanup failure
+	listError := errors.New("simulated list failure")
+	builder := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterConfig).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, client client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				// Fail List operations for BreakglassSessions to simulate cleanup failure
+				if _, ok := list.(*breakglassv1alpha1.BreakglassSessionList); ok {
+					return listError
+				}
+				return client.List(ctx, list, opts...)
+			},
+		})
+
+	fakeClient := builder.Build()
+	logger := zap.NewNop().Sugar()
+
+	r := &ClusterConfigReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Log:    logger,
+	}
+
+	result, err := r.Reconcile(ctx, reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
+	})
+
+	// Should return error and requeue after delay
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "simulated list failure")
+	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+
+	// Verify the ClusterConfig still exists with its finalizer
+	// (deletion should be blocked because cleanup failed)
+	var updated breakglassv1alpha1.ClusterConfig
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
+	require.NoError(t, err, "ClusterConfig should still exist because cleanup failed")
+	assert.Contains(t, updated.Finalizers, ClusterConfigFinalizer, "Finalizer should still be present")
+}
+
+// TestClusterConfigReconciler_DebugSessionCleanupFailureBlocksDeletion tests that when DebugSession
+// listing fails, the finalizer is NOT removed and deletion is blocked.
+func TestClusterConfigReconciler_DebugSessionCleanupFailureBlocksDeletion(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+
+	now := metav1.Now()
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-cluster",
+			Namespace:         "default",
+			Finalizers:        []string{ClusterConfigFinalizer},
+			DeletionTimestamp: &now,
+		},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			ClusterID: "test-cluster-id",
+		},
+	}
+
+	// Create a client that fails List operations for DebugSessions to simulate cleanup failure
+	listError := errors.New("simulated debug session list failure")
+	builder := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterConfig).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, client client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				// Fail List operations for DebugSessions to simulate cleanup failure
+				if _, ok := list.(*breakglassv1alpha1.DebugSessionList); ok {
+					return listError
+				}
+				return client.List(ctx, list, opts...)
+			},
+		})
+
+	fakeClient := builder.Build()
+	logger := zap.NewNop().Sugar()
+
+	r := &ClusterConfigReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Log:    logger,
+	}
+
+	result, err := r.Reconcile(ctx, reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
+	})
+
+	// Should return error and requeue after delay
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "simulated debug session list failure")
+	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+
+	// Verify the ClusterConfig still exists with its finalizer
+	var updated breakglassv1alpha1.ClusterConfig
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
+	require.NoError(t, err, "ClusterConfig should still exist because cleanup failed")
+	assert.Contains(t, updated.Finalizers, ClusterConfigFinalizer, "Finalizer should still be present")
 }

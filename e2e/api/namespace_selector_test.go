@@ -113,8 +113,11 @@ func TestDenyPolicyNamespaceSelectorTerms(t *testing.T) {
 	require.NoError(t, err, "Failed to create DenyPolicy with namespace selector")
 
 	// Create escalation that references this deny policy
+	// Use breakglass-emergency-admin which has RBAC permissions for all resources.
+	// Without RBAC permissions, the session SAR check fails before policy evaluation.
+	testGroup := helpers.TestGroupEmergencyAdmin
 	escalation := helpers.NewEscalationBuilder("e2e-ns-selector-escalation", namespace).
-		WithEscalatedGroup("e2e-ns-selector-group").
+		WithEscalatedGroup(testGroup).
 		WithAllowedClusters(clusterName).
 		WithDenyPolicyRefs(denyPolicy.Name).
 		Build()
@@ -126,7 +129,7 @@ func TestDenyPolicyNamespaceSelectorTerms(t *testing.T) {
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
 		User:    helpers.TestUsers.Requester.Email,
-		Group:   escalation.Spec.EscalatedGroup,
+		Group:   testGroup,
 		Reason:  "Test namespace selector policy",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
@@ -139,7 +142,7 @@ func TestDenyPolicyNamespaceSelectorTerms(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   helpers.TestUsers.Requester.Email,
-				Groups: []string{escalation.Spec.EscalatedGroup},
+				Groups: []string{testGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: prodNS.Name,
 					Verb:      "delete",
@@ -160,13 +163,12 @@ func TestDenyPolicyNamespaceSelectorTerms(t *testing.T) {
 
 	t.Run("PolicyDoesNotBlockNonMatchingNamespace", func(t *testing.T) {
 		// This test verifies that DenyPolicy with namespace selector ONLY blocks
-		// matching namespaces. Non-matching namespaces are NOT blocked by the policy.
-		// Note: The request may still be denied by RBAC if the group lacks permissions,
-		// but the denial reason should NOT mention the DenyPolicy.
+		// matching namespaces. Non-matching namespaces should be ALLOWED because
+		// the group (breakglass-emergency-admin) has full RBAC permissions.
 		sar := &authorizationv1.SubjectAccessReview{
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   helpers.TestUsers.Requester.Email,
-				Groups: []string{escalation.Spec.EscalatedGroup},
+				Groups: []string{testGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: stagingNS.Name,
 					Verb:      "delete",
@@ -177,9 +179,10 @@ func TestDenyPolicyNamespaceSelectorTerms(t *testing.T) {
 		}
 		resp, err := apiClient.SendSAR(ctx, t, clusterName, sar)
 		require.NoError(t, err)
-		// The request may be denied by RBAC (no ClusterRoleBinding for the group),
-		// but the key assertion is that the DenyPolicy did NOT block it.
-		// Check that the reason does NOT mention the deny policy name.
+		// With breakglass-emergency-admin which has full permissions, the request should be allowed
+		// because the staging namespace does NOT have env=production label.
+		assert.True(t, resp.Status.Allowed,
+			"Staging namespace should NOT be blocked by the production-only DenyPolicy")
 		assert.NotContains(t, strings.ToLower(resp.Status.Reason), "e2e-ns-selector-policy",
 			"Staging namespace should NOT be blocked by the production-only DenyPolicy")
 	})
@@ -268,8 +271,11 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 	require.NoError(t, err, "Failed to create DenyPolicy with mixed namespace filter")
 
 	// Create escalation
+	// Use breakglass-emergency-admin which has RBAC permissions for all resources.
+	// Without RBAC permissions, the session SAR check fails before policy evaluation.
+	testGroup := helpers.TestGroupEmergencyAdmin
 	escalation := helpers.NewEscalationBuilder("e2e-mixed-ns-filter-escalation", namespace).
-		WithEscalatedGroup("e2e-mixed-ns-group").
+		WithEscalatedGroup(testGroup).
 		WithAllowedClusters(clusterName).
 		WithDenyPolicyRefs(denyPolicy.Name).
 		Build()
@@ -281,7 +287,7 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: clusterName,
 		User:    helpers.TestUsers.Requester.Email,
-		Group:   escalation.Spec.EscalatedGroup,
+		Group:   testGroup,
 		Reason:  "Test mixed namespace filter",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
@@ -309,7 +315,7 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   helpers.TestUsers.Requester.Email,
-				Groups: []string{escalation.Spec.EscalatedGroup},
+				Groups: []string{testGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: blockedPatternNS.Name,
 					Verb:      "delete",
@@ -330,7 +336,7 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 		sar := &authorizationv1.SubjectAccessReview{
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   helpers.TestUsers.Requester.Email,
-				Groups: []string{escalation.Spec.EscalatedGroup},
+				Groups: []string{testGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: mixedNS.Name,
 					Verb:      "delete",
@@ -349,12 +355,12 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 
 	t.Run("PolicyDoesNotBlockUnmatchedNamespace", func(t *testing.T) {
 		// This test verifies that DenyPolicy only blocks namespaces that match
-		// either the pattern OR the label selector. Unmatched namespaces are
-		// NOT blocked by this policy (but may still be denied by RBAC).
+		// either the pattern OR the label selector. Unmatched namespaces should
+		// be ALLOWED because the group (breakglass-emergency-admin) has full RBAC permissions.
 		sar := &authorizationv1.SubjectAccessReview{
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   helpers.TestUsers.Requester.Email,
-				Groups: []string{escalation.Spec.EscalatedGroup},
+				Groups: []string{testGroup},
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: allowedNS.Name,
 					Verb:      "delete",
@@ -365,7 +371,9 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 		}
 		resp, err := apiClient.SendSAR(ctx, t, clusterName, sar)
 		require.NoError(t, err)
-		// The request may be denied by RBAC, but NOT by the DenyPolicy
+		// With breakglass-emergency-admin which has full permissions, the request should be allowed
+		assert.True(t, resp.Status.Allowed,
+			"Unmatched namespace should be allowed for group with full permissions")
 		assert.NotContains(t, strings.ToLower(resp.Status.Reason), "e2e-mixed-ns-filter-policy",
 			"Unmatched namespace should NOT be blocked by the mixed DenyPolicy")
 	})

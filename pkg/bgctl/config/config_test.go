@@ -217,6 +217,43 @@ func TestValidate(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "server is required")
 	})
+
+	t.Run("rejects multiple client secret sources", func(t *testing.T) {
+		cfg := &Config{
+			Version: VersionV1,
+			OIDCProviders: []OIDCProvider{{
+				Name:            "corp",
+				Authority:       "https://idp.example.com",
+				ClientID:        "bgctl",
+				ClientSecret:    "inline",
+				ClientSecretEnv: "SECRET_ENV",
+			}},
+			Contexts: []Context{{Name: "prod", Server: "https://example.com", OIDCProvider: "corp"}},
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "only one")
+	})
+
+	t.Run("rejects inline oidc with provider reference", func(t *testing.T) {
+		cfg := &Config{
+			Version: VersionV1,
+			OIDCProviders: []OIDCProvider{{
+				Name:      "corp",
+				Authority: "https://idp.example.com",
+				ClientID:  "bgctl",
+			}},
+			Contexts: []Context{{
+				Name:         "prod",
+				Server:       "https://example.com",
+				OIDCProvider: "corp",
+				OIDC:         &InlineOIDC{Authority: "https://idp.example.com", ClientID: "bgctl"},
+			}},
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "must not set both oidc and oidc-provider")
+	})
 }
 
 func TestResolveOIDCErrors(t *testing.T) {
@@ -246,18 +283,16 @@ func TestResolveOIDCErrors(t *testing.T) {
 func TestResolveOIDCWithAllFields(t *testing.T) {
 	cfg := &Config{
 		OIDCProviders: []OIDCProvider{{
-			Name:             "corp",
-			Authority:        "https://idp.example.com",
-			ClientID:         "bgctl",
-			ClientSecret:     "secret",
-			ClientSecretEnv:  "SECRET_ENV",
-			ClientSecretFile: "/path/to/secret",
-			GrantType:        "authorization_code",
-			Scopes:           []string{"openid", "profile"},
-			CAFile:           "/path/to/ca.crt",
-			DeviceCodeFlow:   true,
-			InsecureSkipTLS:  true,
-			ExtraAuthParams:  map[string]string{"audience": "api"},
+			Name:            "corp",
+			Authority:       "https://idp.example.com",
+			ClientID:        "bgctl",
+			ClientSecretEnv: "SECRET_ENV",
+			GrantType:       "authorization_code",
+			Scopes:          []string{"openid", "profile"},
+			CAFile:          "/path/to/ca.crt",
+			DeviceCodeFlow:  true,
+			InsecureSkipTLS: true,
+			ExtraAuthParams: map[string]string{"audience": "api"},
 		}},
 	}
 	ctx := &Context{Name: "test", Server: "https://example.com", OIDCProvider: "corp"}
@@ -267,9 +302,9 @@ func TestResolveOIDCWithAllFields(t *testing.T) {
 	require.Equal(t, "corp", resolved.ProviderName)
 	require.Equal(t, "https://idp.example.com", resolved.Authority)
 	require.Equal(t, "bgctl", resolved.ClientID)
-	require.Equal(t, "secret", resolved.ClientSecret)
+	require.Equal(t, "", resolved.ClientSecret)
 	require.Equal(t, "SECRET_ENV", resolved.ClientSecretEnv)
-	require.Equal(t, "/path/to/secret", resolved.ClientSecretFile)
+	require.Equal(t, "", resolved.ClientSecretFile)
 	require.Equal(t, "authorization_code", resolved.GrantType)
 	require.Equal(t, []string{"openid", "profile"}, resolved.Scopes)
 	require.Equal(t, "/path/to/ca.crt", resolved.CAFile)

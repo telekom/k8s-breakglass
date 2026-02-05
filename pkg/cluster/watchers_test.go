@@ -123,7 +123,7 @@ func TestClientProvider_Invalidate(t *testing.T) {
 	provider := NewClientProvider(cli, logger)
 
 	// Invalidate should not panic even if the cluster doesn't exist
-	provider.Invalidate("nonexistent-cluster")
+	provider.Invalidate("default", "nonexistent-cluster")
 }
 
 func TestClientProvider_IsSecretTracked_NotTracked(t *testing.T) {

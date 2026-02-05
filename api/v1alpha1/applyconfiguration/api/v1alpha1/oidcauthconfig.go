@@ -38,6 +38,9 @@ type OIDCAuthConfigApplyConfiguration struct {
 	CASecretRef *SecretKeyReferenceApplyConfiguration `json:"caSecretRef,omitempty"`
 	// insecureSkipTLSVerify skips TLS verification for the target cluster (NOT recommended for production).
 	InsecureSkipTLSVerify *bool `json:"insecureSkipTLSVerify,omitempty"`
+	// allowTOFU enables Trust On First Use (TOFU) for cluster or issuer CAs when no CA is provided.
+	// When false (default), the controller relies on system trust or explicit CA configuration.
+	AllowTOFU *bool `json:"allowTOFU,omitempty"`
 	// tokenExchange enables token exchange flow instead of client credentials.
 	// When enabled, the controller exchanges the user's token for a cluster-scoped token.
 	TokenExchange *TokenExchangeConfigApplyConfiguration `json:"tokenExchange,omitempty"`
@@ -120,6 +123,14 @@ func (b *OIDCAuthConfigApplyConfiguration) WithCASecretRef(value *SecretKeyRefer
 // If called multiple times, the InsecureSkipTLSVerify field is set to the value of the last call.
 func (b *OIDCAuthConfigApplyConfiguration) WithInsecureSkipTLSVerify(value bool) *OIDCAuthConfigApplyConfiguration {
 	b.InsecureSkipTLSVerify = &value
+	return b
+}
+
+// WithAllowTOFU sets the AllowTOFU field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AllowTOFU field is set to the value of the last call.
+func (b *OIDCAuthConfigApplyConfiguration) WithAllowTOFU(value bool) *OIDCAuthConfigApplyConfiguration {
+	b.AllowTOFU = &value
 	return b
 }
 

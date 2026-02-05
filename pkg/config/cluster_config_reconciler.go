@@ -22,11 +22,14 @@ import (
 	"time"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -94,9 +97,29 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 			}
 
-			// Remove the finalizer to allow deletion
-			controllerutil.RemoveFinalizer(clusterConfig, ClusterConfigFinalizer)
-			if err := r.Update(ctx, clusterConfig); err != nil {
+			// Remove the finalizer to allow deletion (retry on conflict)
+			if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				latest := &telekomv1alpha1.ClusterConfig{}
+				if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
+					return err
+				}
+				if !controllerutil.ContainsFinalizer(latest, ClusterConfigFinalizer) {
+					return nil
+				}
+				controllerutil.RemoveFinalizer(latest, ClusterConfigFinalizer)
+				patch := &telekomv1alpha1.ClusterConfig{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: telekomv1alpha1.GroupVersion.String(),
+						Kind:       "ClusterConfig",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:       latest.Name,
+						Namespace:  latest.Namespace,
+						Finalizers: latest.Finalizers,
+					},
+				}
+				return utils.ApplyObject(ctx, r.Client, patch)
+			}); err != nil {
 				log.Errorw("Failed to remove finalizer from ClusterConfig", "cluster", clusterName, "error", err)
 				return ctrl.Result{}, err
 			}
@@ -110,8 +133,28 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// ClusterConfig is not being deleted - ensure finalizer is present
 	if !controllerutil.ContainsFinalizer(clusterConfig, ClusterConfigFinalizer) {
 		log.Debugw("Adding finalizer to ClusterConfig", "cluster", clusterName)
-		controllerutil.AddFinalizer(clusterConfig, ClusterConfigFinalizer)
-		if err := r.Update(ctx, clusterConfig); err != nil {
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			latest := &telekomv1alpha1.ClusterConfig{}
+			if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
+				return err
+			}
+			if controllerutil.ContainsFinalizer(latest, ClusterConfigFinalizer) {
+				return nil
+			}
+			controllerutil.AddFinalizer(latest, ClusterConfigFinalizer)
+			patch := &telekomv1alpha1.ClusterConfig{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: telekomv1alpha1.GroupVersion.String(),
+					Kind:       "ClusterConfig",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       latest.Name,
+					Namespace:  latest.Namespace,
+					Finalizers: latest.Finalizers,
+				},
+			}
+			return utils.ApplyObject(ctx, r.Client, patch)
+		}); err != nil {
 			log.Errorw("Failed to add finalizer to ClusterConfig", "cluster", clusterName, "error", err)
 			return ctrl.Result{}, err
 		}
@@ -151,7 +194,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 		session.Status.State = telekomv1alpha1.SessionStateExpired
 		session.Status.ExpiresAt = now
 
-		if err := r.Status().Update(ctx, session); err != nil {
+		if err := ssa.ApplyBreakglassSessionStatus(ctx, r.Client, session); err != nil {
 			log.Warnw("Failed to terminate BreakglassSession", "session", session.Name, "error", err)
 			// Continue with other sessions even if one fails
 			continue
@@ -196,7 +239,7 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 		session.Status.State = telekomv1alpha1.DebugSessionStateFailed
 		session.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
 
-		if err := r.Status().Update(ctx, session); err != nil {
+		if err := ssa.ApplyDebugSessionStatus(ctx, r.Client, session); err != nil {
 			log.Warnw("Failed to terminate DebugSession", "session", session.Name, "error", err)
 			// Continue with other sessions even if one fails
 			continue

@@ -790,6 +790,16 @@ func (b *ClusterConfigBuilder) WithOIDCCertificateAuthority(caPEM string) *Clust
 	return b
 }
 
+// WithOIDCAllowTOFU enables Trust On First Use for cluster/issuer CAs.
+// Use this when the cluster has a self-signed certificate and no CA is provided.
+func (b *ClusterConfigBuilder) WithOIDCAllowTOFU(allow bool) *ClusterConfigBuilder {
+	if b.oidcAuth == nil {
+		b.oidcAuth = &telekomv1alpha1.OIDCAuthConfig{}
+	}
+	b.oidcAuth.AllowTOFU = allow
+	return b
+}
+
 // WithOIDCInsecureSkipTLSVerify sets insecure TLS verification for OIDC (for testing only).
 func (b *ClusterConfigBuilder) WithOIDCInsecureSkipTLSVerify(skip bool) *ClusterConfigBuilder {
 	if b.oidcAuth == nil {

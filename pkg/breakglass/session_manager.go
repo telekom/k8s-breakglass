@@ -9,8 +9,10 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -251,7 +253,13 @@ func (c SessionManager) AddBreakglassSession(ctx context.Context, bs *v1alpha1.B
 // Update breakglass session.
 func (c SessionManager) UpdateBreakglassSession(ctx context.Context, bs v1alpha1.BreakglassSession) error {
 	zap.S().Infow("Updating BreakglassSession", system.NamespacedFields(bs.Name, bs.Namespace)...)
-	if err := c.Update(ctx, &bs); err != nil {
+	if bs.TypeMeta.APIVersion == "" || bs.TypeMeta.Kind == "" {
+		bs.TypeMeta = metav1.TypeMeta{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "BreakglassSession",
+		}
+	}
+	if err := utils.ApplyObject(ctx, c.Client, &bs); err != nil {
 		zap.S().Errorw("Failed to update BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err.Error())...)
 		return fmt.Errorf("failed to update BreakglassSession %s/%s: %w", bs.Namespace, bs.Name, err)
 	}

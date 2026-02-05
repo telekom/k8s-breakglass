@@ -156,11 +156,9 @@ type Server struct {
 	TrustedProxies []string `yaml:"trustedProxies"` // IPs/CIDRS to trust for X-Forwarded-For headers (e.g., ["10.0.0.0/8", "127.0.0.1"])
 	AllowedOrigins []string `yaml:"allowedOrigins"` // Explicit list of origins permitted for credentialed browser calls
 	// HardenedIDPHints when true, prevents disclosure of available identity providers in error messages.
-	// By default (false), users see helpful hints about which IDPs are available when their token issuer
-	// doesn't match. When enabled, only generic error messages are returned to prevent attackers from
-	// enumerating valid IDP configurations.
+	// Default: true (hardened) unless explicitly set to false in config.
 	// +optional
-	HardenedIDPHints bool `yaml:"hardenedIDPHints"`
+	HardenedIDPHints *bool `yaml:"hardenedIDPHints"`
 }
 
 type Kubernetes struct {
@@ -180,6 +178,15 @@ type Config struct {
 	Server     Server
 	Frontend   Frontend
 	Kubernetes Kubernetes
+}
+
+// HardenedIDPHintsEnabled returns true when IDP hints should be hardened.
+// If the setting is unset, it defaults to true to avoid IDP enumeration.
+func (c Config) HardenedIDPHintsEnabled() bool {
+	if c.Server.HardenedIDPHints == nil {
+		return true
+	}
+	return *c.Server.HardenedIDPHints
 }
 
 // Load loads the breakglass configuration from a file path.

@@ -18,15 +18,16 @@ type Config struct {
 }
 
 type runtimeState struct {
-	configPath      string
-	cfg             *config.Config
-	contextOverride string
-	outputFormat    string
-	serverOverride  string
-	tokenOverride   string
-	nonInteractive  bool
-	verbose         bool
-	writer          io.Writer
+	configPath           string
+	cfg                  *config.Config
+	contextOverride      string
+	outputFormat         string
+	serverOverride       string
+	tokenOverride        string
+	tokenStorageOverride string
+	nonInteractive       bool
+	verbose              bool
+	writer               io.Writer
 }
 
 type runtimeKey struct{}
@@ -62,6 +63,9 @@ func NewRootCommand(cfg Config) *cobra.Command {
 			}
 			if rt.tokenOverride == "" {
 				rt.tokenOverride = os.Getenv("BGCTL_TOKEN")
+			}
+			if rt.tokenStorageOverride == "" {
+				rt.tokenStorageOverride = os.Getenv("BGCTL_TOKEN_STORAGE")
 			}
 			if !rt.nonInteractive {
 				rt.nonInteractive = strings.EqualFold(os.Getenv("BGCTL_NON_INTERACTIVE"), "true")
@@ -102,6 +106,7 @@ func NewRootCommand(cfg Config) *cobra.Command {
 	root.PersistentFlags().StringVarP(&rt.outputFormat, "output", "o", "", "Output format: table, json, yaml")
 	root.PersistentFlags().StringVar(&rt.serverOverride, "server", "", "Server override (bypass config)")
 	root.PersistentFlags().StringVar(&rt.tokenOverride, "token", "", "Bearer token override")
+	root.PersistentFlags().StringVar(&rt.tokenStorageOverride, "token-storage", "", "Token storage backend: keychain or file")
 	root.PersistentFlags().BoolVar(&rt.nonInteractive, "non-interactive", false, "Fail instead of prompting")
 	root.PersistentFlags().BoolVarP(&rt.verbose, "verbose", "v", false, "Enable verbose output with correlation IDs")
 
@@ -147,6 +152,16 @@ func (rt *runtimeState) OutputFormat() string {
 		return rt.cfg.Settings.OutputFormat
 	}
 	return "table"
+}
+
+func (rt *runtimeState) TokenStorage() string {
+	if rt.tokenStorageOverride != "" {
+		return rt.tokenStorageOverride
+	}
+	if rt.cfg != nil && rt.cfg.Settings.TokenStorage != "" {
+		return rt.cfg.Settings.TokenStorage
+	}
+	return ""
 }
 
 func (rt *runtimeState) Writer() io.Writer {

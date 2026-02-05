@@ -1100,6 +1100,49 @@ spec:
                   description: AuxiliaryResourceStatus tracks the state of a deployed
                     auxiliary resource.
                   properties:
+                    additionalResources:
+                      description: |-
+                        additionalResources tracks extra resources from multi-document YAML templates.
+                        When a templateString produces multiple YAML documents, the first document is tracked
+                        in the fields above, and any additional documents are tracked here.
+                      items:
+                        description: |-
+                          AdditionalResourceRef tracks a resource created from a multi-document YAML template.
+                          This is used when an auxiliary resource templateString produces multiple K8s resources.
+                        properties:
+                          apiVersion:
+                            description: apiVersion is the Kubernetes API version.
+                            type: string
+                          deleted:
+                            description: deleted indicates if the resource was deleted.
+                            type: boolean
+                          error:
+                            description: error contains any error message.
+                            type: string
+                          kind:
+                            description: kind is the Kubernetes resource kind.
+                            type: string
+                          namespace:
+                            description: namespace is where the resource was created.
+                            type: string
+                          readinessStatus:
+                            description: readinessStatus is the kstatus status of
+                              the resource.
+                            type: string
+                          ready:
+                            description: ready indicates if the resource has reached
+                              its desired state (computed via kstatus).
+                            type: boolean
+                          resourceName:
+                            description: resourceName is the actual Kubernetes resource
+                              name.
+                            type: string
+                        required:
+                        - apiVersion
+                        - kind
+                        - resourceName
+                        type: object
+                      type: array
                     apiVersion:
                       description: apiVersion is the Kubernetes API version.
                       type: string
@@ -1131,6 +1174,17 @@ spec:
                       type: string
                     namespace:
                       description: namespace is where the resource was created.
+                      type: string
+                    readinessStatus:
+                      description: readinessStatus is the kstatus status of the resource
+                        (Current, InProgress, Failed, etc.).
+                      type: string
+                    ready:
+                      description: ready indicates if the resource has reached its
+                        desired state (computed via kstatus).
+                      type: boolean
+                    readyAt:
+                      description: readyAt is when the resource became ready.
                       type: string
                     resourceName:
                       description: resourceName is the actual Kubernetes resource
@@ -1359,6 +1413,64 @@ spec:
                   - joinedAt
                   - role
                   - user
+                  type: object
+                type: array
+              podTemplateResourceStatuses:
+                description: |-
+                  podTemplateResourceStatuses tracks the state of additional resources deployed
+                  from multi-document pod templates. These are K8s resources defined in second+
+                  documents of a pod templateString (first document is always the PodSpec).
+                items:
+                  description: PodTemplateResourceStatus tracks the state of resources
+                    deployed from multi-doc pod templates.
+                  properties:
+                    apiVersion:
+                      description: apiVersion is the API version of the resource.
+                      type: string
+                    created:
+                      description: created indicates whether the resource was successfully
+                        created.
+                      type: boolean
+                    createdAt:
+                      description: createdAt is when the resource was created.
+                      type: string
+                    deleted:
+                      description: deleted indicates whether the resource has been
+                        deleted.
+                      type: boolean
+                    deletedAt:
+                      description: deletedAt is when the resource was deleted.
+                      type: string
+                    error:
+                      description: error contains any error message from resource
+                        operations.
+                      type: string
+                    kind:
+                      description: kind is the Kubernetes kind of the resource.
+                      type: string
+                    namespace:
+                      description: namespace is the namespace where the resource is
+                        deployed.
+                      type: string
+                    readinessStatus:
+                      description: readinessStatus provides the kstatus readiness
+                        state.
+                      type: string
+                    ready:
+                      description: ready indicates whether the resource is ready (using
+                        kstatus).
+                      type: boolean
+                    readyAt:
+                      description: readyAt is when the resource became ready.
+                      type: string
+                    resourceName:
+                      description: resourceName is the name of the deployed resource.
+                      type: string
+                    source:
+                      description: |-
+                        source identifies where this resource came from.
+                        Either "podTemplateString" or "debugPodTemplate:<name>".
+                      type: string
                   type: object
                 type: array
               renewalCount:

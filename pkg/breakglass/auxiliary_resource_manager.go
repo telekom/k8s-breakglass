@@ -29,26 +29,29 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
 // AuxiliaryResourceManager handles rendering, deploying, and cleaning up auxiliary resources.
 type AuxiliaryResourceManager struct {
-	log          *zap.SugaredLogger
-	client       client.Client
-	auditManager *audit.Manager
+	log              *zap.SugaredLogger
+	client           client.Client
+	auditManager     *audit.Manager
+	readinessChecker *utils.ReadinessChecker
 }
 
 // NewAuxiliaryResourceManager creates a new auxiliary resource manager.
 func NewAuxiliaryResourceManager(log *zap.SugaredLogger, cli client.Client) *AuxiliaryResourceManager {
 	return &AuxiliaryResourceManager{
-		log:    log.Named("auxiliary-resources"),
-		client: cli,
+		log:              log.Named("auxiliary-resources"),
+		client:           cli,
+		readinessChecker: utils.NewReadinessChecker(log),
 	}
 }
 
@@ -137,6 +140,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			continue
 		}
 
+		// Delete the primary resource
 		err := m.deleteResource(ctx, targetClient, status, session)
 		if err != nil {
 			log.Warnw("Failed to delete auxiliary resource",
@@ -151,6 +155,37 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			session.Status.AuxiliaryResourceStatuses[i].Deleted = true
 			session.Status.AuxiliaryResourceStatuses[i].DeletedAt = &now
 			metrics.AuxiliaryResourceCleanups.WithLabelValues(session.Spec.Cluster, status.Category, "success").Inc()
+		}
+
+		// Also delete any additional resources from multi-document YAML templates
+		for j, addlRes := range status.AdditionalResources {
+			if addlRes.Deleted {
+				continue
+			}
+
+			addlStatus := v1alpha1.AuxiliaryResourceStatus{
+				Name:         status.Name,
+				Category:     status.Category,
+				Kind:         addlRes.Kind,
+				APIVersion:   addlRes.APIVersion,
+				ResourceName: addlRes.ResourceName,
+				Namespace:    addlRes.Namespace,
+			}
+
+			err := m.deleteResource(ctx, targetClient, addlStatus, session)
+			if err != nil {
+				log.Warnw("Failed to delete additional auxiliary resource",
+					"resource", status.Name,
+					"kind", addlRes.Kind,
+					"resourceName", addlRes.ResourceName,
+					"namespace", addlRes.Namespace,
+					"error", err)
+				cleanupErrors = append(cleanupErrors, err)
+				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Error = err.Error()
+			} else {
+				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Deleted = true
+				metrics.AuxiliaryResourceCleanups.WithLabelValues(session.Spec.Cluster, status.Category, "success").Inc()
+			}
 		}
 	}
 
@@ -400,8 +435,21 @@ func (m *AuxiliaryResourceManager) deployResource(
 			return status, fmt.Errorf("failed to render templateString for %s: %w", auxRes.Name, err)
 		}
 	} else if len(auxRes.Template.Raw) > 0 {
-		// Use legacy template field (single document)
+		// Use legacy template field with Raw bytes (single document)
 		renderedYAML, err := m.renderTemplate(auxRes.Template.Raw, renderCtx)
+		if err != nil {
+			status.Error = fmt.Sprintf("template rendering failed: %v", err)
+			return status, fmt.Errorf("failed to render template for %s: %w", auxRes.Name, err)
+		}
+		renderedDocuments = [][]byte{renderedYAML}
+	} else if auxRes.Template.Object != nil {
+		// Use legacy template field with Object (serialize to YAML first)
+		templateBytes, err := json.Marshal(auxRes.Template.Object)
+		if err != nil {
+			status.Error = fmt.Sprintf("failed to marshal template object: %v", err)
+			return status, fmt.Errorf("failed to marshal template object for %s: %w", auxRes.Name, err)
+		}
+		renderedYAML, err := m.renderTemplate(templateBytes, renderCtx)
 		if err != nil {
 			status.Error = fmt.Sprintf("template rendering failed: %v", err)
 			return status, fmt.Errorf("failed to render template for %s: %w", auxRes.Name, err)
@@ -464,25 +512,13 @@ func (m *AuxiliaryResourceManager) deployResource(
 		annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", session.Namespace, session.Name)
 		obj.SetAnnotations(annotations)
 
-		// Create the resource
-		if err := targetClient.Create(ctx, obj); err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				// Resource already exists, check if it's ours
-				existingObj := &unstructured.Unstructured{}
-				existingObj.SetGroupVersionKind(obj.GroupVersionKind())
-				key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
-				if getErr := targetClient.Get(ctx, key, existingObj); getErr == nil {
-					if existingLabels := existingObj.GetLabels(); existingLabels != nil {
-						if existingLabels["breakglass.t-caas.telekom.com/session"] == session.Name {
-							// It's ours, consider it created
-							deployedResources = append(deployedResources, fmt.Sprintf("%s/%s", obj.GetKind(), obj.GetName()))
-							continue
-						}
-					}
-				}
-			}
-			status.Error = fmt.Sprintf("creation failed for %s/%s: %v", obj.GetKind(), obj.GetName(), err)
-			return status, fmt.Errorf("failed to create resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+		// Deploy the resource using Server-Side Apply (SSA) for idempotency.
+		// SSA will create or update the resource, handling existing resources automatically.
+		// Note: We use our own field owner and force ownership to take over any existing resources.
+		obj.SetManagedFields(nil)
+		if err := utils.ApplyUnstructured(ctx, targetClient, obj); err != nil {
+			status.Error = fmt.Sprintf("SSA apply failed for %s/%s: %v", obj.GetKind(), obj.GetName(), err)
+			return status, fmt.Errorf("failed to apply resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
 
 		deployedResources = append(deployedResources, fmt.Sprintf("%s/%s", obj.GetKind(), obj.GetName()))
@@ -506,12 +542,20 @@ func (m *AuxiliaryResourceManager) deployResource(
 			)
 		}
 
-		// Store first resource's metadata in status
+		// Track resource metadata: first document in main fields, additional docs in AdditionalResources
 		if i == 0 {
 			status.Kind = obj.GetKind()
 			status.APIVersion = obj.GetAPIVersion()
 			status.ResourceName = obj.GetName()
 			status.Namespace = obj.GetNamespace()
+		} else {
+			// Track additional resources from multi-document YAML
+			status.AdditionalResources = append(status.AdditionalResources, v1alpha1.AdditionalResourceRef{
+				Kind:         obj.GetKind(),
+				APIVersion:   obj.GetAPIVersion(),
+				ResourceName: obj.GetName(),
+				Namespace:    obj.GetNamespace(),
+			})
 		}
 	}
 
@@ -634,7 +678,8 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 		}
 
 		// Must have either template or templateString
-		hasTemplate := len(res.Template.Raw) > 0
+		// Note: Template can have Raw bytes or Object set (runtime.RawExtension)
+		hasTemplate := len(res.Template.Raw) > 0 || res.Template.Object != nil
 		hasTemplateString := res.TemplateString != ""
 
 		if !hasTemplate && !hasTemplateString {
@@ -674,7 +719,21 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 		// Validate legacy template is valid YAML
 		if hasTemplate {
 			var obj map[string]interface{}
-			if err := yaml.Unmarshal(res.Template.Raw, &obj); err != nil {
+			var templateBytes []byte
+
+			if len(res.Template.Raw) > 0 {
+				templateBytes = res.Template.Raw
+			} else if res.Template.Object != nil {
+				// Marshal Object to get bytes for validation
+				var err error
+				templateBytes, err = json.Marshal(res.Template.Object)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: failed to marshal template object: %v", i, err))
+					continue
+				}
+			}
+
+			if err := yaml.Unmarshal(templateBytes, &obj); err != nil {
 				errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: invalid YAML template: %v", i, err))
 			} else {
 				// Check for apiVersion and kind
@@ -702,6 +761,7 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 }
 
 // AddAuxiliaryResourceToDeployedResources tracks an auxiliary resource in the session's deployed resources.
+// This includes the primary resource and any additional resources from multi-document YAML templates.
 func AddAuxiliaryResourceToDeployedResources(
 	session *v1alpha1.DebugSession,
 	status v1alpha1.AuxiliaryResourceStatus,
@@ -710,23 +770,169 @@ func AddAuxiliaryResourceToDeployedResources(
 		return
 	}
 
-	ref := v1alpha1.DeployedResourceRef{
+	// Helper to add a ref if not already present
+	addRef := func(ref v1alpha1.DeployedResourceRef) {
+		for _, existing := range session.Status.DeployedResources {
+			if existing.Kind == ref.Kind &&
+				existing.Name == ref.Name &&
+				existing.Namespace == ref.Namespace {
+				return // Already tracked
+			}
+		}
+		session.Status.DeployedResources = append(session.Status.DeployedResources, ref)
+	}
+
+	// Add primary resource
+	addRef(v1alpha1.DeployedResourceRef{
 		Kind:       status.Kind,
 		APIVersion: status.APIVersion,
 		Name:       status.ResourceName,
 		Namespace:  status.Namespace,
 		UID:        "", // UID populated later when we fetch the created resource
 		Source:     fmt.Sprintf("auxiliary:%s", status.Name),
+	})
+
+	// Add additional resources from multi-document YAML templates
+	for _, addlRes := range status.AdditionalResources {
+		addRef(v1alpha1.DeployedResourceRef{
+			Kind:       addlRes.Kind,
+			APIVersion: addlRes.APIVersion,
+			Name:       addlRes.ResourceName,
+			Namespace:  addlRes.Namespace,
+			UID:        "",
+			Source:     fmt.Sprintf("auxiliary:%s", status.Name),
+		})
+	}
+}
+
+// CheckAuxiliaryResourcesReadiness checks the readiness status of all auxiliary resources
+// using kstatus and updates the session status accordingly.
+func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
+	ctx context.Context,
+	session *v1alpha1.DebugSession,
+	targetClient client.Client,
+) (allReady bool, err error) {
+	if len(session.Status.AuxiliaryResourceStatuses) == 0 {
+		return true, nil
 	}
 
-	// Check for duplicate
-	for _, existing := range session.Status.DeployedResources {
-		if existing.Kind == ref.Kind &&
-			existing.Name == ref.Name &&
-			existing.Namespace == ref.Namespace {
-			return // Already tracked
+	log := m.log.With("session", session.Name, "namespace", session.Namespace)
+
+	allReady = true
+	for i, status := range session.Status.AuxiliaryResourceStatuses {
+		// Skip if not created, already ready, or deleted
+		if !status.Created || status.Ready || status.Deleted {
+			if status.Created && !status.Ready && !status.Deleted {
+				allReady = false
+			}
+			continue
+		}
+
+		// Check primary resource readiness
+		primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
+		session.Status.AuxiliaryResourceStatuses[i].ReadinessStatus = primaryReady.readinessStatus
+		if primaryReady.ready {
+			session.Status.AuxiliaryResourceStatuses[i].Ready = true
+			now := time.Now().UTC().Format(time.RFC3339)
+			session.Status.AuxiliaryResourceStatuses[i].ReadyAt = &now
+			log.Infow("Auxiliary resource is ready",
+				"resource", status.Name,
+				"kind", status.Kind,
+				"name", status.ResourceName)
+		} else if primaryReady.failed {
+			session.Status.AuxiliaryResourceStatuses[i].Error = primaryReady.message
+			log.Warnw("Auxiliary resource failed",
+				"resource", status.Name,
+				"kind", status.Kind,
+				"name", status.ResourceName,
+				"message", primaryReady.message)
+			allReady = false
+		} else {
+			log.Debugw("Auxiliary resource not ready yet",
+				"resource", status.Name,
+				"kind", status.Kind,
+				"name", status.ResourceName,
+				"status", primaryReady.readinessStatus,
+				"message", primaryReady.message)
+			allReady = false
+		}
+
+		// Check additional resources from multi-document YAML templates
+		for j, addlRes := range status.AdditionalResources {
+			if addlRes.Ready || addlRes.Deleted {
+				continue
+			}
+
+			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace)
+			session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].ReadinessStatus = addlReady.readinessStatus
+
+			if addlReady.ready {
+				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Ready = true
+				log.Infow("Additional auxiliary resource is ready",
+					"resource", status.Name,
+					"kind", addlRes.Kind,
+					"name", addlRes.ResourceName)
+			} else if addlReady.failed {
+				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Error = addlReady.message
+				log.Warnw("Additional auxiliary resource failed",
+					"resource", status.Name,
+					"kind", addlRes.Kind,
+					"name", addlRes.ResourceName,
+					"message", addlReady.message)
+				allReady = false
+			} else {
+				log.Debugw("Additional auxiliary resource not ready yet",
+					"resource", status.Name,
+					"kind", addlRes.Kind,
+					"name", addlRes.ResourceName,
+					"status", addlReady.readinessStatus)
+				allReady = false
+			}
 		}
 	}
 
-	session.Status.DeployedResources = append(session.Status.DeployedResources, ref)
+	return allReady, nil
+}
+
+// readinessResult holds the result of a single resource readiness check.
+type readinessResult struct {
+	ready           bool
+	failed          bool
+	readinessStatus string
+	message         string
+}
+
+// checkSingleResourceReadiness checks the readiness of a single resource using kstatus.
+func (m *AuxiliaryResourceManager) checkSingleResourceReadiness(
+	ctx context.Context,
+	log *zap.SugaredLogger,
+	targetClient client.Client,
+	apiVersion, kind, name, namespace string,
+) readinessResult {
+	gvk, err := parseGVK(apiVersion, kind)
+	if err != nil {
+		log.Warnw("Failed to parse GVK for resource",
+			"apiVersion", apiVersion,
+			"kind", kind,
+			"error", err)
+		return readinessResult{failed: true, message: fmt.Sprintf("invalid GVK: %v", err)}
+	}
+
+	readiness := m.readinessChecker.CheckResourceReadiness(ctx, targetClient, gvk, name, namespace)
+
+	return readinessResult{
+		ready:           readiness.IsReady(),
+		failed:          readiness.IsFailed(),
+		readinessStatus: string(readiness.Status),
+		message:         readiness.Message,
+	}
+}
+
+// parseGVK parses an apiVersion and kind into a GroupVersionKind.
+func parseGVK(apiVersion, kind string) (schema.GroupVersionKind, error) {
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return schema.GroupVersionKind{}, err
+	}
+	return gv.WithKind(kind), nil
 }

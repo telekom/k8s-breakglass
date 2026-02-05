@@ -180,6 +180,118 @@ The `templateString` supports all session context variables (`.session`, `.targe
 
 > **Note:** `template` and `templateString` are mutually exclusive. The webhook will reject DebugPodTemplates with both fields set.
 
+#### Multi-Document YAML in Pod Templates
+
+When using `templateString`, you can use multi-document YAML (documents separated by `---`) to define the PodSpec AND additional supporting Kubernetes resources that should be created alongside the debug pod.
+
+**Rules:**
+- The **first document** MUST be the PodSpec (just the `spec` portion, not a full Pod definition)
+- **Subsequent documents** must be complete Kubernetes resources with `apiVersion` and `kind`
+- Additional resources are created BEFORE the debug workload starts
+- Additional resources are automatically cleaned up when the session ends
+- Empty documents (blank or whitespace-only) are silently skipped
+
+**Example: Debug Pod with PVC for Storage Testing**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: storage-debug-pod
+spec:
+  displayName: "Storage Debug Pod"
+  description: "Debug pod with dynamically provisioned PVC for storage testing"
+  templateString: |
+    # First document: PodSpec
+    containers:
+      - name: fio
+        image: wallnerryan/fiotools:latest
+        command: ["sleep", "infinity"]
+        volumeMounts:
+          - name: test-volume
+            mountPath: /data
+    volumes:
+      - name: test-volume
+        persistentVolumeClaim:
+          claimName: pvc-{{ .session.name | trunc 20 }}
+    ---
+    # Second document: PVC (created before pod starts)
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: pvc-{{ .session.name | trunc 20 }}
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      storageClassName: {{ .vars.storageClass | default "standard" }}
+      resources:
+        requests:
+          storage: {{ .vars.pvcSize | default "10Gi" }}
+```
+
+**Example: Debug Pod with ConfigMap and Secret**
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: app-debug-pod
+spec:
+  displayName: "Application Debug Pod"
+  templateString: |
+    containers:
+      - name: debug
+        image: alpine:latest
+        command: ["sleep", "infinity"]
+        envFrom:
+          - configMapRef:
+              name: debug-config-{{ .session.name }}
+          - secretRef:
+              name: debug-creds-{{ .session.name }}
+    ---
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: debug-config-{{ .session.name }}
+    data:
+      CLUSTER: {{ .session.cluster }}
+      DEBUG_MODE: "true"
+    ---
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: debug-creds-{{ .session.name }}
+    type: Opaque
+    stringData:
+      api-token: {{ .vars.apiToken | default "default-token" }}
+```
+
+**Conditional Additional Resources**
+
+Use Go template conditionals to optionally include resources:
+
+```yaml
+templateString: |
+  containers:
+    - name: debug
+      image: alpine:latest
+  {{- if eq .vars.createPVC "true" }}
+  ---
+  apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: optional-pvc-{{ .session.name }}
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+  {{- end }}
+```
+
+> **Tip:** Multi-document pod templates are ideal for debug scenarios that need supporting resources (PVCs, ConfigMaps, Secrets) that are tightly coupled to the pod. For shared resources or complex resource graphs, consider using [Auxiliary Resources](#auxiliary-resources) instead.
+
 ### DebugSessionTemplate
 
 Defines session behavior and permissions:
@@ -927,6 +1039,55 @@ spec:
                   port: 53
 ```
 
+### Multi-Document YAML Templates
+
+Use `templateString` instead of `template` for multi-document YAML. This allows deploying multiple Kubernetes resources from a single auxiliary resource definition:
+
+```yaml
+spec:
+  auxiliaryResources:
+    - name: debug-rbac-bundle
+      category: rbac
+      description: "Creates ServiceAccount, Role, and RoleBinding for debug pods"
+      templateString: |
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: debug-{{ .Session.Name }}-sa
+          namespace: {{ .Target.Namespace }}
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: debug-{{ .Session.Name }}-role
+          namespace: {{ .Target.Namespace }}
+        rules:
+          - apiGroups: [""]
+            resources: ["pods", "pods/log"]
+            verbs: ["get", "list"]
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: debug-{{ .Session.Name }}-binding
+          namespace: {{ .Target.Namespace }}
+        subjects:
+          - kind: ServiceAccount
+            name: debug-{{ .Session.Name }}-sa
+            namespace: {{ .Target.Namespace }}
+        roleRef:
+          kind: Role
+          name: debug-{{ .Session.Name }}-role
+          apiGroup: rbac.authorization.k8s.io
+```
+
+All resources from multi-document YAML are:
+- Tracked in the session status for observability
+- Cleaned up automatically when the session ends
+- Monitored for readiness using kstatus
+
+> **Note:** `template` (structured) and `templateString` (Go template) are mutually exclusive. Use `templateString` when you need multi-document YAML or dynamic templating.
+
 ### Resource Categories
 
 Common categories for organizing auxiliary resources:
@@ -994,6 +1155,30 @@ spec:
     - network-policy  # Always require network isolation
     - rbac            # Always require RBAC setup
 ```
+
+### Pod Template Multi-Doc vs Auxiliary Resources
+
+Both pod templates and auxiliary resources support multi-document YAML for creating additional Kubernetes resources. Here's when to use each:
+
+| Feature | Pod Template Multi-Doc | Auxiliary Resources |
+|---------|----------------------|---------------------|
+| **Use Case** | Resources tightly coupled to the pod | Reusable, policy-enforced resources |
+| **Failure Policy** | Session fails if creation fails | Configurable (fail/ignore/warn) |
+| **Readiness Tracking** | Basic (created/deleted) | Full kstatus monitoring |
+| **Categories** | Not categorized | Organized by category |
+| **Binding Requirements** | N/A | Can enforce required categories |
+| **Template Context** | `.session`, `.target`, `.vars` | `.Session`, `.Target`, `.Vars` |
+
+**Choose Pod Template Multi-Doc when:**
+- Resources are specific to this pod template (e.g., PVC for storage testing)
+- You want a self-contained template with all its dependencies
+- The resources have a 1:1 relationship with the pod
+
+**Choose Auxiliary Resources when:**
+- Resources need failure policies (ignore failures for optional monitoring)
+- Cluster bindings should enforce certain resource categories
+- You need detailed readiness tracking via kstatus
+- Resources are reusable across multiple templates
 
 ## Cluster Bindings
 

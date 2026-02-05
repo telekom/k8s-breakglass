@@ -65,7 +65,7 @@ type ClientProvider struct {
 	mu   sync.RWMutex
 	data map[string]*telekomv1alpha1.ClusterConfig
 	rest map[string]*cachedRESTConfig
-	// clusterToSecret tracks which kubeconfig secret each ClusterConfig uses (keyed by cluster name)
+	// clusterToSecret tracks which kubeconfig secret each ClusterConfig uses (keyed by namespace/name)
 	clusterToSecret map[string]string
 	// secretToClusters tracks all clusters backed by a given secret (keyed by namespace/name)
 	secretToClusters map[string]map[string]struct{}
@@ -90,6 +90,16 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 // with the same name in different namespaces.
 func cacheKey(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+func splitNamespacedName(value string) (string, string, bool) {
+	if strings.Contains(value, "/") {
+		parts := strings.SplitN(value, "/", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return parts[0], parts[1], true
+		}
+	}
+	return "", "", false
 }
 
 // GetAcrossAllNamespaces returns a ClusterConfig by name, searching across all namespaces.
@@ -165,24 +175,39 @@ func (p *ClientProvider) GetInNamespace(ctx context.Context, namespace, name str
 func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.Config, error) {
 	now := time.Now()
 
+	// If caller provided namespace/name, use it for exact cache lookup
+	var cacheLookupKey string
+	var parsedNamespace, parsedName string
+	if ns, n, ok := splitNamespacedName(name); ok {
+		parsedNamespace = ns
+		parsedName = n
+		cacheLookupKey = cacheKey(ns, n)
+	}
+
 	// Check cache with TTL validation
 	p.mu.RLock()
-	cached, ok := p.rest[name]
+	cached, ok := p.rest[cacheLookupKey]
 	p.mu.RUnlock()
 
-	if ok && now.Before(cached.expiresAt) {
+	if cacheLookupKey != "" && ok && now.Before(cached.expiresAt) {
 		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
 		return cached.config, nil
 	}
 
 	// Cache miss or expired
-	if ok {
+	if cacheLookupKey != "" && ok {
 		p.log.Debugw("REST config cache expired", "cluster", name, "expiredAt", cached.expiresAt)
 	}
 	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
-	// Legacy Get behavior lists across namespaces when namespace is empty.
-	cc, err := p.GetAcrossAllNamespaces(ctx, name)
+	// Use GetInNamespace if namespace is known, otherwise fall back to GetAcrossAllNamespaces
+	var cc *telekomv1alpha1.ClusterConfig
+	var err error
+	if parsedNamespace != "" && parsedName != "" {
+		cc, err = p.GetInNamespace(ctx, parsedNamespace, parsedName)
+	} else {
+		cc, err = p.GetAcrossAllNamespaces(ctx, name)
+	}
 	if err != nil {
 		metrics.ClusterRESTConfigErrors.WithLabelValues(name, "clusterconfig_not_found").Inc()
 		return nil, err
@@ -220,16 +245,17 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		return nil, err
 	}
 
-	// Cache with TTL
+	// Cache with TTL (keyed by namespace/name)
+	cacheKey := cacheKey(cc.Namespace, cc.Name)
 	p.mu.Lock()
-	p.rest[name] = &cachedRESTConfig{
+	p.rest[cacheKey] = &cachedRESTConfig{
 		config:    cfg,
 		expiresAt: now.Add(ttl),
 		authType:  authType,
 	}
 	p.mu.Unlock()
 
-	p.log.Debugw("Cached REST config", "cluster", name, "authType", authType, "ttl", ttl)
+	p.log.Debugw("Cached REST config", "cluster", cacheKey, "authType", authType, "ttl", ttl)
 	return cfg, nil
 }
 
@@ -277,13 +303,14 @@ func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *te
 
 	// Track secret reference for cache invalidation
 	secretRefKey := cacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
+	clusterKey := cacheKey(cc.Namespace, cc.Name)
 
 	p.mu.Lock()
-	p.clusterToSecret[cc.Name] = secretRefKey
+	p.clusterToSecret[clusterKey] = secretRefKey
 	if _, ok := p.secretToClusters[secretRefKey]; !ok {
 		p.secretToClusters[secretRefKey] = map[string]struct{}{}
 	}
-	p.secretToClusters[secretRefKey][cc.Name] = struct{}{}
+	p.secretToClusters[secretRefKey][clusterKey] = struct{}{}
 	p.mu.Unlock()
 
 	metrics.ClusterRESTConfigLoaded.WithLabelValues(cc.Name).Inc()
@@ -299,10 +326,10 @@ func (p *ClientProvider) getRESTConfigFromOIDC(ctx context.Context, cc *telekomv
 }
 
 // Invalidate removes an entry (called by informer/controller update hooks later).
-func (p *ClientProvider) Invalidate(name string) {
+func (p *ClientProvider) Invalidate(namespace, name string) {
 	metrics.ClusterCacheInvalidations.WithLabelValues("cluster_update").Inc()
 	p.mu.Lock()
-	p.evictClusterLocked(name)
+	p.evictClusterLocked(cacheKey(namespace, name))
 	p.mu.Unlock()
 }
 
@@ -331,20 +358,21 @@ func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
 	return ok
 }
 
-func (p *ClientProvider) evictClusterLocked(name string) {
-	for k := range p.data {
-		if strings.HasSuffix(k, "/"+name) || k == name {
-			delete(p.data, k)
+func (p *ClientProvider) evictClusterLocked(clusterKey string) {
+	delete(p.data, clusterKey)
+	delete(p.rest, clusterKey)
+	if p.oidcProvider != nil {
+		if ns, name, ok := splitNamespacedName(clusterKey); ok {
+			p.oidcProvider.Invalidate(ns, name)
 		}
 	}
-	delete(p.rest, name)
-	if secretKey, ok := p.clusterToSecret[name]; ok {
+	if secretKey, ok := p.clusterToSecret[clusterKey]; ok {
 		if clusters, found := p.secretToClusters[secretKey]; found {
-			delete(clusters, name)
+			delete(clusters, clusterKey)
 			if len(clusters) == 0 {
 				delete(p.secretToClusters, secretKey)
 			}
 		}
-		delete(p.clusterToSecret, name)
+		delete(p.clusterToSecret, clusterKey)
 	}
 }

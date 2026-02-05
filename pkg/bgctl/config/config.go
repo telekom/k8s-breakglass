@@ -27,6 +27,8 @@ type Settings struct {
 	Color        string `yaml:"color,omitempty"`
 	PageSize     int    `yaml:"page-size,omitempty"`
 	Timeout      string `yaml:"timeout,omitempty"`
+	// TokenStorage controls where bgctl stores tokens: "keychain" (default) or "file".
+	TokenStorage string `yaml:"token-storage,omitempty"`
 }
 
 type OIDCProvider struct {
@@ -71,6 +73,7 @@ func DefaultConfig() Config {
 			OutputFormat: "table",
 			Color:        "auto",
 			PageSize:     50,
+			TokenStorage: "keychain",
 		},
 	}
 }
@@ -196,6 +199,14 @@ func (c *Config) Validate() error {
 	if c.Version == "" {
 		return errors.New("config version missing")
 	}
+	for _, provider := range c.OIDCProviders {
+		if strings.TrimSpace(provider.Name) == "" {
+			return errors.New("oidc provider name cannot be empty")
+		}
+		if err := validateClientSecretSources(provider.ClientSecret, provider.ClientSecretEnv, provider.ClientSecretFile, "oidc provider "+provider.Name); err != nil {
+			return err
+		}
+	}
 	for _, ctx := range c.Contexts {
 		if strings.TrimSpace(ctx.Name) == "" {
 			return errors.New("context name cannot be empty")
@@ -203,6 +214,26 @@ func (c *Config) Validate() error {
 		if strings.TrimSpace(ctx.Server) == "" {
 			return fmt.Errorf("context %s server is required", ctx.Name)
 		}
+		if ctx.OIDC != nil && ctx.OIDCProvider != "" {
+			return fmt.Errorf("context %s must not set both oidc and oidc-provider", ctx.Name)
+		}
+	}
+	return nil
+}
+
+func validateClientSecretSources(clientSecret, clientSecretEnv, clientSecretFile, scope string) error {
+	count := 0
+	if strings.TrimSpace(clientSecret) != "" {
+		count++
+	}
+	if strings.TrimSpace(clientSecretEnv) != "" {
+		count++
+	}
+	if strings.TrimSpace(clientSecretFile) != "" {
+		count++
+	}
+	if count > 1 {
+		return fmt.Errorf("%s must set only one of client-secret, client-secret-env, or client-secret-file", scope)
 	}
 	return nil
 }

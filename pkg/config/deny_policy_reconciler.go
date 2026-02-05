@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 
 	"go.uber.org/zap"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -128,14 +129,28 @@ func (r *DenyPolicyReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 // validatePolicy validates the DenyPolicy spec.
 // This performs structural validation beyond what the CRD validation can check.
 func (r *DenyPolicyReconciler) validatePolicy(policy *breakglassv1alpha1.DenyPolicy) error {
-	// Currently the webhook performs most validation.
-	// This reconciler ensures status reflects validation state.
-	// Additional runtime validation can be added here.
-
 	// Validate that at least one rule exists if policy is not empty
 	if len(policy.Spec.Rules) == 0 && policy.Spec.PodSecurityRules == nil {
 		// Empty rules are valid - policy has no effect
 		return nil
+	}
+
+	for i, rule := range policy.Spec.Rules {
+		if len(rule.Verbs) == 0 {
+			return fmt.Errorf("rule %d: verbs must not be empty", i)
+		}
+		if len(rule.APIGroups) == 0 {
+			return fmt.Errorf("rule %d: apiGroups must not be empty", i)
+		}
+		if len(rule.Resources) == 0 {
+			return fmt.Errorf("rule %d: resources must not be empty", i)
+		}
+	}
+
+	if policy.Spec.PodSecurityRules != nil {
+		if len(policy.Spec.PodSecurityRules.Thresholds) == 0 {
+			return fmt.Errorf("podSecurityRules.thresholds must not be empty")
+		}
 	}
 
 	return nil

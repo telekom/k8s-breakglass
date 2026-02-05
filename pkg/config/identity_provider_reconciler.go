@@ -3,7 +3,6 @@ package config
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -34,11 +33,10 @@ import (
 // - No thundering herd: Uses work queue to deduplicate rapid changes
 // - Finalization ready: Supports cleanup logic if needed
 //
-// Caching:
-// - Maintains an in-memory cache of enabled IdentityProviders
-// - Cache is updated whenever IdentityProvider CRs change
-// - API calls use the cache to avoid DDoSing the Kubernetes APIServer
-// - Cache is thread-safe using RWMutex
+// Data Access:
+// - Uses controller-runtime's informer-based cache for reads (automatic sync)
+// - GetEnabledIdentityProviders() queries the controller-runtime cache directly
+// - No need for manual TTL-based caching - informers are event-driven and always up-to-date
 type IdentityProviderReconciler struct {
 	client   client.Client
 	logger   *zap.SugaredLogger
@@ -50,11 +48,6 @@ type IdentityProviderReconciler struct {
 	onError func(ctx context.Context, err error)
 	// resyncPeriod defines the full list reconciliation interval (default 10m)
 	resyncPeriod time.Duration
-
-	// Cache for enabled IdentityProviders to avoid APIServer queries
-	// Protected by cacheMutex for thread-safe access
-	idpCacheMutex sync.RWMutex
-	idpCache      []*breakglassv1alpha1.IdentityProvider
 }
 
 // NewIdentityProviderReconciler creates a new controller-runtime reconciler for IdentityProvider
@@ -71,29 +64,21 @@ func NewIdentityProviderReconciler(
 		logger:       logger,
 		onReload:     reloadFn,
 		resyncPeriod: 10 * time.Minute, // Full list resync every 10 minutes
-		idpCache:     []*breakglassv1alpha1.IdentityProvider{},
 	}
 }
 
-// GetCachedIdentityProviders returns the cached list of enabled IdentityProviders
-// This is used by the API to avoid querying the Kubernetes APIServer on every request
-// The cache is automatically maintained by the reconciler when IdentityProviders change
-func (r *IdentityProviderReconciler) GetCachedIdentityProviders() []*breakglassv1alpha1.IdentityProvider {
-	r.idpCacheMutex.RLock()
-	defer r.idpCacheMutex.RUnlock()
-	// Return a copy to prevent external modifications
-	result := make([]*breakglassv1alpha1.IdentityProvider, len(r.idpCache))
-	copy(result, r.idpCache)
-	return result
-}
+// GetEnabledIdentityProviders returns the list of enabled IdentityProviders.
+// This queries the controller-runtime informer cache directly (no APIServer call).
+// The informer cache is automatically synced via watch events, so data is always up-to-date.
+func (r *IdentityProviderReconciler) GetEnabledIdentityProviders(ctx context.Context) ([]*breakglassv1alpha1.IdentityProvider, error) {
+	if r.client == nil {
+		return []*breakglassv1alpha1.IdentityProvider{}, nil
+	}
 
-// updateIDPCache updates the cached list of identity providers
-// Called during reconciliation when changes are detected
-func (r *IdentityProviderReconciler) updateIDPCache(ctx context.Context) error {
 	idpList := &breakglassv1alpha1.IdentityProviderList{}
 	if err := r.client.List(ctx, idpList); err != nil {
-		r.logger.Errorw("failed to list identity providers for cache update", "error", err)
-		return err
+		r.logger.Errorw("failed to list identity providers", "error", err)
+		return nil, err
 	}
 
 	// Filter to only enabled providers
@@ -104,13 +89,24 @@ func (r *IdentityProviderReconciler) updateIDPCache(ctx context.Context) error {
 		}
 	}
 
-	// Update cache atomically
-	r.idpCacheMutex.Lock()
-	r.idpCache = enabledIDPs
-	r.idpCacheMutex.Unlock()
+	return enabledIDPs, nil
+}
 
-	r.logger.Debugw("updated identity provider cache", "count", len(enabledIDPs))
-	return nil
+// GetCachedIdentityProviders returns the list of enabled IdentityProviders.
+// Deprecated: Use GetEnabledIdentityProviders(ctx) instead. This method exists for backward compatibility.
+// It creates a background context internally which is not ideal for tracing/cancellation.
+func (r *IdentityProviderReconciler) GetCachedIdentityProviders() []*breakglassv1alpha1.IdentityProvider {
+	if r.logger == nil {
+		// Handle case where reconciler was not properly initialized
+		return []*breakglassv1alpha1.IdentityProvider{}
+	}
+	ctx := context.Background()
+	idps, err := r.GetEnabledIdentityProviders(ctx)
+	if err != nil {
+		r.logger.Errorw("failed to get enabled identity providers", "error", err)
+		return []*breakglassv1alpha1.IdentityProvider{}
+	}
+	return idps
 }
 
 // WithErrorHandler sets the error callback function
@@ -227,25 +223,7 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 			r.logger.Errorw("failed to update identity provider status after reload failure", "error", statusErr, "name", req.Name)
 		}
 
-		// Update cache anyway - even if reload failed, we should still have the latest list
-		if cacheErr := r.updateIDPCache(ctx); cacheErr != nil {
-			r.logger.Warnw("failed to update IDP cache after reload failure", "error", cacheErr, "name", req.Name)
-			// Update condition with cache error
-			cacheCondition := metav1.Condition{
-				Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: idp.Generation,
-				LastTransitionTime: metav1.Now(),
-				Reason:             "CacheUpdateFailed",
-				Message:            fmt.Sprintf("Failed to update provider cache: %v", cacheErr),
-			}
-			idp.SetCondition(cacheCondition)
-			if cacheStatusErr := r.applyStatus(ctx, idp); cacheStatusErr != nil {
-				r.logger.Errorw("failed to update IDP cache error status", "error", cacheStatusErr, "name", req.Name)
-			}
-		}
-
-		// Emit events for each failure type
+		// Emit events for failure
 		if r.recorder != nil {
 			eventIdp := idp.DeepCopy()
 			eventIdp.SetNamespace("")
@@ -270,47 +248,6 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	}
 	idp.SetCondition(readyCondition)
 	idp.Status.ObservedGeneration = idp.Generation
-
-	// Update cache with latest IDPs (for API to use)
-	if err := r.updateIDPCache(ctx); err != nil {
-		r.logger.Warnw("failed to update IDP cache after successful reload", "error", err, "name", req.Name)
-		// Expose cache failure even on successful config reload via condition
-		cacheCondition := metav1.Condition{
-			Type:               string(breakglassv1alpha1.IdentityProviderConditionCacheUpdated),
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: idp.Generation,
-			LastTransitionTime: metav1.Now(),
-			Reason:             "CacheUpdateFailed",
-			Message:            fmt.Sprintf("Failed to update provider cache: %v", err),
-		}
-		idp.SetCondition(cacheCondition)
-		idp.Status.ObservedGeneration = idp.Generation
-
-		// Try to persist this cache error in status
-		if cacheStatusErr := r.applyStatus(ctx, idp); cacheStatusErr != nil {
-			r.logger.Errorw("failed to update IDP cache error status", "error", cacheStatusErr, "name", req.Name)
-		}
-
-		// Emit event for cache failure
-		if r.recorder != nil {
-			eventIdp := idp.DeepCopy()
-			eventIdp.SetNamespace("")
-			r.recorder.Eventf(eventIdp, nil, corev1.EventTypeWarning, "CacheUpdateFailed", "CacheUpdateFailed",
-				"Failed to update provider cache: %v", err)
-		}
-	} else {
-		// Cache update successful - update condition
-		readyCondition := metav1.Condition{
-			Type:               string(breakglassv1alpha1.IdentityProviderConditionCacheUpdated),
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: idp.Generation,
-			LastTransitionTime: metav1.Now(),
-			Reason:             "CacheUpdated",
-			Message:            "Provider cache updated successfully",
-		}
-		idp.SetCondition(readyCondition)
-		idp.Status.ObservedGeneration = idp.Generation
-	}
 
 	// Check group sync provider health if configured
 	r.updateGroupSyncHealth(ctx, idp)

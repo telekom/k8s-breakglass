@@ -357,7 +357,7 @@ func TestUpdateWithRetry_ConflictRetry(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(session).
 		WithInterceptorFuncs(interceptor.Funcs{
-			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 				if conflictCount < maxConflicts {
 					conflictCount++
 					return apierrors.NewConflict(
@@ -366,7 +366,7 @@ func TestUpdateWithRetry_ConflictRetry(t *testing.T) {
 						nil,
 					)
 				}
-				return c.Update(ctx, obj, opts...)
+				return c.Apply(ctx, obj, opts...)
 			},
 		}).
 		Build()
@@ -412,7 +412,7 @@ func TestUpdateWithRetry_MaxRetriesExceeded(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(session).
 		WithInterceptorFuncs(interceptor.Funcs{
-			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 				return apierrors.NewConflict(
 					schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
 					session.Name,
@@ -458,12 +458,12 @@ func TestUpdateWithRetry_ContextCancelled(t *testing.T) {
 		},
 	}
 
-	// Always return conflict to trigger retry
+	// Always return conflict to trigger retry using Apply interceptor (SSA uses Apply)
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(session).
 		WithInterceptorFuncs(interceptor.Funcs{
-			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 				return apierrors.NewConflict(
 					schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
 					session.Name,
@@ -543,7 +543,7 @@ func TestUpdateWithRetry_NonConflictError(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(session).
 		WithInterceptorFuncs(interceptor.Funcs{
-			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 				return apierrors.NewNotFound(
 					schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
 					session.Name,

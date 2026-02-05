@@ -53,6 +53,7 @@ func TestResolveTokenFromCache_NotAuthenticated(t *testing.T) {
 			},
 			CurrentContext: "ctx",
 		},
+		tokenStorageOverride: "file", // Use file storage to avoid keychain dependency in tests
 	}
 
 	ctxCfg, err := rt.cfg.FindContext("ctx")

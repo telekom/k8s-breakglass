@@ -122,6 +122,8 @@ func UpdateWithRetry[T client.Object](
 	config RetryConfig,
 ) error {
 	backoff := config.InitialBackoff
+	// Preserve TypeMeta since client.Get strips it from typed objects
+	gvk := obj.GetObjectKind().GroupVersionKind()
 
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		// Apply the modification function
@@ -129,8 +131,11 @@ func UpdateWithRetry[T client.Object](
 			return err
 		}
 
-		// Try to update the object
-		err := c.Update(ctx, obj)
+		// Restore TypeMeta before ApplyObject (required for SSA)
+		obj.GetObjectKind().SetGroupVersionKind(gvk)
+
+		// Try to apply the object using SSA (new API)
+		err := ApplyObject(ctx, c, obj)
 		if err == nil {
 			return nil // Success
 		}

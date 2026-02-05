@@ -8,12 +8,19 @@ import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
 import useCurrentTime from "@/utils/currentTime";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
+import type { Breakglass, SessionCR } from "@/model/breakglass";
 
 const auth = inject(AuthKey);
 const breakglassService = new BreakglassService(auth!);
 const time = useCurrentTime();
 
-type BreakglassWithSession = any; // Use 'any' for now, or define a merged type if desired
+type BreakglassWithSession = Breakglass & {
+  requestingGroups?: string[];
+  approvalGroups?: string[];
+  sessionActive?: SessionCR | null;
+  sessionPending?: SessionCR | null;
+  state?: string;
+};
 const route = useRoute();
 const state = reactive<{
   breakglasses: BreakglassWithSession[];
@@ -74,7 +81,7 @@ const dedupedBreakglasses = computed(() => {
 
   const collectRequesterGroups = (bg: BreakglassWithSession): string[] => {
     const groups = new Set<string>();
-    const provided = Array.isArray((bg as any).requestingGroups) ? (bg as any).requestingGroups : [];
+    const provided = Array.isArray(bg.requestingGroups) ? bg.requestingGroups : [];
     provided.filter(Boolean).forEach((g: string) => groups.add(g));
     if (bg.from) {
       groups.add(bg.from);
@@ -87,35 +94,36 @@ const dedupedBreakglasses = computed(() => {
     const existing = map.get(key);
     if (!existing) {
       const groups = collectRequesterGroups(bg);
-      const clone = {
+      const clone: BreakglassWithSession = {
         ...bg,
         requestingGroups: groups,
+        from: groups[0] ?? bg.from,
       };
-      if (groups.length > 0) {
-        clone.from = groups[0];
-      }
       map.set(key, clone);
       return;
     }
 
     const mergedGroups = new Set<string>([...(existing.requestingGroups || []), ...collectRequesterGroups(bg)]);
-    existing.requestingGroups = Array.from(mergedGroups);
-    if (existing.requestingGroups.length > 0) {
-      existing.from = existing.requestingGroups[0];
-    }
+    const mergedGroupsArray = Array.from(mergedGroups);
+
+    const next: BreakglassWithSession = {
+      ...existing,
+      requestingGroups: mergedGroupsArray,
+      from: mergedGroupsArray[0] ?? existing.from,
+    };
 
     if (!existing.sessionActive && bg.sessionActive) {
-      existing.sessionActive = bg.sessionActive;
-      existing.state = bg.state;
+      next.sessionActive = bg.sessionActive;
+      next.state = bg.state;
     } else if (bg.state === "Active") {
-      existing.state = "Active";
-      existing.sessionActive = bg.sessionActive || existing.sessionActive;
+      next.state = "Active";
+      next.sessionActive = bg.sessionActive ?? existing.sessionActive ?? undefined;
     }
 
     if (!existing.sessionPending && bg.sessionPending) {
-      existing.sessionPending = bg.sessionPending;
-      if (!existing.state || existing.state === "Available") {
-        existing.state = "Pending";
+      next.sessionPending = bg.sessionPending;
+      if (!next.state || next.state === "Available") {
+        next.state = "Pending";
       }
     }
 
@@ -124,8 +132,10 @@ const dedupedBreakglasses = computed(() => {
       Array.isArray(bg.approvalGroups) &&
       bg.approvalGroups.length > 0
     ) {
-      existing.approvalGroups = bg.approvalGroups;
+      next.approvalGroups = bg.approvalGroups;
     }
+
+    map.set(key, next);
   });
 
   return Array.from(map.values());

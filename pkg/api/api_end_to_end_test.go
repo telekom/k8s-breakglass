@@ -516,6 +516,8 @@ func (env *apiEndToEndEnv) updateSessionSpec(t *testing.T, name string, mutate f
 	var session v1alpha1.BreakglassSession
 	require.NoError(t, env.client.Get(ctx, client.ObjectKey{Namespace: e2eNamespace, Name: name}, &session))
 	mutate(&session)
+	// Use direct Update for fake client - SSA has limitations with fake client
+	// In production code, SSA is used via ApplyObject
 	require.NoError(t, env.client.Update(ctx, &session))
 }
 

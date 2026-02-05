@@ -85,6 +85,53 @@ sum(rate(breakglass_webhook_session_sar_allowed_total[5m]))
 sum(rate(breakglass_webhook_session_sar_errors_total[5m]))
 ```
 
+### SAR Processing Phase Timing
+
+These metrics track the time spent in each phase of SubjectAccessReview processing, enabling detailed performance analysis and bottleneck identification.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `breakglass_webhook_sar_phase_duration_seconds` | Histogram | `cluster`, `phase` | Duration of each SAR processing phase |
+
+**Processing Phases:**
+
+| Phase | Description |
+|-------|-------------|
+| `parse` | JSON request unmarshaling |
+| `cluster_config` | ClusterConfig lookup |
+| `sessions` | Load user groups and sessions |
+| `debug_session` | Early debug session check |
+| `deny_policy` | DenyPolicy evaluation |
+| `rbac_check` | canDoFn RBAC verification (when applicable) |
+| `session_sars` | Session authorization checks |
+| `escalations` | Escalation discovery |
+| `total` | Complete request duration |
+
+**Example Queries:**
+
+```promql
+# Average time per phase
+avg(rate(breakglass_webhook_sar_phase_duration_seconds_sum[5m]))
+/
+avg(rate(breakglass_webhook_sar_phase_duration_seconds_count[5m]))
+  by (cluster, phase)
+
+# Identify slowest phase (p95)
+histogram_quantile(0.95, 
+  rate(breakglass_webhook_sar_phase_duration_seconds_bucket[5m])
+) by (phase)
+
+# Total SAR processing time by cluster
+histogram_quantile(0.99, 
+  rate(breakglass_webhook_sar_phase_duration_seconds_bucket{phase="total"}[5m])
+) by (cluster)
+
+# Compare session lookup vs RBAC check duration
+histogram_quantile(0.95,
+  rate(breakglass_webhook_sar_phase_duration_seconds_bucket{phase=~"sessions|rbac_check"}[5m])
+) by (phase)
+```
+
 ## Session Lifecycle Metrics
 
 Track breakglass session creation, state changes, and expiration.

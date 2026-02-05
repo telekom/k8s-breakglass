@@ -103,6 +103,20 @@ func (r *MailProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		metrics.MailProviderConfigured.WithLabelValues(mp.Name, "enabled").Set(1)
 	}
 
+	// Emit warnings for insecure SMTP settings
+	if mp.Spec.SMTP.DisableTLS {
+		log.Warnw("MailProvider has DisableTLS enabled (insecure for production)", "provider", mp.Name)
+		if r.Recorder != nil {
+			r.Recorder.Eventf(&mp, nil, "Warning", "InsecureSMTP", "DisableTLS", "DisableTLS is enabled; SMTP traffic will be unencrypted")
+		}
+	}
+	if mp.Spec.SMTP.InsecureSkipVerify {
+		log.Warnw("MailProvider has InsecureSkipVerify enabled (insecure for production)", "provider", mp.Name)
+		if r.Recorder != nil {
+			r.Recorder.Eventf(&mp, nil, "Warning", "InsecureSMTP", "InsecureSkipVerify", "InsecureSkipVerify is enabled; SMTP TLS verification will be skipped")
+		}
+	}
+
 	// If disabled, just mark as not ready and return
 	if mp.Spec.Disabled {
 		return r.updateStatusDisabled(ctx, &mp)

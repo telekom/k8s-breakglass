@@ -67,7 +67,7 @@ func newAuthLoginCommand() *cobra.Command {
 				return err
 			}
 			providerKey := resolveProviderKey(ctxCfg, resolved)
-			manager := auth.TokenManager{CachePath: config.DefaultTokenPath()}
+			manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 			stored := auth.StoredToken{
 				AccessToken:  result.Token.AccessToken,
 				RefreshToken: result.Token.RefreshToken,
@@ -113,7 +113,7 @@ func newAuthStatusCommand() *cobra.Command {
 				return err
 			}
 			providerKey := resolveProviderKey(ctxCfg, resolved)
-			manager := auth.TokenManager{CachePath: config.DefaultTokenPath()}
+			manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 			token, ok, err := manager.GetToken(providerKey)
 			if err != nil {
 				return err
@@ -191,7 +191,7 @@ func newAuthLogoutCommand() *cobra.Command {
 				return err
 			}
 			providerKey := resolveProviderKey(ctxCfg, resolved)
-			manager := auth.TokenManager{CachePath: config.DefaultTokenPath()}
+			manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 			if err := manager.DeleteToken(providerKey); err != nil {
 				return err
 			}

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -121,9 +122,26 @@ func WaitForResourceDeleted[T client.Object](ctx context.Context, cli client.Cli
 // WaitForDeploymentReady waits for a deployment to have available replicas
 func WaitForDeploymentReady(ctx context.Context, cli client.Client, namespace, name string, timeout time.Duration) error {
 	return WaitForCondition(ctx, func() (bool, error) {
-		// Use unstructured to avoid importing apps/v1
-		// This is a simplified check - in practice you'd check the full deployment status
-		return true, nil
+		var deploy appsv1.Deployment
+		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &deploy); err != nil {
+			return false, nil
+		}
+		if deploy.Status.ObservedGeneration < deploy.Generation {
+			return false, nil
+		}
+		replicas := int32(1)
+		if deploy.Spec.Replicas != nil {
+			replicas = *deploy.Spec.Replicas
+		}
+		if deploy.Status.AvailableReplicas < replicas || deploy.Status.UpdatedReplicas < replicas {
+			return false, nil
+		}
+		for _, cond := range deploy.Status.Conditions {
+			if cond.Type == appsv1.DeploymentAvailable {
+				return cond.Status == corev1.ConditionTrue, nil
+			}
+		}
+		return false, nil
 	}, timeout, DefaultInterval)
 }
 

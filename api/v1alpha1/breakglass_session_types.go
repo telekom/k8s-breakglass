@@ -62,15 +62,15 @@ const (
 type BreakglassSessionSpec struct {
 	// cluster is the name of the cluster the session is valid for.
 	// +required
-	Cluster string `json:"cluster,omitempty"`
+	Cluster string `json:"cluster"`
 
 	// user is the name of the user the session is valid for.
 	// +required
-	User string `json:"user,omitempty"`
+	User string `json:"user"`
 
 	// grantedGroup is the group granted by the session.
 	// +required
-	GrantedGroup string `json:"grantedGroup,omitempty"`
+	GrantedGroup string `json:"grantedGroup"`
 
 	// maxValidFor is the maximum amount of time the session will be active for after it is approved.
 	// +default="1h"

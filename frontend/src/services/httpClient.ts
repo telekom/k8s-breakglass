@@ -29,7 +29,7 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
       const headers = AxiosHeaders.from(config.headers || {});
       headers.set("Authorization", `Bearer ${await auth.getAccessToken()}`);
 
-      if (options?.enableDevTokenLogging) {
+      if (options?.enableDevTokenLogging && import.meta.env.DEV) {
         try {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore - dev flag injected via window

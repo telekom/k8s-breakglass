@@ -79,7 +79,7 @@ func TestGetRESTConfigFromOIDC_Success(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	cfg, err := provider.GetRESTConfig(ctx, "oidc-cluster")
+	cfg, err := provider.GetRESTConfig(ctx, "default/oidc-cluster")
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 	assert.Equal(t, "https://api.oidc-cluster.example.com:6443", cfg.Host)
@@ -168,11 +168,11 @@ func TestGetRESTConfig_OIDCWithCaching(t *testing.T) {
 	ctx := context.Background()
 
 	// First call - should cache the config
-	cfg1, err := provider.GetRESTConfig(ctx, "cached-oidc-cluster")
+	cfg1, err := provider.GetRESTConfig(ctx, "default/cached-oidc-cluster")
 	require.NoError(t, err)
 
 	// Second call - should return cached config
-	cfg2, err := provider.GetRESTConfig(ctx, "cached-oidc-cluster")
+	cfg2, err := provider.GetRESTConfig(ctx, "default/cached-oidc-cluster")
 	require.NoError(t, err)
 
 	// Should be the same pointer (cached)
@@ -228,7 +228,7 @@ func TestGetRESTConfig_InferOIDCAuthType(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	cfg, err := provider.GetRESTConfig(ctx, "inferred-oidc-cluster")
+	cfg, err := provider.GetRESTConfig(ctx, "default/inferred-oidc-cluster")
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 	assert.NotNil(t, cfg.WrapTransport, "Should use OIDC auth (inferred)")
@@ -264,7 +264,7 @@ func TestGetRESTConfig_InferKubeconfigAuthType(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	cfg, err := provider.GetRESTConfig(ctx, "inferred-kube-cluster")
+	cfg, err := provider.GetRESTConfig(ctx, "default/inferred-kube-cluster")
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 	assert.Nil(t, cfg.WrapTransport, "Should use Kubeconfig auth (no WrapTransport)")
@@ -290,7 +290,7 @@ func TestGetRESTConfig_NoAuthMethodConfigured(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	_, err := provider.GetRESTConfig(ctx, "no-auth-cluster")
+	_, err := provider.GetRESTConfig(ctx, "default/no-auth-cluster")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no authentication method configured")
 }
@@ -315,7 +315,7 @@ func TestGetRESTConfig_UnsupportedAuthType(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	_, err := provider.GetRESTConfig(ctx, "unsupported-cluster")
+	_, err := provider.GetRESTConfig(ctx, "default/unsupported-cluster")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported auth type")
 }
@@ -373,7 +373,7 @@ func TestGetRESTConfig_OIDCWithQPSAndBurst(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	cfg, err := provider.GetRESTConfig(ctx, "oidc-qps-cluster")
+	cfg, err := provider.GetRESTConfig(ctx, "default/oidc-qps-cluster")
 	require.NoError(t, err)
 	assert.Equal(t, float32(100), cfg.QPS)
 	assert.Equal(t, 200, cfg.Burst)
@@ -413,7 +413,7 @@ func TestEvictClusterLocked_RemovesAllRelatedData(t *testing.T) {
 	ctx := context.Background()
 
 	// Load the config to populate caches
-	_, err := provider.GetRESTConfig(ctx, "evict-test")
+	_, err := provider.GetRESTConfig(ctx, "default/evict-test")
 	require.NoError(t, err)
 	_, err = provider.GetInNamespace(ctx, "default", "evict-test")
 	require.NoError(t, err)
@@ -426,7 +426,7 @@ func TestEvictClusterLocked_RemovesAllRelatedData(t *testing.T) {
 	provider.mu.RUnlock()
 
 	// Evict the cluster
-	provider.Invalidate("evict-test")
+	provider.Invalidate("default", "evict-test")
 
 	// Verify caches are cleared
 	provider.mu.RLock()
@@ -479,9 +479,9 @@ func TestInvalidateSecret_RemovesMultipleClusters(t *testing.T) {
 	ctx := context.Background()
 
 	// Load both configs
-	_, err := provider.GetRESTConfig(ctx, "cluster-1")
+	_, err := provider.GetRESTConfig(ctx, "default/cluster-1")
 	require.NoError(t, err)
-	_, err = provider.GetRESTConfig(ctx, "cluster-2")
+	_, err = provider.GetRESTConfig(ctx, "default/cluster-2")
 	require.NoError(t, err)
 
 	// Both should be tracked
@@ -535,7 +535,7 @@ func TestGetRESTConfigFromKubeconfig_CustomSecretKey(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	cfg, err := provider.GetRESTConfig(ctx, "custom-key-cluster")
+	cfg, err := provider.GetRESTConfig(ctx, "default/custom-key-cluster")
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.example.com:6443", cfg.Host)
 }
@@ -573,7 +573,7 @@ func TestGetRESTConfigFromKubeconfig_WithQPSAndBurst(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	cfg, err := provider.GetRESTConfig(ctx, "qps-burst-cluster")
+	cfg, err := provider.GetRESTConfig(ctx, "default/qps-burst-cluster")
 	require.NoError(t, err)
 	assert.Equal(t, float32(50), cfg.QPS)
 	assert.Equal(t, 100, cfg.Burst)
@@ -605,7 +605,7 @@ func TestGetRESTConfigFromKubeconfig_InvalidKubeconfig(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	_, err := provider.GetRESTConfig(ctx, "invalid-kube-cluster")
+	_, err := provider.GetRESTConfig(ctx, "default/invalid-kube-cluster")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse kubeconfig")
 }
@@ -631,7 +631,7 @@ func TestGetRESTConfigFromKubeconfig_SecretNotFound(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	_, err := provider.GetRESTConfig(ctx, "missing-secret-cluster")
+	_, err := provider.GetRESTConfig(ctx, "default/missing-secret-cluster")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fetch kubeconfig secret")
 }
@@ -750,12 +750,12 @@ func TestRESTConfigCacheTTL_Expiry(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	_, err := provider.GetRESTConfig(ctx, "ttl-test-cluster")
+	_, err := provider.GetRESTConfig(ctx, "default/ttl-test-cluster")
 	require.NoError(t, err)
 
 	// Check that the cache entry has an expiry time
 	provider.mu.RLock()
-	cached, ok := provider.rest["ttl-test-cluster"]
+	cached, ok := provider.rest["default/ttl-test-cluster"]
 	provider.mu.RUnlock()
 
 	require.True(t, ok)

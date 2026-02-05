@@ -508,29 +508,47 @@ func TestIdentityProviderReconciler_GetCachedIdentityProviders(t *testing.T) {
 
 	reconciler := NewIdentityProviderReconciler(client, log, reloadFn)
 
-	// Initially cache is empty
+	// GetCachedIdentityProviders now queries the controller-runtime cache directly
+	// The IDP should be available immediately (no reconcile needed)
 	cached := reconciler.GetCachedIdentityProviders()
-	assert.Empty(t, cached)
-
-	// Run reconcile to populate cache
-	req := reconcile.Request{
-		NamespacedName: types.NamespacedName{
-			Name: "test-idp",
-		},
-	}
-	_, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-
-	// Cache should now have the IDP
-	cached = reconciler.GetCachedIdentityProviders()
 	assert.Len(t, cached, 1)
 	assert.Equal(t, "test-idp", cached[0].Name)
 
-	// Verify it returns a copy (modifying returned slice doesn't affect cache)
+	// Verify it returns a copy (modifying returned slice doesn't affect future calls)
 	cached[0] = nil
 	cachedAgain := reconciler.GetCachedIdentityProviders()
 	assert.Len(t, cachedAgain, 1)
 	assert.NotNil(t, cachedAgain[0])
+}
+
+// TestIdentityProviderReconciler_GetEnabledIdentityProviders tests the new context-aware method
+func TestIdentityProviderReconciler_GetEnabledIdentityProviders(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	scheme := newTestScheme(t)
+
+	idp := &v1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-idp",
+		},
+		Spec: v1alpha1.IdentityProviderSpec{
+			OIDC: v1alpha1.OIDCConfig{
+				Authority: "https://auth.example.com",
+				ClientID:  "test-client",
+			},
+		},
+	}
+
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp).WithStatusSubresource(idp).Build()
+	reloadFn := func(ctx context.Context) error { return nil }
+
+	reconciler := NewIdentityProviderReconciler(client, log, reloadFn)
+
+	// Use the new context-aware method
+	ctx := context.Background()
+	idps, err := reconciler.GetEnabledIdentityProviders(ctx)
+	require.NoError(t, err)
+	assert.Len(t, idps, 1)
+	assert.Equal(t, "test-idp", idps[0].Name)
 }
 
 // TestIdentityProviderReconciler_DisabledIDPsFilteredFromCache tests that disabled IDPs are filtered
@@ -572,16 +590,7 @@ func TestIdentityProviderReconciler_DisabledIDPsFilteredFromCache(t *testing.T) 
 
 	reconciler := NewIdentityProviderReconciler(client, log, reloadFn)
 
-	// Reconcile any IDP to trigger cache update
-	req := reconcile.Request{
-		NamespacedName: types.NamespacedName{
-			Name: "enabled-idp",
-		},
-	}
-	_, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-
-	// Cache should only have enabled IDP
+	// GetCachedIdentityProviders filters disabled IDPs automatically
 	cached := reconciler.GetCachedIdentityProviders()
 	assert.Len(t, cached, 1)
 	assert.Equal(t, "enabled-idp", cached[0].Name)

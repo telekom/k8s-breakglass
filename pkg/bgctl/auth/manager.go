@@ -11,11 +11,31 @@ import (
 )
 
 type TokenManager struct {
-	CachePath string
+	CachePath   string
+	StorageMode string
+}
+
+func (m *TokenManager) tokenStore() (TokenStore, error) {
+	mode := normalizeTokenStorage(m.StorageMode)
+	switch mode {
+	case tokenStoreKeychain:
+		return KeychainTokenStore{}, nil
+	case tokenStoreFile:
+		if m.CachePath == "" {
+			return nil, errors.New("token cache path is required for file storage")
+		}
+		return FileTokenStore{Path: m.CachePath}, nil
+	default:
+		return nil, fmt.Errorf("unsupported token storage mode: %s", mode)
+	}
 }
 
 func (m *TokenManager) GetToken(providerName string) (StoredToken, bool, error) {
-	cache, err := LoadTokenCache(m.CachePath)
+	store, err := m.tokenStore()
+	if err != nil {
+		return StoredToken{}, false, err
+	}
+	cache, err := store.Load()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return StoredToken{}, false, nil
@@ -27,21 +47,29 @@ func (m *TokenManager) GetToken(providerName string) (StoredToken, bool, error) 
 }
 
 func (m *TokenManager) SaveToken(providerName string, token StoredToken) error {
-	cache, err := LoadTokenCache(m.CachePath)
+	store, err := m.tokenStore()
+	if err != nil {
+		return err
+	}
+	cache, err := store.Load()
 	if err != nil {
 		cache = &TokenCache{Tokens: map[string]StoredToken{}}
 	}
 	cache.Tokens[providerName] = token
-	return SaveTokenCache(m.CachePath, cache)
+	return store.Save(cache)
 }
 
 func (m *TokenManager) DeleteToken(providerName string) error {
-	cache, err := LoadTokenCache(m.CachePath)
+	store, err := m.tokenStore()
+	if err != nil {
+		return err
+	}
+	cache, err := store.Load()
 	if err != nil {
 		return err
 	}
 	delete(cache.Tokens, providerName)
-	return SaveTokenCache(m.CachePath, cache)
+	return store.Save(cache)
 }
 
 func (m *TokenManager) RefreshIfNeeded(ctx context.Context, providerName string, oauthCfg oauth2.Config) (StoredToken, bool, error) {

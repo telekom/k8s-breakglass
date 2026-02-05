@@ -279,6 +279,7 @@ func main() {
 	// Create a channel to broadcast leadership signal to background loops
 	// This enables safe horizontal scaling: only the leader runs cleanup loops
 	leaderElectedCh := make(chan struct{})
+	errCh := make(chan error, 4)
 
 	var wg sync.WaitGroup
 
@@ -425,8 +426,8 @@ func main() {
 		go func() {
 			defer wg.Done()
 			if err := certMgr.Start(managerCtx, scheme); err != nil {
-				// log.Errorw("certificate manager failed", "err", err)
 				certMgrErr <- err
+				errCh <- fmt.Errorf("certificate manager failed: %w", err)
 			}
 		}()
 	}
@@ -448,19 +449,15 @@ func main() {
 
 	// Always start the reconciler manager (field indices and reconcilers always run)
 	// The manager does NOT do leader election; background loops handle that
-	recMgrErr := make(chan error)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		if err := reconciler.Setup(managerCtx, reconcilerMgr, idpLoader, server, ccProvider, auditService, mailService, escalationManager, log); err != nil {
-			recMgrErr <- err
+			errCh <- fmt.Errorf("reconciler manager failed: %w", err)
 		}
 	}()
 
 	// Optionally setup webhooks if enabled (webhooks are optional, reconcilers are not)
-	webhookErr := make(chan error)
-	defer close(webhookErr)
-
 	if cliConfig.EnableWebhooks {
 		log.Infow("Webhooks enabled via --enable-webhooks flag")
 		if cliConfig.Webhook.CertGeneration {
@@ -473,7 +470,7 @@ func main() {
 			defer wg.Done()
 			if err := webhook.Setup(managerCtx, log, scheme, &cliConfig.Webhook, cliConfig.EnableValidatingWebhooks,
 				cliConfig.EnableHTTP2, cliConfig.Webhook.CertGeneration); err != nil {
-				webhookErr <- err
+				errCh <- fmt.Errorf("webhook server failed: %w", err)
 			}
 		}()
 	} else {
@@ -495,10 +492,8 @@ func main() {
 	select {
 	case <-sigChan:
 		log.Info("Received shutdown signal, initiating graceful shutdown")
-	case err := <-webhookErr:
-		log.Errorf("webhook server failed, shutting down: %s", err.Error())
-	case err := <-recMgrErr:
-		log.Errorf("reconciler manager failed, shutting down: %s", err.Error())
+	case err := <-errCh:
+		log.Errorf("background component failed, shutting down: %s", err.Error())
 	}
 
 	// Create shutdown context with timeout for graceful shutdown of all components
