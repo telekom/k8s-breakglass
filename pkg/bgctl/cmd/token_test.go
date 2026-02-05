@@ -118,7 +118,7 @@ func TestResolveProviderKey(t *testing.T) {
 
 func TestTokenManager_Integration(t *testing.T) {
 	t.Run("manager can be created with default path", func(t *testing.T) {
-		manager := auth.TokenManager{CachePath: config.DefaultTokenPath()}
+		manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: "file"}
 		require.NotNil(t, manager)
 	})
 }

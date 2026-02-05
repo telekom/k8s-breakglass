@@ -28,7 +28,7 @@ spec:
     spec:
       containers:
         - name: netshoot
-          image: nicolaka/netshoot:latest
+          image: nicolaka/netshoot:v0.13
           command: ["sleep", "infinity"]
           securityContext:
             capabilities:

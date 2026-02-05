@@ -58,6 +58,15 @@ npm run build
 
 Output: `./frontend/dist/`
 
+### Debug panel
+
+The UI includes a developer-only debug panel for authentication diagnostics. It is **disabled in production builds** by default.
+
+To explicitly enable it in a non-dev build, set the following Vite environment variables at build time:
+
+- `VITE_ENABLE_DEBUG_PANEL=true` to render the panel
+- `VITE_DEBUG_PANEL_ALLOW_MOCK_TOKEN=true` to allow the mock access token fallback (recommended only for local debugging)
+
 ### Rapid local UI preview (mock backend)
 
 Use the bundled mock API to edit the UI with hot module reloading—no controller container or cluster

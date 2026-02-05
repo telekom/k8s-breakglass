@@ -25,8 +25,10 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -431,6 +433,58 @@ func TestAddAuxiliaryResourceToDeployedResources_Deduplication(t *testing.T) {
 	assert.Len(t, session.Status.DeployedResources, 1, "Should not add duplicates")
 }
 
+func TestAddAuxiliaryResourceToDeployedResources_WithAdditionalResources(t *testing.T) {
+	session := &v1alpha1.DebugSession{
+		Status: v1alpha1.DebugSessionStatus{
+			DeployedResources: []v1alpha1.DeployedResourceRef{},
+		},
+	}
+
+	// Status with additional resources from multi-document YAML
+	status := v1alpha1.AuxiliaryResourceStatus{
+		Name:         "network-bundle",
+		Category:     "network",
+		Created:      true,
+		Kind:         "NetworkPolicy",
+		APIVersion:   "networking.k8s.io/v1",
+		ResourceName: "debug-netpol",
+		Namespace:    "debug-ns",
+		AdditionalResources: []v1alpha1.AdditionalResourceRef{
+			{
+				Kind:         "ServiceAccount",
+				APIVersion:   "v1",
+				ResourceName: "debug-sa",
+				Namespace:    "debug-ns",
+			},
+			{
+				Kind:         "Role",
+				APIVersion:   "rbac.authorization.k8s.io/v1",
+				ResourceName: "debug-role",
+				Namespace:    "debug-ns",
+			},
+		},
+	}
+
+	AddAuxiliaryResourceToDeployedResources(session, status)
+
+	// Should have 3 resources: primary + 2 additional
+	require.Len(t, session.Status.DeployedResources, 3)
+
+	// Verify primary resource
+	assert.Equal(t, "NetworkPolicy", session.Status.DeployedResources[0].Kind)
+	assert.Equal(t, "debug-netpol", session.Status.DeployedResources[0].Name)
+	assert.Equal(t, "auxiliary:network-bundle", session.Status.DeployedResources[0].Source)
+
+	// Verify additional resources
+	assert.Equal(t, "ServiceAccount", session.Status.DeployedResources[1].Kind)
+	assert.Equal(t, "debug-sa", session.Status.DeployedResources[1].Name)
+	assert.Equal(t, "auxiliary:network-bundle", session.Status.DeployedResources[1].Source)
+
+	assert.Equal(t, "Role", session.Status.DeployedResources[2].Kind)
+	assert.Equal(t, "debug-role", session.Status.DeployedResources[2].Name)
+	assert.Equal(t, "auxiliary:network-bundle", session.Status.DeployedResources[2].Source)
+}
+
 func TestValidateAuxiliaryResources_ValidTemplate(t *testing.T) {
 	auxResources := []v1alpha1.AuxiliaryResource{
 		{
@@ -470,6 +524,45 @@ func TestValidateAuxiliaryResources_MissingTemplate(t *testing.T) {
 	errs := ValidateAuxiliaryResources(auxResources)
 	require.NotEmpty(t, errs)
 	assert.Contains(t, errs[0].Error(), "either template or templateString is required")
+}
+
+func TestValidateAuxiliaryResources_ValidWithTemplateObject(t *testing.T) {
+	// Test that Template.Object is accepted as an alternative to Template.Raw
+	// runtime.RawExtension can have either Raw or Object set
+	cm := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "ConfigMap",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-config",
+		},
+	}
+
+	auxResources := []v1alpha1.AuxiliaryResource{
+		{
+			Name:     "test",
+			Category: "config",
+			Template: runtime.RawExtension{Object: cm},
+		},
+	}
+
+	errs := ValidateAuxiliaryResources(auxResources)
+	assert.Empty(t, errs, "should accept Template.Object as valid")
+}
+
+func TestValidateAuxiliaryResources_ValidWithTemplateString(t *testing.T) {
+	// Test that templateString is accepted
+	auxResources := []v1alpha1.AuxiliaryResource{
+		{
+			Name:           "test",
+			Category:       "config",
+			TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Session.Name }}-config",
+		},
+	}
+
+	errs := ValidateAuxiliaryResources(auxResources)
+	assert.Empty(t, errs, "should accept templateString as valid")
 }
 
 func TestValidateAuxiliaryResources_DuplicateNames(t *testing.T) {
@@ -583,6 +676,257 @@ data:
 	assert.Equal(t, "test-config", status.Name)
 	assert.Equal(t, "ConfigMap", status.Kind)
 	assert.Equal(t, "debug-test-session-config", status.ResourceName)
+}
+
+func TestDeployResource_WithTemplateObject(t *testing.T) {
+	// Test that Template.Object is correctly handled when deploying auxiliary resources
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "prod",
+			TemplateRef: "test-template",
+		},
+	}
+
+	// Create a ConfigMap as the Template.Object
+	// Note: The template will be rendered as-is (no Go templating for Object)
+	cm := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "ConfigMap",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-object-config",
+		},
+		Data: map[string]string{
+			"key": "value",
+		},
+	}
+
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:         "test-object",
+		Category:     "configmap",
+		Template:     runtime.RawExtension{Object: cm},
+		CreateBefore: true,
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{
+		Session: v1alpha1.AuxiliaryResourceSessionContext{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+			Cluster:   "prod",
+		},
+		Target: v1alpha1.AuxiliaryResourceTargetContext{
+			Namespace:   "debug-ns",
+			ClusterName: "prod",
+		},
+		Labels:      map[string]string{},
+		Annotations: map[string]string{},
+	}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, status.Created)
+	assert.Equal(t, "test-object", status.Name)
+	assert.Equal(t, "ConfigMap", status.Kind)
+	assert.Equal(t, "test-object-config", status.ResourceName)
+}
+
+func TestDeployResource_MultiDocumentYAML(t *testing.T) {
+	// Test that multi-document YAML templates correctly track all resources
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "prod",
+			TemplateRef: "test-template",
+		},
+	}
+
+	// Multi-document YAML template
+	multiDocTemplate := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-1
+data:
+  key1: value1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-2
+data:
+  key2: value2
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-1
+type: Opaque
+stringData:
+  password: test123`
+
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:           "multi-resource",
+		Category:       "config",
+		TemplateString: multiDocTemplate,
+		CreateBefore:   true,
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{
+		Session: v1alpha1.AuxiliaryResourceSessionContext{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+			Cluster:   "prod",
+		},
+		Target: v1alpha1.AuxiliaryResourceTargetContext{
+			Namespace:   "debug-ns",
+			ClusterName: "prod",
+		},
+		Labels:      map[string]string{},
+		Annotations: map[string]string{},
+	}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, status.Created)
+
+	// Primary resource should be first document
+	assert.Equal(t, "multi-resource", status.Name)
+	assert.Equal(t, "ConfigMap", status.Kind)
+	assert.Equal(t, "config-1", status.ResourceName)
+
+	// Additional resources should be tracked
+	require.Len(t, status.AdditionalResources, 2, "Should have 2 additional resources from multi-doc YAML")
+
+	// Second document
+	assert.Equal(t, "ConfigMap", status.AdditionalResources[0].Kind)
+	assert.Equal(t, "config-2", status.AdditionalResources[0].ResourceName)
+	assert.Equal(t, "debug-ns", status.AdditionalResources[0].Namespace)
+
+	// Third document
+	assert.Equal(t, "Secret", status.AdditionalResources[1].Kind)
+	assert.Equal(t, "secret-1", status.AdditionalResources[1].ResourceName)
+	assert.Equal(t, "debug-ns", status.AdditionalResources[1].Namespace)
+}
+
+func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
+	// Test that cleanup deletes additional resources from multi-document YAML
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	// Create the resources that will be cleaned up
+	cm1 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "config-1",
+			Namespace: "debug-ns",
+		},
+	}
+	cm2 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "config-2",
+			Namespace: "debug-ns",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cm1, cm2).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster: "prod",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "multi-resource",
+					Category:     "config",
+					Created:      true,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "config-1",
+					Namespace:    "debug-ns",
+					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "config-2",
+							Namespace:    "debug-ns",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := mgr.CleanupAuxiliaryResources(context.Background(), session, fakeClient)
+	require.NoError(t, err)
+
+	// Verify primary resource deletion was tracked
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+
+	// Verify additional resource deletion was tracked
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Deleted)
+
+	// Verify resources are actually deleted
+	err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "config-1", Namespace: "debug-ns"}, &corev1.ConfigMap{})
+	assert.True(t, apierrors.IsNotFound(err), "config-1 should be deleted")
+
+	err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "config-2", Namespace: "debug-ns"}, &corev1.ConfigMap{})
+	assert.True(t, apierrors.IsNotFound(err), "config-2 should be deleted")
 }
 
 // ============================================================================
@@ -1030,4 +1374,1120 @@ func TestBuildRenderContext_VarsAndMetadata(t *testing.T) {
 
 	// Verify Now is set
 	assert.NotEmpty(t, ctx.Now)
+}
+
+func TestCheckAuxiliaryResourcesReadiness_NoResources(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	session := &v1alpha1.DebugSession{
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: nil, // No resources
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(context.Background(), session, nil)
+
+	require.NoError(t, err)
+	assert.True(t, allReady)
+}
+
+func TestCheckAuxiliaryResourcesReadiness_AlreadyReady(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	readyAt := "2024-01-01T00:00:00Z"
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "test-cm",
+					Created:      true,
+					Ready:        true,
+					ReadyAt:      &readyAt,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "test-cm",
+					Namespace:    "default",
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(context.Background(), session, nil)
+
+	require.NoError(t, err)
+	assert.True(t, allReady)
+}
+
+func TestCheckAuxiliaryResourcesReadiness_NotCreated(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:    "test-cm",
+					Created: false, // Not created
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(context.Background(), session, nil)
+
+	require.NoError(t, err)
+	assert.True(t, allReady) // Not created resources don't block readiness
+}
+
+func TestCheckAuxiliaryResourcesReadiness_Deleted(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+
+	deletedAt := "2024-01-01T00:00:00Z"
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "test-cm",
+					Created:      true,
+					Ready:        false,
+					Deleted:      true,
+					DeletedAt:    &deletedAt,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "test-cm",
+					Namespace:    "default",
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(context.Background(), session, nil)
+
+	require.NoError(t, err)
+	assert.True(t, allReady) // Deleted resources don't block readiness
+}
+
+func TestCheckAuxiliaryResourcesReadiness_ConfigMapReady(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Create a ConfigMap in the fake client
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cm",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"key": "value",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cm).
+		Build()
+
+	mgr := newTestAuxiliaryResourceManager()
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "test-cm",
+					Created:      true,
+					Ready:        false,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "test-cm",
+					Namespace:    "default",
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+
+	require.NoError(t, err)
+	assert.True(t, allReady)
+
+	// Verify status was updated
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.NotNil(t, session.Status.AuxiliaryResourceStatuses[0].ReadyAt)
+	assert.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+}
+
+func TestCheckAuxiliaryResourcesReadiness_ResourceNotFound(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Empty fake client - resource doesn't exist
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	mgr := newTestAuxiliaryResourceManager()
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "missing-cm",
+					Created:      true,
+					Ready:        false,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "missing-cm",
+					Namespace:    "default",
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+
+	require.NoError(t, err)
+	assert.False(t, allReady)
+
+	// Status should show NotFound
+	assert.False(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.Equal(t, "NotFound", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+}
+
+func TestCheckAuxiliaryResourcesReadiness_MixedStates(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Create one ConfigMap
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ready-cm",
+			Namespace: "default",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cm).
+		Build()
+
+	mgr := newTestAuxiliaryResourceManager()
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "ready-cm",
+					Created:      true,
+					Ready:        false,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "ready-cm",
+					Namespace:    "default",
+				},
+				{
+					Name:         "missing-cm",
+					Created:      true,
+					Ready:        false,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "missing-cm",
+					Namespace:    "default",
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+
+	require.NoError(t, err)
+	assert.False(t, allReady) // One resource is not found
+
+	// First should be ready
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+
+	// Second should be not found
+	assert.False(t, session.Status.AuxiliaryResourceStatuses[1].Ready)
+	assert.Equal(t, "NotFound", session.Status.AuxiliaryResourceStatuses[1].ReadinessStatus)
+}
+
+func TestParseGVK(t *testing.T) {
+	tests := []struct {
+		name          string
+		apiVersion    string
+		kind          string
+		expectedGroup string
+		expectedVer   string
+		expectedKind  string
+		expectError   bool
+	}{
+		{
+			name:          "core v1 resource",
+			apiVersion:    "v1",
+			kind:          "ConfigMap",
+			expectedGroup: "",
+			expectedVer:   "v1",
+			expectedKind:  "ConfigMap",
+		},
+		{
+			name:          "apps/v1 resource",
+			apiVersion:    "apps/v1",
+			kind:          "Deployment",
+			expectedGroup: "apps",
+			expectedVer:   "v1",
+			expectedKind:  "Deployment",
+		},
+		{
+			name:          "custom resource",
+			apiVersion:    "breakglass.t-caas.telekom.com/v1alpha1",
+			kind:          "DebugSession",
+			expectedGroup: "breakglass.t-caas.telekom.com",
+			expectedVer:   "v1alpha1",
+			expectedKind:  "DebugSession",
+		},
+		{
+			name:          "batch/v1 resource",
+			apiVersion:    "batch/v1",
+			kind:          "Job",
+			expectedGroup: "batch",
+			expectedVer:   "v1",
+			expectedKind:  "Job",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gvk, err := parseGVK(tt.apiVersion, tt.kind)
+
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedGroup, gvk.Group)
+			assert.Equal(t, tt.expectedVer, gvk.Version)
+			assert.Equal(t, tt.expectedKind, gvk.Kind)
+		})
+	}
+}
+
+// ============================================================================
+// Multi-Document YAML Edge Cases and Failure Handling Tests
+// ============================================================================
+
+func TestDeployResource_MultiDocumentYAML_EmptyDocuments(t *testing.T) {
+	// Test that empty documents (whitespace only) are skipped
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "prod",
+			TemplateRef: "test-template",
+		},
+	}
+
+	// Template with empty documents (only whitespace between separators)
+	multiDocWithEmpty := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-1
+data:
+  key1: value1
+---
+
+---
+   
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-2
+data:
+  key2: value2`
+
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:           "empty-doc-test",
+		Category:       "config",
+		TemplateString: multiDocWithEmpty,
+		CreateBefore:   true,
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{
+		Session: v1alpha1.AuxiliaryResourceSessionContext{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+			Cluster:   "prod",
+		},
+		Target: v1alpha1.AuxiliaryResourceTargetContext{
+			Namespace:   "debug-ns",
+			ClusterName: "prod",
+		},
+		Labels:      map[string]string{},
+		Annotations: map[string]string{},
+	}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, status.Created)
+
+	// Should only have 2 resources (empty documents should be skipped)
+	assert.Equal(t, "ConfigMap", status.Kind)
+	assert.Equal(t, "config-1", status.ResourceName)
+	require.Len(t, status.AdditionalResources, 1, "Should skip empty documents")
+	assert.Equal(t, "config-2", status.AdditionalResources[0].ResourceName)
+}
+
+func TestDeployResource_MultiDocumentYAML_InvalidSecondDocument(t *testing.T) {
+	// Test failure when second document is invalid YAML
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "prod",
+			TemplateRef: "test-template",
+		},
+	}
+
+	// Second document has invalid YAML (indentation error)
+	invalidSecondDoc := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: valid-config
+data:
+  key1: value1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+name: invalid - no indentation
+  nested: wrong`
+
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:           "invalid-doc-test",
+		Category:       "config",
+		TemplateString: invalidSecondDoc,
+		CreateBefore:   true,
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{
+		Labels:      map[string]string{},
+		Annotations: map[string]string{},
+	}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	// Should fail on second document
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "doc 2")
+	assert.Contains(t, status.Error, "YAML parsing failed")
+}
+
+func TestDeployResource_MultiDocumentYAML_ConditionalAllExcluded(t *testing.T) {
+	// Test when all documents are conditionally excluded
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "prod",
+			TemplateRef: "test-template",
+		},
+	}
+
+	// All documents are conditionally excluded
+	conditionalTemplate := `{{- if eq .vars.createConfig "true" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-1
+{{- end }}
+---
+{{- if eq .vars.createSecret "true" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-1
+{{- end }}`
+
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:           "conditional-test",
+		Category:       "config",
+		TemplateString: conditionalTemplate,
+		CreateBefore:   true,
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{
+		Vars: map[string]string{
+			"createConfig": "false",
+			"createSecret": "false",
+		},
+		Labels:      map[string]string{},
+		Annotations: map[string]string{},
+	}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	// Should succeed but not create anything
+	require.NoError(t, err)
+	assert.False(t, status.Created, "Should not be created when all documents are excluded")
+	assert.Empty(t, status.Kind)
+	assert.Empty(t, status.ResourceName)
+	assert.Empty(t, status.AdditionalResources)
+}
+
+func TestDeployResource_MultiDocumentYAML_PartialConditional(t *testing.T) {
+	// Test when some documents are conditionally excluded
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "prod",
+			TemplateRef: "test-template",
+		},
+	}
+
+	// First and third documents included, second excluded
+	conditionalTemplate := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-always
+data:
+  key: value
+---
+{{- if eq .vars.createOptional "true" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-optional
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-also-always
+data:
+  key: value`
+
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:           "partial-conditional-test",
+		Category:       "config",
+		TemplateString: conditionalTemplate,
+		CreateBefore:   true,
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{
+		Vars: map[string]string{
+			"createOptional": "false",
+		},
+		Labels:      map[string]string{},
+		Annotations: map[string]string{},
+	}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, status.Created)
+
+	// Should have primary + 1 additional (skipping the excluded one)
+	assert.Equal(t, "config-always", status.ResourceName)
+	require.Len(t, status.AdditionalResources, 1, "Should skip conditionally excluded document")
+	assert.Equal(t, "config-also-always", status.AdditionalResources[0].ResourceName)
+}
+
+func TestDeployResource_NoTemplateDefinedError(t *testing.T) {
+	// Test error when neither templateString nor template is defined
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster: "prod",
+		},
+	}
+
+	// No template defined
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:     "no-template",
+		Category: "config",
+		// Neither TemplateString nor Template is set
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no template defined")
+	assert.Contains(t, status.Error, "no template defined")
+}
+
+func TestDeployResource_TemplateRenderingError(t *testing.T) {
+	// Test error when template rendering fails
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster: "prod",
+		},
+	}
+
+	// Invalid template syntax
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:           "bad-template",
+		Category:       "config",
+		TemplateString: `{{ .invalid.syntax | unknownFunc }}`, // unknownFunc doesn't exist
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "templateString")
+	assert.Contains(t, status.Error, "template rendering failed")
+}
+
+func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
+	// Test cleanup when deleting one resource fails but others succeed
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	// Only create config-1 (config-2 and config-3 will fail to delete because they don't exist)
+	// But NotFound errors are handled gracefully
+	cm1 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "config-1",
+			Namespace: "debug-ns",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cm1).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster: "prod",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "multi-resource",
+					Category:     "config",
+					Created:      true,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "config-1",
+					Namespace:    "debug-ns",
+					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "config-2", // Doesn't exist
+							Namespace:    "debug-ns",
+						},
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "config-3", // Doesn't exist
+							Namespace:    "debug-ns",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Cleanup should handle missing resources gracefully (NotFound is not an error)
+	err := mgr.CleanupAuxiliaryResources(context.Background(), session, fakeClient)
+	require.NoError(t, err, "NotFound errors should be handled gracefully")
+
+	// All should be marked as deleted
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Deleted)
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[1].Deleted)
+}
+
+func TestCleanupAuxiliaryResources_SkipsAlreadyDeleted(t *testing.T) {
+	// Test that cleanup skips resources already marked as deleted
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	deletedAt := "2024-01-01T00:00:00Z"
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster: "prod",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "already-deleted",
+					Category:     "config",
+					Created:      true,
+					Deleted:      true, // Already deleted
+					DeletedAt:    &deletedAt,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "config-1",
+					Namespace:    "debug-ns",
+					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "config-2",
+							Namespace:    "debug-ns",
+							Deleted:      true, // Already deleted
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := mgr.CleanupAuxiliaryResources(context.Background(), session, fakeClient)
+	require.NoError(t, err)
+
+	// Should remain marked as deleted with original timestamp
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	assert.Equal(t, &deletedAt, session.Status.AuxiliaryResourceStatuses[0].DeletedAt)
+}
+
+func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_AllReady(t *testing.T) {
+	// Test readiness checking when all additional resources are ready
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Create all ConfigMaps
+	cm1 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "config-1",
+			Namespace: "default",
+		},
+	}
+	cm2 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "config-2",
+			Namespace: "default",
+		},
+	}
+	cm3 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "config-3",
+			Namespace: "default",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cm1, cm2, cm3).
+		Build()
+
+	mgr := newTestAuxiliaryResourceManager()
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "multi-resource",
+					Created:      true,
+					Ready:        false,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "config-1",
+					Namespace:    "default",
+					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "config-2",
+							Namespace:    "default",
+						},
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "config-3",
+							Namespace:    "default",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+
+	require.NoError(t, err)
+	assert.True(t, allReady)
+
+	// Primary should be ready
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+
+	// Additional resources should be ready
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[1].Ready)
+	assert.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[1].ReadinessStatus)
+}
+
+func TestCheckAuxiliaryResourcesReadiness_WithAdditionalResources_SomeNotReady(t *testing.T) {
+	// Test readiness checking when some additional resources are not found
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Only create config-1 (config-2 doesn't exist)
+	cm1 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "config-1",
+			Namespace: "default",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cm1).
+		Build()
+
+	mgr := newTestAuxiliaryResourceManager()
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "multi-resource",
+					Created:      true,
+					Ready:        false,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "config-1",
+					Namespace:    "default",
+					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "config-2", // Doesn't exist
+							Namespace:    "default",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+
+	require.NoError(t, err)
+	assert.False(t, allReady, "Should not be ready when additional resource is missing")
+
+	// Primary should be ready
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+
+	// Additional resource should not be ready
+	assert.False(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "NotFound", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+}
+
+func TestCheckAuxiliaryResourcesReadiness_AdditionalResourceAlreadyDeleted(t *testing.T) {
+	// Test readiness checking when additional resource is marked as deleted
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	mgr := newTestAuxiliaryResourceManager()
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Status: v1alpha1.DebugSessionStatus{
+			AuxiliaryResourceStatuses: []v1alpha1.AuxiliaryResourceStatus{
+				{
+					Name:         "multi-resource",
+					Created:      true,
+					Ready:        true,
+					Kind:         "ConfigMap",
+					APIVersion:   "v1",
+					ResourceName: "config-1",
+					Namespace:    "default",
+					AdditionalResources: []v1alpha1.AdditionalResourceRef{
+						{
+							Kind:         "ConfigMap",
+							APIVersion:   "v1",
+							ResourceName: "config-2",
+							Namespace:    "default",
+							Deleted:      true, // Already deleted - should be skipped
+						},
+					},
+				},
+			},
+		},
+	}
+
+	allReady, err := mgr.CheckAuxiliaryResourcesReadiness(ctx, session, fakeClient)
+
+	require.NoError(t, err)
+	assert.True(t, allReady, "Deleted additional resources should not block readiness")
+}
+
+func TestDeployResource_MultiDocumentYAML_DifferentKinds(t *testing.T) {
+	// Test multi-document with different resource kinds
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	logger := zap.NewNop().Sugar()
+	mgr := NewAuxiliaryResourceManager(logger, fakeClient)
+
+	session := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:     "prod",
+			TemplateRef: "test-template",
+		},
+	}
+
+	// Multi-document with ServiceAccount, ConfigMap, and Secret
+	multiKindTemplate := `apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: debug-sa
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-config
+data:
+  key: value
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: debug-secret
+type: Opaque
+stringData:
+  password: secret123`
+
+	auxRes := v1alpha1.AuxiliaryResource{
+		Name:           "multi-kind-test",
+		Category:       "rbac",
+		TemplateString: multiKindTemplate,
+		CreateBefore:   true,
+	}
+
+	renderCtx := v1alpha1.AuxiliaryResourceContext{
+		Labels:      map[string]string{"test": "label"},
+		Annotations: map[string]string{"test": "annotation"},
+	}
+
+	status, err := mgr.deployResource(
+		context.Background(),
+		fakeClient,
+		"debug-ns",
+		auxRes,
+		renderCtx,
+		session,
+	)
+
+	require.NoError(t, err)
+	assert.True(t, status.Created)
+
+	// Primary resource
+	assert.Equal(t, "ServiceAccount", status.Kind)
+	assert.Equal(t, "debug-sa", status.ResourceName)
+
+	// Additional resources with different kinds
+	require.Len(t, status.AdditionalResources, 2)
+	assert.Equal(t, "ConfigMap", status.AdditionalResources[0].Kind)
+	assert.Equal(t, "debug-config", status.AdditionalResources[0].ResourceName)
+	assert.Equal(t, "Secret", status.AdditionalResources[1].Kind)
+	assert.Equal(t, "debug-secret", status.AdditionalResources[1].ResourceName)
+
+	// Verify all have the same namespace
+	assert.Equal(t, "debug-ns", status.Namespace)
+	assert.Equal(t, "debug-ns", status.AdditionalResources[0].Namespace)
+	assert.Equal(t, "debug-ns", status.AdditionalResources[1].Namespace)
 }

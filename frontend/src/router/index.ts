@@ -16,6 +16,8 @@ import DebugSessionDetails from "@/views/DebugSessionDetails.vue";
 import { createRouter, createWebHistory } from "vue-router";
 import logger from "@/services/logger-console";
 
+const isDev = import.meta.env.DEV;
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -86,12 +88,14 @@ const router = createRouter({
 
 // Navigation guards with logging
 router.beforeEach((to, from, next) => {
-  logger.info("Router", `Navigation: ${from.path} → ${to.path}`, {
-    fromName: from.name,
-    toName: to.name,
-    params: to.params,
-    query: to.query,
-  });
+  if (isDev) {
+    logger.info("Router", `Navigation: ${from.path} → ${to.path}`, {
+      fromName: from.name,
+      toName: to.name,
+      params: to.params,
+      query: to.query,
+    });
+  }
   next();
 });
 
@@ -101,7 +105,7 @@ router.afterEach((to, from, failure) => {
       from: from.path,
       to: to.path,
     });
-  } else {
+  } else if (isDev) {
     logger.debug("Router", "Navigation completed", {
       path: to.path,
       name: to.name,

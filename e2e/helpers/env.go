@@ -336,7 +336,9 @@ func GetOIDCClientConfig() OIDCClientConfig {
 	clientSecret := GetKeycloakServiceAccountSecret()
 
 	// If we have a valid service account secret, use confidential client
-	if clientSecret != "" && clientSecret != "breakglass-group-sync-secret" {
+	// Note: "breakglass-group-sync-secret" is the actual Keycloak client secret value
+	// defined in config/dev/resources/breakglass-e2e-realm.json, so it IS a valid secret.
+	if clientSecret != "" {
 		return OIDCClientConfig{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
@@ -344,11 +346,11 @@ func GetOIDCClientConfig() OIDCClientConfig {
 		}
 	}
 
-	// Fall back to default service account credentials
+	// Fall back to public client if no secret is configured
 	return OIDCClientConfig{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		IsPublic:     false,
+		ClientID:     GetKeycloakClientID(),
+		ClientSecret: "",
+		IsPublic:     true,
 	}
 }
 

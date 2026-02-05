@@ -32,7 +32,10 @@ require (
 	dario.cat/mergo v1.0.1 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	github.com/alessio/shellescape v1.4.1 // indirect
+	github.com/danieljoos/wincred v1.1.2 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -45,7 +48,9 @@ require (
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
+	github.com/zalando/go-keyring v0.2.2 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
+	sigs.k8s.io/cli-utils v0.37.2 // indirect
 )
 
 require (

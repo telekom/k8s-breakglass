@@ -860,8 +860,10 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	}
 	// Ignore errors; payload is optional. Guard against nil Request.Body which can occur in tests/clients.
 	if c.Request != nil && c.Request.Body != nil {
-		if err := json.NewDecoder(c.Request.Body).Decode(&approverPayload); err != nil {
-			reqLog.Debugw("Failed to decode optional approver payload (using empty values)", "error", err)
+		if err := decodeJSONStrict(c.Request.Body, &approverPayload); err != nil {
+			if err != io.EOF {
+				reqLog.Debugw("Failed to decode optional approver payload (using empty values)", "error", err)
+			}
 		}
 	}
 	// Sanitize approver reason to prevent injection attacks

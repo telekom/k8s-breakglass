@@ -48,22 +48,42 @@ type PodSecurityResult struct {
 	OverrideApplied bool   // true if escalation overrides were applied
 }
 
+// Evaluator evaluates DenyPolicy rules against actions.
+// It uses the controller-runtime cache for efficient, event-driven policy lookups.
+// The cache is automatically kept in sync with the API server by the controller-runtime
+// informer machinery, eliminating the need for manual TTL-based caching.
 type Evaluator struct {
 	c   ctrlclient.Client
 	log *zap.SugaredLogger
 }
 
+// NewEvaluator creates a new policy evaluator using the provided controller-runtime client.
+// The client should be a cached client (e.g., from manager.GetClient()) for optimal performance.
+// Controller-runtime's cache automatically syncs with the API server via informers.
 func NewEvaluator(c ctrlclient.Client, log *zap.SugaredLogger) *Evaluator {
 	return &Evaluator{c: c, log: log}
 }
 
-// Match iterates all DenyPolicies (initial naive implementation). Returns (denied, policyName, error).
-func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error) {
+// listPolicies retrieves all DenyPolicies using the controller-runtime cache.
+// The cache is automatically kept in sync by informers, providing:
+// - Event-driven updates (no polling delay)
+// - Reduced API server load
+// - Consistent reads within a reconciliation cycle
+func (e *Evaluator) listPolicies(ctx context.Context) ([]telekomv1alpha1.DenyPolicy, error) {
 	list := telekomv1alpha1.DenyPolicyList{}
 	if err := e.c.List(ctx, &list); err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+// Match iterates all DenyPolicies (initial naive implementation). Returns (denied, policyName, error).
+func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error) {
+	policies, err := e.listPolicies(ctx)
+	if err != nil {
 		return false, "", err
 	}
-	for _, pol := range list.Items {
+	for _, pol := range policies {
 		if !scopeMatches(pol.Spec.AppliesTo, act) {
 			continue
 		}
@@ -107,15 +127,15 @@ func (e *Evaluator) Match(ctx context.Context, act Action) (bool, string, error)
 // It evaluates all policies and returns denial if any policy denies.
 // Warning results are collected but do not short-circuit policy evaluation.
 func (e *Evaluator) MatchWithDetails(ctx context.Context, act Action) (denied bool, policyName string, podSecResult *PodSecurityResult, err error) {
-	list := telekomv1alpha1.DenyPolicyList{}
-	if err := e.c.List(ctx, &list); err != nil {
+	policies, err := e.listPolicies(ctx)
+	if err != nil {
 		return false, "", nil, err
 	}
 
 	// Track the first warning result to return if no denial occurs
 	var warnResult *PodSecurityResult
 
-	for _, pol := range list.Items {
+	for _, pol := range policies {
 		if !scopeMatches(pol.Spec.AppliesTo, act) {
 			continue
 		}

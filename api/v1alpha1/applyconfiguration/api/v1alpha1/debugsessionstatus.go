@@ -56,6 +56,10 @@ type DebugSessionStatusApplyConfiguration struct {
 	ResolvedBinding *ResolvedBindingRefApplyConfiguration `json:"resolvedBinding,omitempty"`
 	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
 	AuxiliaryResourceStatuses []AuxiliaryResourceStatusApplyConfiguration `json:"auxiliaryResourceStatuses,omitempty"`
+	// podTemplateResourceStatuses tracks the state of additional resources deployed
+	// from multi-document pod templates. These are K8s resources defined in second+
+	// documents of a pod templateString (first document is always the PodSpec).
+	PodTemplateResourceStatuses []PodTemplateResourceStatusApplyConfiguration `json:"podTemplateResourceStatuses,omitempty"`
 }
 
 // DebugSessionStatusApplyConfiguration constructs a declarative configuration of the DebugSessionStatus type for use with
@@ -221,6 +225,19 @@ func (b *DebugSessionStatusApplyConfiguration) WithAuxiliaryResourceStatuses(val
 			panic("nil value passed to WithAuxiliaryResourceStatuses")
 		}
 		b.AuxiliaryResourceStatuses = append(b.AuxiliaryResourceStatuses, *values[i])
+	}
+	return b
+}
+
+// WithPodTemplateResourceStatuses adds the given value to the PodTemplateResourceStatuses field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the PodTemplateResourceStatuses field.
+func (b *DebugSessionStatusApplyConfiguration) WithPodTemplateResourceStatuses(values ...*PodTemplateResourceStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithPodTemplateResourceStatuses")
+		}
+		b.PodTemplateResourceStatuses = append(b.PodTemplateResourceStatuses, *values[i])
 	}
 	return b
 }

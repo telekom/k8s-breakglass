@@ -145,13 +145,13 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
-	cfg, err := provider.GetRESTConfig(context.Background(), "my-cluster")
+	cfg, err := provider.GetRESTConfig(context.Background(), "default/my-cluster")
 	assert.NoError(t, err)
 	// loopback should be rewritten to cluster DNS
 	assert.Equal(t, "https://kubernetes.default.svc", cfg.Host)
 
 	// second call should return cached pointer
-	cfg2, err2 := provider.GetRESTConfig(context.Background(), "my-cluster")
+	cfg2, err2 := provider.GetRESTConfig(context.Background(), "default/my-cluster")
 	assert.NoError(t, err2)
 	assert.Same(t, cfg, cfg2)
 }
@@ -177,7 +177,7 @@ func TestGetRESTConfig_MissingSecretKey(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&cc, &secret).Build()
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
-	_, err := provider.GetRESTConfig(context.Background(), "c2")
+	_, err := provider.GetRESTConfig(context.Background(), "default/c2")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "missing key")
 }
@@ -235,7 +235,7 @@ func TestInvalidate_ClearsCache(t *testing.T) {
 	assert.Same(t, first, second)
 
 	// Invalidate and ensure subsequent Get produces a different pointer
-	provider.Invalidate("ci1")
+	provider.Invalidate("default", "ci1")
 	third, err3 := provider.GetInNamespace(ctx, "default", "ci1")
 	assert.NoError(t, err3)
 	if first == third {
@@ -264,14 +264,14 @@ func TestInvalidateSecret_EvictsTrackedEntries(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
-	firstCfg, err := provider.GetRESTConfig(ctx, "kind")
+	firstCfg, err := provider.GetRESTConfig(ctx, "default/kind")
 	assert.NoError(t, err)
 	assert.True(t, provider.IsSecretTracked("default", "kind-kube"))
 
 	provider.InvalidateSecret("default", "kind-kube")
 	assert.False(t, provider.IsSecretTracked("default", "kind-kube"))
 
-	secondCfg, err := provider.GetRESTConfig(ctx, "kind")
+	secondCfg, err := provider.GetRESTConfig(ctx, "default/kind")
 	assert.NoError(t, err)
 	assert.NotSame(t, firstCfg, secondCfg, "expected rest config to be rebuilt after secret invalidation")
 }

@@ -25,7 +25,7 @@ func TestTokenManager_GetToken(t *testing.T) {
 	path := filepath.Join(dir, "tokens.json")
 
 	// Test getting token when cache doesn't exist
-	mgr := &TokenManager{CachePath: path}
+	mgr := &TokenManager{CachePath: path, StorageMode: tokenStoreFile}
 	token, found, err := mgr.GetToken("provider")
 	require.NoError(t, err)
 	assert.False(t, found)
@@ -51,7 +51,7 @@ func TestTokenManager_SaveToken(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.json")
 
-	mgr := &TokenManager{CachePath: path}
+	mgr := &TokenManager{CachePath: path, StorageMode: tokenStoreFile}
 
 	// Save first token
 	token1 := StoredToken{
@@ -85,7 +85,7 @@ func TestTokenManager_DeleteToken(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.json")
 
-	mgr := &TokenManager{CachePath: path}
+	mgr := &TokenManager{CachePath: path, StorageMode: tokenStoreFile}
 
 	// Save a token
 	testToken := StoredToken{
@@ -112,7 +112,7 @@ func TestTokenManager_RefreshIfNeeded_TokenNotExpiring(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.json")
 
-	mgr := &TokenManager{CachePath: path}
+	mgr := &TokenManager{CachePath: path, StorageMode: tokenStoreFile}
 
 	// Token not expiring soon - should not refresh
 	testToken := StoredToken{
@@ -134,7 +134,7 @@ func TestTokenManager_RefreshIfNeeded_TokenExpired_NoRefreshToken(t *testing.T) 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.json")
 
-	mgr := &TokenManager{CachePath: path}
+	mgr := &TokenManager{CachePath: path, StorageMode: tokenStoreFile}
 
 	// Token expired and no refresh token - should error
 	testToken := StoredToken{
@@ -154,7 +154,7 @@ func TestTokenManager_RefreshIfNeeded_TokenNotFound(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.json")
 
-	mgr := &TokenManager{CachePath: path}
+	mgr := &TokenManager{CachePath: path, StorageMode: tokenStoreFile}
 
 	oauthCfg := oauth2.Config{}
 	_, found, err := mgr.RefreshIfNeeded(context.Background(), "nonexistent", oauthCfg)

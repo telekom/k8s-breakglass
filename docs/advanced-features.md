@@ -6,7 +6,9 @@ This guide covers advanced configuration options and features for breakglass.
 
 Breakglass controllers use server-side apply (SSA) for status updates with the field manager set to
 `breakglass-controller`. This improves conflict handling and preserves status ownership across
-multiple controller instances.
+multiple controller instances. For object updates (metadata/spec), controllers use generated
+apply-configurations where available (CRDs and core types like Secrets) to keep SSA patches
+structured and consistent.
 
 Additional controller-runtime features in use:
 

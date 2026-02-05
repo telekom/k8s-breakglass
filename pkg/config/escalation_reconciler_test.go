@@ -11,6 +11,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,7 +36,6 @@ func TestNewEscalationReconciler(t *testing.T) {
 		r := NewEscalationReconciler(fakeClient, logger, recorder, nil, nil, 0)
 		require.NotNil(t, r)
 		assert.Equal(t, 10*time.Minute, r.resyncPeriod)
-		assert.NotNil(t, r.escalationIDPMapping)
 	})
 
 	t.Run("creates reconciler with custom resync period", func(t *testing.T) {
@@ -173,9 +173,18 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ClusterConfigRefs not found")
+		// Validation errors are now persisted to status instead of returning an error
+		require.NoError(t, err)
 		assert.Equal(t, reconcile.Result{}, result)
+
+		// Verify the status condition was set
+		var updated breakglassv1alpha1.BreakglassEscalation
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-escalation", Namespace: "default"}, &updated)
+		require.NoError(t, err)
+		cond := apimeta.FindStatusCondition(updated.Status.Conditions, string(breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid))
+		require.NotNil(t, cond)
+		assert.Equal(t, metav1.ConditionFalse, cond.Status)
+		assert.Contains(t, cond.Message, "ClusterConfigRefs not found")
 	})
 
 	t.Run("escalation with missing IDP ref fails validation", func(t *testing.T) {
@@ -210,9 +219,18 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "IdentityProvider refs not found")
+		// Validation errors are now persisted to status instead of returning an error
+		require.NoError(t, err)
 		assert.Equal(t, reconcile.Result{}, result)
+
+		// Verify the status condition was set
+		var updated breakglassv1alpha1.BreakglassEscalation
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-escalation", Namespace: "default"}, &updated)
+		require.NoError(t, err)
+		cond := apimeta.FindStatusCondition(updated.Status.Conditions, string(breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid))
+		require.NotNil(t, cond)
+		assert.Equal(t, metav1.ConditionFalse, cond.Status)
+		assert.Contains(t, cond.Message, "IdentityProvider refs not found")
 	})
 
 	t.Run("escalation with disabled IDP ref fails validation", func(t *testing.T) {
@@ -258,9 +276,18 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "IdentityProvider refs disabled")
+		// Validation errors are now persisted to status instead of returning an error
+		require.NoError(t, err)
 		assert.Equal(t, reconcile.Result{}, result)
+
+		// Verify the status condition was set
+		var updated breakglassv1alpha1.BreakglassEscalation
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-escalation", Namespace: "default"}, &updated)
+		require.NoError(t, err)
+		cond := apimeta.FindStatusCondition(updated.Status.Conditions, string(breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid))
+		require.NotNil(t, cond)
+		assert.Equal(t, metav1.ConditionFalse, cond.Status)
+		assert.Contains(t, cond.Message, "IdentityProvider refs disabled")
 	})
 
 	t.Run("escalation with missing deny policy ref fails validation", func(t *testing.T) {
@@ -295,9 +322,18 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "DenyPolicy refs not found")
+		// Validation errors are now persisted to status instead of returning an error
+		require.NoError(t, err)
 		assert.Equal(t, reconcile.Result{}, result)
+
+		// Verify the status condition was set
+		var updated breakglassv1alpha1.BreakglassEscalation
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-escalation", Namespace: "default"}, &updated)
+		require.NoError(t, err)
+		cond := apimeta.FindStatusCondition(updated.Status.Conditions, string(breakglassv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid))
+		require.NotNil(t, cond)
+		assert.Equal(t, metav1.ConditionFalse, cond.Status)
+		assert.Contains(t, cond.Message, "DenyPolicy refs not found")
 	})
 }
 
@@ -313,24 +349,58 @@ func TestEscalationReconciler_GetCachedEscalationIDPMapping(t *testing.T) {
 		assert.Empty(t, mapping)
 	})
 
-	t.Run("returns copy of mapping", func(t *testing.T) {
-		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
-
-		// Manually set the mapping
-		r.escalationIDPMappingMutex.Lock()
-		r.escalationIDPMapping = map[string][]string{
-			"esc1": {"idp1", "idp2"},
-			"esc2": {"idp3"},
+	t.Run("returns mapping from escalation objects", func(t *testing.T) {
+		// Create escalation objects with AllowedIdentityProviders
+		esc1 := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "esc1", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup:           "group1",
+				MaxValidFor:              "1h",
+				AllowedIdentityProviders: []string{"idp1", "idp2"},
+			},
 		}
-		r.escalationIDPMappingMutex.Unlock()
+		esc2 := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "esc2", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup:           "group2",
+				MaxValidFor:              "1h",
+				AllowedIdentityProviders: []string{"idp3"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(esc1, esc2).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
 
 		mapping := r.GetCachedEscalationIDPMapping()
 		assert.Len(t, mapping, 2)
 		assert.Equal(t, []string{"idp1", "idp2"}, mapping["esc1"])
 		assert.Equal(t, []string{"idp3"}, mapping["esc2"])
+	})
 
-		// Modify the returned map to ensure it's a copy
+	t.Run("returns independent copy of mapping", func(t *testing.T) {
+		esc1 := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "esc1", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup:           "group1",
+				MaxValidFor:              "1h",
+				AllowedIdentityProviders: []string{"idp1", "idp2"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(esc1).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		mapping := r.GetCachedEscalationIDPMapping()
+		assert.Len(t, mapping, 1)
+		assert.Equal(t, []string{"idp1", "idp2"}, mapping["esc1"])
+
+		// Modify the returned map to ensure it's an independent copy
 		mapping["esc1"][0] = "modified"
 
 		// Get again and verify original is unchanged
@@ -580,7 +650,7 @@ func TestValidateMailProviderRef(t *testing.T) {
 	}
 }
 
-func TestEscalationReconciler_UpdateEscalationIDPMapping(t *testing.T) {
+func TestEscalationReconciler_GetEscalationIDPMapping(t *testing.T) {
 	scheme := newTestEscalationReconcilerScheme()
 	logger := zap.NewNop().Sugar()
 
@@ -616,14 +686,36 @@ func TestEscalationReconciler_UpdateEscalationIDPMapping(t *testing.T) {
 			Build()
 		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
 
-		err := r.updateEscalationIDPMapping(context.Background())
-		require.NoError(t, err)
-
+		// GetCachedEscalationIDPMapping now queries the controller-runtime cache directly
 		mapping := r.GetCachedEscalationIDPMapping()
 		assert.Len(t, mapping, 2)
 		assert.Equal(t, []string{"idp1", "idp2"}, mapping["esc1"])
 		assert.Equal(t, []string{"idp3"}, mapping["esc2"])
 		_, hasEsc3 := mapping["esc3"]
 		assert.False(t, hasEsc3, "esc3 should not be in mapping as it has no AllowedIdentityProviders")
+	})
+
+	t.Run("GetEscalationIDPMapping with context", func(t *testing.T) {
+		esc1 := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "esc1", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				EscalatedGroup:           "group1",
+				MaxValidFor:              "1h",
+				AllowedIdentityProviders: []string{"idp1"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(esc1).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		// Use the new context-aware method
+		ctx := context.Background()
+		mapping, err := r.GetEscalationIDPMapping(ctx)
+		require.NoError(t, err)
+		assert.Len(t, mapping, 1)
+		assert.Equal(t, []string{"idp1"}, mapping["esc1"])
 	})
 }

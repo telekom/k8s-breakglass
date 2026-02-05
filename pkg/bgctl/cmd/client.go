@@ -99,7 +99,7 @@ func resolveTokenFromCache(cmdCtx context.Context, rt *runtimeState, ctxCfg *con
 		return "", err
 	}
 	providerKey := resolveProviderKey(ctxCfg, resolved)
-	manager := auth.TokenManager{CachePath: config.DefaultTokenPath()}
+	manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 	token, ok, err := manager.GetToken(providerKey)
 	if err != nil {
 		return "", err

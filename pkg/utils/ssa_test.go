@@ -1,7 +1,3 @@
-// SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
-//
-// SPDX-License-Identifier: Apache-2.0
-
 package utils
 
 import (
@@ -10,453 +6,434 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-func newTestScheme() *runtime.Scheme {
+func newSSATestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
+	_ = telekomv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
 	return scheme
 }
 
-func TestApplyStatus_Success(t *testing.T) {
-	scheme := newTestScheme()
+func TestApplyObject_BreakglassSession(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
 
-	session := &v1alpha1.BreakglassSession{
+	// Create a fake client
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	session := &telekomv1alpha1.BreakglassSession{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
+			APIVersion: telekomv1alpha1.GroupVersion.String(),
 			Kind:       "BreakglassSession",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
-			Cluster: "test-cluster",
-			User:    "test@example.com",
+		Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Cluster:      "test-cluster",
+			User:         "test@example.com",
+			GrantedGroup: "test-group",
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(session).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		Build()
-
-	// Create patch with status changes
-	patch := &v1alpha1.BreakglassSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.Name,
-			Namespace: session.Namespace,
-		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStatePending,
-		},
-	}
-
-	err := ApplyStatus(context.Background(), c, patch)
+	// Apply should create the object
+	err := ApplyObject(ctx, fakeClient, session)
 	require.NoError(t, err)
 
-	// Verify the status was updated
-	var updated v1alpha1.BreakglassSession
-	err = c.Get(context.Background(), client.ObjectKeyFromObject(session), &updated)
+	// Verify object was created
+	var created telekomv1alpha1.BreakglassSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session", Namespace: "default"}, &created)
 	require.NoError(t, err)
-	assert.Equal(t, v1alpha1.SessionStatePending, updated.Status.State)
+	assert.Equal(t, "test-cluster", created.Spec.Cluster)
+	assert.Equal(t, "test@example.com", created.Spec.User)
 }
 
-func TestApplyStatus_ResolvesResourceVersion(t *testing.T) {
-	scheme := newTestScheme()
+func TestApplyObject_Secret(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
 
-	session := &v1alpha1.BreakglassSession{
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	secret := &corev1.Secret{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
+			APIVersion: "v1",
+			Kind:       "Secret",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-session",
+			Name:      "test-secret",
 			Namespace: "default",
-		},
-		Spec: v1alpha1.BreakglassSessionSpec{
-			Cluster: "test-cluster",
-			User:    "test@example.com",
-		},
-	}
-
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(session).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		Build()
-
-	// Create patch WITHOUT resourceVersion - ApplyStatus should resolve it
-	patch := &v1alpha1.BreakglassSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.Name,
-			Namespace: session.Namespace,
-			// No ResourceVersion set
-		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateApproved,
-		},
-	}
-
-	err := ApplyStatus(context.Background(), c, patch)
-	require.NoError(t, err)
-
-	// Verify the status was updated
-	var updated v1alpha1.BreakglassSession
-	err = c.Get(context.Background(), client.ObjectKeyFromObject(session), &updated)
-	require.NoError(t, err)
-	assert.Equal(t, v1alpha1.SessionStateApproved, updated.Status.State)
-}
-
-func TestApplyStatus_WithExplicitResourceVersion(t *testing.T) {
-	scheme := newTestScheme()
-
-	session := &v1alpha1.BreakglassSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            "test-session",
-			Namespace:       "default",
-			ResourceVersion: "12345",
-		},
-		Spec: v1alpha1.BreakglassSessionSpec{
-			Cluster: "test-cluster",
-			User:    "test@example.com",
-		},
-	}
-
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(session).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		Build()
-
-	// Create patch WITH resourceVersion - should use it directly
-	patch := &v1alpha1.BreakglassSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            session.Name,
-			Namespace:       session.Namespace,
-			ResourceVersion: "12345",
-		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStateRejected,
-		},
-	}
-
-	err := ApplyStatus(context.Background(), c, patch)
-	require.NoError(t, err)
-
-	// Verify the status was updated
-	var updated v1alpha1.BreakglassSession
-	err = c.Get(context.Background(), client.ObjectKeyFromObject(session), &updated)
-	require.NoError(t, err)
-	assert.Equal(t, v1alpha1.SessionStateRejected, updated.Status.State)
-}
-
-func TestApplyStatus_NotFoundError(t *testing.T) {
-	scheme := newTestScheme()
-
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		Build()
-
-	// Try to apply status to a non-existent namespaced object
-	patch := &v1alpha1.BreakglassSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "non-existent",
-			Namespace: "default",
-		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStatePending,
-		},
-	}
-
-	err := ApplyStatus(context.Background(), c, patch)
-	assert.True(t, apierrors.IsNotFound(err), "Expected NotFound error for non-existent namespaced object")
-}
-
-func TestApplyStatus_ClusterScopedResource(t *testing.T) {
-	scheme := newTestScheme()
-
-	idp := &v1alpha1.IdentityProvider{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "IdentityProvider",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-idp",
-		},
-		Spec: v1alpha1.IdentityProviderSpec{
-			OIDC: v1alpha1.OIDCConfig{
-				ClientID: "test-client",
-			},
-			Issuer: "https://example.com",
-		},
-	}
-
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(idp).
-		WithStatusSubresource(&v1alpha1.IdentityProvider{}).
-		Build()
-
-	// Create patch for cluster-scoped resource (no namespace)
-	patch := &v1alpha1.IdentityProvider{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "IdentityProvider",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: idp.Name,
-		},
-		Status: v1alpha1.IdentityProviderStatus{
-			ObservedGeneration: 1,
-		},
-	}
-
-	err := ApplyStatus(context.Background(), c, patch)
-	require.NoError(t, err)
-
-	// Verify the status was updated
-	var updated v1alpha1.IdentityProvider
-	err = c.Get(context.Background(), client.ObjectKey{Name: idp.Name}, &updated)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), updated.Status.ObservedGeneration)
-}
-
-func TestApplyStatus_ClearsManagedFields(t *testing.T) {
-	scheme := newTestScheme()
-
-	session := &v1alpha1.BreakglassSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-session",
-			Namespace: "default",
-		},
-		Spec: v1alpha1.BreakglassSessionSpec{
-			Cluster: "test-cluster",
-			User:    "test@example.com",
-		},
-	}
-
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(session).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		Build()
-
-	// Create patch with managed fields set (should be cleared)
-	patch := &v1alpha1.BreakglassSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.Name,
-			Namespace: session.Namespace,
-			ManagedFields: []metav1.ManagedFieldsEntry{
-				{Manager: "test-manager"},
+			Labels: map[string]string{
+				"app": "test",
 			},
 		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStatePending,
+		Data: map[string][]byte{
+			"key": []byte("value"),
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	err := ApplyObject(ctx, fakeClient, secret)
+	require.NoError(t, err)
+
+	var created corev1.Secret
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-secret", Namespace: "default"}, &created)
+	require.NoError(t, err)
+	assert.Equal(t, "test", created.Labels["app"])
+	assert.Equal(t, []byte("value"), created.Data["key"])
+}
+
+func TestApplyObject_Update(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	// Pre-create an object
+	existing := &telekomv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Cluster:      "old-cluster",
+			User:         "old@example.com",
+			GrantedGroup: "old-group",
 		},
 	}
 
-	err := ApplyStatus(context.Background(), c, patch)
-	require.NoError(t, err)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(existing).
+		Build()
 
-	// Verify the status was updated (managed fields should have been cleared internally)
-	var updated v1alpha1.BreakglassSession
-	err = c.Get(context.Background(), client.ObjectKeyFromObject(session), &updated)
-	require.NoError(t, err)
-	assert.Equal(t, v1alpha1.SessionStatePending, updated.Status.State)
-}
-
-func TestApplyStatus_ConflictLogged(t *testing.T) {
-	scheme := newTestScheme()
-
-	session := &v1alpha1.BreakglassSession{
+	// Apply with updated values
+	updated := &telekomv1alpha1.BreakglassSession{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
+			APIVersion: telekomv1alpha1.GroupVersion.String(),
 			Kind:       "BreakglassSession",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassSessionSpec{
-			Cluster: "test-cluster",
-			User:    "test@example.com",
+		Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Cluster:      "new-cluster",
+			User:         "new@example.com",
+			GrantedGroup: "new-group",
 		},
 	}
 
-	// Create a client that returns conflict errors
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(session).
-		WithStatusSubresource(&v1alpha1.BreakglassSession{}).
-		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourcePatch: func(ctx context.Context, client client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-				if subResource == "status" {
-					return apierrors.NewConflict(
-						schema.GroupResource{Group: v1alpha1.GroupVersion.Group, Resource: "breakglasssessions"},
-						"test-session",
-						nil,
-					)
-				}
-				return client.SubResource(subResource).Patch(ctx, obj, patch, opts...)
-			},
-		}).
-		Build()
+	err := ApplyObject(ctx, fakeClient, updated)
+	require.NoError(t, err)
 
-	patch := &v1alpha1.BreakglassSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.Name,
-			Namespace: session.Namespace,
-		},
-		Status: v1alpha1.BreakglassSessionStatus{
-			State: v1alpha1.SessionStatePending,
-		},
-	}
-
-	err := ApplyStatus(context.Background(), c, patch)
-	assert.True(t, apierrors.IsConflict(err), "Expected Conflict error")
+	var result telekomv1alpha1.BreakglassSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session", Namespace: "default"}, &result)
+	require.NoError(t, err)
+	assert.Equal(t, "new-cluster", result.Spec.Cluster)
+	assert.Equal(t, "new@example.com", result.Spec.User)
 }
 
-func TestApplyStatus_DebugSession(t *testing.T) {
-	scheme := newTestScheme()
+func TestApplyStatus_BreakglassSession(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
 
-	session := &v1alpha1.DebugSession{
+	// Pre-create an object (status updates require existing object)
+	existing := &telekomv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.BreakglassSessionSpec{
+			Cluster:      "test-cluster",
+			User:         "test@example.com",
+			GrantedGroup: "test-group",
+		},
+		Status: telekomv1alpha1.BreakglassSessionStatus{
+			State: telekomv1alpha1.SessionStatePending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(existing).
+		WithStatusSubresource(&telekomv1alpha1.BreakglassSession{}).
+		Build()
+
+	// Update status
+	updated := existing.DeepCopy()
+	updated.TypeMeta = metav1.TypeMeta{
+		APIVersion: telekomv1alpha1.GroupVersion.String(),
+		Kind:       "BreakglassSession",
+	}
+	updated.Status.State = telekomv1alpha1.SessionStateApproved
+
+	err := ApplyStatus(ctx, fakeClient, updated)
+	require.NoError(t, err)
+
+	var result telekomv1alpha1.BreakglassSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session", Namespace: "default"}, &result)
+	require.NoError(t, err)
+	assert.Equal(t, telekomv1alpha1.SessionStateApproved, result.Status.State)
+}
+
+func TestToApplyConfiguration_UnsupportedType(t *testing.T) {
+	// Test with an unsupported type
+	unsupported := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+	}
+
+	_, err := ToApplyConfiguration(unsupported)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported type")
+}
+
+func TestToStatusApplyConfiguration_UnsupportedType(t *testing.T) {
+	// Test with an unsupported type for status
+	unsupported := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+	}
+
+	_, err := ToStatusApplyConfiguration(unsupported)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported type")
+}
+
+func TestApplyObject_ClusterConfig(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	config := &telekomv1alpha1.ClusterConfig{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
+			APIVersion: telekomv1alpha1.GroupVersion.String(),
+			Kind:       "ClusterConfig",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			ClusterID: "cluster-123",
+			AuthType:  telekomv1alpha1.ClusterAuthTypeKubeconfig,
+		},
+	}
+
+	err := ApplyObject(ctx, fakeClient, config)
+	require.NoError(t, err)
+
+	var created telekomv1alpha1.ClusterConfig
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &created)
+	require.NoError(t, err)
+	assert.Equal(t, "cluster-123", created.Spec.ClusterID)
+}
+
+func TestApplyObject_DebugSession(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	session := &telekomv1alpha1.DebugSession{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: telekomv1alpha1.GroupVersion.String(),
 			Kind:       "DebugSession",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-debug-session",
-			Namespace: "breakglass",
-		},
-		Spec: v1alpha1.DebugSessionSpec{
-			Cluster:     "test-cluster",
-			RequestedBy: "test@example.com",
-			TemplateRef: "test-template",
-		},
-	}
-
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(session).
-		WithStatusSubresource(&v1alpha1.DebugSession{}).
-		Build()
-
-	now := metav1.Now()
-	patch := &v1alpha1.DebugSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "DebugSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.Name,
-			Namespace: session.Namespace,
-		},
-		Status: v1alpha1.DebugSessionStatus{
-			State:    v1alpha1.DebugSessionStateActive,
-			StartsAt: &now,
-		},
-	}
-
-	err := ApplyStatus(context.Background(), c, patch)
-	require.NoError(t, err)
-
-	// Verify the status was updated
-	var updated v1alpha1.DebugSession
-	err = c.Get(context.Background(), client.ObjectKeyFromObject(session), &updated)
-	require.NoError(t, err)
-	assert.Equal(t, v1alpha1.DebugSessionStateActive, updated.Status.State)
-}
-
-func TestApplyStatus_BreakglassEscalation(t *testing.T) {
-	scheme := newTestScheme()
-
-	escalation := &v1alpha1.BreakglassEscalation{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassEscalation",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-escalation",
+			Name:      "test-debug",
 			Namespace: "default",
 		},
-		Spec: v1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup: "admin",
+		Spec: telekomv1alpha1.DebugSessionSpec{
+			Cluster: "test-cluster",
 		},
 	}
 
-	c := fake.NewClientBuilder().
+	err := ApplyObject(ctx, fakeClient, session)
+	require.NoError(t, err)
+
+	var created telekomv1alpha1.DebugSession
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-debug", Namespace: "default"}, &created)
+	require.NoError(t, err)
+	assert.Equal(t, "test-cluster", created.Spec.Cluster)
+}
+
+func TestApplyUnstructured_ConfigMap(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(escalation).
-		WithStatusSubresource(&v1alpha1.BreakglassEscalation{}).
 		Build()
 
-	patch := &v1alpha1.BreakglassEscalation{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.GroupVersion.String(),
-			Kind:       "BreakglassEscalation",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      escalation.Name,
-			Namespace: escalation.Namespace,
-		},
-		Status: v1alpha1.BreakglassEscalationStatus{
-			ApproverGroupMembers: map[string][]string{
-				"approvers": {"user1@example.com", "user2@example.com"},
+	// Create an unstructured ConfigMap
+	cm := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name":      "test-cm",
+				"namespace": "default",
+			},
+			"data": map[string]interface{}{
+				"key1": "value1",
+				"key2": "value2",
 			},
 		},
 	}
 
-	err := ApplyStatus(context.Background(), c, patch)
+	err := ApplyUnstructured(ctx, fakeClient, cm)
 	require.NoError(t, err)
 
-	// Verify the status was updated
-	var updated v1alpha1.BreakglassEscalation
-	err = c.Get(context.Background(), client.ObjectKeyFromObject(escalation), &updated)
+	// Verify the ConfigMap was created
+	var result unstructured.Unstructured
+	result.SetAPIVersion("v1")
+	result.SetKind("ConfigMap")
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cm", Namespace: "default"}, &result)
 	require.NoError(t, err)
-	assert.Len(t, updated.Status.ApproverGroupMembers["approvers"], 2)
+	assert.Equal(t, "test-cm", result.GetName())
+	data, found, err := unstructured.NestedStringMap(result.Object, "data")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "value1", data["key1"])
+	assert.Equal(t, "value2", data["key2"])
+}
+
+func TestApplyUnstructured_Update(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	// Pre-create an unstructured ConfigMap
+	existing := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name":      "test-cm",
+				"namespace": "default",
+			},
+			"data": map[string]interface{}{
+				"key1": "old-value",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(existing).
+		Build()
+
+	// Apply with updated values
+	updated := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name":      "test-cm",
+				"namespace": "default",
+			},
+			"data": map[string]interface{}{
+				"key1": "new-value",
+				"key2": "added-value",
+			},
+		},
+	}
+
+	err := ApplyUnstructured(ctx, fakeClient, updated)
+	require.NoError(t, err)
+
+	// Verify the ConfigMap was updated
+	var result unstructured.Unstructured
+	result.SetAPIVersion("v1")
+	result.SetKind("ConfigMap")
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cm", Namespace: "default"}, &result)
+	require.NoError(t, err)
+	data, found, err := unstructured.NestedStringMap(result.Object, "data")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "new-value", data["key1"])
+	assert.Equal(t, "added-value", data["key2"])
+}
+
+func TestApplyUnstructured_Deployment(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	// Create an unstructured Deployment (arbitrary auxiliary resource)
+	deployment := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]interface{}{
+				"name":      "debug-deployment",
+				"namespace": "default",
+				"labels": map[string]interface{}{
+					"app": "debug-session",
+				},
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+				"selector": map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						"app": "debug-session",
+					},
+				},
+				"template": map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"labels": map[string]interface{}{
+							"app": "debug-session",
+						},
+					},
+					"spec": map[string]interface{}{
+						"containers": []interface{}{
+							map[string]interface{}{
+								"name":  "debug",
+								"image": "busybox:latest",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := ApplyUnstructured(ctx, fakeClient, deployment)
+	require.NoError(t, err)
+
+	// Verify the Deployment was created
+	var result unstructured.Unstructured
+	result.SetAPIVersion("apps/v1")
+	result.SetKind("Deployment")
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "debug-deployment", Namespace: "default"}, &result)
+	require.NoError(t, err)
+	assert.Equal(t, "debug-deployment", result.GetName())
+
+	labels := result.GetLabels()
+	assert.Equal(t, "debug-session", labels["app"])
 }

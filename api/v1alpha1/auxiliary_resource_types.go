@@ -115,6 +115,15 @@ type AuxiliaryResourceStatus struct {
 	// createdAt is when the resource was created.
 	CreatedAt *string `json:"createdAt,omitempty"`
 
+	// ready indicates if the resource has reached its desired state (computed via kstatus).
+	Ready bool `json:"ready,omitempty"`
+
+	// readyAt is when the resource became ready.
+	ReadyAt *string `json:"readyAt,omitempty"`
+
+	// readinessStatus is the kstatus status of the resource (Current, InProgress, Failed, etc.).
+	ReadinessStatus string `json:"readinessStatus,omitempty"`
+
 	// deleted indicates if the resource was deleted.
 	Deleted bool `json:"deleted,omitempty"`
 
@@ -122,6 +131,45 @@ type AuxiliaryResourceStatus struct {
 	DeletedAt *string `json:"deletedAt,omitempty"`
 
 	// error contains any error message from creation or deletion.
+	Error string `json:"error,omitempty"`
+
+	// additionalResources tracks extra resources from multi-document YAML templates.
+	// When a templateString produces multiple YAML documents, the first document is tracked
+	// in the fields above, and any additional documents are tracked here.
+	// +optional
+	AdditionalResources []AdditionalResourceRef `json:"additionalResources,omitempty"`
+}
+
+// AdditionalResourceRef tracks a resource created from a multi-document YAML template.
+// This is used when an auxiliary resource templateString produces multiple K8s resources.
+type AdditionalResourceRef struct {
+	// kind is the Kubernetes resource kind.
+	Kind string `json:"kind"`
+
+	// apiVersion is the Kubernetes API version.
+	APIVersion string `json:"apiVersion"`
+
+	// resourceName is the actual Kubernetes resource name.
+	ResourceName string `json:"resourceName"`
+
+	// namespace is where the resource was created.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// ready indicates if the resource has reached its desired state (computed via kstatus).
+	// +optional
+	Ready bool `json:"ready,omitempty"`
+
+	// readinessStatus is the kstatus status of the resource.
+	// +optional
+	ReadinessStatus string `json:"readinessStatus,omitempty"`
+
+	// deleted indicates if the resource was deleted.
+	// +optional
+	Deleted bool `json:"deleted,omitempty"`
+
+	// error contains any error message.
+	// +optional
 	Error string `json:"error,omitempty"`
 }
 

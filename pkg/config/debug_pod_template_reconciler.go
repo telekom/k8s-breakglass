@@ -134,7 +134,7 @@ func (r *DebugPodTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&breakglassv1alpha1.DebugPodTemplate{}).
 		WithEventFilter(specChangePredicate).
 		WithOptions(controller.Options{
-			MaxConcurrentReconciles: 1,
+			MaxConcurrentReconciles: 2,
 		}).
 		Complete(r)
 }

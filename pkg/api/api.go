@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -516,14 +517,14 @@ func buildAllowedOrigins(cfg config.Config) []string {
 		add(raw)
 	}
 
-	if len(origins) == 0 {
+	if len(origins) == 0 && allowDefaultOrigins() {
 		for _, raw := range defaultAllowedOrigins {
 			add(raw)
 		}
 		usedDefaultOrigins = true
 	}
 
-	if usedDefaultOrigins && cfg.Frontend.BaseURL != "" {
+	if (usedDefaultOrigins || len(origins) == 0) && cfg.Frontend.BaseURL != "" {
 		add(cfg.Frontend.BaseURL)
 	}
 
@@ -561,6 +562,11 @@ func normalizeOrigin(raw string) string {
 	}
 
 	return fmt.Sprintf("%s://%s", scheme, host)
+}
+
+func allowDefaultOrigins() bool {
+	val := strings.TrimSpace(strings.ToLower(os.Getenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS")))
+	return val == "true" || val == "1" || val == "yes"
 }
 
 // SetIdentityProviderReconciler sets the reconciler for accessing cached IDPs

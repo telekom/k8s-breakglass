@@ -12,11 +12,14 @@ import { computed, ref, inject, onMounted } from "vue";
 import { decodeJwt } from "jose";
 import { AuthKey } from "@/keys";
 import { useUser, currentIDPName } from "@/services/auth";
+import { debug, warn, error } from "@/services/logger";
 
 const auth = inject(AuthKey);
 const user = useUser();
 const showDebug = ref(false);
 const usedMockAccessToken = ref(false);
+const allowMockAccessToken =
+  import.meta.env.DEV === true || import.meta.env.VITE_DEBUG_PANEL_ALLOW_MOCK_TOKEN === "true";
 
 const MOCK_ACCESS_TOKEN =
   "eyJhbGciOiJub25lIn0." +
@@ -59,16 +62,24 @@ function extractGroups(claims: any | null): string[] {
 }
 
 function applyMockAccessToken() {
+  if (!allowMockAccessToken) {
+    usedMockAccessToken.value = false;
+    debugInfo.value.accessTokenClaims = null;
+    debugInfo.value.groups = [];
+    debugInfo.value.error = "No access token available";
+    warn("DebugPanel", "Mock access token disabled");
+    return;
+  }
   usedMockAccessToken.value = true;
   debugInfo.value.accessTokenClaims = MOCK_ACCESS_TOKEN_CLAIMS;
   debugInfo.value.groups = extractGroups(MOCK_ACCESS_TOKEN_CLAIMS);
   debugInfo.value.error = null;
-  console.debug("[DebugPanel] Using mock access token claims", MOCK_ACCESS_TOKEN_CLAIMS);
+  debug("DebugPanel", "Using mock access token claims", MOCK_ACCESS_TOKEN_CLAIMS);
 }
 
 async function collectDebugInfo() {
   try {
-    console.debug("[DebugPanel] Collecting debug information...");
+    debug("DebugPanel", "Collecting debug information...");
     usedMockAccessToken.value = false;
 
     // Get user info
@@ -87,12 +98,12 @@ async function collectDebugInfo() {
       if (at) {
         debugInfo.value.accessTokenClaims = decodeJwt(at);
         debugInfo.value.groups = extractGroups(debugInfo.value.accessTokenClaims);
-        console.debug("[DebugPanel] Access token claims:", debugInfo.value.accessTokenClaims);
+        debug("DebugPanel", "Access token claims", debugInfo.value.accessTokenClaims);
       } else {
         applyMockAccessToken();
       }
     } catch (err) {
-      console.warn("[DebugPanel] Error decoding access token:", err);
+      warn("DebugPanel", "Error decoding access token", err);
       debugInfo.value.error = `Failed to decode access token: ${String(err)}`;
       applyMockAccessToken();
     }
@@ -101,10 +112,10 @@ async function collectDebugInfo() {
     try {
       if (user.value?.id_token) {
         debugInfo.value.idTokenClaims = decodeJwt(user.value.id_token);
-        console.debug("[DebugPanel] ID token claims:", debugInfo.value.idTokenClaims);
+        debug("DebugPanel", "ID token claims", debugInfo.value.idTokenClaims);
       }
     } catch (err) {
-      console.warn("[DebugPanel] Error decoding ID token:", err);
+      warn("DebugPanel", "Error decoding ID token", err);
     }
 
     // Get current IDP
@@ -115,15 +126,15 @@ async function collectDebugInfo() {
       debugInfo.value.groups = extractGroups(debugInfo.value.accessTokenClaims);
     }
 
-    console.debug("[DebugPanel] Debug info collected:", debugInfo.value);
+    debug("DebugPanel", "Debug info collected", debugInfo.value);
   } catch (err) {
-    console.error("[DebugPanel] Error collecting debug info:", err);
+    error("DebugPanel", "Error collecting debug info", err);
     debugInfo.value.error = `Error: ${String(err)}`;
   }
 }
 
 onMounted(() => {
-  console.debug("[DebugPanel] Component mounted");
+  debug("DebugPanel", "Component mounted");
   collectDebugInfo();
 });
 

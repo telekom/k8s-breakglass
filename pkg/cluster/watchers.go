@@ -40,9 +40,9 @@ func RegisterInvalidationHandlers(ctx context.Context, mgr ctrl.Manager, provide
 			if oldCfg != nil && oldCfg.ResourceVersion == newCfg.ResourceVersion {
 				return
 			}
-			provider.Invalidate(newCfg.Name)
+			provider.Invalidate(newCfg.Namespace, newCfg.Name)
 			if log != nil {
-				log.Debugw("ClusterConfig cache invalidated", "cluster", newCfg.Name)
+				log.Debugw("ClusterConfig cache invalidated", "cluster", fmt.Sprintf("%s/%s", newCfg.Namespace, newCfg.Name))
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -50,9 +50,9 @@ func RegisterInvalidationHandlers(ctx context.Context, mgr ctrl.Manager, provide
 			if cfg == nil {
 				return
 			}
-			provider.Invalidate(cfg.Name)
+			provider.Invalidate(cfg.Namespace, cfg.Name)
 			if log != nil {
-				log.Debugw("ClusterConfig cache invalidated due to delete", "cluster", cfg.Name)
+				log.Debugw("ClusterConfig cache invalidated due to delete", "cluster", fmt.Sprintf("%s/%s", cfg.Namespace, cfg.Name))
 			}
 		},
 	}); err != nil {

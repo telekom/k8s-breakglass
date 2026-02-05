@@ -378,7 +378,11 @@ func TestOriginValidationMiddleware(t *testing.T) {
 func TestServer_RegisterAll(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	logger := zaptest.NewLogger(t)
-	cfg := config.Config{}
+	cfg := config.Config{
+		Server: config.Server{
+			AllowedOrigins: []string{"https://test.example.com"},
+		},
+	}
 
 	// Use mock auth handler to avoid JWKS fetching
 	mockAuth := &AuthHandler{}
@@ -448,7 +452,11 @@ func TestServerConfig_Structure(t *testing.T) {
 func TestServer_RegisterAll_Error(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	logger := zaptest.NewLogger(t)
-	cfg := config.Config{}
+	cfg := config.Config{
+		Server: config.Server{
+			AllowedOrigins: []string{"https://test.example.com"},
+		},
+	}
 
 	// Use mock auth handler to avoid JWKS fetching
 	mockAuth := &AuthHandler{}
@@ -470,7 +478,11 @@ func TestServer_RegisterAll_Error(t *testing.T) {
 func TestServer_NoRoute_API_Json404(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	logger := zaptest.NewLogger(t)
-	cfg := config.Config{}
+	cfg := config.Config{
+		Server: config.Server{
+			AllowedOrigins: []string{"https://test.example.com"},
+		},
+	}
 	server := NewServer(logger, cfg, true, &AuthHandler{})
 
 	// Use the engine directly and perform a request to an unknown /api/ path
@@ -805,6 +817,8 @@ func TestBuildAllowedOrigins(t *testing.T) {
 	})
 
 	t.Run("defaults include frontend base URL when provided", func(t *testing.T) {
+		os.Setenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS", "true")
+		t.Cleanup(func() { os.Unsetenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS") })
 		cfg := config.Config{
 			Frontend: config.Frontend{BaseURL: "https://ui.example.com"},
 		}
@@ -814,9 +828,10 @@ func TestBuildAllowedOrigins(t *testing.T) {
 		require.ElementsMatch(t, expected, origins)
 	})
 
-	t.Run("empty config uses localhost defaults", func(t *testing.T) {
+	t.Run("empty config yields empty allowlist unless defaults enabled", func(t *testing.T) {
+		os.Unsetenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS")
 		defaults := buildAllowedOrigins(config.Config{})
-		require.ElementsMatch(t, defaultAllowedOrigins, defaults)
+		require.Empty(t, defaults)
 	})
 }
 
@@ -826,7 +841,8 @@ func TestSecurityHeaders(t *testing.T) {
 
 	cfg := config.Config{
 		Server: config.Server{
-			ListenAddress: ":8080",
+			ListenAddress:  ":8080",
+			AllowedOrigins: []string{"https://test.example.com"},
 		},
 	}
 
@@ -865,7 +881,8 @@ func TestHSTSHeaderBehindProxy(t *testing.T) {
 
 	cfg := config.Config{
 		Server: config.Server{
-			ListenAddress: ":8080",
+			ListenAddress:  ":8080",
+			AllowedOrigins: []string{"https://test.example.com"},
 		},
 	}
 

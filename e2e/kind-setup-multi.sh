@@ -1063,6 +1063,8 @@ spec:
     issuerURL: ${issuer_url}
     clientID: breakglass-group-sync
     server: ${spoke_a_server}
+    # TOFU enabled because spoke clusters use self-signed certificates in E2E
+    allowTOFU: true
     clientSecretRef:
       name: breakglass-group-sync-secret
       namespace: breakglass-system
@@ -1085,6 +1087,8 @@ spec:
     issuerURL: ${issuer_url}
     clientID: breakglass-group-sync
     server: ${spoke_b_server}
+    # TOFU enabled because spoke clusters use self-signed certificates in E2E
+    allowTOFU: true
     clientSecretRef:
       name: breakglass-group-sync-secret
       namespace: breakglass-system

@@ -6,15 +6,15 @@ metadata:
   name: {{ default (printf "escalation-%d" $i) $esc.name | trunc 63 | trimSuffix "-" }}
   namespace: {{ $.Release.Namespace }}
 spec:
+  {{- $allowed := required "escalations[].allowed is required" $esc.allowed }}
+  {{- $allowedGroups := required "escalations[].allowed.groups is required" $allowed.groups }}
   allowed:
-    {{- if $esc.allowed.clusters }}
+    {{- if $allowed.clusters }}
     clusters:
-{{ toYaml $esc.allowed.clusters | indent 6 }}
+{{ toYaml $allowed.clusters | indent 6 }}
     {{- end }}
-    {{- if $esc.allowed.groups }}
     groups:
-{{ toYaml $esc.allowed.groups | indent 6 }}
-    {{- end }}
+{{ toYaml $allowedGroups | indent 6 }}
   escalatedGroup: {{ $esc.escalatedGroup }}
   {{- if $esc.approvers }}
   approvers:

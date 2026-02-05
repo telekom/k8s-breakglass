@@ -536,7 +536,7 @@ volumes:
 		},
 	}
 
-	spec, err := controller.buildPodSpec(ds, template, nil)
+	spec, _, err := controller.buildPodSpec(ds, template, nil)
 	require.NoError(t, err)
 
 	// Verify container
@@ -607,7 +607,7 @@ hostPID: true
 		},
 	}
 
-	spec, err := controller.buildPodSpec(ds, template, podTemplate)
+	spec, _, err := controller.buildPodSpec(ds, template, podTemplate)
 	require.NoError(t, err)
 
 	// Verify container from podTemplate
@@ -681,7 +681,7 @@ containers:
 		},
 	}
 
-	spec, err := controller.buildPodSpec(ds, template, podTemplate)
+	spec, _, err := controller.buildPodSpec(ds, template, podTemplate)
 	require.NoError(t, err)
 
 	// Verify the template was rendered with session context and vars
@@ -736,7 +736,7 @@ func TestBuildPodSpec_DebugPodTemplateNeitherTemplateNorTemplateString(t *testin
 		Spec: v1alpha1.DebugSessionTemplateSpec{},
 	}
 
-	_, err := controller.buildPodSpec(ds, template, podTemplate)
+	_, _, err := controller.buildPodSpec(ds, template, podTemplate)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "neither template nor templateString")
 }
@@ -784,7 +784,7 @@ hostNetwork: true
 		},
 	}
 
-	spec, err := controller.buildPodSpec(ds, template, podTemplate)
+	spec, _, err := controller.buildPodSpec(ds, template, podTemplate)
 	require.NoError(t, err)
 
 	// Overrides should NOT be applied (condition was false)
@@ -812,4 +812,485 @@ func TestExtractJSONValueForPod(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// ============================================================================
+// Multi-Document Pod Template Tests
+// ============================================================================
+
+func TestRenderPodTemplateStringMultiDoc_SingleDocument(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	templateStr := `
+containers:
+  - name: debug
+    image: busybox:latest
+    command: ["sleep", "infinity"]
+`
+
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	require.NoError(t, err)
+
+	// Should have a valid PodSpec
+	require.Len(t, result.PodSpec.Containers, 1)
+	assert.Equal(t, "debug", result.PodSpec.Containers[0].Name)
+	assert.Equal(t, "busybox:latest", result.PodSpec.Containers[0].Image)
+
+	// Should have no additional resources
+	assert.Empty(t, result.AdditionalResources)
+}
+
+func TestRenderPodTemplateStringMultiDoc_WithPVC(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	// Multi-doc template: PodSpec + PVC
+	templateStr := `containers:
+  - name: fio
+    image: fio:latest
+    volumeMounts:
+      - name: test-volume
+        mountPath: /data
+volumes:
+  - name: test-volume
+    persistentVolumeClaim:
+      claimName: pvc-{{ .session.name }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-{{ .session.name }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .vars.pvcSize | default "10Gi" }}
+`
+
+	ctx := v1alpha1.AuxiliaryResourceContext{
+		Session: v1alpha1.AuxiliaryResourceSessionContext{
+			Name: "test-session",
+		},
+		Vars: map[string]string{
+			"pvcSize": "50Gi",
+		},
+	}
+
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
+	require.NoError(t, err)
+
+	// Verify PodSpec
+	require.Len(t, result.PodSpec.Containers, 1)
+	assert.Equal(t, "fio", result.PodSpec.Containers[0].Name)
+	require.Len(t, result.PodSpec.Volumes, 1)
+	assert.Equal(t, "pvc-test-session", result.PodSpec.Volumes[0].PersistentVolumeClaim.ClaimName)
+
+	// Verify additional resource (PVC)
+	require.Len(t, result.AdditionalResources, 1)
+	pvc := result.AdditionalResources[0]
+	assert.Equal(t, "PersistentVolumeClaim", pvc.GetKind())
+	assert.Equal(t, "v1", pvc.GetAPIVersion())
+	assert.Equal(t, "pvc-test-session", pvc.GetName())
+}
+
+func TestRenderPodTemplateStringMultiDoc_MultipleResources(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	// Multi-doc template: PodSpec + ConfigMap + Secret + PVC
+	templateStr := `containers:
+  - name: app
+    image: app:latest
+    envFrom:
+      - configMapRef:
+          name: app-config
+      - secretRef:
+          name: app-secret
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  key: value
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+type: Opaque
+stringData:
+  password: secret123
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+`
+
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	require.NoError(t, err)
+
+	// Verify PodSpec
+	require.Len(t, result.PodSpec.Containers, 1)
+	assert.Equal(t, "app", result.PodSpec.Containers[0].Name)
+
+	// Verify 3 additional resources
+	require.Len(t, result.AdditionalResources, 3)
+
+	// ConfigMap
+	assert.Equal(t, "ConfigMap", result.AdditionalResources[0].GetKind())
+	assert.Equal(t, "app-config", result.AdditionalResources[0].GetName())
+
+	// Secret
+	assert.Equal(t, "Secret", result.AdditionalResources[1].GetKind())
+	assert.Equal(t, "app-secret", result.AdditionalResources[1].GetName())
+
+	// PVC
+	assert.Equal(t, "PersistentVolumeClaim", result.AdditionalResources[2].GetKind())
+	assert.Equal(t, "app-pvc", result.AdditionalResources[2].GetName())
+}
+
+func TestRenderPodTemplateStringMultiDoc_EmptyDocumentsSkipped(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	// Template with empty documents
+	templateStr := `containers:
+  - name: debug
+    image: busybox
+---
+
+---
+   
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config
+data:
+  key: value
+`
+
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	require.NoError(t, err)
+
+	// Verify PodSpec
+	require.Len(t, result.PodSpec.Containers, 1)
+
+	// Should only have 1 additional resource (empty docs skipped)
+	require.Len(t, result.AdditionalResources, 1)
+	assert.Equal(t, "ConfigMap", result.AdditionalResources[0].GetKind())
+}
+
+func TestRenderPodTemplateStringMultiDoc_EmptyTemplate(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	// Empty template
+	_, err := controller.renderPodTemplateStringMultiDoc("", v1alpha1.AuxiliaryResourceContext{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty")
+}
+
+func TestRenderPodTemplateStringMultiDoc_InvalidSecondDocument(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	// Second document is missing apiVersion/kind
+	templateStr := `containers:
+  - name: debug
+    image: busybox
+---
+data:
+  key: value
+`
+
+	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, v1alpha1.AuxiliaryResourceContext{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing apiVersion or kind")
+}
+
+func TestRenderPodTemplateStringMultiDoc_TemplateVariables(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	templateStr := `containers:
+  - name: debug-{{ .session.name | trunc 10 }}
+    image: {{ .vars.image }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-{{ .session.name }}
+  namespace: {{ .target.namespace }}
+data:
+  cluster: {{ .session.cluster }}
+  requestedBy: {{ .session.requestedBy }}
+`
+
+	ctx := v1alpha1.AuxiliaryResourceContext{
+		Session: v1alpha1.AuxiliaryResourceSessionContext{
+			Name:        "very-long-session-name-12345",
+			Cluster:     "prod-cluster",
+			RequestedBy: "user@example.com",
+		},
+		Target: v1alpha1.AuxiliaryResourceTargetContext{
+			Namespace: "debug-ns",
+		},
+		Vars: map[string]string{
+			"image": "alpine:3.19",
+		},
+	}
+
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
+	require.NoError(t, err)
+
+	// Verify PodSpec with templated values
+	assert.Equal(t, "debug-very-long-", result.PodSpec.Containers[0].Name)
+	assert.Equal(t, "alpine:3.19", result.PodSpec.Containers[0].Image)
+
+	// Verify ConfigMap with templated values
+	require.Len(t, result.AdditionalResources, 1)
+	cm := result.AdditionalResources[0]
+	assert.Equal(t, "config-very-long-session-name-12345", cm.GetName())
+	assert.Equal(t, "debug-ns", cm.GetNamespace())
+}
+
+func TestRenderPodTemplateStringMultiDoc_ConditionalResource(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	// Template with conditional PVC
+	templateStr := `containers:
+  - name: app
+    image: app:latest
+{{- if eq .vars.createPVC "true" }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+{{- end }}
+`
+
+	// Test with PVC enabled
+	ctx := v1alpha1.AuxiliaryResourceContext{
+		Vars: map[string]string{"createPVC": "true"},
+	}
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
+	require.NoError(t, err)
+	assert.Len(t, result.AdditionalResources, 1)
+
+	// Test with PVC disabled
+	ctx = v1alpha1.AuxiliaryResourceContext{
+		Vars: map[string]string{"createPVC": "false"},
+	}
+	result, err = controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
+	require.NoError(t, err)
+	assert.Empty(t, result.AdditionalResources)
+}
+
+func TestBuildPodSpec_MultiDocReturnsAdditionalResources(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	ds := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:         "test-cluster",
+			TemplateRef:     "storage-test",
+			RequestedBy:     "user@example.com",
+			TargetNamespace: "target-ns",
+		},
+	}
+
+	template := &v1alpha1.DebugSessionTemplate{
+		Spec: v1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "Storage Test",
+			PodTemplateString: `containers:
+  - name: fio
+    image: fio:latest
+    volumeMounts:
+      - name: data
+        mountPath: /data
+volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: pvc-{{ .session.name }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-{{ .session.name }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+`,
+		},
+	}
+
+	spec, additionalResources, err := controller.buildPodSpec(ds, template, nil)
+	require.NoError(t, err)
+
+	// Verify PodSpec
+	require.Len(t, spec.Containers, 1)
+	assert.Equal(t, "fio", spec.Containers[0].Name)
+	assert.Equal(t, "pvc-test-session", spec.Volumes[0].PersistentVolumeClaim.ClaimName)
+
+	// Verify additional resources
+	require.Len(t, additionalResources, 1)
+	assert.Equal(t, "PersistentVolumeClaim", additionalResources[0].GetKind())
+	assert.Equal(t, "pvc-test-session", additionalResources[0].GetName())
+}
+
+func TestBuildPodSpec_StructuredTemplateNoAdditionalResources(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	ds := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:         "test-cluster",
+			TemplateRef:     "simple",
+			TargetNamespace: "target-ns",
+		},
+	}
+
+	template := &v1alpha1.DebugSessionTemplate{
+		Spec: v1alpha1.DebugSessionTemplateSpec{},
+	}
+
+	podTemplate := &v1alpha1.DebugPodTemplate{
+		Spec: v1alpha1.DebugPodTemplateSpec{
+			Template: &v1alpha1.DebugPodSpec{
+				Spec: v1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{
+						{Name: "debug", Image: "busybox"},
+					},
+				},
+			},
+		},
+	}
+
+	spec, additionalResources, err := controller.buildPodSpec(ds, template, podTemplate)
+	require.NoError(t, err)
+
+	// Verify PodSpec
+	require.Len(t, spec.Containers, 1)
+	assert.Equal(t, "debug", spec.Containers[0].Name)
+
+	// Structured templates don't support multi-doc, so no additional resources
+	assert.Empty(t, additionalResources)
+}
+
+func TestBuildPodSpec_DebugPodTemplateMultiDoc(t *testing.T) {
+	// Test multi-doc support in DebugPodTemplate.templateString
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionController{
+		log: logger,
+	}
+
+	ds := &v1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session",
+			Namespace: "breakglass-system",
+		},
+		Spec: v1alpha1.DebugSessionSpec{
+			Cluster:         "test-cluster",
+			TemplateRef:     "with-pod-template",
+			TargetNamespace: "target-ns",
+		},
+	}
+
+	template := &v1alpha1.DebugSessionTemplate{
+		Spec: v1alpha1.DebugSessionTemplateSpec{
+			// No PodTemplateString - will use podTemplate's templateString
+		},
+	}
+
+	podTemplate := &v1alpha1.DebugPodTemplate{
+		Spec: v1alpha1.DebugPodTemplateSpec{
+			TemplateString: `containers:
+  - name: app
+    image: app:latest
+    env:
+      - name: CONFIG_PATH
+        value: /config/settings.yaml
+    volumeMounts:
+      - name: config
+        mountPath: /config
+volumes:
+  - name: config
+    configMap:
+      name: app-config-{{ .session.name }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config-{{ .session.name }}
+data:
+  settings.yaml: |
+    debug: true
+    cluster: {{ .session.cluster }}
+`,
+		},
+	}
+
+	spec, additionalResources, err := controller.buildPodSpec(ds, template, podTemplate)
+	require.NoError(t, err)
+
+	// Verify PodSpec
+	require.Len(t, spec.Containers, 1)
+	assert.Equal(t, "app", spec.Containers[0].Name)
+	require.Len(t, spec.Volumes, 1)
+	assert.Equal(t, "app-config-test-session", spec.Volumes[0].ConfigMap.Name)
+
+	// Verify additional resources from DebugPodTemplate
+	require.Len(t, additionalResources, 1)
+	assert.Equal(t, "ConfigMap", additionalResources[0].GetKind())
+	assert.Equal(t, "app-config-test-session", additionalResources[0].GetName())
 }

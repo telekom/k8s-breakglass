@@ -117,14 +117,15 @@ func (r *DebugSessionClusterBindingReconciler) Reconcile(ctx context.Context, re
 	now := metav1.Now()
 	allValid := true
 
-	// Reset resolved lists
-	binding.Status.ResolvedTemplates = nil
-	binding.Status.ResolvedClusters = nil
+	// Preserve last-known-good resolved lists to avoid status flapping on transient errors
+	prevTemplates := binding.Status.ResolvedTemplates
+	prevClusters := binding.Status.ResolvedClusters
 
 	// Resolve templates
 	templatesResolved, templateErr := r.resolveTemplates(ctx, binding)
 	if templateErr != nil {
 		allValid = false
+		binding.Status.ResolvedTemplates = prevTemplates
 		apimeta.SetStatusCondition(&binding.Status.Conditions, metav1.Condition{
 			Type:               string(breakglassv1alpha1.DebugSessionClusterBindingConditionTemplateResolved),
 			Status:             metav1.ConditionFalse,
@@ -134,6 +135,7 @@ func (r *DebugSessionClusterBindingReconciler) Reconcile(ctx context.Context, re
 		})
 	} else if len(templatesResolved) == 0 {
 		allValid = false
+		binding.Status.ResolvedTemplates = prevTemplates
 		apimeta.SetStatusCondition(&binding.Status.Conditions, metav1.Condition{
 			Type:               string(breakglassv1alpha1.DebugSessionClusterBindingConditionTemplateResolved),
 			Status:             metav1.ConditionFalse,
@@ -156,6 +158,7 @@ func (r *DebugSessionClusterBindingReconciler) Reconcile(ctx context.Context, re
 	clustersResolved, clusterErr := r.resolveClusters(ctx, binding)
 	if clusterErr != nil {
 		allValid = false
+		binding.Status.ResolvedClusters = prevClusters
 		apimeta.SetStatusCondition(&binding.Status.Conditions, metav1.Condition{
 			Type:               string(breakglassv1alpha1.DebugSessionClusterBindingConditionClustersResolved),
 			Status:             metav1.ConditionFalse,
@@ -165,6 +168,7 @@ func (r *DebugSessionClusterBindingReconciler) Reconcile(ctx context.Context, re
 		})
 	} else if len(clustersResolved) == 0 {
 		allValid = false
+		binding.Status.ResolvedClusters = prevClusters
 		apimeta.SetStatusCondition(&binding.Status.Conditions, metav1.Condition{
 			Type:               string(breakglassv1alpha1.DebugSessionClusterBindingConditionClustersResolved),
 			Status:             metav1.ConditionFalse,

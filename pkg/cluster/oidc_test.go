@@ -632,8 +632,8 @@ func TestOIDCTokenProvider_InvalidateDoesNotMatchSimilarNames(t *testing.T) {
 	provider.cacheTokenWithNamespace("default", "my-prod", token)
 	provider.cacheTokenWithNamespace("default", "test-prod", token)
 
-	// Invalidate "prod" - should NOT affect "my-prod" or "test-prod"
-	provider.Invalidate("prod")
+	// Invalidate "default/prod" - should NOT affect "my-prod" or "test-prod"
+	provider.Invalidate("default", "prod")
 
 	provider.mu.RLock()
 	_, hasProd := provider.tokens["default/prod"]
@@ -642,8 +642,8 @@ func TestOIDCTokenProvider_InvalidateDoesNotMatchSimilarNames(t *testing.T) {
 	provider.mu.RUnlock()
 
 	assert.False(t, hasProd, "default/prod should be invalidated")
-	assert.True(t, hasMyProd, "default/my-prod should NOT be invalidated by Invalidate('prod')")
-	assert.True(t, hasTestProd, "default/test-prod should NOT be invalidated by Invalidate('prod')")
+	assert.True(t, hasMyProd, "default/my-prod should NOT be invalidated by Invalidate('default/prod')")
+	assert.True(t, hasTestProd, "default/test-prod should NOT be invalidated by Invalidate('default/prod')")
 }
 
 func TestOIDCTokenProvider_InvalidateWithNamespace(t *testing.T) {
@@ -661,7 +661,7 @@ func TestOIDCTokenProvider_InvalidateWithNamespace(t *testing.T) {
 	provider.cacheTokenWithNamespace("ns2", "cluster", token)
 
 	// Invalidate only ns1/cluster
-	provider.InvalidateWithNamespace("ns1", "cluster")
+	provider.Invalidate("ns1", "cluster")
 
 	provider.mu.RLock()
 	_, hasNs1 := provider.tokens["ns1/cluster"]
@@ -1039,12 +1039,8 @@ func TestOIDCTokenProvider_Invalidate(t *testing.T) {
 
 	provider := NewOIDCTokenProvider(k8sClient, log)
 
-	// Add tokens with both old-style (no namespace) and new-style (namespaced) keys
-	// to verify backward compatibility
+	// Add tokens with namespace/name keys
 	provider.mu.Lock()
-	// Old-style key (legacy format, no namespace)
-	provider.tokens["cluster1"] = &cachedToken{accessToken: "old-style-token"}
-	// New-style keys (namespace/name format)
 	provider.tokens["ns1/cluster1"] = &cachedToken{accessToken: "ns1-token"}
 	provider.tokens["ns2/cluster1"] = &cachedToken{accessToken: "ns2-token"}
 	// Different cluster to verify no false matches
@@ -1053,21 +1049,18 @@ func TestOIDCTokenProvider_Invalidate(t *testing.T) {
 
 	// Verify all tokens exist before invalidation
 	provider.mu.RLock()
-	assert.NotNil(t, provider.tokens["cluster1"])
 	assert.NotNil(t, provider.tokens["ns1/cluster1"])
 	assert.NotNil(t, provider.tokens["ns2/cluster1"])
 	assert.NotNil(t, provider.tokens["default/cluster2"])
 	provider.mu.RUnlock()
 
-	// Invalidate cluster1 - should remove both old-style and all namespaced entries
-	provider.Invalidate("cluster1")
+	// Invalidate ns1/cluster1 - should remove only that entry
+	provider.Invalidate("ns1", "cluster1")
 
-	// Verify: old-style "cluster1" and new-style "*/cluster1" entries are gone,
-	// but cluster2 remains
+	// Verify: only ns1/cluster1 is removed
 	provider.mu.RLock()
-	assert.Nil(t, provider.tokens["cluster1"], "Old-style key should be invalidated")
 	assert.Nil(t, provider.tokens["ns1/cluster1"], "Namespaced ns1/cluster1 should be invalidated")
-	assert.Nil(t, provider.tokens["ns2/cluster1"], "Namespaced ns2/cluster1 should be invalidated")
+	assert.NotNil(t, provider.tokens["ns2/cluster1"], "Namespaced ns2/cluster1 should NOT be invalidated")
 	assert.NotNil(t, provider.tokens["default/cluster2"], "cluster2 should NOT be affected")
 	provider.mu.RUnlock()
 }

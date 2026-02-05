@@ -16,13 +16,19 @@ spec:
   
   {{- /* Authentication Type Selection */}}
   {{- if eq (default "Kubeconfig" .Values.cluster.authType) "OIDC" }}
+  {{- if and .Values.cluster.oidcFromIdentityProvider .Values.cluster.oidcAuth }}
+  {{- fail "cluster.oidcFromIdentityProvider and cluster.oidcAuth are mutually exclusive" }}
+  {{- end }}
+  {{- if and (not .Values.cluster.oidcFromIdentityProvider) (not .Values.cluster.oidcAuth) }}
+  {{- fail "cluster.authType=OIDC requires oidcFromIdentityProvider or oidcAuth" }}
+  {{- end }}
   authType: OIDC
   
   {{- /* OIDC From IdentityProvider Reference */}}
   {{- if .Values.cluster.oidcFromIdentityProvider }}
   oidcFromIdentityProvider:
-    name: {{ .Values.cluster.oidcFromIdentityProvider.name }}
-    server: {{ .Values.cluster.oidcFromIdentityProvider.server }}
+    name: {{ required "cluster.oidcFromIdentityProvider.name is required" .Values.cluster.oidcFromIdentityProvider.name }}
+    server: {{ required "cluster.oidcFromIdentityProvider.server is required" .Values.cluster.oidcFromIdentityProvider.server }}
     {{- if .Values.cluster.oidcFromIdentityProvider.clientID }}
     clientID: {{ .Values.cluster.oidcFromIdentityProvider.clientID }}
     {{- end }}
@@ -49,16 +55,22 @@ spec:
     {{- if .Values.cluster.oidcFromIdentityProvider.insecureSkipTLSVerify }}
     insecureSkipTLSVerify: {{ .Values.cluster.oidcFromIdentityProvider.insecureSkipTLSVerify }}
     {{- end }}
+    {{- if .Values.cluster.oidcFromIdentityProvider.allowTOFU }}
+    allowTOFU: {{ .Values.cluster.oidcFromIdentityProvider.allowTOFU }}
+    {{- end }}
   
   {{- /* Direct OIDC Configuration */}}
   {{- else if .Values.cluster.oidcAuth }}
   oidcAuth:
-    issuerURL: {{ .Values.cluster.oidcAuth.issuerURL }}
-    clientID: {{ .Values.cluster.oidcAuth.clientID }}
-    server: {{ .Values.cluster.oidcAuth.server }}
+    issuerURL: {{ required "cluster.oidcAuth.issuerURL is required" .Values.cluster.oidcAuth.issuerURL }}
+    clientID: {{ required "cluster.oidcAuth.clientID is required" .Values.cluster.oidcAuth.clientID }}
+    server: {{ required "cluster.oidcAuth.server is required" .Values.cluster.oidcAuth.server }}
+    {{- if not .Values.cluster.oidcAuth.clientSecretRef }}
+    {{- fail "cluster.oidcAuth.clientSecretRef is required when authType=OIDC" }}
+    {{- end }}
     {{- if .Values.cluster.oidcAuth.clientSecretRef }}
     clientSecretRef:
-      name: {{ .Values.cluster.oidcAuth.clientSecretRef.name }}
+      name: {{ required "cluster.oidcAuth.clientSecretRef.name is required" .Values.cluster.oidcAuth.clientSecretRef.name }}
       {{- if .Values.cluster.oidcAuth.clientSecretRef.namespace }}
       namespace: {{ .Values.cluster.oidcAuth.clientSecretRef.namespace }}
       {{- end }}
@@ -88,6 +100,9 @@ spec:
     {{- end }}
     {{- if .Values.cluster.oidcAuth.insecureSkipTLSVerify }}
     insecureSkipTLSVerify: {{ .Values.cluster.oidcAuth.insecureSkipTLSVerify }}
+    {{- end }}
+    {{- if .Values.cluster.oidcAuth.allowTOFU }}
+    allowTOFU: {{ .Values.cluster.oidcAuth.allowTOFU }}
     {{- end }}
     {{- if .Values.cluster.oidcAuth.tokenExchange }}
     tokenExchange:

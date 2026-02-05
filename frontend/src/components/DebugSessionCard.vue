@@ -52,6 +52,8 @@ const stateLabel = computed(() => {
   }
 });
 
+const stateClass = computed(() => (props.session.state || "unknown").toLowerCase());
+
 const canJoin = computed(() => props.session.state === "Active" && !props.isOwner);
 const canLeave = computed(() => props.session.state === "Active" && !props.isOwner);
 const canTerminate = computed(() => props.session.state === "Active" && props.isOwner);
@@ -77,7 +79,7 @@ function handleRenew() {
 </script>
 
 <template>
-  <div class="debug-session-card" :class="`state-${session.state.toLowerCase()}`" data-testid="debug-session-card">
+  <div class="debug-session-card" :class="`state-${stateClass}`" data-testid="debug-session-card">
     <div class="card-header" data-testid="card-header">
       <div class="session-info">
         <h3 class="session-name" data-testid="session-name">{{ session.name }}</h3>
@@ -102,11 +104,11 @@ function handleRenew() {
       <div class="info-grid">
         <div class="info-item">
           <span class="label">Template</span>
-          <span class="value">{{ session.templateRef }}</span>
+          <span class="value">{{ session.templateRef || "—" }}</span>
         </div>
         <div class="info-item">
           <span class="label">Requested By</span>
-          <span class="value">{{ session.requestedByDisplayName || session.requestedBy }}</span>
+          <span class="value">{{ session.requestedByDisplayName || session.requestedBy || "—" }}</span>
         </div>
         <div v-if="session.startsAt" class="info-item">
           <span class="label">Started</span>
@@ -118,7 +120,7 @@ function handleRenew() {
         </div>
         <div class="info-item">
           <span class="label">Participants</span>
-          <span class="value">{{ session.participants }}</span>
+          <span class="value">{{ session.participants ?? "—" }}</span>
         </div>
         <div v-if="session.allowedPods > 0" class="info-item">
           <span class="label">Debug Pods</span>

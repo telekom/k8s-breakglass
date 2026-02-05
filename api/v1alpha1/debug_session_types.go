@@ -256,6 +256,68 @@ type DebugSessionStatus struct {
 	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
 	// +optional
 	AuxiliaryResourceStatuses []AuxiliaryResourceStatus `json:"auxiliaryResourceStatuses,omitempty"`
+
+	// podTemplateResourceStatuses tracks the state of additional resources deployed
+	// from multi-document pod templates. These are K8s resources defined in second+
+	// documents of a pod templateString (first document is always the PodSpec).
+	// +optional
+	PodTemplateResourceStatuses []PodTemplateResourceStatus `json:"podTemplateResourceStatuses,omitempty"`
+}
+
+// PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.
+type PodTemplateResourceStatus struct {
+	// kind is the Kubernetes kind of the resource.
+	// +optional
+	Kind string `json:"kind,omitempty"`
+
+	// apiVersion is the API version of the resource.
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
+
+	// resourceName is the name of the deployed resource.
+	// +optional
+	ResourceName string `json:"resourceName,omitempty"`
+
+	// namespace is the namespace where the resource is deployed.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// source identifies where this resource came from.
+	// Either "podTemplateString" or "debugPodTemplate:<name>".
+	// +optional
+	Source string `json:"source,omitempty"`
+
+	// created indicates whether the resource was successfully created.
+	// +optional
+	Created bool `json:"created,omitempty"`
+
+	// createdAt is when the resource was created.
+	// +optional
+	CreatedAt *string `json:"createdAt,omitempty"`
+
+	// ready indicates whether the resource is ready (using kstatus).
+	// +optional
+	Ready bool `json:"ready,omitempty"`
+
+	// readyAt is when the resource became ready.
+	// +optional
+	ReadyAt *string `json:"readyAt,omitempty"`
+
+	// readinessStatus provides the kstatus readiness state.
+	// +optional
+	ReadinessStatus string `json:"readinessStatus,omitempty"`
+
+	// deleted indicates whether the resource has been deleted.
+	// +optional
+	Deleted bool `json:"deleted,omitempty"`
+
+	// deletedAt is when the resource was deleted.
+	// +optional
+	DeletedAt *string `json:"deletedAt,omitempty"`
+
+	// error contains any error message from resource operations.
+	// +optional
+	Error string `json:"error,omitempty"`
 }
 
 // ResolvedBindingRef contains information about the binding used to create a session.

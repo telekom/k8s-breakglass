@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // TokenRefreshBuffer is the duration before expiry when we proactively refresh tokens
@@ -39,6 +40,9 @@ type OIDCTokenProvider struct {
 	log    *zap.SugaredLogger
 	tokens map[string]*cachedToken
 	mu     sync.RWMutex
+	// httpClients caches OIDC HTTP clients by issuer/config key
+	httpClients map[string]*http.Client
+	httpMu      sync.RWMutex
 	// tofuCAs stores discovered CA certificates for TOFU (cluster name -> CA PEM)
 	tofuCAs map[string][]byte
 	tofuMu  sync.RWMutex
@@ -77,6 +81,7 @@ func NewOIDCTokenProvider(k8s client.Client, log *zap.SugaredLogger) *OIDCTokenP
 		k8s:           k8s,
 		log:           log.Named("oidc-token-provider"),
 		tokens:        make(map[string]*cachedToken),
+		httpClients:   make(map[string]*http.Client),
 		tofuCAs:       make(map[string][]byte),
 		issuerTOFUCAs: make(map[string][]byte),
 	}
@@ -213,6 +218,7 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 		CASecretRef:           ref.CASecretRef,
 		ClientSecretRef:       ref.ClientSecretRef,
 		InsecureSkipTLSVerify: ref.InsecureSkipTLSVerify,
+		AllowTOFU:             ref.AllowTOFU,
 	}
 
 	// If client secret is not specified in the reference, try to use Keycloak service account credentials
@@ -762,6 +768,14 @@ func (p *OIDCTokenProvider) getClientSecret(ctx context.Context, oidc *v1alpha1.
 // 2. Explicit CertificateAuthority - use provided CA
 // 3. TOFU (Trust On First Use) - auto-discover and cache CA on first connection to the issuer
 func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *v1alpha1.OIDCAuthConfig) (*http.Client, error) {
+	cacheKey := p.oidcHTTPClientCacheKey(oidc)
+	p.httpMu.RLock()
+	if client := p.httpClients[cacheKey]; client != nil {
+		p.httpMu.RUnlock()
+		return client, nil
+	}
+	p.httpMu.RUnlock()
+
 	transport := &http.Transport{}
 
 	if oidc.InsecureSkipTLSVerify {
@@ -772,7 +786,7 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *v1alpha1.OIDCAuthConfig) 
 			return nil, fmt.Errorf("failed to parse certificateAuthority")
 		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: roots}
-	} else {
+	} else if oidc.AllowTOFU {
 		// Check if we have a cached TOFU CA for this issuer
 		issuerKey := oidc.IssuerURL
 		p.issuerTOFUMu.RLock()
@@ -791,26 +805,31 @@ func (p *OIDCTokenProvider) createOIDCHTTPClient(oidc *v1alpha1.OIDCAuthConfig) 
 			ca, err := p.performTOFU(tofuCtx, oidc.IssuerURL)
 			cancel()
 			if err != nil {
-				p.log.Warnw("TOFU failed for OIDC issuer, connection may fail", "issuer", issuerKey, "error", err)
-			} else {
-				// Cache the CA
-				p.issuerTOFUMu.Lock()
-				p.issuerTOFUCAs[issuerKey] = ca
-				p.issuerTOFUMu.Unlock()
+				return nil, fmt.Errorf("TOFU failed for OIDC issuer %s: %w", issuerKey, err)
+			}
+			// Cache the CA
+			p.issuerTOFUMu.Lock()
+			p.issuerTOFUCAs[issuerKey] = ca
+			p.issuerTOFUMu.Unlock()
 
-				roots := x509.NewCertPool()
-				if ok := roots.AppendCertsFromPEM(ca); ok {
-					transport.TLSClientConfig = &tls.Config{RootCAs: roots}
-					p.log.Infow("TOFU: captured and cached OIDC issuer CA", "issuer", issuerKey)
-				}
+			roots := x509.NewCertPool()
+			if ok := roots.AppendCertsFromPEM(ca); ok {
+				transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+				p.log.Infow("TOFU: captured and cached OIDC issuer CA", "issuer", issuerKey)
 			}
 		}
 	}
 
-	return &http.Client{
+	client := &http.Client{
 		Transport: transport,
 		Timeout:   30 * time.Second,
-	}, nil
+	}
+	if cacheKey != "" {
+		p.httpMu.Lock()
+		p.httpClients[cacheKey] = client
+		p.httpMu.Unlock()
+	}
+	return client, nil
 }
 
 // configureTLS configures TLS for the cluster API server connection.
@@ -844,16 +863,23 @@ func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, 
 		} else {
 			key := oidc.CASecretRef.Key
 			if key == "" {
-				key = "ca.crt"
+				key = "value"
 			}
-
-			if caData, ok := secret.Data[key]; ok {
-				cfg.CAData = caData
+			if ca, ok := secret.Data[key]; ok && len(ca) > 0 {
+				cfg.TLSClientConfig.CAData = ca
+				p.log.Debugw("Loaded cluster CA from secret", "cluster", clusterName,
+					"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name), "key", key)
 				return nil
 			}
-			// Key doesn't exist in secret, will try TOFU
-			p.log.Debugw("CA key not found in secret, will attempt TOFU", "cluster", clusterName, "key", key)
+			p.log.Warnw("Cluster CA secret key missing or empty; will attempt TOFU", "cluster", clusterName,
+				"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name), "key", key)
 		}
+	}
+
+	if !oidc.AllowTOFU {
+		// No explicit CA and TOFU disabled: rely on system trust store
+		p.log.Debugw("No CA configured and TOFU disabled; using system trust store", "cluster", clusterName)
+		return nil
 	}
 
 	// 2. Check TOFU cache
@@ -862,39 +888,49 @@ func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, 
 	p.tofuMu.RUnlock()
 
 	if hasCachedCA {
-		cfg.CAData = cachedCA
+		cfg.TLSClientConfig.CAData = cachedCA
+		p.log.Debugw("Using cached TOFU CA for cluster", "cluster", clusterName)
 		return nil
 	}
 
 	// 3. Perform TOFU - connect to API server and capture the CA certificate
-	// (insecureSkipTLSVerify is already handled above, so we always attempt TOFU here)
 	ca, err := p.performTOFU(ctx, oidc.Server)
 	if err != nil {
-		p.log.Warnw("TOFU failed, connection may be insecure or fail", "cluster", clusterName, "error", err)
-		// Don't fail here - let the actual connection fail if CA is required
-	} else {
-		// Cache the CA
-		p.tofuMu.Lock()
-		p.tofuCAs[clusterName] = ca
-		p.tofuMu.Unlock()
+		return fmt.Errorf("TOFU failed for cluster %s: %w", clusterName, err)
+	}
 
-		cfg.CAData = ca
+	// Cache the CA
+	p.tofuMu.Lock()
+	p.tofuCAs[clusterName] = ca
+	p.tofuMu.Unlock()
 
-		// Optionally persist the CA to a secret for future use
-		if oidc.CASecretRef != nil {
-			if err := p.persistTOFUCA(ctx, oidc.CASecretRef, ca); err != nil {
-				p.log.Warnw("Failed to persist TOFU CA to secret", "cluster", clusterName, "error", err)
-				// Non-fatal - we still have the CA in memory
-			} else {
-				p.log.Infow("Persisted TOFU CA to secret", "cluster", clusterName,
-					"secret", oidc.CASecretRef.Name, "namespace", oidc.CASecretRef.Namespace)
-			}
+	// Set the CA for this connection
+	cfg.TLSClientConfig.CAData = ca
+	p.log.Infow("TOFU: captured CA for cluster", "cluster", clusterName)
+
+	// If CASecretRef is configured, persist the discovered CA
+	if oidc.CASecretRef != nil {
+		if err := p.persistTOFUCA(ctx, oidc.CASecretRef, ca); err != nil {
+			p.log.Warnw("Failed to persist TOFU CA to secret", "cluster", clusterName, "error", err)
+		} else {
+			p.log.Infow("Persisted TOFU CA to secret", "cluster", clusterName,
+				"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name))
 		}
-
-		return nil
 	}
 
 	return nil
+}
+
+func (p *OIDCTokenProvider) oidcHTTPClientCacheKey(oidc *v1alpha1.OIDCAuthConfig) string {
+	if oidc == nil {
+		return ""
+	}
+	var caHash string
+	if oidc.CertificateAuthority != "" {
+		sum := sha256.Sum256([]byte(oidc.CertificateAuthority))
+		caHash = hex.EncodeToString(sum[:])
+	}
+	return fmt.Sprintf("%s|ca=%s|insecure=%t|tofu=%t", oidc.IssuerURL, caHash, oidc.InsecureSkipTLSVerify, oidc.AllowTOFU)
 }
 
 // performTOFU performs Trust On First Use for the API server certificate.
@@ -1059,7 +1095,11 @@ func (p *OIDCTokenProvider) persistTOFUCA(ctx context.Context, secretRef *v1alph
 	}
 	secret.Annotations["breakglass.t-caas.telekom.com/tofu-timestamp"] = time.Now().UTC().Format(time.RFC3339)
 
-	return p.k8s.Update(ctx, &secret)
+	secret.TypeMeta = metav1.TypeMeta{
+		APIVersion: corev1.SchemeGroupVersion.String(),
+		Kind:       "Secret",
+	}
+	return utils.ApplyObject(ctx, p.k8s, &secret)
 }
 
 // InvalidateTOFU removes a cached TOFU CA for the specified cluster
@@ -1069,25 +1109,9 @@ func (p *OIDCTokenProvider) InvalidateTOFU(apiServerURL string) {
 	p.tofuMu.Unlock()
 }
 
-// Invalidate removes cached tokens for the specified cluster name.
-// Since tokens are now keyed by namespace/name, this will evict all entries
-// ending with "/clusterName" to handle the case where watchers don't know the namespace.
-// The suffix check includes the "/" to prevent false matches (e.g., "prod" won't
-// match "my-prod" because the suffix is "/prod", not "prod").
-func (p *OIDCTokenProvider) Invalidate(clusterName string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	// Evict any entry that matches this cluster name (handles both old and new key formats)
-	for key := range p.tokens {
-		if key == clusterName || strings.HasSuffix(key, "/"+clusterName) {
-			delete(p.tokens, key)
-		}
-	}
-}
-
-// InvalidateWithNamespace removes a cached token for the specified namespace/cluster combination.
-// This is the preferred method when the namespace is known.
-func (p *OIDCTokenProvider) InvalidateWithNamespace(namespace, clusterName string) {
+// Invalidate removes a cached token for the specified namespace/cluster combination.
+// Callers must provide the namespace to avoid cross-namespace collisions.
+func (p *OIDCTokenProvider) Invalidate(namespace, clusterName string) {
 	cacheKey := tokenCacheKey(namespace, clusterName)
 	p.mu.Lock()
 	delete(p.tokens, cacheKey)

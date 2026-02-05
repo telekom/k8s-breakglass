@@ -18,6 +18,7 @@ const user = useUser();
 const authenticated = computed(() => user.value && !user.value?.expired);
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
+const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
 
 const route = useRoute();
 const router = useRouter();
@@ -426,7 +427,7 @@ watch(
 
       <ErrorToasts />
       <AutoLogoutWarning />
-      <DebugPanel />
+      <DebugPanel v-if="showDebugPanel" />
     </scale-telekom-app-shell>
   </main>
 </template>

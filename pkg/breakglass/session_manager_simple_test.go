@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -146,12 +147,11 @@ func TestSessionManager_Simple(t *testing.T) {
 	})
 
 	t.Run("UpdateBreakglassSession", func(t *testing.T) {
-		// Test the method exists and handles errors properly
-		// Since fake client update semantics are complex,
-		// we just test that the method exists and error handling
+		// Test that UpdateBreakglassSession uses SSA (Server-Side Apply) semantics.
+		// SSA creates objects if they don't exist (upsert behavior).
 		session := telekomv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "nonexistent-update-session",
+				Name: "ssa-create-session",
 			},
 			Spec: telekomv1alpha1.BreakglassSessionSpec{
 				User:         "testuser@example.com",
@@ -160,9 +160,14 @@ func TestSessionManager_Simple(t *testing.T) {
 			},
 		}
 
-		// This should fail because the session doesn't exist
+		// SSA creates object if it doesn't exist (upsert semantics)
 		err := manager.UpdateBreakglassSession(context.Background(), session)
-		assert.Error(t, err, "Should fail for non-existent session")
+		assert.NoError(t, err, "SSA should create object if it doesn't exist")
+
+		// Verify the object was created
+		created, err := manager.GetBreakglassSessionByName(context.Background(), "ssa-create-session")
+		assert.NoError(t, err)
+		assert.Equal(t, "testuser@example.com", created.Spec.User)
 	})
 
 	t.Run("GetAllBreakglassSessions uses reader", func(t *testing.T) {
@@ -254,48 +259,48 @@ func TestSessionManager_FieldSelectorMethods(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(session).
+		WithIndex(&telekomv1alpha1.BreakglassSession{}, "metadata.name", func(obj client.Object) []string {
+			if s, ok := obj.(*telekomv1alpha1.BreakglassSession); ok && s.Name != "" {
+				return []string{s.Name}
+			}
+			return nil
+		}).
+		WithIndex(&telekomv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*telekomv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&telekomv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			if s, ok := obj.(*telekomv1alpha1.BreakglassSession); ok && s.Spec.User != "" {
+				return []string{s.Spec.User}
+			}
+			return nil
+		}).
 		Build()
 
-	manager := SessionManager{Client: fakeClient}
+	manager := NewSessionManagerWithClient(fakeClient)
 
 	t.Run("GetBreakglassSessionsWithSelector", func(t *testing.T) {
-		// Test with empty selector - should work with fake client
-		selector := fields.Everything()
+		// Test with a name selector - fake client requires explicit key=value format
+		selector := fields.ParseSelectorOrDie("metadata.name=field-test-session")
 		sessions, err := manager.GetBreakglassSessionsWithSelector(context.Background(), selector)
-
-		if err == nil {
-			// If it works, verify we get the session
-			assert.Len(t, sessions, 1)
-		} else {
-			// If it fails (expected with field selectors), just verify method exists
-			assert.Error(t, err)
-		}
+		require.NoError(t, err)
+		assert.Len(t, sessions, 1)
 	})
 
 	t.Run("GetBreakglassSessionsWithSelectorString", func(t *testing.T) {
 		// Test with a simple selector string
 		selectorString := "metadata.name=field-test-session"
 		sessions, err := manager.GetBreakglassSessionsWithSelectorString(context.Background(), selectorString)
-
-		if err == nil {
-			// If it works, verify we get the session
-			assert.Len(t, sessions, 1)
-		} else {
-			// If it fails (expected with field selectors), just verify method exists
-			assert.Error(t, err)
-		}
+		require.NoError(t, err)
+		assert.Len(t, sessions, 1)
 	})
 
 	t.Run("GetClusterUserBreakglassSessions", func(t *testing.T) {
 		// Test cluster user specific method
 		sessions, err := manager.GetClusterUserBreakglassSessions(context.Background(), "fieldtestcluster", "fieldtestuser@example.com")
-
-		if err == nil {
-			// If it works, verify we get the session
-			assert.Len(t, sessions, 1)
-		} else {
-			// If it fails (expected with field selectors), just verify method exists
-			assert.Error(t, err)
-		}
+		require.NoError(t, err)
+		assert.Len(t, sessions, 1)
 	})
 }

@@ -87,7 +87,9 @@ func (c *cliTestContext) runCommand(args ...string) (string, error) {
 		ConfigPath:   c.configPath,
 		OutputWriter: buf,
 	})
-	root.SetArgs(args)
+	// Use file storage to avoid keychain dependency in CI (Linux runners don't have D-Bus secrets service)
+	allArgs := append([]string{"--token-storage", "file"}, args...)
+	root.SetArgs(allArgs)
 	err := root.Execute()
 	return buf.String(), err
 }
@@ -159,16 +161,22 @@ func TestCLIAuthLogoutWithoutLogin(t *testing.T) {
 		ConfigPath:   configPath,
 		OutputWriter: buf,
 	})
-	root.SetArgs([]string{"auth", "logout"})
+	// Use file storage to avoid keychain dependency in CI (Linux runners don't have D-Bus secrets service)
+	root.SetArgs([]string{"--token-storage", "file", "auth", "logout"})
 	root.SetOut(buf)
 	root.SetErr(buf)
 
 	// Logout may fail if no tokens file exists - that's acceptable
-	// The command should either succeed or fail gracefully with "no such file" error
+	// The command should either succeed or fail gracefully with file not found error
 	err := root.Execute()
 	if err != nil {
-		// Accept "no such file" errors as valid (no tokens to logout)
-		assert.Contains(t, err.Error(), "no such file", "expected 'no such file' error or success")
+		// Accept file not found errors as valid (no tokens to logout)
+		// Different platforms/libraries use different messages
+		errStr := err.Error()
+		isFileNotFound := strings.Contains(errStr, "no such file") ||
+			strings.Contains(errStr, "file does not exist") ||
+			strings.Contains(errStr, "not found")
+		assert.True(t, isFileNotFound, "expected file not found error or success, got: %s", errStr)
 	}
 }
 

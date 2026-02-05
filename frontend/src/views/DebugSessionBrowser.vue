@@ -116,9 +116,9 @@ const filteredSessions = computed(() => {
     result = result.filter(
       (s) =>
         s.name.toLowerCase().includes(searchLower) ||
-        s.cluster.toLowerCase().includes(searchLower) ||
-        s.templateRef.toLowerCase().includes(searchLower) ||
-        s.requestedBy.toLowerCase().includes(searchLower),
+        (s.cluster ?? "").toLowerCase().includes(searchLower) ||
+        (s.templateRef ?? "").toLowerCase().includes(searchLower) ||
+        (s.requestedBy ?? "").toLowerCase().includes(searchLower),
     );
   }
 

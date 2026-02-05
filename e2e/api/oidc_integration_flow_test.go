@@ -110,7 +110,8 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 
 	ccBuilder := helpers.NewClusterConfigBuilder(oidcClusterName, namespace).
 		WithOIDCAuth(oidcIssuer, oidcClientConfig.ClientID, oidcServer).
-		WithOIDCClientSecret(oidcSecret.Name, namespace, "client-secret")
+		WithOIDCClientSecret(oidcSecret.Name, namespace, "client-secret").
+		WithOIDCAllowTOFU(true) // Allow TOFU for self-signed cluster certificate
 	if keycloakCA != "" {
 		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(keycloakCA)
 	}
@@ -126,7 +127,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 		if getErr := cli.Get(ctx, types.NamespacedName{Name: clusterConfig.Name, Namespace: namespace}, &cc); getErr == nil {
 			logClusterConfigConditions(t, &cc)
 		}
-		t.Skipf("ClusterConfig did not become Ready: %v", err)
+		require.NoError(t, err, "ClusterConfig did not become Ready")
 	}
 	t.Log("ClusterConfig is Ready")
 
@@ -248,7 +249,8 @@ func TestOIDCClusterConfigTokenExchange(t *testing.T) {
 
 	ccBuilder := helpers.NewClusterConfigBuilder("e2e-token-exchange-cluster", namespace).
 		WithOIDCAuth(oidcIssuer, helpers.GetKeycloakServiceAccountClientID(), oidcServer).
-		WithOIDCClientSecret(oidcSecret.Name, namespace, "client-secret")
+		WithOIDCClientSecret(oidcSecret.Name, namespace, "client-secret").
+		WithOIDCAllowTOFU(true) // Allow TOFU for self-signed cluster certificate
 	if keycloakCA != "" {
 		ccBuilder = ccBuilder.WithOIDCCertificateAuthority(keycloakCA)
 	}

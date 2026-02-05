@@ -3763,7 +3763,7 @@ func TestDebugSessionReconciler_WorkloadLabelsAndAnnotations(t *testing.T) {
 		},
 	}
 
-	workload, err := controller.buildWorkload(session, template, binding, podTemplate, "breakglass-debug")
+	workload, _, err := controller.buildWorkload(session, template, binding, podTemplate, "breakglass-debug")
 	require.NoError(t, err)
 
 	daemonSet, ok := workload.(*appsv1.DaemonSet)

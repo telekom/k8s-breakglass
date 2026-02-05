@@ -22,6 +22,8 @@ import (
 func ForKind(kind schema.GroupVersionKind) interface{} {
 	switch kind {
 	// Group=breakglass.t-caas.telekom.com, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithKind("AdditionalResourceRef"):
+		return &apiv1alpha1.AdditionalResourceRefApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodOperations"):
 		return &apiv1alpha1.AllowedPodOperationsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodRef"):
@@ -220,6 +222,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.PodSecurityRulesApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PodSecurityScope"):
 		return &apiv1alpha1.PodSecurityScopeApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("PodTemplateResourceStatus"):
+		return &apiv1alpha1.PodTemplateResourceStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ReasonConfig"):
 		return &apiv1alpha1.ReasonConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ResolvedBindingRef"):

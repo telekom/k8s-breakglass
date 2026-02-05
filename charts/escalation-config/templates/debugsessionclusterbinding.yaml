@@ -1,4 +1,7 @@
 {{- range $i, $binding := .Values.debugSessionBindings }}
+{{- if and $binding.templateRef $binding.templateSelector }}
+{{- fail "debugSessionBindings[].templateRef and templateSelector are mutually exclusive" }}
+{{- end }}
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionClusterBinding
 metadata:

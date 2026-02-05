@@ -143,7 +143,7 @@ func (r *DebugSessionTemplateReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		For(&breakglassv1alpha1.DebugSessionTemplate{}).
 		WithEventFilter(specChangePredicate).
 		WithOptions(controller.Options{
-			MaxConcurrentReconciles: 1,
+			MaxConcurrentReconciles: 2,
 		}).
 		Complete(r)
 }
