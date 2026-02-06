@@ -168,6 +168,51 @@ func (p *ClientProvider) GetInNamespace(ctx context.Context, namespace, name str
 	return &cp, nil
 }
 
+// getAcrossAllNamespacesLocked is the lock-held variant of GetAcrossAllNamespaces.
+// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
+// as this function may modify p.data when caching results.
+func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
+	// First, try to find a cached entry by scanning for any namespace with this name
+	for _, cfg := range p.data {
+		if cfg != nil && cfg.Name == name {
+			return cfg, nil
+		}
+	}
+
+	// Namespace not provided: preserve legacy behavior and list across namespaces
+	list := telekomv1alpha1.ClusterConfigList{}
+	if err := p.k8s.List(ctx, &list); err != nil {
+		return nil, fmt.Errorf("list clusterconfigs: %w", err)
+	}
+	for _, item := range list.Items {
+		if item.Name == name {
+			// copy loop variable before taking address
+			cp := item
+			p.data[cacheKey(cp.Namespace, cp.Name)] = &cp
+			return &cp, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: %s", ErrClusterConfigNotFound, name)
+}
+
+// getInNamespaceLocked is the lock-held variant of GetInNamespace.
+// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
+// as this function may modify p.data when caching results.
+func (p *ClientProvider) getInNamespaceLocked(ctx context.Context, namespace, name string) (*telekomv1alpha1.ClusterConfig, error) {
+	key := cacheKey(namespace, name)
+	if cfg, ok := p.data[key]; ok {
+		return cfg, nil
+	}
+
+	got := telekomv1alpha1.ClusterConfig{}
+	if err := p.k8s.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &got); err != nil {
+		return nil, fmt.Errorf("get clusterconfig %s/%s: %w", namespace, name, err)
+	}
+	cp := got
+	p.data[key] = &cp
+	return &cp, nil
+}
+
 // GetRESTConfig returns a rest.Config for the cluster, supporting both kubeconfig and OIDC authentication.
 // The auth method is determined by the ClusterConfig's authType field.
 // For OIDC clusters, the config uses WrapTransport for dynamic token injection, allowing caching
@@ -184,29 +229,52 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		cacheLookupKey = cacheKey(ns, n)
 	}
 
-	// Check cache with TTL validation
+	// Check cache with TTL validation (read lock for fast path)
 	p.mu.RLock()
 	cached, ok := p.rest[cacheLookupKey]
-	p.mu.RUnlock()
-
 	if cacheLookupKey != "" && ok && now.Before(cached.expiresAt) {
+		p.mu.RUnlock()
 		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
 		return cached.config, nil
 	}
+	p.mu.RUnlock()
 
-	// Cache miss or expired
+	// Cache miss or expired - this request takes the slow path
+	// Note: We count this as a miss immediately, even if another thread populates the cache
+	// while we wait for the write lock. This prevents double-counting if we later find
+	// the cache populated by another thread (the double-checked locking optimization).
+	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
+
+	// Acquire write lock for the slow path
+	// Use double-checked locking to prevent redundant REST config creation
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Recapture timestamp after acquiring write lock to avoid using stale value.
+	// If we used the pre-lock `now`, we might incorrectly consider a fresh cache entry
+	// (populated by another goroutine while we waited for the lock) as expired.
+	now = time.Now()
+
+	// Re-check cache after acquiring write lock (another thread may have populated it)
+	// No metric increment here - we already counted this as a miss above.
+	cached, ok = p.rest[cacheLookupKey]
+	if cacheLookupKey != "" && ok && now.Before(cached.expiresAt) {
+		return cached.config, nil
+	}
+
+	// Log expiry if we had a stale entry
 	if cacheLookupKey != "" && ok {
 		p.log.Debugw("REST config cache expired", "cluster", name, "expiredAt", cached.expiresAt)
 	}
-	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
-	// Use GetInNamespace if namespace is known, otherwise fall back to GetAcrossAllNamespaces
+	// Use GetInNamespaceLocked if namespace is known, otherwise fall back to GetAcrossAllNamespacesLocked
+	// Note: Using *Locked variants since we already hold the lock
 	var cc *telekomv1alpha1.ClusterConfig
 	var err error
 	if parsedNamespace != "" && parsedName != "" {
-		cc, err = p.GetInNamespace(ctx, parsedNamespace, parsedName)
+		cc, err = p.getInNamespaceLocked(ctx, parsedNamespace, parsedName)
 	} else {
-		cc, err = p.GetAcrossAllNamespaces(ctx, name)
+		cc, err = p.getAcrossAllNamespacesLocked(ctx, name)
 	}
 	if err != nil {
 		metrics.ClusterRESTConfigErrors.WithLabelValues(name, "clusterconfig_not_found").Inc()
@@ -246,20 +314,21 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 
 	// Cache with TTL (keyed by namespace/name)
-	cacheKey := cacheKey(cc.Namespace, cc.Name)
-	p.mu.Lock()
-	p.rest[cacheKey] = &cachedRESTConfig{
+	// Note: We already hold the write lock from above
+	finalCacheKey := cacheKey(cc.Namespace, cc.Name)
+	p.rest[finalCacheKey] = &cachedRESTConfig{
 		config:    cfg,
 		expiresAt: now.Add(ttl),
 		authType:  authType,
 	}
-	p.mu.Unlock()
 
-	p.log.Debugw("Cached REST config", "cluster", cacheKey, "authType", authType, "ttl", ttl)
+	p.log.Debugw("Cached REST config", "cluster", finalCacheKey, "authType", authType, "ttl", ttl)
 	return cfg, nil
 }
 
 // getRESTConfigFromKubeconfig builds a rest.Config from a kubeconfig stored in a secret.
+// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
+// as this function may modify p.clusterToSecret and p.secretToClusters when tracking secret references.
 func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *telekomv1alpha1.ClusterConfig) (*rest.Config, error) {
 	if cc.Spec.KubeconfigSecretRef == nil {
 		return nil, fmt.Errorf("kubeconfigSecretRef is required for kubeconfig auth")
@@ -302,22 +371,22 @@ func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *te
 	}
 
 	// Track secret reference for cache invalidation
+	// Note: Caller (GetRESTConfig) already holds p.mu write lock
 	secretRefKey := cacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
 	clusterKey := cacheKey(cc.Namespace, cc.Name)
 
-	p.mu.Lock()
 	p.clusterToSecret[clusterKey] = secretRefKey
 	if _, ok := p.secretToClusters[secretRefKey]; !ok {
 		p.secretToClusters[secretRefKey] = map[string]struct{}{}
 	}
 	p.secretToClusters[secretRefKey][clusterKey] = struct{}{}
-	p.mu.Unlock()
 
 	metrics.ClusterRESTConfigLoaded.WithLabelValues(cc.Name).Inc()
 	return cfg, nil
 }
 
 // getRESTConfigFromOIDC builds a rest.Config using OIDC token authentication.
+// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method.
 func (p *ClientProvider) getRESTConfigFromOIDC(ctx context.Context, cc *telekomv1alpha1.ClusterConfig) (*rest.Config, error) {
 	if p.oidcProvider == nil {
 		return nil, fmt.Errorf("OIDC provider not initialized")

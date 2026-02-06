@@ -122,6 +122,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **REST Config Cache Race Condition**: Fixed race condition in REST config cache that could cause redundant ClusterConfig fetches and REST config creation (PR #296)
+  - Uses double-checked locking pattern to prevent multiple threads from building the same REST config simultaneously
+  - Added `getInNamespaceLocked` and `getAcrossAllNamespacesLocked` helpers for lock-held cache operations
+  - Reduces unnecessary API calls and improves performance under concurrent load
+
 - **DebugPodTemplate Template Validation**: Fixed nil pointer panic in DebugPodTemplate validation when `templateString` is used instead of the `template` field (PR #309)
   - Added validation to enforce mutual exclusivity between `template` and `templateString` fields
   - Added Go template syntax validation at admission time so invalid templates are rejected early
