@@ -122,9 +122,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Template Validation FuncMap Consistency**: Webhook template validation now uses `sprig.FuncMap()` instead of `sprig.TxtFuncMap()` to match runtime template rendering behavior (PR #309)
-  - Prevents false validation errors for templates using sprig functions that exist in `FuncMap` but not `TxtFuncMap`
-  - Ensures validation accepts all templates that will execute correctly at runtime
+- **DebugPodTemplate Template Validation**: Fixed nil pointer panic in DebugPodTemplate validation when `templateString` is used instead of the `template` field (PR #309)
+  - Added validation to enforce mutual exclusivity between `template` and `templateString` fields
+  - Added Go template syntax validation at admission time so invalid templates are rejected early
 
 - **Strict JSON Request Validation**: Session creation API now rejects requests with unknown/typo'd fields
   - Unknown fields in JSON request body now return `422 Unprocessable Entity` instead of being silently ignored
