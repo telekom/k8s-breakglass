@@ -655,7 +655,30 @@ func ValidateDebugPodTemplate(template *DebugPodTemplate) *ValidationResult {
 
 	specPath := field.NewPath("spec")
 
-	// Validate containers are specified
+	// Template and TemplateString are mutually exclusive - one must be specified
+	hasTemplate := template.Spec.Template != nil
+	hasTemplateString := template.Spec.TemplateString != ""
+
+	if !hasTemplate && !hasTemplateString {
+		result.Errors = append(result.Errors, field.Required(specPath, "either template or templateString must be specified"))
+		return result
+	}
+
+	if hasTemplate && hasTemplateString {
+		result.Errors = append(result.Errors, field.Invalid(specPath, "both specified", "template and templateString are mutually exclusive"))
+		return result
+	}
+
+	// If using templateString, validate its syntax then return (skip static template validation)
+	if hasTemplateString {
+		if err := validateGoTemplateSyntax(template.Spec.TemplateString); err != nil {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("templateString"), "",
+				fmt.Sprintf("invalid Go template syntax: %v", err)))
+		}
+		return result
+	}
+
+	// Validate static template containers are specified
 	if len(template.Spec.Template.Spec.Containers) == 0 {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("template").Child("spec").Child("containers"), "at least one container is required"))
 	}
@@ -705,6 +728,22 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	if (mode == DebugSessionModeWorkload || mode == DebugSessionModeHybrid) && !hasPodTemplateRef && !hasPodTemplateString {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("podTemplateRef"),
 			"either podTemplateRef or podTemplateString is required for workload or hybrid mode"))
+	}
+
+	// Validate podTemplateString syntax if present
+	if hasPodTemplateString {
+		if err := validateGoTemplateSyntax(template.Spec.PodTemplateString); err != nil {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("podTemplateString"), "",
+				fmt.Sprintf("invalid Go template syntax: %v", err)))
+		}
+	}
+
+	// Validate podOverridesTemplate syntax if present
+	if template.Spec.PodOverridesTemplate != "" {
+		if err := validateGoTemplateSyntax(template.Spec.PodOverridesTemplate); err != nil {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("podOverridesTemplate"), "",
+				fmt.Sprintf("invalid Go template syntax: %v", err)))
+		}
 	}
 
 	// For kubectl-debug or hybrid mode, kubectlDebug config is required

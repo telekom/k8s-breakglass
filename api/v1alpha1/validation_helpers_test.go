@@ -2589,3 +2589,117 @@ func TestValidateIdentifierFormat_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateGoTemplateSyntax(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		wantErr  bool
+	}{
+		{
+			name:     "empty template is valid",
+			template: "",
+			wantErr:  false,
+		},
+		{
+			name:     "simple text is valid",
+			template: "hello world",
+			wantErr:  false,
+		},
+		{
+			name:     "valid template with variable",
+			template: "Hello {{ .Name }}",
+			wantErr:  false,
+		},
+		{
+			name:     "valid template with sprig function",
+			template: "{{ .Name | default \"unknown\" }}",
+			wantErr:  false,
+		},
+		{
+			name:     "valid template with yamlQuote",
+			template: "name: {{ .Name | yamlQuote }}",
+			wantErr:  false,
+		},
+		{
+			name:     "valid conditional",
+			template: "{{- if .Enabled }}enabled{{- end }}",
+			wantErr:  false,
+		},
+		{
+			name:     "valid range",
+			template: "{{- range .Items }}{{ . }}{{- end }}",
+			wantErr:  false,
+		},
+		{
+			name:     "invalid template - unclosed brace",
+			template: "{{ .Name",
+			wantErr:  true,
+		},
+		{
+			name:     "invalid template - unknown function",
+			template: "{{ unknownFunc .Name }}",
+			wantErr:  true,
+		},
+		{
+			name:     "invalid template - bad syntax",
+			template: "{{ if }}",
+			wantErr:  true,
+		},
+		{
+			name:     "invalid template - mismatched end",
+			template: "{{ end }}",
+			wantErr:  true,
+		},
+		{
+			name:     "complex valid template",
+			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Session.Name }}\n  labels:\n    {{- range $k, $v := .Labels }}\n    {{ $k }}: {{ $v | yamlQuote }}\n    {{- end }}",
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGoTemplateSyntax(tt.template)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateAuxiliaryResources_InvalidTemplateSyntax(t *testing.T) {
+	fieldPath := field.NewPath("spec", "auxiliaryResources")
+
+	t.Run("invalid templateString syntax", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:           "test",
+				TemplateString: "{{ .Name", // unclosed brace
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.NotEmpty(t, errs)
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e.Error(), "invalid Go template syntax") {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "expected error about invalid Go template syntax")
+	})
+
+	t.Run("valid templateString syntax", func(t *testing.T) {
+		res := []AuxiliaryResource{
+			{
+				Name:           "test",
+				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Session.Name }}",
+			},
+		}
+		errs := validateAuxiliaryResources(res, fieldPath)
+		assert.Empty(t, errs)
+	})
+}
