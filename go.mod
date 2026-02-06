@@ -18,6 +18,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.50
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	github.com/zalando/go-keyring v0.2.2
 	go.uber.org/zap v1.27.1
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
@@ -25,7 +26,8 @@ require (
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
-	sigs.k8s.io/controller-runtime v0.23.1
+	sigs.k8s.io/cli-utils v0.37.2
+	sigs.k8s.io/controller-runtime v0.23.2-0.20260202104230-4dbfa5c66aa2
 )
 
 require (
@@ -48,9 +50,7 @@ require (
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
-	github.com/zalando/go-keyring v0.2.2 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	sigs.k8s.io/cli-utils v0.37.2 // indirect
 )
 
 require (

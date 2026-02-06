@@ -232,6 +232,8 @@ func (c SessionManager) GetBreakglassSessionsWithSelector(ctx context.Context,
 }
 
 // Add new breakglass session.
+// Note: Uses Create instead of SSA because GenerateName requires Create semantics.
+// For updates, use UpdateBreakglassSession which uses SSA.
 func (c SessionManager) AddBreakglassSession(ctx context.Context, bs *v1alpha1.BreakglassSession) error {
 	zap.S().Infow("Adding new BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "user", bs.Spec.User, "cluster", bs.Spec.Cluster)...)
 	if err := c.Create(ctx, bs); err != nil {
