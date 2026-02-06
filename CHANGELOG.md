@@ -122,6 +122,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Template Validation FuncMap Consistency**: Webhook template validation now uses `sprig.FuncMap()` instead of `sprig.TxtFuncMap()` to match runtime template rendering behavior (PR #309)
+  - Prevents false validation errors for templates using sprig functions that exist in `FuncMap` but not `TxtFuncMap`
+  - Ensures validation accepts all templates that will execute correctly at runtime
+
 - **Strict JSON Request Validation**: Session creation API now rejects requests with unknown/typo'd fields
   - Unknown fields in JSON request body now return `422 Unprocessable Entity` instead of being silently ignored
   - Trailing JSON data after the main object is rejected

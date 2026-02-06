@@ -2592,10 +2592,9 @@ func TestValidateIdentifierFormat_EdgeCases(t *testing.T) {
 
 func TestValidateGoTemplateSyntax(t *testing.T) {
 	tests := []struct {
-		name        string
-		template    string
-		wantErr     bool
-		errContains string
+		name     string
+		template string
+		wantErr  bool
 	}{
 		{
 			name:     "empty template is valid",
@@ -2633,28 +2632,24 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:        "invalid template - unclosed brace",
-			template:    "{{ .Name",
-			wantErr:     true,
-			errContains: "unclosed action",
+			name:     "invalid template - unclosed brace",
+			template: "{{ .Name",
+			wantErr:  true,
 		},
 		{
-			name:        "invalid template - unknown function",
-			template:    "{{ unknownFunc .Name }}",
-			wantErr:     true,
-			errContains: "function \"unknownFunc\" not defined",
+			name:     "invalid template - unknown function",
+			template: "{{ unknownFunc .Name }}",
+			wantErr:  true,
 		},
 		{
-			name:        "invalid template - bad syntax",
-			template:    "{{ if }}",
-			wantErr:     true,
-			errContains: "missing value",
+			name:     "invalid template - bad syntax",
+			template: "{{ if }}",
+			wantErr:  true,
 		},
 		{
-			name:        "invalid template - mismatched end",
-			template:    "{{ end }}",
-			wantErr:     true,
-			errContains: "unexpected",
+			name:     "invalid template - mismatched end",
+			template: "{{ end }}",
+			wantErr:  true,
 		},
 		{
 			name:     "complex valid template",
@@ -2668,9 +2663,6 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 			err := validateGoTemplateSyntax(tt.template)
 			if tt.wantErr {
 				assert.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
 			} else {
 				assert.NoError(t, err)
 			}

@@ -1563,7 +1563,8 @@ func validateGoTemplateSyntax(templateStr string) error {
 
 	// Create function map with sprig functions plus common custom functions
 	// This ensures template functions like yamlQuote, default, etc. are recognized
-	funcMap := sprig.TxtFuncMap()
+	// Use sprig.FuncMap() (not TxtFuncMap) to match runtime template rendering behavior
+	funcMap := sprig.FuncMap()
 
 	// Add custom breakglass template functions that are used at runtime.
 	// These are stubs - we only need them to parse, not execute correctly.
