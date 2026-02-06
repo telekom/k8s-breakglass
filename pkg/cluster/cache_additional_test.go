@@ -656,7 +656,10 @@ func TestGetRESTConfigFromKubeconfig_MissingKubeconfigSecretRef(t *testing.T) {
 	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
 
 	ctx := context.Background()
+	// Must hold write lock since getRESTConfigFromKubeconfig expects it
+	provider.mu.Lock()
 	_, err := provider.getRESTConfigFromKubeconfig(ctx, cc)
+	provider.mu.Unlock()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "kubeconfigSecretRef is required")
 }

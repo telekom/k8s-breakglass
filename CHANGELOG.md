@@ -122,6 +122,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **REST Config Cache Race Condition**: Fixed race condition in REST config cache that could cause redundant ClusterConfig fetches and REST config creation (PR #296)
+  - Uses double-checked locking pattern to prevent multiple threads from building the same REST config simultaneously
+  - Added `getInNamespaceLocked` and `getAcrossAllNamespacesLocked` helpers for lock-held cache operations
+  - Reduces unnecessary API calls and improves performance under concurrent load
+
 - **Strict JSON Request Validation**: Session creation API now rejects requests with unknown/typo'd fields
   - Unknown fields in JSON request body now return `422 Unprocessable Entity` instead of being silently ignored
   - Trailing JSON data after the main object is rejected
