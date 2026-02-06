@@ -8,8 +8,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
+	"github.com/Masterminds/sprig/v3"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -1196,6 +1198,14 @@ func validateAuxiliaryResources(resources []AuxiliaryResource, fieldPath *field.
 				"template and templateString are mutually exclusive"))
 		}
 
+		// Validate templateString syntax if present
+		if hasTemplateString {
+			if err := validateGoTemplateSyntax(res.TemplateString); err != nil {
+				errs = append(errs, field.Invalid(resPath.Child("templateString"), "",
+					fmt.Sprintf("invalid Go template syntax: %v", err)))
+			}
+		}
+
 		// Category validation - these are common categories, but others are allowed
 		// Only validate format, not specific values, to allow extensibility
 		if res.Category != "" {
@@ -1539,4 +1549,46 @@ func validateVariableValidation(v *VariableValidation, inputType ExtraDeployInpu
 	}
 
 	return errs
+}
+
+// validateGoTemplateSyntax checks if a Go template string is syntactically valid.
+// It parses the template with sprig functions to ensure all function calls are valid.
+// This catches syntax errors like unclosed braces, invalid function names, etc.
+// Note: This only validates syntax, not that the template will execute correctly
+// with actual runtime data (which depends on context variables).
+func validateGoTemplateSyntax(templateStr string) error {
+	if templateStr == "" {
+		return nil
+	}
+
+	// Create function map with sprig functions plus common custom functions
+	// This ensures template functions like yamlQuote, default, etc. are recognized
+	// Use sprig.FuncMap() (not TxtFuncMap) to match runtime template rendering behavior
+	funcMap := sprig.FuncMap()
+
+	// Add custom breakglass template functions that are used at runtime.
+	// These are stubs - we only need them to parse, not execute correctly.
+	funcMap["yamlQuote"] = func(s string) string { return s }
+	funcMap["toYaml"] = func(v interface{}) string { return "" }
+	funcMap["fromYaml"] = func(s string) map[string]interface{} { return nil }
+	funcMap["resourceQuantity"] = func(s string) string { return s }
+
+	// Additional custom functions present in the runtime template renderer.
+	// Implemented as minimal stubs so that templates using them pass syntax validation.
+	funcMap["truncName"] = func(s string, maxLen int) string { return s }
+	funcMap["k8sName"] = func(s string) string { return s }
+	funcMap["parseQuantity"] = func(s string) interface{} { return s }
+	funcMap["formatQuantity"] = func(q interface{}) string { return "" }
+	funcMap["required"] = func(args ...interface{}) (interface{}, error) { return nil, nil }
+	funcMap["indent"] = func(spaces int, s string) string { return s }
+	funcMap["nindent"] = func(spaces int, s string) string { return s }
+	funcMap["yamlSafe"] = func(v interface{}) interface{} { return v }
+
+	// Parse the template - this validates syntax
+	_, err := template.New("syntax-check").Funcs(funcMap).Parse(templateStr)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

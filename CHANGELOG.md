@@ -127,6 +127,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `getInNamespaceLocked` and `getAcrossAllNamespacesLocked` helpers for lock-held cache operations
   - Reduces unnecessary API calls and improves performance under concurrent load
 
+- **DebugPodTemplate Template Validation**: Fixed nil pointer panic in DebugPodTemplate validation when `templateString` is used instead of the `template` field (PR #309)
+  - Added validation to enforce mutual exclusivity between `template` and `templateString` fields
+  - Added Go template syntax validation at admission time so invalid templates are rejected early
+
 - **Strict JSON Request Validation**: Session creation API now rejects requests with unknown/typo'd fields
   - Unknown fields in JSON request body now return `422 Unprocessable Entity` instead of being silently ignored
   - Trailing JSON data after the main object is rejected
