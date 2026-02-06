@@ -169,7 +169,8 @@ func (p *ClientProvider) GetInNamespace(ctx context.Context, namespace, name str
 }
 
 // getAcrossAllNamespacesLocked is the lock-held variant of GetAcrossAllNamespaces.
-// Caller MUST hold p.mu write lock before calling this method.
+// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
+// as this function may modify p.data when caching results.
 func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name string) (*telekomv1alpha1.ClusterConfig, error) {
 	// First, try to find a cached entry by scanning for any namespace with this name
 	for _, cfg := range p.data {
@@ -195,7 +196,8 @@ func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name 
 }
 
 // getInNamespaceLocked is the lock-held variant of GetInNamespace.
-// Caller MUST hold p.mu write lock before calling this method.
+// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
+// as this function may modify p.data when caching results.
 func (p *ClientProvider) getInNamespaceLocked(ctx context.Context, namespace, name string) (*telekomv1alpha1.ClusterConfig, error) {
 	key := cacheKey(namespace, name)
 	if cfg, ok := p.data[key]; ok {
@@ -237,15 +239,26 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 	p.mu.RUnlock()
 
-	// Cache miss or expired - acquire write lock for the slow path
+	// Cache miss or expired - this request takes the slow path
+	// Note: We count this as a miss immediately, even if another thread populates the cache
+	// while we wait for the write lock. This prevents double-counting if we later find
+	// the cache populated by another thread (the double-checked locking optimization).
+	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
+
+	// Acquire write lock for the slow path
 	// Use double-checked locking to prevent redundant REST config creation
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Recapture timestamp after acquiring write lock to avoid using stale value.
+	// If we used the pre-lock `now`, we might incorrectly consider a fresh cache entry
+	// (populated by another goroutine while we waited for the lock) as expired.
+	now = time.Now()
+
 	// Re-check cache after acquiring write lock (another thread may have populated it)
+	// No metric increment here - we already counted this as a miss above.
 	cached, ok = p.rest[cacheLookupKey]
 	if cacheLookupKey != "" && ok && now.Before(cached.expiresAt) {
-		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
 		return cached.config, nil
 	}
 
@@ -253,7 +266,6 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	if cacheLookupKey != "" && ok {
 		p.log.Debugw("REST config cache expired", "cluster", name, "expiredAt", cached.expiresAt)
 	}
-	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
 	// Use GetInNamespaceLocked if namespace is known, otherwise fall back to GetAcrossAllNamespacesLocked
 	// Note: Using *Locked variants since we already hold the lock
@@ -315,7 +327,8 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 }
 
 // getRESTConfigFromKubeconfig builds a rest.Config from a kubeconfig stored in a secret.
-// Caller MUST hold p.mu write lock before calling this method.
+// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
+// as this function may modify p.clusterToSecret and p.secretToClusters when tracking secret references.
 func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *telekomv1alpha1.ClusterConfig) (*rest.Config, error) {
 	if cc.Spec.KubeconfigSecretRef == nil {
 		return nil, fmt.Errorf("kubeconfigSecretRef is required for kubeconfig auth")
@@ -373,6 +386,7 @@ func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *te
 }
 
 // getRESTConfigFromOIDC builds a rest.Config using OIDC token authentication.
+// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method.
 func (p *ClientProvider) getRESTConfigFromOIDC(ctx context.Context, cc *telekomv1alpha1.ClusterConfig) (*rest.Config, error) {
 	if p.oidcProvider == nil {
 		return nil, fmt.Errorf("OIDC provider not initialized")

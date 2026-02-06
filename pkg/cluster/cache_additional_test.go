@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +18,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // ============================================================================
@@ -764,4 +769,180 @@ func TestRESTConfigCacheTTL_Expiry(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, cached.expiresAt.IsZero())
 	assert.True(t, cached.expiresAt.After(time.Now()))
+}
+
+// ============================================================================
+// Race Condition Prevention Tests
+// ============================================================================
+
+// TestGetRESTConfig_ConcurrentAccess_SingleFetch verifies the double-checked locking pattern
+// prevents redundant REST config creation. When multiple goroutines simultaneously request
+// the same (uncached) REST config, only ONE should perform the actual fetch operation.
+// This is the key test for PR #296 - verifying the race condition is actually fixed.
+func TestGetRESTConfig_ConcurrentAccess_SingleFetch(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
+
+	cc := telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "concurrent-test-cluster", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+				Name: "kube-secret", Namespace: "default",
+			},
+		},
+	}
+
+	kubeSecret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kube-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": kubeYAML},
+	}
+
+	// Track how many times the secret is fetched (this is the expensive operation
+	// that the double-checked locking should prevent from happening multiple times)
+	var secretFetchCount atomic.Int32
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&cc, &kubeSecret).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				// Track secret fetches specifically (the expensive operation in kubeconfig flow)
+				if _, isSecret := obj.(*corev1.Secret); isSecret {
+					secretFetchCount.Add(1)
+					// Add a small delay to increase the chance of race conditions manifesting
+					time.Sleep(10 * time.Millisecond)
+				}
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+	ctx := context.Background()
+
+	// Launch multiple goroutines all requesting the same REST config simultaneously
+	const numGoroutines = 10
+	var wg sync.WaitGroup
+	var results [numGoroutines]*rest.Config
+	var errors [numGoroutines]error
+	start := make(chan struct{})
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start // Wait for all goroutines to be ready
+			results[idx], errors[idx] = provider.GetRESTConfig(ctx, "default/concurrent-test-cluster")
+		}(i)
+	}
+
+	// Release all goroutines at once to maximize contention
+	close(start)
+	wg.Wait()
+
+	// All goroutines should succeed
+	for i := 0; i < numGoroutines; i++ {
+		require.NoError(t, errors[i], "goroutine %d should not fail", i)
+		require.NotNil(t, results[i], "goroutine %d should get a valid config", i)
+	}
+
+	// All goroutines should get the same cached result (pointer equality)
+	for i := 1; i < numGoroutines; i++ {
+		assert.Same(t, results[0], results[i],
+			"goroutine %d should get same cached pointer as goroutine 0", i)
+	}
+
+	// The key assertion: the secret should only be fetched ONCE despite concurrent access.
+	// Without the double-checked locking fix, each goroutine would fetch the secret,
+	// resulting in secretFetchCount == numGoroutines (or close to it).
+	// With the fix, only the first goroutine to acquire the write lock performs the fetch.
+	fetchCount := secretFetchCount.Load()
+	assert.Equal(t, int32(1), fetchCount,
+		"secret should be fetched exactly once; got %d fetches (race condition not prevented)", fetchCount)
+
+	t.Logf("Success: %d goroutines, only %d secret fetch(es)", numGoroutines, fetchCount)
+}
+
+// TestGetRESTConfig_ConcurrentAccess_ExpiredCache verifies that when a cache entry expires
+// and multiple goroutines request it simultaneously, only ONE refresh operation occurs.
+func TestGetRESTConfig_ConcurrentAccess_ExpiredCache(t *testing.T) {
+	// Save original TTL and restore after test
+	originalTTL := KubeconfigCacheTTL
+	KubeconfigCacheTTL = 50 * time.Millisecond
+	defer func() { KubeconfigCacheTTL = originalTTL }()
+
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = telekomv1alpha1.AddToScheme(scheme)
+
+	kubeYAML := mustBuildKubeconfigYAML("https://api.example.com:6443")
+
+	cc := telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "expiry-test-cluster", Namespace: "default"},
+		Spec: telekomv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &telekomv1alpha1.SecretKeyReference{
+				Name: "kube-secret", Namespace: "default",
+			},
+		},
+	}
+
+	kubeSecret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kube-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": kubeYAML},
+	}
+
+	var secretFetchCount atomic.Int32
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&cc, &kubeSecret).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, isSecret := obj.(*corev1.Secret); isSecret {
+					secretFetchCount.Add(1)
+					time.Sleep(10 * time.Millisecond)
+				}
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+
+	provider := NewClientProvider(fakeClient, zaptest.NewLogger(t).Sugar())
+	ctx := context.Background()
+
+	// First call to populate the cache
+	_, err := provider.GetRESTConfig(ctx, "default/expiry-test-cluster")
+	require.NoError(t, err)
+	initialFetches := secretFetchCount.Load()
+	require.Equal(t, int32(1), initialFetches, "initial fetch should happen once")
+
+	// Wait for cache to expire
+	time.Sleep(100 * time.Millisecond)
+
+	// Reset counter for the next phase
+	secretFetchCount.Store(0)
+
+	// Now launch concurrent requests after cache expiry
+	const numGoroutines = 5
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, _ = provider.GetRESTConfig(ctx, "default/expiry-test-cluster")
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	refreshFetches := secretFetchCount.Load()
+	assert.Equal(t, int32(1), refreshFetches,
+		"cache refresh should trigger exactly one fetch; got %d (race condition on expiry)", refreshFetches)
 }
