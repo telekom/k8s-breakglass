@@ -1,13 +1,9 @@
 package breakglass
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -417,116 +413,6 @@ func TestSendSessionRejectionEmail_WithMailServiceDisabled(t *testing.T) {
 
 	// No email should be enqueued when mail service is disabled
 	assert.Len(t, mockMailService.GetMessages(), 0)
-}
-
-// TestHandleListClusters tests the handleListClusters HTTP handler
-func TestHandleListClusters(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	tests := []struct {
-		name           string
-		sessions       []v1alpha1.BreakglassSession
-		expectedCodes  int
-		expectedLen    int
-		expectClusters []string
-	}{
-		{
-			name:          "no sessions returns empty list",
-			sessions:      []v1alpha1.BreakglassSession{},
-			expectedCodes: http.StatusOK,
-			expectedLen:   0,
-		},
-		{
-			name: "single session returns single cluster",
-			sessions: []v1alpha1.BreakglassSession{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "session-1",
-						Namespace: "default",
-					},
-					Spec: v1alpha1.BreakglassSessionSpec{
-						Cluster: "cluster-a",
-					},
-				},
-			},
-			expectedCodes:  http.StatusOK,
-			expectedLen:    1,
-			expectClusters: []string{"cluster-a"},
-		},
-		{
-			name: "multiple sessions returns multiple clusters",
-			sessions: []v1alpha1.BreakglassSession{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "session-1",
-						Namespace: "default",
-					},
-					Spec: v1alpha1.BreakglassSessionSpec{
-						Cluster: "cluster-a",
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "session-2",
-						Namespace: "default",
-					},
-					Spec: v1alpha1.BreakglassSessionSpec{
-						Cluster: "cluster-b",
-					},
-				},
-			},
-			expectedCodes:  http.StatusOK,
-			expectedLen:    2,
-			expectClusters: []string{"cluster-a", "cluster-b"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(Scheme)
-			for _, session := range tt.sessions {
-				session := session // capture range variable
-				builder.WithObjects(&session)
-			}
-			cli := builder.Build()
-
-			sesmanager := &SessionManager{Client: cli}
-			escmanager := &EscalationManager{Client: cli}
-
-			logger := zaptest.NewLogger(t)
-			ctrl := NewBreakglassSessionController(
-				logger.Sugar(),
-				config.Config{},
-				sesmanager, escmanager,
-				func(c *gin.Context) {
-					c.Set("email", "user@example.com")
-					c.Next()
-				},
-				"/config/config.yaml", nil, cli,
-			)
-
-			router := gin.New()
-			router.GET("/clusters", ctrl.handleListClusters)
-
-			req := httptest.NewRequest(http.MethodGet, "/clusters", nil)
-			rec := httptest.NewRecorder()
-
-			router.ServeHTTP(rec, req)
-
-			assert.Equal(t, tt.expectedCodes, rec.Code)
-
-			if tt.expectedCodes == http.StatusOK {
-				var clusters []string
-				err := json.Unmarshal(rec.Body.Bytes(), &clusters)
-				require.NoError(t, err)
-				assert.Len(t, clusters, tt.expectedLen)
-
-				for _, expected := range tt.expectClusters {
-					assert.Contains(t, clusters, expected)
-				}
-			}
-		})
-	}
 }
 
 // TestEmitSessionExpiredAuditEvent_NoAuditService tests when audit service is nil

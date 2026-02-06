@@ -110,7 +110,10 @@ func (r *K8sEventRecorder) Eventf(regarding runtime.Object, related runtime.Obje
 		// NOTE: Do NOT set deprecated fields (DeprecatedSource, DeprecatedFirstTimestamp,
 		// DeprecatedLastTimestamp, DeprecatedCount) - events.k8s.io/v1 API rejects them
 	}
-	// best-effort write; surface errors to optional logger so operators can diagnose
+	// NOTE: Using Events().Create() instead of SSA.
+	// Reason: Kubernetes Events are ephemeral, best-effort resources. They are
+	// automatically garbage-collected by the API server (default TTL: 1 hour).
+	// SSA would add unnecessary overhead for resources that are never updated.
 	if created, err := r.Clientset.EventsV1().Events(ns).Create(context.Background(), ev, metav1.CreateOptions{}); err != nil {
 		if r.Logger != nil {
 			// include namespace information for the involved object

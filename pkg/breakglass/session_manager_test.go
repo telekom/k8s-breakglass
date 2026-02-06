@@ -154,6 +154,228 @@ func TestSessionManager_GetAllBreakglassSessions(t *testing.T) {
 	})
 }
 
+func TestSessionManager_GetUserBreakglassSessions(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("empty list when no sessions exist", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithIndex(&v1alpha1.BreakglassSession{}, "spec.user", func(o client.Object) []string {
+				bs := o.(*v1alpha1.BreakglassSession)
+				if bs.Spec.User != "" {
+					return []string{bs.Spec.User}
+				}
+				return nil
+			}).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		sessions, err := mgr.GetUserBreakglassSessions(ctx, "user@example.com")
+		require.NoError(t, err)
+		assert.Empty(t, sessions)
+	})
+
+	t.Run("returns only sessions for the specified user", func(t *testing.T) {
+		session1 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-1", Namespace: "default"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user1@example.com",
+				Cluster: "cluster-a",
+			},
+		}
+		session2 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-2", Namespace: "default"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user1@example.com",
+				Cluster: "cluster-b",
+			},
+		}
+		session3 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-3", Namespace: "default"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user2@example.com",
+				Cluster: "cluster-a",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithObjects(session1, session2, session3).
+			WithIndex(&v1alpha1.BreakglassSession{}, "spec.user", func(o client.Object) []string {
+				bs := o.(*v1alpha1.BreakglassSession)
+				if bs.Spec.User != "" {
+					return []string{bs.Spec.User}
+				}
+				return nil
+			}).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		// Get sessions for user1
+		sessions, err := mgr.GetUserBreakglassSessions(ctx, "user1@example.com")
+		require.NoError(t, err)
+		assert.Len(t, sessions, 2, "Should return 2 sessions for user1")
+		for _, s := range sessions {
+			assert.Equal(t, "user1@example.com", s.Spec.User)
+		}
+
+		// Get sessions for user2
+		sessions, err = mgr.GetUserBreakglassSessions(ctx, "user2@example.com")
+		require.NoError(t, err)
+		assert.Len(t, sessions, 1, "Should return 1 session for user2")
+		assert.Equal(t, "user2@example.com", sessions[0].Spec.User)
+
+		// Get sessions for non-existent user
+		sessions, err = mgr.GetUserBreakglassSessions(ctx, "nobody@example.com")
+		require.NoError(t, err)
+		assert.Empty(t, sessions, "Should return no sessions for non-existent user")
+	})
+
+	t.Run("returns sessions from multiple namespaces", func(t *testing.T) {
+		session1 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-1", Namespace: "ns1"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user@example.com",
+				Cluster: "cluster-a",
+			},
+		}
+		session2 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-2", Namespace: "ns2"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user@example.com",
+				Cluster: "cluster-b",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithObjects(session1, session2).
+			WithIndex(&v1alpha1.BreakglassSession{}, "spec.user", func(o client.Object) []string {
+				bs := o.(*v1alpha1.BreakglassSession)
+				if bs.Spec.User != "" {
+					return []string{bs.Spec.User}
+				}
+				return nil
+			}).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		sessions, err := mgr.GetUserBreakglassSessions(ctx, "user@example.com")
+		require.NoError(t, err)
+		assert.Len(t, sessions, 2, "Should return sessions from all namespaces")
+
+		namespaces := map[string]bool{}
+		for _, s := range sessions {
+			namespaces[s.Namespace] = true
+		}
+		assert.True(t, namespaces["ns1"])
+		assert.True(t, namespaces["ns2"])
+	})
+}
+
+func TestSessionManager_GetSessionsByState(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("empty list when no sessions in state", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithIndex(&v1alpha1.BreakglassSession{}, "status.state", func(o client.Object) []string {
+				bs := o.(*v1alpha1.BreakglassSession)
+				if bs.Status.State != "" {
+					return []string{string(bs.Status.State)}
+				}
+				return nil
+			}).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		sessions, err := mgr.GetSessionsByState(ctx, v1alpha1.SessionStateApproved)
+		require.NoError(t, err)
+		assert.Empty(t, sessions)
+	})
+
+	t.Run("returns only sessions in specified state", func(t *testing.T) {
+		session1 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-1", Namespace: "default"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user1@example.com",
+				Cluster: "cluster-a",
+			},
+			Status: v1alpha1.BreakglassSessionStatus{
+				State: v1alpha1.SessionStateApproved,
+			},
+		}
+		session2 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-2", Namespace: "default"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user2@example.com",
+				Cluster: "cluster-b",
+			},
+			Status: v1alpha1.BreakglassSessionStatus{
+				State: v1alpha1.SessionStateApproved,
+			},
+		}
+		session3 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-3", Namespace: "default"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user3@example.com",
+				Cluster: "cluster-a",
+			},
+			Status: v1alpha1.BreakglassSessionStatus{
+				State: v1alpha1.SessionStatePending,
+			},
+		}
+		session4 := &v1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-4", Namespace: "default"},
+			Spec: v1alpha1.BreakglassSessionSpec{
+				User:    "user4@example.com",
+				Cluster: "cluster-c",
+			},
+			Status: v1alpha1.BreakglassSessionStatus{
+				State: v1alpha1.SessionStateWaitingForScheduledTime,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithObjects(session1, session2, session3, session4).
+			WithIndex(&v1alpha1.BreakglassSession{}, "status.state", func(o client.Object) []string {
+				bs := o.(*v1alpha1.BreakglassSession)
+				if bs.Status.State != "" {
+					return []string{string(bs.Status.State)}
+				}
+				return nil
+			}).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+
+		// Get approved sessions
+		sessions, err := mgr.GetSessionsByState(ctx, v1alpha1.SessionStateApproved)
+		require.NoError(t, err)
+		assert.Len(t, sessions, 2, "Should return 2 approved sessions")
+		for _, s := range sessions {
+			assert.Equal(t, v1alpha1.SessionStateApproved, s.Status.State)
+		}
+
+		// Get pending sessions
+		sessions, err = mgr.GetSessionsByState(ctx, v1alpha1.SessionStatePending)
+		require.NoError(t, err)
+		assert.Len(t, sessions, 1, "Should return 1 pending session")
+		assert.Equal(t, "session-3", sessions[0].Name)
+
+		// Get waiting for scheduled time sessions
+		sessions, err = mgr.GetSessionsByState(ctx, v1alpha1.SessionStateWaitingForScheduledTime)
+		require.NoError(t, err)
+		assert.Len(t, sessions, 1, "Should return 1 waiting session")
+		assert.Equal(t, "session-4", sessions[0].Name)
+
+		// Get expired sessions (none exist)
+		sessions, err = mgr.GetSessionsByState(ctx, v1alpha1.SessionStateExpired)
+		require.NoError(t, err)
+		assert.Empty(t, sessions, "Should return no expired sessions")
+	})
+}
+
 func TestSessionManager_UpdateBreakglassSession(t *testing.T) {
 	ctx := context.Background()
 

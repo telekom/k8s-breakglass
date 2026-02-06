@@ -81,6 +81,19 @@ spec:
   {{- if $esc.approvalTimeout }}
   approvalTimeout: {{ $esc.approvalTimeout }}
   {{- end }}
+  # Optional: override IDP session limits for this escalation
+  {{- if $esc.sessionLimitsOverride }}
+  sessionLimitsOverride:
+    {{- if hasKey $esc.sessionLimitsOverride "unlimited" }}
+    unlimited: {{ $esc.sessionLimitsOverride.unlimited }}
+    {{- end }}
+    {{- if $esc.sessionLimitsOverride.maxActiveSessionsPerUser }}
+    maxActiveSessionsPerUser: {{ $esc.sessionLimitsOverride.maxActiveSessionsPerUser }}
+    {{- end }}
+    {{- if $esc.sessionLimitsOverride.maxActiveSessionsTotal }}
+    maxActiveSessionsTotal: {{ $esc.sessionLimitsOverride.maxActiveSessionsTotal }}
+    {{- end }}
+  {{- end }}
   # Optional: route notifications through specific mail provider
   {{- if $esc.mailProvider }}
   mailProvider: {{ $esc.mailProvider }}

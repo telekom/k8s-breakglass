@@ -631,6 +631,53 @@ Retry-After: 1  # Only on 429 responses
    - Authenticated requests are limited by user identifier (from JWT `sub` claim)
    - Behind proxies, ensure `trustedProxies` is configured correctly for accurate IP detection
 
+### Approver Resolution Limits
+
+When a `BreakglassSession` is created, the controller resolves all potential approvers from configured `BreakglassEscalation` resources. To prevent resource exhaustion from extremely large groups (e.g., misconfigured LDAP groups containing thousands of members), the controller enforces hard limits on approver resolution:
+
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| MaxApproverGroupMembers | 1,000 | Maximum members resolved per individual approver group |
+| MaxTotalApprovers | 5,000 | Maximum total approvers across all matched escalations |
+
+**Behavior when limits are exceeded:**
+
+1. **Per-group limit (MaxApproverGroupMembers):** If a single approver group contains more than 1,000 members, only the first 1,000 are added. A warning is logged:
+   ```
+   Approver group has too many members, truncating
+   ```
+
+2. **Total limit (MaxTotalApprovers):** If the total approvers would exceed 5,000, resolution stops early. Groups are skipped entirely when no capacity remains. Warnings are logged:
+   ```
+   No remaining capacity for approvers, skipping group
+   ```
+   Or when truncating to fit:
+   ```
+   Truncating members to fit within total approvers limit
+   ```
+   And when the limit is reached:
+   ```
+   Maximum total approvers limit reached, stopping escalation processing
+   ```
+
+3. **Matched escalation preserved:** Even when limits cause truncation, the matched `BreakglassEscalation` is still recorded. This ensures escalation matching logic works correctly regardless of approver count limits.
+
+**Operational Guidance - Approver Limits:**
+
+1. **Monitor warning logs:** Watch for truncation warnings in controller logs:
+   ```bash
+   kubectl logs -n breakglass-system -l app=breakglass-manager | grep -i "truncat\|too many members\|no remaining capacity"
+   ```
+
+2. **Check approver counts:** Sessions with truncated approvers will still work correctly, but some potential approvers may not be notified.
+
+3. **Review large groups:** If warnings appear frequently, review your `BreakglassEscalation` configurations. Consider:
+   - Using more specific/smaller approver groups
+   - Breaking large escalations into multiple targeted ones
+   - Ensuring LDAP/AD groups are scoped appropriately
+
+4. **These limits are hardcoded:** Currently, these values cannot be configured. They are designed to handle worst-case scenarios while allowing legitimate large deployments. If you need different limits, modify the constants in `pkg/breakglass/session_controller.go` and rebuild.
+
 ## Troubleshooting
 
 ### "Configuration file not found"

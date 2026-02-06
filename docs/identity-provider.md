@@ -234,6 +234,144 @@ spec:
   disabled: true
 ```
 
+## Session Limits
+
+You can configure session limits at the IdentityProvider level to control how many concurrent sessions users can have. These limits apply to all users authenticating through this IDP, with optional group-based overrides for more flexibility.
+
+### Default Session Limits
+
+Set default limits for all users authenticated by this IDP:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: production-idp
+spec:
+  oidc:
+    authority: "https://auth.example.com"
+    clientID: "breakglass-ui"
+  
+  # Session limits for users from this IDP
+  sessionLimits:
+    maxActiveSessionsPerUser: 3  # Example: limit to 3 active sessions per user
+```
+
+### Group-Based Overrides
+
+You can override session limits for specific user groups. This is useful for platform teams or other privileged groups that need more concurrent sessions:
+
+```yaml
+spec:
+  sessionLimits:
+    maxActiveSessionsPerUser: 3  # Default for all users
+    
+    # Group-specific overrides (first match wins)
+    groupOverrides:
+      - group: "platform-team"
+        maxActiveSessionsPerUser: 10  # Platform team gets 10 sessions
+        
+      - group: "sre-oncall"
+        unlimited: true  # SRE oncall has no session limit
+        
+      - group: "external-contractors"
+        maxActiveSessionsPerUser: 1  # Contractors limited to 1 session
+```
+
+### Session Limits Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sessionLimits.maxActiveSessionsPerUser` | int32 | ❌ No | Default maximum concurrent sessions per user. Nil means no limit. |
+| `sessionLimits.groupOverrides` | []GroupOverride | ❌ No | List of group-specific overrides. First matching group wins. |
+
+**GroupOverride Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `group` | string | ✅ Yes | Group name pattern (glob supported, e.g., `platform-*`). First match wins. |
+| `unlimited` | bool | ❌ No | If true, no session limit applies for users in this group. |
+| `maxActiveSessionsPerUser` | int32 | ❌ No | Override limit for users in this group. |
+
+> **Note:** If a group override matches but has neither `unlimited: true` nor `maxActiveSessionsPerUser` set, the limit falls through to the IDP default limit, not "no limit".
+
+### Limit Resolution Order
+
+Session limits are resolved in the following order of precedence:
+
+**Per-User Limits:**
+1. **Escalation override** - If the `BreakglassEscalation` has `sessionLimitsOverride.unlimited: true` or `sessionLimitsOverride.maxActiveSessionsPerUser` set, those values take precedence.
+
+2. **IDP group override** - If the user belongs to a group in `sessionLimits.groupOverrides`, the first matching override is used.
+
+3. **IDP default** - The default `sessionLimits.maxActiveSessionsPerUser` from the IDP.
+
+4. **No limit** - If no limits are configured at any level, users can have unlimited sessions.
+
+**Total Session Limits:**
+
+`sessionLimitsOverride.maxActiveSessionsTotal` is an escalation-level only limit that caps the total number of active sessions for an escalation across all users. This limit is independent of per-user limits and is only configurable in `BreakglassEscalation`, not at the IDP level.
+
+> **Important:** Per-user session limits are counted **globally across all escalations**, not per-escalation. For example, if a user has 2 approved sessions via escalation A, and the IDP limit is 3, they can only create 1 more session via any escalation (not 3 more via a different escalation). This prevents users from bypassing limits by using multiple escalations.
+
+### Escalation-Level Overrides
+
+Individual `BreakglassEscalation` resources can override IDP session limits. This allows specific escalations (e.g., for platform operations) to bypass normal limits:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: platform-emergency-access
+spec:
+  escalatedGroup: "cluster-admin"
+  # ... other fields ...
+  
+  # Override IDP session limits for this escalation
+  sessionLimitsOverride:
+    unlimited: true  # No session limit for this escalation
+```
+
+Or set a specific limit different from the IDP:
+
+```yaml
+spec:
+  sessionLimitsOverride:
+    maxActiveSessionsPerUser: 10  # Override IDP limit to 10
+```
+
+### Example: Enterprise Configuration
+
+A typical enterprise configuration might look like:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: enterprise-idp
+spec:
+  oidc:
+    authority: "https://auth.enterprise.com"
+    clientID: "breakglass"
+  
+  sessionLimits:
+    # Most users: 2 concurrent sessions
+    maxActiveSessionsPerUser: 2
+    
+    groupOverrides:
+      # Platform team: higher limits for operational work
+      - group: "platform-engineers"
+        maxActiveSessionsPerUser: 5
+        
+      # SRE oncall: unlimited for incident response
+      - group: "sre-oncall"
+        unlimited: true
+        
+      # Service accounts: single session only
+      - group: "service-accounts"
+        maxActiveSessionsPerUser: 1
+```
+
 ## Integration with ClusterConfig
 
 IdentityProviders can be linked to specific clusters using `ClusterConfig.spec.identityProviderRefs`:

@@ -13,7 +13,7 @@ import (
 
 // ExpectedIndexCount is the number of field indexes that should be registered.
 // Update this constant when adding or removing indexes.
-const ExpectedIndexCount = 13
+const ExpectedIndexCount = 14
 
 // registeredIndexes tracks which indexes have been successfully registered.
 var registeredIndexes = make(map[string]bool)
@@ -79,6 +79,17 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "metadata.name", func(rawObj client.Object) []string {
 			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Name != "" {
 				return []string{bs.Name}
+			}
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("BreakglassSession", "status.state", func() error {
+		return idx.IndexField(ctx, &v1alpha1.BreakglassSession{}, "status.state", func(rawObj client.Object) []string {
+			if bs, ok := rawObj.(*v1alpha1.BreakglassSession); ok && bs.Status.State != "" {
+				return []string{string(bs.Status.State)}
 			}
 			return nil
 		})

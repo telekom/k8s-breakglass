@@ -21,6 +21,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,6 +38,20 @@ const (
 	DefaultValidForDuration  = time.Hour
 	DefaultRetainForDuration = MonthDuration
 	APIContextTimeout        = 30 * time.Second // Timeout for API operations like session listing
+
+	// MaxApproverGroupMembers limits the number of members resolved from a single approver group.
+	// This prevents resource exhaustion from malicious or misconfigured groups with millions of members.
+	// A warning is logged when truncation occurs.
+	// NOTE: If you change this constant, also update the documentation in:
+	//   - docs/configuration-reference.md (Approver Resolution Limits section)
+	MaxApproverGroupMembers = 1000
+
+	// MaxTotalApprovers limits the total number of unique approvers collected across all groups.
+	// This provides an overall cap regardless of how many groups are configured. When this limit is
+	// exceeded, additional approvers are ignored and a warning is logged to prevent resource exhaustion.
+	// NOTE: If you change this constant, also update the documentation in:
+	//   - docs/configuration-reference.md (Approver Resolution Limits section)
+	MaxTotalApprovers = 5000
 )
 
 var ErrSessionNotFound error = errors.New("session not found")
@@ -342,8 +357,42 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 			"explicitUserCount", len(p.Spec.Approvers.Users),
 			"approverGroupCount", len(p.Spec.Approvers.Groups))
 
+		// Always check if this is the matched escalation first (needed for deny policies)
+		isMatchedEscalation := p.Spec.EscalatedGroup == request.GroupName && matchedEsc == nil
+		if isMatchedEscalation {
+			matchedEsc = p
+			selectedDenyPolicies = append(selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
+			reqLog.Debugw("Matched escalation found during approver collection",
+				"escalationName", matchedEsc.Name,
+				"escalatedGroup", matchedEsc.Spec.EscalatedGroup,
+				"denyPolicyCount", len(selectedDenyPolicies))
+		}
+
+		// Check total approvers limit before processing this escalation's approvers
+		if len(allApprovers) >= MaxTotalApprovers {
+			// If we've already found the matched escalation, break out entirely
+			// to avoid unnecessary work and log spam
+			if matchedEsc != nil {
+				reqLog.Infow("Total approvers limit reached and matched escalation found, stopping",
+					"limit", MaxTotalApprovers,
+					"matchedEscalation", matchedEsc.Name)
+				break
+			}
+			// Otherwise continue looking for the matched escalation (but skip approver resolution)
+			reqLog.Debugw("Total approvers limit reached, skipping approver resolution for escalation",
+				"limit", MaxTotalApprovers,
+				"skippedEscalation", p.Name)
+			continue
+		}
+
 		// Add explicit users (deduplicated) - track them under special key
 		for _, user := range p.Spec.Approvers.Users {
+			if len(allApprovers) >= MaxTotalApprovers {
+				reqLog.Warnw("Total approvers limit reached while adding explicit users",
+					"limit", MaxTotalApprovers,
+					"escalation", p.Name)
+				break
+			}
 			before := len(allApprovers)
 			allApprovers = addIfNotPresent(allApprovers, user)
 			if len(allApprovers) > before {
@@ -358,6 +407,15 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 
 		// Resolve and add group members (deduplicated)
 		for _, group := range p.Spec.Approvers.Groups {
+			// Check total approvers limit before processing this group
+			if len(allApprovers) >= MaxTotalApprovers {
+				reqLog.Warnw("Total approvers limit reached, skipping remaining groups",
+					"limit", MaxTotalApprovers,
+					"skippedGroup", group,
+					"escalation", p.Name)
+				break
+			}
+
 			reqLog.Debugw("Resolving approver group members",
 				"group", group,
 				"escalation", p.Name)
@@ -388,12 +446,51 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 						// Continue with other groups even if one fails
 						continue
 					}
-					reqLog.Debugw("Resolved approver group members from legacy resolver",
-						"group", group,
-						"escalation", p.Name,
-						"memberCount", len(members),
-						"members", members)
 				}
+			}
+
+			// Apply per-group member limit to prevent resource exhaustion
+			if len(members) > MaxApproverGroupMembers {
+				reqLog.Warnw("Approver group has too many members, truncating",
+					"group", group,
+					"escalation", p.Name,
+					"originalCount", len(members),
+					"limit", MaxApproverGroupMembers)
+				members = members[:MaxApproverGroupMembers]
+			}
+
+			// Log member count (after truncation) to avoid PII leakage for large groups.
+			// Only log individual members at Debug level when the group is small enough.
+			if len(members) <= 20 {
+				reqLog.Debugw("Resolved approver group members",
+					"group", group,
+					"escalation", p.Name,
+					"memberCount", len(members),
+					"members", members)
+			} else {
+				reqLog.Debugw("Resolved approver group members",
+					"group", group,
+					"escalation", p.Name,
+					"memberCount", len(members))
+			}
+
+			// Calculate how many more approvers we can add
+			remainingCapacity := MaxTotalApprovers - len(allApprovers)
+			if remainingCapacity == 0 {
+				reqLog.Warnw("No remaining capacity for approvers, skipping group",
+					"group", group,
+					"escalation", p.Name,
+					"totalApproversLimit", MaxTotalApprovers)
+				break
+			}
+			if remainingCapacity < len(members) {
+				reqLog.Warnw("Truncating members to fit within total approvers limit",
+					"group", group,
+					"escalation", p.Name,
+					"originalCount", len(members),
+					"truncatedTo", remainingCapacity,
+					"totalApproversLimit", MaxTotalApprovers)
+				members = members[:remainingCapacity]
 			}
 
 			countBefore := len(allApprovers)
@@ -410,14 +507,15 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 				"totalApproversNow", len(allApprovers))
 		}
 
-		// Check if this is the matched escalation
-		if p.Spec.EscalatedGroup == request.GroupName && matchedEsc == nil {
-			matchedEsc = p
-			selectedDenyPolicies = append(selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
-			reqLog.Debugw("Matched escalation found during approver collection",
-				"escalationName", matchedEsc.Name,
-				"escalatedGroup", matchedEsc.Spec.EscalatedGroup,
-				"denyPolicyCount", len(selectedDenyPolicies))
+		// Break outer loop if we've reached the maximum total approvers AND
+		// we've already found the matched escalation. If matchedEsc is nil,
+		// let the loop continue — the top-of-loop check will skip approver
+		// resolution but still identify the matched escalation.
+		if len(allApprovers) >= MaxTotalApprovers && matchedEsc != nil {
+			reqLog.Infow("Maximum total approvers limit reached, stopping escalation processing",
+				"limit", MaxTotalApprovers,
+				"matchedEscalation", matchedEsc.Name)
+			break
 		}
 	}
 
@@ -674,6 +772,27 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	if matchedEsc == nil {
 		reqLog.Warnw("Refusing to create session without matched escalation", "user", userIdentifier, "cluster", request.Clustername, "group", request.GroupName)
 		apiresponses.RespondUnauthorizedWithMessage(c, "no escalation found for requested group")
+		return
+	}
+
+	// Check session limits (IDP-level with escalation overrides)
+	if err := wc.checkSessionLimits(ctx, matchedEsc, spec.IdentityProviderName, userIdentifier, userGroups, reqLog); err != nil {
+		reqLog.Warnw("Session limit check failed", "error", err, "escalation", matchedEsc.Name, "user", userIdentifier)
+		// Distinguish infrastructure errors (500) from user-facing limit errors (422).
+		switch {
+		case apierrors.IsNotFound(err),
+			apierrors.IsForbidden(err),
+			apierrors.IsUnauthorized(err),
+			apierrors.IsTimeout(err),
+			apierrors.IsServerTimeout(err),
+			apierrors.IsTooManyRequests(err),
+			apierrors.IsInternalError(err),
+			errors.Is(err, context.DeadlineExceeded),
+			errors.Is(err, context.Canceled):
+			apiresponses.RespondInternalError(c, "check session limits", err, reqLog)
+		default:
+			apiresponses.RespondUnprocessableEntity(c, err.Error())
+		}
 		return
 	}
 
@@ -1156,6 +1275,224 @@ func (wc BreakglassSessionController) getActiveBreakglassSession(ctx context.Con
 	}
 	wc.log.Infow("Returning active breakglass session", "session", validSessions[0].Name)
 	return validSessions[0], nil
+}
+
+// checkSessionLimits verifies that creating a new session won't exceed session limits.
+// Limits are resolved in order of precedence:
+// 1. Escalation override (sessionLimitsOverride.unlimited = true disables limits)
+// 2. Escalation override (sessionLimitsOverride.maxActiveSessionsPerUser and/or maxActiveSessionsTotal)
+// 3. IDP group override (sessionLimits.groupOverrides[].unlimited or maxActiveSessionsPerUser)
+// 4. IDP default (sessionLimits.maxActiveSessionsPerUser)
+//
+// Note: maxActiveSessionsTotal is only available at escalation level, not IDP level.
+// Per-user limits are checked globally across all escalations; total limits are per-escalation.
+// Returns nil if the session can be created, or an error describing the limit violation.
+func (wc *BreakglassSessionController) checkSessionLimits(
+	ctx context.Context,
+	escalation *v1alpha1.BreakglassEscalation,
+	idpName string,
+	userIdentifier string,
+	userGroups []string,
+	log *zap.SugaredLogger,
+) error {
+	// 1. Check escalation-level override first
+	if escalation.Spec.SessionLimitsOverride != nil {
+		override := escalation.Spec.SessionLimitsOverride
+		if override.Unlimited {
+			log.Debugw("Session limits disabled via escalation override (unlimited)",
+				"escalation", escalation.Name)
+			return nil
+		}
+		// Check per-user limit from escalation override
+		if override.MaxActiveSessionsPerUser != nil {
+			limit := *override.MaxActiveSessionsPerUser
+			log.Debugw("Using escalation-level per-user session limit override",
+				"escalation", escalation.Name,
+				"maxPerUser", limit)
+			if err := wc.checkUserSessionCount(ctx, userIdentifier, limit, "escalation override", log); err != nil {
+				return err
+			}
+		}
+		// Check total limit from escalation override
+		if override.MaxActiveSessionsTotal != nil {
+			limit := *override.MaxActiveSessionsTotal
+			log.Debugw("Using escalation-level total session limit override",
+				"escalation", escalation.Name,
+				"maxTotal", limit)
+			if err := wc.checkTotalSessionCount(ctx, escalation, limit, "escalation override", log); err != nil {
+				return err
+			}
+		}
+		// Only return early if escalation has per-user override (which replaces IDP per-user limits).
+		// If only MaxActiveSessionsTotal is set, fall through to check IDP per-user limits,
+		// since total and per-user limits are orthogonal concerns.
+		if override.MaxActiveSessionsPerUser != nil {
+			return nil
+		}
+	}
+
+	// 2. Look up IDP limits if idpName is set
+	if idpName == "" {
+		log.Debugw("No IDP name set, skipping IDP-level session limits")
+		return nil
+	}
+
+	idp := &v1alpha1.IdentityProvider{}
+	if err := wc.sessionManager.Client.Get(ctx, client.ObjectKey{Name: idpName}, idp); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Warnw("IdentityProvider not found — session limits cannot be enforced; verify the IDP resource exists",
+				"idp", idpName)
+			return nil
+		}
+		return fmt.Errorf("failed to get IdentityProvider: %w", err)
+	}
+
+	// No session limits configured on IDP
+	if idp.Spec.SessionLimits == nil {
+		log.Debugw("No session limits configured on IDP", "idp", idpName)
+		return nil
+	}
+
+	// 3. Check IDP group overrides (first matching group wins)
+	// Uses glob pattern matching (e.g., "platform-*" matches "platform-team")
+GroupOverrideLoop:
+	for _, groupOverride := range idp.Spec.SessionLimits.GroupOverrides {
+		for _, userGroup := range userGroups {
+			// Use glob pattern matching for flexible group specifications
+			matched, err := utils.GlobMatch(groupOverride.Group, userGroup)
+			if err != nil {
+				// Invalid glob pattern - log warning and skip this override
+				log.Warnw("Invalid glob pattern in IDP group override, skipping",
+					"idp", idpName,
+					"pattern", groupOverride.Group,
+					"error", err)
+				continue GroupOverrideLoop
+			}
+			if matched {
+				log.Debugw("Matched IDP group override",
+					"idp", idpName,
+					"pattern", groupOverride.Group,
+					"matchedGroup", userGroup,
+					"unlimited", groupOverride.Unlimited)
+				if groupOverride.Unlimited {
+					return nil
+				}
+				if groupOverride.MaxActiveSessionsPerUser != nil {
+					return wc.checkUserSessionCount(ctx, userIdentifier, *groupOverride.MaxActiveSessionsPerUser, fmt.Sprintf("IDP group override (%s)", groupOverride.Group), log)
+				}
+				// Group matched but no specific limit set, fall through to IDP default
+				// Use labeled break to exit BOTH loops (first matching group wins)
+				break GroupOverrideLoop
+			}
+		}
+	}
+
+	// 4. Apply IDP default limit
+	if idp.Spec.SessionLimits.MaxActiveSessionsPerUser != nil {
+		return wc.checkUserSessionCount(ctx, userIdentifier, *idp.Spec.SessionLimits.MaxActiveSessionsPerUser, "IDP default", log)
+	}
+
+	log.Debugw("No session limit applicable", "idp", idpName, "escalation", escalation.Name)
+	return nil
+}
+
+// checkUserSessionCount counts active sessions for a user and checks against a limit.
+// Uses the spec.user field index for efficient lookup when available.
+func (wc *BreakglassSessionController) checkUserSessionCount(
+	ctx context.Context,
+	userIdentifier string,
+	limit int32,
+	source string,
+	log *zap.SugaredLogger,
+) error {
+	// Use indexed query to fetch only sessions for this user
+	sessionList, err := wc.sessionManager.GetUserBreakglassSessions(ctx, userIdentifier)
+	if err != nil {
+		return fmt.Errorf("failed to list sessions for user: %w", err)
+	}
+
+	// Count active sessions for this user (across ALL escalations)
+	var userActive int32
+	for i := range sessionList {
+		session := &sessionList[i]
+		if !IsSessionActive(*session) {
+			continue
+		}
+		userActive++
+	}
+
+	log.Debugw("Session count for user",
+		"user", userIdentifier,
+		"activeCount", userActive,
+		"limit", limit,
+		"source", source)
+
+	if userActive >= limit {
+		return fmt.Errorf("session limit reached: maximum %d active sessions per user allowed (%s)", limit, source)
+	}
+
+	return nil
+}
+
+// checkTotalSessionCount counts total active sessions for an escalation and checks against a limit.
+// Sessions are counted by matching owner reference to ensure sessions created by different
+// escalations that grant the same group are not incorrectly counted together.
+// Optimized: only lists sessions in states that can be active (Pending, Approved) instead of all sessions.
+func (wc *BreakglassSessionController) checkTotalSessionCount(
+	ctx context.Context,
+	escalation *v1alpha1.BreakglassEscalation,
+	limit int32,
+	source string,
+	log *zap.SugaredLogger,
+) error {
+	// Optimization: only list sessions in potentially active states (Pending and Approved)
+	// rather than listing all sessions and filtering out terminal states.
+	// This reduces data transfer from etcd significantly in clusters with many expired sessions.
+	pendingSessions, err := wc.sessionManager.GetSessionsByState(ctx, v1alpha1.SessionStatePending)
+	if err != nil {
+		return fmt.Errorf("failed to list pending sessions: %w", err)
+	}
+	approvedSessions, err := wc.sessionManager.GetSessionsByState(ctx, v1alpha1.SessionStateApproved)
+	if err != nil {
+		return fmt.Errorf("failed to list approved sessions: %w", err)
+	}
+
+	// Count active sessions for this specific escalation (by matching owner reference UID)
+	// This ensures sessions from different escalations that grant the same group are counted separately.
+	var totalActive int32
+	for i := range pendingSessions {
+		session := &pendingSessions[i]
+		if !isOwnedByEscalation(session, escalation) {
+			continue
+		}
+		if !IsSessionActive(*session) {
+			continue
+		}
+		totalActive++
+	}
+	for i := range approvedSessions {
+		session := &approvedSessions[i]
+		if !isOwnedByEscalation(session, escalation) {
+			continue
+		}
+		if !IsSessionActive(*session) {
+			continue
+		}
+		totalActive++
+	}
+
+	log.Debugw("Total session count for escalation",
+		"escalation", escalation.Name,
+		"escalationUID", escalation.UID,
+		"activeCount", totalActive,
+		"limit", limit,
+		"source", source)
+
+	if totalActive >= limit {
+		return fmt.Errorf("session limit reached: maximum %d total active sessions allowed (%s)", limit, source)
+	}
+
+	return nil
 }
 
 func (wc BreakglassSessionController) handleApproveBreakglassSession(c *gin.Context) {
@@ -2326,31 +2663,6 @@ func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
 	return filtered
 }
 
-//nolint:unused // might use later
-func (wc BreakglassSessionController) handleListClusters(c *gin.Context) {
-	reqLog := system.GetReqLogger(c, wc.log)
-	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
-
-	// Use background context with timeout instead of request context to prevent
-	// "context canceled" errors when client closes connection.
-	ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
-	defer cancel()
-
-	sessions, err := wc.sessionManager.GetAllBreakglassSessions(ctx)
-	if err != nil {
-		reqLog.Error("Error getting access reviews", zap.Error(err))
-		apiresponses.RespondInternalError(c, "extract cluster group access information", err, reqLog)
-		return
-	}
-
-	clusters := make([]string, 0, len(sessions))
-	for _, session := range sessions {
-		clusters = append(clusters, session.Spec.Cluster)
-	}
-
-	c.JSON(http.StatusOK, clusters)
-}
-
 // checkApprovalAuthorization performs a detailed check of whether the current user can approve/reject a session.
 // It returns an ApprovalCheckResult with specific denial reasons instead of a simple boolean.
 func (wc BreakglassSessionController) checkApprovalAuthorization(c *gin.Context, session v1alpha1.BreakglassSession) ApprovalCheckResult {
@@ -2668,6 +2980,18 @@ func IsSessionActive(session v1alpha1.BreakglassSession) bool {
 
 	// Use general validity check for other state-based rules
 	return IsSessionValid(session)
+}
+
+// isOwnedByEscalation checks if a session is owned by the given escalation by matching
+// the owner reference UID. This ensures sessions from different escalations that grant
+// the same group are counted separately.
+func isOwnedByEscalation(session *v1alpha1.BreakglassSession, escalation *v1alpha1.BreakglassEscalation) bool {
+	for _, ownerRef := range session.GetOwnerReferences() {
+		if ownerRef.UID == escalation.UID {
+			return true
+		}
+	}
+	return false
 }
 
 func NewBreakglassSessionController(log *zap.SugaredLogger,

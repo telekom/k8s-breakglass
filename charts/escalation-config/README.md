@@ -149,6 +149,9 @@ escalations:
 | `clusterConfigRefs` | Alternative to `allowed.clusters` | - |
 | `denyPolicyRefs` | Attach DenyPolicy restrictions | - |
 | `mailProvider` | Specific mail provider to use | - |
+| `sessionLimitsOverride.unlimited` | Disable all session limits for this escalation | `false` |
+| `sessionLimitsOverride.maxActiveSessionsPerUser` | Override per-user session limit | - |
+| `sessionLimitsOverride.maxActiveSessionsTotal` | Max total active sessions for this escalation | - |
 
 ### Multi-IDP Configuration
 

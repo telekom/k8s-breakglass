@@ -48,7 +48,13 @@ func ApplyObject(ctx context.Context, c client.Client, obj client.Object) error 
 
 // ApplyUnstructured performs a server-side apply on an unstructured object.
 // This is useful for applying arbitrary Kubernetes resources (e.g., from templates).
+// Defensively clears managedFields from the input object before applying, since
+// managedFields are server-managed and not user-settable via SSA.
 func ApplyUnstructured(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
+	// Defensively clear managedFields — they are not user-settable and can cause
+	// apply failures if the rendered/parsed object happens to contain them.
+	obj.SetManagedFields(nil)
+
 	// Convert unstructured to apply configuration wrapper
 	applyConfig := &unstructuredApplyConfiguration{obj: obj}
 
@@ -63,6 +69,39 @@ func ApplyUnstructured(ctx context.Context, c client.Client, obj *unstructured.U
 		return err
 	}
 	return nil
+}
+
+// ApplyTypedObject performs a server-side apply on any typed Kubernetes object by
+// converting it to unstructured first. This is useful for core k8s types like
+// ResourceQuota, PodDisruptionBudget, DaemonSet, Deployment, etc. that don't have
+// generated ApplyConfiguration types in this repo.
+//
+// The object must have TypeMeta (APIVersion and Kind) set properly.
+func ApplyTypedObject(ctx context.Context, c client.Client, obj client.Object, scheme *runtime.Scheme) error {
+	// Convert typed object to unstructured
+	u := &unstructured.Unstructured{}
+	objData, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+	if err != nil {
+		return fmt.Errorf("failed to convert typed object to unstructured: %w", err)
+	}
+	u.SetUnstructuredContent(objData)
+
+	// Ensure GVK is set (runtime conversion may lose it)
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Empty() && scheme != nil {
+		// Try to get GVK from scheme
+		gvks, _, err := scheme.ObjectKinds(obj)
+		if err == nil && len(gvks) > 0 {
+			gvk = gvks[0]
+		}
+	}
+	if !gvk.Empty() {
+		u.SetGroupVersionKind(gvk)
+	} else {
+		return fmt.Errorf("cannot apply object without GVK: set TypeMeta (APIVersion, Kind) on the object or provide a scheme")
+	}
+
+	return ApplyUnstructured(ctx, c, u)
 }
 
 // unstructuredApplyConfiguration wraps an unstructured object to implement runtime.ApplyConfiguration.

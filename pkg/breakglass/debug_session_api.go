@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -34,6 +33,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -710,6 +710,14 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
+	// NOTE: Using Create() instead of SSA for DebugSession creation.
+	// Reason: We need AlreadyExists detection to return HTTP 409 Conflict to the user.
+	// SSA would silently update an existing session, which is not the desired UX.
+	// The session name is deterministic (debug-{user}-{cluster}-{timestamp}), so SSA
+	// would technically work, but we want explicit conflict detection for the API.
+	//
+	// TODO(SSA): Consider using SSA with a pre-check Get() if we want SSA semantics
+	// while preserving conflict detection for duplicate session names.
 	if err := c.client.Create(apiCtx, session); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			ctx.JSON(http.StatusConflict, gin.H{"error": "session already exists"})
@@ -2664,25 +2672,17 @@ func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *v1alph
 //   - "*.tst.*" matches strings containing ".tst."
 //   - "dev-*" matches "dev-cluster1"
 //
-// Uses path.Match for full glob support when pattern contains wildcards in the middle.
+// Uses utils.GlobMatch for pattern matching. If the pattern is invalid (e.g., unclosed
+// bracket), falls back to exact string comparison for backward compatibility.
 func matchPattern(pattern, value string) bool {
-	if pattern == "*" {
-		return true
+	matched, err := utils.GlobMatch(pattern, value)
+	if err != nil {
+		// Invalid glob pattern — fall back to exact match for backward compatibility.
+		// This preserves the previous behavior where patterns like "[unclosed" could
+		// still match the literal string.
+		return pattern == value
 	}
-
-	// Use path.Match for patterns with wildcards in the middle (e.g., "*.tst.*")
-	// This handles complex glob patterns that simple prefix/suffix matching can't
-	if strings.Contains(pattern, "*") {
-		matched, err := path.Match(pattern, value)
-		if err != nil {
-			// Invalid pattern - fall back to exact match
-			return pattern == value
-		}
-		return matched
-	}
-
-	// No wildcards - exact match
-	return pattern == value
+	return matched
 }
 
 // convertSelectorTerms converts v1alpha1 selector terms to API response format

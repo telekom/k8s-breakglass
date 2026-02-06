@@ -87,6 +87,10 @@ func CanGroupsDo(ctx context.Context,
 	}
 
 	v1Sar := authorizationv1.SelfSubjectAccessReview{Spec: v1SarSpec}
+	// NOTE: SelfSubjectAccessReview uses Create() to "submit" the review.
+	// This is not a write operation in the traditional sense - it's a readonly query
+	// to check permissions. The K8s API uses POST/Create for SubjectAccessReviews
+	// because they are ephemeral request/response resources, not stored objects.
 	response, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &v1Sar, metav1.CreateOptions{})
 	if err != nil {
 		zap.S().Errorw("Failed to create SelfSubjectAccessReview", "error", err.Error())

@@ -59,7 +59,8 @@ func (ssa *ScheduledSessionActivator) WithMailService(mailService MailEnqueuer, 
 // whose ScheduledStartTime has arrived, and transitions them to Approved state.
 // This allows the RBAC group to be applied and the session to become usable.
 func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
-	sessions, err := ssa.sessionManager.GetAllBreakglassSessions(context.Background())
+	// Use indexed query to fetch only sessions waiting for scheduled time
+	sessions, err := ssa.sessionManager.GetSessionsByState(context.Background(), v1.SessionStateWaitingForScheduledTime)
 	if err != nil {
 		ssa.log.Error("error listing sessions for scheduled activation", zap.String("error", err.Error()))
 		return
@@ -67,11 +68,6 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 
 	now := time.Now()
 	for _, ses := range sessions {
-		// Only process sessions in WaitingForScheduledTime state
-		if ses.Status.State != v1.SessionStateWaitingForScheduledTime {
-			continue
-		}
-
 		// Sanity check: session should have a scheduledStartTime
 		if ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero() {
 			ssa.log.Warnw("session in WaitingForScheduledTime state has no ScheduledStartTime",

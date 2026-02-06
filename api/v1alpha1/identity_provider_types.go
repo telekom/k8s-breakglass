@@ -127,6 +127,43 @@ type KeycloakGroupSync struct {
 	CertificateAuthority string `json:"certificateAuthority,omitempty"`
 }
 
+// SessionLimits defines default session limits for users from this IdentityProvider.
+// These limits help prevent resource exhaustion from excessive session creation.
+type SessionLimits struct {
+	// maxActiveSessionsPerUser is the default maximum concurrent active sessions per user.
+	// Active sessions are those in Pending or Approved state.
+	// If not set, no limit is enforced by default.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxActiveSessionsPerUser *int32 `json:"maxActiveSessionsPerUser,omitempty"`
+
+	// groupOverrides allows different limits for specific groups from this IDP.
+	// For example, platform teams can have higher limits than tenant teams.
+	// Overrides are evaluated in order; first matching group wins.
+	// +optional
+	GroupOverrides []SessionLimitGroupOverride `json:"groupOverrides,omitempty"`
+}
+
+// SessionLimitGroupOverride defines session limit overrides for a specific group.
+type SessionLimitGroupOverride struct {
+	// group is a glob pattern used to match group names (e.g., "platform-*").
+	// Supports wildcards: "*" matches any sequence, "?" matches single char, "[...]" for char classes.
+	// Matching is case-sensitive; the first matching override wins.
+	// +kubebuilder:validation:MinLength=1
+	Group string `json:"group"`
+
+	// unlimited disables session limits entirely for users in this group.
+	// When true, maxActiveSessionsPerUser is ignored.
+	// +optional
+	Unlimited bool `json:"unlimited,omitempty"`
+
+	// maxActiveSessionsPerUser overrides the default limit for this group.
+	// Only used if unlimited is false.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxActiveSessionsPerUser *int32 `json:"maxActiveSessionsPerUser,omitempty"`
+}
+
 // IdentityProviderSpec defines the desired state of an IdentityProvider
 type IdentityProviderSpec struct {
 	// OIDC holds mandatory OIDC configuration for user authentication
@@ -142,6 +179,11 @@ type IdentityProviderSpec struct {
 	// Required when groupSyncProvider is "Keycloak"
 	// +optional
 	Keycloak *KeycloakGroupSync `json:"keycloak,omitempty"`
+
+	// sessionLimits defines default session limits for users from this IdentityProvider.
+	// Individual escalations can override these limits via sessionLimitsOverride.
+	// +optional
+	SessionLimits *SessionLimits `json:"sessionLimits,omitempty"`
 
 	// Issuer is the OIDC issuer URL, which must match the 'iss' claim in JWT tokens
 	// This uniquely identifies the identity provider and is used to determine which provider

@@ -321,9 +321,10 @@ func (s *HubSpokeTestSuite) TestCrossClusterSessionVisibility() {
 	t := s.T()
 	namespace := helpers.GetTestNamespace()
 	testLabel := fmt.Sprintf("mc-visibility-%d", time.Now().UnixNano())
+	expectedClusters := []string{s.config.HubClusterName, s.config.SpokeAClusterName, s.config.SpokeBClusterName}
 
 	// Create sessions for each cluster
-	for _, cluster := range []string{s.config.HubClusterName, s.config.SpokeAClusterName, s.config.SpokeBClusterName} {
+	for _, cluster := range expectedClusters {
 		session := helpers.NewSessionBuilder(fmt.Sprintf("%s-%s", testLabel, cluster), namespace).
 			WithCluster(cluster).
 			WithUser(helpers.MultiClusterTestUsers.Employee.Email).
@@ -338,20 +339,27 @@ func (s *HubSpokeTestSuite) TestCrossClusterSessionVisibility() {
 		require.NoError(t, err, "Should create session for %s", cluster)
 	}
 
-	// List all sessions from hub with our test label
-	var sessionList telekomv1alpha1.BreakglassSessionList
-	err := s.hubClient.List(s.ctx, &sessionList, client.InNamespace(namespace), client.MatchingLabels{
-		"test": testLabel,
-	})
-	require.NoError(t, err)
+	// Wait for client cache to sync and verify all sessions are visible
+	require.Eventually(t, func() bool {
+		var sessionList telekomv1alpha1.BreakglassSessionList
+		err := s.hubClient.List(s.ctx, &sessionList, client.InNamespace(namespace), client.MatchingLabels{
+			"test": testLabel,
+		})
+		if err != nil {
+			return false
+		}
 
-	// Verify we can see sessions for all clusters
-	clustersSeen := make(map[string]bool)
-	for _, session := range sessionList.Items {
-		clustersSeen[session.Spec.Cluster] = true
-	}
+		// Verify we can see sessions for all clusters
+		clustersSeen := make(map[string]bool)
+		for _, session := range sessionList.Items {
+			clustersSeen[session.Spec.Cluster] = true
+		}
 
-	require.True(t, clustersSeen[s.config.HubClusterName], "Should see hub cluster sessions")
-	require.True(t, clustersSeen[s.config.SpokeAClusterName], "Should see spoke-a cluster sessions")
-	require.True(t, clustersSeen[s.config.SpokeBClusterName], "Should see spoke-b cluster sessions")
+		for _, cluster := range expectedClusters {
+			if !clustersSeen[cluster] {
+				return false
+			}
+		}
+		return true
+	}, 30*time.Second, helpers.PollInterval, "Should see sessions for all clusters (hub, spoke-a, spoke-b)")
 }
