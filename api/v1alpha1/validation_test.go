@@ -1505,6 +1505,47 @@ func TestValidateDebugPodTemplate(t *testing.T) {
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "debug")
 	})
+
+	t.Run("valid templateString", func(t *testing.T) {
+		template := &DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugPodTemplateSpec{
+				TemplateString: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Session.Name }}",
+			},
+		}
+		result := ValidateDebugPodTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("invalid templateString syntax - unclosed brace", func(t *testing.T) {
+		template := &DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugPodTemplateSpec{
+				TemplateString: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Session.Name",
+			},
+		}
+		result := ValidateDebugPodTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "invalid Go template syntax")
+	})
+
+	t.Run("invalid templateString syntax - unknown function", func(t *testing.T) {
+		template := &DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugPodTemplateSpec{
+				TemplateString: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ unknownFunc .Name }}",
+			},
+		}
+		result := ValidateDebugPodTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "invalid Go template syntax")
+	})
 }
 
 // ==================== DebugSessionTemplate Validation Tests ====================
@@ -1652,6 +1693,70 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 		}
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("valid podTemplateString", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode:              DebugSessionModeWorkload,
+				PodTemplateString: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Session.Name }}",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("invalid podTemplateString syntax", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode:              DebugSessionModeWorkload,
+				PodTemplateString: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Session.Name",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "invalid Go template syntax")
+	})
+
+	t.Run("valid podOverridesTemplate", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				PodOverridesTemplate: "metadata:\n  labels:\n    custom: {{ .Vars.customLabel | default \"default\" }}",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("invalid podOverridesTemplate syntax", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				PodOverridesTemplate: "metadata:\n  labels:\n    custom: {{ unknownFunc .Vars }}",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "invalid Go template syntax")
 	})
 }
 
