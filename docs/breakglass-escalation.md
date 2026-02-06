@@ -282,6 +282,115 @@ blockSelfApproval: true    # Prevent self-approval for this escalation
 
 If not specified, the cluster-level `blockSelfApproval` setting from `ClusterConfig` is used.
 
+### Session Limits
+
+Control the maximum number of concurrent active sessions via this escalation. These limits help prevent resource exhaustion and enforce organizational policies for different escalation tiers (e.g., platform vs. tenant).
+
+#### maxActiveSessionsPerUser
+
+Limits concurrent active (Pending or Approved) sessions per user. When set on an escalation, this overrides the IDP per-user limit:
+
+```yaml
+sessionLimitsOverride:
+  maxActiveSessionsPerUser: 1   # Each user can have at most 1 active session
+
+# Or for higher limits:
+sessionLimitsOverride:
+  maxActiveSessionsPerUser: 3   # Allow up to 3 concurrent sessions per user
+```
+
+When a user reaches this limit, they cannot create new sessions until existing ones expire, are rejected, or are withdrawn.
+
+> **Important:** Per-user limits set here replace the IDP per-user limits (they don't stack). However, per-user session counts are **global across all escalations**, not per-escalation. For example, if a user has 2 approved sessions via escalation A, and their limit (from IDP or this escalation's override) is 3, they can only create 1 more session via any escalation. This prevents users from bypassing limits by using multiple escalations.
+
+#### maxActiveSessionsTotal
+
+Limits the total number of concurrent active sessions across all users via this escalation:
+
+```yaml
+sessionLimitsOverride:
+  maxActiveSessionsTotal: 10    # Maximum 10 active sessions total for this escalation
+
+# Or for higher limits:
+sessionLimitsOverride:
+  maxActiveSessionsTotal: 100   # Allow up to 100 concurrent sessions
+```
+
+This is useful for limiting resource consumption by heavily-used escalations.
+
+> **Note:** Unlike per-user limits (which are global), total session limits are **counted per-escalation using owner references**. Sessions are linked to the specific escalation that created them. If two escalations grant the same `escalatedGroup`, they each maintain independent total counts. This allows fine-grained control over resource consumption for each escalation tier.
+
+#### Use Cases
+
+**Platform vs. Tenant Differentiation:**
+
+Platform teams often need more flexible access than tenant teams. Configure different limits per tier:
+
+```yaml
+# Platform team escalation - higher limits
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: platform-cluster-admin
+spec:
+  escalatedGroup: "cluster-admin"
+  allowed:
+    clusters: ["*"]
+    groups: ["platform-team"]
+  sessionLimitsOverride:
+    maxActiveSessionsPerUser: 5    # Platform team can have 5 concurrent sessions
+    maxActiveSessionsTotal: 50     # Allow up to 50 total platform sessions
+---
+# Tenant escalation - stricter limits
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: tenant-namespace-admin
+spec:
+  escalatedGroup: "namespace-admin"
+  allowed:
+    clusters: ["prod-*"]
+    groups: ["tenant-developers"]
+  sessionLimitsOverride:
+    maxActiveSessionsPerUser: 1    # Tenants get 1 session at a time
+    maxActiveSessionsTotal: 10     # Limit total tenant sessions
+```
+
+**Single-Session Policy:**
+
+For sensitive escalations where only one session should be active at a time:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: emergency-cluster-admin
+spec:
+  escalatedGroup: "cluster-admin"
+  allowed:
+    clusters: ["prod-critical"]
+    groups: ["emergency-responders"]
+  sessionLimitsOverride:
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 1      # Only ONE emergency session at a time globally
+```
+
+#### Error Messages
+
+When limits are exceeded, the API returns an HTTP 422 Unprocessable Entity with a clear error message:
+
+- Per-user limit: `"session limit reached: maximum N active sessions per user allowed (SOURCE)"`
+- Total limit: `"session limit reached: maximum N total active sessions allowed (SOURCE)"`
+
+Where `SOURCE` indicates where the limit was configured: `"escalation override"`, `"IDP default"`, or `"IDP group override (group-name)"`.
+
+#### Notes
+
+- Only active sessions count against limits (Pending or Approved states)
+- Expired, Rejected, Withdrawn, and Timeout sessions do NOT count against limits
+- Limits are checked at session creation time, not during approval
+- If both limits are set, both must pass for session creation to succeed
+
 ### Multi-IDP Fields (Identity Provider Restriction)
 
 When multiple identity providers are configured, you can restrict which IDPs can use an escalation:

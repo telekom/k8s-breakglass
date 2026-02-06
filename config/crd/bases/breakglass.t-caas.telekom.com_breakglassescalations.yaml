@@ -374,6 +374,36 @@ spec:
                   a session for this escalation after it expired
                 pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                 type: string
+              sessionLimitsOverride:
+                description: |-
+                  sessionLimitsOverride allows this escalation to override the IdentityProvider's default session limits.
+                  Use this to grant higher limits (e.g., for platform teams) or disable limits entirely.
+                  If not set, the IdentityProvider's limits apply (including any group-specific overrides).
+                properties:
+                  maxActiveSessionsPerUser:
+                    description: |-
+                      maxActiveSessionsPerUser overrides the IdentityProvider's default per-user limit.
+                      Only used if unlimited is false.
+                      If not set (and unlimited is false), the IdentityProvider's limit applies.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maxActiveSessionsTotal:
+                    description: |-
+                      maxActiveSessionsTotal sets the maximum number of simultaneously active sessions
+                      allowed for this escalation across all users.
+                      Only used if unlimited is false.
+                      If not set (and unlimited is false), no escalation-scoped total active session cap is enforced.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  unlimited:
+                    description: |-
+                      unlimited disables session limits entirely for this escalation.
+                      When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
+                      Use with caution - this should only be granted to trusted platform teams.
+                    type: boolean
+                type: object
             required:
             - allowed
             type: object

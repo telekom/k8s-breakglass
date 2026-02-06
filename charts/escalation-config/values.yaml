@@ -149,6 +149,21 @@ escalations: []
   #   # approvalTimeout: 30m
   #   
   #   # ==========================================
+  #   # Session Limits Override (optional)
+  #   # ==========================================
+  #   # Override the IdentityProvider's default session limits for this escalation.
+  #   # Session limits are configured at the IdentityProvider level with optional
+  #   # per-group overrides. Use this field to grant higher limits or disable limits
+  #   # entirely for specific escalations (e.g., platform team escalations).
+  #   #
+  #   # sessionLimitsOverride:
+  #   #   # Set unlimited: true to disable session limits entirely for this escalation
+  #   #   unlimited: true
+  #   #   # Or set specific limits (only used if unlimited is false)
+  #   #   # maxActiveSessionsPerUser: 5   # Per-user limit across all escalations
+  #   #   # maxActiveSessionsTotal: 50    # Total sessions for this escalation
+  #   
+  #   # ==========================================
   #   # Reason Configuration
   #   # ==========================================
   #   requestReason:

@@ -4882,3 +4882,2066 @@ func TestDecodeJSONStrict(t *testing.T) {
 		require.NoError(t, err, "trailing whitespace should be allowed")
 	})
 }
+
+func TestSessionLimits(t *testing.T) {
+	t.Run("IDP default limit blocks session creation when reached", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		maxPerUser := int32(2)
+
+		// Create IDP with default session limit
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+				SessionLimits: &v1alpha1.SessionLimits{
+					MaxActiveSessionsPerUser: &maxPerUser,
+				},
+			},
+		}
+
+		// Create escalation (no session limit override)
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-123"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"system:authenticated"},
+				},
+				EscalatedGroup: "admin-group",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create 2 existing active sessions for same user (at IDP limit)
+		existingSessions := []*v1alpha1.BreakglassSession{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-1",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "test-user@example.com",
+					GrantedGroup: "other-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStatePending,
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-2",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "test-user@example.com",
+					GrantedGroup: "another-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "test-user@example.com")
+				c.Set("username", "TestUser")
+				c.Set("user_id", "test-user@example.com")
+				c.Set("identity_provider_name", idpName) // Set IDP name
+				c.Set("groups", []string{"system:authenticated"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"system:authenticated"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "test-user@example.com",
+			GroupName:   "admin-group",
+			Reason:      "Test reason",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusUnprocessableEntity, w.Result().StatusCode, "should reject when IDP limit reached")
+		body, _ := io.ReadAll(w.Result().Body)
+		require.Contains(t, string(body), "session limit reached")
+		require.Contains(t, string(body), "IDP default")
+	})
+
+	t.Run("escalation unlimited override bypasses IDP limits", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		maxPerUser := int32(1) // Very restrictive
+
+		// Create IDP with restrictive limit
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+				SessionLimits: &v1alpha1.SessionLimits{
+					MaxActiveSessionsPerUser: &maxPerUser,
+				},
+			},
+		}
+
+		// Create escalation with unlimited override (for platform team)
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "platform-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-456"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"platform-team"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+				SessionLimitsOverride: &v1alpha1.SessionLimitsOverride{
+					Unlimited: true,
+				},
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create existing sessions (would exceed limit without override)
+		existingSessions := []*v1alpha1.BreakglassSession{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-1",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "platform-user@example.com",
+					GrantedGroup: "other-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStatePending,
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-2",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "platform-user@example.com",
+					GrantedGroup: "another-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "platform-user@example.com")
+				c.Set("username", "PlatformUser")
+				c.Set("user_id", "platform-user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"platform-team"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"platform-team"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "platform-user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Platform emergency",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Session should be created because escalation has unlimited override
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode, "should allow session with unlimited escalation override")
+	})
+
+	t.Run("IDP group override allows higher limits for specific groups", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		defaultLimit := int32(1)
+		platformLimit := int32(5)
+
+		// Create IDP with default limit and platform-team group override
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+				SessionLimits: &v1alpha1.SessionLimits{
+					MaxActiveSessionsPerUser: &defaultLimit,
+					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+						{
+							Group:                    "platform-team",
+							MaxActiveSessionsPerUser: &platformLimit,
+						},
+					},
+				},
+			},
+		}
+
+		// Create escalation (no override - uses IDP group override)
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-789"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"platform-team"},
+				},
+				EscalatedGroup: "admin-group",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create 2 existing sessions (exceeds default limit of 1, but under platform limit of 5)
+		existingSessions := []*v1alpha1.BreakglassSession{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-1",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "platform-user@example.com",
+					GrantedGroup: "other-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStatePending,
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-2",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "platform-user@example.com",
+					GrantedGroup: "another-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "platform-user@example.com")
+				c.Set("username", "PlatformUser")
+				c.Set("user_id", "platform-user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"platform-team"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"platform-team"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "platform-user@example.com",
+			GroupName:   "admin-group",
+			Reason:      "Test reason",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Should succeed because platform-team has higher limit (5) via IDP group override
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode, "should allow session with IDP group override")
+	})
+
+	t.Run("no limits without IDP or escalation configuration", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+
+		// Create escalation without any session limits
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-nolimit"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"system:authenticated"},
+				},
+				EscalatedGroup: "admin-group",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		builder.WithObjects(esc, clusterConfig)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "test-user@example.com")
+				c.Set("username", "TestUser")
+				c.Set("user_id", "test-user@example.com")
+				// No IDP name set - simulating legacy single-IDP mode
+				c.Set("groups", []string{"system:authenticated"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"system:authenticated"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "test-user@example.com",
+			GroupName:   "admin-group",
+			Reason:      "Test reason",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Should succeed - no limits configured
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode, "should allow session without any limits configured")
+	})
+
+	t.Run("escalation maxActiveSessionsTotal blocks when total sessions exceeded", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		maxTotal := int32(2)
+
+		// Create IDP (no limits - escalation provides the limit)
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			},
+		}
+
+		// Create escalation with maxActiveSessionsTotal limit
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-total"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"system:authenticated"},
+				},
+				EscalatedGroup: "admin-group",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+				SessionLimitsOverride: &v1alpha1.SessionLimitsOverride{
+					MaxActiveSessionsTotal: &maxTotal,
+				},
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create 2 existing active sessions for admin-group (at total limit)
+		// Note: different users but same granted group
+		// Sessions must have owner references to the escalation to be counted
+		existingSessions := []*v1alpha1.BreakglassSession{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-1",
+					Namespace: escalationNamespace,
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "breakglass.t-caas.telekom.com/v1alpha1",
+							Kind:       "BreakglassEscalation",
+							Name:       "test-escalation",
+							UID:        types.UID("esc-uid-total"),
+						},
+					},
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "user1@example.com",
+					GrantedGroup: "admin-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStatePending,
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-2",
+					Namespace: escalationNamespace,
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "breakglass.t-caas.telekom.com/v1alpha1",
+							Kind:       "BreakglassEscalation",
+							Name:       "test-escalation",
+							UID:        types.UID("esc-uid-total"),
+						},
+					},
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "user2@example.com",
+					GrantedGroup: "admin-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "new-user@example.com")
+				c.Set("username", "NewUser")
+				c.Set("user_id", "new-user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"system:authenticated"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"system:authenticated"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "new-user@example.com",
+			GroupName:   "admin-group",
+			Reason:      "Test reason",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusUnprocessableEntity, w.Result().StatusCode, "should reject when total session limit reached")
+		body, _ := io.ReadAll(w.Result().Body)
+		require.Contains(t, string(body), "session limit reached")
+		require.Contains(t, string(body), "total active sessions")
+	})
+
+	t.Run("IDP group override with unlimited allows sessions", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		restrictiveLimit := int32(1)
+
+		// Create IDP with very restrictive default but unlimited for sre-oncall
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+				SessionLimits: &v1alpha1.SessionLimits{
+					MaxActiveSessionsPerUser: &restrictiveLimit, // Very restrictive
+					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+						{
+							Group:     "sre-oncall",
+							Unlimited: true, // SRE oncall has no limits
+						},
+					},
+				},
+			},
+		}
+
+		// Create escalation (no override)
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-unlimited-group"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"sre-oncall"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create multiple existing sessions for this user (would exceed the default limit)
+		existingSessions := []*v1alpha1.BreakglassSession{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-1",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "sre-user@example.com",
+					GrantedGroup: "other-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStatePending,
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-2",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "sre-user@example.com",
+					GrantedGroup: "another-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "sre-user@example.com")
+				c.Set("username", "SREUser")
+				c.Set("user_id", "sre-user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"sre-oncall"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"sre-oncall"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "sre-user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "SRE emergency",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Should succeed because sre-oncall group has unlimited override
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode, "should allow session with IDP group unlimited override")
+	})
+}
+
+// TestSessionLimits_GlobPatterns tests glob pattern matching for IDP group overrides
+func TestSessionLimits_GlobPatterns(t *testing.T) {
+	t.Run("glob pattern matches user group", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		restrictiveLimit := int32(1)
+		platformLimit := int32(10)
+
+		// Create IDP with glob pattern for platform-* groups
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+				SessionLimits: &v1alpha1.SessionLimits{
+					MaxActiveSessionsPerUser: &restrictiveLimit, // Default limit
+					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+						{
+							Group:                    "platform-*", // Glob pattern
+							MaxActiveSessionsPerUser: &platformLimit,
+						},
+					},
+				},
+			},
+		}
+
+		// Create escalation
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-glob"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"platform-sre"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create 5 existing sessions (exceeds default limit of 1, but under glob pattern limit of 10)
+		var existingSessions []client.Object
+		for i := range 5 {
+			existingSessions = append(existingSessions, &v1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("existing-session-%d", i),
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "platform-user@example.com",
+					GrantedGroup: "other-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			})
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig)
+		builder.WithObjects(existingSessions...)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "platform-user@example.com")
+				c.Set("username", "PlatformUser")
+				c.Set("user_id", "platform-user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"platform-sre"}) // Matches glob pattern "platform-*"
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"platform-sre"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "platform-user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Platform emergency",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Should succeed because platform-sre matches "platform-*" glob with higher limit
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode, "should allow session when glob pattern matches and within limit")
+	})
+
+	t.Run("first matching glob wins", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		restrictiveLimit := int32(1)
+		specificLimit := int32(2)
+		generalLimit := int32(100) // More permissive but should not be used
+
+		// Create IDP where both patterns could match, but first should win
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+				SessionLimits: &v1alpha1.SessionLimits{
+					MaxActiveSessionsPerUser: &restrictiveLimit,
+					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+						{
+							Group:                    "platform-sre", // More specific - matches first
+							MaxActiveSessionsPerUser: &specificLimit, // Limit: 2
+						},
+						{
+							Group:                    "platform-*",  // More general - matches second
+							MaxActiveSessionsPerUser: &generalLimit, // Limit: 100
+						},
+					},
+				},
+			},
+		}
+
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-first-match"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"platform-sre"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create 2 existing sessions (at first-match limit of 2)
+		existingSessions := []*v1alpha1.BreakglassSession{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-1",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "sre-user@example.com",
+					GrantedGroup: "other-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-2",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "sre-user@example.com",
+					GrantedGroup: "another-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStatePending,
+				},
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "sre-user@example.com")
+				c.Set("username", "SREUser")
+				c.Set("user_id", "sre-user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"platform-sre"}) // Matches BOTH patterns
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"platform-sre"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "sre-user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "SRE emergency",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Should FAIL because first matching pattern (platform-sre) has limit 2, and we're at 2
+		// The general "platform-*" pattern with limit 100 should NOT be used
+		require.Equal(t, http.StatusUnprocessableEntity, w.Result().StatusCode, "first matching group override wins, should not fallback to more permissive pattern")
+		body, _ := io.ReadAll(w.Result().Body)
+		require.Contains(t, string(body), "session limit reached")
+	})
+
+	t.Run("invalid glob pattern is skipped", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		restrictiveLimit := int32(1)
+		invalidPatternLimit := int32(100)
+		validPatternLimit := int32(10)
+
+		// Create IDP with an invalid glob pattern followed by a valid one
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+				SessionLimits: &v1alpha1.SessionLimits{
+					MaxActiveSessionsPerUser: &restrictiveLimit,
+					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+						{
+							Group:                    "[invalid-regex", // Invalid glob pattern
+							MaxActiveSessionsPerUser: &invalidPatternLimit,
+						},
+						{
+							Group:                    "platform-*", // Valid pattern
+							MaxActiveSessionsPerUser: &validPatternLimit,
+						},
+					},
+				},
+			},
+		}
+
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-invalid-glob"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"platform-team"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create 5 existing sessions (exceeds default of 1, but under valid pattern limit of 10)
+		var existingSessions []client.Object
+		for i := range 5 {
+			existingSessions = append(existingSessions, &v1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("existing-session-%d", i),
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "platform-user@example.com",
+					GrantedGroup: "other-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			})
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig)
+		builder.WithObjects(existingSessions...)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "platform-user@example.com")
+				c.Set("username", "PlatformUser")
+				c.Set("user_id", "platform-user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"platform-team"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"platform-team"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "platform-user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Test reason",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Invalid pattern is skipped, valid pattern "platform-*" matches with limit 10
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode, "should skip invalid glob and use next matching pattern")
+	})
+
+	t.Run("IDP group override without limit falls through to IDP default", func(t *testing.T) {
+		// Test scenario: User matches a group override that has neither unlimited: true
+		// nor maxActiveSessionsPerUser set. Should fall through to IDP default limit.
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		idpDefaultLimit := int32(2)
+
+		// Create IDP with a group override that has no limit fields set
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: idpName,
+			},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+				SessionLimits: &v1alpha1.SessionLimits{
+					MaxActiveSessionsPerUser: &idpDefaultLimit, // IDP default: 2 sessions
+					GroupOverrides: []v1alpha1.SessionLimitGroupOverride{
+						{
+							Group: "special-group", // Just group name, no unlimited or maxActiveSessionsPerUser
+							// Unlimited: false (default)
+							// MaxActiveSessionsPerUser: nil
+						},
+					},
+				},
+			},
+		}
+
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-fallthrough"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"special-group"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create 2 existing sessions (at IDP default limit)
+		existingSessions := []*v1alpha1.BreakglassSession{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-1",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "special-user@example.com",
+					GrantedGroup: "admin-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "existing-session-2",
+					Namespace: escalationNamespace,
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "special-user@example.com",
+					GrantedGroup: "other-group",
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStatePending,
+				},
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig, existingSessions[0], existingSessions[1])
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "special-user@example.com")
+				c.Set("username", "SpecialUser")
+				c.Set("user_id", "special-user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"special-group"}) // Matches the empty group override
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"special-group"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "special-user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Test IDP fallthrough",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Should FAIL because group override matched but had no limit,
+		// so it falls through to IDP default of 2, and we're at 2 sessions.
+		require.Equal(t, http.StatusUnprocessableEntity, w.Result().StatusCode,
+			"group override without limit should fall through to IDP default")
+		body, _ := io.ReadAll(w.Result().Body)
+		require.Contains(t, string(body), "session limit reached",
+			"should include limit error message")
+		require.Contains(t, string(body), "IDP default",
+			"should indicate it's the IDP default limit")
+	})
+}
+
+// TestApproverResolutionLimits tests the security limits for approver group resolution.
+// These limits prevent resource exhaustion from malicious or misconfigured large approver groups.
+func TestApproverResolutionLimits(t *testing.T) {
+	t.Run("truncates single group exceeding MaxApproverGroupMembers", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+
+		// Create IDP
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: idpName},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			},
+		}
+
+		// Create escalation with a single approver group
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-limit-test"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"requester-group"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Groups: []string{"large-approver-group"}, // This group will have >1000 members
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "user@example.com")
+				c.Set("username", "User")
+				c.Set("user_id", "user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"requester-group"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"requester-group"}, nil
+		}
+
+		// Set up mock resolver that returns >1000 members for the approver group
+		largeGroupMembers := make([]string, MaxApproverGroupMembers+100)
+		for i := range largeGroupMembers {
+			largeGroupMembers[i] = fmt.Sprintf("approver-%d@example.com", i)
+		}
+		mockResolver := &MockGroupResolver{
+			members: map[string][]string{
+				"large-approver-group": largeGroupMembers,
+			},
+		}
+		ctrl.escalationManager.SetResolver(mockResolver)
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Test truncation",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Session should still be created successfully even with truncation
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode, "session should be created even when approvers are truncated")
+	})
+
+	t.Run("caps total approvers across multiple groups via MaxTotalApprovers", func(t *testing.T) {
+		// This test verifies that when multiple approver groups together would exceed
+		// MaxTotalApprovers, the resolution stops early and later groups are skipped.
+		// The session should still be created with whatever approvers were collected.
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+
+		// Create IDP
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: idpName},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			},
+		}
+
+		// Create escalation with multiple approver groups
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-total-limit-test"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"requester-group"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Groups: []string{"group-1", "group-2", "group-3"}, // 3 groups
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "user@example.com")
+				c.Set("username", "User")
+				c.Set("user_id", "user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"requester-group"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"requester-group"}, nil
+		}
+
+		// Set up mock resolver with large enough groups that together exceed MaxTotalApprovers
+		// Use groups that together would exceed 5000 total approvers
+		// Group 1: 2500 members, Group 2: 2000 members, Group 3: 2000 members
+		// Total = 6500, but MaxTotalApprovers=5000 so group-3 should be truncated
+		group1Members := make([]string, 2500)
+		for i := range group1Members {
+			group1Members[i] = fmt.Sprintf("g1-approver-%d@example.com", i)
+		}
+		group2Members := make([]string, 2000)
+		for i := range group2Members {
+			group2Members[i] = fmt.Sprintf("g2-approver-%d@example.com", i)
+		}
+		group3Members := make([]string, 2000)
+		for i := range group3Members {
+			group3Members[i] = fmt.Sprintf("g3-approver-%d@example.com", i)
+		}
+
+		mockResolver := &MockGroupResolver{
+			members: map[string][]string{
+				"group-1": group1Members,
+				"group-2": group2Members,
+				"group-3": group3Members,
+			},
+		}
+		ctrl.escalationManager.SetResolver(mockResolver)
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Test total approvers limit",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Session should be created successfully - approver truncation doesn't fail session creation
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode,
+			"session should be created even when total approvers are capped")
+	})
+
+	t.Run("preserves matched escalation when approvers are truncated", func(t *testing.T) {
+		// This test verifies that even when approver resolution is truncated due to limits,
+		// the matched BreakglassEscalation is still properly recorded on the session.
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+
+		// Create IDP
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: idpName},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			},
+		}
+
+		// Create escalation with a huge approver group that will be truncated
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "truncated-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-preserve-match"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"requester-group"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Groups: []string{"huge-approver-group"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "user@example.com")
+				c.Set("username", "User")
+				c.Set("user_id", "user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"requester-group"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"requester-group"}, nil
+		}
+
+		// Create a group with more members than MaxApproverGroupMembers
+		hugeGroupMembers := make([]string, MaxApproverGroupMembers+500)
+		for i := range hugeGroupMembers {
+			hugeGroupMembers[i] = fmt.Sprintf("approver-%d@example.com", i)
+		}
+		mockResolver := &MockGroupResolver{
+			members: map[string][]string{
+				"huge-approver-group": hugeGroupMembers,
+			},
+		}
+		ctrl.escalationManager.SetResolver(mockResolver)
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Test preserved matching",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode,
+			"session should be created with truncated approvers")
+
+		// Verify the session has the correct owner reference to the escalation
+		var sessions v1alpha1.BreakglassSessionList
+		err := cli.List(context.Background(), &sessions)
+		require.NoError(t, err, "should list sessions")
+		require.Len(t, sessions.Items, 1, "should have exactly one session")
+
+		session := sessions.Items[0]
+		require.Len(t, session.OwnerReferences, 1, "session should have owner reference")
+		require.Equal(t, "truncated-escalation", session.OwnerReferences[0].Name,
+			"session should be owned by the matched escalation")
+	})
+
+	t.Run("totalSessionCount uses owner reference not grantedGroup", func(t *testing.T) {
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+		totalLimit := int32(2)
+
+		// Create IDP
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: idpName},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			},
+		}
+
+		// Create two escalations that grant the SAME group but have different UIDs.
+		// esc1 allows a *different* requester group so it will NOT match the request,
+		// while esc2 allows "requester-group" and will be the matched escalation.
+		esc1UID := types.UID("esc1-uid")
+		esc1 := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "escalation-1",
+				Namespace: escalationNamespace,
+				UID:       esc1UID,
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"other-team"}, // Does NOT match "requester-group"
+				},
+				EscalatedGroup: "cluster-admin", // Same group as esc2
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+				SessionLimitsOverride: &v1alpha1.SessionLimitsOverride{
+					MaxActiveSessionsTotal: &totalLimit, // Limit to 2 total sessions
+				},
+			},
+		}
+
+		esc2UID := types.UID("esc2-uid")
+		esc2 := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "escalation-2",
+				Namespace: escalationNamespace,
+				UID:       esc2UID,
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"requester-group"}, // Matches the request
+				},
+				EscalatedGroup: "cluster-admin", // Same group as esc1
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+				MaxValidFor: "1h",
+				SessionLimitsOverride: &v1alpha1.SessionLimitsOverride{
+					MaxActiveSessionsTotal: &totalLimit, // Limit to 2 total sessions
+				},
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		// Create 2 existing sessions OWNED BY esc1 (hitting its limit)
+		var existingSessions []client.Object
+		for i := range 2 {
+			existingSessions = append(existingSessions, &v1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("esc1-session-%d", i),
+					Namespace: escalationNamespace,
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "breakglass.t-caas.telekom.com/v1alpha1",
+							Kind:       "BreakglassEscalation",
+							Name:       esc1.Name,
+							UID:        esc1UID,
+						},
+					},
+				},
+				Spec: v1alpha1.BreakglassSessionSpec{
+					Cluster:      clusterName,
+					User:         "other-user@example.com",
+					GrantedGroup: "cluster-admin", // Same group - but owned by esc1
+				},
+				Status: v1alpha1.BreakglassSessionStatus{
+					State: v1alpha1.SessionStateApproved,
+				},
+			})
+		}
+
+		builder.WithObjects(idp, esc1, esc2, clusterConfig)
+		builder.WithObjects(existingSessions...)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "user@example.com")
+				c.Set("username", "User")
+				c.Set("user_id", "user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"requester-group"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"requester-group"}, nil
+		}
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		// Request session via esc2 (which should NOT count esc1's sessions).
+		// Since esc1 doesn't allow "requester-group", only esc2 will match.
+		// esc2 has 0 sessions, so it should succeed despite esc1 being at its limit.
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Test owner reference counting",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// The session MUST succeed because:
+		// - esc2 is the only escalation matching "requester-group"
+		// - esc2 has 0 sessions owned by it (the 2 existing sessions are owned by esc1)
+		// - If owner-ref counting is broken (e.g., counting by grantedGroup), this would
+		//   incorrectly fail with a 422 limit error because both escalations share "cluster-admin"
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode,
+			"session should be created because esc2 has no sessions (esc1's sessions should not count)")
+
+		// Verify the created session is owned by esc2, not esc1
+		var response v1alpha1.BreakglassSession
+		err := json.NewDecoder(w.Body).Decode(&response)
+		require.NoError(t, err, "should decode response")
+
+		createdSession := &v1alpha1.BreakglassSession{}
+		err = cli.Get(context.Background(), client.ObjectKey{
+			Name:      response.Name,
+			Namespace: response.Namespace,
+		}, createdSession)
+		require.NoError(t, err, "should fetch created session")
+		require.Len(t, createdSession.OwnerReferences, 1, "session should have one owner reference")
+		require.Equal(t, esc2UID, createdSession.OwnerReferences[0].UID,
+			"session should be owned by esc2, not esc1")
+	})
+
+	t.Run("boundary test - exactly MaxApproverGroupMembers members", func(t *testing.T) {
+		// Tests the boundary condition where group has exactly 1000 members (the limit)
+		// Should process all 1000 without truncation.
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: idpName},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			},
+		}
+
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "boundary-test-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-boundary"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"requester-group"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Groups: []string{"exact-limit-group"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "user@example.com")
+				c.Set("username", "User")
+				c.Set("user_id", "user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"requester-group"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"requester-group"}, nil
+		}
+
+		// Create exactly MaxApproverGroupMembers members (boundary case)
+		boundaryMembers := make([]string, MaxApproverGroupMembers) // Exactly 1000
+		for i := range boundaryMembers {
+			boundaryMembers[i] = fmt.Sprintf("approver-%d@example.com", i)
+		}
+		mockResolver := &MockGroupResolver{
+			members: map[string][]string{
+				"exact-limit-group": boundaryMembers,
+			},
+		}
+		ctrl.escalationManager.SetResolver(mockResolver)
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Boundary test - exactly at limit",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Should succeed - exactly at limit, no truncation
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode,
+			"should create session when at exactly MaxApproverGroupMembers boundary")
+	})
+
+	t.Run("explicit users plus groups exceeding total limit", func(t *testing.T) {
+		// Tests that explicit users + group members together can't exceed MaxTotalApprovers
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: idpName},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			},
+		}
+
+		// Create explicit users list - halfway to limit
+		explicitUsers := make([]string, MaxTotalApprovers/2)
+		for i := range explicitUsers {
+			explicitUsers[i] = fmt.Sprintf("explicit-user-%d@example.com", i)
+		}
+
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "explicit-plus-groups-escalation",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-explicit-groups"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"requester-group"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Users:  explicitUsers,
+					Groups: []string{"group-that-also-has-many"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "user@example.com")
+				c.Set("username", "User")
+				c.Set("user_id", "user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"requester-group"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"requester-group"}, nil
+		}
+
+		// Group members that would exceed total limit when combined with explicit users
+		groupMembers := make([]string, MaxTotalApprovers) // Would exceed when combined
+		for i := range groupMembers {
+			groupMembers[i] = fmt.Sprintf("group-member-%d@example.com", i)
+		}
+		mockResolver := &MockGroupResolver{
+			members: map[string][]string{
+				"group-that-also-has-many": groupMembers,
+			},
+		}
+		ctrl.escalationManager.SetResolver(mockResolver)
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Test explicit users + groups combined limit",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Session creation should succeed even though total potential approvers exceeds limit
+		// The approvers list is just truncated/capped
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode,
+			"session should be created with capped total approvers from explicit + groups")
+	})
+
+	t.Run("remainingCapacity equals zero skips group", func(t *testing.T) {
+		// Tests that when remaining capacity is exactly 0, the group is skipped entirely
+		// rather than being truncated to an empty slice with misleading logs.
+		builder := fake.NewClientBuilder().WithScheme(Scheme)
+		for index, fn := range sessionIndexFunctions {
+			builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+		}
+
+		clusterName := "test-cluster"
+		escalationNamespace := "default"
+		idpName := "test-idp"
+
+		idp := &v1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: idpName},
+			Spec: v1alpha1.IdentityProviderSpec{
+				OIDC: v1alpha1.OIDCConfig{
+					Authority: "https://auth.example.com",
+					ClientID:  "test-client",
+				},
+			},
+		}
+
+		esc := &v1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "remaining-capacity-test",
+				Namespace: escalationNamespace,
+				UID:       types.UID("esc-uid-remaining-capacity"),
+			},
+			Spec: v1alpha1.BreakglassEscalationSpec{
+				Allowed: v1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{clusterName},
+					Groups:   []string{"requester-group"},
+				},
+				EscalatedGroup: "cluster-admin",
+				Approvers: v1alpha1.BreakglassEscalationApprovers{
+					Groups: []string{"first-group", "second-group", "third-group"},
+				},
+				MaxValidFor: "1h",
+			},
+		}
+
+		clusterConfig := &v1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clusterName,
+				Namespace: escalationNamespace,
+			},
+		}
+
+		builder.WithObjects(idp, esc, clusterConfig)
+		cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}, &v1alpha1.IdentityProvider{}).Build()
+		sesmanager := SessionManager{Client: cli}
+		escmanager := EscalationManager{Client: cli}
+
+		logger, _ := zap.NewDevelopment()
+		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+			func(c *gin.Context) {
+				c.Set("email", "user@example.com")
+				c.Set("username", "User")
+				c.Set("user_id", "user@example.com")
+				c.Set("identity_provider_name", idpName)
+				c.Set("groups", []string{"requester-group"})
+				c.Next()
+			}, "/config/config.yaml", nil, cli)
+
+		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
+			return []string{"requester-group"}, nil
+		}
+
+		// Set up groups such that first-group exactly fills the limit,
+		// second-group and third-group should be skipped with remainingCapacity=0
+		firstGroupMembers := make([]string, MaxTotalApprovers) // Fills entire limit
+		for i := range firstGroupMembers {
+			firstGroupMembers[i] = fmt.Sprintf("first-approver-%d@example.com", i)
+		}
+		secondGroupMembers := make([]string, 100)
+		for i := range secondGroupMembers {
+			secondGroupMembers[i] = fmt.Sprintf("second-approver-%d@example.com", i)
+		}
+		mockResolver := &MockGroupResolver{
+			members: map[string][]string{
+				"first-group":  firstGroupMembers,
+				"second-group": secondGroupMembers,
+				"third-group":  {"third-approver@example.com"},
+			},
+		}
+		ctrl.escalationManager.SetResolver(mockResolver)
+
+		engine := gin.New()
+		_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+		reqData := BreakglassSessionRequest{
+			Clustername: clusterName,
+			Username:    "user@example.com",
+			GroupName:   "cluster-admin",
+			Reason:      "Test remainingCapacity=0 edge case",
+		}
+		b, _ := json.Marshal(reqData)
+		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		// Session should be created successfully - second and third groups skipped
+		require.Equal(t, http.StatusCreated, w.Result().StatusCode,
+			"session should be created when some groups are skipped due to zero remaining capacity")
+	})
+}

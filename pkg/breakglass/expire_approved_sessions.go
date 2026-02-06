@@ -13,13 +13,14 @@ import (
 
 // ExpireApprovedSessions sets state to Expired for approved sessions that have passed ExpiresAt
 func (wc *BreakglassSessionController) ExpireApprovedSessions() {
-	sessions, err := wc.sessionManager.GetAllBreakglassSessions(context.Background())
+	// Use indexed query to fetch only approved sessions
+	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), telekomv1alpha1.SessionStateApproved)
 	if err != nil {
 		wc.log.Error("error listing breakglass sessions for approved expiry", err)
 		return
 	}
 	for _, ses := range sessions {
-		if ses.Status.State == telekomv1alpha1.SessionStateApproved && IsSessionExpired(ses) {
+		if IsSessionExpired(ses) {
 			// Log intent and timestamps for easier debugging
 			now := time.Now()
 			wc.log.Infow("Expiring approved session due to reached ExpiresAt", "session", ses.Name, "expiresAt", ses.Status.ExpiresAt.Time, "now", now)

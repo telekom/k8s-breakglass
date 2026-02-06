@@ -373,27 +373,20 @@ func TestStatusReasons(t *testing.T) {
 	}
 }
 
-// Tests if we get status interal server error if listing sessions or escalations returns error
+// Tests if we get status internal server error if listing sessions or escalations returns error
 func TestManagerError(t *testing.T) {
 	errorClusterName := "testError"
+	// Use a flag to control when errors should be returned.
+	// The interceptor errors on ALL BreakglassSessionList/EscalationList queries,
+	// which tests that infrastructure errors are properly propagated as 500.
+	shouldError := true
 	listIntercept := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-		var intercept bool
+		if !shouldError {
+			return c.List(ctx, list, opts...)
+		}
 		switch list.(type) {
 		case *v1alpha1.BreakglassSessionList, *v1alpha1.BreakglassEscalationList:
-			intercept = true
-		}
-		if intercept {
-			lo := client.ListOptions{}
-			for _, opt := range opts {
-				opt.ApplyToList(&lo)
-			}
-			if lo.FieldSelector != nil {
-				for _, req := range lo.FieldSelector.Requirements() {
-					if req.Value == errorClusterName {
-						return errors.New("IGNORE manager unit test error")
-					}
-				}
-			}
+			return errors.New("IGNORE manager unit test error - simulated infrastructure failure")
 		}
 		return c.List(ctx, list, opts...)
 	}}

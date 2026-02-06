@@ -437,3 +437,121 @@ func TestApplyUnstructured_Deployment(t *testing.T) {
 	labels := result.GetLabels()
 	assert.Equal(t, "debug-session", labels["app"])
 }
+
+func TestApplyTypedObject_WithTypeMeta(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	// ConfigMap with TypeMeta explicitly set
+	cm := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "ConfigMap",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "typed-cm",
+			Namespace: "default",
+		},
+		Data: map[string]string{"key": "value"},
+	}
+
+	err := ApplyTypedObject(ctx, fakeClient, cm, scheme)
+	require.NoError(t, err)
+
+	// Verify the ConfigMap was created
+	var result corev1.ConfigMap
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "typed-cm", Namespace: "default"}, &result)
+	require.NoError(t, err)
+	assert.Equal(t, "typed-cm", result.Name)
+	assert.Equal(t, "value", result.Data["key"])
+}
+
+func TestApplyTypedObject_GVKFromScheme(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	// ConfigMap WITHOUT TypeMeta — GVK should be resolved from the scheme
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "schemeless-cm",
+			Namespace: "default",
+		},
+		Data: map[string]string{"foo": "bar"},
+	}
+
+	err := ApplyTypedObject(ctx, fakeClient, cm, scheme)
+	require.NoError(t, err)
+
+	var result corev1.ConfigMap
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "schemeless-cm", Namespace: "default"}, &result)
+	require.NoError(t, err)
+	assert.Equal(t, "bar", result.Data["foo"])
+}
+
+func TestApplyTypedObject_NoGVK_ReturnsError(t *testing.T) {
+	ctx := context.Background()
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(runtime.NewScheme()). // empty scheme — no GVK resolution
+		Build()
+
+	// ConfigMap with no TypeMeta and no scheme registration → cannot determine GVK
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "unknown-cm",
+			Namespace: "default",
+		},
+	}
+
+	err := ApplyTypedObject(ctx, fakeClient, cm, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot apply object without GVK")
+}
+
+func TestApplyTypedObject_Update(t *testing.T) {
+	ctx := context.Background()
+	scheme := newSSATestScheme()
+
+	// Pre-create a ConfigMap
+	existing := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "update-cm",
+			Namespace: "default",
+		},
+		Data: map[string]string{"key": "old"},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(existing).
+		Build()
+
+	// Apply an update via ApplyTypedObject
+	updated := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "ConfigMap",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "update-cm",
+			Namespace: "default",
+		},
+		Data: map[string]string{"key": "new"},
+	}
+
+	err := ApplyTypedObject(ctx, fakeClient, updated, scheme)
+	require.NoError(t, err)
+
+	var result corev1.ConfigMap
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "update-cm", Namespace: "default"}, &result)
+	require.NoError(t, err)
+	assert.Equal(t, "new", result.Data["key"])
+}

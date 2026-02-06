@@ -197,6 +197,52 @@ spec:
                   Primary indicates if this is the primary identity provider (used by default)
                   Deprecated: Primary is kept for backward compatibility. In multi-IDP mode, use ClusterConfig.IdentityProviderRefs instead.
                 type: boolean
+              sessionLimits:
+                description: |-
+                  sessionLimits defines default session limits for users from this IdentityProvider.
+                  Individual escalations can override these limits via sessionLimitsOverride.
+                properties:
+                  groupOverrides:
+                    description: |-
+                      groupOverrides allows different limits for specific groups from this IDP.
+                      For example, platform teams can have higher limits than tenant teams.
+                      Overrides are evaluated in order; first matching group wins.
+                    items:
+                      description: SessionLimitGroupOverride defines session limit
+                        overrides for a specific group.
+                      properties:
+                        group:
+                          description: |-
+                            group is a glob pattern used to match group names (e.g., "platform-*").
+                            Supports wildcards: "*" matches any sequence, "?" matches single char, "[...]" for char classes.
+                            Matching is case-sensitive; the first matching override wins.
+                          minLength: 1
+                          type: string
+                        maxActiveSessionsPerUser:
+                          description: |-
+                            maxActiveSessionsPerUser overrides the default limit for this group.
+                            Only used if unlimited is false.
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        unlimited:
+                          description: |-
+                            unlimited disables session limits entirely for users in this group.
+                            When true, maxActiveSessionsPerUser is ignored.
+                          type: boolean
+                      required:
+                      - group
+                      type: object
+                    type: array
+                  maxActiveSessionsPerUser:
+                    description: |-
+                      maxActiveSessionsPerUser is the default maximum concurrent active sessions per user.
+                      Active sessions are those in Pending or Approved state.
+                      If not set, no limit is enforced by default.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
             required:
             - oidc
             type: object

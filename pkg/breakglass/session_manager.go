@@ -69,6 +69,25 @@ func (c SessionManager) list(ctx context.Context, list client.ObjectList, opts .
 	return c.Client.List(ctx, list, opts...)
 }
 
+// isFieldIndexError returns true if the error indicates a missing field index
+// or unsupported field selector—i.e. it is safe to fall back to a full list +
+// client-side filter.  All other errors (RBAC, network, etcd) are real failures.
+func isFieldIndexError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// controller-runtime cache: "no index with name <field> has been registered"
+	// controller-runtime cache: "Index with name <field> does not exist"
+	// generic phrasing: "field index", "no indexer"
+	// apiserver field selectors: "field label not supported"
+	return strings.Contains(msg, "field index") ||
+		strings.Contains(msg, "no indexer") ||
+		strings.Contains(msg, "no index with name") ||
+		strings.Contains(msg, "field label not supported") ||
+		strings.Contains(msg, "Index with name")
+}
+
 func SessionSelector(name, username, cluster, group string) string {
 	selectors := []string{}
 
@@ -99,6 +118,40 @@ func (c SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]v1alpha
 	}
 	zap.S().Infow("Fetched BreakglassSessions", "count", len(cgal.Items))
 	return cgal.Items, nil
+}
+
+// GetSessionsByState returns all sessions in the specified state.
+// Uses the status.state field index for efficient lookup when available.
+// Falls back to listing all and filtering if index is not registered.
+func (c SessionManager) GetSessionsByState(ctx context.Context,
+	state v1alpha1.BreakglassSessionState,
+) ([]v1alpha1.BreakglassSession, error) {
+	zap.S().Debugw("Fetching BreakglassSessions by state (using field index)", "state", state)
+	bsl := v1alpha1.BreakglassSessionList{}
+	// Use the cached client (c.Client.List) for indexed queries.
+	// Field indexes are only available in the cache, not via APIReader.
+	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"status.state": string(state)}); err != nil {
+		if !isFieldIndexError(err) {
+			// Real error (RBAC, network, etc.) — return it directly.
+			zap.S().Errorw("Failed to list BreakglassSessions by state", "state", state, "error", err)
+			return nil, fmt.Errorf("failed to list BreakglassSessions by state: %w", err)
+		}
+		// Field index not available — fall back to client-side filtering.
+		zap.S().Debugw("Field index not available; falling back to client-side filtering", "state", state, "error", err)
+		all, err := c.GetAllBreakglassSessions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]v1alpha1.BreakglassSession, 0, len(all))
+		for _, s := range all {
+			if s.Status.State == state {
+				filtered = append(filtered, s)
+			}
+		}
+		return filtered, nil
+	}
+	zap.S().Infow("Fetched BreakglassSessions by state (indexed)", "count", len(bsl.Items), "state", state)
+	return bsl.Items, nil
 }
 
 // Get all stored GetClusterGroupAccess
@@ -176,20 +229,68 @@ func (c SessionManager) GetBreakglassSessionByName(ctx context.Context, name str
 	return found, nil
 }
 
+// GetUserBreakglassSessions returns all sessions for a user across all clusters.
+// Uses the spec.user field index for efficient lookup when available.
+// Falls back to listing all and filtering if index is not registered.
+func (c SessionManager) GetUserBreakglassSessions(ctx context.Context,
+	user string,
+) ([]v1alpha1.BreakglassSession, error) {
+	zap.S().Debugw("Fetching BreakglassSessions for user (using field index)", "user", user)
+	bsl := v1alpha1.BreakglassSessionList{}
+	// Use the cached client (c.Client.List) for indexed queries.
+	// Field indexes are only available in the cache, not via APIReader.
+	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.user": user}); err != nil {
+		if !isFieldIndexError(err) {
+			zap.S().Errorw("Failed to list BreakglassSessions for user", "user", user, "error", err)
+			return nil, fmt.Errorf("failed to list BreakglassSessions for user: %w", err)
+		}
+		// Field index not available — fall back to client-side filtering.
+		zap.S().Debugw("Field index not available; falling back to client-side filtering", "user", user, "error", err)
+		all, err := c.GetAllBreakglassSessions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]v1alpha1.BreakglassSession, 0, len(all))
+		for _, s := range all {
+			if s.Spec.User == user {
+				filtered = append(filtered, s)
+			}
+		}
+		return filtered, nil
+	}
+	zap.S().Infow("Fetched BreakglassSessions for user (indexed)", "count", len(bsl.Items), "user", user)
+	return bsl.Items, nil
+}
+
 // Get GetClusterGroupAccess by cluster name.
+// Uses the spec.cluster and spec.user field indexes for efficient lookup when available.
+// Falls back to listing all and filtering if indexes are not registered.
 func (c SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 	cluster string,
 	user string,
 ) ([]v1alpha1.BreakglassSession, error) {
 	zap.S().Debugw("Fetching BreakglassSessions for cluster and user (using field index)", "cluster", cluster, "user", user)
 	bsl := v1alpha1.BreakglassSessionList{}
-	// Use MatchingFields to leverage field indexers registered by the manager
-	if err := c.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster, "spec.user": user}); err != nil {
-		zap.S().Debugw("Field-index based list failed; falling back to selector string", "error", err)
-		selector := fmt.Sprintf("spec.cluster=%s,spec.user=%s",
-			cluster,
-			user)
-		return c.GetBreakglassSessionsWithSelectorString(ctx, selector)
+	// Use the cached client (c.Client.List) for indexed queries.
+	// Field indexes are only available in the cache, not via APIReader.
+	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster, "spec.user": user}); err != nil {
+		if !isFieldIndexError(err) {
+			zap.S().Errorw("Failed to list BreakglassSessions for cluster/user", "cluster", cluster, "user", user, "error", err)
+			return nil, fmt.Errorf("failed to list BreakglassSessions for cluster/user: %w", err)
+		}
+		// Field index not available — fall back to client-side filtering.
+		zap.S().Debugw("Field index not available; falling back to client-side filtering", "cluster", cluster, "user", user, "error", err)
+		all, err := c.GetAllBreakglassSessions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]v1alpha1.BreakglassSession, 0, len(all))
+		for _, s := range all {
+			if s.Spec.Cluster == cluster && s.Spec.User == user {
+				filtered = append(filtered, s)
+			}
+		}
+		return filtered, nil
 	}
 	zap.S().Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
 	return bsl.Items, nil

@@ -411,6 +411,10 @@ func TestMatchPattern(t *testing.T) {
 		// Universal wildcard
 		{"*", "anything", true},
 		{"*", "", true},
+
+		// Invalid glob pattern - falls back to exact match
+		{"[unclosed", "[unclosed", true},  // Exact match succeeds
+		{"[unclosed", "something", false}, // Exact match fails
 	}
 
 	for _, tc := range tests {

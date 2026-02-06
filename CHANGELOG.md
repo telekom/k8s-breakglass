@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **IDP-Based Session Limits**: Session limits are now configured at the IdentityProvider level with support for group-based overrides and escalation-level overrides
+  - New `IdentityProvider.spec.sessionLimits` field with `maxActiveSessionsPerUser` default limit
+  - New `sessionLimits.groupOverrides[]` for group-specific limits (platform teams, SRE, etc.)
+  - Group overrides support `unlimited: true` to disable limits for privileged groups
+  - `BreakglassEscalation.spec.sessionLimitsOverride` allows escalations to override IDP limits
+  - Escalation overrides support `unlimited`, `maxActiveSessionsPerUser`, and `maxActiveSessionsTotal`
+  - Limit resolution order: Escalation override → IDP group override → IDP default → No limit
+  - Glob pattern matching supported for IDP group overrides (e.g., `platform-*` matches `platform-team`)
+  - See [IdentityProvider documentation](docs/identity-provider.md#session-limits) for details
+
 - **SAR Processing Phase Metrics**: New Prometheus histogram `breakglass_webhook_sar_phase_duration_seconds` tracks timing for each phase of SubjectAccessReview authorization
   - Phases tracked: `parse`, `cluster_config`, `sessions`, `debug_session`, `deny_policy`, `rbac_check`, `session_sars`, `escalations`, `total`
   - Enables bottleneck identification and performance optimization
@@ -108,6 +118,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Reference a MailProvider by name for cluster-specific email configuration
 
 ### Security
+
+- **Approver Group Resource Protection**: Added limits to prevent resource exhaustion during approver resolution
+  - `MaxApproverGroupMembers=1000`: Maximum members per approver group to prevent oversized group processing
+  - `MaxTotalApprovers=5000`: Maximum total approvers across all groups to cap memory/CPU usage
+  - Prevents denial-of-service from maliciously large group memberships
+  - Groups exceeding limits are logged with warnings and truncated rather than failing the session
 
 - **AllowedGroups Server-Side Enforcement**: The API now validates `allowedGroups` on both variables and select options
   - Variable-level `allowedGroups` prevents unauthorized users from setting restricted variables

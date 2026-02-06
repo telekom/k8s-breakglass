@@ -153,6 +153,12 @@ type BreakglassEscalationSpec struct {
 	// This enables trusted groups (e.g., SRE) to access high-risk pods when necessary.
 	// +optional
 	PodSecurityOverrides *PodSecurityOverrides `json:"podSecurityOverrides,omitempty"`
+
+	// sessionLimitsOverride allows this escalation to override the IdentityProvider's default session limits.
+	// Use this to grant higher limits (e.g., for platform teams) or disable limits entirely.
+	// If not set, the IdentityProvider's limits apply (including any group-specific overrides).
+	// +optional
+	SessionLimitsOverride *SessionLimitsOverride `json:"sessionLimitsOverride,omitempty"`
 }
 
 // PodSecurityOverrides defines how an escalation can relax pod security rules.
@@ -217,6 +223,31 @@ type NotificationExclusions struct {
 	// groups is a list of approver groups to exclude from notifications
 	// +optional
 	Groups []string `json:"groups,omitempty"`
+}
+
+// SessionLimitsOverride allows an escalation to override the IdentityProvider's session limits.
+// This enables differentiated access for platform teams vs tenants.
+type SessionLimitsOverride struct {
+	// unlimited disables session limits entirely for this escalation.
+	// When true, maxActiveSessionsPerUser and maxActiveSessionsTotal are ignored.
+	// Use with caution - this should only be granted to trusted platform teams.
+	// +optional
+	Unlimited bool `json:"unlimited,omitempty"`
+
+	// maxActiveSessionsPerUser overrides the IdentityProvider's default per-user limit.
+	// Only used if unlimited is false.
+	// If not set (and unlimited is false), the IdentityProvider's limit applies.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxActiveSessionsPerUser *int32 `json:"maxActiveSessionsPerUser,omitempty"`
+
+	// maxActiveSessionsTotal sets the maximum number of simultaneously active sessions
+	// allowed for this escalation across all users.
+	// Only used if unlimited is false.
+	// If not set (and unlimited is false), no escalation-scoped total active session cap is enforced.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxActiveSessionsTotal *int32 `json:"maxActiveSessionsTotal,omitempty"`
 }
 
 type ReasonConfig struct {
