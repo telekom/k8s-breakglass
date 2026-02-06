@@ -48,6 +48,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 const (
@@ -956,12 +957,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 		}
 		if rq != nil {
 			gvk := rq.GetObjectKind().GroupVersionKind()
-			if err := targetClient.Create(ctx, rq); err != nil {
-				if !apierrors.IsAlreadyExists(err) {
-					return fmt.Errorf("failed to create resource quota: %w", err)
-				}
-				log.Infow("ResourceQuota already exists", "name", rq.Name)
+			if err := utils.ApplyObject(ctx, targetClient, rq); err != nil {
+				return fmt.Errorf("failed to apply resource quota: %w", err)
 			}
+			log.Infow("ResourceQuota applied", "name", rq.Name)
 			ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(),
 				Kind:       gvk.Kind,
@@ -980,12 +979,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 		}
 		if pdb != nil {
 			gvk := pdb.GetObjectKind().GroupVersionKind()
-			if err := targetClient.Create(ctx, pdb); err != nil {
-				if !apierrors.IsAlreadyExists(err) {
-					return fmt.Errorf("failed to create pod disruption budget: %w", err)
-				}
-				log.Infow("PodDisruptionBudget already exists", "name", pdb.Name)
+			if err := utils.ApplyObject(ctx, targetClient, pdb); err != nil {
+				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
 			}
+			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
 			ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(),
 				Kind:       gvk.Kind,
@@ -1015,17 +1012,13 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 		}
 	}
 
-	// Capture GVK before Create call as Kubernetes client clears TypeMeta after creation
+	// Capture GVK before Apply call as Kubernetes client may clear TypeMeta
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
-	if err := targetClient.Create(ctx, workload); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			log.Infow("Debug workload already exists", "name", workload.GetName())
-			// Update deployed resources reference
-		} else {
-			return fmt.Errorf("failed to create workload: %w", err)
-		}
+	if err := utils.ApplyObject(ctx, targetClient, workload); err != nil {
+		return fmt.Errorf("failed to apply workload: %w", err)
 	}
+	log.Infow("Debug workload applied", "name", workload.GetName())
 
 	// Record deployed resource using captured GVK
 	ds.Status.DeployedResources = append(ds.Status.DeployedResources, v1alpha1.DeployedResourceRef{

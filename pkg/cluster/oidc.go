@@ -1046,58 +1046,34 @@ func (p *OIDCTokenProvider) performTOFU(ctx context.Context, apiServerURL string
 	return caPEM, nil
 }
 
-// persistTOFUCA saves the discovered CA certificate to the referenced secret
+// persistTOFUCA saves the discovered CA certificate to the referenced secret using SSA
 func (p *OIDCTokenProvider) persistTOFUCA(ctx context.Context, secretRef *v1alpha1.SecretKeyReference, caPEM []byte) error {
 	key := secretRef.Key
 	if key == "" {
 		key = "ca.crt"
 	}
 
-	// Try to get existing secret
-	var secret corev1.Secret
-	err := p.k8s.Get(ctx, types.NamespacedName{
-		Name:      secretRef.Name,
-		Namespace: secretRef.Namespace,
-	}, &secret)
-
-	if apierrors.IsNotFound(err) {
-		// Create new secret
-		secret = corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      secretRef.Name,
-				Namespace: secretRef.Namespace,
-				Labels: map[string]string{
-					"app.kubernetes.io/managed-by":          "breakglass",
-					"breakglass.t-caas.telekom.com/tofu-ca": "true",
-				},
-				Annotations: map[string]string{
-					"breakglass.t-caas.telekom.com/tofu-timestamp": time.Now().UTC().Format(time.RFC3339),
-				},
+	// Use SSA to create or update the secret - no need to check existence first
+	secret := corev1.Secret{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "Secret",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretRef.Name,
+			Namespace: secretRef.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by":          "breakglass",
+				"breakglass.t-caas.telekom.com/tofu-ca": "true",
 			},
-			Type: corev1.SecretTypeOpaque,
-			Data: map[string][]byte{
-				key: caPEM,
+			Annotations: map[string]string{
+				"breakglass.t-caas.telekom.com/tofu-timestamp": time.Now().UTC().Format(time.RFC3339),
 			},
-		}
-		return p.k8s.Create(ctx, &secret)
-	} else if err != nil {
-		return fmt.Errorf("failed to get existing secret: %w", err)
-	}
-
-	// Update existing secret
-	if secret.Data == nil {
-		secret.Data = make(map[string][]byte)
-	}
-	secret.Data[key] = caPEM
-
-	if secret.Annotations == nil {
-		secret.Annotations = make(map[string]string)
-	}
-	secret.Annotations["breakglass.t-caas.telekom.com/tofu-timestamp"] = time.Now().UTC().Format(time.RFC3339)
-
-	secret.TypeMeta = metav1.TypeMeta{
-		APIVersion: corev1.SchemeGroupVersion.String(),
-		Kind:       "Secret",
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			key: caPEM,
+		},
 	}
 	return utils.ApplyObject(ctx, p.k8s, &secret)
 }

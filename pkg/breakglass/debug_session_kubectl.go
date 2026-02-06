@@ -325,7 +325,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	copyPod.ResourceVersion = ""
 	copyPod.UID = ""
 
-	// Create the copy pod
+	// Create the copy pod using Create (not SSA) because each pod copy must be unique
 	if err := targetClient.Create(ctx, copyPod); err != nil {
 		return nil, fmt.Errorf("failed to create pod copy: %w", err)
 	}
@@ -500,7 +500,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		},
 	}
 
-	// Create the pod
+	// Create the pod using Create (not SSA) because each debug pod must be unique
 	if err := targetClient.Create(ctx, debugPod); err != nil {
 		return nil, fmt.Errorf("failed to create node debug pod: %w", err)
 	}
