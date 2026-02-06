@@ -1565,12 +1565,23 @@ func validateGoTemplateSyntax(templateStr string) error {
 	// This ensures template functions like yamlQuote, default, etc. are recognized
 	funcMap := sprig.TxtFuncMap()
 
-	// Add custom breakglass template functions that are used at runtime
-	// These are stubs - we only need them to parse, not execute correctly
+	// Add custom breakglass template functions that are used at runtime.
+	// These are stubs - we only need them to parse, not execute correctly.
 	funcMap["yamlQuote"] = func(s string) string { return s }
 	funcMap["toYaml"] = func(v interface{}) string { return "" }
 	funcMap["fromYaml"] = func(s string) map[string]interface{} { return nil }
 	funcMap["resourceQuantity"] = func(s string) string { return s }
+
+	// Additional custom functions present in the runtime template renderer.
+	// Implemented as minimal stubs so that templates using them pass syntax validation.
+	funcMap["truncName"] = func(s string, maxLen int) string { return s }
+	funcMap["k8sName"] = func(s string) string { return s }
+	funcMap["parseQuantity"] = func(s string) interface{} { return s }
+	funcMap["formatQuantity"] = func(q interface{}) string { return "" }
+	funcMap["required"] = func(args ...interface{}) (interface{}, error) { return nil, nil }
+	funcMap["indent"] = func(spaces int, s string) string { return s }
+	funcMap["nindent"] = func(spaces int, s string) string { return s }
+	funcMap["yamlSafe"] = func(v interface{}) interface{} { return v }
 
 	// Parse the template - this validates syntax
 	_, err := template.New("syntax-check").Funcs(funcMap).Parse(templateStr)

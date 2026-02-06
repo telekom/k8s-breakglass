@@ -1546,6 +1546,74 @@ func TestValidateDebugPodTemplate(t *testing.T) {
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "invalid Go template syntax")
 	})
+
+	t.Run("neither template nor templateString specified", func(t *testing.T) {
+		template := &DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugPodTemplateSpec{
+				// Both template and templateString are empty/nil
+			},
+		}
+		result := ValidateDebugPodTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "either template or templateString must be specified")
+	})
+
+	t.Run("both template and templateString specified - mutually exclusive", func(t *testing.T) {
+		template := &DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugPodTemplateSpec{
+				Template: &DebugPodSpec{
+					Spec: DebugPodSpecInner{
+						Containers: []corev1.Container{
+							{Name: "debug", Image: "busybox"},
+						},
+					},
+				},
+				TemplateString: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test",
+			},
+		}
+		result := ValidateDebugPodTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "mutually exclusive")
+	})
+
+	t.Run("templateString with custom functions validates", func(t *testing.T) {
+		// Verify that custom runtime functions like truncName, k8sName, etc. pass validation
+		template := &DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugPodTemplateSpec{
+				TemplateString: `apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Session.Name | truncName 63 }}
+  labels:
+    app: {{ .Session.Name | k8sName }}
+spec:
+  containers:
+  - name: debug
+    image: busybox
+    resources:
+      limits:
+        memory: {{ parseQuantity "1Gi" | formatQuantity }}
+    env:
+    - name: REQUIRED_VAR
+      value: {{ required "REQUIRED_VAR is required" .Vars.requiredValue }}
+  volumes:
+  - name: config
+    configMap:
+      name: {{ .Session.Name | yamlSafe }}`,
+			},
+		}
+		result := ValidateDebugPodTemplate(template)
+		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
 }
 
 // ==================== DebugSessionTemplate Validation Tests ====================
