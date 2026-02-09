@@ -3022,16 +3022,21 @@ func matchNamespaceFilter(namespace string, filter *v1alpha1.NamespaceFilter) bo
 }
 
 // resolveSchedulingConstraints validates and resolves the scheduling constraints.
-// It merges the template's base constraints with the selected scheduling option.
-// When a binding is provided, its scheduling options take precedence over the template's.
+// It merges the template's and binding's base constraints with the selected scheduling option.
+// When a binding is provided, its base constraints are treated as mandatory additions
+// on top of the template, and its scheduling options take precedence over the template's.
 // Returns the merged constraints, the selected option name, and any error.
 func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	template *v1alpha1.DebugSessionTemplate,
 	selectedOption string,
 	binding *v1alpha1.DebugSessionClusterBinding,
 ) (*v1alpha1.SchedulingConstraints, string, error) {
-	// Start with the template's base scheduling constraints
+	// Start with the template's base scheduling constraints and merge in binding-level
+	// base constraints (which are documented as mandatory additions on top of the template).
 	baseConstraints := template.Spec.SchedulingConstraints
+	if binding != nil && binding.Spec.SchedulingConstraints != nil {
+		baseConstraints = mergeSchedulingConstraints(baseConstraints, binding.Spec.SchedulingConstraints)
+	}
 
 	// Resolve effective scheduling options: binding takes precedence over template
 	var effectiveOpts *v1alpha1.SchedulingOptions

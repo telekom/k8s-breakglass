@@ -548,5 +548,23 @@ describe("VariableForm", () => {
       expect(desc.exists()).toBe(true);
       expect(desc.text()).toContain("Select 1–3 items");
     });
+
+    it("does not show min/max range hint for storageSize input type", () => {
+      const vars: ExtraDeployVariable[] = [
+        {
+          name: "disk",
+          displayName: "Disk Size",
+          inputType: "storageSize",
+          required: false,
+          description: "PVC size",
+          validation: { min: "1", max: "100" },
+        },
+      ];
+      const wrapper = mountForm(vars);
+      const input = wrapper.find('[data-testid="input-disk"]');
+      expect(input.attributes("helper-text")).not.toContain("Range:");
+      expect(input.attributes("helper-text")).not.toContain("Min:");
+      expect(input.attributes("helper-text")).not.toContain("Max:");
+    });
   });
 });

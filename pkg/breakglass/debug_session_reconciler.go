@@ -2224,7 +2224,8 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	}
 
 	if len(ds.Status.DeployedResources) == 0 {
-		return nil
+		// Persist any status changes from auxiliary/pod-template cleanup above
+		return applyDebugSessionStatus(ctx, c.client, ds)
 	}
 
 	// Cleanup main workloads (DaemonSet/Deployment)

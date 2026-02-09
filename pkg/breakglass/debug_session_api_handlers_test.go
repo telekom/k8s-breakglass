@@ -2018,6 +2018,76 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 		assert.Equal(t, "template-opt", selectedOpt)
 		assert.Nil(t, resolved)
 	})
+
+	t.Run("binding base scheduling constraints merged with template base", func(t *testing.T) {
+		// Template has base nodeSelector, binding adds mandatory deniedNodes
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"role": "worker"},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					DeniedNodes:      []string{"control-plane-*"},
+					DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},
+				},
+			},
+		}
+
+		// No scheduling options - just base constraints
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "", selectedOpt)
+		require.NotNil(t, resolved)
+		// Template base constraint preserved
+		assert.Equal(t, "worker", resolved.NodeSelector["role"])
+		// Binding base constraints merged in
+		assert.Contains(t, resolved.DeniedNodes, "control-plane-*")
+		assert.Equal(t, "*", resolved.DeniedNodeLabels["node-role.kubernetes.io/control-plane"])
+	})
+
+	t.Run("binding base constraints merged before option overlay", func(t *testing.T) {
+		// Template + binding base constraints, then option on top
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"base": "template"},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"mandatory": "binding-base"},
+				},
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Options: []telekomv1alpha1.SchedulingOption{
+						{
+							Name:        "gpu",
+							DisplayName: "GPU Nodes",
+							SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+								NodeSelector: map[string]string{"accelerator": "nvidia"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "gpu", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "gpu", selectedOpt)
+		require.NotNil(t, resolved)
+		// Template base
+		assert.Equal(t, "template", resolved.NodeSelector["base"])
+		// Binding mandatory base
+		assert.Equal(t, "binding-base", resolved.NodeSelector["mandatory"])
+		// Option overlay
+		assert.Equal(t, "nvidia", resolved.NodeSelector["accelerator"])
+	})
 }
 
 // ============================================================================

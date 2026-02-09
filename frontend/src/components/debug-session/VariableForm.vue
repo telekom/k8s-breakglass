@@ -236,12 +236,14 @@ function getConstraintHint(variable: ExtraDeployVariable): string {
       parts.push(`Max ${v.maxLength} chars`);
     }
 
-    if (v.min !== undefined && v.max !== undefined) {
-      parts.push(`Range: ${v.min}–${v.max}`);
-    } else if (v.min !== undefined) {
-      parts.push(`Min: ${v.min}`);
-    } else if (v.max !== undefined) {
-      parts.push(`Max: ${v.max}`);
+    if (variable.inputType === "number") {
+      if (v.min !== undefined && v.max !== undefined) {
+        parts.push(`Range: ${v.min}–${v.max}`);
+      } else if (v.min !== undefined) {
+        parts.push(`Min: ${v.min}`);
+      } else if (v.max !== undefined) {
+        parts.push(`Max: ${v.max}`);
+      }
     }
 
     if (v.pattern) {
