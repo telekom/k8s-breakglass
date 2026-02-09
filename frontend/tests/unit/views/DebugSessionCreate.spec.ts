@@ -559,4 +559,434 @@ describe("DebugSessionCreate", () => {
       expect(vm.requiredAuxiliaryResources).toContain("monitoring");
     });
   });
+
+  // -----------------------------------------------------------------
+  // Cluster Search/Filter
+  // -----------------------------------------------------------------
+  describe("cluster filter", () => {
+    function manyClustersMock() {
+      return {
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: Array.from({ length: 8 }, (_, i) => ({
+          name: `cluster-${i}`,
+          displayName: `Cluster ${i}`,
+          environment: i < 4 ? "production" : "staging",
+          location: i % 2 === 0 ? "Frankfurt" : "Berlin",
+          constraints: { maxDuration: "4h" },
+          approval: { required: false },
+        })),
+      };
+    }
+
+    it("shows filter input when more than 5 clusters", async () => {
+      mockGetTemplateClusters.mockResolvedValue(manyClustersMock());
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as { goToStep2: () => void };
+      vm.goToStep2();
+      await flushPromises();
+
+      expect(wrapper.find('[data-testid="cluster-filter"]').exists()).toBe(true);
+      expect(wrapper.find('[data-testid="cluster-filter-input"]').exists()).toBe(true);
+    });
+
+    it("does not show filter when 5 or fewer clusters", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          { name: "c1", displayName: "C1" },
+          { name: "c2", displayName: "C2" },
+        ],
+      });
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as { goToStep2: () => void };
+      vm.goToStep2();
+      await flushPromises();
+
+      expect(wrapper.find('[data-testid="cluster-filter"]').exists()).toBe(false);
+    });
+
+    it("filters clusters by name", async () => {
+      mockGetTemplateClusters.mockResolvedValue(manyClustersMock());
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        filteredClusterDetails: { name: string }[];
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // All 8 should be shown initially
+      expect(vm.filteredClusterDetails).toHaveLength(8);
+
+      // Set the clusterFilter ref directly to simulate user typing
+      const clusterFilter = wrapper.vm as unknown as { clusterFilter: string };
+      clusterFilter.clusterFilter = "staging";
+      await wrapper.vm.$nextTick();
+
+      // Only clusters 4-7 have environment "staging"
+      expect(vm.filteredClusterDetails).toHaveLength(4);
+      expect(vm.filteredClusterDetails.every((c) => c.name.match(/cluster-[4-7]/))).toBe(true);
+
+      // Filter by location
+      clusterFilter.clusterFilter = "Frankfurt";
+      await wrapper.vm.$nextTick();
+
+      // Even-numbered clusters (0, 2, 4, 6) are in Frankfurt
+      expect(vm.filteredClusterDetails).toHaveLength(4);
+
+      // Filter with no match
+      clusterFilter.clusterFilter = "nonexistent";
+      await wrapper.vm.$nextTick();
+      expect(vm.filteredClusterDetails).toHaveLength(0);
+    });
+
+    it("shows cluster count when filter is active", async () => {
+      mockGetTemplateClusters.mockResolvedValue(manyClustersMock());
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as { goToStep2: () => void };
+      vm.goToStep2();
+      await flushPromises();
+
+      const countText = wrapper.find(".cluster-count");
+      expect(countText.exists()).toBe(true);
+      expect(countText.text()).toContain("Showing 8 of 8 clusters");
+    });
+  });
+
+  // -----------------------------------------------------------------
+  // Scheduling Constraint Details
+  // -----------------------------------------------------------------
+  describe("scheduling constraint details display", () => {
+    it("shows scheduling options with constraint details", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "elevated-debug",
+        templateDisplayName: "Elevated Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            schedulingOptions: {
+              required: true,
+              options: [
+                {
+                  name: "worker",
+                  displayName: "Worker Nodes",
+                  default: true,
+                  schedulingConstraints: {
+                    nodeSelector: { "node-role.kubernetes.io/worker": "" },
+                    summary: "Worker nodes only",
+                  },
+                },
+                {
+                  name: "debug",
+                  displayName: "Debug Nodes",
+                  schedulingConstraints: {
+                    nodeSelector: { "node.breakglass.io/debug": "true" },
+                    deniedNodeLabels: { "node-role.kubernetes.io/control-plane": "" },
+                    tolerations: [{ key: "debug-workload", operator: "Exists", effect: "NoSchedule" }],
+                    summary: "Debug-labeled nodes",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      });
+
+      const templates = defaultTemplates();
+      (templates[1]!.schedulingOptions!.options as any[]) = [
+        {
+          name: "worker",
+          displayName: "Worker Nodes",
+          default: true,
+          schedulingConstraints: {
+            nodeSelector: { "node-role.kubernetes.io/worker": "" },
+          },
+        },
+        {
+          name: "debug",
+          displayName: "Debug Nodes",
+          schedulingConstraints: {
+            nodeSelector: { "node.breakglass.io/debug": "true" },
+            deniedNodeLabels: { "node-role.kubernetes.io/control-plane": "" },
+            tolerations: [{ key: "debug-workload", operator: "Exists", effect: "NoSchedule" }],
+          },
+        },
+      ];
+      const wrapper = await createWrapper(templates);
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string; templateRef: string };
+      };
+
+      // Select elevated-debug template
+      vm.form.templateRef = "elevated-debug";
+      await flushPromises();
+
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select the cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Scheduling options section should be visible
+      const schedulingSection = wrapper.find('[data-testid="scheduling-options-section"]');
+      expect(schedulingSection.exists()).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------
+  // Binding Source Labels
+  // -----------------------------------------------------------------
+  describe("binding source labels", () => {
+    it("shows binding source reference on binding option cards", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindingRef: { name: "binding-1", namespace: "breakglass" },
+            bindingOptions: [
+              {
+                bindingRef: { name: "binding-sre", namespace: "breakglass", displayName: "SRE Access" },
+                constraints: { maxDuration: "2h" },
+                approval: { required: true, approverGroups: ["sre-leads"] },
+              },
+              {
+                bindingRef: { name: "binding-oncall", namespace: "emergency-ns", displayName: "On-Call Access" },
+                constraints: { maxDuration: "4h" },
+                approval: { required: false },
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select the cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Binding options section should exist
+      const bindingSection = wrapper.find('[data-testid="binding-options-section"]');
+      expect(bindingSection.exists()).toBe(true);
+
+      // Binding option cards should show source ref
+      const sourceRefs = wrapper.findAll('[data-testid="binding-source-ref"]');
+      expect(sourceRefs).toHaveLength(2);
+      expect(sourceRefs[0]!.text()).toContain("breakglass/binding-sre");
+      expect(sourceRefs[1]!.text()).toContain("emergency-ns/binding-oncall");
+    });
+  });
+
+  // -----------------------------------------------------------------
+  // Extra Deploy Variables
+  // -----------------------------------------------------------------
+  describe("extra deploy variables", () => {
+    it("renders VariableForm when template has extraDeployVariables", async () => {
+      const templates = defaultTemplates();
+      (templates[0] as any).extraDeployVariables = [
+        { name: "testVar", displayName: "Test Var", inputType: "text", required: false },
+      ];
+
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [{ name: "prod-east", displayName: "Production East" }],
+      });
+
+      const wrapper = await createWrapper(templates);
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        hasExtraDeployVariables: boolean;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      // Select cluster
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      // Template should have extra deploy variables
+      expect(vm.hasExtraDeployVariables).toBe(true);
+    });
+
+    it("does not render extra variables section when template has none", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [{ name: "prod-east", displayName: "Production East" }],
+      });
+
+      const wrapper = await createWrapper();
+
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        hasExtraDeployVariables: boolean;
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      expect(vm.hasExtraDeployVariables).toBeFalsy();
+    });
+  });
+
+  describe("auto-approve approval display", () => {
+    it("shows auto-approve label when canAutoApprove is true and approval required", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindingRef: { name: "binding-1", namespace: "default" },
+            bindingOptions: [
+              {
+                bindingRef: { name: "binding-1", namespace: "default" },
+                displayName: "Standard",
+                approval: { required: true, canAutoApprove: true, approverGroups: ["admins"] },
+                constraints: { maxDuration: "2h" },
+              },
+              {
+                bindingRef: { name: "binding-2", namespace: "default" },
+                displayName: "Emergency",
+                approval: { required: false },
+                constraints: { maxDuration: "4h" },
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      const html = wrapper.html();
+      expect(html).toContain("Auto");
+      expect(html).toContain("approval (eligible)");
+    });
+
+    it("shows Required label when canAutoApprove is false and approval required", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindingRef: { name: "binding-1", namespace: "default" },
+            bindingOptions: [
+              {
+                bindingRef: { name: "binding-1", namespace: "default" },
+                displayName: "Standard",
+                approval: { required: true, canAutoApprove: false, approverGroups: ["admins"] },
+                constraints: { maxDuration: "2h" },
+              },
+              {
+                bindingRef: { name: "binding-2", namespace: "default" },
+                displayName: "Emergency",
+                approval: { required: false },
+                constraints: { maxDuration: "4h" },
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      const html = wrapper.html();
+      expect(html).toContain("Required");
+      expect(html).toContain("approval");
+    });
+
+    it("shows approver users when available", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindingRef: { name: "binding-1", namespace: "default" },
+            bindingOptions: [
+              {
+                bindingRef: { name: "binding-1", namespace: "default" },
+                displayName: "Standard",
+                approval: {
+                  required: true,
+                  approverGroups: ["admins"],
+                  approverUsers: ["alice@example.com", "bob@example.com"],
+                },
+                constraints: { maxDuration: "2h" },
+              },
+              {
+                bindingRef: { name: "binding-2", namespace: "default" },
+                displayName: "Emergency",
+                approval: { required: false },
+                constraints: { maxDuration: "4h" },
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      const html = wrapper.html();
+      expect(html).toContain("alice@example.com");
+      expect(html).toContain("bob@example.com");
+    });
+  });
 });

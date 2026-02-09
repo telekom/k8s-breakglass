@@ -176,6 +176,8 @@ type ImpersonationInfo struct {
 type ApprovalInfo struct {
 	Required       bool     `json:"required"`
 	ApproverGroups []string `json:"approverGroups,omitempty"`
+	ApproverUsers  []string `json:"approverUsers,omitempty"`
+	CanAutoApprove bool     `json:"canAutoApprove,omitempty"`
 }
 
 // ClusterStatusInfo about cluster health
@@ -1323,6 +1325,10 @@ func TestDebugSessionAPITemplateClusters(t *testing.T) {
 			// Add approvers to test approval flow
 			Approvers: &telekomv1alpha1.DebugSessionApprovers{
 				Groups: []string{"approvers-group"},
+				Users:  []string{"debug-session-approver@example.com"},
+				AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+					Groups: []string{"debug-session-test-group"},
+				},
 			},
 			// Add required auxiliary resource categories
 			RequiredAuxiliaryResourceCategories: []string{"logging", "monitoring"},
@@ -1455,6 +1461,9 @@ func TestDebugSessionAPITemplateClusters(t *testing.T) {
 		require.NotNil(t, foundCluster.Approval, "Should have approval info from binding")
 		assert.True(t, foundCluster.Approval.Required, "Approval should be required")
 		assert.Contains(t, foundCluster.Approval.ApproverGroups, "approvers-group")
+		assert.Contains(t, foundCluster.Approval.ApproverUsers, "debug-session-approver@example.com")
+		// AutoApproveFor is configured for debug-session-test-group, and the requester belongs to that group
+		assert.True(t, foundCluster.Approval.CanAutoApprove, "Should indicate auto-approve is possible for this user")
 	})
 
 	t.Run("GetTemplateClustersWithRequiredAuxResources", func(t *testing.T) {

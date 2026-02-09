@@ -1117,7 +1117,9 @@ Returns available clusters for a template with resolved constraints from cluster
       },
       "approval": {
         "required": true,
-        "approverGroups": ["security-leads"]
+        "approverGroups": ["security-leads"],
+        "approverUsers": ["admin@example.com"],
+        "canAutoApprove": false
       },
       "status": {
         "healthy": true,
@@ -1142,6 +1144,10 @@ Returns available clusters for a template with resolved constraints from cluster
 | `clusters[].namespaceConstraints` | object | Namespace restrictions and defaults |
 | `clusters[].impersonation` | object | Impersonation configuration |
 | `clusters[].approval` | object | Approval requirements |
+| `clusters[].approval.required` | boolean | Whether the session requires approval |
+| `clusters[].approval.approverGroups` | string[] | Groups that can approve sessions |
+| `clusters[].approval.approverUsers` | string[] | Individual users that can approve sessions |
+| `clusters[].approval.canAutoApprove` | boolean | Whether the requesting user qualifies for auto-approval |
 | `clusters[].status` | object | Cluster health status |
 
 **Error Responses:**

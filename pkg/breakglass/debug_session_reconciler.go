@@ -419,6 +419,19 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *v1alph
 func (c *DebugSessionController) failSession(ctx context.Context, ds *v1alpha1.DebugSession, reason string) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
+	// Best-effort cleanup of any partially deployed resources on the target cluster.
+	// Short-circuit if the session never deployed anything to avoid noisy cross-cluster calls.
+	hasDeployedResources := len(ds.Status.DeployedResources) > 0 ||
+		len(ds.Status.AuxiliaryResourceStatuses) > 0 ||
+		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
+		len(ds.Status.AllowedPods) > 0
+	if hasDeployedResources {
+		if cleanupErr := c.cleanupResources(ctx, ds); cleanupErr != nil {
+			log.Warnw("Best-effort cleanup of partially deployed resources failed during session failure",
+				"cleanupError", cleanupErr)
+		}
+	}
+
 	// Log the failure with full context
 	log.Errorw("Debug session failed",
 		"reason", reason,
@@ -2211,7 +2224,8 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *v1alp
 	}
 
 	if len(ds.Status.DeployedResources) == 0 {
-		return nil
+		// Persist any status changes from auxiliary/pod-template cleanup above
+		return applyDebugSessionStatus(ctx, c.client, ds)
 	}
 
 	// Cleanup main workloads (DaemonSet/Deployment)

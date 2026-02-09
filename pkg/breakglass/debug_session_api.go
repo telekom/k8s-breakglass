@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -496,7 +497,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 
 	// Validate and resolve scheduling option
-	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption)
+	resolvedScheduling, selectedOption, err := c.resolveSchedulingConstraints(template, req.SelectedSchedulingOption, allowedResult.MatchingBinding)
 	if err != nil {
 		reqLog.Warnw("Scheduling option validation failed",
 			"templateRef", req.TemplateRef,
@@ -511,11 +512,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		warnings = append(warnings, fmt.Sprintf("Scheduling option defaulted to '%s'", selectedOption))
 		reqLog.Debugw("Scheduling option defaulted", "defaultedTo", selectedOption)
 	}
-	// Track warning if scheduling option was ignored (template has no options but client sent one)
-	if req.SelectedSchedulingOption != "" && selectedOption == "" &&
-		(template.Spec.SchedulingOptions == nil || len(template.Spec.SchedulingOptions.Options) == 0) {
-		warnings = append(warnings, fmt.Sprintf("Scheduling option '%s' was ignored (template has no scheduling options)", req.SelectedSchedulingOption))
-		reqLog.Debugw("Scheduling option ignored", "ignoredOption", req.SelectedSchedulingOption)
+	// Track warning if scheduling option was ignored (no options in template or binding but client sent one)
+	if req.SelectedSchedulingOption != "" && selectedOption == "" {
+		// Determine if any scheduling options exist (template or binding)
+		hasOptions := (template.Spec.SchedulingOptions != nil && len(template.Spec.SchedulingOptions.Options) > 0) ||
+			(allowedResult.MatchingBinding != nil && allowedResult.MatchingBinding.Spec.SchedulingOptions != nil && len(allowedResult.MatchingBinding.Spec.SchedulingOptions.Options) > 0)
+		if !hasOptions {
+			warnings = append(warnings, fmt.Sprintf("Scheduling option '%s' was ignored (template has no scheduling options)", req.SelectedSchedulingOption))
+			reqLog.Debugw("Scheduling option ignored", "ignoredOption", req.SelectedSchedulingOption)
+		}
 	}
 
 	// Get current user from context
@@ -1308,6 +1313,7 @@ type DebugSessionTemplateResponse struct {
 	RequiresApproval      bool                              `json:"requiresApproval"`
 	SchedulingOptions     *SchedulingOptionsResponse        `json:"schedulingOptions,omitempty"`
 	NamespaceConstraints  *NamespaceConstraintsResponse     `json:"namespaceConstraints,omitempty"`
+	ExtraDeployVariables  []v1alpha1.ExtraDeployVariable    `json:"extraDeployVariables,omitempty"`
 	Priority              int32                             `json:"priority,omitempty"`
 	Hidden                bool                              `json:"hidden,omitempty"`
 	Deprecated            bool                              `json:"deprecated,omitempty"`
@@ -1324,10 +1330,11 @@ type SchedulingOptionsResponse struct {
 
 // SchedulingOptionResponse represents a single scheduling option in API responses
 type SchedulingOptionResponse struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName"`
-	Description string `json:"description,omitempty"`
-	Default     bool   `json:"default,omitempty"`
+	Name                  string                        `json:"name"`
+	DisplayName           string                        `json:"displayName"`
+	Description           string                        `json:"description,omitempty"`
+	Default               bool                          `json:"default,omitempty"`
+	SchedulingConstraints *SchedulingConstraintsSummary `json:"schedulingConstraints,omitempty"`
 }
 
 // NamespaceConstraintsResponse represents namespace constraints in API responses
@@ -1419,8 +1426,18 @@ type BindingReference struct {
 
 // SchedulingConstraintsSummary summarizes scheduling constraints for API responses
 type SchedulingConstraintsSummary struct {
-	Summary          string            `json:"summary,omitempty"`
-	DeniedNodeLabels map[string]string `json:"deniedNodeLabels,omitempty"`
+	Summary          string              `json:"summary,omitempty"`
+	NodeSelector     map[string]string   `json:"nodeSelector,omitempty"`
+	DeniedNodeLabels map[string]string   `json:"deniedNodeLabels,omitempty"`
+	Tolerations      []TolerationSummary `json:"tolerations,omitempty"`
+}
+
+// TolerationSummary summarizes a toleration for API responses
+type TolerationSummary struct {
+	Key      string `json:"key"`
+	Operator string `json:"operator,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Effect   string `json:"effect,omitempty"`
 }
 
 // ImpersonationSummary summarizes impersonation configuration for API responses
@@ -1557,7 +1574,8 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			WorkloadType:          t.Spec.WorkloadType,
 			TargetNamespace:       t.Spec.TargetNamespace,
 			Constraints:           t.Spec.Constraints,
-			RequiresApproval:      t.Spec.Approvers != nil && len(t.Spec.Approvers.Groups) > 0,
+			RequiresApproval:      t.Spec.Approvers != nil && (len(t.Spec.Approvers.Groups) > 0 || len(t.Spec.Approvers.Users) > 0),
+			ExtraDeployVariables:  t.Spec.ExtraDeployVariables,
 			Priority:              t.Spec.Priority,
 			Hidden:                t.Spec.Hidden,
 			Deprecated:            t.Spec.Deprecated,
@@ -1583,10 +1601,11 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			}
 			for _, opt := range t.Spec.SchedulingOptions.Options {
 				resp.SchedulingOptions.Options = append(resp.SchedulingOptions.Options, SchedulingOptionResponse{
-					Name:        opt.Name,
-					DisplayName: opt.DisplayName,
-					Description: opt.Description,
-					Default:     opt.Default,
+					Name:                  opt.Name,
+					DisplayName:           opt.DisplayName,
+					Description:           opt.Description,
+					Default:               opt.Default,
+					SchedulingConstraints: buildConstraintsSummary(opt.SchedulingConstraints),
 				})
 			}
 		}
@@ -1651,18 +1670,19 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 
 	// Build response using same format as list endpoint
 	resp := DebugSessionTemplateResponse{
-		Name:               template.Name,
-		DisplayName:        template.Spec.DisplayName,
-		Description:        template.Spec.Description,
-		Mode:               template.Spec.Mode,
-		WorkloadType:       template.Spec.WorkloadType,
-		TargetNamespace:    template.Spec.TargetNamespace,
-		Constraints:        template.Spec.Constraints,
-		RequiresApproval:   template.Spec.Approvers != nil && len(template.Spec.Approvers.Groups) > 0,
-		Priority:           template.Spec.Priority,
-		Hidden:             template.Spec.Hidden,
-		Deprecated:         template.Spec.Deprecated,
-		DeprecationMessage: template.Spec.DeprecationMessage,
+		Name:                 template.Name,
+		DisplayName:          template.Spec.DisplayName,
+		Description:          template.Spec.Description,
+		Mode:                 template.Spec.Mode,
+		WorkloadType:         template.Spec.WorkloadType,
+		TargetNamespace:      template.Spec.TargetNamespace,
+		Constraints:          template.Spec.Constraints,
+		RequiresApproval:     template.Spec.Approvers != nil && (len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0),
+		ExtraDeployVariables: template.Spec.ExtraDeployVariables,
+		Priority:             template.Spec.Priority,
+		Hidden:               template.Spec.Hidden,
+		Deprecated:           template.Spec.Deprecated,
+		DeprecationMessage:   template.Spec.DeprecationMessage,
 	}
 
 	if template.Spec.PodTemplateRef != nil {
@@ -1671,6 +1691,39 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	if template.Spec.Allowed != nil {
 		resp.AllowedClusters = template.Spec.Allowed.Clusters
 		resp.AllowedGroups = template.Spec.Allowed.Groups
+	}
+
+	// Include scheduling options if present
+	if template.Spec.SchedulingOptions != nil {
+		resp.SchedulingOptions = &SchedulingOptionsResponse{
+			Required: template.Spec.SchedulingOptions.Required,
+			Options:  make([]SchedulingOptionResponse, 0, len(template.Spec.SchedulingOptions.Options)),
+		}
+		for _, opt := range template.Spec.SchedulingOptions.Options {
+			resp.SchedulingOptions.Options = append(resp.SchedulingOptions.Options, SchedulingOptionResponse{
+				Name:                  opt.Name,
+				DisplayName:           opt.DisplayName,
+				Description:           opt.Description,
+				Default:               opt.Default,
+				SchedulingConstraints: buildConstraintsSummary(opt.SchedulingConstraints),
+			})
+		}
+	}
+
+	// Include namespace constraints if present
+	if template.Spec.NamespaceConstraints != nil {
+		resp.NamespaceConstraints = &NamespaceConstraintsResponse{
+			DefaultNamespace:   template.Spec.NamespaceConstraints.DefaultNamespace,
+			AllowUserNamespace: template.Spec.NamespaceConstraints.AllowUserNamespace,
+		}
+		if template.Spec.NamespaceConstraints.AllowedNamespaces != nil {
+			resp.NamespaceConstraints.AllowedPatterns = template.Spec.NamespaceConstraints.AllowedNamespaces.Patterns
+			resp.NamespaceConstraints.AllowedLabelSelectors = convertSelectorTerms(template.Spec.NamespaceConstraints.AllowedNamespaces.SelectorTerms)
+		}
+		if template.Spec.NamespaceConstraints.DeniedNamespaces != nil {
+			resp.NamespaceConstraints.DeniedPatterns = template.Spec.NamespaceConstraints.DeniedNamespaces.Patterns
+			resp.NamespaceConstraints.DeniedLabelSelectors = convertSelectorTerms(template.Spec.NamespaceConstraints.DeniedNamespaces.SelectorTerms)
+		}
 	}
 
 	ctx.JSON(http.StatusOK, resp)
@@ -1778,7 +1831,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	applicableBindings := c.findBindingsForTemplate(template, bindingList.Items)
 
 	// Build the response - resolve clusters from bindings and template's allowed.clusters
-	clusterDetails := c.resolveTemplateClusters(template, applicableBindings, clusterMap)
+	clusterDetails := c.resolveTemplateClusters(template, applicableBindings, clusterMap, groups)
 
 	// Apply optional query filters
 	environment := ctx.Query("environment")
@@ -1897,7 +1950,7 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *v1alpha1.D
 // resolveTemplateClusters resolves all available clusters for a template.
 // When multiple bindings match the same cluster, all binding options are returned
 // so users can select which binding configuration to use.
-func (c *DebugSessionAPIController) resolveTemplateClusters(template *v1alpha1.DebugSessionTemplate, bindings []v1alpha1.DebugSessionClusterBinding, clusterMap map[string]*v1alpha1.ClusterConfig) []AvailableClusterDetail {
+func (c *DebugSessionAPIController) resolveTemplateClusters(template *v1alpha1.DebugSessionTemplate, bindings []v1alpha1.DebugSessionClusterBinding, clusterMap map[string]*v1alpha1.ClusterConfig, userGroups []string) []AvailableClusterDetail {
 	// Build a map of cluster -> all matching bindings
 	clusterBindings := make(map[string][]*v1alpha1.DebugSessionClusterBinding)
 
@@ -1926,7 +1979,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *v1alpha1.D
 		}
 
 		// Build detail with all binding options
-		detail := c.buildClusterDetailWithBindings(template, matchingBindings, cc)
+		detail := c.buildClusterDetailWithBindings(template, matchingBindings, cc, userGroups)
 		result = append(result, detail)
 	}
 
@@ -1949,7 +2002,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *v1alpha1.D
 			}
 
 			// No binding - use template defaults
-			detail := c.buildClusterDetailWithBindings(template, nil, cc)
+			detail := c.buildClusterDetailWithBindings(template, nil, cc, userGroups)
 			result = append(result, detail)
 		}
 	}
@@ -1959,7 +2012,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *v1alpha1.D
 
 // buildClusterDetailWithBindings creates a cluster detail with all matching binding options.
 // The first binding becomes the default (for backward compatibility with BindingRef).
-func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1alpha1.DebugSessionTemplate, matchingBindings []*v1alpha1.DebugSessionClusterBinding, cc *v1alpha1.ClusterConfig) AvailableClusterDetail {
+func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1alpha1.DebugSessionTemplate, matchingBindings []*v1alpha1.DebugSessionClusterBinding, cc *v1alpha1.ClusterConfig, userGroups []string) AvailableClusterDetail {
 	detail := AvailableClusterDetail{
 		Name:        cc.Name,
 		DisplayName: cc.Name,
@@ -1977,7 +2030,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1a
 		detail.SchedulingOptions = c.resolveSchedulingOptions(template, nil)
 		detail.NamespaceConstraints = c.resolveNamespaceConstraints(template, nil)
 		detail.Impersonation = c.resolveImpersonation(template, nil)
-		detail.Approval = c.resolveApproval(template, nil, cc)
+		detail.Approval = c.resolveApproval(template, nil, cc, userGroups)
 		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, nil)
 		return detail
 	}
@@ -1999,7 +2052,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1a
 			NamespaceConstraints:          c.resolveNamespaceConstraints(template, binding),
 			Impersonation:                 c.resolveImpersonation(template, binding),
 			RequiredAuxResourceCategories: c.resolveRequiredAuxResourceCategories(template, binding),
-			Approval:                      c.resolveApproval(template, binding, cc),
+			Approval:                      c.resolveApproval(template, binding, cc, userGroups),
 			RequestReason:                 c.resolveRequestReason(template, binding),
 			ApprovalReason:                c.resolveApprovalReason(template, binding),
 			Notification:                  c.resolveNotification(template, binding),
@@ -2021,7 +2074,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *v1a
 		detail.SchedulingOptions = c.resolveSchedulingOptions(template, primaryBinding)
 		detail.NamespaceConstraints = c.resolveNamespaceConstraints(template, primaryBinding)
 		detail.Impersonation = c.resolveImpersonation(template, primaryBinding)
-		detail.Approval = c.resolveApproval(template, primaryBinding, cc)
+		detail.Approval = c.resolveApproval(template, primaryBinding, cc, userGroups)
 		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, primaryBinding)
 		detail.RequestReason = c.resolveRequestReason(template, primaryBinding)
 		detail.ApprovalReason = c.resolveApprovalReason(template, primaryBinding)
@@ -2131,8 +2184,32 @@ func (c *DebugSessionAPIController) getSchedulingConstraintsSummary(template *v1
 		return nil
 	}
 
+	return buildConstraintsSummary(sc)
+}
+
+// buildConstraintsSummary builds a SchedulingConstraintsSummary from SchedulingConstraints.
+// Shared between cluster-level and per-option constraint summaries.
+func buildConstraintsSummary(sc *v1alpha1.SchedulingConstraints) *SchedulingConstraintsSummary {
+	if sc == nil {
+		return nil
+	}
+
 	summary := &SchedulingConstraintsSummary{
+		NodeSelector:     sc.NodeSelector,
 		DeniedNodeLabels: sc.DeniedNodeLabels,
+	}
+
+	// Convert tolerations to summaries
+	if len(sc.Tolerations) > 0 {
+		summary.Tolerations = make([]TolerationSummary, 0, len(sc.Tolerations))
+		for _, t := range sc.Tolerations {
+			summary.Tolerations = append(summary.Tolerations, TolerationSummary{
+				Key:      t.Key,
+				Operator: string(t.Operator),
+				Value:    t.Value,
+				Effect:   string(t.Effect),
+			})
+		}
 	}
 
 	// Build summary string
@@ -2145,6 +2222,9 @@ func (c *DebugSessionAPIController) getSchedulingConstraintsSummary(template *v1
 	}
 	if len(sc.DeniedNodes) > 0 {
 		parts = append(parts, "Some nodes are denied")
+	}
+	if len(sc.Tolerations) > 0 {
+		parts = append(parts, "Custom tolerations applied")
 	}
 	if len(parts) > 0 {
 		summary.Summary = strings.Join(parts, "; ")
@@ -2175,10 +2255,11 @@ func (c *DebugSessionAPIController) resolveSchedulingOptions(template *v1alpha1.
 
 	for _, opt := range so.Options {
 		response.Options = append(response.Options, SchedulingOptionResponse{
-			Name:        opt.Name,
-			DisplayName: opt.DisplayName,
-			Description: opt.Description,
-			Default:     opt.Default,
+			Name:                  opt.Name,
+			DisplayName:           opt.DisplayName,
+			Description:           opt.Description,
+			Default:               opt.Default,
+			SchedulingConstraints: buildConstraintsSummary(opt.SchedulingConstraints),
 		})
 	}
 
@@ -2244,28 +2325,56 @@ func (c *DebugSessionAPIController) resolveImpersonation(template *v1alpha1.Debu
 	return summary
 }
 
-// resolveApproval resolves approval requirements from binding, template, or ClusterConfig
-func (c *DebugSessionAPIController) resolveApproval(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, cc *v1alpha1.ClusterConfig) *ApprovalInfo {
+// resolveApproval resolves approval requirements from binding, template, or ClusterConfig.
+// It also evaluates AutoApproveFor conditions to determine if the current user
+// would be auto-approved, matching the logic in the reconciler's requiresApproval().
+func (c *DebugSessionAPIController) resolveApproval(template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, cc *v1alpha1.ClusterConfig, userGroups []string) *ApprovalInfo {
 	info := &ApprovalInfo{}
+
+	var autoApproveFor *v1alpha1.AutoApproveConfig
 
 	// Check binding approvers first
 	if binding != nil && binding.Spec.Approvers != nil {
 		info.Required = len(binding.Spec.Approvers.Groups) > 0 || len(binding.Spec.Approvers.Users) > 0
 		info.ApproverGroups = binding.Spec.Approvers.Groups
 		info.ApproverUsers = binding.Spec.Approvers.Users
-		return info
-	}
-
-	// Check template approvers
-	if template.Spec.Approvers != nil {
+		autoApproveFor = binding.Spec.Approvers.AutoApproveFor
+	} else if template.Spec.Approvers != nil {
+		// Check template approvers
 		info.Required = len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0
 		info.ApproverGroups = template.Spec.Approvers.Groups
 		info.ApproverUsers = template.Spec.Approvers.Users
-		return info
+		autoApproveFor = template.Spec.Approvers.AutoApproveFor
 	}
 
-	// No approvers required
+	// Evaluate auto-approve conditions if approval is required
+	if info.Required && autoApproveFor != nil {
+		info.CanAutoApprove = c.evaluateAutoApprove(autoApproveFor, cc.Name, userGroups)
+	}
+
 	return info
+}
+
+// evaluateAutoApprove checks if auto-approve conditions are met for the given cluster and user groups.
+// This mirrors the reconciler's checkAutoApprove() logic for API preview purposes.
+func (c *DebugSessionAPIController) evaluateAutoApprove(autoApprove *v1alpha1.AutoApproveConfig, clusterName string, userGroups []string) bool {
+	// Check cluster patterns
+	for _, pattern := range autoApprove.Clusters {
+		if matched, _ := filepath.Match(pattern, clusterName); matched {
+			return true
+		}
+	}
+
+	// Check group matches
+	for _, autoApproveGroup := range autoApprove.Groups {
+		for _, userGroup := range userGroups {
+			if userGroup == autoApproveGroup {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // resolveClusterStatus returns cluster health status
@@ -2913,22 +3022,37 @@ func matchNamespaceFilter(namespace string, filter *v1alpha1.NamespaceFilter) bo
 }
 
 // resolveSchedulingConstraints validates and resolves the scheduling constraints.
-// It merges the template's base constraints with the selected scheduling option.
+// It merges the template's and binding's base constraints with the selected scheduling option.
+// When a binding is provided, its base constraints are treated as mandatory additions
+// on top of the template, and its scheduling options take precedence over the template's.
 // Returns the merged constraints, the selected option name, and any error.
 func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	template *v1alpha1.DebugSessionTemplate,
 	selectedOption string,
+	binding *v1alpha1.DebugSessionClusterBinding,
 ) (*v1alpha1.SchedulingConstraints, string, error) {
-	// Start with the template's base scheduling constraints
+	// Start with the template's base scheduling constraints and merge in binding-level
+	// base constraints (which are documented as mandatory additions on top of the template).
 	baseConstraints := template.Spec.SchedulingConstraints
+	if binding != nil && binding.Spec.SchedulingConstraints != nil {
+		baseConstraints = mergeSchedulingConstraints(baseConstraints, binding.Spec.SchedulingConstraints)
+	}
 
-	// If no scheduling options defined, just return base constraints
-	// Ignore any user-selected option since the template doesn't support them.
+	// Resolve effective scheduling options: binding takes precedence over template
+	var effectiveOpts *v1alpha1.SchedulingOptions
+	if binding != nil && binding.Spec.SchedulingOptions != nil {
+		effectiveOpts = binding.Spec.SchedulingOptions
+	} else if template.Spec.SchedulingOptions != nil {
+		effectiveOpts = template.Spec.SchedulingOptions
+	}
+
+	// If no scheduling options defined (in template or binding), just return base constraints
+	// Ignore any user-selected option since neither the template nor binding supports them.
 	// This handles cases where the frontend sends a stale scheduling option
 	// after switching to a template that doesn't have scheduling options.
-	if template.Spec.SchedulingOptions == nil || len(template.Spec.SchedulingOptions.Options) == 0 {
+	if effectiveOpts == nil || len(effectiveOpts.Options) == 0 {
 		if selectedOption != "" {
-			c.log.Debugw("Ignoring scheduling option - template has no options defined",
+			c.log.Debugw("Ignoring scheduling option - no options defined in template or binding",
 				"template", template.Name,
 				"selectedOption", selectedOption,
 			)
@@ -2936,7 +3060,7 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 		return baseConstraints, "", nil
 	}
 
-	opts := template.Spec.SchedulingOptions
+	opts := effectiveOpts
 
 	// If required and no option selected, find the default
 	if selectedOption == "" {
@@ -2967,7 +3091,7 @@ func (c *DebugSessionAPIController) resolveSchedulingConstraints(
 	}
 
 	if selectedOpt == nil {
-		return nil, "", fmt.Errorf("scheduling option '%s' not found in template", selectedOption)
+		return nil, "", fmt.Errorf("scheduling option '%s' not found in template or binding", selectedOption)
 	}
 
 	// Merge base constraints with option's constraints

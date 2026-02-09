@@ -4128,3 +4128,656 @@ func TestCheckAutoApprove(t *testing.T) {
 		assert.False(t, controller.checkAutoApprove(autoApprove, session))
 	})
 }
+
+// ============================================================================
+// CLEANUP & FAILURE PATH EDGE CASE TESTS
+// ============================================================================
+
+// TestDebugSessionController_FailSession tests failSession directly for various scenarios.
+// failSession should always transition to Failed state and record the reason, regardless
+// of cleanup outcomes.
+func TestDebugSessionController_FailSession(t *testing.T) {
+	scheme := newTestScheme()
+
+	tests := []struct {
+		name          string
+		initialState  telekomv1alpha1.DebugSessionState
+		reason        string
+		setupSession  func(*telekomv1alpha1.DebugSession)
+		validateAfter func(t *testing.T, session *telekomv1alpha1.DebugSession)
+	}{
+		{
+			name:         "fail_from_pending_state",
+			initialState: telekomv1alpha1.DebugSessionStatePending,
+			reason:       "template not found",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Equal(t, "template not found", ds.Status.Message)
+			},
+		},
+		{
+			name:         "fail_from_pending_approval_state",
+			initialState: telekomv1alpha1.DebugSessionStatePendingApproval,
+			reason:       "template disappeared during approval",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {
+				ds.Status.Approval = &telekomv1alpha1.DebugSessionApproval{
+					Required: true,
+				}
+			},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Contains(t, ds.Status.Message, "template disappeared")
+			},
+		},
+		{
+			name:         "fail_from_active_state_after_deploy_error",
+			initialState: telekomv1alpha1.DebugSessionStateActive,
+			reason:       "failed to deploy resources: connection refused",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {
+				now := metav1.Now()
+				ds.Status.StartsAt = &now
+				expiresAt := metav1.NewTime(now.Add(2 * time.Hour))
+				ds.Status.ExpiresAt = &expiresAt
+			},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Contains(t, ds.Status.Message, "failed to deploy resources")
+			},
+		},
+		{
+			name:         "fail_records_reason_in_status_message",
+			initialState: telekomv1alpha1.DebugSessionStatePending,
+			reason:       "very specific error: namespace quota exceeded in cluster prod-eu-1",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Equal(t, "very specific error: namespace quota exceeded in cluster prod-eu-1", ds.Status.Message)
+			},
+		},
+		{
+			name:         "fail_with_deployed_resources_nil_ccProvider_cleanup_is_noop",
+			initialState: telekomv1alpha1.DebugSessionStateActive,
+			reason:       "workload health check failed",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {
+				// Session has deployed resources but cleanup can't reach the cluster (nil ccProvider)
+				ds.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+					{Kind: "DaemonSet", Name: "debug-ds-test", Namespace: "breakglass-debug", Source: "debug-pod"},
+					{Kind: "ResourceQuota", Name: "debug-rq-test", Namespace: "breakglass-debug", Source: "debug-resourcequota"},
+					{Kind: "PodDisruptionBudget", Name: "debug-pdb-test", Namespace: "breakglass-debug", Source: "debug-pdb"},
+				}
+				ds.Status.AllowedPods = []telekomv1alpha1.AllowedPodRef{
+					{Name: "debug-pod-1", Namespace: "breakglass-debug"},
+				}
+			},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Equal(t, "workload health check failed", ds.Status.Message)
+				// With nil ccProvider, cleanup is a no-op, so resources remain in status
+				assert.NotNil(t, ds.Status.DeployedResources, "Resources stay in status when cleanup is no-op (nil ccProvider)")
+			},
+		},
+		{
+			name:         "fail_with_auxiliary_resources_nil_ccProvider",
+			initialState: telekomv1alpha1.DebugSessionStateActive,
+			reason:       "auxiliary resource deployment failed",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {
+				ds.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+					{Kind: "Deployment", Name: "debug-deploy-test", Namespace: "breakglass-debug", Source: "debug-pod"},
+				}
+				ds.Status.AuxiliaryResourceStatuses = []telekomv1alpha1.AuxiliaryResourceStatus{
+					{Name: "aux-configmap", Kind: "ConfigMap", Namespace: "breakglass-debug", Created: true},
+				}
+			},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Contains(t, ds.Status.Message, "auxiliary resource deployment failed")
+			},
+		},
+		{
+			name:         "fail_with_pod_template_resources_nil_ccProvider",
+			initialState: telekomv1alpha1.DebugSessionStateActive,
+			reason:       "pod template resource conflict",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {
+				ds.Status.PodTemplateResourceStatuses = []telekomv1alpha1.PodTemplateResourceStatus{
+					{Kind: "PersistentVolumeClaim", ResourceName: "debug-pvc", Namespace: "breakglass-debug", Created: true},
+					{Kind: "ConfigMap", ResourceName: "debug-cm", Namespace: "breakglass-debug", Created: true},
+				}
+			},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Contains(t, ds.Status.Message, "pod template resource conflict")
+			},
+		},
+		{
+			name:         "fail_idempotent_already_failed_session",
+			initialState: telekomv1alpha1.DebugSessionStateFailed,
+			reason:       "new failure reason overwrites old one",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {
+				ds.Status.Message = "original failure reason"
+			},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Equal(t, "new failure reason overwrites old one", ds.Status.Message)
+			},
+		},
+		{
+			name:         "fail_from_empty_state_initial_session",
+			initialState: "",
+			reason:       "failed before any state was set",
+			setupSession: func(ds *telekomv1alpha1.DebugSession) {},
+			validateAfter: func(t *testing.T, ds *telekomv1alpha1.DebugSession) {
+				assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				assert.Equal(t, "failed before any state was set", ds.Status.Message)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := newTestDebugSession("fail-session", "test-template", "test-cluster", "user@example.com")
+			session.Status.State = tt.initialState
+			tt.setupSession(session)
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(session).
+				WithStatusSubresource(session).
+				Build()
+
+			controller := &DebugSessionController{
+				log:    zap.NewNop().Sugar(),
+				client: fakeClient,
+				// ccProvider is nil → cleanupResources is a no-op
+			}
+
+			result, err := controller.failSession(context.Background(), session, tt.reason)
+			require.NoError(t, err, "failSession should not return error")
+			assert.Equal(t, reconcile.Result{}, result, "failSession should return empty result (no requeue)")
+
+			// Fetch the session from the fake client to verify persisted state
+			var updated telekomv1alpha1.DebugSession
+			err = fakeClient.Get(context.Background(), types.NamespacedName{
+				Name:      session.Name,
+				Namespace: session.Namespace,
+			}, &updated)
+			require.NoError(t, err)
+
+			tt.validateAfter(t, &updated)
+		})
+	}
+}
+
+// TestDebugSessionController_CleanupResources tests cleanupResources edge cases.
+func TestDebugSessionController_CleanupResources(t *testing.T) {
+	scheme := newTestScheme()
+
+	t.Run("cleanup_with_nil_ccProvider_returns_nil", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-session", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+			{Kind: "DaemonSet", Name: "test-ds", Namespace: "breakglass-debug", Source: "debug-pod"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+			// ccProvider is nil
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		assert.NoError(t, err, "cleanupResources with nil ccProvider should return nil")
+		// Resources remain in status since we couldn't actually clean them up
+		assert.NotNil(t, session.Status.DeployedResources)
+	})
+
+	t.Run("cleanup_with_nil_ccProvider_and_empty_resources", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-empty", "test-template", "test-cluster", "user@example.com")
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		assert.NoError(t, err)
+	})
+
+	t.Run("cleanup_with_nil_ccProvider_and_auxiliary_resources", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-aux", "test-template", "test-cluster", "user@example.com")
+		session.Status.AuxiliaryResourceStatuses = []telekomv1alpha1.AuxiliaryResourceStatus{
+			{Name: "aux-cm", Kind: "ConfigMap", Namespace: "breakglass-debug", Created: true},
+		}
+		session.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+			{Kind: "Deployment", Name: "test-deploy", Namespace: "breakglass-debug", Source: "debug-pod"},
+			{Kind: "ConfigMap", Name: "aux-cm", Namespace: "breakglass-debug", Source: "auxiliary:test"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		assert.NoError(t, err, "Should return nil with nil ccProvider even with auxiliary resources")
+	})
+
+	t.Run("cleanup_with_nil_ccProvider_and_pod_template_resources", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-ptr", "test-template", "test-cluster", "user@example.com")
+		session.Status.PodTemplateResourceStatuses = []telekomv1alpha1.PodTemplateResourceStatus{
+			{Kind: "PersistentVolumeClaim", ResourceName: "debug-pvc", Namespace: "breakglass-debug", Created: true},
+		}
+		session.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+			{Kind: "DaemonSet", Name: "test-ds", Namespace: "breakglass-debug", Source: "debug-pod"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		assert.NoError(t, err, "Should return nil with nil ccProvider even with pod template resources")
+	})
+}
+
+// TestDebugSessionController_Reconcile_FailSessionCleanup tests the full reconcile loop
+// when sessions fail and verifies cleanup behavior end-to-end through the reconciler.
+func TestDebugSessionController_Reconcile_FailSessionCleanup(t *testing.T) {
+	scheme := newTestScheme()
+
+	t.Run("pending_session_with_missing_template_transitions_to_failed", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "missing-template-session",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "test-cluster",
+				TemplateRef: "nonexistent-template",
+				RequestedBy: "user@example.com",
+				Reason:      "testing missing template",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStatePending,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		ctrl := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := ctrl.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Contains(t, updated.Status.Message, "template not found")
+	})
+
+	t.Run("pending_approval_with_missing_template_transitions_to_failed", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "approval-missing-template",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "test-cluster",
+				TemplateRef: "deleted-template",
+				RequestedBy: "user@example.com",
+				Reason:      "testing approval with missing template",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State: telekomv1alpha1.DebugSessionStatePendingApproval,
+				Approval: &telekomv1alpha1.DebugSessionApproval{
+					Required:   true,
+					ApprovedAt: &metav1.Time{Time: time.Now()},
+					ApprovedBy: "approver@example.com",
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		ctrl := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := ctrl.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Contains(t, updated.Status.Message, "template not found")
+	})
+
+	t.Run("failed_state_is_terminal_no_requeue", func(t *testing.T) {
+		session := &telekomv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "already-failed",
+				Namespace: "breakglass",
+			},
+			Spec: telekomv1alpha1.DebugSessionSpec{
+				Cluster:     "test-cluster",
+				TemplateRef: "test-template",
+				RequestedBy: "user@example.com",
+				Reason:      "testing terminal state",
+			},
+			Status: telekomv1alpha1.DebugSessionStatus{
+				State:   telekomv1alpha1.DebugSessionStateFailed,
+				Message: "previously failed",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		ctrl := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := ctrl.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result, "Terminal state should not requeue")
+
+		// Verify state is unchanged
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Equal(t, "previously failed", updated.Status.Message, "Message should not change on re-reconcile of failed session")
+	})
+
+	t.Run("fail_session_without_audit_manager_does_not_panic", func(t *testing.T) {
+		session := newTestDebugSession("no-audit-session", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = telekomv1alpha1.DebugSessionStatePending
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+			// auditManager is nil
+			// mailService is nil
+			// ccProvider is nil
+		}
+
+		// Should not panic even without audit manager, mail service, or ccProvider
+		result, err := controller.failSession(context.Background(), session, "test failure")
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{
+			Name:      session.Name,
+			Namespace: session.Namespace,
+		}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	})
+
+	t.Run("fail_session_preserves_spec_fields", func(t *testing.T) {
+		session := newTestDebugSession("preserve-spec-session", "important-template", "prod-cluster", "admin@example.com")
+		session.Spec.RequestedDuration = "4h"
+		session.Spec.Reason = "critical debugging needed"
+		session.Status.State = telekomv1alpha1.DebugSessionStatePending
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		_, err := controller.failSession(context.Background(), session, "deployment failed")
+		require.NoError(t, err)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{
+			Name:      session.Name,
+			Namespace: session.Namespace,
+		}, &updated)
+		require.NoError(t, err)
+
+		// Verify spec is preserved after failure
+		assert.Equal(t, "important-template", updated.Spec.TemplateRef)
+		assert.Equal(t, "prod-cluster", updated.Spec.Cluster)
+		assert.Equal(t, "admin@example.com", updated.Spec.RequestedBy)
+		assert.Equal(t, "4h", updated.Spec.RequestedDuration)
+		assert.Equal(t, "critical debugging needed", updated.Spec.Reason)
+		// Verify status was updated to Failed
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Equal(t, "deployment failed", updated.Status.Message)
+	})
+}
+
+// TestDebugSessionController_FailSession_PartialDeployScenarios tests that failSession
+// handles various partial deployment states correctly. Even though cleanup is a no-op
+// with nil ccProvider, these tests verify the state machine correctly transitions and
+// that the session status accurately reflects the failure.
+func TestDebugSessionController_FailSession_PartialDeployScenarios(t *testing.T) {
+	scheme := newTestScheme()
+
+	t.Run("fail_after_resourcequota_only_deployed", func(t *testing.T) {
+		// Simulates: ResourceQuota created successfully, then PDB creation failed
+		session := newTestDebugSession("partial-rq", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = telekomv1alpha1.DebugSessionStatePending
+		session.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+			{
+				APIVersion: "v1",
+				Kind:       "ResourceQuota",
+				Name:       "debug-rq-partial-rq",
+				Namespace:  "breakglass-debug",
+				Source:     "debug-resourcequota",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		result, err := controller.failSession(context.Background(), session, "failed to apply pod disruption budget: forbidden")
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Contains(t, updated.Status.Message, "failed to apply pod disruption budget")
+	})
+
+	t.Run("fail_after_rq_and_pdb_deployed", func(t *testing.T) {
+		// Simulates: ResourceQuota + PDB created, workload build failed
+		session := newTestDebugSession("partial-rq-pdb", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = telekomv1alpha1.DebugSessionStatePending
+		session.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+			{Kind: "ResourceQuota", Name: "debug-rq-partial-rq-pdb", Namespace: "breakglass-debug", Source: "debug-resourcequota"},
+			{Kind: "PodDisruptionBudget", Name: "debug-pdb-partial-rq-pdb", Namespace: "breakglass-debug", Source: "debug-pdb"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		result, err := controller.failSession(context.Background(), session, "failed to build workload: invalid pod template")
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Contains(t, updated.Status.Message, "failed to build workload")
+	})
+
+	t.Run("fail_after_full_deploy_with_all_resource_types", func(t *testing.T) {
+		// Simulates: Everything deployed but auxiliary resources failed
+		session := newTestDebugSession("partial-full", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = telekomv1alpha1.DebugSessionStateActive
+		session.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+			{Kind: "ResourceQuota", Name: "debug-rq-full", Namespace: "breakglass-debug", Source: "debug-resourcequota"},
+			{Kind: "PodDisruptionBudget", Name: "debug-pdb-full", Namespace: "breakglass-debug", Source: "debug-pdb"},
+			{Kind: "DaemonSet", Name: "debug-ds-full", Namespace: "breakglass-debug", Source: "debug-pod"},
+			{Kind: "ConfigMap", Name: "aux-cm", Namespace: "breakglass-debug", Source: "auxiliary:monitoring"},
+		}
+		session.Status.AuxiliaryResourceStatuses = []telekomv1alpha1.AuxiliaryResourceStatus{
+			{Name: "aux-cm", Kind: "ConfigMap", Namespace: "breakglass-debug", Created: true},
+		}
+		session.Status.PodTemplateResourceStatuses = []telekomv1alpha1.PodTemplateResourceStatus{
+			{Kind: "PersistentVolumeClaim", ResourceName: "debug-pvc", Namespace: "breakglass-debug", Created: true},
+		}
+		session.Status.AllowedPods = []telekomv1alpha1.AllowedPodRef{
+			{Name: "debug-pod-1", Namespace: "breakglass-debug"},
+			{Name: "debug-pod-2", Namespace: "breakglass-debug"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		result, err := controller.failSession(context.Background(), session, "post-deploy health check failed")
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Equal(t, "post-deploy health check failed", updated.Status.Message)
+	})
+
+	t.Run("fail_with_deployment_workload_instead_of_daemonset", func(t *testing.T) {
+		session := newTestDebugSession("partial-deploy", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = telekomv1alpha1.DebugSessionStatePending
+		session.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+			{Kind: "Deployment", Name: "debug-deployment-test", Namespace: "breakglass-debug", Source: "debug-pod"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		result, err := controller.failSession(context.Background(), session, "deployment pods not ready after timeout")
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	})
+
+	t.Run("fail_after_pod_template_resources_deployed", func(t *testing.T) {
+		// Simulates: PVCs/ConfigMaps from multi-doc template created, workload apply failed
+		session := newTestDebugSession("partial-ptr", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = telekomv1alpha1.DebugSessionStatePending
+		session.Status.PodTemplateResourceStatuses = []telekomv1alpha1.PodTemplateResourceStatus{
+			{Kind: "PersistentVolumeClaim", ResourceName: "debug-data-pvc", Namespace: "breakglass-debug", Created: true},
+			{Kind: "ConfigMap", ResourceName: "debug-script-cm", Namespace: "breakglass-debug", Created: true},
+			{Kind: "Secret", ResourceName: "debug-credentials", Namespace: "breakglass-debug", Created: true},
+		}
+		session.Status.DeployedResources = []telekomv1alpha1.DeployedResourceRef{
+			{Kind: "ResourceQuota", Name: "debug-rq-ptr", Namespace: "breakglass-debug", Source: "debug-resourcequota"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(session).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		result, err := controller.failSession(context.Background(), session, "failed to apply workload: image pull backoff")
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+
+		var updated telekomv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, telekomv1alpha1.DebugSessionStateFailed, updated.Status.State)
+		assert.Contains(t, updated.Status.Message, "failed to apply workload")
+	})
+}

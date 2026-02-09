@@ -123,7 +123,18 @@ const mockDebugSessionTemplates = [
         portForward: true,
       },
       // Resolved cluster names (no globs)
-      allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu", "global-platform-us", "global-platform-apac"],
+      allowedClusters: [
+        "t-sec-1st.dtmd11",
+        "global-platform-eu",
+        "global-platform-us",
+        "global-platform-apac",
+        "staging-eu-west",
+        "staging-us-east",
+        "dev-cluster-bn",
+        "ref-cluster-bn",
+        "canary-eu",
+        "dr-cluster-us",
+      ],
       allowedGroups: ["sre-team", "platform-oncall", "dtcaas-platform_emergency"],
       // Extra deploy variables for runtime customization
       extraDeployVariables: [
@@ -153,10 +164,10 @@ const mockDebugSessionTemplates = [
         },
         {
           name: "captureStorageGi",
-          displayName: "Capture Storage (Gi)",
-          description: "Storage for packet captures (shown when packet capture enabled)",
-          inputType: "number",
-          default: "5",
+          displayName: "Capture Storage",
+          description: "Storage volume for packet captures",
+          inputType: "storageSize",
+          default: "5Gi",
           validation: { min: "1", max: "50" },
         },
         {
@@ -179,17 +190,32 @@ const mockDebugSessionTemplates = [
             displayName: "Any Worker Node",
             description: "Deploy to any available worker node",
             default: true,
+            schedulingConstraints: {
+              nodeSelector: { "node-role.kubernetes.io/worker": "" },
+              summary: "Schedules on any worker node",
+            },
           },
           {
             name: "dedicated-debug",
             displayName: "Dedicated Debug Nodes",
             description: "Deploy to nodes labeled for debugging workloads",
+            schedulingConstraints: {
+              nodeSelector: { "node.breakglass.io/debug": "true" },
+              deniedNodeLabels: { "node-role.kubernetes.io/control-plane": "" },
+              tolerations: [{ key: "debug-workload", operator: "Exists", effect: "NoSchedule" }],
+              summary: "Debug-labeled nodes, excludes control-plane",
+            },
           },
           {
             name: "high-memory",
             displayName: "High Memory Nodes",
             description: "Deploy to nodes with extra memory for heap dumps",
             allowedGroups: ["sre-team"],
+            schedulingConstraints: {
+              nodeSelector: { "node.kubernetes.io/instance-type": "m5.4xlarge", "node-role.kubernetes.io/worker": "" },
+              tolerations: [{ key: "high-memory", value: "reserved", effect: "NoSchedule" }],
+              summary: "m5.4xlarge worker nodes with high-memory reservation",
+            },
           },
         ],
       },
@@ -245,6 +271,10 @@ const mockDebugSessionTemplates = [
         "global-platform-apac",
         "edge-hub",
         "ops-lab",
+        "dev-cluster-bn",
+        "dev-cluster-ba",
+        "test-edge-hub",
+        "staging-eu-west",
       ],
       allowedGroups: ["developers", "sre-team"],
       requiresApproval: false,
@@ -257,11 +287,18 @@ const mockDebugSessionTemplates = [
             displayName: "Any Node",
             description: "Debug pods on any available node",
             default: true,
+            schedulingConstraints: {
+              summary: "Any available node",
+            },
           },
           {
             name: "same-az",
             displayName: "Same Availability Zone",
             description: "Deploy debug pods in the same AZ as target workload",
+            schedulingConstraints: {
+              nodeSelector: { "topology.kubernetes.io/zone": "eu-west-1a" },
+              summary: "Same AZ as target workload",
+            },
           },
         ],
       },
@@ -294,6 +331,18 @@ const mockDebugSessionTemplates = [
         ephemeralContainers: { enabled: true },
         nodeDebug: { enabled: true },
         podCopy: { enabled: false },
+      },
+      // Reason configuration with suggested reasons
+      requestReason: {
+        required: true,
+        minLength: 20,
+        suggestedReasons: [
+          "Kernel panic / node not ready investigation",
+          "Container runtime (containerd) troubleshooting",
+          "kubelet debug / node resource pressure",
+          "Network / CNI plugin debugging at node level",
+          "Storage / CSI driver investigation",
+        ],
       },
       constraints: {
         maxDuration: "1h",
@@ -368,17 +417,32 @@ const mockDebugSessionTemplates = [
             displayName: "Worker Nodes Only",
             description: "Debug on worker nodes (safer)",
             default: true,
+            schedulingConstraints: {
+              nodeSelector: { "node-role.kubernetes.io/worker": "" },
+              deniedNodeLabels: { "node-role.kubernetes.io/control-plane": "" },
+              summary: "Worker nodes only, excludes control-plane",
+            },
           },
           {
             name: "control-plane",
             displayName: "Control Plane",
             description: "Debug on control plane nodes (high risk)",
             allowedGroups: ["sre-leads"],
+            schedulingConstraints: {
+              nodeSelector: { "node-role.kubernetes.io/control-plane": "" },
+              tolerations: [{ key: "node-role.kubernetes.io/control-plane", operator: "Exists", effect: "NoSchedule" }],
+              summary: "Control plane nodes with NoSchedule toleration",
+            },
           },
           {
             name: "infra-nodes",
             displayName: "Infrastructure Nodes",
             description: "Debug on infra nodes (ingress, monitoring)",
+            schedulingConstraints: {
+              nodeSelector: { "node-role.kubernetes.io/infra": "true" },
+              tolerations: [{ key: "infra", value: "reserved", effect: "NoSchedule" }],
+              summary: "Infrastructure nodes (ingress, monitoring)",
+            },
           },
         ],
       },
@@ -847,6 +911,7 @@ export function listDebugSessionTemplates(_userGroups = []) {
     schedulingOptions: t.spec.schedulingOptions,
     namespaceConstraints: t.spec.namespaceConstraints,
     extraDeployVariables: t.spec.extraDeployVariables,
+    requestReason: t.spec.requestReason,
     hasAvailableClusters: t.spec.allowedClusters?.length > 0,
     availableClusterCount: t.spec.allowedClusters?.length || 0,
   }));
@@ -870,6 +935,15 @@ const mockClusterMetadata = {
   "lab-cluster": { displayName: "Development Lab", environment: "development", location: "Berlin" },
   "ops-lab": { displayName: "Operations Lab", environment: "staging", location: "Munich" },
   "edge-hub": { displayName: "Edge Hub", environment: "edge", location: "Multi-Region" },
+  "staging-eu-west": { displayName: "Staging EU West", environment: "staging", location: "Dublin" },
+  "staging-us-east": { displayName: "Staging US East", environment: "staging", location: "Virginia" },
+  "dev-cluster-bn": { displayName: "Dev Cluster BN", environment: "development", location: "Bonn" },
+  "dev-cluster-ba": { displayName: "Dev Cluster BA", environment: "development", location: "Bad Aibling" },
+  "ref-cluster-bn": { displayName: "Reference Cluster BN", environment: "reference", location: "Bonn" },
+  "test-edge-hub": { displayName: "Test Edge Hub", environment: "test", location: "Berlin" },
+  "prod-sa2-ba": { displayName: "Production SA2 BA", environment: "production", location: "Bad Aibling" },
+  "canary-eu": { displayName: "Canary EU", environment: "canary", location: "Frankfurt" },
+  "dr-cluster-us": { displayName: "Disaster Recovery US", environment: "dr", location: "Oregon" },
 };
 
 // Mock cluster bindings for templates
@@ -882,8 +956,25 @@ const mockClusterBindings = {
       schedulingOptions: {
         required: false,
         options: [
-          { name: "any-worker", displayName: "Any Worker Node", default: true },
-          { name: "dedicated-debug", displayName: "Dedicated Debug Nodes" },
+          {
+            name: "any-worker",
+            displayName: "Any Worker Node",
+            default: true,
+            schedulingConstraints: {
+              nodeSelector: { "node-role.kubernetes.io/worker": "" },
+              summary: "Any worker node",
+            },
+          },
+          {
+            name: "dedicated-debug",
+            displayName: "Dedicated Debug Nodes",
+            schedulingConstraints: {
+              nodeSelector: { "node.breakglass.io/debug": "true" },
+              deniedNodeLabels: { "node-role.kubernetes.io/control-plane": "" },
+              tolerations: [{ key: "debug-workload", operator: "Exists", effect: "NoSchedule" }],
+              summary: "Nodes labeled for debug workloads, tolerating debug-workload taint",
+            },
+          },
         ],
       },
       namespaceConstraints: {

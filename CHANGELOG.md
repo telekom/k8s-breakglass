@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
+- **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
+- **Comprehensive Cleanup Edge Case Tests**: Added 22 unit tests covering failSession and cleanupResources behavior across all failure scenarios including partial deploys, nil cluster providers, idempotent re-fail, and spec preservation
+
+### Changed
+
+- **Frontend Debug Session Variables**: Improved variable form validation with inline hints showing allowed values, default indicators, and dark theme support for approval cards
+
+### Fixed
+
+- **Auto-Approve in resolveApproval API**: The `resolveApproval()` handler now evaluates auto-approve eligibility using `evaluateAutoApprove()`, correctly populating `canAutoApprove` in API responses
+- **Frontend Log Spam**: Removed excessive console logging of full approval objects during debug session creation
+
 - **IDP-Based Session Limits**: Session limits are now configured at the IdentityProvider level with support for group-based overrides and escalation-level overrides
   - New `IdentityProvider.spec.sessionLimits` field with `maxActiveSessionsPerUser` default limit
   - New `sessionLimits.groupOverrides[]` for group-specific limits (platform teams, SRE, etc.)

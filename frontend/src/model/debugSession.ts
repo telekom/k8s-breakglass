@@ -127,6 +127,7 @@ export interface SchedulingOptionResponse {
   displayName: string;
   description?: string;
   default?: boolean;
+  schedulingConstraints?: SchedulingConstraintsSummary;
 }
 
 // Namespace constraints for debug sessions
@@ -363,6 +364,7 @@ export interface BindingReference {
 
 // Summary of scheduling constraints from binding/template
 export interface SchedulingConstraintsSummary {
+  summary?: string;
   nodeSelector?: Record<string, string>;
   tolerations?: TolerationSummary[];
   deniedNodes?: string[];
@@ -387,6 +389,8 @@ export interface ImpersonationSummary {
 export interface ApprovalInfo {
   required: boolean;
   approverGroups?: string[];
+  approverUsers?: string[];
+  canAutoApprove?: boolean;
 }
 
 // Cluster health status

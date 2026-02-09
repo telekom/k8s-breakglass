@@ -1820,7 +1820,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "")
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", nil)
 		require.NoError(t, err)
 		assert.Empty(t, selectedOpt)
 		require.NotNil(t, resolved)
@@ -1838,7 +1838,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				// No SchedulingOptions defined
 			},
 		}
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "any-worker")
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "any-worker", nil)
 		require.NoError(t, err, "should not error when stale option is sent")
 		assert.Empty(t, selectedOpt, "selected option should be empty")
 		require.NotNil(t, resolved)
@@ -1855,7 +1855,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		_, _, err := ctrl.resolveSchedulingConstraints(template, "nonexistent")
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "nonexistent", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found in template")
 	})
@@ -1871,7 +1871,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		_, _, err := ctrl.resolveSchedulingConstraints(template, "")
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "required but none selected")
 	})
@@ -1888,7 +1888,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		_, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "")
+		_, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "standard", selectedOpt)
 	})
@@ -1914,7 +1914,7 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "sriov")
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "sriov", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "sriov", selectedOpt)
 		require.NotNil(t, resolved)
@@ -1926,6 +1926,167 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 		// Denied nodes should be merged (additive)
 		assert.Contains(t, resolved.DeniedNodes, "control-plane-*")
 		assert.Contains(t, resolved.DeniedNodes, "old-node-*")
+	})
+
+	t.Run("binding scheduling options take precedence over template", func(t *testing.T) {
+		// Template has scheduling options, but binding overrides them
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"base": "value"},
+				},
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Options: []telekomv1alpha1.SchedulingOption{
+						{Name: "template-opt", DisplayName: "Template Option"},
+					},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Options: []telekomv1alpha1.SchedulingOption{
+						{
+							Name:        "binding-opt",
+							DisplayName: "Binding Option",
+							SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+								NodeSelector: map[string]string{"binding-key": "binding-val"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "binding-opt", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "binding-opt", selectedOpt)
+		require.NotNil(t, resolved)
+		assert.Equal(t, "binding-val", resolved.NodeSelector["binding-key"])
+		assert.Equal(t, "value", resolved.NodeSelector["base"])
+	})
+
+	t.Run("binding with options accepts binding option even when template has none", func(t *testing.T) {
+		// Template has NO scheduling options, but binding adds them
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},
+				},
+				// No SchedulingOptions at template level
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Options: []telekomv1alpha1.SchedulingOption{
+						{
+							Name:        "dedicated-debug",
+							DisplayName: "Dedicated Debug Nodes",
+							Default:     true,
+							SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+								NodeSelector: map[string]string{"node-type": "debug"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "dedicated-debug", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "dedicated-debug", selectedOpt)
+		require.NotNil(t, resolved)
+		// Should have binding's nodeSelector merged with base constraints
+		assert.Equal(t, "debug", resolved.NodeSelector["node-type"])
+		assert.Equal(t, "*", resolved.DeniedNodeLabels["node-role.kubernetes.io/control-plane"])
+	})
+
+	t.Run("nil binding falls back to template options", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Options: []telekomv1alpha1.SchedulingOption{
+						{Name: "template-opt", DisplayName: "Template Option"},
+					},
+				},
+			},
+		}
+
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "template-opt", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "template-opt", selectedOpt)
+		assert.Nil(t, resolved)
+	})
+
+	t.Run("binding base scheduling constraints merged with template base", func(t *testing.T) {
+		// Template has base nodeSelector, binding adds mandatory deniedNodes
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"role": "worker"},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					DeniedNodes:      []string{"control-plane-*"},
+					DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},
+				},
+			},
+		}
+
+		// No scheduling options - just base constraints
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "", selectedOpt)
+		require.NotNil(t, resolved)
+		// Template base constraint preserved
+		assert.Equal(t, "worker", resolved.NodeSelector["role"])
+		// Binding base constraints merged in
+		assert.Contains(t, resolved.DeniedNodes, "control-plane-*")
+		assert.Equal(t, "*", resolved.DeniedNodeLabels["node-role.kubernetes.io/control-plane"])
+	})
+
+	t.Run("binding base constraints merged before option overlay", func(t *testing.T) {
+		// Template + binding base constraints, then option on top
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"base": "template"},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"mandatory": "binding-base"},
+				},
+				SchedulingOptions: &telekomv1alpha1.SchedulingOptions{
+					Options: []telekomv1alpha1.SchedulingOption{
+						{
+							Name:        "gpu",
+							DisplayName: "GPU Nodes",
+							SchedulingConstraints: &telekomv1alpha1.SchedulingConstraints{
+								NodeSelector: map[string]string{"accelerator": "nvidia"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		resolved, selectedOpt, err := ctrl.resolveSchedulingConstraints(template, "gpu", binding)
+		require.NoError(t, err)
+		assert.Equal(t, "gpu", selectedOpt)
+		require.NotNil(t, resolved)
+		// Template base
+		assert.Equal(t, "template", resolved.NodeSelector["base"])
+		// Binding mandatory base
+		assert.Equal(t, "binding-base", resolved.NodeSelector["mandatory"])
+		// Option overlay
+		assert.Equal(t, "nvidia", resolved.NodeSelector["accelerator"])
 	})
 }
 

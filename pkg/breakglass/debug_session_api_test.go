@@ -4472,3 +4472,223 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 func ptrInt(i int) *int {
 	return &i
 }
+
+func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionAPIController{log: logger}
+
+	cc := &telekomv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-cluster-eu"},
+	}
+
+	t.Run("no approvers returns not required", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{},
+		}
+		result := controller.resolveApproval(template, nil, cc, []string{"dev-team"})
+		assert.False(t, result.Required)
+		assert.False(t, result.CanAutoApprove)
+	})
+
+	t.Run("template approvers required without auto-approve", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approver-group"},
+					Users:  []string{"admin@example.com"},
+				},
+			},
+		}
+		result := controller.resolveApproval(template, nil, cc, []string{"dev-team"})
+		assert.True(t, result.Required)
+		assert.False(t, result.CanAutoApprove)
+		assert.Equal(t, []string{"approver-group"}, result.ApproverGroups)
+		assert.Equal(t, []string{"admin@example.com"}, result.ApproverUsers)
+	})
+
+	t.Run("auto-approve via group match", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approver-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Groups: []string{"sre-team", "dev-team"},
+					},
+				},
+			},
+		}
+		result := controller.resolveApproval(template, nil, cc, []string{"dev-team"})
+		assert.True(t, result.Required)
+		assert.True(t, result.CanAutoApprove)
+	})
+
+	t.Run("auto-approve via cluster pattern match", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approver-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"prod-*"},
+					},
+				},
+			},
+		}
+		result := controller.resolveApproval(template, nil, cc, []string{"other-team"})
+		assert.True(t, result.Required)
+		assert.True(t, result.CanAutoApprove)
+	})
+
+	t.Run("auto-approve cluster pattern no match", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"approver-group"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Clusters: []string{"staging-*"},
+					},
+				},
+			},
+		}
+		result := controller.resolveApproval(template, nil, cc, []string{"other-team"})
+		assert.True(t, result.Required)
+		assert.False(t, result.CanAutoApprove)
+	})
+
+	t.Run("binding approvers take precedence over template", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Groups: []string{"template-approvers"},
+				},
+			},
+		}
+		binding := &telekomv1alpha1.DebugSessionClusterBinding{
+			Spec: telekomv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					Users: []string{"binding-approver@example.com"},
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Groups: []string{"privileged-team"},
+					},
+				},
+			},
+		}
+		// User not in privileged group - no auto-approve
+		result := controller.resolveApproval(template, binding, cc, []string{"dev-team"})
+		assert.True(t, result.Required)
+		assert.False(t, result.CanAutoApprove)
+		assert.Equal(t, []string{"binding-approver@example.com"}, result.ApproverUsers)
+
+		// User in privileged group - auto-approve
+		result = controller.resolveApproval(template, binding, cc, []string{"privileged-team"})
+		assert.True(t, result.Required)
+		assert.True(t, result.CanAutoApprove)
+	})
+
+	t.Run("no auto-approve when approval not required", func(t *testing.T) {
+		template := &telekomv1alpha1.DebugSessionTemplate{
+			Spec: telekomv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &telekomv1alpha1.DebugSessionApprovers{
+					// No groups or users specified = approval not required
+					AutoApproveFor: &telekomv1alpha1.AutoApproveConfig{
+						Groups: []string{"dev-team"},
+					},
+				},
+			},
+		}
+		result := controller.resolveApproval(template, nil, cc, []string{"dev-team"})
+		assert.False(t, result.Required)
+		assert.False(t, result.CanAutoApprove, "CanAutoApprove should be false when approval is not required")
+	})
+}
+
+func TestDebugSessionAPIController_evaluateAutoApprove(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	controller := &DebugSessionAPIController{log: logger}
+
+	tests := []struct {
+		name       string
+		config     *telekomv1alpha1.AutoApproveConfig
+		cluster    string
+		userGroups []string
+		wantResult bool
+	}{
+		{
+			name:       "empty config returns false",
+			config:     &telekomv1alpha1.AutoApproveConfig{},
+			cluster:    "prod",
+			userGroups: []string{"team-a"},
+			wantResult: false,
+		},
+		{
+			name: "exact cluster match",
+			config: &telekomv1alpha1.AutoApproveConfig{
+				Clusters: []string{"prod"},
+			},
+			cluster:    "prod",
+			userGroups: nil,
+			wantResult: true,
+		},
+		{
+			name: "wildcard cluster match",
+			config: &telekomv1alpha1.AutoApproveConfig{
+				Clusters: []string{"prod-*"},
+			},
+			cluster:    "prod-eu-west",
+			userGroups: nil,
+			wantResult: true,
+		},
+		{
+			name: "cluster no match",
+			config: &telekomv1alpha1.AutoApproveConfig{
+				Clusters: []string{"staging-*"},
+			},
+			cluster:    "prod-eu-west",
+			userGroups: nil,
+			wantResult: false,
+		},
+		{
+			name: "group match",
+			config: &telekomv1alpha1.AutoApproveConfig{
+				Groups: []string{"sre-team"},
+			},
+			cluster:    "prod",
+			userGroups: []string{"dev-team", "sre-team"},
+			wantResult: true,
+		},
+		{
+			name: "group no match",
+			config: &telekomv1alpha1.AutoApproveConfig{
+				Groups: []string{"sre-team"},
+			},
+			cluster:    "prod",
+			userGroups: []string{"dev-team"},
+			wantResult: false,
+		},
+		{
+			name: "cluster match wins over group miss",
+			config: &telekomv1alpha1.AutoApproveConfig{
+				Clusters: []string{"prod-*"},
+				Groups:   []string{"admin"},
+			},
+			cluster:    "prod-eu",
+			userGroups: []string{"dev-team"},
+			wantResult: true,
+		},
+		{
+			name: "nil user groups with group config",
+			config: &telekomv1alpha1.AutoApproveConfig{
+				Groups: []string{"team-a"},
+			},
+			cluster:    "prod",
+			userGroups: nil,
+			wantResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := controller.evaluateAutoApprove(tt.config, tt.cluster, tt.userGroups)
+			assert.Equal(t, tt.wantResult, result)
+		})
+	}
+}
