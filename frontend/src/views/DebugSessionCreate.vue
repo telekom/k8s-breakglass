@@ -32,6 +32,8 @@ const loading = ref(true);
 const loadingClusters = ref(false);
 const submitting = ref(false);
 
+const clusterFilter = ref("");
+
 const form = reactive<{
   templateRef: string;
   cluster: string;
@@ -62,8 +64,8 @@ const form = reactive<{
 watch(
   () => form.templateRef,
   (newVal, oldVal) => {
-    console.debug("[DebugSessionCreate] TEMPLATE_CHANGED:", { from: oldVal, to: newVal });
     if (oldVal && newVal !== oldVal) {
+      console.debug("[DebugSessionCreate] TEMPLATE_CHANGED:", { from: oldVal, to: newVal });
       form.cluster = "";
       form.selectedBindingIndex = 0;
       form.requestedDuration = "1h";
@@ -107,6 +109,18 @@ watch(
 const selectedTemplate = computed(() => {
   if (!templates.value || templates.value.length === 0) return undefined;
   return templates.value.find((t) => t.name === form.templateRef);
+});
+
+// Filtered cluster list based on search input
+const filteredClusterDetails = computed(() => {
+  const q = clusterFilter.value.trim().toLowerCase();
+  if (!q) return clusterDetails.value;
+  return clusterDetails.value.filter((c) => {
+    const name = (c.displayName || c.name || "").toLowerCase();
+    const env = (c.environment || "").toLowerCase();
+    const loc = (c.location || "").toLowerCase();
+    return name.includes(q) || env.includes(q) || loc.includes(q);
+  });
 });
 
 // User groups for variable visibility filtering
@@ -605,75 +619,103 @@ function handleDurationChange(ev: Event) {
           No clusters are available for this template.
         </div>
 
-        <div v-else class="cluster-grid" data-testid="cluster-grid">
-          <div
-            v-for="cluster in clusterDetails"
-            :key="cluster.name"
-            :class="['cluster-card', { selected: form.cluster === cluster.name }]"
-            data-testid="cluster-card"
-            @click="form.cluster = cluster.name"
-          >
-            <div class="cluster-header">
-              <span class="cluster-name">{{ cluster.displayName || cluster.name }}</span>
-              <span v-if="cluster.status?.healthy !== false" class="health-badge healthy">●</span>
-              <span v-else class="health-badge unhealthy">●</span>
-            </div>
+        <template v-else>
+          <!-- Cluster search filter -->
+          <div v-if="clusterDetails.length > 5" class="cluster-filter" data-testid="cluster-filter">
+            <scale-text-field
+              :value="clusterFilter"
+              label="Filter clusters"
+              placeholder="Search by name, environment, or location..."
+              size="small"
+              data-testid="cluster-filter-input"
+              @scale-change="clusterFilter = ($event.target as HTMLInputElement).value"
+            ></scale-text-field>
+            <span class="cluster-count">
+              Showing {{ filteredClusterDetails.length }} of {{ clusterDetails.length }} clusters
+            </span>
+          </div>
 
-            <div class="cluster-meta">
-              <span v-if="cluster.environment" class="meta-item">{{ cluster.environment }}</span>
-              <span v-if="cluster.location" class="meta-item">{{ cluster.location }}</span>
-            </div>
+          <div v-if="filteredClusterDetails.length === 0" class="warning-text">
+            No clusters match "{{ clusterFilter }}".
+          </div>
 
-            <!-- Access Source Indicator -->
-            <div class="cluster-access-source">
-              <span
-                v-if="cluster.bindingRef"
-                class="source-badge binding"
-                :title="`Via binding: ${cluster.bindingRef.namespace}/${cluster.bindingRef.name}`"
+          <div v-else class="cluster-grid" data-testid="cluster-grid">
+            <div
+              v-for="cluster in filteredClusterDetails"
+              :key="cluster.name"
+              :class="['cluster-card', { selected: form.cluster === cluster.name }]"
+              data-testid="cluster-card"
+              @click="form.cluster = cluster.name"
+            >
+              <div class="cluster-header">
+                <span class="cluster-name">{{ cluster.displayName || cluster.name }}</span>
+                <span v-if="cluster.status?.healthy !== false" class="health-badge healthy">●</span>
+                <span v-else class="health-badge unhealthy">●</span>
+              </div>
+
+              <div class="cluster-meta">
+                <span v-if="cluster.environment" class="meta-item">{{ cluster.environment }}</span>
+                <span v-if="cluster.location" class="meta-item">{{ cluster.location }}</span>
+              </div>
+
+              <!-- Access Source Indicator -->
+              <div class="cluster-access-source">
+                <span
+                  v-if="cluster.bindingRef"
+                  class="source-badge binding"
+                  :title="`Via binding: ${cluster.bindingRef.namespace}/${cluster.bindingRef.name}`"
+                >
+                  <scale-icon-content-link size="12"></scale-icon-content-link>
+                  via Binding:
+                  <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
+                </span>
+                <span v-else class="source-badge direct" title="Direct access from template allowed.clusters">
+                  <scale-icon-action-success size="12"></scale-icon-action-success>
+                  Direct
+                </span>
+              </div>
+
+              <div class="cluster-constraints">
+                <span v-if="cluster.constraints?.maxDuration" class="constraint">
+                  Max: {{ cluster.constraints.maxDuration }}
+                </span>
+                <span v-if="cluster.approval?.required" class="constraint approval-required"> Approval Required </span>
+                <span v-else class="constraint auto-approve"> Auto-Approve </span>
+              </div>
+
+              <!-- Multiple Access Options Indicator - Prominent -->
+              <div
+                v-if="cluster.bindingOptions && cluster.bindingOptions.length > 1"
+                class="multiple-bindings-indicator"
               >
-                <scale-icon-content-link size="12"></scale-icon-content-link>
-                via Binding:
-                <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
-              </span>
-              <span v-else class="source-badge direct" title="Direct access from template allowed.clusters">
-                <scale-icon-action-success size="12"></scale-icon-action-success>
-                Direct
-              </span>
-            </div>
+                <scale-icon-navigation-double-right size="12"></scale-icon-navigation-double-right>
+                <strong>{{ cluster.bindingOptions.length }} access configurations</strong>
+                <span class="bindings-preview">
+                  {{ cluster.bindingOptions.map((b) => b.displayName || b.bindingRef.name).join(", ") }}
+                </span>
+              </div>
 
-            <div class="cluster-constraints">
-              <span v-if="cluster.constraints?.maxDuration" class="constraint">
-                Max: {{ cluster.constraints.maxDuration }}
-              </span>
-              <span v-if="cluster.approval?.required" class="constraint approval-required"> Approval Required </span>
-              <span v-else class="constraint auto-approve"> Auto-Approve </span>
-            </div>
-
-            <!-- Multiple Access Options Indicator - Prominent -->
-            <div v-if="cluster.bindingOptions && cluster.bindingOptions.length > 1" class="multiple-bindings-indicator">
-              <scale-icon-navigation-double-right size="12"></scale-icon-navigation-double-right>
-              <strong>{{ cluster.bindingOptions.length }} access configurations</strong>
-              <span class="bindings-preview">
-                {{ cluster.bindingOptions.map((b) => b.displayName || b.bindingRef.name).join(", ") }}
-              </span>
-            </div>
-
-            <!-- Additional Info -->
-            <div class="cluster-extra-info">
-              <span v-if="cluster.impersonation?.enabled" class="extra-item" title="Uses ServiceAccount impersonation">
-                <scale-icon-action-random size="12"></scale-icon-action-random> SA Impersonation
-              </span>
-              <span
-                v-if="cluster.schedulingOptions?.options && cluster.schedulingOptions.options.length > 1"
-                class="extra-item"
-                title="Multiple node options"
-              >
-                <scale-icon-device-server size="12"></scale-icon-device-server>
-                {{ cluster.schedulingOptions?.options?.length }} node options
-              </span>
+              <!-- Additional Info -->
+              <div class="cluster-extra-info">
+                <span
+                  v-if="cluster.impersonation?.enabled"
+                  class="extra-item"
+                  title="Uses ServiceAccount impersonation"
+                >
+                  <scale-icon-action-random size="12"></scale-icon-action-random> SA Impersonation
+                </span>
+                <span
+                  v-if="cluster.schedulingOptions?.options && cluster.schedulingOptions.options.length > 1"
+                  class="extra-item"
+                  title="Multiple node options"
+                >
+                  <scale-icon-device-server size="12"></scale-icon-device-server>
+                  {{ cluster.schedulingOptions?.options?.length }} node options
+                </span>
+              </div>
             </div>
           </div>
-        </div>
+        </template>
       </div>
 
       <!-- Binding Selection (only show when cluster selected and has multiple bindings) -->
@@ -705,15 +747,23 @@ function handleDurationChange(ev: Event) {
                 <span class="label">max duration</span>
               </span>
 
-              <span v-if="option.approval?.required" class="key-constraint approval-req">
+              <span
+                v-if="option.approval?.required && option.approval?.canAutoApprove"
+                class="key-constraint auto-approve"
+              >
+                <scale-icon-action-success size="16"></scale-icon-action-success>
+                <span class="value">Auto</span>
+                <span class="label">approval (eligible)</span>
+              </span>
+              <span v-else-if="option.approval?.required" class="key-constraint approval-req">
                 <scale-icon-user-file-user size="16"></scale-icon-user-file-user>
                 <span class="value">Required</span>
                 <span class="label">approval</span>
               </span>
               <span v-else class="key-constraint auto-approve">
                 <scale-icon-action-success size="16"></scale-icon-action-success>
-                <span class="value">Auto</span>
-                <span class="label">approval</span>
+                <span class="value">None</span>
+                <span class="label">approval needed</span>
               </span>
             </div>
 
@@ -748,12 +798,31 @@ function handleDurationChange(ev: Event) {
             </div>
 
             <!-- Approver Groups (if different) -->
-            <div v-if="option.approval?.approverGroups?.length" class="binding-approvers">
+            <div
+              v-if="option.approval?.approverGroups?.length || option.approval?.approverUsers?.length"
+              class="binding-approvers"
+            >
               <span class="approvers-label">Approvers:</span>
-              <span class="approvers-value">{{ option.approval.approverGroups.slice(0, 2).join(", ") }}</span>
-              <span v-if="option.approval.approverGroups.length > 2" class="approvers-more">
-                +{{ option.approval.approverGroups.length - 2 }}
-              </span>
+              <template v-if="option.approval?.approverGroups?.length">
+                <span class="approvers-value">{{ option.approval.approverGroups.slice(0, 2).join(", ") }}</span>
+                <span v-if="option.approval.approverGroups.length > 2" class="approvers-more">
+                  +{{ option.approval.approverGroups.length - 2 }} groups
+                </span>
+              </template>
+              <template v-if="option.approval?.approverUsers?.length">
+                <span class="approvers-value approvers-users">{{
+                  option.approval.approverUsers.slice(0, 2).join(", ")
+                }}</span>
+                <span v-if="option.approval.approverUsers.length > 2" class="approvers-more">
+                  +{{ option.approval.approverUsers.length - 2 }} users
+                </span>
+              </template>
+            </div>
+
+            <!-- Binding Source Reference -->
+            <div class="binding-source-ref" data-testid="binding-source-ref">
+              <scale-icon-content-link size="10"></scale-icon-content-link>
+              <span class="ref-value">{{ option.bindingRef.namespace }}/{{ option.bindingRef.name }}</span>
             </div>
           </div>
         </div>
@@ -786,6 +855,42 @@ function handleDurationChange(ev: Event) {
           >
             {{ opt.displayName }}
             <span v-if="opt.description" class="option-description">{{ opt.description }}</span>
+            <!-- Constraint details for this scheduling option -->
+            <div
+              v-if="
+                opt.schedulingConstraints &&
+                (opt.schedulingConstraints.nodeSelector ||
+                  opt.schedulingConstraints.deniedNodeLabels ||
+                  opt.schedulingConstraints.tolerations?.length)
+              "
+              class="scheduling-constraint-details"
+              data-testid="scheduling-constraint-details"
+            >
+              <span
+                v-for="(value, key) in opt.schedulingConstraints.nodeSelector"
+                :key="`ns-${String(key)}`"
+                class="constraint-tag node-selector"
+                :title="`Node selector: ${String(key)}=${value}`"
+              >
+                {{ key }}={{ value }}
+              </span>
+              <span
+                v-for="(value, key) in opt.schedulingConstraints.deniedNodeLabels"
+                :key="`dnl-${String(key)}`"
+                class="constraint-tag denied-label"
+                :title="`Excluded: ${String(key)}=${value}`"
+              >
+                ✕ {{ key }}={{ value }}
+              </span>
+              <span
+                v-for="(tol, tidx) in opt.schedulingConstraints.tolerations"
+                :key="`tol-${tidx}`"
+                class="constraint-tag toleration"
+                :title="`Toleration: ${tol.key} ${tol.operator || ''} ${tol.value || ''} ${tol.effect || ''}`"
+              >
+                ⚡ {{ tol.key }}{{ tol.value ? `=${tol.value}` : "" }}{{ tol.effect ? `:${tol.effect}` : "" }}
+              </span>
+            </div>
           </scale-radio-button>
         </scale-radio-button-group>
       </div>
@@ -1721,5 +1826,76 @@ function handleDurationChange(ev: Event) {
   font-size: 0.875rem;
   color: var(--telekom-color-text-and-icon-additional);
   margin: 0 0 var(--space-md) 0;
+}
+
+/* Cluster Filter */
+.cluster-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.cluster-filter .cluster-count {
+  font-size: 0.75rem;
+  color: var(--telekom-color-text-and-icon-additional);
+  white-space: nowrap;
+}
+
+/* Scheduling Constraint Details (inside radio buttons) */
+.scheduling-constraint-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.constraint-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.6875rem;
+  font-family: monospace;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
+}
+
+.constraint-tag.node-selector {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--telekom-color-functional-informational-standard, #93c5fd);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.constraint-tag.denied-label {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--telekom-color-functional-danger-standard, #fca5a5);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.constraint-tag.toleration {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--telekom-color-functional-warning-standard, #fcd34d);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+/* Binding Source Reference */
+.binding-source-ref {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.6875rem;
+  color: var(--telekom-color-text-and-icon-additional);
+  padding-top: var(--space-xs);
+  margin-top: auto;
+  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+}
+
+.binding-source-ref .ref-value {
+  font-family: monospace;
+  font-size: 0.625rem;
+  color: var(--telekom-color-text-and-icon-additional);
+  opacity: 0.8;
 }
 </style>

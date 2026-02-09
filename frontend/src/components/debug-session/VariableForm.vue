@@ -218,6 +218,57 @@ function getError(fieldName: string): string | undefined {
   return error?.message;
 }
 
+// Build constraint hint text from validation rules to show before user starts typing
+function getConstraintHint(variable: ExtraDeployVariable): string {
+  const parts: string[] = [];
+  const v = variable.validation;
+
+  if (variable.required) {
+    parts.push("Required");
+  }
+
+  if (v) {
+    if (v.minLength !== undefined && v.maxLength !== undefined) {
+      parts.push(`${v.minLength}–${v.maxLength} chars`);
+    } else if (v.minLength !== undefined) {
+      parts.push(`Min ${v.minLength} chars`);
+    } else if (v.maxLength !== undefined) {
+      parts.push(`Max ${v.maxLength} chars`);
+    }
+
+    if (v.min !== undefined && v.max !== undefined) {
+      parts.push(`Range: ${v.min}–${v.max}`);
+    } else if (v.min !== undefined) {
+      parts.push(`Min: ${v.min}`);
+    } else if (v.max !== undefined) {
+      parts.push(`Max: ${v.max}`);
+    }
+
+    if (v.pattern) {
+      parts.push(`Format: ${v.patternError || v.pattern}`);
+    }
+
+    if (v.minItems !== undefined && v.maxItems !== undefined) {
+      parts.push(`Select ${v.minItems}–${v.maxItems} items`);
+    } else if (v.minItems !== undefined) {
+      parts.push(`Select at least ${v.minItems}`);
+    } else if (v.maxItems !== undefined) {
+      parts.push(`Select at most ${v.maxItems}`);
+    }
+  }
+
+  return parts.join(" · ");
+}
+
+// Combine variable description with constraint hints for helper text
+function getHelperText(variable: ExtraDeployVariable): string {
+  const hint = getConstraintHint(variable);
+  if (variable.description && hint) {
+    return `${variable.description} (${hint})`;
+  }
+  return variable.description || hint || "";
+}
+
 // Expose validation state to parent
 defineExpose({
   isValid: computed(() => validationErrors.value.length === 0),
@@ -301,7 +352,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
           v-else-if="variable.inputType === 'text'"
           :value="getValue(variable.name, variable.default ?? '') as string"
           :label="variable.displayName || variable.name"
-          :helper-text="variable.description"
+          :helper-text="getHelperText(variable)"
           :required="variable.required"
           :invalid="!!getError(variable.name)"
           :helper-text-invalid="getError(variable.name)"
@@ -315,7 +366,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
           type="number"
           :value="String(getValue(variable.name, variable.default ?? '') ?? '')"
           :label="variable.displayName || variable.name"
-          :helper-text="variable.description"
+          :helper-text="getHelperText(variable)"
           :required="variable.required"
           :invalid="!!getError(variable.name)"
           :helper-text-invalid="getError(variable.name)"
@@ -330,7 +381,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
           v-else-if="variable.inputType === 'storageSize'"
           :value="getValue(variable.name, variable.default ?? '') as string"
           :label="variable.displayName || variable.name"
-          :helper-text="variable.description || 'e.g., 10Gi, 500Mi'"
+          :helper-text="getHelperText(variable) || 'e.g., 10Gi, 500Mi'"
           :required="variable.required"
           :invalid="!!getError(variable.name)"
           :helper-text-invalid="getError(variable.name)"
@@ -344,7 +395,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
           v-else-if="variable.inputType === 'select'"
           :value="getValue(variable.name, variable.default ?? '') as string"
           :label="variable.displayName || variable.name"
-          :helper-text="variable.description"
+          :helper-text="getHelperText(variable)"
           :required="variable.required"
           :invalid="!!getError(variable.name)"
           :data-testid="`input-${variable.name}`"
@@ -365,7 +416,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             {{ variable.displayName || variable.name }}
             <span v-if="variable.required" class="required-marker">*</span>
           </label>
-          <p v-if="variable.description" class="multi-select-description">{{ variable.description }}</p>
+          <p v-if="getHelperText(variable)" class="multi-select-description">{{ getHelperText(variable) }}</p>
           <div class="multi-select-options" :data-testid="`input-${variable.name}`">
             <scale-checkbox
               v-for="option in variable.options || []"
@@ -432,7 +483,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             v-else-if="variable.inputType === 'text'"
             :value="getValue(variable.name, variable.default ?? '') as string"
             :label="variable.displayName || variable.name"
-            :helper-text="variable.description"
+            :helper-text="getHelperText(variable)"
             :required="variable.required"
             :invalid="!!getError(variable.name)"
             :helper-text-invalid="getError(variable.name)"
@@ -445,7 +496,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             type="number"
             :value="String(getValue(variable.name, variable.default ?? '') ?? '')"
             :label="variable.displayName || variable.name"
-            :helper-text="variable.description"
+            :helper-text="getHelperText(variable)"
             :required="variable.required"
             :invalid="!!getError(variable.name)"
             :helper-text-invalid="getError(variable.name)"
@@ -459,7 +510,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             v-else-if="variable.inputType === 'storageSize'"
             :value="getValue(variable.name, variable.default ?? '') as string"
             :label="variable.displayName || variable.name"
-            :helper-text="variable.description || 'e.g., 10Gi, 500Mi'"
+            :helper-text="getHelperText(variable) || 'e.g., 10Gi, 500Mi'"
             :required="variable.required"
             :invalid="!!getError(variable.name)"
             :helper-text-invalid="getError(variable.name)"
@@ -472,7 +523,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             v-else-if="variable.inputType === 'select'"
             :value="getValue(variable.name, variable.default ?? '') as string"
             :label="variable.displayName || variable.name"
-            :helper-text="variable.description"
+            :helper-text="getHelperText(variable)"
             :required="variable.required"
             :invalid="!!getError(variable.name)"
             :data-testid="`input-${variable.name}`"
@@ -492,7 +543,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
               {{ variable.displayName || variable.name }}
               <span v-if="variable.required" class="required-marker">*</span>
             </label>
-            <p v-if="variable.description" class="multi-select-description">{{ variable.description }}</p>
+            <p v-if="getHelperText(variable)" class="multi-select-description">{{ getHelperText(variable) }}</p>
             <div class="multi-select-options" :data-testid="`input-${variable.name}`">
               <scale-checkbox
                 v-for="option in variable.options || []"
