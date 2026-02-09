@@ -18,7 +18,7 @@ const scaleStubs = {
   },
   "scale-text-field": {
     template:
-      '<input type="text" :value="value" @input="$emit(\'scale-input\', $event)" @change="$emit(\'scale-change\', $event)" />',
+      '<input type="text" :value="value" :helper-text="helperText" @input="$emit(\'scale-input\', $event)" @change="$emit(\'scale-change\', $event)" />',
     props: [
       "value",
       "type",

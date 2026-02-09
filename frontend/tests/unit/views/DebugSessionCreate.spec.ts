@@ -623,8 +623,26 @@ describe("DebugSessionCreate", () => {
       // All 8 should be shown initially
       expect(vm.filteredClusterDetails).toHaveLength(8);
 
-      // Set the filter via the reactive ref
-      // filteredClusterDetails computed is tested via the component's reactive state
+      // Set the clusterFilter ref directly to simulate user typing
+      const clusterFilter = wrapper.vm as unknown as { clusterFilter: string };
+      clusterFilter.clusterFilter = "staging";
+      await wrapper.vm.$nextTick();
+
+      // Only clusters 4-7 have environment "staging"
+      expect(vm.filteredClusterDetails).toHaveLength(4);
+      expect(vm.filteredClusterDetails.every((c) => c.name.match(/cluster-[4-7]/))).toBe(true);
+
+      // Filter by location
+      clusterFilter.clusterFilter = "Frankfurt";
+      await wrapper.vm.$nextTick();
+
+      // Even-numbered clusters (0, 2, 4, 6) are in Frankfurt
+      expect(vm.filteredClusterDetails).toHaveLength(4);
+
+      // Filter with no match
+      clusterFilter.clusterFilter = "nonexistent";
+      await wrapper.vm.$nextTick();
+      expect(vm.filteredClusterDetails).toHaveLength(0);
     });
 
     it("shows cluster count when filter is active", async () => {

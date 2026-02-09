@@ -74,6 +74,7 @@ watch(
       form.extraDeployValues = {};
       form.showAdvancedOptions = false;
       clusterDetails.value = [];
+      clusterFilter.value = "";
       currentStep.value = 1;
     }
   },
@@ -628,7 +629,7 @@ function handleDurationChange(ev: Event) {
               placeholder="Search by name, environment, or location..."
               size="small"
               data-testid="cluster-filter-input"
-              @scale-change="clusterFilter = ($event.target as HTMLInputElement).value"
+              @scale-change="clusterFilter = ($event.detail?.value ?? ($event.target as HTMLInputElement)?.value) || ''"
             ></scale-text-field>
             <span class="cluster-count">
               Showing {{ filteredClusterDetails.length }} of {{ clusterDetails.length }} clusters
@@ -679,8 +680,16 @@ function handleDurationChange(ev: Event) {
                 <span v-if="cluster.constraints?.maxDuration" class="constraint">
                   Max: {{ cluster.constraints.maxDuration }}
                 </span>
-                <span v-if="cluster.approval?.required" class="constraint approval-required"> Approval Required </span>
-                <span v-else class="constraint auto-approve"> Auto-Approve </span>
+                <span
+                  v-if="cluster.approval?.required && cluster.approval?.canAutoApprove"
+                  class="constraint auto-approve"
+                >
+                  Auto-Approve
+                </span>
+                <span v-else-if="cluster.approval?.required" class="constraint approval-required">
+                  Approval Required
+                </span>
+                <span v-else class="constraint auto-approve"> No approval needed </span>
               </div>
 
               <!-- Multiple Access Options Indicator - Prominent -->
