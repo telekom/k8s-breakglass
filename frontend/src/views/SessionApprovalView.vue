@@ -282,7 +282,7 @@ onUnmounted(() => {
 
 <template>
   <div class="session-approval-view">
-    <div v-if="loading" class="loading-container">
+    <div v-if="loading" class="loading-container" role="status" aria-busy="true" aria-live="polite">
       <scale-loading-spinner></scale-loading-spinner>
       <p>Loading session...</p>
     </div>

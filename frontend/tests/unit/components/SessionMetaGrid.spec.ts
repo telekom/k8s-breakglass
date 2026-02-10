@@ -29,7 +29,7 @@ type MetaItem = {
 describe("SessionMetaGrid", () => {
   let activeWrapper: ReturnType<typeof mount> | null = null;
 
-  function mountGrid(items: MetaItem[], slots: any = {}) {
+  function mountGrid(items: MetaItem[], slots: Record<string, string> = {}) {
     const wrapper = mount(SessionMetaGrid, { props: { items }, slots });
     activeWrapper = wrapper;
     return wrapper;

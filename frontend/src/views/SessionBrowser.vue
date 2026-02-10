@@ -480,8 +480,8 @@ onMounted(() => {
     <section class="results-card" data-testid="results-section">
       <header>
         <h3>Results ({{ visibleSessions.length }})</h3>
-        <p v-if="loading" data-testid="loading-indicator">Loading sessions…</p>
-        <p v-else-if="error" class="error" data-testid="error-message">{{ error }}</p>
+        <p v-if="loading" role="status" aria-live="polite" data-testid="loading-indicator">Loading sessions…</p>
+        <p v-else-if="error" class="error" role="alert" data-testid="error-message">{{ error }}</p>
       </header>
 
       <EmptyState

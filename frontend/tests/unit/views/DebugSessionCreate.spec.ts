@@ -989,4 +989,141 @@ describe("DebugSessionCreate", () => {
       expect(html).toContain("bob@example.com");
     });
   });
+
+  describe("keyboard navigation", () => {
+    it("cluster and binding cards have role=radio with roving tabindex", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindings: [
+              {
+                bindingRef: { name: "binding-1", namespace: "default" },
+                displayName: "Standard",
+                approval: { required: false },
+                constraints: { maxDuration: "4h" },
+              },
+            ],
+          },
+          {
+            name: "prod-west",
+            displayName: "Production West",
+            bindings: [
+              {
+                bindingRef: { name: "binding-2", namespace: "default" },
+                displayName: "Emergency",
+                approval: { required: false },
+                constraints: { maxDuration: "2h" },
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as { goToStep2: () => void };
+      vm.goToStep2();
+      await flushPromises();
+
+      const clusterCards = wrapper.findAll('[role="radio"]');
+      expect(clusterCards.length).toBeGreaterThanOrEqual(2);
+
+      // First unselected card: tabindex 0 (first focusable), second: tabindex -1
+      const firstCard = clusterCards[0]!;
+      expect(firstCard.attributes("tabindex")).toBe("0");
+      const secondCard = clusterCards[1]!;
+      expect(secondCard.attributes("tabindex")).toBe("-1");
+    });
+
+    it("cluster radiogroup has correct aria-label", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindings: [
+              {
+                bindingRef: { name: "binding-1", namespace: "default" },
+                displayName: "Standard",
+                approval: { required: false },
+                constraints: { maxDuration: "4h" },
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as { goToStep2: () => void };
+      vm.goToStep2();
+      await flushPromises();
+
+      const radiogroup = wrapper.find('[role="radiogroup"]');
+      expect(radiogroup.exists()).toBe(true);
+      expect(radiogroup.attributes("aria-label")).toContain("Select");
+    });
+
+    it("Enter/Space keydown handlers are bound on cluster cards", async () => {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindings: [
+              {
+                bindingRef: { name: "binding-1", namespace: "default" },
+                displayName: "Standard",
+                approval: { required: false },
+                constraints: { maxDuration: "4h" },
+              },
+            ],
+          },
+          {
+            name: "prod-west",
+            displayName: "Production West",
+            bindings: [
+              {
+                bindingRef: { name: "binding-2", namespace: "default" },
+                displayName: "Emergency",
+                approval: { required: false },
+                constraints: { maxDuration: "2h" },
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+      };
+      vm.goToStep2();
+      await flushPromises();
+
+      const cards = wrapper.findAll('[data-testid="cluster-card"]');
+      expect(cards.length).toBeGreaterThanOrEqual(2);
+
+      // Test Enter key selects the second cluster card
+      await cards[1]!.trigger("keydown.enter");
+      await flushPromises();
+
+      expect(vm.form.cluster).toBe("prod-west");
+      expect(cards[1]!.attributes("aria-checked")).toBe("true");
+
+      // Test Space key selects the first cluster card back
+      await cards[0]!.trigger("keydown.space");
+      await flushPromises();
+
+      expect(vm.form.cluster).toBe("prod-east");
+      expect(cards[0]!.attributes("aria-checked")).toBe("true");
+    });
+  });
 });
