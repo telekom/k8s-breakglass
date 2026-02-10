@@ -344,12 +344,25 @@ spec:
 
 ## Policy Evaluation
 
-`DenyPolicy` is evaluated before other authorization mechanisms:
+The webhook authorization evaluates access in the following order:
 
-1. **DenyPolicy** - explicit denials (highest priority)
-2. **BreakglassSession** - temporary approved access
-3. **RBAC** - standard Kubernetes permissions
-4. **Default** - deny if no permissions match
+1. **DebugSession** — pod operations (`exec`, `attach`, `portforward`, `log`) for active debug sessions (highest priority)
+2. **DenyPolicy** — explicit denials
+3. **BreakglassSession** — temporary approved access
+4. **RBAC** — standard Kubernetes permissions
+5. **Default** — deny if no permissions match
+
+> **Debug Session Override:** Active debug sessions bypass deny policy evaluation
+> for pod-level operations. When a user has an active `DebugSession` authorizing a
+> specific pod and operation, the webhook grants access **before** deny policies
+> are checked. This is by design — debug sessions represent pre-approved,
+> time-limited troubleshooting access to specific pods. The bypass is scoped only
+> to pods listed in the session's `status.allowedPods` and operations listed in the
+> template's `allowedPodOperations`.
+>
+> To restrict debug session creation itself, use `DebugSessionTemplate` constraints
+> (allowed namespaces, approval requirements, image allow-lists, etc.). See
+> [Debug Sessions](./debug-session.md#interaction-with-deny-policies) for details.
 
 ### Pod Security Evaluation Order
 
