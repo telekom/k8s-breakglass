@@ -36,6 +36,6 @@ func TestJWKSCacheConfig(t *testing.T) {
 // 1. Cache stores JWKS by issuer URL with LRU ordering
 // 2. When cache reaches maxJWKSCacheSize, LRU eviction removes oldest entries
 // 3. Cache hits move entries to front of LRU list (most recently used)
-// 4. Eviction calls EndBackground() on removed JWKS to stop refresh goroutines
+// 4. Eviction cancels the context of removed JWKS entries to stop refresh goroutines
 //
 // Integration tests in e2e/ verify the full multi-IDP authentication flow.

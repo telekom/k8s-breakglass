@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/auth"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
 )

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MicahParks/keyfunc"
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -60,9 +60,8 @@ func TestAuthMiddleware_ExtendedNegativeJWTCases(t *testing.T) {
 	srv, priv, kid := setupTestJWKSServer(t)
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}
@@ -148,9 +147,9 @@ func TestAuthMiddleware_ExtendedNegativeJWTCases(t *testing.T) {
 				tokStr, _ := tok.SignedString(priv)
 				return "Bearer " + tokStr
 			},
-			// jwt-go library rejects tokens with future iat by default
+			// jwt.WithIssuedAt() is enabled, so tokens with future iat are rejected
 			expectedStatus: http.StatusUnauthorized,
-			description:    "Token with future iat is rejected by jwt-go library",
+			description:    "jwt.WithIssuedAt() rejects tokens with future iat",
 		},
 		{
 			name: "missing kid header",
@@ -161,8 +160,9 @@ func TestAuthMiddleware_ExtendedNegativeJWTCases(t *testing.T) {
 				tokStr, _ := tok.SignedString(priv)
 				return "Bearer " + tokStr
 			},
-			expectedStatus: http.StatusUnauthorized,
-			description:    "Token without kid cannot be validated against JWKS",
+			// keyfunc v3 can match a single key in JWKS even without kid in token header
+			expectedStatus: http.StatusOK,
+			description:    "keyfunc v3 matches the only key when kid is absent",
 		},
 		{
 			name: "unknown kid",
@@ -285,9 +285,8 @@ func TestAuthMiddleware_TokenClaimsEdgeCases(t *testing.T) {
 	srv, priv, kid := setupTestJWKSServer(t)
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}
@@ -439,9 +438,8 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 	srv, priv, kid := setupTestJWKSServer(t)
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}

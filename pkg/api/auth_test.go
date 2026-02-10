@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MicahParks/keyfunc"
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
 )
@@ -217,9 +217,8 @@ func TestAuthHandler_ClaimsExtraction(t *testing.T) {
 	srv, priv, kid := setupTestJWKSServer(t)
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	assert.NoError(t, err)
-	defer jwks.EndBackground()
 
 	authHandler := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
 
@@ -364,9 +363,8 @@ func TestMiddlewareWithRateLimiting(t *testing.T) {
 	srv, priv, kid := setupTestJWKSServer(t)
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	assert.NoError(t, err)
-	defer jwks.EndBackground()
 
 	tests := []struct {
 		name           string
