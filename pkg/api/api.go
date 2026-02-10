@@ -773,7 +773,7 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 		s.log.Sugar().Warnw("identity_provider_not_loaded")
 		metrics.APIEndpointErrors.WithLabelValues("getIdentityProvider", "not_configured").Inc()
 		metrics.APIEndpointDuration.WithLabelValues("getIdentityProvider").Observe(time.Since(start).Seconds())
-		c.JSON(http.StatusNotFound, gin.H{"error": "Identity provider not configured"})
+		RespondNotFoundSimple(c, "Identity provider not configured")
 		return
 	}
 
@@ -895,7 +895,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if s.oidcAuthority == nil {
 		s.log.Sugar().Warnw("oidc_proxy_missing_authority")
 		recordOIDCProxyFailure("missing_authority", start)
-		c.JSON(http.StatusNotFound, APIError{Error: "OIDC authority not configured", Code: "NOT_FOUND"})
+		RespondNotFoundSimple(c, "OIDC authority not configured")
 		return
 	}
 
@@ -980,15 +980,15 @@ func (s *Server) handleOIDCProxyPathError(c *gin.Context, proxyPath, normalizedP
 	case errors.Is(err, errProxyPathNotAllowed):
 		s.log.Sugar().Warnw("oidc_proxy_path_not_whitelisted", "path", proxyPath, "normalized", normalizedPath)
 		recordOIDCProxyFailure("path_not_allowed", start)
-		c.JSON(http.StatusForbidden, APIError{Error: errProxyPathNotAllowed.Error(), Code: "FORBIDDEN"})
+		RespondForbidden(c, errProxyPathNotAllowed.Error())
 	case errors.Is(err, errProxyPathSuspicious):
 		s.log.Sugar().Warnw("oidc_proxy_suspicious_pattern", "path", proxyPath)
 		recordOIDCProxyFailure("suspicious_pattern", start)
-		c.JSON(http.StatusForbidden, APIError{Error: errProxyPathSuspicious.Error(), Code: "FORBIDDEN"})
+		RespondForbidden(c, errProxyPathSuspicious.Error())
 	case errors.Is(err, errProxyPathMalformed):
 		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "normalized", normalizedPath, "error", err)
 		recordOIDCProxyFailure("malformed_path", start)
-		c.JSON(http.StatusBadRequest, APIError{Error: errProxyPathMalformed.Error(), Code: "BAD_REQUEST"})
+		RespondBadRequest(c, errProxyPathMalformed.Error())
 	case errors.Is(err, errProxyAuthorityMissing):
 		s.log.Sugar().Errorw("oidc_proxy_missing_authority_base", "path", proxyPath)
 		recordOIDCProxyFailure("missing_authority", start)
@@ -996,15 +996,15 @@ func (s *Server) handleOIDCProxyPathError(c *gin.Context, proxyPath, normalizedP
 	case errors.Is(err, errProxyPathAbsolute):
 		s.log.Sugar().Warnw("oidc_proxy_absolute_url_detected", "path", proxyPath)
 		recordOIDCProxyFailure("absolute_url_detected", start)
-		c.JSON(http.StatusForbidden, APIError{Error: errProxyPathAbsolute.Error(), Code: "FORBIDDEN"})
+		RespondForbidden(c, errProxyPathAbsolute.Error())
 	case errors.Is(err, errURLResolutionAttack):
 		s.log.Sugar().Warnw("oidc_proxy_url_resolution_attack", "originalPath", proxyPath)
 		recordOIDCProxyFailure("url_resolution_attack", start)
-		c.JSON(http.StatusForbidden, APIError{Error: errURLResolutionAttack.Error(), Code: "FORBIDDEN"})
+		RespondForbidden(c, errURLResolutionAttack.Error())
 	default:
 		s.log.Sugar().Errorw("oidc_proxy_unknown_path_error", "path", proxyPath, "error", err)
 		recordOIDCProxyFailure("path_error", start)
-		c.JSON(http.StatusBadRequest, APIError{Error: "invalid proxy path", Code: "BAD_REQUEST"})
+		RespondBadRequest(c, "invalid proxy path")
 	}
 }
 
@@ -1013,15 +1013,15 @@ func (s *Server) handleOIDCProxyAuthorityError(c *gin.Context, headerValue strin
 	case errors.Is(err, errInvalidAuthorityHeader):
 		s.log.Sugar().Warnw("oidc_proxy_invalid_authority_header", "customAuthority", headerValue, "error", err)
 		recordOIDCProxyFailure("invalid_authority_header", start)
-		c.JSON(http.StatusBadRequest, APIError{Error: errInvalidAuthorityHeader.Error(), Code: "BAD_REQUEST"})
+		RespondBadRequest(c, errInvalidAuthorityHeader.Error())
 	case errors.Is(err, errUnknownOIDCAuthority):
 		s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", headerValue)
 		recordOIDCProxyFailure("unknown_authority", start)
-		c.JSON(http.StatusForbidden, APIError{Error: errUnknownOIDCAuthority.Error(), Code: "FORBIDDEN"})
+		RespondForbidden(c, errUnknownOIDCAuthority.Error())
 	default:
 		s.log.Sugar().Errorw("oidc_proxy_authority_error", "customAuthority", headerValue, "error", err)
 		recordOIDCProxyFailure("authority_error", start)
-		c.JSON(http.StatusBadRequest, APIError{Error: "invalid authority header", Code: "BAD_REQUEST"})
+		RespondBadRequest(c, "invalid authority header")
 	}
 }
 

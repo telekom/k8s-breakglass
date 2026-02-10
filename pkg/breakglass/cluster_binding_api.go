@@ -24,6 +24,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -118,7 +119,7 @@ func (c *ClusterBindingAPIController) handleListClusterBindings(ctx *gin.Context
 	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
 	if err := c.client.List(ctx, bindingList); err != nil {
 		c.log.Errorw("Failed to list cluster bindings", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list cluster bindings"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list cluster bindings")
 		return
 	}
 
@@ -173,18 +174,18 @@ func (c *ClusterBindingAPIController) handleGetClusterBinding(ctx *gin.Context) 
 	name := ctx.Param("name")
 
 	if namespace == "" || name == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "namespace and name are required"})
+		apiresponses.RespondBadRequest(ctx, "namespace and name are required")
 		return
 	}
 
 	binding := &v1alpha1.DebugSessionClusterBinding{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: name}, binding); err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("cluster binding %s/%s not found", namespace, name)})
+			apiresponses.RespondNotFoundSimple(ctx, fmt.Sprintf("cluster binding %s/%s not found", namespace, name))
 			return
 		}
 		c.log.Errorw("Failed to get cluster binding", "namespace", namespace, "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get cluster binding"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get cluster binding")
 		return
 	}
 
@@ -195,7 +196,7 @@ func (c *ClusterBindingAPIController) handleGetClusterBinding(ctx *gin.Context) 
 func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Context) {
 	clusterName := ctx.Param("cluster")
 	if clusterName == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "cluster name is required"})
+		apiresponses.RespondBadRequest(ctx, "cluster name is required")
 		return
 	}
 
@@ -203,11 +204,11 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 	clusterConfig := &v1alpha1.ClusterConfig{}
 	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: clusterName}, clusterConfig); err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("cluster %s not found", clusterName)})
+			apiresponses.RespondNotFoundSimple(ctx, fmt.Sprintf("cluster %s not found", clusterName))
 			return
 		}
 		c.log.Errorw("Failed to get cluster config", "cluster", clusterName, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get cluster"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get cluster")
 		return
 	}
 
@@ -215,7 +216,7 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 	bindingList := &v1alpha1.DebugSessionClusterBindingList{}
 	if err := c.client.List(ctx, bindingList); err != nil {
 		c.log.Errorw("Failed to list cluster bindings", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list cluster bindings"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list cluster bindings")
 		return
 	}
 
