@@ -24,7 +24,7 @@ func TestKeycloakIdentityProvider_GetEmail(t *testing.T) {
 	//     returned values and errors match expectations.
 	//
 	gin.SetMode(gin.TestMode)
-	provider := KeycloakIdentityProvider{}
+	provider := NewKeycloakIdentityProvider(nil)
 
 	tests := []struct {
 		name        string
@@ -73,7 +73,7 @@ func TestKeycloakIdentityProvider_GetUsername(t *testing.T) {
 	//   values.
 	//
 	gin.SetMode(gin.TestMode)
-	provider := KeycloakIdentityProvider{}
+	provider := NewKeycloakIdentityProvider(nil)
 
 	tests := []struct {
 		name           string
@@ -117,7 +117,7 @@ func TestKeycloakIdentityProvider_GetIdentity(t *testing.T) {
 	//   set and unset cases.
 	//
 	gin.SetMode(gin.TestMode)
-	provider := KeycloakIdentityProvider{}
+	provider := NewKeycloakIdentityProvider(nil)
 
 	tests := []struct {
 		name           string
@@ -163,7 +163,7 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 	//   identifier in the session to enable SAR authorization matching.
 	//
 	gin.SetMode(gin.TestMode)
-	provider := KeycloakIdentityProvider{}
+	provider := NewKeycloakIdentityProvider(nil)
 
 	tests := []struct {
 		name             string

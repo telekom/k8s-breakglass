@@ -17,28 +17,45 @@ type IdentityProvider interface {
 	GetUserIdentifier(*gin.Context, v1alpha1.UserIdentifierClaimType) (string, error)
 }
 
-type KeycloakIdentityProvider struct{}
+type KeycloakIdentityProvider struct {
+	log *zap.SugaredLogger
+}
+
+// NewKeycloakIdentityProvider creates a KeycloakIdentityProvider with the given logger.
+// If log is nil, the global zap.S() logger is used as a fallback.
+func NewKeycloakIdentityProvider(log *zap.SugaredLogger) KeycloakIdentityProvider {
+	return KeycloakIdentityProvider{log: getLoggerOrDefault(log)}
+}
+
+// getLog returns the configured logger or falls back to the cached no-op logger
+// to prevent nil-pointer panics on zero-value KeycloakIdentityProvider instances.
+func (kip KeycloakIdentityProvider) getLog() *zap.SugaredLogger {
+	if kip.log != nil {
+		return kip.log
+	}
+	return nopLogger
+}
 
 func (kip KeycloakIdentityProvider) GetEmail(c *gin.Context) (email string, err error) {
 	email = c.GetString("email")
 	if email == "" {
-		zap.S().Warn("Keycloak provider failed to retrieve email identity from context")
+		kip.getLog().Warn("Keycloak provider failed to retrieve email identity from context")
 		err = errors.New("keycloak provider failed to retrieve email identity")
 	} else {
-		zap.S().Debugw("Keycloak provider retrieved email", "email", email)
+		kip.getLog().Debugw("Keycloak provider retrieved email", "email", email)
 	}
 	return
 }
 
 func (kip KeycloakIdentityProvider) GetIdentity(c *gin.Context) string {
 	id := c.GetString("user_id")
-	zap.S().Debugw("Keycloak provider retrieved user_id", "user_id", id)
+	kip.getLog().Debugw("Keycloak provider retrieved user_id", "user_id", id)
 	return id
 }
 
 func (kip KeycloakIdentityProvider) GetUsername(c *gin.Context) string {
 	username := c.GetString("username")
-	zap.S().Debugw("Keycloak provider retrieved username", "username", username)
+	kip.getLog().Debugw("Keycloak provider retrieved username", "username", username)
 	return username
 }
 
@@ -69,6 +86,6 @@ func (kip KeycloakIdentityProvider) GetUserIdentifier(c *gin.Context, claimType 
 			return "", errors.New("email claim not found in token (default)")
 		}
 	}
-	zap.S().Debugw("Keycloak provider retrieved user identifier", "claimType", claimType, "identifier", identifier)
+	kip.getLog().Debugw("Keycloak provider retrieved user identifier", "claimType", claimType, "identifier", identifier)
 	return identifier, nil
 }

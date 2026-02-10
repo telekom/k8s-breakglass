@@ -65,7 +65,7 @@ func TestHandleGetEscalations_ReturnsEscalationsForTokenGroups(t *testing.T) {
 		manager:          &em,
 		log:              logger,
 		middleware:       middleware,
-		identityProvider: KeycloakIdentityProvider{},
+		identityProvider: NewKeycloakIdentityProvider(nil),
 	}
 
 	engine := gin.New()

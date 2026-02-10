@@ -3030,7 +3030,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	clusterConfigClient client.Client,
 	disableEmail ...bool,
 ) *BreakglassSessionController {
-	ip := KeycloakIdentityProvider{}
+	ip := NewKeycloakIdentityProvider(log)
 
 	// Check if disableEmail flag is provided
 	disableEmailFlag := false

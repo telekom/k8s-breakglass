@@ -3672,7 +3672,7 @@ func TestHiddenFromUI_EscalationResponse_GroupsRemoved(t *testing.T) {
 			c.Set("groups", []string{"system:authenticated"})
 			c.Next()
 		},
-		identityProvider: KeycloakIdentityProvider{},
+		identityProvider: NewKeycloakIdentityProvider(nil),
 		getUserGroupsFn: func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 			return []string{"system:authenticated"}, nil
 		},

@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend Debug Session Variables**: Improved variable form validation with inline hints showing allowed values, default indicators, and dark theme support for approval cards
 - **EscalationManager Functional Options**: Refactored `NewEscalationManagerWithClient` from type-unsafe `...any` variadic to type-safe functional options pattern (`WithLogger`, `WithConfigLoader`)
 - **Deduplicated Cluster Escalation Lookup**: Extracted `collectClusterEscalations` helper to eliminate repeated index-based query logic in `GetClusterBreakglassEscalations` and `GetClusterGroupBreakglassEscalations`
+- **Logging Consistency**: Replaced `zap.S()` global logger with injected `*zap.SugaredLogger` in `SessionManager`, `KeycloakIdentityProvider`, and `ClusterConfigManager`. All three now accept an optional logger via their constructors, falling back to `zap.S()` when none is provided.
 
 ### Fixed
 
