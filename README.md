@@ -41,6 +41,7 @@
   - `MailProvider` - Email notification configuration
   - `DebugSession` - Debug session lifecycle
   - `DebugSessionTemplate` - Debug session templates
+  - `DebugSessionClusterBinding` - Delegate template access to teams and clusters
   - `DebugPodTemplate` - Debug pod templates
 
 **Design:** Hub-and-spoke topology where a central breakglass service manages temporary access for multiple Kubernetes clusters.

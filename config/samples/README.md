@@ -16,7 +16,7 @@ make validate-samples
 
 | File | Description |
 |------|-------------|
-| `breakglass.t-cass.telekom.com_v1alpha1_breakglassescalation.yaml` | Basic escalation configurations |
+| `breakglass.t-caas.telekom.com_v1alpha1_breakglassescalation.yaml` | Basic escalation configurations |
 | `breakglass_v1alpha1_breakglassescalation_advanced.yaml` | Advanced escalation features (multi-IDP, pod security overrides) |
 | `breakglass_session_comprehensive.yaml` | Session examples including scheduled sessions |
 | `telekom_v1alpha1_breakglasssession.yaml` | Basic session example |
@@ -55,7 +55,10 @@ make validate-samples
 | File | Description |
 |------|-------------|
 | `audit_config_kafka.yaml` | Kafka sink with TLS/SASL, webhook, and multi-sink examples |
+| `audit_config_webhook.yaml` | Webhook sink for SIEM/logging integration |
+| `audit_config_kubernetes.yaml` | Kubernetes Events sink for native kubectl visibility |
 | `audit_config_namespace_selectors.yaml` | Namespace-based filtering with label selectors |
+| `audit_config_stdout.yaml` | Simple stdout/log sink for development |
 
 ### Debug Sessions
 
@@ -70,6 +73,8 @@ make validate-samples
 | `debug-pod-template-log-inspector.yaml` | Log inspection tools |
 | `debug-pod-template-comprehensive.yaml` | **Comprehensive collection** of pod templates for all use-cases |
 | `debug_sessions.yaml` | DebugSession examples |
+| `debug_session_cluster_binding.yaml` | DebugSessionClusterBinding for delegating template access |
+| `debug_session_template_auxiliary_resources.yaml` | Templates with auxiliary resources |
 
 ## Feature Coverage
 

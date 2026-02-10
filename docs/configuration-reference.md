@@ -223,7 +223,7 @@ Base URL of the breakglass frontend (for redirects and links).
 | Property | Value |
 |----------|-------|
 | **Type** | `string` |
-| **Required** | Yes |
+| **Required** | Recommended |
 | **Example** | `https://breakglass.example.com`, `http://localhost:5173` |
 
 ```yaml
@@ -238,7 +238,7 @@ Used for:
 - Frontend JavaScript API calls
 - **Webhook authorization messages** - When access is denied, the webhook response includes a link to this URL so users can request access via the UI
 
-**Important**: This URL must be resolvable by users' browsers. In production deployments, always set this to the externally accessible URL of your breakglass frontend. Using `localhost` URLs in production will result in confusing error messages for users.
+**Important**: This URL must be resolvable by users' browsers. In production deployments, always set this to the externally accessible URL of your breakglass frontend. Using `localhost` URLs in production will result in confusing error messages for users. If omitted, OIDC redirects, email links, and webhook denial messages will lack a usable frontend URL.
 
 #### `brandingName` (Optional)
 
@@ -492,6 +492,17 @@ export BREAKGLASS_ALLOW_DEFAULT_ORIGINS=true
 breakglass-controller
 ```
 
+#### `BREAKGLASS_ALLOW_DEFAULT_ORIGINS`
+
+When `server.allowedOrigins` is empty and this variable is set to `true`, `1`, or `yes`, the API server includes a set of default localhost-based origins in the CORS allowlist:
+
+- `https://localhost:8443`
+- `http://localhost:28081`
+- `http://localhost:28080`
+- `http://localhost:5173` (Vite dev server)
+
+**⚠️ Warning:** This is intended for local development only. Never set this in production — always configure explicit `server.allowedOrigins` instead.
+
 ## Configuration Loading
 
 Breakglass loads configuration in this order:
@@ -510,16 +521,16 @@ Breakglass loads configuration in this order:
 
 ## Validation
 
-Breakglass validates configuration on startup:
+Breakglass checks configuration on startup:
 
 - **REQUIRED**: `frontend.baseURL`
-- **REQUIRED**: `mail.host` (unless `--disable-email` flag set)
-- **REQUIRED**: At least one IdentityProvider CRD must exist in the cluster
+- **RECOMMENDED**: At least one IdentityProvider CRD should exist in the cluster
+- **RECOMMENDED**: At least one MailProvider CRD (unless `--disable-email` flag set)
 
-**If validation fails**: Controller exits with error message.
+**If IdentityProvider is missing**: The controller logs a warning and continues with limited functionality (API authentication will not work until an IdentityProvider is created). Mail sending is also best-effort.
 
 ```text
-Fatal error: IdentityProvider validation failed: no IdentityProvider resources found
+WARN: No IdentityProvider resources found - session/escalation features will be limited until one is created
 ```
 
 ## Secrets and Sensitive Data
@@ -594,13 +605,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8081
+            port: 8082
           timeoutSeconds: 5
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8081
+            port: 8082
           timeoutSeconds: 5
           periodSeconds: 5
 ```
@@ -695,16 +706,18 @@ Error loading config: open config.yaml: no such file or directory
 2. Use absolute path: `--config-path=/etc/breakglass/config.yaml`
 3. Set environment variable: `export BREAKGLASS_CONFIG_PATH=/etc/breakglass/config.yaml`
 
-### "Required field missing"
+### "No IdentityProvider found" warning
 
 ```text
-Fatal error: missing required configuration field 'frontend.identityProviderName'
+WARN: IdentityProvider not found - controller will start with limited functionality
 ```
+
+The controller starts but API authentication will not work until an IdentityProvider exists.
 
 **Solutions**:
 
-1. Add missing field to config.yaml
-2. Verify IdentityProvider Kubernetes resource exists
+1. Create an IdentityProvider CRD in the cluster
+2. Verify the IdentityProvider resource exists: `kubectl get identityproviders`
 3. Check field name spelling (case-sensitive)
 
 ### "OIDC provider unreachable"
@@ -715,7 +728,7 @@ Error validating OIDC configuration: context deadline exceeded
 
 **Solutions**:
 
-1. Verify `authorizationserver.url` is correct and reachable
+1. Verify the IdentityProvider's OIDC authority URL is correct and reachable
 2. Check network connectivity to OIDC provider
 3. Verify TLS certificates if using HTTPS
 
@@ -727,10 +740,10 @@ Error sending email: connection refused
 
 **Solutions**:
 
-1. Verify SMTP server `host` and `port` are correct
+1. Verify the MailProvider SMTP `host` and `port` are correct: `kubectl get mailproviders -o yaml`
 2. Check firewall allows outbound SMTP
-3. Test with `telnet host port`
-4. For development, set `insecureSkipVerify: true` (development only!)
+3. Test with `telnet <host> <port>`
+4. For development, use MailHog with `insecureSkipVerify: true` (development only!)
 
 ---
 
