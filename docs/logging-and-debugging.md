@@ -126,6 +126,41 @@ const handleApprove = async () => {
 };
 ```
 
+## Frontend Error Handling
+
+### ErrorBoundary Component
+
+The `ErrorBoundary` component (`src/components/common/ErrorBoundary.vue`) provides a Vue error boundary that catches errors from child components and displays a fallback UI instead of crashing the entire page.
+
+**Usage:**
+
+```vue
+<ErrorBoundary title="Failed to load sessions">
+  <SessionList />
+</ErrorBoundary>
+```
+
+**Behavior:**
+- Wraps child components and catches errors via Vue's `onErrorCaptured` hook
+- Displays an error message with a "Try Again" button when an error is captured
+- Logs the error (component name + lifecycle info) via the console logger
+- Prevents error propagation to parent components (returns `false` from the hook)
+- Clicking "Try Again" clears the error state and re-renders child components
+
+**Props:**
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `title` | `string` | `"Something went wrong"` | Heading shown in the error fallback UI |
+
+### Global Error Handlers
+
+The application registers two global error handlers in `src/main.ts`:
+
+1. **`app.config.errorHandler`**: Catches uncaught Vue component errors and pushes a toast notification via `pushError()`
+2. **`window.addEventListener("unhandledrejection")`**: Logs unhandled promise rejections that escape Vue's error boundary
+
+Both handlers log through the structured console logger for debugging visibility.
+
 ## Backend Logging
 
 ### Structured Logging

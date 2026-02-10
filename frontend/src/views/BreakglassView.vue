@@ -36,9 +36,15 @@ const state = reactive<{
 
 async function fetchAll() {
   state.loading = true;
-  // getBreakglasses() returns merged escalation/session info
-  state.breakglasses = await breakglassService.getBreakglasses();
-  state.loading = false;
+  try {
+    // getBreakglasses() returns merged escalation/session info
+    state.breakglasses = await breakglassService.getBreakglasses();
+  } catch (e: any) {
+    pushError(e?.message || "Failed to load escalations");
+    state.breakglasses = [];
+  } finally {
+    state.loading = false;
+  }
 }
 
 onMounted(() => {
@@ -242,8 +248,12 @@ async function onWithdraw(bg: any) {
 }
 
 async function onDrop(bg: any) {
-  await breakglassService.dropBreakglass(bg);
-  await refresh();
+  try {
+    await breakglassService.dropBreakglass(bg);
+    await refresh();
+  } catch {
+    // Error already handled by breakglassService (pushError with CID)
+  }
 }
 </script>
 

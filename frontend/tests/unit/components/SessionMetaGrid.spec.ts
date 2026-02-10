@@ -29,7 +29,6 @@ type MetaItem = {
 describe("SessionMetaGrid", () => {
   let activeWrapper: ReturnType<typeof mount> | null = null;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function mountGrid(items: MetaItem[], slots: any = {}) {
     const wrapper = mount(SessionMetaGrid, { props: { items }, slots });
     activeWrapper = wrapper;
