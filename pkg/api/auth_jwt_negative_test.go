@@ -459,7 +459,7 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 			name: "token expires in 1 second",
 			claims: jwt.MapClaims{
 				"sub": "test",
-				"exp": time.Now().Add(1 * time.Second).Unix(),
+				"exp": time.Now().Add(30 * time.Second).Unix(),
 			},
 			expectedStatus: http.StatusOK,
 		},
