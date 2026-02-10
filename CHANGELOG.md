@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Standardized API Error Responses**: Replaced raw `c.JSON(status, "string")` and `gin.H{"error": ...}` patterns with standardized `apiresponses` helpers across escalation controller, debug session API, cluster binding API, session controller, and OIDC proxy. All error responses now include a consistent `"code"` field (e.g., `INTERNAL_ERROR`, `BAD_REQUEST`, `UNPROCESSABLE_ENTITY`) alongside the `"error"` message
+- **Keycloak CA Certificate TLS Configuration**: The Keycloak group member resolver now properly configures custom CA certificates for TLS connections. Previously, the `CertificateAuthority` field in the IdentityProvider CRD was accepted but silently ignored (no-op stub). The resolver now creates a custom `x509.CertPool` from the provided PEM certificate and configures it on the HTTP client's TLS settings.
+- **Token Logging Security**: Replaced all token preview logging (`tokenPreview: eyJhbG...`) with token length logging (`tokenLen: 1234`) in the Keycloak group member resolver. This prevents JWT header information from leaking into debug logs.
 - **Auto-Approve in resolveApproval API**: The `resolveApproval()` handler now evaluates auto-approve eligibility using `evaluateAutoApprove()`, correctly populating `canAutoApprove` in API responses
 - **Frontend Log Spam**: Removed excessive console logging of full approval objects during debug session creation
 

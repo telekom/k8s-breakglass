@@ -19,6 +19,7 @@ package breakglass
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -479,6 +480,83 @@ func TestNewKeycloakGroupMemberResolver_InsecureSkipVerify(t *testing.T) {
 	assert.Equal(t, cfg.BaseURL, resolver.cfg.BaseURL)
 	assert.Equal(t, cfg.Realm, resolver.cfg.Realm)
 	assert.True(t, resolver.cfg.InsecureSkipVerify)
+}
+
+// TestNewKeycloakGroupMemberResolver_CertificateAuthority tests that the resolver configures
+// a custom CA certificate for TLS when CertificateAuthority is provided
+func TestNewKeycloakGroupMemberResolver_CertificateAuthority(t *testing.T) {
+	log, _ := zap.NewDevelopment()
+	defer func() { _ = log.Sync() }()
+	slog := log.Sugar()
+
+	// Use a parseable PEM certificate for testing (expired, not a real CA).
+	// The test only verifies that AppendCertsFromPEM succeeds and the TLS config is applied.
+	validPEM := `-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbwnc/KhCk3FhnpHZnQz7B
+5aETbbIgmuvewdjvSBSjYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCDmxvY2FsaG9zdDo1
+NDUzgg4xMjcuMC4wLjE6NTQ1MzAKBggqhkjOPQQDAgNIADBFAiEA2wpSel1YoFxP
+0EXJfb1gIkDfLBMb0MshUDm0REXQX5oCIGSMEVl1CAIU/wtUAN8EQwPx9Vu36A7f
+dEKqR1oJjVFB
+-----END CERTIFICATE-----`
+
+	t.Run("valid CA cert configures custom root CAs", func(t *testing.T) {
+		cfg := cfgpkg.KeycloakRuntimeConfig{
+			BaseURL:              "https://keycloak.example.com:8443",
+			Realm:                "test-realm",
+			ClientID:             "test-client",
+			ClientSecret:         "test-secret",
+			CertificateAuthority: validPEM,
+			CacheTTL:             "5m",
+		}
+
+		resolver := NewKeycloakGroupMemberResolver(slog, cfg)
+		assert.NotNil(t, resolver)
+		assert.NotNil(t, resolver.gocloak)
+		assert.Equal(t, validPEM, resolver.cfg.CertificateAuthority)
+
+		// Verify that the gocloak client's underlying HTTP transport has custom RootCAs configured
+		restyClient := resolver.gocloak.RestyClient()
+		httpClient := restyClient.GetClient()
+		transport, ok := httpClient.Transport.(*http.Transport)
+		if assert.True(t, ok, "transport should be *http.Transport") {
+			tlsCfg := transport.TLSClientConfig
+			if assert.NotNil(t, tlsCfg, "TLS config should be set") {
+				assert.NotNil(t, tlsCfg.RootCAs, "custom RootCAs pool should be set for valid CA PEM")
+				assert.False(t, tlsCfg.InsecureSkipVerify, "InsecureSkipVerify should be false")
+			}
+		}
+	})
+
+	t.Run("invalid CA cert falls back to system certs", func(t *testing.T) {
+		cfg := cfgpkg.KeycloakRuntimeConfig{
+			BaseURL:              "https://keycloak.example.com:8443",
+			Realm:                "test-realm",
+			ClientID:             "test-client",
+			ClientSecret:         "test-secret",
+			CertificateAuthority: "not-a-valid-pem",
+			CacheTTL:             "5m",
+		}
+
+		// Should not panic; falls back to system certs with a warning
+		resolver := NewKeycloakGroupMemberResolver(slog, cfg)
+		assert.NotNil(t, resolver)
+		assert.NotNil(t, resolver.gocloak)
+
+		// Verify that no custom TLS config was applied (fallback to system certs)
+		restyClient := resolver.gocloak.RestyClient()
+		httpClient := restyClient.GetClient()
+		if transport, ok := httpClient.Transport.(*http.Transport); ok {
+			if transport.TLSClientConfig != nil {
+				assert.Nil(t, transport.TLSClientConfig.RootCAs,
+					"RootCAs should be nil for invalid PEM (system certs fallback)")
+			}
+		}
+		// If Transport is nil or not *http.Transport, that's fine — it means no custom TLS was set
+	})
 }
 
 // TestNewKeycloakGroupMemberResolver_SecureByDefault tests that the resolver uses
