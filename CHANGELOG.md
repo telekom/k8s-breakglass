@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workload Type Mismatch Warning**: Admission webhook warns when a `templateString` produces a Deployment/DaemonSet that doesn't match the configured `workloadType`
 - **Dry-Run Template Rendering in Webhooks**: Admission webhooks now perform best-effort dry-run rendering of Go-templated `templateString` values, catching execution errors and invalid YAML output at admission time instead of only at reconciliation
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
+- **CORS Origin Warnings**: Log WARN when default localhost origins are active via `BREAKGLASS_ALLOW_DEFAULT_ORIGINS=true` and when no origins are configured at all, to prevent accidental permissive CORS in production
 
 ### Changed
 
