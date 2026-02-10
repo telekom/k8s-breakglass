@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend Debug Session Variables**: Improved variable form validation with inline hints showing allowed values, default indicators, and dark theme support for approval cards
 - **EscalationManager Functional Options**: Refactored `NewEscalationManagerWithClient` from type-unsafe `...any` variadic to type-safe functional options pattern (`WithLogger`, `WithConfigLoader`)
 - **Deduplicated Cluster Escalation Lookup**: Extracted `collectClusterEscalations` helper to eliminate repeated index-based query logic in `GetClusterBreakglassEscalations` and `GetClusterGroupBreakglassEscalations`
+- **Logger Dependency Injection**: `SessionManager` and `ClusterConfigManager` now accept an injected `*zap.SugaredLogger` via variadic constructor options, and `KeycloakIdentityProvider` uses an injected logger field on the struct, replacing direct `zap.S()` global logger calls with instance-scoped loggers for improved testability and structured logging context
 
 ### Fixed
 
@@ -74,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `BreakglassService.fetchAvailableEscalations()` now catches errors (previously broke the entire `getBreakglasses()` Promise.all)
   - Fixed double-toast errors in BreakglassSessionReview (approve/reject), DebugSessionCreate (fetchTemplates/fetchTemplateClusters)
   - `DebugSessionCreate.onMounted` now handles `auth.getUser()` failures gracefully
+- **Silent Log Loss**: Added `zap.ReplaceGlobals(zapLogger)` in startup so that standalone utility functions, webhook validators, and legacy code paths using `zap.S()` log through the configured logger instead of the default no-op
 
 - **IDP-Based Session Limits**: Session limits are now configured at the IdentityProvider level with support for group-based overrides and escalation-level overrides
   - New `IdentityProvider.spec.sessionLimits` field with `maxActiveSessionsPerUser` default limit

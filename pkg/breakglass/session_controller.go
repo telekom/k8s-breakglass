@@ -3030,7 +3030,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 	clusterConfigClient client.Client,
 	disableEmail ...bool,
 ) *BreakglassSessionController {
-	ip := KeycloakIdentityProvider{}
+	ip := KeycloakIdentityProvider{log: log}
 
 	// Check if disableEmail flag is provided
 	disableEmailFlag := false
@@ -3055,7 +3055,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		configPath:           configPath,
 		configLoader:         config.NewCachedLoader(configPath, 5*time.Second), // Cache config, check file every 5s
 		ccProvider:           ccProvider,
-		clusterConfigManager: NewClusterConfigManager(clusterConfigClient),
+		clusterConfigManager: NewClusterConfigManager(clusterConfigClient, log),
 		inFlightCreates:      &sync.Map{},
 	}
 

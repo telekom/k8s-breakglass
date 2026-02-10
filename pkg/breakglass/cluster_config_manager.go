@@ -13,10 +13,28 @@ import (
 // ClusterConfigManager provides access to ClusterConfig CRs by name.
 type ClusterConfigManager struct {
 	client client.Client
+	log    *zap.SugaredLogger
 }
 
-func NewClusterConfigManager(c client.Client) *ClusterConfigManager {
-	return &ClusterConfigManager{client: c}
+// getLogger returns the injected logger or falls back to the global logger.
+func (ccm *ClusterConfigManager) getLogger() *zap.SugaredLogger {
+	if ccm.log != nil {
+		return ccm.log
+	}
+	return zap.S()
+}
+
+// NewClusterConfigManager creates a ClusterConfigManager backed by the provided client.
+// Optional variadic arguments:
+//   - *zap.SugaredLogger: custom logger (falls back to global zap.S() if not provided)
+func NewClusterConfigManager(c client.Client, opts ...any) *ClusterConfigManager {
+	ccm := &ClusterConfigManager{client: c}
+	for _, opt := range opts {
+		if l, ok := opt.(*zap.SugaredLogger); ok {
+			ccm.log = l
+		}
+	}
+	return ccm
 }
 
 // GetClusterConfigByName fetches the ClusterConfig CR by metadata.name (which is usually the cluster name/ID)
@@ -48,7 +66,7 @@ func (ccm *ClusterConfigManager) GetClusterConfigByName(ctx context.Context, nam
 	// Fallback: do a full list scan (should be rare) - maintain original behavior for safety.
 	list2 := telekomv1alpha1.ClusterConfigList{}
 	if err := ccm.client.List(ctx, &list2); err != nil {
-		zap.S().Errorw("Failed to list ClusterConfig resources", "error", err.Error())
+		ccm.getLogger().Errorw("Failed to list ClusterConfig resources", "error", err)
 		return nil, fmt.Errorf("failed to list ClusterConfig resources: %w", err)
 	}
 	matching := make([]*telekomv1alpha1.ClusterConfig, 0, len(list2.Items))

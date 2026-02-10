@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -91,5 +92,33 @@ func TestClusterConfigManager_GetClusterConfigInNamespace(t *testing.T) {
 		got, err := mgr.GetClusterConfigInNamespace(ctx, "test-ns", "missing")
 		require.Error(t, err)
 		require.Nil(t, got)
+	})
+}
+
+func TestClusterConfigManager_LoggerInjection(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+
+	t.Run("injected logger is used", func(t *testing.T) {
+		logger, err := zap.NewDevelopment()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = logger.Sync() })
+		sugar := logger.Sugar()
+		mgr := NewClusterConfigManager(cli, sugar)
+
+		require.Same(t, sugar, mgr.getLogger())
+	})
+
+	t.Run("fallback to global logger when no logger provided", func(t *testing.T) {
+		mgr := NewClusterConfigManager(cli)
+
+		require.Nil(t, mgr.log, "log field should be nil when no logger injected")
+		// getLogger() should still return a non-nil logger (global fallback)
+		require.NotNil(t, mgr.getLogger())
+	})
+
+	t.Run("non-logger opts are ignored", func(t *testing.T) {
+		mgr := NewClusterConfigManager(cli, "not-a-logger", 42)
+
+		require.Nil(t, mgr.log, "non-logger opts should not set the log field")
 	})
 }

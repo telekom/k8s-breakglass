@@ -128,6 +128,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Replace the global zap logger so that any code still using zap.S() or zap.L()
+	// (e.g. standalone utility functions, webhook validators) logs through the
+	// configured logger instead of the default no-op.
+	zap.ReplaceGlobals(zapLogger)
+
 	defer func() {
 		_ = zapLogger.Sync()
 	}()
@@ -230,7 +235,7 @@ func main() {
 	// This allows the backend to verify tokens from any configured IDP, not just the default one
 	auth.WithIdentityProviderLoader(idpLoader)
 
-	sessionManager := breakglass.NewSessionManagerWithClientAndReader(reconcilerMgr.GetClient(), reconcilerMgr.GetAPIReader())
+	sessionManager := breakglass.NewSessionManagerWithClientAndReader(reconcilerMgr.GetClient(), reconcilerMgr.GetAPIReader(), log)
 
 	// Create authenticated rate limiter for API endpoints
 	// Authenticated users get 50 req/s (per user), unauthenticated get 10 req/s (per IP)
