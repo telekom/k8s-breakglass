@@ -1395,7 +1395,7 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 	if len(reqLog) > 0 {
 		logger = reqLog[0]
 	}
-	if len(sessions) == 0 || incoming.Spec.ResourceAttributes == nil {
+	if len(sessions) == 0 || (incoming.Spec.ResourceAttributes == nil && incoming.Spec.NonResourceAttributes == nil) {
 		return false, "", "", ""
 	}
 	clientset, err := kubernetes.NewForConfig(rc)
@@ -1491,15 +1491,24 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 			sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   "system:breakglass-session",
 				Groups: []string{g},
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
+			}}
+			// Populate either ResourceAttributes or NonResourceAttributes from the incoming SAR
+			if incoming.Spec.ResourceAttributes != nil {
+				sar.Spec.ResourceAttributes = &authorizationv1.ResourceAttributes{
 					Namespace:   incoming.Spec.ResourceAttributes.Namespace,
 					Verb:        incoming.Spec.ResourceAttributes.Verb,
 					Group:       incoming.Spec.ResourceAttributes.Group,
+					Version:     incoming.Spec.ResourceAttributes.Version,
 					Resource:    incoming.Spec.ResourceAttributes.Resource,
 					Subresource: incoming.Spec.ResourceAttributes.Subresource,
 					Name:        incoming.Spec.ResourceAttributes.Name,
-				},
-			}}
+				}
+			} else if incoming.Spec.NonResourceAttributes != nil {
+				sar.Spec.NonResourceAttributes = &authorizationv1.NonResourceAttributes{
+					Path: incoming.Spec.NonResourceAttributes.Path,
+					Verb: incoming.Spec.NonResourceAttributes.Verb,
+				}
+			}
 			if logger != nil {
 				logger.Debugw("Creating SubjectAccessReview for session impersonation", "group", g, "session", s.Name)
 			} else if wc.log != nil {

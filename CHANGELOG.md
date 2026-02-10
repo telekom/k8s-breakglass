@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Standardized API Error Responses**: Replaced raw `c.JSON(status, "string")` and `gin.H{"error": ...}` patterns with standardized `apiresponses` helpers across escalation controller, debug session API, cluster binding API, session controller, and OIDC proxy. All error responses now include a consistent `"code"` field (e.g., `INTERNAL_ERROR`, `BAD_REQUEST`, `UNPROCESSABLE_ENTITY`) alongside the `"error"` message
+- **ExpirePendingSessions Query Optimization**: `ExpirePendingSessions` now uses `GetSessionsByState(Pending)` indexed query instead of `GetAllBreakglassSessions()`, avoiding unnecessary iteration over non-pending sessions
+- **Webhook NonResourceAttributes Support**: Authorization webhook now correctly forwards `NonResourceAttributes` (e.g., `/healthz`, `/metrics`) in SubjectAccessReview requests instead of silently dropping them
 - **Auto-Approve in resolveApproval API**: The `resolveApproval()` handler now evaluates auto-approve eligibility using `evaluateAutoApprove()`, correctly populating `canAutoApprove` in API responses
 - **Frontend Log Spam**: Removed excessive console logging of full approval objects during debug session creation
 

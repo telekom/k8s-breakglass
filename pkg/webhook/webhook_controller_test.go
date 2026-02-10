@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -663,7 +664,11 @@ func TestAuthorizeViaSessions_PrefixedAllowed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && (r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews" || r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews/") {
 			// inspect raw body and allow if it contains the prefixed group string
-			bodyBytes, _ := io.ReadAll(r.Body)
+			bodyBytes, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				http.Error(w, "failed to read body", http.StatusInternalServerError)
+				return
+			}
 			bodyStr := string(bodyBytes)
 			allow := false
 			if strings.Contains(bodyStr, "oidc:breakglass-create-all") || strings.Contains(bodyStr, "\"groups\":\"breakglass-create-all\"") || strings.Contains(bodyStr, "\"groups\":[\"breakglass-create-all\"") {
@@ -951,5 +956,102 @@ func TestIDPMismatchErrorInfo(t *testing.T) {
 
 	if !idpSet["keycloak"] || !idpSet["ldap"] {
 		t.Errorf("Expected keycloak and ldap in mismatched IDPs, got %v", idpSet)
+	}
+}
+
+// TestAuthorizeViaSessions_NonResourceAttributes verifies that NonResourceAttributes SARs
+// (e.g., /healthz, /api) are correctly proxied through session-based authorization.
+// Previously, the function returned false immediately when ResourceAttributes was nil.
+func TestAuthorizeViaSessions_NonResourceAttributes(t *testing.T) {
+	controller := SetupController(nil)
+
+	ses := v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess-nonresource-1"},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	// Track the proxied SAR to verify correct forwarding
+	var capturedBody []byte
+
+	// Start HTTP test server that simulates kube-apiserver SubjectAccessReview endpoint
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/apis/authorization.k8s.io/v1/subjectaccessreviews") {
+			var readErr error
+			capturedBody, readErr = io.ReadAll(r.Body)
+			if readErr != nil {
+				http.Error(w, "failed to read body", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","status":{"allowed":true}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	rc := &rest.Config{Host: srv.URL, ContentConfig: rest.ContentConfig{ContentType: "application/json"}, TLSClientConfig: rest.TLSClientConfig{Insecure: true}}
+
+	nonResourceSAR := authorization.SubjectAccessReview{
+		Spec: authorization.SubjectAccessReviewSpec{
+			User:   "testuser",
+			Groups: []string{"system:authenticated"},
+			NonResourceAttributes: &authorization.NonResourceAttributes{
+				Path: "/healthz",
+				Verb: "get",
+			},
+		},
+	}
+
+	allowed, grp, name, _ := controller.authorizeViaSessions(
+		context.Background(), rc, []v1alpha1.BreakglassSession{ses}, nonResourceSAR, "test-cluster")
+
+	if !allowed {
+		t.Fatalf("expected NonResourceAttributes SAR to be allowed via session, but it was denied")
+	}
+	if grp != ses.Spec.GrantedGroup {
+		t.Fatalf("expected granted group %s got %s", ses.Spec.GrantedGroup, grp)
+	}
+	if name != ses.Name {
+		t.Fatalf("expected session name %s got %s", ses.Name, name)
+	}
+
+	// Verify the proxied SAR forwarded NonResourceAttributes (not ResourceAttributes).
+	// The k8s client may use protobuf encoding, so we check for JSON key presence
+	// in the serialized body as a best-effort assertion.
+	bodyStr := string(capturedBody)
+	assert.Contains(t, bodyStr, "nonResourceAttributes",
+		"proxied SAR must contain nonResourceAttributes")
+	assert.Contains(t, bodyStr, "/healthz",
+		"proxied SAR must contain the requested path")
+	assert.NotContains(t, bodyStr, "resourceAttributes",
+		"proxied SAR must not contain resourceAttributes for a NonResourceAttributes request")
+}
+
+// TestAuthorizeViaSessions_NilAttributes verifies that sessions with neither
+// ResourceAttributes nor NonResourceAttributes are properly rejected.
+func TestAuthorizeViaSessions_NilAttributes(t *testing.T) {
+	controller := SetupController(nil)
+
+	ses := v1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "sess-nil-attrs"},
+		Spec: v1alpha1.BreakglassSessionSpec{
+			GrantedGroup: "breakglass-admin",
+		},
+	}
+
+	nilSAR := authorization.SubjectAccessReview{
+		Spec: authorization.SubjectAccessReviewSpec{
+			User: "testuser",
+		},
+	}
+
+	allowed, _, _, _ := controller.authorizeViaSessions(
+		context.Background(), nil, []v1alpha1.BreakglassSession{ses}, nilSAR, "test-cluster")
+
+	if allowed {
+		t.Fatalf("expected SAR with nil attributes to be rejected, but it was allowed")
 	}
 }
