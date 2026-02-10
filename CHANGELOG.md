@@ -13,8 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Webhook Evaluation Order Documentation**: Updated deny-policy, debug-session, and advanced-features docs to clarify the webhook evaluation order
 - **Debug Session Roadmap Table Correction**: Corrected the debug session roadmap table to reflect the implemented behavior
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
-- **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
-- **Comprehensive Cleanup Edge Case Tests**: Added 22 unit tests covering failSession and cleanupResources behavior across all failure scenarios including partial deploys, nil cluster providers, idempotent re-fail, and spec preservation
 
 ### Changed
 
@@ -22,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dockerfile Cross-Compilation**: Added `GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}` to the `go build` command in Dockerfile, ensuring correct binary architecture when building multi-platform images and falling back to the host architecture for non-BuildKit builds
+- **Helm Chart ClusterConfig Name**: Replaced no-op `default` (which defaulted a value to itself) with `required` in the ClusterConfig metadata name template, providing a clear error when `cluster.clusterID` is not set
+- **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
+- **Comprehensive Cleanup Edge Case Tests**: Added 22 unit tests covering failSession and cleanupResources behavior across all failure scenarios including partial deploys, nil cluster providers, idempotent re-fail, and spec preservation
 - **Standardized API Error Responses**: Replaced raw `c.JSON(status, "string")` and `gin.H{"error": ...}` patterns with standardized `apiresponses` helpers across escalation controller, debug session API, cluster binding API, session controller, and OIDC proxy. All error responses now include a consistent `"code"` field (e.g., `INTERNAL_ERROR`, `BAD_REQUEST`, `UNPROCESSABLE_ENTITY`) alongside the `"error"` message
 - **Auto-Approve in resolveApproval API**: The `resolveApproval()` handler now evaluates auto-approve eligibility using `evaluateAutoApprove()`, correctly populating `canAutoApprove` in API responses
 - **Frontend Log Spam**: Removed excessive console logging of full approval objects during debug session creation

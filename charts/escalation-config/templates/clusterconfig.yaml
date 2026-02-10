@@ -1,12 +1,12 @@
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
-  name: {{ default .Values.cluster.clusterID .Values.cluster.clusterID | trunc 63 | trimSuffix "-" }}
+  name: {{ required "cluster.clusterID is required" .Values.cluster.clusterID | trunc 63 | trimSuffix "-" | quote }}
   namespace: {{ .Release.Namespace }}
 spec:
-  clusterID: {{ .Values.cluster.clusterID }}
-  tenant: {{ .Values.cluster.tenant }}
-  environment: {{ .Values.cluster.environment }}
+  clusterID: {{ .Values.cluster.clusterID | quote }}
+  tenant: {{ .Values.cluster.tenant | quote }}
+  environment: {{ .Values.cluster.environment | quote }}
   {{- if .Values.cluster.site }}
   site: {{ .Values.cluster.site }}
   {{- end }}
