@@ -28,6 +28,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
@@ -286,7 +287,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 
 	if err := c.reader().List(apiCtx, sessionList, listOpts...); err != nil {
 		reqLog.Errorw("Failed to list debug sessions", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list debug sessions"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list debug sessions")
 		return
 	}
 
@@ -344,7 +345,7 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 	namespaceHint := ctx.Query("namespace")
 
 	if name == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session name is required"})
+		apiresponses.RespondBadRequest(ctx, "session name is required")
 		return
 	}
 
@@ -354,11 +355,11 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
@@ -372,7 +373,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	var req CreateDebugSessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		reqLog.Warnw("Failed to parse CreateDebugSession request", "error", err)
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
 
@@ -404,11 +405,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			reqLog.Warnw("Template not found", "templateRef", req.TemplateRef)
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("template '%s' not found", req.TemplateRef)})
+			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("template '%s' not found", req.TemplateRef))
 			return
 		}
 		reqLog.Errorw("Failed to get template", "template", req.TemplateRef, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate template"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate template")
 		return
 	}
 
@@ -417,12 +418,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	var clusterConfigList v1alpha1.ClusterConfigList
 	if err := c.client.List(apiCtx, &bindingList); err != nil {
 		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate cluster access"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
 	}
 	if err := c.client.List(apiCtx, &clusterConfigList); err != nil {
 		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate cluster access"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
 	}
 
@@ -455,7 +456,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			}(),
 			"bindingsChecked", len(bindingList.Items),
 		)
-		ctx.JSON(http.StatusForbidden, gin.H{"error": errDetails})
+		apiresponses.RespondForbidden(ctx, errDetails)
 		return
 	}
 	reqLog.Debugw("Cluster access validated",
@@ -487,7 +488,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			"bindingUsed", allowedResult.MatchingBinding != nil,
 			"error", err,
 		)
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
 	// Track warning if namespace was defaulted
@@ -504,7 +505,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			"selectedSchedulingOption", req.SelectedSchedulingOption,
 			"error", err,
 		)
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
 	// Track warning if scheduling option was defaulted
@@ -526,7 +527,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Get current user from context
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -585,7 +586,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Generate session name - use safe type assertion
 	currentUserStr, ok := currentUser.(string)
 	if !ok {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "invalid user context type"})
+		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
 		return
 	}
 	sessionName := fmt.Sprintf("debug-%s-%s-%d", naming.ToRFC1123Subdomain(currentUserStr), naming.ToRFC1123Subdomain(req.Cluster), time.Now().Unix())
@@ -661,11 +662,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: parts[1], Namespace: parts[0]}, resolvedBinding); err != nil {
 				if apierrors.IsNotFound(err) {
 					reqLog.Warnw("Binding not found", "bindingRef", req.BindingRef)
-					ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("binding '%s' not found", req.BindingRef)})
+					apiresponses.RespondBadRequest(ctx, fmt.Sprintf("binding '%s' not found", req.BindingRef))
 					return
 				}
 				reqLog.Errorw("Failed to get binding", "binding", req.BindingRef, "error", err)
-				ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate binding"})
+				apiresponses.RespondInternalErrorSimple(ctx, "failed to validate binding")
 				return
 			}
 
@@ -677,7 +678,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 					"effectiveFrom", resolvedBinding.Spec.EffectiveFrom,
 					"expiresAt", resolvedBinding.Spec.ExpiresAt,
 				)
-				ctx.JSON(http.StatusForbidden, gin.H{"error": "binding is not active (disabled, expired, or not yet effective)"})
+				apiresponses.RespondForbidden(ctx, "binding is not active (disabled, expired, or not yet effective)")
 				return
 			}
 		} else {
@@ -693,7 +694,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"userEmail", userEmail,
 				"error", err,
 			)
-			ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			apiresponses.RespondForbidden(ctx, err.Error())
 			return
 		}
 
@@ -725,11 +726,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// while preserving conflict detection for duplicate session names.
 	if err := c.client.Create(apiCtx, session); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			ctx.JSON(http.StatusConflict, gin.H{"error": "session already exists"})
+			apiresponses.RespondConflict(ctx, "session already exists")
 			return
 		}
 		reqLog.Errorw("Failed to create debug session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to create debug session")
 		return
 	}
 
@@ -776,7 +777,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -786,17 +787,17 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
 	// Check session is active
 	if session.Status.State != v1alpha1.DebugSessionStateActive {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("cannot join session in state '%s'", session.Status.State)})
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot join session in state '%s'", session.Status.State))
 		return
 	}
 
@@ -804,7 +805,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	username := currentUser.(string)
 	for _, p := range session.Status.Participants {
 		if p.User == username {
-			ctx.JSON(http.StatusConflict, gin.H{"error": "user already joined this session"})
+			apiresponses.RespondConflict(ctx, "user already joined this session")
 			return
 		}
 	}
@@ -814,7 +815,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		session.Status.ResolvedTemplate.TerminalSharing != nil &&
 		session.Status.ResolvedTemplate.TerminalSharing.MaxParticipants > 0 {
 		if int32(len(session.Status.Participants)) >= session.Status.ResolvedTemplate.TerminalSharing.MaxParticipants {
-			ctx.JSON(http.StatusForbidden, gin.H{"error": "maximum participants reached"})
+			apiresponses.RespondForbidden(ctx, "maximum participants reached")
 			return
 		}
 	}
@@ -853,7 +854,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 
 	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to add participant", "session", name, "user", username, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to join session")
 		return
 	}
 
@@ -872,27 +873,27 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	// Get current user for authorization check
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 	username := currentUser.(string)
 
 	var req RenewDebugSessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
 
 	// Parse extension duration (supports day units like "1d")
 	extendBy, err := v1alpha1.ParseDuration(req.ExtendBy)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid duration format"})
+		apiresponses.RespondBadRequest(ctx, "invalid duration format")
 		return
 	}
 
 	// Validate duration is positive
 	if extendBy <= 0 {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "extension duration must be positive"})
+		apiresponses.RespondBadRequest(ctx, "extension duration must be positive")
 		return
 	}
 
@@ -902,11 +903,11 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
@@ -921,13 +922,13 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		}
 	}
 	if !isOwnerOrParticipant {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "only session owner or participants can renew"})
+		apiresponses.RespondForbidden(ctx, "only session owner or participants can renew")
 		return
 	}
 
 	// Check session is active
 	if session.Status.State != v1alpha1.DebugSessionStateActive {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("cannot renew session in state '%s'", session.Status.State)})
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot renew session in state '%s'", session.Status.State))
 		return
 	}
 
@@ -937,7 +938,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 
 		// Check if renewals are allowed (defaults to true if not set)
 		if constraints.AllowRenewal != nil && !*constraints.AllowRenewal {
-			ctx.JSON(http.StatusForbidden, gin.H{"error": "session renewals are not allowed by template"})
+			apiresponses.RespondForbidden(ctx, "session renewals are not allowed by template")
 			return
 		}
 
@@ -945,13 +946,13 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		if constraints.MaxRenewals != nil {
 			maxRenewals := *constraints.MaxRenewals
 			if maxRenewals == 0 || session.Status.RenewalCount >= maxRenewals {
-				ctx.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("maximum renewals (%d) reached", maxRenewals)})
+				apiresponses.RespondForbidden(ctx, fmt.Sprintf("maximum renewals (%d) reached", maxRenewals))
 				return
 			}
 		} else {
 			// Default max renewals is 3
 			if session.Status.RenewalCount >= 3 {
-				ctx.JSON(http.StatusForbidden, gin.H{"error": "maximum renewals (3) reached"})
+				apiresponses.RespondForbidden(ctx, "maximum renewals (3) reached")
 				return
 			}
 		}
@@ -962,9 +963,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 			if err == nil && session.Status.StartsAt != nil {
 				currentDuration := time.Since(session.Status.StartsAt.Time)
 				if currentDuration+extendBy > maxDur {
-					ctx.JSON(http.StatusForbidden, gin.H{
-						"error": fmt.Sprintf("extension would exceed maximum duration of %s", constraints.MaxDuration),
-					})
+					apiresponses.RespondForbidden(ctx, fmt.Sprintf("extension would exceed maximum duration of %s", constraints.MaxDuration))
 					return
 				}
 			}
@@ -973,7 +972,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 
 	// Extend the expiration
 	if session.Status.ExpiresAt == nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session has no expiration time"})
+		apiresponses.RespondBadRequest(ctx, "session has no expiration time")
 		return
 	}
 
@@ -983,7 +982,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 
 	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to renew session", "session", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to renew session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew session")
 		return
 	}
 
@@ -1009,7 +1008,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -1019,18 +1018,18 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
 	// Check if user is allowed to terminate (owner or admin)
 	// For now, only the owner can terminate
 	if session.Spec.RequestedBy != currentUser.(string) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "only the session owner can terminate"})
+		apiresponses.RespondForbidden(ctx, "only the session owner can terminate")
 		return
 	}
 
@@ -1038,7 +1037,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	if session.Status.State == v1alpha1.DebugSessionStateTerminated ||
 		session.Status.State == v1alpha1.DebugSessionStateExpired ||
 		session.Status.State == v1alpha1.DebugSessionStateFailed {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is already in terminal state '%s'", session.Status.State)})
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
 		return
 	}
 
@@ -1048,7 +1047,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 
 	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to terminate session", "session", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to terminate session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to terminate session")
 		return
 	}
 
@@ -1074,7 +1073,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -1084,24 +1083,24 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
 	// Check session is pending approval
 	if session.Status.State != v1alpha1.DebugSessionStatePendingApproval {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State)})
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
 
 	// Check if user is authorized to approve (in allowed approver groups)
 	userGroups, _ := ctx.Get("groups")
 	if !c.isUserAuthorizedToApprove(apiCtx, session, currentUser.(string), userGroups) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "user is not authorized to approve this session"})
+		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
 		return
 	}
 
@@ -1127,7 +1126,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 
 	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to approve session", "session", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to approve session")
 		return
 	}
 
@@ -1156,7 +1155,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -1166,24 +1165,24 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
 	// Check session is pending approval
 	if session.Status.State != v1alpha1.DebugSessionStatePendingApproval {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State)})
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
 
 	// Check if user is authorized to reject (in allowed approver groups)
 	userGroups, _ := ctx.Get("groups")
 	if !c.isUserAuthorizedToApprove(apiCtx, session, currentUser.(string), userGroups) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "user is not authorized to reject this session"})
+		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
 		return
 	}
 
@@ -1212,7 +1211,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to reject session", "session", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to reject session")
 		return
 	}
 
@@ -1238,7 +1237,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -1248,11 +1247,11 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	session, err := c.getDebugSessionByName(apiCtx, name, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
@@ -1264,7 +1263,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		if session.Status.Participants[i].User == username {
 			// Check if owner - owners cannot leave
 			if session.Status.Participants[i].Role == v1alpha1.ParticipantRoleOwner {
-				ctx.JSON(http.StatusForbidden, gin.H{"error": "session owner cannot leave; use terminate instead"})
+				apiresponses.RespondForbidden(ctx, "session owner cannot leave; use terminate instead")
 				return
 			}
 			// Mark as left
@@ -1275,13 +1274,13 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	}
 
 	if !found {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "user is not a participant in this session"})
+		apiresponses.RespondNotFoundSimple(ctx, "user is not a participant in this session")
 		return
 	}
 
 	if err := applyDebugSessionStatus(apiCtx, c.client, session); err != nil {
 		reqLog.Errorw("Failed to leave session", "session", name, "user", username, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to leave session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to leave session")
 		return
 	}
 
@@ -1487,7 +1486,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 
 	if err := c.reader().List(apiCtx, templateList); err != nil {
 		reqLog.Errorw("Failed to list debug session templates", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list templates"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list templates")
 		return
 	}
 
@@ -1650,7 +1649,7 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	name := ctx.Param("name")
 
 	if name == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "template name is required"})
+		apiresponses.RespondBadRequest(ctx, "template name is required")
 		return
 	}
 
@@ -1660,11 +1659,11 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 
 	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "template not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "template not found")
 			return
 		}
 		reqLog.Errorw("Failed to get template", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get template"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get template")
 		return
 	}
 
@@ -1735,7 +1734,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	name := ctx.Param("name")
 
 	if name == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "template name is required"})
+		apiresponses.RespondBadRequest(ctx, "template name is required")
 		return
 	}
 
@@ -1746,11 +1745,11 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	template := &v1alpha1.DebugSessionTemplate{}
 	if err := c.client.Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "template not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "template not found")
 			return
 		}
 		reqLog.Errorw("Failed to get template", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get template"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get template")
 		return
 	}
 
@@ -1782,7 +1781,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 			}
 		}
 		if !hasAccess {
-			ctx.JSON(http.StatusForbidden, gin.H{"error": "access denied to this template"})
+			apiresponses.RespondForbidden(ctx, "access denied to this template")
 			return
 		}
 	}
@@ -1810,13 +1809,13 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 
 	if ccErr != nil {
 		reqLog.Errorw("Failed to list cluster configs", "error", ccErr)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list clusters"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list clusters")
 		return
 	}
 
 	if bindErr != nil {
 		reqLog.Errorw("Failed to list cluster bindings", "error", bindErr)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list bindings"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list bindings")
 		return
 	}
 
@@ -2618,7 +2617,7 @@ func (c *DebugSessionAPIController) handleListPodTemplates(ctx *gin.Context) {
 
 	if err := c.reader().List(apiCtx, templateList); err != nil {
 		reqLog.Errorw("Failed to list debug pod templates", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list pod templates"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to list pod templates")
 		return
 	}
 
@@ -2645,7 +2644,7 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 	name := ctx.Param("name")
 
 	if name == "" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "template name is required"})
+		apiresponses.RespondBadRequest(ctx, "template name is required")
 		return
 	}
 
@@ -2655,11 +2654,11 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 
 	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "pod template not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "pod template not found")
 			return
 		}
 		reqLog.Errorw("Failed to get pod template", "name", name, "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get pod template"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get pod template")
 		return
 	}
 
@@ -3517,14 +3516,14 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 
 	var req InjectEphemeralContainerRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
 
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -3535,23 +3534,23 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	session, err := c.getDebugSessionByName(apiCtx, sessionName, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
 	// Verify session is active
 	if session.Status.State != v1alpha1.DebugSessionStateActive {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is not active, current state: %s", session.Status.State)})
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
 
 	// Verify user is a participant
 	if !c.isUserParticipant(session, currentUser.(string)) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "user is not a participant of this session"})
+		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
 		return
 	}
 
@@ -3559,7 +3558,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	if session.Status.ResolvedTemplate == nil ||
 		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
 			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session template does not support kubectl-debug mode"})
+		apiresponses.RespondBadRequest(ctx, "session template does not support kubectl-debug mode")
 		return
 	}
 
@@ -3570,14 +3569,14 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	capabilities := extractCapabilities(req.SecurityContext)
 	runAsNonRoot := extractRunAsNonRoot(req.SecurityContext)
 	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot); err != nil {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		apiresponses.RespondForbidden(ctx, err.Error())
 		return
 	}
 
 	// Inject the ephemeral container
 	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, currentUser.(string)); err != nil {
 		reqLog.Errorw("Failed to inject ephemeral container", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to inject ephemeral container: %v", err)})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to inject ephemeral container")
 		return
 	}
 
@@ -3605,14 +3604,14 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 
 	var req CreatePodCopyRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
 
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -3623,23 +3622,23 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	session, err := c.getDebugSessionByName(apiCtx, sessionName, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
 	// Verify session is active
 	if session.Status.State != v1alpha1.DebugSessionStateActive {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is not active, current state: %s", session.Status.State)})
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
 
 	// Verify user is a participant
 	if !c.isUserParticipant(session, currentUser.(string)) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "user is not a participant of this session"})
+		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
 		return
 	}
 
@@ -3647,7 +3646,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	if session.Status.ResolvedTemplate == nil ||
 		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
 			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session template does not support kubectl-debug mode"})
+		apiresponses.RespondBadRequest(ctx, "session template does not support kubectl-debug mode")
 		return
 	}
 
@@ -3658,7 +3657,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, currentUser.(string))
 	if err != nil {
 		reqLog.Errorw("Failed to create pod copy", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create pod copy: %v", err)})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to create pod copy")
 		return
 	}
 
@@ -3688,14 +3687,14 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 
 	var req CreateNodeDebugPodRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
 
 	// Get current user
 	currentUser, exists := ctx.Get("username")
 	if !exists || currentUser == nil {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -3706,23 +3705,23 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	session, err := c.getDebugSessionByName(apiCtx, sessionName, namespaceHint)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			ctx.JSON(http.StatusNotFound, gin.H{"error": "debug session not found"})
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 			return
 		}
 		reqLog.Errorw("Failed to get debug session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get debug session"})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
 
 	// Verify session is active
 	if session.Status.State != v1alpha1.DebugSessionStateActive {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session is not active, current state: %s", session.Status.State)})
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
 
 	// Verify user is a participant
 	if !c.isUserParticipant(session, currentUser.(string)) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "user is not a participant of this session"})
+		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
 		return
 	}
 
@@ -3730,7 +3729,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	if session.Status.ResolvedTemplate == nil ||
 		(session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeKubectlDebug &&
 			session.Status.ResolvedTemplate.Mode != v1alpha1.DebugSessionModeHybrid) {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "session template does not support kubectl-debug mode"})
+		apiresponses.RespondBadRequest(ctx, "session template does not support kubectl-debug mode")
 		return
 	}
 
@@ -3741,7 +3740,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, currentUser.(string))
 	if err != nil {
 		reqLog.Errorw("Failed to create node debug pod", "error", err)
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create node debug pod: %v", err)})
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to create node debug pod")
 		return
 	}
 

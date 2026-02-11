@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
@@ -67,7 +68,7 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	if err != nil {
 		reqLog.With("error", err).Error("Failed to extract user email from authentication token")
 		metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
-		c.JSON(http.StatusInternalServerError, "failed to extract user identity")
+		apiresponses.RespondInternalErrorSimple(c, "failed to extract user identity")
 		return
 	}
 	reqLog.With("email", email).Debug("Successfully extracted user email from token")
@@ -92,7 +93,7 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		if gerr != nil {
 			reqLog.With("error", gerr.Error(), "user", email).Error("Failed to retrieve user groups for escalation determination")
 			metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
-			c.JSON(http.StatusInternalServerError, "failed to extract user groups")
+			apiresponses.RespondInternalErrorSimple(c, "failed to extract user groups")
 			return
 		}
 	}
@@ -110,7 +111,7 @@ func (ec BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to retrieve escalations from manager")
 		metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
-		c.JSON(http.StatusInternalServerError, "failed to extract user escalations")
+		apiresponses.RespondInternalErrorSimple(c, "failed to extract user escalations")
 		return
 	}
 	reqLog.With("escalationCount", len(escalations)).Debug("Successfully fetched escalations from manager")

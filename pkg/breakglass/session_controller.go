@@ -805,7 +805,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		reason := "internal_error"
 		if apierrors.IsInvalid(err) {
 			reason = "invalid"
-			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
+			apiresponses.RespondUnprocessableEntity(c, err.Error())
 		} else if apierrors.IsForbidden(err) {
 			reason = "forbidden"
 			apiresponses.RespondForbidden(c, err.Error())
@@ -1184,7 +1184,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 		if apierrors.IsConflict(err) {
 			apiresponses.RespondConflict(c, "session update conflict, please retry")
 		} else if apierrors.IsInvalid(err) {
-			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
+			apiresponses.RespondUnprocessableEntity(c, err.Error())
 		} else {
 			apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		}
@@ -1877,7 +1877,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 		if apierrors.IsConflict(err) {
 			apiresponses.RespondConflict(c, "session update conflict, please retry")
 		} else if apierrors.IsInvalid(err) {
-			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
+			apiresponses.RespondUnprocessableEntity(c, err.Error())
 		} else {
 			apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		}
@@ -1966,7 +1966,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		if apierrors.IsConflict(err) {
 			apiresponses.RespondConflict(c, "session update conflict, please retry")
 		} else if apierrors.IsInvalid(err) {
-			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
+			apiresponses.RespondUnprocessableEntity(c, err.Error())
 		} else {
 			apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		}
@@ -2041,7 +2041,7 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 		if apierrors.IsConflict(err) {
 			apiresponses.RespondConflict(c, "session update conflict, please retry")
 		} else if apierrors.IsInvalid(err) {
-			c.JSON(http.StatusUnprocessableEntity, apiresponses.APIError{Error: err.Error(), Code: "INVALID"})
+			apiresponses.RespondUnprocessableEntity(c, err.Error())
 		} else {
 			apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		}

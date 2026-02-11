@@ -952,3 +952,69 @@ func TestHSTSHeaderBehindProxy(t *testing.T) {
 		})
 	}
 }
+
+// TestRespondHelpers_JSONErrorShape verifies that error response helpers produce
+// the standardized JSON error body with both "error" and "code" fields.
+func TestRespondHelpers_JSONErrorShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		handler      func(c *gin.Context)
+		expectedCode int
+		expectedJSON map[string]string
+	}{
+		{
+			name:         "RespondNotFoundSimple",
+			handler:      func(c *gin.Context) { RespondNotFoundSimple(c, "resource not found") },
+			expectedCode: http.StatusNotFound,
+			expectedJSON: map[string]string{"error": "resource not found", "code": "NOT_FOUND"},
+		},
+		{
+			name:         "RespondBadRequest",
+			handler:      func(c *gin.Context) { RespondBadRequest(c, "invalid input") },
+			expectedCode: http.StatusBadRequest,
+			expectedJSON: map[string]string{"error": "invalid input", "code": "BAD_REQUEST"},
+		},
+		{
+			name:         "RespondForbidden",
+			handler:      func(c *gin.Context) { RespondForbidden(c, "access denied") },
+			expectedCode: http.StatusForbidden,
+			expectedJSON: map[string]string{"error": "access denied", "code": "FORBIDDEN"},
+		},
+		{
+			name:         "RespondInternalErrorSimple",
+			handler:      func(c *gin.Context) { RespondInternalErrorSimple(c, "something went wrong") },
+			expectedCode: http.StatusInternalServerError,
+			expectedJSON: map[string]string{"error": "something went wrong", "code": "INTERNAL_ERROR"},
+		},
+		{
+			name:         "RespondUnauthorized",
+			handler:      func(c *gin.Context) { RespondUnauthorized(c) },
+			expectedCode: http.StatusUnauthorized,
+			expectedJSON: map[string]string{"error": "user not authenticated", "code": "UNAUTHORIZED"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.GET("/test", tt.handler)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			var body map[string]string
+			err := json.Unmarshal(w.Body.Bytes(), &body)
+			require.NoError(t, err, "response body should be valid JSON")
+
+			assert.Equal(t, tt.expectedJSON["error"], body["error"],
+				"error field must match")
+			assert.Equal(t, tt.expectedJSON["code"], body["code"],
+				"code field must be present and match")
+		})
+	}
+}
