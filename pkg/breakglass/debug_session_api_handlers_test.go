@@ -55,6 +55,21 @@ func setupTestRouter(t *testing.T, objects ...client.Object) (*gin.Engine, *Debu
 	return router, ctrl
 }
 
+// assertErrorResponse unmarshals the response body and verifies the JSON
+// shape contains both "error" and "code" fields as required by the APIError
+// contract defined in pkg/apiresponses.
+func assertErrorResponse(t *testing.T, rr *httptest.ResponseRecorder, wantCode string) {
+	t.Helper()
+	var body map[string]interface{}
+	err := json.Unmarshal(rr.Body.Bytes(), &body)
+	require.NoError(t, err, "response body should be valid JSON")
+	assert.Contains(t, body, "error", "response should contain 'error' field")
+	assert.Contains(t, body, "code", "response should contain 'code' field")
+	if wantCode != "" {
+		assert.Equal(t, wantCode, body["code"], "unexpected error code")
+	}
+}
+
 // ============================================================================
 // Tests for handleInjectEphemeralContainer
 // ============================================================================
@@ -69,6 +84,7 @@ func TestHandleInjectEphemeralContainer_BadRequest(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
 }
 
 func TestHandleInjectEphemeralContainer_Unauthorized(t *testing.T) {
@@ -90,6 +106,7 @@ func TestHandleInjectEphemeralContainer_Unauthorized(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	assertErrorResponse(t, rr, "UNAUTHORIZED")
 }
 
 func TestHandleInjectEphemeralContainer_SessionNotFound(t *testing.T) {
@@ -121,6 +138,7 @@ func TestHandleInjectEphemeralContainer_SessionNotFound(t *testing.T) {
 	testRouter.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assertErrorResponse(t, rr, "NOT_FOUND")
 }
 
 func TestHandleInjectEphemeralContainer_SessionNotActive(t *testing.T) {
@@ -177,6 +195,7 @@ func TestHandleInjectEphemeralContainer_SessionNotActive(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
 	assert.Contains(t, rr.Body.String(), "not active")
 }
 
@@ -312,6 +331,7 @@ func TestHandleCreatePodCopy_BadRequest(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
 }
 
 func TestHandleCreatePodCopy_Unauthorized(t *testing.T) {
@@ -330,6 +350,7 @@ func TestHandleCreatePodCopy_Unauthorized(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+	assertErrorResponse(t, rr, "UNAUTHORIZED")
 }
 
 func TestHandleCreatePodCopy_SessionNotFound(t *testing.T) {
@@ -931,6 +952,7 @@ func TestHandleGetDebugSession_NotFound(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assertErrorResponse(t, rr, "NOT_FOUND")
 }
 
 // ============================================================================
