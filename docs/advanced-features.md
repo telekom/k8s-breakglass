@@ -201,6 +201,12 @@ spec:
 
 First matching rule denies the access. If no rules match, access is allowed (unless caught by another policy).
 
+> **Note:** Active debug sessions bypass deny policy evaluation for pod-level
+> operations (`exec`, `attach`, `portforward`, `log`). See
+> [Debug Sessions — Interaction with Deny Policies](./debug-session.md#interaction-with-deny-policies)
+> and [Deny Policy — Policy Evaluation](./deny-policy.md#policy-evaluation) for
+> details.
+
 ### Policy Scoping
 
 Target specific clusters, tenants, or sessions:

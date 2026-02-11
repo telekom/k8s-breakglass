@@ -1822,6 +1822,26 @@ spec:
 - Ensure pod is `ready: true`
 - Verify RBAC permissions on target cluster
 
+## Interaction with Deny Policies
+
+Active debug sessions take precedence over [deny policies](deny-policy.md) for pod-level operations. When the authorization webhook processes a `SubjectAccessReview` for `exec`, `attach`, `portforward`, or `log` on a specific pod, it checks for matching debug sessions **before** evaluating deny policies.
+
+This means:
+
+- A debug session participant can exec into their allowed pods even if a `DenyPolicy` would normally block exec operations.
+- The bypass applies **only** to pods listed in `status.allowedPods` and operations resolved in `status.allowedPodOperations` (derived from the template/binding configuration).
+- All other operations (e.g., `get`, `delete`, `create` on non-pod resources) still go through normal deny policy evaluation.
+
+This is intentional — debug sessions represent pre-approved, time-limited troubleshooting access. The security boundary is enforced at session creation time through `DebugSessionTemplate` constraints:
+
+- **Namespace restrictions** — `allowedNamespaces` / `deniedNamespaces` control where debug pods can be created
+- **Image allow-lists** — `allowedImages` restricts which debug container images can be used
+- **Approval requirements** — `approvalConfig` can require explicit approver sign-off
+- **Time limits** — `maxDuration` caps session lifetime
+- **Operation restrictions** — `status.allowedPodOperations` (resolved from template/binding) limits which subresources are accessible
+
+See [Deny Policy — Policy Evaluation](deny-policy.md#policy-evaluation) for the full evaluation order.
+
 ## Related Resources
 
 - [Breakglass Session](breakglass-session.md) - Traditional privilege escalation
@@ -1900,7 +1920,7 @@ The following Vue components are available for debug session management:
 |---------|--------|-------|
 | Terminal sharing (tmux) | ✅ Implemented | Requires tmux-enabled debug image |
 | Audit sidecar | CRD fields exist | Implementation deferred - Phase 5 |
-| DenyPolicy integration | Planned | Block debug sessions based on policies |
+| DenyPolicy interaction | ✅ Implemented | Active debug sessions bypass deny policies for pod operations (by design); see [Interaction with Deny Policies](#interaction-with-deny-policies) |
 | Tetragon/Falco integration | Documented only | Optional security monitoring |
 
 ### Testing Coverage
