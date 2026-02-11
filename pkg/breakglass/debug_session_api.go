@@ -3576,7 +3576,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	// Inject the ephemeral container
 	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, currentUser.(string)); err != nil {
 		reqLog.Errorw("Failed to inject ephemeral container", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, fmt.Sprintf("failed to inject ephemeral container: %v", err))
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to inject ephemeral container")
 		return
 	}
 
@@ -3657,7 +3657,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, currentUser.(string))
 	if err != nil {
 		reqLog.Errorw("Failed to create pod copy", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, fmt.Sprintf("failed to create pod copy: %v", err))
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to create pod copy")
 		return
 	}
 
@@ -3740,7 +3740,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, currentUser.(string))
 	if err != nil {
 		reqLog.Errorw("Failed to create node debug pod", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, fmt.Sprintf("failed to create node debug pod: %v", err))
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to create node debug pod")
 		return
 	}
 
