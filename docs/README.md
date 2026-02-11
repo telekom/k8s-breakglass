@@ -23,6 +23,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Scaling and Leader Election](./scaling-and-leader-election.md)** - Multi-replica deployments with leader election
 - **[Webhook Setup](./webhook-setup.md)** - Configure authorization webhooks
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
+- **[Rate Limiting](./rate-limiting.md)** - Multi-tier rate limiting architecture, tiers, and troubleshooting
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
 - **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
 

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debug Session / Deny Policy Bypass Documentation**: Documented that active debug sessions bypass deny policy evaluation for pod-level operations (`exec`, `attach`, `portforward`, `log`)
 - **Webhook Evaluation Order Documentation**: Updated deny-policy, debug-session, and advanced-features docs to clarify the webhook evaluation order
 - **Debug Session Roadmap Table Correction**: Corrected the debug session roadmap table to reflect the implemented behavior
+- **Rate Limiting Documentation**: Added comprehensive `docs/rate-limiting.md` covering multi-tier architecture (global, authenticated, SAR webhook), response formats, memory management, and troubleshooting
+- **Configuration Reference Corrections**: Fixed SAR burst limit, removed undocumented rate limit headers, corrected user identity tracking key description (email with fallback to sub claim) in `docs/configuration-reference.md`
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
 - **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
 - **Comprehensive Cleanup Edge Case Tests**: Added 22 unit tests covering failSession and cleanupResources behavior across all failure scenarios including partial deploys, nil cluster providers, idempotent re-fail, and spec preservation

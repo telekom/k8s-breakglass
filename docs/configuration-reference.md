@@ -598,38 +598,32 @@ spec:
 
 ### Rate Limiting
 
-Breakglass implements multi-tier rate limiting to protect against DoS attacks while allowing legitimate traffic.
+Breakglass implements multi-tier rate limiting to protect against DoS attacks while allowing legitimate traffic. See [Rate Limiting](./rate-limiting.md) for the full reference including architecture, debugging guidance, and tuning options.
 
 | Tier | Limit | Burst | Scope | Applied To |
 |------|-------|-------|-------|------------|
-| Public (unauthenticated) | 20 req/s | 50 | Per IP | All requests before auth |
-| Public (authenticated) | 50 req/s | 100 | Per user | Authenticated requests to public endpoints |
-| SAR Webhook | 1000 req/s | 2000 | Per cluster | SubjectAccessReview from spoke clusters |
+| Public (unauthenticated) | 20 req/s | 50 | Per IP | All requests (before auth) |
+| Authenticated (unauthenticated path) | 10 req/s | 20 | Per IP | Public API endpoints without valid JWT |
+| Authenticated (with valid JWT) | 50 req/s | 100 | Per user | Public API endpoints with valid JWT |
+| SAR Webhook | 1000 req/s | 5000 | Per IP | SubjectAccessReview from spoke clusters |
 
-**Rate Limit Headers:**
-
-```http
-X-RateLimit-Limit: 50
-X-RateLimit-Remaining: 49
-X-RateLimit-Reset: 1642502400
-Retry-After: 1  # Only on 429 responses
-```
+> **Note:** Rate limit headers (`X-RateLimit-*`, `Retry-After`) are **not currently emitted** by the server. Clients receive a `429 Too Many Requests` JSON response when rate limited.
 
 **Operational Guidance - Rate Limiting:**
 
-1. **Monitor rate limit metrics:**
-   ```promql
-   # Requests rate limited
-   sum(rate(breakglass_api_rate_limited_total[5m])) by (endpoint)
-   ```
+1. **Static asset exclusions:** Requests to `/assets/` and `/favicon` paths bypass the public rate limiter.
 
-2. **Increase limits for high-traffic deployments:**
-   Rate limits are currently hardcoded. For custom limits, modify `pkg/ratelimit/config.go` and rebuild.
+2. **Dual-layer limiting:** Requests to authentication-optional endpoints (e.g., `/api/config`) hit the global per-IP limiter first, then the authenticated limiter. Authenticated users get significantly higher limits (50 req/s vs 10 req/s).
 
 3. **IP-based vs User-based limiting:**
    - Unauthenticated requests are limited by source IP
-   - Authenticated requests are limited by user identifier (from JWT `sub` claim)
+   - On auth-required endpoints, authenticated requests are limited by the JWT `email` claim; if `email` is missing, the rate limiter falls back to per-IP tracking
+   - On auth-optional endpoints (e.g., `/api/config`), the middleware extracts user identity from the JWT `email` claim with fallback to `sub` (subject)
    - Behind proxies, ensure `trustedProxies` is configured correctly for accurate IP detection
+
+4. **Rate limits are currently hardcoded.** For custom limits, modify `pkg/ratelimit/ratelimit.go` and rebuild. The `DefaultAPIConfig()`, `DefaultAuthenticatedAPIConfig()`, and `DefaultSARConfig()` functions define the default values.
+
+5. **Memory management:** Rate limiter entries are automatically cleaned up. Unused per-IP entries expire after 5 minutes; per-user entries expire after 10 minutes. Cleanup runs every 60 seconds.
 
 ### Approver Resolution Limits
 
