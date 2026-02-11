@@ -358,7 +358,7 @@ The webhook authorization evaluates access in the following order:
 > are checked. This is by design — debug sessions represent pre-approved,
 > time-limited troubleshooting access to specific pods. The bypass is scoped only
 > to pods listed in the session's `status.allowedPods` and operations listed in the
-> template's `allowedPodOperations`.
+> session's `status.allowedPodOperations` (resolved from the template and any bindings).
 >
 > To restrict debug session creation itself, use `DebugSessionTemplate` constraints
 > (allowed namespaces, approval requirements, image allow-lists, etc.). See
@@ -386,10 +386,10 @@ When a `BreakglassSession` is created, the system checks for conflicting policie
 
 ### Webhook Authorization
 
-During authorization, `DenyPolicy` is evaluated first:
+During authorization, access is evaluated in the order described above — debug sessions first (for pod operations), then deny policies, then breakglass sessions, then RBAC:
 
 ```bash
-# This request would be denied if matching a DenyPolicy
+# This request would be denied if matching a DenyPolicy (and no debug session applies)
 kubectl --as=user@example.com get secrets database-credentials
 # Error: access denied by DenyPolicy
 ```
