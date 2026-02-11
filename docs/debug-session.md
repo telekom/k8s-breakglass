@@ -1829,7 +1829,7 @@ Active debug sessions take precedence over [deny policies](deny-policy.md) for p
 This means:
 
 - A debug session participant can exec into their allowed pods even if a `DenyPolicy` would normally block exec operations.
-- The bypass applies **only** to pods listed in `status.allowedPods` and operations configured in `allowedPodOperations`.
+- The bypass applies **only** to pods listed in `status.allowedPods` and operations resolved in `status.allowedPodOperations` (derived from the template/binding configuration).
 - All other operations (e.g., `get`, `delete`, `create` on non-pod resources) still go through normal deny policy evaluation.
 
 This is intentional — debug sessions represent pre-approved, time-limited troubleshooting access. The security boundary is enforced at session creation time through `DebugSessionTemplate` constraints:
@@ -1838,7 +1838,7 @@ This is intentional — debug sessions represent pre-approved, time-limited trou
 - **Image allow-lists** — `allowedImages` restricts which debug container images can be used
 - **Approval requirements** — `approvalConfig` can require explicit approver sign-off
 - **Time limits** — `maxDuration` caps session lifetime
-- **Operation restrictions** — `allowedPodOperations` limits which subresources are accessible
+- **Operation restrictions** — `status.allowedPodOperations` (resolved from template/binding) limits which subresources are accessible
 
 See [Deny Policy — Policy Evaluation](deny-policy.md#policy-evaluation) for the full evaluation order.
 
