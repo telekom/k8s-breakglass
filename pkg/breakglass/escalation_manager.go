@@ -188,21 +188,39 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	})
 }
 
+// collectClusterEscalations queries the index for escalations matching a specific cluster
+// and global "*" patterns. Returns combined results (may be empty if no index hits).
+func (em *EscalationManager) collectClusterEscalations(ctx context.Context, cluster string) []telekomv1alpha1.BreakglassEscalation {
+	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
+	seen := make(map[string]struct{})
+	addUnique := func(items []telekomv1alpha1.BreakglassEscalation) {
+		for _, item := range items {
+			key := item.Namespace + "/" + item.Name
+			if _, exists := seen[key]; !exists {
+				seen[key] = struct{}{}
+				collected = append(collected, item)
+			}
+		}
+	}
+	list := telekomv1alpha1.BreakglassEscalationList{}
+	if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.cluster": cluster}); err == nil && len(list.Items) > 0 {
+		addUnique(list.Items)
+	}
+	globalList := telekomv1alpha1.BreakglassEscalationList{}
+	if err := em.List(ctx, &globalList, client.MatchingFields{"spec.allowed.cluster": "*"}); err == nil && len(globalList.Items) > 0 {
+		addUnique(globalList.Items)
+	}
+	return collected
+}
+
 // GetClusterBreakglassEscalations returns escalations that apply to a specific cluster.
 // Supports glob patterns in both Allowed.Clusters and ClusterConfigRefs fields.
 func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context, cluster string) ([]telekomv1alpha1.BreakglassEscalation, error) {
 	em.getLogger().Debugw("Fetching cluster BreakglassEscalations", "cluster", cluster)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterBreakglassEscalations").Inc()
+
 	// Try index-based lookup for exact cluster match and global "*" pattern
-	list := telekomv1alpha1.BreakglassEscalationList{}
-	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
-	if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.cluster": cluster}); err == nil && len(list.Items) > 0 {
-		collected = append(collected, list.Items...)
-	}
-	globalList := telekomv1alpha1.BreakglassEscalationList{}
-	if err := em.List(ctx, &globalList, client.MatchingFields{"spec.allowed.cluster": "*"}); err == nil && len(globalList.Items) > 0 {
-		collected = append(collected, globalList.Items...)
-	}
+	collected := em.collectClusterEscalations(ctx, cluster)
 
 	// If index returned results, filter using shared helper and return
 	if len(collected) > 0 {
@@ -279,18 +297,8 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 	em.getLogger().Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groups", groups)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupBreakglassEscalations").Inc()
 
-	// Try index-based lookup first for exact cluster matches
-	collected := make([]telekomv1alpha1.BreakglassEscalation, 0)
-	list := telekomv1alpha1.BreakglassEscalationList{}
-	if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.cluster": cluster}); err == nil && len(list.Items) > 0 {
-		collected = append(collected, list.Items...)
-	}
-
-	// Also check for glob pattern "*" (global escalations) via index
-	globalList := telekomv1alpha1.BreakglassEscalationList{}
-	if err := em.List(ctx, &globalList, client.MatchingFields{"spec.allowed.cluster": "*"}); err == nil && len(globalList.Items) > 0 {
-		collected = append(collected, globalList.Items...)
-	}
+	// Try index-based lookup first for exact cluster matches and global "*" pattern
+	collected := em.collectClusterEscalations(ctx, cluster)
 
 	// If index returned nothing, fall back to scanning all escalations for glob patterns
 	if len(collected) == 0 {
@@ -372,19 +380,39 @@ func NewEscalationManager(contextName string, resolver GroupMemberResolver) (Esc
 	return EscalationManager{Client: c, resolver: resolver, log: log}, nil
 }
 
+// EscalationManagerOption configures an EscalationManager during construction.
+type EscalationManagerOption func(*EscalationManager)
+
+// WithLogger sets a custom logger for the EscalationManager.
+// If not provided, the global zap.S() logger is used as fallback.
+// Passing nil is a no-op (the existing logger is retained).
+func WithLogger(log *zap.SugaredLogger) EscalationManagerOption {
+	return func(em *EscalationManager) {
+		if log != nil {
+			em.log = log
+		}
+	}
+}
+
+// WithConfigLoader sets a cached config loader for the EscalationManager.
+// If not provided, the manager falls back to cfgpkg.Load() for each config read.
+// Passing nil is a no-op (the existing loader is retained).
+func WithConfigLoader(loader *cfgpkg.CachedLoader) EscalationManagerOption {
+	return func(em *EscalationManager) {
+		if loader != nil {
+			em.configLoader = loader
+		}
+	}
+}
+
 // NewEscalationManagerWithClient constructs an EscalationManager backed by the provided controller-runtime client.
 // Use this when a shared manager client (with cache/indexes) should be reused instead of creating a new rest.Config.
-// Optional variadic arguments:
-//   - log *zap.SugaredLogger: custom logger (falls back to global zap.S() if not provided)
-//   - configLoader *cfgpkg.CachedLoader: config loader (falls back to cfgpkg.Load() if not provided)
-func NewEscalationManagerWithClient(c client.Client, resolver GroupMemberResolver, opts ...any) *EscalationManager {
+// Configuration is applied via functional options (WithLogger, WithConfigLoader).
+func NewEscalationManagerWithClient(c client.Client, resolver GroupMemberResolver, opts ...EscalationManagerOption) *EscalationManager {
 	em := &EscalationManager{Client: c, resolver: resolver}
 	for _, opt := range opts {
-		switch v := opt.(type) {
-		case *zap.SugaredLogger:
-			em.log = v
-		case *cfgpkg.CachedLoader:
-			em.configLoader = v
+		if opt != nil {
+			opt(em)
 		}
 	}
 	return em

@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Frontend Debug Session Variables**: Improved variable form validation with inline hints showing allowed values, default indicators, and dark theme support for approval cards
+- **EscalationManager Functional Options**: Refactored `NewEscalationManagerWithClient` from type-unsafe `...any` variadic to type-safe functional options pattern (`WithLogger`, `WithConfigLoader`)
+- **Deduplicated Cluster Escalation Lookup**: Extracted `collectClusterEscalations` helper to eliminate repeated index-based query logic in `GetClusterBreakglassEscalations` and `GetClusterGroupBreakglassEscalations`
 
 ### Fixed
 
