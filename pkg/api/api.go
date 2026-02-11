@@ -603,15 +603,16 @@ func (s *Server) RegisterAll(controllers []APIController) error {
 }
 
 func (s *Server) Listen() {
-	// Create http.Server with proper timeouts for production use
+	// Create http.Server with timeouts from configuration (defaults applied if unset)
+	timeouts := s.config.Server.GetServerTimeouts()
 	s.httpServer = &http.Server{
 		Addr:              s.config.Server.ListenAddress,
 		Handler:           s.gin,
-		ReadTimeout:       30 * time.Second,
-		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      60 * time.Second, // Longer for streaming/websocket
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1 MB
+		ReadTimeout:       timeouts.GetReadTimeout(),
+		ReadHeaderTimeout: timeouts.GetReadHeaderTimeout(),
+		WriteTimeout:      timeouts.GetWriteTimeout(),
+		IdleTimeout:       timeouts.GetIdleTimeout(),
+		MaxHeaderBytes:    timeouts.GetMaxHeaderBytes(),
 	}
 
 	var err error

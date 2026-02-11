@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -159,6 +160,133 @@ type Server struct {
 	// Default: true (hardened) unless explicitly set to false in config.
 	// +optional
 	HardenedIDPHints *bool `yaml:"hardenedIDPHints"`
+
+	// Timeouts configures HTTP server timeouts.
+	// All values are Go duration strings (e.g. "30s", "2m", "1h").
+	// When omitted, sensible production defaults are applied automatically.
+	// +optional
+	Timeouts *ServerTimeouts `yaml:"timeouts,omitempty"`
+
+	// ShutdownTimeout controls how long the server waits for in-flight requests
+	// to complete during graceful shutdown. Go duration string.
+	// Default: "30s"
+	// +optional
+	ShutdownTimeout string `yaml:"shutdownTimeout,omitempty"`
+}
+
+// ServerTimeouts configures HTTP server timeouts.
+// Zero or unset values are replaced with production defaults via the GetX() accessor methods.
+type ServerTimeouts struct {
+	// ReadTimeout is the maximum duration for reading the entire request, including the body.
+	// Default: "30s"
+	// +optional
+	ReadTimeout string `yaml:"readTimeout,omitempty"`
+	// ReadHeaderTimeout is the maximum duration for reading request headers.
+	// Default: "10s"
+	// +optional
+	ReadHeaderTimeout string `yaml:"readHeaderTimeout,omitempty"`
+	// WriteTimeout is the maximum duration before timing out writes of the response.
+	// This covers the entire response lifetime for normal HTTP responses, including
+	// streaming/SSE and long-running endpoints. Note: this does not apply after a
+	// connection is hijacked (e.g. for WebSocket upgrades). For workloads that
+	// require long-running responses, set this to a sufficiently large value (e.g. "24h").
+	// Default: "60s"
+	// +optional
+	WriteTimeout string `yaml:"writeTimeout,omitempty"`
+	// IdleTimeout is the maximum duration an idle (keep-alive) connection will remain open.
+	// Default: "120s"
+	// +optional
+	IdleTimeout string `yaml:"idleTimeout,omitempty"`
+	// MaxHeaderBytes controls the maximum number of bytes the server will read
+	// parsing the request header's keys and values, including the request line.
+	// Default: 1048576 (1 MB)
+	// +optional
+	MaxHeaderBytes int `yaml:"maxHeaderBytes,omitempty"`
+}
+
+const (
+	// DefaultReadTimeout is the default maximum duration for reading the entire request.
+	DefaultReadTimeout = 30 * time.Second
+	// DefaultReadHeaderTimeout is the default maximum duration for reading request headers.
+	DefaultReadHeaderTimeout = 10 * time.Second
+	// DefaultWriteTimeout is the default maximum duration before timing out response writes.
+	DefaultWriteTimeout = 60 * time.Second
+	// DefaultIdleTimeout is the default maximum duration an idle connection remains open.
+	DefaultIdleTimeout = 120 * time.Second
+	// DefaultMaxHeaderBytes is the default maximum size of request headers (1 MB).
+	DefaultMaxHeaderBytes = 1 << 20
+	// DefaultShutdownTimeout is the default graceful shutdown timeout.
+	DefaultShutdownTimeout = 30 * time.Second
+)
+
+// GetReadTimeout returns the configured read timeout or the default value.
+func (t *ServerTimeouts) GetReadTimeout() time.Duration {
+	if t == nil {
+		return DefaultReadTimeout
+	}
+	return parseDurationOrDefault(t.ReadTimeout, DefaultReadTimeout)
+}
+
+// GetReadHeaderTimeout returns the configured read header timeout or the default value.
+func (t *ServerTimeouts) GetReadHeaderTimeout() time.Duration {
+	if t == nil {
+		return DefaultReadHeaderTimeout
+	}
+	return parseDurationOrDefault(t.ReadHeaderTimeout, DefaultReadHeaderTimeout)
+}
+
+// GetWriteTimeout returns the configured write timeout or the default value.
+func (t *ServerTimeouts) GetWriteTimeout() time.Duration {
+	if t == nil {
+		return DefaultWriteTimeout
+	}
+	return parseDurationOrDefault(t.WriteTimeout, DefaultWriteTimeout)
+}
+
+// GetIdleTimeout returns the configured idle timeout or the default value.
+func (t *ServerTimeouts) GetIdleTimeout() time.Duration {
+	if t == nil {
+		return DefaultIdleTimeout
+	}
+	return parseDurationOrDefault(t.IdleTimeout, DefaultIdleTimeout)
+}
+
+// GetMaxHeaderBytes returns the configured max header bytes or the default value.
+func (t *ServerTimeouts) GetMaxHeaderBytes() int {
+	if t == nil {
+		return DefaultMaxHeaderBytes
+	}
+	if t.MaxHeaderBytes > 0 {
+		return t.MaxHeaderBytes
+	}
+	return DefaultMaxHeaderBytes
+}
+
+// GetServerTimeouts returns the server timeouts config.
+// If nil, returns an empty ServerTimeouts whose getter methods apply defaults.
+func (s Server) GetServerTimeouts() *ServerTimeouts {
+	if s.Timeouts != nil {
+		return s.Timeouts
+	}
+	return &ServerTimeouts{}
+}
+
+// GetShutdownTimeout returns the configured graceful shutdown timeout or the default value.
+func (s Server) GetShutdownTimeout() time.Duration {
+	return parseDurationOrDefault(s.ShutdownTimeout, DefaultShutdownTimeout)
+}
+
+// parseDurationOrDefault parses a Go duration string, returning the default on empty, invalid, or non-positive input.
+func parseDurationOrDefault(value string, defaultVal time.Duration) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d <= 0 {
+		return defaultVal
+	}
+	return d
 }
 
 type Kubernetes struct {

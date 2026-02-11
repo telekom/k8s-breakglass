@@ -212,6 +212,68 @@ server:
 
 ---
 
+#### `timeouts` (Optional)
+
+HTTP server timeout configuration. All duration values are Go duration strings (e.g. `"30s"`, `"2m"`, `"1h"`). When omitted, sensible production defaults are applied automatically.
+
+```yaml
+server:
+  timeouts:
+    readTimeout: "30s"
+    readHeaderTimeout: "10s"
+    writeTimeout: "60s"
+    idleTimeout: "120s"
+    maxHeaderBytes: 1048576
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `readTimeout` | `string` | `"30s"` | Maximum duration for reading the entire request, including the body |
+| `readHeaderTimeout` | `string` | `"10s"` | Maximum duration for reading request headers only |
+| `writeTimeout` | `string` | `"60s"` | Maximum duration before timing out writes of the response |
+| `idleTimeout` | `string` | `"120s"` | Maximum duration an idle (keep-alive) connection remains open |
+| `maxHeaderBytes` | `int` | `1048576` | Maximum size of request headers in bytes (1 MB) |
+
+**Notes:**
+
+- `writeTimeout` controls the maximum duration for writing a response. Note that for streaming/SSE endpoints, a short `writeTimeout` will terminate long-lived connections; increase it accordingly.
+- Invalid, empty, or non-positive duration strings silently fall back to the default value.
+- These defaults are suitable for most production deployments. Only override them if you have specific requirements (e.g., large file uploads, long-running SSE connections).
+
+**Tuning guidance:**
+
+| Scenario | Recommended Change |
+|----------|--------------------|
+| High-latency networks | Increase `readTimeout` to `"60s"` |
+| Large request headers/cookies | Increase `maxHeaderBytes` |
+| Streaming/SSE endpoints | Increase `writeTimeout` to `"300s"` or more |
+| Aggressive idle cleanup | Decrease `idleTimeout` to `"30s"` |
+
+---
+
+#### `shutdownTimeout` (Optional)
+
+Controls how long the server waits for in-flight requests to complete during graceful shutdown.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` (Go duration) |
+| **Default** | `"30s"` |
+| **Example** | `"60s"`, `"2m"` |
+
+```yaml
+server:
+  shutdownTimeout: "60s"
+```
+
+**Notes:**
+
+- During shutdown, the server stops accepting new connections and waits for existing requests to complete.
+- If in-flight requests don't finish within this timeout, they are forcibly terminated.
+- Increase this value if your deployment handles long-running operations (e.g., large escalation approvals with external webhooks).
+
+---
+
 ### `frontend`
 
 Frontend UI configuration.
