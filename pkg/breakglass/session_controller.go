@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -106,6 +107,14 @@ type BreakglassSessionController struct {
 		GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 	}
 	clusterConfigManager *ClusterConfigManager
+
+	// inFlightCreates prevents TOCTOU race conditions during session creation.
+	// Without this guard, two concurrent requests for the same (cluster, user, group)
+	// triple could both pass the duplicate check and create duplicate sessions.
+	// The map key is "cluster/user/group". Effective for single-replica deployments;
+	// multi-replica setups should additionally rely on webhook-based uniqueness enforcement.
+	// Must be a pointer so it survives value-receiver method copies.
+	inFlightCreates *sync.Map
 }
 
 // MailEnqueuer is an interface for enqueueing emails
@@ -189,7 +198,7 @@ func decodeJSONStrict(r io.Reader, dest interface{}) error {
 }
 
 // validateSessionRequest validates the session request input
-func (wc BreakglassSessionController) validateSessionRequest(request BreakglassSessionRequest) error {
+func (wc *BreakglassSessionController) validateSessionRequest(request BreakglassSessionRequest) error {
 	if request.Clustername == "" {
 		return errors.New("cluster is required")
 	}
@@ -211,7 +220,7 @@ func addIfNotPresent[T comparable](slice []T, value T) []T {
 	return slice
 }
 
-func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Context) {
+func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Context) {
 	// Get correlation ID for consistent logging
 	// request-scoped logger (includes cid, method, path)
 	reqLog := system.GetReqLogger(c, wc.log)
@@ -577,6 +586,21 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 		"userIdentifier", userIdentifier,
 		"userIdentifierClaim", userIdentifierClaim,
 		"requestUsername", request.Username)
+
+	// Guard against TOCTOU race: serialize concurrent session creation requests
+	// for the same (cluster, user, group) triple so the duplicate check below
+	// cannot be bypassed by a second request arriving before the first creates
+	// the session in the API server.
+	if wc.inFlightCreates != nil {
+		createKey := request.Clustername + "/" + userIdentifier + "/" + request.GroupName
+		if _, loaded := wc.inFlightCreates.LoadOrStore(createKey, true); loaded {
+			reqLog.Infow("Concurrent session creation already in-flight, returning conflict",
+				"cluster", request.Clustername, "user", userIdentifier, "group", request.GroupName)
+			c.JSON(http.StatusConflict, gin.H{"error": "session creation already in progress"})
+			return
+		}
+		defer wc.inFlightCreates.Delete(createKey)
+	}
 
 	ses, err := wc.getActiveBreakglassSession(ctx,
 		userIdentifier, request.Clustername, request.GroupName)
@@ -956,7 +980,7 @@ func (wc BreakglassSessionController) handleRequestBreakglassSession(c *gin.Cont
 	c.JSON(http.StatusCreated, bs)
 }
 
-func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondition v1alpha1.BreakglassSessionConditionType) {
+func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondition v1alpha1.BreakglassSessionConditionType) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
 
@@ -1233,7 +1257,7 @@ func (wc BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondit
 	c.JSON(http.StatusOK, bs)
 }
 
-func (wc BreakglassSessionController) getActiveBreakglassSession(ctx context.Context,
+func (wc *BreakglassSessionController) getActiveBreakglassSession(ctx context.Context,
 	username,
 	clustername,
 	group string,
@@ -1495,11 +1519,11 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 	return nil
 }
 
-func (wc BreakglassSessionController) handleApproveBreakglassSession(c *gin.Context) {
+func (wc *BreakglassSessionController) handleApproveBreakglassSession(c *gin.Context) {
 	wc.setSessionStatus(c, v1alpha1.SessionConditionTypeApproved)
 }
 
-func (wc BreakglassSessionController) handleRejectBreakglassSession(c *gin.Context) {
+func (wc *BreakglassSessionController) handleRejectBreakglassSession(c *gin.Context) {
 	wc.setSessionStatus(c, v1alpha1.SessionConditionTypeRejected)
 }
 
@@ -2135,7 +2159,7 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%d seconds", secs)
 }
 
-func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession,
+func (wc *BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassSession,
 	requestEmail,
 	requestUsername string,
 	approvers []string,
@@ -2357,7 +2381,7 @@ func (wc BreakglassSessionController) sendOnRequestEmail(bs v1alpha1.BreakglassS
 // sendOnRequestEmailsByGroup sends separate emails for each approver group, where each email shows
 // only the specific group that matched. This allows approvers to understand which group they're
 // being notified on behalf of.
-func (wc BreakglassSessionController) sendOnRequestEmailsByGroup(
+func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 	log *zap.SugaredLogger,
 	bs v1alpha1.BreakglassSession,
 	requestEmail, requestUsername string,
@@ -2446,7 +2470,7 @@ func (wc BreakglassSessionController) sendOnRequestEmailsByGroup(
 }
 
 // filterExcludedNotificationRecipients filters out users/groups that are in the escalation's NotificationExclusions
-func (wc BreakglassSessionController) filterExcludedNotificationRecipients(
+func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 	log *zap.SugaredLogger,
 	approvers []string,
 	escalation *v1alpha1.BreakglassEscalation,
@@ -2554,7 +2578,7 @@ func (wc BreakglassSessionController) filterExcludedNotificationRecipients(
 
 // filterHiddenFromUIRecipients filters out users/groups that are marked as hidden from UI in the escalation.
 // Hidden groups are used as fallback approvers but are not displayed in the UI or sent notifications.
-func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
+func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 	log *zap.SugaredLogger,
 	approvers []string,
 	escalation *v1alpha1.BreakglassEscalation,
@@ -2665,7 +2689,7 @@ func (wc BreakglassSessionController) filterHiddenFromUIRecipients(
 
 // checkApprovalAuthorization performs a detailed check of whether the current user can approve/reject a session.
 // It returns an ApprovalCheckResult with specific denial reasons instead of a simple boolean.
-func (wc BreakglassSessionController) checkApprovalAuthorization(c *gin.Context, session v1alpha1.BreakglassSession) ApprovalCheckResult {
+func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context, session v1alpha1.BreakglassSession) ApprovalCheckResult {
 	reqLog := system.GetReqLogger(c, wc.log)
 
 	email, err := wc.identityProvider.GetEmail(c)
@@ -2852,7 +2876,7 @@ func (wc BreakglassSessionController) checkApprovalAuthorization(c *gin.Context,
 
 // isSessionApprover returns true if the current user is authorized to approve/reject the session.
 // For detailed denial reasons, use checkApprovalAuthorization instead.
-func (wc BreakglassSessionController) isSessionApprover(c *gin.Context, session v1alpha1.BreakglassSession) bool {
+func (wc *BreakglassSessionController) isSessionApprover(c *gin.Context, session v1alpha1.BreakglassSession) bool {
 	result := wc.checkApprovalAuthorization(c, session)
 	return result.Allowed
 }
@@ -3032,6 +3056,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		configLoader:         config.NewCachedLoader(configPath, 5*time.Second), // Cache config, check file every 5s
 		ccProvider:           ccProvider,
 		clusterConfigManager: NewClusterConfigManager(clusterConfigClient),
+		inFlightCreates:      &sync.Map{},
 	}
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -3067,7 +3092,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 }
 
 // sendSessionApprovalEmail sends an approval notification to the requester
-func (wc BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
+func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
 	// Check if mail is available (either via service or legacy queue)
 	mailEnabled := (wc.mailService != nil && wc.mailService.IsEnabled()) || wc.mailQueue != nil
 	if !mailEnabled {
@@ -3152,7 +3177,7 @@ func (wc BreakglassSessionController) sendSessionApprovalEmail(log *zap.SugaredL
 }
 
 // sendSessionRejectionEmail sends a rejection notification to the requester
-func (wc BreakglassSessionController) sendSessionRejectionEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
+func (wc *BreakglassSessionController) sendSessionRejectionEmail(log *zap.SugaredLogger, session v1alpha1.BreakglassSession) {
 	// Check if mail is available (either via service or legacy queue)
 	mailEnabled := (wc.mailService != nil && wc.mailService.IsEnabled()) || wc.mailQueue != nil
 	if !mailEnabled {
