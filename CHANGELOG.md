@@ -17,8 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workload Type Mismatch Warning**: Admission webhook warns when a `templateString` produces a Deployment/DaemonSet that doesn't match the configured `workloadType`
 - **Dry-Run Template Rendering in Webhooks**: Admission webhooks now perform best-effort dry-run rendering of Go-templated `templateString` values, catching execution errors and invalid YAML output at admission time instead of only at reconciliation
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
-- **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
-- **Comprehensive Cleanup Edge Case Tests**: Added 22 unit tests covering failSession and cleanupResources behavior across all failure scenarios including partial deploys, nil cluster providers, idempotent re-fail, and spec preservation
 
 ### Changed
 
@@ -26,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dockerfile Cross-Compilation**: Added `GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}` to the `go build` command in Dockerfile, ensuring correct binary architecture when building multi-platform images and falling back to the host architecture for non-BuildKit builds
+- **Helm Chart ClusterConfig Name**: Replaced no-op `default` (which defaulted a value to itself) with `required` in the ClusterConfig metadata name template, providing a clear error when `cluster.clusterID` is not set
+- **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
+- **Comprehensive Cleanup Edge Case Tests**: Added 22 unit tests covering failSession and cleanupResources behavior across all failure scenarios including partial deploys, nil cluster providers, idempotent re-fail, and spec preservation
 - **Standardized API Error Responses**: Replaced raw `c.JSON(status, "string")` and `gin.H{"error": ...}` patterns with standardized `apiresponses` helpers across escalation controller, debug session API, cluster binding API, session controller, and OIDC proxy. All error responses now include a consistent `"code"` field (e.g., `INTERNAL_ERROR`, `BAD_REQUEST`, `UNPROCESSABLE_ENTITY`) alongside the `"error"` message
 - **Keycloak CA Certificate TLS Configuration**: The Keycloak group member resolver now properly configures custom CA certificates for TLS connections. Previously, the `CertificateAuthority` field in the IdentityProvider CRD was accepted but silently ignored (no-op stub). The resolver now creates a custom `x509.CertPool` from the provided PEM certificate and configures it on the HTTP client's TLS settings.
 - **Token Logging Security**: Replaced all token preview logging (`tokenPreview: eyJhbG...`) with token length logging (`tokenLen: 1234`) in the Keycloak group member resolver. This prevents JWT header information from leaking into debug logs.
