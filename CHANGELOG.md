@@ -12,19 +12,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debug Session / Deny Policy Bypass Documentation**: Documented that active debug sessions bypass deny policy evaluation for pod-level operations (`exec`, `attach`, `portforward`, `log`)
 - **Webhook Evaluation Order Documentation**: Updated deny-policy, debug-session, and advanced-features docs to clarify the webhook evaluation order
 - **Debug Session Roadmap Table Correction**: Corrected the debug session roadmap table to reflect the implemented behavior
+- **Full Workload Manifest Support in templateString**: `templateString` in `DebugPodTemplate` and `DebugSessionTemplate` now supports `kind: Pod`, `kind: Deployment`, and `kind: DaemonSet` manifests in addition to bare PodSpec format
+- **Webhook Format Validation for templateString**: Admission webhooks now validate the first YAML document format in `templateString`, rejecting unsupported kinds and wrong apiVersions at create/update time
+- **Workload Type Mismatch Warning**: Admission webhook warns when a `templateString` produces a Deployment/DaemonSet that doesn't match the configured `workloadType`
+- **Dry-Run Template Rendering in Webhooks**: Admission webhooks now perform best-effort dry-run rendering of Go-templated `templateString` values, catching execution errors and invalid YAML output at admission time instead of only at reconciliation
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
-- **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
-- **Comprehensive Cleanup Edge Case Tests**: Added 22 unit tests covering failSession and cleanupResources behavior across all failure scenarios including partial deploys, nil cluster providers, idempotent re-fail, and spec preservation
 
 ### Changed
 
 - **Frontend Debug Session Variables**: Improved variable form validation with inline hints showing allowed values, default indicators, and dark theme support for approval cards
+- **EscalationManager Functional Options**: Refactored `NewEscalationManagerWithClient` from type-unsafe `...any` variadic to type-safe functional options pattern (`WithLogger`, `WithConfigLoader`)
+- **Deduplicated Cluster Escalation Lookup**: Extracted `collectClusterEscalations` helper to eliminate repeated index-based query logic in `GetClusterBreakglassEscalations` and `GetClusterGroupBreakglassEscalations`
 
 ### Fixed
 
+- **Dockerfile Cross-Compilation**: Added `GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}` to the `go build` command in Dockerfile, ensuring correct binary architecture when building multi-platform images and falling back to the host architecture for non-BuildKit builds
+- **Helm Chart ClusterConfig Name**: Replaced no-op `default` (which defaulted a value to itself) with `required` in the ClusterConfig metadata name template, providing a clear error when `cluster.clusterID` is not set
+- **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
+- **Comprehensive Cleanup Edge Case Tests**: Added 22 unit tests covering failSession and cleanupResources behavior across all failure scenarios including partial deploys, nil cluster providers, idempotent re-fail, and spec preservation
 - **Standardized API Error Responses**: Replaced raw `c.JSON(status, "string")` and `gin.H{"error": ...}` patterns with standardized `apiresponses` helpers across escalation controller, debug session API, cluster binding API, session controller, and OIDC proxy. All error responses now include a consistent `"code"` field (e.g., `INTERNAL_ERROR`, `BAD_REQUEST`, `UNPROCESSABLE_ENTITY`) alongside the `"error"` message
 - **ExpirePendingSessions Query Optimization**: `ExpirePendingSessions` now uses `GetSessionsByState(Pending)` indexed query instead of `GetAllBreakglassSessions()`, avoiding unnecessary iteration over non-pending sessions
 - **Webhook NonResourceAttributes Support**: Authorization webhook now correctly forwards `NonResourceAttributes` (e.g., `/healthz`, `/metrics`) in SubjectAccessReview requests instead of silently dropping them
+- **TOCTOU Race in Session Creation**: Added in-flight creation guard (`sync.Map`) to prevent concurrent requests for the same (cluster, user, group) triple from bypassing the duplicate session check and creating duplicate sessions
+- **Keycloak CA Certificate TLS Configuration**: The Keycloak group member resolver now properly configures custom CA certificates for TLS connections. Previously, the `CertificateAuthority` field in the IdentityProvider CRD was accepted but silently ignored (no-op stub). The resolver now creates a custom `x509.CertPool` from the provided PEM certificate and configures it on the HTTP client's TLS settings.
+- **Token Logging Security**: Replaced all token preview logging (`tokenPreview: eyJhbG...`) with token length logging (`tokenLen: 1234`) in the Keycloak group member resolver. This prevents JWT header information from leaking into debug logs.
+- **templateString `kind: Pod` Manifests Silently Producing Empty PodSpec**: `renderPodTemplateStringMultiDoc` previously unmarshalled the first YAML document as bare `corev1.PodSpec`, silently dropping `apiVersion`/`kind`/`metadata`/`spec` keys from `kind: Pod` manifests, resulting in empty containers and deployment failures (`spec.template.spec.containers: Required value`). Now correctly detects and extracts PodSpec from Pod, Deployment, and DaemonSet manifests.
+- **Full Workload Manifests Losing PodSpec Overrides**: When `templateString` produced a full `kind: Deployment` or `kind: DaemonSet` manifest, `useTemplateWorkload` returned the original workload object without applying PodSpec overrides from `buildPodSpec`. This caused `schedulingConstraints`, `additionalTolerations`, `affinityOverrides`, `podOverrides` (hostNetwork/PID/IPC), session `NodeSelector`, `resourceQuota` enforcement, and `terminalSharing` command wrapping to be silently lost. Now copies the modified PodSpec back into the workload's `Spec.Template.Spec`.
+- **Webhook `---` Splitting Inconsistency**: `validateTemplateStringFormat` and `warnTemplateStringWorkloadMismatch` used `strings.SplitN` which splits on `---` anywhere in a string (including inside YAML values), while the reconciler uses a line-anchored regex `^---\s*$`. Now both use the same regex-based split.
 - **Auto-Approve in resolveApproval API**: The `resolveApproval()` handler now evaluates auto-approve eligibility using `evaluateAutoApprove()`, correctly populating `canAutoApprove` in API responses
 - **Frontend Log Spam**: Removed excessive console logging of full approval objects during debug session creation
 
