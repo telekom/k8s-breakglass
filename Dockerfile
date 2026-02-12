@@ -28,14 +28,13 @@ COPY pkg/ pkg/
 # COPY internal/ internal/
 
 # Build
-# the GOARCH has not a default value to allow the binary be built according to the host where the command
-# was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
-# the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
-# by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
+# When TARGETARCH is set (e.g., via BuildKit/buildx --platform), it is forwarded to GOARCH
+# for cross-compilation. When unset (classic docker build), GOARCH falls back to the Go
+# toolchain's host architecture via $(go env GOARCH).
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
-RUN CGO_ENABLED=0 go build -a \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -a \
     -ldflags "-X github.com/telekom/k8s-breakglass/pkg/version.Version=${VERSION} \
               -X github.com/telekom/k8s-breakglass/pkg/version.GitCommit=${GIT_COMMIT} \
               -X github.com/telekom/k8s-breakglass/pkg/version.BuildDate=${BUILD_DATE}" \
