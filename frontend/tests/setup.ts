@@ -120,7 +120,7 @@ if (!customElements.get("scale-card")) {
     "scale-card",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -131,7 +131,7 @@ if (!customElements.get("scale-tag")) {
     "scale-tag",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -142,7 +142,7 @@ if (!customElements.get("scale-button")) {
     "scale-button",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -153,7 +153,7 @@ if (!customElements.get("scale-divider")) {
     "scale-divider",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -164,7 +164,7 @@ if (!customElements.get("scale-modal")) {
     "scale-modal",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -175,7 +175,7 @@ if (!customElements.get("scale-dropdown-select")) {
     "scale-dropdown-select",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -186,7 +186,7 @@ if (!customElements.get("scale-dropdown-select-option")) {
     "scale-dropdown-select-option",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -197,7 +197,7 @@ if (!customElements.get("scale-table")) {
     "scale-table",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -208,7 +208,7 @@ if (!customElements.get("scale-text-field")) {
     "scale-text-field",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
@@ -219,8 +219,55 @@ if (!customElements.get("scale-checkbox")) {
     "scale-checkbox",
     class extends HTMLElement {
       connectedCallback() {
-        this.attachShadow({ mode: "open" });
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
       }
     },
   );
+}
+
+if (!customElements.get("scale-notification-toast")) {
+  customElements.define(
+    "scale-notification-toast",
+    class extends HTMLElement {
+      connectedCallback() {
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+      }
+    },
+  );
+}
+
+if (!customElements.get("scale-notification")) {
+  customElements.define(
+    "scale-notification",
+    class extends HTMLElement {
+      connectedCallback() {
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+      }
+    },
+  );
+}
+
+if (!customElements.get("scale-loading-spinner")) {
+  customElements.define(
+    "scale-loading-spinner",
+    class extends HTMLElement {
+      connectedCallback() {
+        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+      }
+    },
+  );
+}
+
+// Scale tooltip and icon stubs used by SessionMetaGrid
+for (const tag of ["scale-tooltip", "scale-icon-action-info"]) {
+  if (!customElements.get(tag)) {
+    customElements.define(
+      tag,
+      class extends HTMLElement {
+        connectedCallback() {
+          if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+        }
+      },
+    );
+  }
 }
