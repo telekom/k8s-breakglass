@@ -2,10 +2,15 @@ package breakglass_test
 
 import (
 	"context"
+	"os"
 	"testing"
+	"time"
 
 	telekomv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -951,6 +956,7 @@ func TestNewEscalationManagerWithClient(t *testing.T) {
 	//
 	// Purpose:
 	//   Validates the constructor that creates an EscalationManager with an existing client.
+	//   Verifies functional options are applied by testing observable behavior.
 	//
 	scheme := breakglass.Scheme
 
@@ -958,11 +964,113 @@ func TestNewEscalationManagerWithClient(t *testing.T) {
 		WithScheme(scheme).
 		Build()
 
-	em := breakglass.NewEscalationManagerWithClient(fakeClient, nil)
+	t.Run("basic construction without options", func(t *testing.T) {
+		em := breakglass.NewEscalationManagerWithClient(fakeClient, nil)
+		if em.Client == nil {
+			t.Error("NewEscalationManagerWithClient() returned nil client")
+		}
+		if em.GetResolver() != nil {
+			t.Error("resolver should be nil when passed as nil")
+		}
+	})
 
-	if em.Client == nil {
-		t.Error("NewEscalationManagerWithClient() returned nil client")
-	}
+	t.Run("with logger option verifiable via SetResolver log", func(t *testing.T) {
+		// WithLogger injects a logger; verify it's used by calling SetResolver
+		// which logs "EscalationManager resolver updated" via the injected logger.
+		core, obs := observer.New(zap.InfoLevel)
+		logger := zap.New(core).Sugar()
+		em := breakglass.NewEscalationManagerWithClient(fakeClient, nil, breakglass.WithLogger(logger))
+		if em.Client == nil {
+			t.Error("NewEscalationManagerWithClient() returned nil client")
+		}
+		// Trigger a log via SetResolver to verify the injected logger is used
+		em.SetResolver(nil)
+		entries := obs.FilterMessage("EscalationManager resolver updated")
+		if entries.Len() == 0 {
+			t.Error("WithLogger: injected logger was not used by SetResolver")
+		}
+	})
+
+	t.Run("with config loader option", func(t *testing.T) {
+		cfgFile := t.TempDir() + "/config.yaml"
+		_ = os.WriteFile(cfgFile, []byte("{}"), 0o644)
+		loader := cfgpkg.NewCachedLoader(cfgFile, 5*time.Second)
+		em := breakglass.NewEscalationManagerWithClient(fakeClient, nil, breakglass.WithConfigLoader(loader))
+		if em.Client == nil {
+			t.Error("NewEscalationManagerWithClient() returned nil client")
+		}
+	})
+
+	t.Run("SetResolver(nil) clears resolver", func(t *testing.T) {
+		em := breakglass.NewEscalationManagerWithClient(fakeClient, nil)
+		em.SetResolver(nil)
+		if em.GetResolver() != nil {
+			t.Error("resolver should be nil after SetResolver(nil)")
+		}
+	})
+
+	t.Run("with multiple options", func(t *testing.T) {
+		logger := zap.NewNop().Sugar()
+		cfgFile := t.TempDir() + "/config.yaml"
+		_ = os.WriteFile(cfgFile, []byte("{}"), 0o644)
+		loader := cfgpkg.NewCachedLoader(cfgFile, 5*time.Second)
+		em := breakglass.NewEscalationManagerWithClient(fakeClient, nil, breakglass.WithLogger(logger), breakglass.WithConfigLoader(loader))
+		if em.Client == nil {
+			t.Error("NewEscalationManagerWithClient() returned nil client")
+		}
+	})
+
+	t.Run("nil option is safely skipped", func(t *testing.T) {
+		em := breakglass.NewEscalationManagerWithClient(fakeClient, nil, nil, breakglass.WithLogger(zap.NewNop().Sugar()), nil)
+		if em.Client == nil {
+			t.Error("NewEscalationManagerWithClient() returned nil client")
+		}
+	})
+
+	t.Run("WithLogger(nil) is a no-op", func(t *testing.T) {
+		// Passing nil to WithLogger should not overwrite the existing logger.
+		core, obs := observer.New(zap.InfoLevel)
+		logger := zap.New(core).Sugar()
+		em := breakglass.NewEscalationManagerWithClient(fakeClient, nil, breakglass.WithLogger(logger), breakglass.WithLogger(nil))
+		em.SetResolver(nil)
+		entries := obs.FilterMessage("EscalationManager resolver updated")
+		if entries.Len() == 0 {
+			t.Error("WithLogger(nil) should not overwrite a previously set logger")
+		}
+	})
+
+	t.Run("WithConfigLoader(nil) is a no-op", func(t *testing.T) {
+		// Passing nil to WithConfigLoader should not overwrite the existing loader.
+		// Verify by calling a method that invokes getConfig() internally and checking
+		// that the fallback warning ("configLoader not set") is NOT logged.
+		core, obs := observer.New(zap.DebugLevel)
+		logger := zap.New(core).Sugar()
+
+		// Create a config file in a temp dir so the CachedLoader has a real path.
+		cfgDir := t.TempDir()
+		cfgFile := cfgDir + "/config.yaml"
+		if err := os.WriteFile(cfgFile, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("failed to write temp config: %v", err)
+		}
+		loader := cfgpkg.NewCachedLoader(cfgFile, 5*time.Second)
+
+		em := breakglass.NewEscalationManagerWithClient(fakeClient, nil,
+			breakglass.WithLogger(logger),
+			breakglass.WithConfigLoader(loader),
+			breakglass.WithConfigLoader(nil), // should be ignored
+		)
+		if em.Client == nil {
+			t.Error("NewEscalationManagerWithClient() returned nil client")
+		}
+		// Trigger getConfig() indirectly via GetClusterGroupBreakglassEscalations,
+		// which calls getOIDCPrefixes() → getConfig().
+		// If WithConfigLoader(nil) overwrote the loader, the fallback warning would be logged.
+		_, _ = em.GetClusterGroupBreakglassEscalations(t.Context(), "test-cluster", []string{"test-group"})
+		entries := obs.FilterMessage("EscalationManager: configLoader not set, falling back to disk read (performance impact)")
+		if entries.Len() > 0 {
+			t.Error("WithConfigLoader(nil) should not have overwritten the existing loader; fallback warning was logged")
+		}
+	})
 }
 
 func TestEscalationManager_UpdateBreakglassEscalationStatus(t *testing.T) {
