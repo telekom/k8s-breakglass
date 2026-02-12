@@ -17,11 +17,18 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
+	"text/template"
+	"time"
 
+	"github.com/Masterminds/sprig/v3"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/yaml"
 )
 
 // ValidationResult holds the result of a validation operation.
@@ -669,12 +676,19 @@ func ValidateDebugPodTemplate(template *DebugPodTemplate) *ValidationResult {
 		return result
 	}
 
-	// If using templateString, validate its syntax then return (skip static template validation)
+	// If using templateString, validate its syntax then validate the first document format
 	if hasTemplateString {
 		if err := validateGoTemplateSyntax(template.Spec.TemplateString); err != nil {
 			result.Errors = append(result.Errors, field.Invalid(specPath.Child("templateString"), "",
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
 		}
+
+		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
+		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.TemplateString, specPath.Child("templateString"))...)
+
+		// Dry-run render for templates with Go directives to catch execution issues early
+		result.Warnings = append(result.Warnings, tryRenderTemplateString(template.Spec.TemplateString, nil)...)
+
 		return result
 	}
 
@@ -736,6 +750,33 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 			result.Errors = append(result.Errors, field.Invalid(specPath.Child("podTemplateString"), "",
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
 		}
+
+		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
+		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.PodTemplateString, specPath.Child("podTemplateString"))...)
+
+		// Warn if workload kind doesn't match configured workloadType
+		if template.Spec.WorkloadType != "" {
+			result.Warnings = append(result.Warnings, warnTemplateStringWorkloadMismatch(template.Spec.PodTemplateString, template.Spec.WorkloadType)...)
+		}
+
+		// Dry-run render for templates with Go directives.
+		// Populate Vars from ExtraDeployVariables defaults if available.
+		dryRunVars := map[string]string{}
+		for _, v := range template.Spec.ExtraDeployVariables {
+			if v.Default != nil {
+				// Extract string value from *apiextensionsv1.JSON
+				raw := string(v.Default.Raw)
+				// JSON strings are quoted, strip quotes for template vars
+				if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+					raw = raw[1 : len(raw)-1]
+				}
+				dryRunVars[v.Name] = raw
+			} else {
+				// Variable has no default; use placeholder so template doesn't fail
+				dryRunVars[v.Name] = "PLACEHOLDER"
+			}
+		}
+		result.Warnings = append(result.Warnings, tryRenderTemplateString(template.Spec.PodTemplateString, dryRunVars)...)
 	}
 
 	// Validate podOverridesTemplate syntax if present
@@ -825,6 +866,245 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 }
 
 // ==================== BreakglassSession Validation ====================
+
+// tryRenderTemplateString performs a best-effort dry-run render of a Go template string.
+// It builds a sample AuxiliaryResourceContext with placeholder values, executes the template,
+// and checks that the rendered output is valid YAML. Returns warnings (never errors) because
+// the sample data may not satisfy all template conditions.
+// vars provides extra deploy variable defaults to populate .Vars in the context.
+func tryRenderTemplateString(templateStr string, vars map[string]string) []string {
+	if templateStr == "" || !strings.Contains(templateStr, "{{") {
+		return nil // Not a templated string, nothing to dry-run
+	}
+
+	// Build sample context matching AuxiliaryResourceContext
+	sampleCtx := AuxiliaryResourceContext{
+		Session: AuxiliaryResourceSessionContext{
+			Name:        "validation-session",
+			Namespace:   "breakglass-system",
+			Cluster:     "validation-cluster",
+			RequestedBy: "user@example.com",
+			ApprovedBy:  "approver@example.com",
+			Reason:      "validation dry-run",
+			ExpiresAt:   time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		},
+		Target: AuxiliaryResourceTargetContext{
+			Namespace:   "debug-namespace",
+			ClusterName: "validation-cluster",
+		},
+		Labels: map[string]string{
+			"app.kubernetes.io/managed-by":          "breakglass",
+			"breakglass.t-caas.telekom.com/session": "validation-session",
+		},
+		Annotations: map[string]string{
+			"breakglass.t-caas.telekom.com/cluster": "validation-cluster",
+		},
+		Template: AuxiliaryResourceTemplateContext{
+			Name:        "validation-template",
+			DisplayName: "Validation Template",
+		},
+		Binding: AuxiliaryResourceBindingContext{
+			Name:      "validation-binding",
+			Namespace: "breakglass-system",
+		},
+		Vars: map[string]string{},
+		Now:  time.Now().Format(time.RFC3339),
+	}
+
+	// Populate Vars from provided defaults
+	for k, v := range vars {
+		sampleCtx.Vars[k] = v
+	}
+
+	// Convert to map[string]interface{} to match runtime rendering
+	ctxJSON, err := json.Marshal(sampleCtx)
+	if err != nil {
+		return []string{fmt.Sprintf("dry-run: failed to build sample context: %v", err)}
+	}
+	var ctxMap map[string]interface{}
+	if err := json.Unmarshal(ctxJSON, &ctxMap); err != nil {
+		return []string{fmt.Sprintf("dry-run: failed to build sample context: %v", err)}
+	}
+
+	// Build function map matching the runtime renderer
+	funcMap := sprig.FuncMap()
+	funcMap["yamlQuote"] = func(s string) string { return "\"" + s + "\"" }
+	funcMap["toYaml"] = func(v interface{}) string { return "" }
+	funcMap["fromYaml"] = func(s string) map[string]interface{} { return nil }
+	funcMap["resourceQuantity"] = func(s string) string { return s }
+	funcMap["truncName"] = func(maxLen int, s string) string {
+		if len(s) <= maxLen {
+			return s
+		}
+		return s[:maxLen]
+	}
+	funcMap["k8sName"] = func(s string) string { return strings.ToLower(s) }
+	funcMap["parseQuantity"] = func(s string) interface{} { return s }
+	funcMap["formatQuantity"] = func(q interface{}) string { return "" }
+	// required must return a placeholder value (not nil) so piped operations succeed
+	funcMap["required"] = func(args ...interface{}) (interface{}, error) {
+		return "PLACEHOLDER", nil
+	}
+	funcMap["indent"] = func(spaces int, s string) string {
+		if spaces <= 0 {
+			return s
+		}
+		padding := strings.Repeat(" ", spaces)
+		return padding + strings.ReplaceAll(s, "\n", "\n"+padding)
+	}
+	funcMap["nindent"] = func(spaces int, s string) string {
+		if spaces <= 0 {
+			return "\n" + s
+		}
+		padding := strings.Repeat(" ", spaces)
+		return "\n" + padding + strings.ReplaceAll(s, "\n", "\n"+padding)
+	}
+	funcMap["yamlSafe"] = func(v interface{}) interface{} { return v }
+
+	// Parse template
+	tmpl, err := template.New("dry-run").Funcs(funcMap).Parse(templateStr)
+	if err != nil {
+		// Parse errors are already caught by validateGoTemplateSyntax
+		return nil
+	}
+
+	// Execute template with sample context
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctxMap); err != nil {
+		return []string{fmt.Sprintf("dry-run render warning: template execution failed with sample data: %v", err)}
+	}
+
+	// Validate that each rendered YAML document is valid
+	var warnings []string
+	rendered := buf.String()
+	if strings.TrimSpace(rendered) == "" {
+		return nil // Empty output is fine (conditionals may suppress all content)
+	}
+
+	documents := yamlDocSeparator.Split(rendered, -1)
+	for i, doc := range documents {
+		trimmed := strings.TrimSpace(doc)
+		if trimmed == "" {
+			continue
+		}
+		var obj map[string]interface{}
+		if err := yaml.Unmarshal([]byte(trimmed), &obj); err != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"dry-run render warning: document %d produced invalid YAML with sample data: %v", i+1, err))
+		}
+	}
+
+	return warnings
+}
+
+// validateTemplateStringFormat validates the first YAML document in a templateString
+// to ensure it uses a supported format: bare PodSpec, Pod, Deployment, or DaemonSet.
+// This validation is best-effort because Go templates may produce dynamic content,
+// so it only checks templates where the first document can be statically analyzed.
+// yamlDocSeparator matches a YAML document separator line (--- optionally followed by whitespace).
+// This must match the regex used in the reconciler's renderPodTemplateStringMultiDoc.
+var yamlDocSeparator = regexp.MustCompile(`(?m)^---\s*$`)
+
+func validateTemplateStringFormat(templateStr string, fldPath *field.Path) field.ErrorList {
+	errs := field.ErrorList{}
+
+	// Split on YAML document separator (--- on its own line) to get the first document.
+	// Use the same regex as the reconciler to avoid discrepancies.
+	documents := yamlDocSeparator.Split(templateStr, 2)
+	firstDoc := strings.TrimSpace(documents[0])
+	if firstDoc == "" {
+		return errs // empty first doc handled elsewhere
+	}
+
+	// Skip format validation if the template uses Go template directives that
+	// would make the apiVersion/kind dynamic (e.g., conditional kind selection)
+	if strings.Contains(firstDoc, "{{") {
+		// Templates with Go directives can't be statically validated for format.
+		// The runtime renderer will catch format issues.
+		return errs
+	}
+
+	// Try to unmarshal as a generic map to check for apiVersion/kind
+	var probe map[string]interface{}
+	if err := yaml.Unmarshal([]byte(firstDoc), &probe); err != nil {
+		// Non-templated YAML that fails to parse should be rejected at admission time.
+		errs = append(errs, field.Invalid(fldPath, firstDoc, fmt.Sprintf("invalid YAML in first document: %v", err)))
+		return errs
+	}
+
+	apiVersion, hasAPIVersion := probe["apiVersion"]
+	kind, hasKind := probe["kind"]
+
+	if !hasAPIVersion && !hasKind {
+		// Bare PodSpec format — valid
+		return errs
+	}
+
+	if hasAPIVersion != hasKind {
+		errs = append(errs, field.Invalid(fldPath, "",
+			"first YAML document has apiVersion but no kind (or vice versa)"))
+		return errs
+	}
+
+	kindStr, _ := kind.(string)
+	apiVersionStr, _ := apiVersion.(string)
+
+	switch kindStr {
+	case "Pod":
+		if apiVersionStr != "v1" {
+			errs = append(errs, field.Invalid(fldPath, apiVersionStr,
+				fmt.Sprintf("Pod requires apiVersion v1, got %q", apiVersionStr)))
+		}
+	case "Deployment", "DaemonSet":
+		if apiVersionStr != "apps/v1" {
+			errs = append(errs, field.Invalid(fldPath, apiVersionStr,
+				fmt.Sprintf("%s requires apiVersion apps/v1, got %q", kindStr, apiVersionStr)))
+		}
+	default:
+		errs = append(errs, field.Invalid(fldPath, kindStr,
+			fmt.Sprintf("unsupported kind %q: only bare PodSpec, Pod, Deployment, and DaemonSet are supported", kindStr)))
+	}
+
+	return errs
+}
+
+// warnTemplateStringWorkloadMismatch checks if a templateString produces a full workload
+// (Deployment or DaemonSet) that doesn't match the configured workloadType.
+// Returns warnings (not errors) since the runtime will enforce this more strictly.
+func warnTemplateStringWorkloadMismatch(templateStr string, workloadType DebugWorkloadType) []string {
+	var warnings []string
+
+	// Split to get first document using same regex as reconciler
+	documents := yamlDocSeparator.Split(templateStr, 2)
+	firstDoc := strings.TrimSpace(documents[0])
+	if firstDoc == "" || strings.Contains(firstDoc, "{{") {
+		return warnings
+	}
+
+	var probe map[string]interface{}
+	if err := yaml.Unmarshal([]byte(firstDoc), &probe); err != nil {
+		return warnings
+	}
+
+	kind, hasKind := probe["kind"]
+	if !hasKind {
+		return warnings
+	}
+
+	kindStr, _ := kind.(string)
+	// Only check for Deployment/DaemonSet manifests
+	if kindStr != "Deployment" && kindStr != "DaemonSet" {
+		return warnings
+	}
+
+	if DebugWorkloadType(kindStr) != workloadType {
+		warnings = append(warnings, fmt.Sprintf(
+			"templateString produces a %s but workloadType is %s: these must match at runtime",
+			kindStr, workloadType))
+	}
+
+	return warnings
+}
 
 // ValidateBreakglassSessionForReconciler performs validation on a BreakglassSession
 // for use in reconcilers. This catches malformed resources that bypassed the webhook.
