@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debug Session / Deny Policy Bypass Documentation**: Documented that active debug sessions bypass deny policy evaluation for pod-level operations (`exec`, `attach`, `portforward`, `log`)
 - **Webhook Evaluation Order Documentation**: Updated deny-policy, debug-session, and advanced-features docs to clarify the webhook evaluation order
 - **Debug Session Roadmap Table Correction**: Corrected the debug session roadmap table to reflect the implemented behavior
+- **Rate Limiting Documentation**: Added comprehensive `docs/rate-limiting.md` covering multi-tier architecture (global, authenticated, SAR webhook), response formats, memory management, and troubleshooting
+- **Configuration Reference Corrections**: Fixed SAR burst limit, removed undocumented rate limit headers, corrected user identity tracking key description (email with fallback to sub claim) in `docs/configuration-reference.md`
 - **Frontend Component Unit Tests**: Added 107 tests across 7 previously untested components (CountdownTimer, ErrorToasts, EmptyState, LoadingState, StatusTag, ErrorBanner, SessionMetaGrid), bringing frontend component test coverage from ~59% to ~78%
 - **Full Workload Manifest Support in templateString**: `templateString` in `DebugPodTemplate` and `DebugSessionTemplate` now supports `kind: Pod`, `kind: Deployment`, and `kind: DaemonSet` manifests in addition to bare PodSpec format
 - **Webhook Format Validation for templateString**: Admission webhooks now validate the first YAML document format in `templateString`, rejecting unsupported kinds and wrong apiVersions at create/update time
