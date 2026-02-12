@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -6944,4 +6945,185 @@ func TestApproverResolutionLimits(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Result().StatusCode,
 			"session should be created when some groups are skipped due to zero remaining capacity")
 	})
+}
+
+// TestConcurrentSessionCreation_TOCTOURace verifies that the in-flight
+// creation guard (sync.Map) prevents two concurrent requests for the same
+// (cluster, user, group) triple from both passing the duplicate check.
+func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
+	clusterName := "race-cluster"
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "race-esc"},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{clusterName},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "breakglass-admin",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@telekom.de"},
+			},
+		},
+	})
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
+		&sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "tester@telekom.de")
+			c.Set("username", "Tester")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(_ context.Context, _ ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	// Pre-populated guard test (simple regression check)
+	createKey := clusterName + "/tester@telekom.de/breakglass-admin"
+	ctrl.inFlightCreates.Store(createKey, true)
+
+	reqData := BreakglassSessionRequest{
+		Clustername: clusterName,
+		Username:    "tester@telekom.de",
+		GroupName:   "breakglass-admin",
+		Reason:      "TOCTOU race test",
+	}
+	b, _ := json.Marshal(reqData)
+	req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Result().StatusCode,
+		"concurrent session creation for same triple should be rejected")
+
+	var body map[string]interface{}
+	_ = json.NewDecoder(w.Result().Body).Decode(&body)
+	require.Contains(t, body["error"], "already in progress",
+		"error message should indicate creation is already in progress")
+
+	// Cleanup the guard and verify a subsequent request can proceed
+	ctrl.inFlightCreates.Delete(createKey)
+
+	b2, _ := json.Marshal(reqData)
+	req2, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b2))
+	w2 := httptest.NewRecorder()
+	engine.ServeHTTP(w2, req2)
+
+	// After removing the guard, the request should succeed (201 Created)
+	require.Equal(t, http.StatusCreated, w2.Result().StatusCode,
+		"request should succeed after in-flight guard is released")
+
+	// Verify a session was actually created in the API server
+	var sessions v1alpha1.BreakglassSessionList
+	err := cli.List(context.Background(), &sessions)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(sessions.Items), 1,
+		"at least one BreakglassSession should exist after successful creation")
+}
+
+// TestConcurrentSessionCreation_ParallelRequests issues multiple POST requests
+// concurrently using a barrier to overlap them and asserts that exactly one
+// succeeds (201) while the others are rejected (409 conflict).
+func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
+	clusterName := "parallel-cluster"
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&v1alpha1.BreakglassSession{}, index, fn)
+	}
+	builder.WithObjects(&v1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "parallel-esc"},
+		Spec: v1alpha1.BreakglassEscalationSpec{
+			Allowed: v1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{clusterName},
+				Groups:   []string{"system:authenticated"},
+			},
+			EscalatedGroup: "breakglass-admin",
+			Approvers: v1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@telekom.de"},
+			},
+		},
+	})
+	cli := builder.WithStatusSubresource(&v1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := EscalationManager{Client: cli}
+
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
+		&sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", "tester@telekom.de")
+			c.Set("username", "Tester")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(_ context.Context, _ ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	const goroutines = 5
+	barrier := make(chan struct{})
+	type result struct {
+		status int
+	}
+	results := make(chan result, goroutines)
+
+	reqData := BreakglassSessionRequest{
+		Clustername: clusterName,
+		Username:    "tester@telekom.de",
+		GroupName:   "breakglass-admin",
+		Reason:      "concurrent race test",
+	}
+
+	b, err := json.Marshal(reqData)
+	require.NoError(t, err)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			r, rErr := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
+			if rErr != nil {
+				results <- result{status: -1}
+				return
+			}
+			w := httptest.NewRecorder()
+			<-barrier // wait for all goroutines to be ready
+			engine.ServeHTTP(w, r)
+			results <- result{status: w.Code}
+		}()
+	}
+
+	// Release all goroutines simultaneously
+	close(barrier)
+
+	created := 0
+	conflicted := 0
+	for i := 0; i < goroutines; i++ {
+		res := <-results
+		switch res.status {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+			conflicted++
+		default:
+			require.Failf(t, "unexpected status code", "received unexpected HTTP status code %d", res.status)
+		}
+	}
+
+	assert.Equal(t, 1, created,
+		"exactly one concurrent request should succeed with 201 Created")
+	assert.Equal(t, goroutines-1, conflicted,
+		"remaining concurrent requests should be rejected with 409 Conflict")
 }

@@ -1064,17 +1064,22 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 // buildWorkload creates the DaemonSet or Deployment for debug pods.
 // It also returns any additional resources from multi-document pod templates
 // that should be deployed alongside the workload.
+// Supports three templateString formats:
+//   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment)
+//   - Full Pod manifest (kind: Pod): PodSpec extracted, wrapped into workloadType
+//   - Full workload manifest (kind: Deployment/DaemonSet): used directly with breakglass labels merged
 func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, podTemplate *v1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	workloadName := fmt.Sprintf("debug-%s", ds.Name)
-	podSpec, additionalResources, err := c.buildPodSpec(ds, template, podTemplate)
+	renderResult, err := c.buildPodSpec(ds, template, podTemplate)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	labels := map[string]string{
-		DebugSessionLabelKey:  ds.Name,
-		DebugTemplateLabelKey: ds.Spec.TemplateRef,
-		DebugClusterLabelKey:  ds.Spec.Cluster,
+		DebugSessionLabelKey:           ds.Name,
+		DebugTemplateLabelKey:          ds.Spec.TemplateRef,
+		DebugClusterLabelKey:           ds.Spec.Cluster,
+		"app.kubernetes.io/managed-by": "breakglass",
 	}
 
 	labels = mergeStringMaps(labels, template.Spec.Labels, bindingLabels(binding), podTemplateLabels(podTemplate))
@@ -1084,6 +1089,15 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 		}
 		labels[k] = v
 	}
+
+	// Merge pod-level labels from the template manifest (e.g., kind: Pod metadata.labels).
+	// Re-assert controller-owned debug labels afterwards so they cannot be overridden
+	// by template manifests.
+	labels = mergeStringMaps(labels, renderResult.PodLabels)
+	labels[DebugSessionLabelKey] = ds.Name
+	labels[DebugTemplateLabelKey] = ds.Spec.TemplateRef
+	labels[DebugClusterLabelKey] = ds.Spec.Cluster
+	labels["app.kubernetes.io/managed-by"] = "breakglass"
 
 	annotations := mergeStringMaps(nil, template.Spec.Annotations, bindingAnnotations(binding), podTemplateAnnotations(podTemplate))
 	if len(ds.Annotations) > 0 {
@@ -1095,9 +1109,19 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 		}
 	}
 
+	// Merge pod-level annotations from the template manifest
+	annotations = mergeStringMaps(annotations, renderResult.PodAnnotations)
+
 	workloadType := template.Spec.WorkloadType
 	if workloadType == "" {
 		workloadType = v1alpha1.DebugWorkloadDaemonSet
+	}
+
+	podSpec := renderResult.PodSpec
+
+	// If the template produced a full workload manifest, validate and use it directly
+	if renderResult.Workload != nil {
+		return c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, labels, annotations)
 	}
 
 	// Enforce RestartPolicy: Always for DaemonSets and Deployments
@@ -1140,7 +1164,7 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 					Spec: podSpec,
 				},
 			},
-		}, additionalResources, nil
+		}, renderResult.AdditionalResources, nil
 
 	case v1alpha1.DebugWorkloadDeployment:
 		replicas := int32(1)
@@ -1176,10 +1200,98 @@ func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, templa
 					Spec: podSpec,
 				},
 			},
-		}, additionalResources, nil
+		}, renderResult.AdditionalResources, nil
 
 	default:
 		return nil, nil, fmt.Errorf("unsupported workload type: %s", workloadType)
+	}
+}
+
+// useTemplateWorkload processes a full workload manifest from a templateString.
+// It validates the kind matches the configured workloadType, overrides name/namespace/labels,
+// and enforces breakglass policies (RestartPolicy, selectors, replicas).
+func (c *DebugSessionController) useTemplateWorkload(
+	renderResult *PodTemplateRenderResult,
+	workloadType v1alpha1.DebugWorkloadType,
+	workloadName, targetNs string,
+	ds *v1alpha1.DebugSession,
+	template *v1alpha1.DebugSessionTemplate,
+	labels, annotations map[string]string,
+) (ctrlclient.Object, []*unstructured.Unstructured, error) {
+	workload := renderResult.Workload
+	gvk := workload.GetObjectKind().GroupVersionKind()
+
+	// Validate workload kind matches the configured workloadType
+	if v1alpha1.DebugWorkloadType(gvk.Kind) != workloadType {
+		return nil, nil, fmt.Errorf(
+			"templateString produces a %s but workloadType is %s: these must match",
+			gvk.Kind, workloadType,
+		)
+	}
+
+	selectorLabels := map[string]string{
+		DebugSessionLabelKey: ds.Name,
+	}
+
+	switch w := workload.(type) {
+	case *appsv1.Deployment:
+		// Override name, namespace, labels, annotations, selector
+		w.Name = workloadName
+		w.Namespace = targetNs
+		w.Labels = labels
+		w.Annotations = annotations
+		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
+
+		// Apply the modified PodSpec back into the workload.
+		// buildPodSpec applies overrides (schedulingConstraints, tolerations, affinity,
+		// podOverrides, nodeSelector, resourceQuota enforcement, terminalSharing) to
+		// renderResult.PodSpec. We must copy the modified PodSpec back into the workload
+		// to ensure those overrides are not lost.
+		w.Spec.Template.Spec = renderResult.PodSpec
+
+		// Override replicas from session template if set
+		if template.Spec.Replicas != nil {
+			w.Spec.Replicas = template.Spec.Replicas
+		}
+		if w.Spec.Replicas == nil {
+			one := int32(1)
+			w.Spec.Replicas = &one
+		}
+		if template.Spec.ResourceQuota != nil && template.Spec.ResourceQuota.MaxPods != nil && *w.Spec.Replicas > *template.Spec.ResourceQuota.MaxPods {
+			return nil, nil, fmt.Errorf("replicas (%d) exceed resourceQuota.maxPods (%d)", *w.Spec.Replicas, *template.Spec.ResourceQuota.MaxPods)
+		}
+
+		// Enforce RestartPolicy (after PodSpec copy, since overrides may have changed it)
+		if w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyAlways {
+			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
+		}
+
+		return w, renderResult.AdditionalResources, nil
+
+	case *appsv1.DaemonSet:
+		// Override name, namespace, labels, annotations, selector
+		w.Name = workloadName
+		w.Namespace = targetNs
+		w.Labels = labels
+		w.Annotations = annotations
+		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
+
+		// Apply the modified PodSpec back into the workload (see Deployment comment above).
+		w.Spec.Template.Spec = renderResult.PodSpec
+
+		// Enforce RestartPolicy (after PodSpec copy)
+		if w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyAlways {
+			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
+		}
+
+		return w, renderResult.AdditionalResources, nil
+
+	default:
+		return nil, nil, fmt.Errorf("unsupported workload type from template: %T", workload)
 	}
 }
 
@@ -1257,11 +1369,11 @@ func (c *DebugSessionController) deployPodTemplateResource(
 
 // buildPodSpec creates the pod spec from templates and overrides.
 // Supports both structured podTemplate and Go-templated podTemplateString.
-// Now supports multi-document YAML where the first document is the PodSpec
-// and subsequent documents are additional K8s resources to deploy.
-func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate) (corev1.PodSpec, []*unstructured.Unstructured, error) {
-	var spec corev1.PodSpec
-	var additionalResources []*unstructured.Unstructured
+// Now supports multi-document YAML where the first document can be a bare PodSpec,
+// a full Pod manifest, or a full Deployment/DaemonSet manifest.
+// Returns a PodTemplateRenderResult containing the PodSpec, optional workload, and metadata.
+func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, podTemplate *v1alpha1.DebugPodTemplate) (*PodTemplateRenderResult, error) {
+	var renderResult *PodTemplateRenderResult
 
 	// Build render context for template rendering (podTemplateString, podOverridesTemplate)
 	renderCtx := c.buildPodRenderContext(ds, template)
@@ -1271,35 +1383,39 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 		// Render podTemplateString as Go template (from DebugSessionTemplate)
 		result, err := c.renderPodTemplateStringMultiDoc(template.Spec.PodTemplateString, renderCtx)
 		if err != nil {
-			return corev1.PodSpec{}, nil, fmt.Errorf("failed to render podTemplateString: %w", err)
+			return nil, fmt.Errorf("failed to render podTemplateString: %w", err)
 		}
-		spec = result.PodSpec
-		additionalResources = result.AdditionalResources
+		renderResult = result
 	} else if podTemplate != nil {
 		// Use DebugPodTemplate - check for templateString first, then structured template
 		if podTemplate.Spec.TemplateString != "" {
 			// Render DebugPodTemplate's templateString as Go template
 			result, err := c.renderPodTemplateStringMultiDoc(podTemplate.Spec.TemplateString, renderCtx)
 			if err != nil {
-				return corev1.PodSpec{}, nil, fmt.Errorf("failed to render DebugPodTemplate templateString: %w", err)
+				return nil, fmt.Errorf("failed to render DebugPodTemplate templateString: %w", err)
 			}
-			spec = result.PodSpec
-			additionalResources = result.AdditionalResources
+			renderResult = result
 		} else if podTemplate.Spec.Template != nil {
 			// Use structured pod template (no multi-doc support for structured templates)
-			spec = c.convertDebugPodSpec(podTemplate.Spec.Template.Spec)
+			renderResult = &PodTemplateRenderResult{
+				PodSpec: c.convertDebugPodSpec(podTemplate.Spec.Template.Spec),
+			}
 		} else {
-			return corev1.PodSpec{}, nil, fmt.Errorf("DebugPodTemplate %s has neither template nor templateString", podTemplate.Name)
+			return nil, fmt.Errorf("DebugPodTemplate %s has neither template nor templateString", podTemplate.Name)
 		}
+	} else {
+		renderResult = &PodTemplateRenderResult{}
 	}
+
+	spec := &renderResult.PodSpec
 
 	// Apply podOverridesTemplate if specified (Go template producing overrides YAML)
 	if template.Spec.PodOverridesTemplate != "" {
 		overrides, err := c.renderPodOverridesTemplate(template.Spec.PodOverridesTemplate, renderCtx)
 		if err != nil {
-			return corev1.PodSpec{}, nil, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
+			return nil, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
 		}
-		c.applyPodOverridesStruct(&spec, overrides)
+		c.applyPodOverridesStruct(spec, overrides)
 	}
 
 	// Apply static overrides from session template (legacy support)
@@ -1339,15 +1455,15 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 	// Apply resolved scheduling constraints from session
 	// These are computed at session creation time and take precedence
 	if ds.Spec.ResolvedSchedulingConstraints != nil {
-		c.applySchedulingConstraints(&spec, ds.Spec.ResolvedSchedulingConstraints)
+		c.applySchedulingConstraints(spec, ds.Spec.ResolvedSchedulingConstraints)
 	} else if template.Spec.SchedulingConstraints != nil {
 		// Fallback to template constraints if session doesn't have resolved constraints
-		c.applySchedulingConstraints(&spec, template.Spec.SchedulingConstraints)
+		c.applySchedulingConstraints(spec, template.Spec.SchedulingConstraints)
 	}
 
 	if template.Spec.ResourceQuota != nil {
 		if err := enforceContainerResources(template.Spec.ResourceQuota, spec.Containers, spec.InitContainers); err != nil {
-			return corev1.PodSpec{}, nil, err
+			return nil, err
 		}
 	}
 
@@ -1386,7 +1502,7 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 		}
 	}
 
-	return spec, additionalResources, nil
+	return renderResult, nil
 }
 
 // buildPodRenderContext creates the render context for pod templates.
@@ -1500,6 +1616,19 @@ type PodTemplateRenderResult struct {
 
 	// AdditionalResources are parsed K8s resources from subsequent YAML documents.
 	AdditionalResources []*unstructured.Unstructured
+
+	// Workload is non-nil when the first document is a full workload manifest
+	// (kind: Deployment or kind: DaemonSet). In this case, PodSpec is extracted
+	// from the workload's pod template spec.
+	Workload ctrlclient.Object
+
+	// PodLabels are labels extracted from the metadata of a kind: Pod manifest.
+	// These are merged into the workload's pod template labels.
+	PodLabels map[string]string
+
+	// PodAnnotations are annotations extracted from the metadata of a kind: Pod manifest.
+	// These are merged into the workload's pod template annotations.
+	PodAnnotations map[string]string
 }
 
 // renderPodTemplateString renders a podTemplateString Go template and returns a PodSpec.
@@ -1514,7 +1643,12 @@ func (c *DebugSessionController) renderPodTemplateString(templateStr string, ctx
 }
 
 // renderPodTemplateStringMultiDoc renders a podTemplateString Go template with multi-document support.
-// The first YAML document MUST be a PodSpec (required).
+// The first YAML document can be:
+//   - A bare PodSpec (containers at top level)
+//   - A full Pod manifest (kind: Pod) — PodSpec is extracted from .spec
+//   - A full Deployment manifest (kind: Deployment) — PodSpec extracted from .spec.template.spec
+//   - A full DaemonSet manifest (kind: DaemonSet) — PodSpec extracted from .spec.template.spec
+//
 // Subsequent documents can be any Kubernetes resource (ConfigMaps, Secrets, PVCs, etc.)
 // that will be deployed alongside the debug pod.
 func (c *DebugSessionController) renderPodTemplateStringMultiDoc(templateStr string, ctx v1alpha1.AuxiliaryResourceContext) (*PodTemplateRenderResult, error) {
@@ -1530,9 +1664,67 @@ func (c *DebugSessionController) renderPodTemplateStringMultiDoc(templateStr str
 
 	result := &PodTemplateRenderResult{}
 
-	// First document MUST be a PodSpec
-	if err := yaml.Unmarshal(documents[0], &result.PodSpec); err != nil {
-		return nil, fmt.Errorf("failed to parse first document as PodSpec: %w", err)
+	// Probe the first document to determine its format
+	var probe map[string]interface{}
+	if err := yaml.Unmarshal(documents[0], &probe); err != nil {
+		return nil, fmt.Errorf("failed to parse first document: %w", err)
+	}
+
+	kind, _ := probe["kind"].(string)
+	apiVersion, _ := probe["apiVersion"].(string)
+
+	switch {
+	case kind == "Pod" && apiVersion == "v1":
+		// Full Pod manifest — extract .spec as PodSpec and .metadata labels/annotations
+		if err := c.extractPodSpecFromPodManifest(documents[0], result); err != nil {
+			return nil, fmt.Errorf("failed to parse Pod manifest: %w", err)
+		}
+
+	case kind == "Deployment" && apiVersion == "apps/v1":
+		// Full Deployment manifest — extract PodSpec from .spec.template.spec
+		var deployment appsv1.Deployment
+		if err := yaml.Unmarshal(documents[0], &deployment); err != nil {
+			return nil, fmt.Errorf("failed to parse Deployment manifest: %w", err)
+		}
+		result.PodSpec = deployment.Spec.Template.Spec
+		result.PodLabels = deployment.Spec.Template.Labels
+		result.PodAnnotations = deployment.Spec.Template.Annotations
+		result.Workload = &deployment
+
+	case kind == "DaemonSet" && apiVersion == "apps/v1":
+		// Full DaemonSet manifest — extract PodSpec from .spec.template.spec
+		var daemonSet appsv1.DaemonSet
+		if err := yaml.Unmarshal(documents[0], &daemonSet); err != nil {
+			return nil, fmt.Errorf("failed to parse DaemonSet manifest: %w", err)
+		}
+		result.PodSpec = daemonSet.Spec.Template.Spec
+		result.PodLabels = daemonSet.Spec.Template.Labels
+		result.PodAnnotations = daemonSet.Spec.Template.Annotations
+		result.Workload = &daemonSet
+
+	case kind != "" && apiVersion != "":
+		// Has apiVersion/kind but not a supported type — give specific error for known kinds with wrong apiVersion
+		switch kind {
+		case "Pod":
+			return nil, fmt.Errorf("unsupported apiVersion %q for kind Pod: expected v1", apiVersion)
+		case "Deployment":
+			return nil, fmt.Errorf("unsupported apiVersion %q for kind Deployment: expected apps/v1", apiVersion)
+		case "DaemonSet":
+			return nil, fmt.Errorf("unsupported apiVersion %q for kind DaemonSet: expected apps/v1", apiVersion)
+		default:
+			return nil, fmt.Errorf("unsupported manifest kind %q (apiVersion %q) in templateString: only bare PodSpec, Pod (v1), Deployment (apps/v1), and DaemonSet (apps/v1) are supported", kind, apiVersion)
+		}
+
+	default:
+		// No apiVersion/kind — treat as bare PodSpec (backward compatible)
+		if err := yaml.Unmarshal(documents[0], &result.PodSpec); err != nil {
+			return nil, fmt.Errorf("failed to parse first document as PodSpec: %w", err)
+		}
+	}
+
+	// Validate that the extracted PodSpec has containers
+	if len(result.PodSpec.Containers) == 0 {
+		return nil, fmt.Errorf("pod template produced a PodSpec with no containers: ensure the template defines at least one container")
 	}
 
 	// Subsequent documents are additional K8s resources
@@ -1551,6 +1743,52 @@ func (c *DebugSessionController) renderPodTemplateStringMultiDoc(templateStr str
 	}
 
 	return result, nil
+}
+
+// extractPodSpecFromPodManifest extracts the PodSpec, labels, and annotations from a kind: Pod YAML document.
+func (c *DebugSessionController) extractPodSpecFromPodManifest(document []byte, result *PodTemplateRenderResult) error {
+	// Unmarshal as a map to extract the spec sub-object
+	var podMap map[string]interface{}
+	if err := yaml.Unmarshal(document, &podMap); err != nil {
+		return fmt.Errorf("failed to parse Pod manifest: %w", err)
+	}
+
+	// Extract .spec and re-marshal it as PodSpec
+	specRaw, ok := podMap["spec"]
+	if !ok {
+		return fmt.Errorf("Pod manifest is missing 'spec' field")
+	}
+
+	specBytes, err := yaml.Marshal(specRaw)
+	if err != nil {
+		return fmt.Errorf("failed to re-marshal Pod spec: %w", err)
+	}
+
+	if err := yaml.Unmarshal(specBytes, &result.PodSpec); err != nil {
+		return fmt.Errorf("failed to parse Pod spec as PodSpec: %w", err)
+	}
+
+	// Extract metadata labels and annotations
+	if metadata, ok := podMap["metadata"].(map[string]interface{}); ok {
+		if labels, ok := metadata["labels"].(map[string]interface{}); ok {
+			result.PodLabels = make(map[string]string, len(labels))
+			for k, v := range labels {
+				if s, ok := v.(string); ok {
+					result.PodLabels[k] = s
+				}
+			}
+		}
+		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+			result.PodAnnotations = make(map[string]string, len(annotations))
+			for k, v := range annotations {
+				if s, ok := v.(string); ok {
+					result.PodAnnotations[k] = s
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // renderPodOverridesTemplate renders podOverridesTemplate and returns structured overrides.

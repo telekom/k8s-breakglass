@@ -211,7 +211,7 @@ func main() {
 	// Create cached config loader to avoid disk reads per request
 	cfgLoader := config.NewCachedLoader(cliConfig.ConfigPath, 5*time.Second)
 
-	escalationManager := breakglass.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver, log, cfgLoader)
+	escalationManager := breakglass.NewEscalationManagerWithClient(reconcilerMgr.GetClient(), resolver, breakglass.WithLogger(log), breakglass.WithConfigLoader(cfgLoader))
 
 	// Build shared cluster config provider & deny policy evaluator reusing kubernetes client
 	ccProvider := cluster.NewClientProvider(escalationManager.Client, log)
