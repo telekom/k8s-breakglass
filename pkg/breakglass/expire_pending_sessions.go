@@ -13,7 +13,8 @@ import (
 )
 
 func (wc *BreakglassSessionController) ExpirePendingSessions() {
-	sessions, err := wc.sessionManager.GetAllBreakglassSessions(context.Background())
+	// Use indexed query to fetch only pending sessions (matching ExpireApprovedSessions pattern)
+	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), telekomv1alpha1.SessionStatePending)
 	if err != nil {
 		wc.log.Error("error listing breakglass sessions for pending expiry", err)
 		return
