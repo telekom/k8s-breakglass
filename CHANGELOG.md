@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
 - **ErrorBoundary Component**: New `<ErrorBoundary>` component using `onErrorCaptured` provides fallback UI when child components throw during render, preventing full-page crashes
 - **Global Vue Error Handler**: Added `app.config.errorHandler` and `window.onunhandledrejection` to catch and surface uncaught errors as toast notifications
+- **CORS Origin Warnings**: Log WARN when default localhost origins are active via `BREAKGLASS_ALLOW_DEFAULT_ORIGINS=true` and when no origins are configured at all, to prevent accidental permissive CORS in production
 
 ### Changed
 

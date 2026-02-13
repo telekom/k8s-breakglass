@@ -243,7 +243,18 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		},
 	)
 
-	allowedOrigins := buildAllowedOrigins(cfg)
+	allowedOrigins, usedDefaults := buildAllowedOrigins(cfg)
+
+	if usedDefaults {
+		log.Warn("CORS: using default localhost origins because BREAKGLASS_ALLOW_DEFAULT_ORIGINS is enabled — not suitable for production; set server.allowedOrigins in config",
+			zap.Strings("origins", allowedOrigins),
+			zap.String("BREAKGLASS_ALLOW_DEFAULT_ORIGINS", os.Getenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS")))
+	} else if len(allowedOrigins) == 0 {
+		log.Warn("CORS: no allowed origins configured and defaults not enabled — browser requests with Origin header will be blocked; set server.allowedOrigins in config")
+	} else {
+		log.Info("CORS: allowed origins configured", zap.Strings("origins", allowedOrigins))
+	}
+
 	allowedOriginSet := make(map[string]struct{}, len(allowedOrigins))
 	for _, origin := range allowedOrigins {
 		allowedOriginSet[origin] = struct{}{}
@@ -496,10 +507,8 @@ func (s *Server) ReloadIdentityProvider(loader *config.IdentityProviderLoader) e
 	return nil
 }
 
-func buildAllowedOrigins(cfg config.Config) []string {
+func buildAllowedOrigins(cfg config.Config) (origins []string, usedDefaults bool) {
 	seen := make(map[string]struct{})
-	var origins []string
-	usedDefaultOrigins := false
 
 	add := func(candidate string) {
 		normalized := normalizeOrigin(candidate)
@@ -521,14 +530,14 @@ func buildAllowedOrigins(cfg config.Config) []string {
 		for _, raw := range defaultAllowedOrigins {
 			add(raw)
 		}
-		usedDefaultOrigins = true
+		usedDefaults = true
 	}
 
-	if (usedDefaultOrigins || len(origins) == 0) && cfg.Frontend.BaseURL != "" {
+	if (usedDefaults || len(origins) == 0) && cfg.Frontend.BaseURL != "" {
 		add(cfg.Frontend.BaseURL)
 	}
 
-	return origins
+	return origins, usedDefaults
 }
 
 func normalizeOrigin(raw string) string {
