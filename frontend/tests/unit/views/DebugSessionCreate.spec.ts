@@ -991,7 +991,7 @@ describe("DebugSessionCreate", () => {
   });
 
   describe("keyboard navigation", () => {
-    it("cluster and binding cards have role=radio with roving tabindex", async () => {
+    it("cluster cards have role=radio with roving tabindex", async () => {
       mockGetTemplateClusters.mockResolvedValue({
         templateName: "standard-debug",
         templateDisplayName: "Standard Debug",
@@ -999,26 +999,16 @@ describe("DebugSessionCreate", () => {
           {
             name: "prod-east",
             displayName: "Production East",
-            bindings: [
-              {
-                bindingRef: { name: "binding-1", namespace: "default" },
-                displayName: "Standard",
-                approval: { required: false },
-                constraints: { maxDuration: "4h" },
-              },
-            ],
+            bindingRef: { name: "binding-1", namespace: "default" },
+            approval: { required: false },
+            constraints: { maxDuration: "4h" },
           },
           {
             name: "prod-west",
             displayName: "Production West",
-            bindings: [
-              {
-                bindingRef: { name: "binding-2", namespace: "default" },
-                displayName: "Emergency",
-                approval: { required: false },
-                constraints: { maxDuration: "2h" },
-              },
-            ],
+            bindingRef: { name: "binding-2", namespace: "default" },
+            approval: { required: false },
+            constraints: { maxDuration: "2h" },
           },
         ],
       });
@@ -1028,7 +1018,8 @@ describe("DebugSessionCreate", () => {
       vm.goToStep2();
       await flushPromises();
 
-      const clusterCards = wrapper.findAll('[role="radio"]');
+      const clusterGrid = wrapper.find('[data-testid="cluster-grid"]');
+      const clusterCards = clusterGrid.findAll('[role="radio"]');
       expect(clusterCards.length).toBeGreaterThanOrEqual(2);
 
       // First unselected card: tabindex 0 (first focusable), second: tabindex -1
@@ -1046,14 +1037,9 @@ describe("DebugSessionCreate", () => {
           {
             name: "prod-east",
             displayName: "Production East",
-            bindings: [
-              {
-                bindingRef: { name: "binding-1", namespace: "default" },
-                displayName: "Standard",
-                approval: { required: false },
-                constraints: { maxDuration: "4h" },
-              },
-            ],
+            bindingRef: { name: "binding-1", namespace: "default" },
+            approval: { required: false },
+            constraints: { maxDuration: "4h" },
           },
         ],
       });
@@ -1076,26 +1062,16 @@ describe("DebugSessionCreate", () => {
           {
             name: "prod-east",
             displayName: "Production East",
-            bindings: [
-              {
-                bindingRef: { name: "binding-1", namespace: "default" },
-                displayName: "Standard",
-                approval: { required: false },
-                constraints: { maxDuration: "4h" },
-              },
-            ],
+            bindingRef: { name: "binding-1", namespace: "default" },
+            approval: { required: false },
+            constraints: { maxDuration: "4h" },
           },
           {
             name: "prod-west",
             displayName: "Production West",
-            bindings: [
-              {
-                bindingRef: { name: "binding-2", namespace: "default" },
-                displayName: "Emergency",
-                approval: { required: false },
-                constraints: { maxDuration: "2h" },
-              },
-            ],
+            bindingRef: { name: "binding-2", namespace: "default" },
+            approval: { required: false },
+            constraints: { maxDuration: "2h" },
           },
         ],
       });
