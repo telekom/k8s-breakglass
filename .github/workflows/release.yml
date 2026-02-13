@@ -15,11 +15,12 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  release:
+  # ---------------------------------------------------------------------------
+  # Build release manifests and bgctl CLI binaries
+  # ---------------------------------------------------------------------------
+  prepare:
     permissions:
-      contents: write
-      packages: write
-      id-token: write
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -32,23 +33,23 @@ jobs:
         run: |
           make manifests
           make kustomize
-          
+
           # Set the correct image tag for this release
           VERSION=${{ github.ref_name }}
           cd config/deployment
           ../../bin/kustomize edit set image breakglass=ghcr.io/telekom/k8s-breakglass:${VERSION}
           cd ../..
-          
+
           # Build complete deployment manifests for each target
           ./bin/kustomize build config/base > manifests-base.yaml
           ./bin/kustomize build config/debug > manifests-debug.yaml
           # Create CRDs-only manifest
           ./bin/kustomize build config/crd > manifests-crds.yaml
-          
+
           # Verify image tag is correct in output
           echo "Verifying image tags in manifests..."
           grep -o "ghcr.io/telekom/k8s-breakglass:${VERSION}" manifests-base.yaml || { echo "ERROR: Image tag not set correctly"; exit 1; }
-          
+
           # Package everything
           tar -czf manifests-${{ github.ref_name }}.tgz \
             config/crd/bases \
@@ -59,7 +60,11 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: manifests
-          path: manifests-${{ github.ref_name }}.tgz
+          path: |
+            manifests-${{ github.ref_name }}.tgz
+            manifests-base.yaml
+            manifests-debug.yaml
+            manifests-crds.yaml
       - name: Build bgctl release assets
         run: |
           set -e
@@ -91,14 +96,43 @@ jobs:
           done
           # Generate combined checksums file (only archive files, not directories)
           (cd dist && shasum -a 256 *.tar.gz *.zip > "bgctl_${VERSION}_checksums.txt")
+      - name: Upload bgctl artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: bgctl-dist
+          path: |
+            dist/bgctl_*.tar.gz
+            dist/bgctl_*.zip
+            dist/bgctl_*.sha256
+            dist/bgctl_${{ github.ref_name }}_checksums.txt
+
+  # ---------------------------------------------------------------------------
+  # Build per-architecture container images natively (no QEMU emulation)
+  # ---------------------------------------------------------------------------
+  build-image:
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    outputs:
+      # Expose digests so the assemble job can reference them
+      digest-amd64: ${{ steps.set-digest.outputs.digest-amd64 }}
+      digest-arm64: ${{ steps.set-digest.outputs.digest-arm64 }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Login to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Docker meta
@@ -106,9 +140,6 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=${{ github.ref_name }}
-            type=raw,value=latest
           labels: |
             org.opencontainers.image.title=Kubernetes Breakglass
             org.opencontainers.image.description=Secure, auditable privilege escalation system for Kubernetes clusters with real-time webhook integration and time-bounded access
@@ -123,20 +154,125 @@ jobs:
             com.github.repo.branch=${{ github.ref_name }}
             com.github.repo.owner=${{ github.repository_owner }}
             com.buildkit.build.ref=${{ github.ref }}
-      - name: Build & Push Image
+      - name: Build & push single-platform image (by digest)
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
+          # Push by digest only — no tag yet; tags are created in the assemble step
+          platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+      - name: Export digest
+        id: set-digest
+        run: |
+          ARCH=$(echo "${{ matrix.platform }}" | tr '/' '-')  # linux-amd64 or linux-arm64
+          DIGEST="${{ steps.build.outputs.digest }}"
+          echo "digest-${ARCH#linux-}=${DIGEST}" >> "$GITHUB_OUTPUT"
+          # Also persist to a file artifact so the assemble job can collect all digests
+          mkdir -p /tmp/digests
+          echo "${DIGEST}" > "/tmp/digests/${ARCH}"
+      - name: Upload digest
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
 
+  # ---------------------------------------------------------------------------
+  # Assemble per-arch images into a single multi-arch manifest and tag it
+  # ---------------------------------------------------------------------------
+  assemble:
+    needs: [build-image]
+    permissions:
+      packages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.inspect.outputs.digest }}
+    steps:
+      - name: Download all digests
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: /tmp/digests
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+            type=raw,value=latest
+      - name: Create and push multi-arch manifest
+        run: |
+          set -euo pipefail
+          # Collect per-arch digests
+          DIGESTS=""
+          for f in /tmp/digests/*; do
+            d=$(cat "$f")
+            DIGESTS="${DIGESTS} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${d}"
+          done
+          echo "Assembling multi-arch manifest from:${DIGESTS}"
+
+          # Build the --tag flags from metadata
+          TAGS=""
+          while IFS= read -r tag; do
+            TAGS="${TAGS} --tag ${tag}"
+          done <<< "${{ steps.meta.outputs.tags }}"
+
+          # Create and push the multi-arch manifest list
+          # shellcheck disable=SC2086
+          docker buildx imagetools create ${TAGS} ${DIGESTS}
+      - name: Inspect final image
+        id: inspect
+        run: |
+          set -euo pipefail
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          docker buildx imagetools inspect "${IMG}"
+          DIGEST=$(docker buildx imagetools inspect "${IMG}" --format '{{.Manifest.Digest}}')
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Multi-arch manifest digest: ${DIGEST}"
+      - name: Attest provenance (skipped temporarily)
+        # Temporarily disabled because ACTIONS_ID_TOKEN_REQUEST_URL isn't available in some runners
+        # Re-enable by removing or changing the `if` condition when the environment supports id-token requests.
+        if: ${{ false }}
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+
+  # ---------------------------------------------------------------------------
+  # Push multi-arch image to Artifactory OCI mirror
+  # ---------------------------------------------------------------------------
+  artifactory:
+    needs: [assemble]
+    permissions:
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Tag and push image to Artifactory OCI
         env:
           ARTIFACTORY_URL: artifactory.devops.telekom.de
@@ -146,7 +282,7 @@ jobs:
           # docker CLI login using environment secrets
           echo "Logging in to Artifactory OCI at ${ARTIFACTORY_URL}"
           echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
-          echo "Docker login status: $(docker info --format '{{json .}}' 2>/dev/null || echo 'docker info not available')"
+
           # Diagnose Artifactory repo accessibility
           REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
           echo "Checking Artifactory storage API for repo key: ${REPO_KEY}"
@@ -155,17 +291,17 @@ jobs:
           if [ "${HTTP_STATUS}" != "200" ]; then
             echo "Warning: Artifactory repo ${REPO_KEY} not accessible (HTTP ${HTTP_STATUS}). Ensure AF_USER/AF_TOKEN are valid and have deploy permissions."
           fi
-          # Retrieve tag list from docker metadata output and push each tag with Artifactory repo prefix
+
           IMAGE=${{ env.IMAGE_NAME }}
-          # meta.tags contains comma separated tags from docker/metadata-action; we will push the main tag (ref_name)
           TAG=${{ github.ref_name }}
-          ART_IMG=${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}:${TAG}
-          echo "Tagging ${REGISTRY}/${IMAGE}:${TAG} -> ${ART_IMG}"
-          set -x
-          docker pull ${REGISTRY}/${IMAGE}:${TAG} || true
-          docker tag ${REGISTRY}/${IMAGE}:${TAG} ${ART_IMG}
-          docker push ${ART_IMG} || (echo "docker push failed"; exit 1)
-          set +x
+          SRC=${REGISTRY}/${IMAGE}:${TAG}
+          DST=${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}:${TAG}
+
+          echo "Copying multi-arch manifest ${SRC} -> ${DST}"
+
+          # Use buildx imagetools to copy the full multi-arch manifest (all platforms)
+          docker buildx imagetools create --tag "${DST}" "${SRC}"
+
           # Small wait for Artifactory to index
           sleep 3
           # Check whether the pushed image path exists in Artifactory storage (best-effort)
@@ -178,6 +314,27 @@ jobs:
           else
             echo "Artifact path not found or not accessible (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
           fi
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release with manifests, bgctl binaries, and SBOM
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [prepare, assemble]
+    permissions:
+      contents: write
+      packages: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download manifests
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: manifests
+      - name: Download bgctl dist
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: bgctl-dist
+          path: dist
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
@@ -224,12 +381,3 @@ jobs:
             fi
             # fallback: keep sbom in workspace and rely on release assets uploaded elsewhere
           fi
-      - name: Attest provenance (skipped temporarily)
-        # Temporarily disabled because ACTIONS_ID_TOKEN_REQUEST_URL isn't available in some runners
-        # Re-enable by removing or changing the `if` condition when the environment supports id-token requests.
-        if: ${{ false }}
-        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
