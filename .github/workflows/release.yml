@@ -121,10 +121,6 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    outputs:
-      # Expose digests so the assemble job can reference them
-      digest-amd64: ${{ steps.set-digest.outputs.digest-amd64 }}
-      digest-arm64: ${{ steps.set-digest.outputs.digest-arm64 }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Login to GHCR
@@ -171,16 +167,27 @@ jobs:
       - name: Export digest
         id: set-digest
         run: |
-          ARCH=$(echo "${{ matrix.platform }}" | tr '/' '-')  # linux-amd64 or linux-arm64
+          PLATFORM="${{ matrix.platform }}"
+          ARCH_FULL=$(echo "${PLATFORM}" | tr '/' '-')  # e.g., linux-amd64 or linux-arm64
+          ARCH_SHORT="${PLATFORM#*/}"  # e.g., amd64 or arm64
+          if [ -z "${ARCH_SHORT}" ] || [ "${ARCH_SHORT}" = "${PLATFORM}" ]; then
+            echo "Invalid platform format: '${PLATFORM}'. Expected '<os>/<arch>' (e.g., 'linux/amd64')." >&2
+            exit 1
+          fi
           DIGEST="${{ steps.build.outputs.digest }}"
-          echo "digest-${ARCH#linux-}=${DIGEST}" >> "$GITHUB_OUTPUT"
+          if [ -z "${DIGEST}" ]; then
+            echo "Error: Build produced no digest for platform '${PLATFORM}'." >&2
+            exit 1
+          fi
+          echo "digest-${ARCH_SHORT}=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "artifact-name=digest-${ARCH_SHORT}" >> "$GITHUB_OUTPUT"
           # Also persist to a file artifact so the assemble job can collect all digests
           mkdir -p /tmp/digests
-          echo "${DIGEST}" > "/tmp/digests/${ARCH}"
+          echo "${DIGEST}" > "/tmp/digests/${ARCH_FULL}"
       - name: Upload digest
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: digest-${{ strategy.job-index }}
+          name: ${{ steps.set-digest.outputs.artifact-name }}
           path: /tmp/digests/*
 
   # ---------------------------------------------------------------------------
@@ -218,25 +225,40 @@ jobs:
             type=raw,value=${{ github.ref_name }}
             type=raw,value=latest
       - name: Create and push multi-arch manifest
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
           set -euo pipefail
-          # Collect per-arch digests
-          DIGESTS=""
+
+          # Verify digest files exist
+          if [ -z "$(ls -A /tmp/digests 2>/dev/null)" ]; then
+            echo "Error: No digest files found in /tmp/digests. Artifact download may have failed." >&2
+            exit 1
+          fi
+
+          # Collect per-arch digests into an array
+          DIGESTS=()
           for f in /tmp/digests/*; do
             d=$(cat "$f")
-            DIGESTS="${DIGESTS} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${d}"
+            DIGESTS+=("${REGISTRY}/${IMAGE_NAME}@${d}")
           done
-          echo "Assembling multi-arch manifest from:${DIGESTS}"
+          echo "Assembling multi-arch manifest from: ${DIGESTS[*]}"
 
-          # Build the --tag flags from metadata
-          TAGS=""
+          # Build the --tag flags from metadata into an array
+          TAGS=()
           while IFS= read -r tag; do
-            TAGS="${TAGS} --tag ${tag}"
+            TAGS+=("--tag" "$tag")
           done <<< "${{ steps.meta.outputs.tags }}"
 
+          # Ensure we have at least one tag
+          if [ ${#TAGS[@]} -eq 0 ]; then
+            echo "Error: No tags were generated from docker/metadata-action; aborting multi-arch manifest creation." >&2
+            exit 1
+          fi
+
           # Create and push the multi-arch manifest list
-          # shellcheck disable=SC2086
-          docker buildx imagetools create ${TAGS} ${DIGESTS}
+          docker buildx imagetools create "${TAGS[@]}" "${DIGESTS[@]}"
       - name: Inspect final image
         id: inspect
         run: |
@@ -277,6 +299,8 @@ jobs:
         env:
           ARTIFACTORY_URL: artifactory.devops.telekom.de
           ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
           set -e
           # docker CLI login using environment secrets
@@ -330,6 +354,7 @@ jobs:
         uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           name: manifests
+          path: .
       - name: Download bgctl dist
         uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
