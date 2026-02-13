@@ -649,7 +649,7 @@ function drop() {
 
     <div class="reason-field">
       <scale-textarea
-        id="reason-field-input"
+        :id="`reason-field-input-${cardUid}`"
         data-testid="reason-input"
         label="Reason"
         :value="requestReason"
