@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -112,6 +113,38 @@ func TestNewSessionManagerWithClientAndReader(t *testing.T) {
 
 		assert.Same(t, fakeClient, mgr.Client)
 		assert.Same(t, fakeClient, mgr.reader)
+	})
+
+	t.Run("with logger", func(t *testing.T) {
+		testLogger := zaptest.NewLogger(t).Sugar()
+		mgr := NewSessionManagerWithClientAndReader(fakeClient, nil, testLogger)
+
+		assert.Same(t, testLogger, mgr.log)
+	})
+
+	t.Run("without logger uses global", func(t *testing.T) {
+		mgr := NewSessionManagerWithClientAndReader(fakeClient, nil)
+
+		// Without explicit logger, getLoggerOrDefault returns zap.S()
+		assert.NotNil(t, mgr.log)
+	})
+}
+
+func TestSessionManager_getLog(t *testing.T) {
+	t.Run("returns configured logger", func(t *testing.T) {
+		testLogger := zaptest.NewLogger(t).Sugar()
+		fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+		mgr := NewSessionManagerWithClientAndReader(fakeClient, nil, testLogger)
+
+		assert.Same(t, testLogger, mgr.getLog())
+	})
+
+	t.Run("returns nopLogger when log is nil", func(t *testing.T) {
+		mgr := SessionManager{} // zero-value, log is nil
+		got := mgr.getLog()
+
+		assert.NotNil(t, got)
+		assert.Same(t, nopLogger, got)
 	})
 }
 

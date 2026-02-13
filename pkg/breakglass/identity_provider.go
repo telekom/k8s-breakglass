@@ -22,7 +22,9 @@ type KeycloakIdentityProvider struct {
 }
 
 // NewKeycloakIdentityProvider creates a KeycloakIdentityProvider with the given logger.
-// If log is nil, the global zap.S() logger is used as a fallback.
+// If log is nil, the global zap.S() logger is used as a fallback via getLoggerOrDefault.
+// Note: zero-value instances (not created via this constructor) use a no-op logger
+// via the getLog() nil-safety guard to prevent panics.
 func NewKeycloakIdentityProvider(log *zap.SugaredLogger) KeycloakIdentityProvider {
 	return KeycloakIdentityProvider{log: getLoggerOrDefault(log)}
 }
