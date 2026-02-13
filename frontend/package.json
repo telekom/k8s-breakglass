@@ -2,11 +2,17 @@
   "name": "breakglass",
   "version": "0.0.0",
   "engines": {
-    "node": ">=18.11.0"
+    "node": ">=20.19.0"
   },
   "overrides": {
     "test-exclude": "^7.0.1",
-    "glob": "^10.4.1"
+    "glob": "^10.4.1",
+    "@vue/eslint-config-typescript": {
+      "eslint": "$eslint"
+    },
+    "vue-eslint-parser": {
+      "eslint": "$eslint"
+    }
   },
   "scripts": {
     "dev": "vite",
@@ -56,7 +62,7 @@
     "concurrently": "^9.2.1",
     "cors": "^2.8.6",
     "cross-env": "^10.1.0",
-    "eslint": "^9.39.1",
+    "eslint": "^10.0.0",
     "eslint-plugin-vue": "^10.7.0",
     "express": "^5.2.1",
     "jsdom": "^28.0.0",
