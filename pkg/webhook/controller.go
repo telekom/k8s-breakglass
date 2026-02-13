@@ -1002,8 +1002,9 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	reason = wc.finalizeReason(reason, allowed, clusterName)
 	if allowed {
 		metrics.WebhookSARAllowed.WithLabelValues(clusterName).Inc()
-		// also increment action-based decision metric if we have resource attributes
-		if sar.Spec.ResourceAttributes != nil {
+		// Increment action-based decision metric only for session-authorized decisions.
+		// RBAC and debug-session paths are already recorded at decision time to avoid duplicate/misleading labels.
+		if sar.Spec.ResourceAttributes != nil && allowSource == "session" {
 			ra := sar.Spec.ResourceAttributes
 			metrics.WebhookSARDecisionsByAction.WithLabelValues(clusterName, ra.Verb, ra.Group, ra.Resource, ra.Namespace, ra.Subresource, "allowed", "session").Inc()
 		}
