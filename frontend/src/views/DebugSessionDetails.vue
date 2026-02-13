@@ -153,7 +153,9 @@ const allowedPods = computed((): DebugPodInfo[] => {
   return session.value?.status?.allowedPods || [];
 });
 
-const canJoin = computed(() => session.value?.status?.state === "Active" && !isCurrentUserParticipant.value);
+const canJoin = computed(
+  () => session.value?.status?.state === "Active" && !isCurrentUserParticipant.value && !isCurrentUserOwner.value,
+);
 const canTerminate = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
 const canRenew = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
 const canApprove = computed(() => session.value?.status?.state === "PendingApproval");

@@ -325,6 +325,13 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 				break
 			}
 		}
+		// Count only active participants (those who haven't left)
+		activeParticipants := 0
+		for _, p := range s.Status.Participants {
+			if p.LeftAt == nil {
+				activeParticipants++
+			}
+		}
 		summaries = append(summaries, DebugSessionSummary{
 			Name:                   s.Name,
 			TemplateRef:            s.Spec.TemplateRef,
@@ -335,7 +342,7 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			StatusMessage:          s.Status.Message,
 			StartsAt:               s.Status.StartsAt,
 			ExpiresAt:              s.Status.ExpiresAt,
-			Participants:           len(s.Status.Participants),
+			Participants:           activeParticipants,
 			IsParticipant:          isParticipant,
 			AllowedPods:            len(s.Status.AllowedPods),
 			AllowedPodOperations:   s.Status.AllowedPodOperations,

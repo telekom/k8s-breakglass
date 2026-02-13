@@ -134,8 +134,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	engine.Use(func(c *gin.Context) {
 		// Prevent MIME type sniffing
 		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-		// Prevent clickjacking attacks
-		c.Writer.Header().Set("X-Frame-Options", "DENY")
+		// Prevent clickjacking attacks (SAMEORIGIN matches CSP frame-ancestors 'self')
+		c.Writer.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		// Enable XSS filter in older browsers
 		c.Writer.Header().Set("X-XSS-Protection", "1; mode=block")
 		// Control referrer information

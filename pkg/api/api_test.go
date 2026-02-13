@@ -859,8 +859,8 @@ func TestSecurityHeaders(t *testing.T) {
 	// Verify security headers are set
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"),
 		"X-Content-Type-Options header should be set to 'nosniff'")
-	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"),
-		"X-Frame-Options header should be set to 'DENY'")
+	assert.Equal(t, "SAMEORIGIN", w.Header().Get("X-Frame-Options"),
+		"X-Frame-Options header should be set to 'SAMEORIGIN' to match CSP frame-ancestors 'self'")
 	assert.Equal(t, "1; mode=block", w.Header().Get("X-XSS-Protection"),
 		"X-XSS-Protection header should be set")
 	assert.Equal(t, "strict-origin-when-cross-origin", w.Header().Get("Referrer-Policy"),
