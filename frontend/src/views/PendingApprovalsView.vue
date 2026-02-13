@@ -245,7 +245,10 @@ import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 
 // Services
 const auth = inject(AuthKey);
-const breakglassService = new BreakglassService(auth!);
+if (!auth) {
+  throw new Error("PendingApprovalsView requires an Auth provider");
+}
+const breakglassService = new BreakglassService(auth);
 
 // State
 const pendingSessions = ref<SessionCR[]>([]);

@@ -11,7 +11,10 @@ import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import type { Breakglass, SessionCR } from "@/model/breakglass";
 
 const auth = inject(AuthKey);
-const breakglassService = new BreakglassService(auth!);
+if (!auth) {
+  throw new Error("BreakglassView requires an Auth provider");
+}
+const breakglassService = new BreakglassService(auth);
 const time = useCurrentTime();
 
 type BreakglassWithSession = Breakglass & {

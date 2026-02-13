@@ -15,8 +15,11 @@ import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 const route = useRoute();
 const user = useUser();
 const auth = inject(AuthKey);
+if (!auth) {
+  throw new Error("BreakglassSessionReview requires an Auth provider");
+}
 const authenticated = computed(() => user.value && !user.value?.expired);
-const service = new BreakglassSessionService(auth!);
+const service = new BreakglassSessionService(auth);
 const time = useCurrentTime();
 
 const resourceName = ref(route.query.name?.toString() || "");

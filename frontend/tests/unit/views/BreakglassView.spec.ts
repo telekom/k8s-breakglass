@@ -128,6 +128,27 @@ describe("BreakglassView", () => {
       const wrapper = await createWrapper();
       expect(wrapper.element.tagName).toBeDefined();
     });
+
+    it("throws a clear error when auth provider is missing", async () => {
+      await router.push("/");
+      await router.isReady();
+
+      expect(() => {
+        mount(BreakglassView, {
+          global: {
+            plugins: [router],
+            stubs: {
+              PageHeader: true,
+              LoadingState: true,
+              EmptyState: true,
+              BreakglassCard: true,
+              "scale-text-field": true,
+              "scale-button": true,
+            },
+          },
+        });
+      }).toThrow("BreakglassView requires an Auth provider");
+    });
   });
 
   describe("Query Parameters", () => {
