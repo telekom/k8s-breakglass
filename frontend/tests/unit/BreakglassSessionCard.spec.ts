@@ -6,10 +6,8 @@
  * - User role validation
  * - Action availability based on session state and user permissions
  *
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
-
-/// <reference types="jest" />
 
 describe("BreakglassSessionCard Utilities", () => {
   /**

@@ -5,10 +5,8 @@
  * - formatDuration(): Parses Go duration strings (e.g., "1h0m0s") to human-readable format
  * - computeEndTime(): Calculates end time from start time and duration
  *
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
-
-/// <reference types="jest" />
 
 describe("PendingApprovalsView Duration Utilities", () => {
   /**

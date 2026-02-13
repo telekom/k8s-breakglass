@@ -7,10 +7,8 @@
  * 3. Integration: Large configs, multi-IDP scenarios
  * 4. Backward compatibility: Single-IDP mode, empty configs
  *
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
-
-/// <reference types="jest" />
 
 // Mock types
 interface IDPInfo {

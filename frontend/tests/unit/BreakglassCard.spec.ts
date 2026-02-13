@@ -10,10 +10,8 @@ import { formatDurationSeconds, parseDurationInput, sanitizeReason, validateDura
  * - validateDuration(): Client-side duration validation
  * - formatDurationSeconds(): Duration conversion to human-readable format
  *
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
-
-/// <reference types="jest" />
 
 describe("BreakglassCard Duration and Reason Handling", () => {
   /**

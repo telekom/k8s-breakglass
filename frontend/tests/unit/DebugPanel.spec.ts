@@ -6,10 +6,8 @@
  * - Debug information collection
  * - Token summary display
  *
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
-
-/// <reference types="jest" />
 
 describe("DebugPanel Utilities", () => {
   /**

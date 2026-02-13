@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MicahParks/keyfunc"
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -40,9 +40,8 @@ func TestAuthMiddleware_ExposesTokenAndRawClaims(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}
@@ -97,9 +96,8 @@ func TestAuthMiddleware_GroupNormalizationCases(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}
@@ -160,11 +158,11 @@ func TestAuthMiddleware_GroupNormalizationCases(t *testing.T) {
 	}
 }
 
-// Negative test: JWKS refresh times out/unreachable -> middleware returns 401 with an error message.
-func TestAuthMiddleware_JWKSUnreachable(t *testing.T) {
+// Negative test: JWKS has no matching key and refresh returns HTTP 500 -> middleware returns 401.
+func TestAuthMiddleware_JWKSRefreshFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	// JWKS server: first request returns empty JWKS; second request sleeps longer than refresh timeout causing Refresh to fail
+	// JWKS server: first request returns empty JWKS; subsequent requests return HTTP 500
 	emptyJWKS := map[string]interface{}{"keys": []interface{}{}}
 	emptyJWKSBytes, err := json.Marshal(emptyJWKS)
 	require.NoError(t, err)
@@ -173,12 +171,6 @@ func TestAuthMiddleware_JWKSUnreachable(t *testing.T) {
 	privNew, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	kid := "unreach-kid"
-	nB64New := base64.RawURLEncoding.EncodeToString(privNew.N.Bytes())
-	eBytesNew := big.NewInt(int64(privNew.E)).Bytes()
-	eB64New := base64.RawURLEncoding.EncodeToString(eBytesNew)
-	jwksWithKey := map[string]interface{}{"keys": []interface{}{map[string]interface{}{"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": nB64New, "e": eB64New}}}
-	jwksWithKeyBytes, err := json.Marshal(jwksWithKey)
-	require.NoError(t, err)
 
 	var reqCount int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,17 +180,14 @@ func TestAuthMiddleware_JWKSUnreachable(t *testing.T) {
 			_, _ = w.Write(emptyJWKSBytes)
 			return
 		}
-		// Sleep to simulate an unreachable/slow JWKS during refresh
-		time.Sleep(200 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(jwksWithKeyBytes)
+		// Return HTTP 500 to simulate unreachable JWKS during refresh
+		http.Error(w, "service unavailable", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
-	// Use a small refresh timeout so refresh fails quickly
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour, RefreshTimeout: 50 * time.Millisecond})
+	// Use keyfunc/v3 — initial fetch succeeds with empty JWKS, refresh on unknown kid will fail
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}
@@ -245,9 +234,8 @@ func TestAuthMiddleware_NegativeTokenCases(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}
@@ -328,11 +316,9 @@ func TestAuthMiddleware_ValidAndInvalidJWT(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Obtain a keyfunc.JWKS from the server
-	options := keyfunc.Options{RefreshInterval: time.Hour}
-	jwks, err := keyfunc.Get(srv.URL, options)
+	// Obtain a keyfunc.Keyfunc from the server
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}
@@ -453,9 +439,8 @@ func TestAuthMiddleware_MissingOrWrongHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}
@@ -526,9 +511,8 @@ func TestAuthMiddleware_RefreshOnMissingKid(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	logger := zaptest.NewLogger(t).Sugar()
 	auth := &AuthHandler{jwks: jwks, log: logger}

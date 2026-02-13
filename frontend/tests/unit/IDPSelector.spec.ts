@@ -6,10 +6,8 @@
  * - Display name resolution
  * - Validation of IDP selection state
  *
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
-
-/// <reference types="jest" />
 
 interface IDPInfo {
   name: string;

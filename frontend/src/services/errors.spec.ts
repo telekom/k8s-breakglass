@@ -7,10 +7,7 @@
  * - Auto-expiration of errors
  * - Error state management
  *
- * @jest-environment jsdom
  */
-
-/// <reference types="jest" />
 
 import { pushError, dismissError, useErrors } from "@/services/errors";
 

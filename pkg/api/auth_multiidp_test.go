@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MicahParks/keyfunc"
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
@@ -84,9 +84,8 @@ func TestMultiIDPJWKSCaching(t *testing.T) {
 
 	// Verify tokens can be validated with their respective keys
 	t.Run("IDP1_Token_Validation", func(t *testing.T) {
-		jwks1, err := keyfunc.Get(srv1.URL, keyfunc.Options{RefreshInterval: time.Hour})
+		jwks1, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv1.URL})
 		require.NoError(t, err)
-		defer jwks1.EndBackground()
 
 		parsedToken, err := jwt.ParseWithClaims(token1, &jwt.MapClaims{}, jwks1.Keyfunc)
 		require.NoError(t, err)
@@ -94,9 +93,8 @@ func TestMultiIDPJWKSCaching(t *testing.T) {
 	})
 
 	t.Run("IDP2_Token_Validation", func(t *testing.T) {
-		jwks2, err := keyfunc.Get(srv2.URL, keyfunc.Options{RefreshInterval: time.Hour})
+		jwks2, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv2.URL})
 		require.NoError(t, err)
-		defer jwks2.EndBackground()
 
 		parsedToken, err := jwt.ParseWithClaims(token2, &jwt.MapClaims{}, jwks2.Keyfunc)
 		require.NoError(t, err)
@@ -105,9 +103,8 @@ func TestMultiIDPJWKSCaching(t *testing.T) {
 
 	// Verify IDP1 token fails with IDP2 key
 	t.Run("CrossIDP_Token_Fails", func(t *testing.T) {
-		jwks2, err := keyfunc.Get(srv2.URL, keyfunc.Options{RefreshInterval: time.Hour})
+		jwks2, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv2.URL})
 		require.NoError(t, err)
-		defer jwks2.EndBackground()
 
 		_, err = jwt.ParseWithClaims(token1, &jwt.MapClaims{}, jwks2.Keyfunc)
 		require.Error(t, err, "Token from IDP1 should fail with IDP2 key")
@@ -143,9 +140,8 @@ func TestIDPExtractedFromJWTClaims(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	testCases := []struct {
 		name     string
@@ -221,9 +217,8 @@ func TestEmptyIDPHandling(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	auth := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
 
@@ -340,9 +335,8 @@ func TestMultiIDPWithDifferentClaims(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+			jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 			require.NoError(t, err)
-			defer jwks.EndBackground()
 
 			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, tc.claims)
 			tok.Header["kid"] = kid
@@ -386,9 +380,8 @@ func TestTokenExpirationValidation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	jwks, err := keyfunc.Get(srv.URL, keyfunc.Options{RefreshInterval: time.Hour})
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
 	require.NoError(t, err)
-	defer jwks.EndBackground()
 
 	t.Run("ValidToken_NotExpired", func(t *testing.T) {
 		claims := jwt.MapClaims{

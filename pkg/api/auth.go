@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MicahParks/keyfunc"
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
@@ -42,7 +42,8 @@ var allowedJWTAlgs = []string{
 // jwksCacheEntry holds the JWKS and its position in the LRU list
 type jwksCacheEntry struct {
 	issuer string
-	jwks   *keyfunc.JWKS
+	jwks   keyfunc.Keyfunc
+	cancel context.CancelFunc // stops the background refresh goroutine
 }
 
 type AuthHandler struct {
@@ -52,7 +53,7 @@ type AuthHandler struct {
 	jwksMutex   sync.RWMutex
 
 	// Single-IDP fallback (for backward compatibility)
-	jwks *keyfunc.JWKS
+	jwks keyfunc.Keyfunc
 
 	log *zap.SugaredLogger
 
@@ -79,7 +80,7 @@ func (a *AuthHandler) WithIdentityProviderLoader(loader *config.IdentityProvider
 // getJWKSForIssuer returns the JWKS for a given issuer URL, loading it if necessary
 // For single-IDP mode (no idpLoader), returns the default JWKS
 // Uses LRU eviction to prevent memory exhaustion when cache is full.
-func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*keyfunc.JWKS, error) {
+func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (keyfunc.Keyfunc, error) {
 	// Single-IDP mode: use default JWKS
 	if a.idpLoader == nil {
 		return a.jwks, nil
@@ -104,12 +105,14 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		return nil, fmt.Errorf("invalid or unknown identity provider")
 	}
 
-	// Create JWKS options
-	options := keyfunc.Options{
+	// Create JWKS override options for keyfunc/v3
+	override := keyfunc.Override{
 		RefreshInterval: time.Hour,
-		RefreshTimeout:  time.Second * 10,
-		RefreshErrorHandler: func(err error) {
-			a.log.Warnf("failed to refresh JWKS for issuer %s: %v", issuer, err)
+		HTTPTimeout:     10 * time.Second,
+		RefreshErrorHandlerFunc: func(u string) func(ctx context.Context, err error) {
+			return func(_ context.Context, err error) {
+				a.log.Warnf("failed to refresh JWKS for issuer %s (url: %s): %v", issuer, u, err)
+			}
 		},
 	}
 
@@ -120,17 +123,17 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 			return nil, fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
 		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
-		options.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
 		pool, err := buildCertPoolFromPEM(idpCfg.Keycloak.CertificateAuthority)
 		if err != nil {
 			return nil, fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
 		}
 		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
-		options.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	} else if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
 		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-		options.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+		override.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 		a.log.Warnf("TLS verification disabled for IDP %s (dev/e2e only)", idpCfg.Name)
 	}
 
@@ -151,7 +154,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		discoveryURL := fmt.Sprintf("%s/.well-known/openid-configuration", strings.TrimRight(idpCfg.Authority, "/"))
 
 		// Use the configured client (or default) to fetch discovery
-		client := options.Client
+		client := override.Client
 		if client == nil {
 			// Create client with explicit timeout to prevent goroutine hangs
 			// when OIDC provider is slow or unresponsive
@@ -184,9 +187,12 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 		}
 	}
 
-	// Fetch JWKS
-	jwks, err := keyfunc.Get(jwksURL, options)
+	// Create a per-entry context to control the background refresh goroutine.
+	// Cancelling this context stops the refresh goroutine (replaces EndBackground in keyfunc v1).
+	entryCtx, entryCancel := context.WithCancel(context.Background())
+	k, err := keyfunc.NewDefaultOverrideCtx(entryCtx, []string{jwksURL}, override)
 	if err != nil {
+		entryCancel()
 		return nil, fmt.Errorf("failed to load JWKS for IDP %s (%s): %w", idpCfg.Name, issuer, err)
 	}
 
@@ -197,7 +203,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 	// Check again in case another goroutine loaded it while we were fetching
 	if elem, exists := a.jwksCache[issuer]; exists {
 		// Another goroutine beat us to it - use theirs, discard ours
-		jwks.EndBackground()
+		entryCancel()
 		a.jwksLRUList.MoveToFront(elem)
 		return elem.Value.(*jwksCacheEntry).jwks, nil
 	}
@@ -214,21 +220,21 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (*key
 			"evictedIssuer", entry.issuer,
 			"currentSize", len(a.jwksCache),
 			"maxSize", maxJWKSCacheSize)
-		// Stop the background refresh goroutine
-		if entry.jwks != nil {
-			entry.jwks.EndBackground()
+		// Stop the background refresh goroutine via context cancellation
+		if entry.cancel != nil {
+			entry.cancel()
 		}
 		delete(a.jwksCache, entry.issuer)
 		a.jwksLRUList.Remove(oldest)
 	}
 
 	// Add new entry at front (most recently used)
-	entry := &jwksCacheEntry{issuer: issuer, jwks: jwks}
+	entry := &jwksCacheEntry{issuer: issuer, jwks: k, cancel: entryCancel}
 	elem := a.jwksLRUList.PushFront(entry)
 	a.jwksCache[issuer] = elem
 
 	a.log.Debugw("loaded JWKS for issuer", "issuer", issuer, "idp_name", idpCfg.Name)
-	return jwks, nil
+	return k, nil
 }
 
 func (a *AuthHandler) authenticate(c *gin.Context) bool {
@@ -273,7 +279,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	startTime := time.Now()
 
 	// Get appropriate JWKS (based on issuer or default)
-	var jwks *keyfunc.JWKS
+	var jwks keyfunc.Keyfunc
 	var selectedIDP string
 
 	if a.idpLoader != nil && issuer != "" {
@@ -324,18 +330,13 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	}
 
 	// Verify and parse JWT with selected JWKS
+	// Note: keyfunc/v3 automatically refreshes on unknown kid, so no manual refresh needed
 	claims := jwt.MapClaims{}
-	verifiedParser := jwt.NewParser(jwt.WithValidMethods(allowedJWTAlgs))
+	verifiedParser := jwt.NewParser(
+		jwt.WithValidMethods(allowedJWTAlgs),
+		jwt.WithIssuedAt(),
+	)
 	token, err := verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
-	if err != nil {
-		// Attempt single forced JWKS refresh if kid missing
-		if strings.Contains(err.Error(), "key ID") {
-			c.Set("jwks_refresh_attempt", true)
-			if rErr := jwks.Refresh(context.Background(), keyfunc.RefreshOptions{}); rErr == nil {
-				token, err = verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
-			}
-		}
-	}
 	if err != nil {
 		// Record failure with reason
 		failureReason := "verification_failed"
@@ -570,8 +571,11 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 
 	// Verify the token
 	claims := jwt.MapClaims{}
-	verifiedParser := jwt.NewParser(jwt.WithValidMethods(allowedJWTAlgs))
-	_, err = verifiedParser.ParseWithClaims(bearer, claims, jwks.Keyfunc)
+	verifiedParser := jwt.NewParser(
+		jwt.WithValidMethods(allowedJWTAlgs),
+		jwt.WithIssuedAt(),
+	)
+	_, err = verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
 	if err != nil {
 		return ""
 	}

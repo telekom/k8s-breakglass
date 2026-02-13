@@ -5,27 +5,6 @@
 
 import { vi } from "vitest";
 
-// Jest compatibility shim - Vitest exposes vi but some tests use jest.*
-// We add jest as an alias to vi for backwards compatibility
-const jestCompat = {
-  fn: vi.fn,
-  mock: vi.mock,
-  unmock: vi.unmock,
-  clearAllMocks: vi.clearAllMocks,
-  resetAllMocks: vi.resetAllMocks,
-  restoreAllMocks: vi.restoreAllMocks,
-  spyOn: vi.spyOn,
-  useFakeTimers: vi.useFakeTimers,
-  useRealTimers: vi.useRealTimers,
-  setSystemTime: vi.setSystemTime,
-  advanceTimersByTime: vi.advanceTimersByTime,
-  runAllTimers: vi.runAllTimers,
-  mocked: vi.mocked,
-};
-
-// @ts-expect-error - Adding jest compatibility layer
-globalThis.jest = jestCompat;
-
 // Mock window.history to avoid SecurityError in jsdom
 const originalReplaceState = window.history.replaceState;
 window.history.replaceState = function (...args: Parameters<typeof originalReplaceState>) {

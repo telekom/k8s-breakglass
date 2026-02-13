@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import { createAuthenticatedApiClient } from "./httpClient";
 import type AuthService from "@/services/auth";
 import { AxiosError, type InternalAxiosRequestConfig } from "axios";
@@ -17,7 +18,7 @@ function createResolvedAdapter() {
 
 describe("createAuthenticatedApiClient", () => {
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
 
     const globalWindow = (globalThis as any).window;
     if (globalWindow && "__DEV_TOKEN_LOG" in globalWindow) {
@@ -27,7 +28,7 @@ describe("createAuthenticatedApiClient", () => {
 
   it("attaches Authorization headers using the provided auth service", async () => {
     const auth = {
-      getAccessToken: jest.fn().mockResolvedValue("mock-token"),
+      getAccessToken: vi.fn().mockResolvedValue("mock-token"),
     } as unknown as AuthService;
 
     const client = createAuthenticatedApiClient(auth, { baseURL: "https://api.example.com" });
@@ -41,7 +42,7 @@ describe("createAuthenticatedApiClient", () => {
 
   it("uses default timeout of 30 seconds when not specified", () => {
     const auth = {
-      getAccessToken: jest.fn().mockResolvedValue("mock-token"),
+      getAccessToken: vi.fn().mockResolvedValue("mock-token"),
     } as unknown as AuthService;
 
     const client = createAuthenticatedApiClient(auth, { baseURL: "https://api.example.com" });
@@ -50,7 +51,7 @@ describe("createAuthenticatedApiClient", () => {
 
   it("allows custom timeout configuration", () => {
     const auth = {
-      getAccessToken: jest.fn().mockResolvedValue("mock-token"),
+      getAccessToken: vi.fn().mockResolvedValue("mock-token"),
     } as unknown as AuthService;
 
     const client = createAuthenticatedApiClient(auth, { baseURL: "https://api.example.com", timeout: 60000 });
@@ -59,11 +60,11 @@ describe("createAuthenticatedApiClient", () => {
 
   it("logs Authorization headers when dev token logging is enabled", async () => {
     const auth = {
-      getAccessToken: jest.fn().mockResolvedValue("dev-token"),
+      getAccessToken: vi.fn().mockResolvedValue("dev-token"),
     } as unknown as AuthService;
 
     const client = createAuthenticatedApiClient(auth, { enableDevTokenLogging: true });
-    const debugSpy = jest.spyOn(console, "debug").mockImplementation(() => {});
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
 
     const globalWindow = ((globalThis as any).window = (globalThis as any).window || {});
     globalWindow.__DEV_TOKEN_LOG = true;
@@ -85,17 +86,17 @@ describe("createAuthenticatedApiClient", () => {
 
 describe("timeout detection", () => {
   const mockAuth = {
-    getAccessToken: jest.fn().mockResolvedValue("mock-token"),
-    trySilentRenew: jest.fn().mockResolvedValue(false),
+    getAccessToken: vi.fn().mockResolvedValue("mock-token"),
+    trySilentRenew: vi.fn().mockResolvedValue(false),
   } as unknown as AuthService;
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   it("detects timeout errors by ECONNABORTED code", async () => {
     const client = createAuthenticatedApiClient(mockAuth, { baseURL: "https://api.example.com" });
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // Simulate a timeout error from axios (no response, has request, ECONNABORTED code)
     client.defaults.adapter = async (config: any) => {
@@ -119,7 +120,7 @@ describe("timeout detection", () => {
 
   it("does not falsely detect timeout when message contains 'timeout' but code is different", async () => {
     const client = createAuthenticatedApiClient(mockAuth, { baseURL: "https://api.example.com" });
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // Simulate network error with "timeout" in message but different code
     client.defaults.adapter = async (config: any) => {
@@ -145,7 +146,7 @@ describe("timeout detection", () => {
 
   it("handles network errors without timeout", async () => {
     const client = createAuthenticatedApiClient(mockAuth, { baseURL: "https://api.example.com" });
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // Simulate a network error (no response, has request, different code)
     client.defaults.adapter = async (config: any) => {

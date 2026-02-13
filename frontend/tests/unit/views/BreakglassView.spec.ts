@@ -1,7 +1,7 @@
 /**
  * Tests for BreakglassView component
  *
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

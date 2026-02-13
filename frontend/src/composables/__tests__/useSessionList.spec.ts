@@ -209,12 +209,12 @@ describe("useSessionList", () => {
     const NOW = new Date("2025-12-01T12:00:00Z").getTime();
 
     beforeEach(() => {
-      jest.useFakeTimers();
-      jest.setSystemTime(NOW);
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW);
     });
 
     afterEach(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it("adds urgency and timeRemaining", () => {
@@ -232,12 +232,12 @@ describe("useSessionList", () => {
     const NOW = new Date("2025-12-01T12:00:00Z").getTime();
 
     beforeEach(() => {
-      jest.useFakeTimers();
-      jest.setSystemTime(NOW);
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW);
     });
 
     afterEach(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     function createWithUrgency(name: string, overrides: Partial<SessionCR> = {}): SessionWithUrgency {

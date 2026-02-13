@@ -1,7 +1,7 @@
 /**
  * Tests for NotFoundView component
  *
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
 
 import { describe, it, expect } from "vitest";
