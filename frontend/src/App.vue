@@ -11,6 +11,7 @@ import IDPSelector from "@/components/IDPSelector.vue";
 import DebugPanel from "@/components/DebugPanel.vue";
 import ErrorToasts from "@/components/ErrorToasts.vue";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
+import { ErrorBoundary } from "@/components/common";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 
 const auth = inject(AuthKey);
@@ -422,7 +423,9 @@ watch(
           <scale-button v-else @click="login">Log In</scale-button>
         </div>
 
-        <RouterView v-if="authenticated" />
+        <ErrorBoundary v-if="authenticated" title="Page failed to render">
+          <RouterView />
+        </ErrorBoundary>
       </div>
 
       <ErrorToasts />

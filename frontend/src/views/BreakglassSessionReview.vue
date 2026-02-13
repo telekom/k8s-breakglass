@@ -84,7 +84,6 @@ async function confirmApprove() {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.confirmApprove", errResponse, "Failed to approve session");
-    pushError("Failed to approve session");
   }
   isSubmitting.value = false;
 }
@@ -107,7 +106,6 @@ async function confirmReject() {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.confirmReject", errResponse, "Failed to reject session");
-    pushError("Failed to reject session");
   }
   isSubmitting.value = false;
 }

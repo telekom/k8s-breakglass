@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workload Type Mismatch Warning**: Admission webhook warns when a `templateString` produces a Deployment/DaemonSet that doesn't match the configured `workloadType`
 - **Dry-Run Template Rendering in Webhooks**: Admission webhooks now perform best-effort dry-run rendering of Go-templated `templateString` values, catching execution errors and invalid YAML output at admission time instead of only at reconciliation
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
+- **ErrorBoundary Component**: New `<ErrorBoundary>` component using `onErrorCaptured` provides fallback UI when child components throw during render, preventing full-page crashes
+- **Global Vue Error Handler**: Added `app.config.errorHandler` and `window.onunhandledrejection` to catch and surface uncaught errors as toast notifications
 - **CORS Origin Warnings**: Log WARN when default localhost origins are active via `BREAKGLASS_ALLOW_DEFAULT_ORIGINS=true` and when no origins are configured at all, to prevent accidental permissive CORS in production
 
 ### Changed
@@ -45,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Webhook `---` Splitting Inconsistency**: `validateTemplateStringFormat` and `warnTemplateStringWorkloadMismatch` used `strings.SplitN` which splits on `---` anywhere in a string (including inside YAML values), while the reconciler uses a line-anchored regex `^---\s*$`. Now both use the same regex-based split.
 - **Auto-Approve in resolveApproval API**: The `resolveApproval()` handler now evaluates auto-approve eligibility using `evaluateAutoApprove()`, correctly populating `canAutoApprove` in API responses
 - **Frontend Log Spam**: Removed excessive console logging of full approval objects during debug session creation
+- **Frontend Error Handling**: Fixed multiple error handling gaps across frontend:
+  - `BreakglassView.fetchAll()` now catches errors (previously left loading spinner stuck on failure)
+  - `BreakglassView.onDrop()` now handles service errors gracefully
+  - `BreakglassService.fetchAvailableEscalations()` now catches errors (previously broke the entire `getBreakglasses()` Promise.all)
+  - Fixed double-toast errors in BreakglassSessionReview (approve/reject), DebugSessionCreate (fetchTemplates/fetchTemplateClusters)
+  - `DebugSessionCreate.onMounted` now handles `auth.getUser()` failures gracefully
 
 - **IDP-Based Session Limits**: Session limits are now configured at the IdentityProvider level with support for group-based overrides and escalation-level overrides
   - New `IdentityProvider.spec.sessionLimits` field with `maxActiveSessionsPerUser` default limit

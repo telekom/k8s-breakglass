@@ -10,6 +10,7 @@ import { BrandingKey } from "@/keys";
 import type Config from "@/model/config";
 import { exposeDebugControls, debug } from "@/services/logger";
 import logger from "@/services/logger-console";
+import { pushError } from "@/services/toast";
 
 const CONFIG_CACHE_KEY = "breakglass_runtime_config";
 const explicitMockFlag = import.meta.env.VITE_USE_MOCK_AUTH;
@@ -132,6 +133,21 @@ async function initializeApp() {
 
   app.use(createPinia());
   app.use(router);
+
+  // Global Vue error handler — catches uncaught errors in components, lifecycle hooks, and watchers
+  app.config.errorHandler = (err, instance, info) => {
+    const componentName = instance?.$options?.name || instance?.$options?.__name || "Unknown";
+    logger.error("Vue", `Uncaught error in ${componentName} (${info})`, err);
+    pushError("An unexpected error occurred. Please try again.");
+  };
+
+  // Catch unhandled promise rejections outside Vue's scope.
+  // This listener is intentionally never removed — it lives for the entire
+  // application lifetime and there is no teardown path for the root app.
+  window.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    logger.error("App", "Unhandled promise rejection", event.reason);
+  });
 
   const auth = new AuthService(config, { mock: USE_MOCK_AUTH });
   if (USE_MOCK_AUTH) {

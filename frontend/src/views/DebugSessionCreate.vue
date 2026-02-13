@@ -368,8 +368,8 @@ async function fetchTemplates() {
     if (firstTemplate && !form.templateRef) {
       form.templateRef = firstTemplate.name;
     }
-  } catch (e: any) {
-    pushError(e?.message || "Failed to load templates");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   } finally {
     loading.value = false;
   }
@@ -387,8 +387,8 @@ async function fetchTemplateClusters() {
     if (clusterDetails.value.length === 1 && clusterDetails.value[0]) {
       form.cluster = clusterDetails.value[0].name;
     }
-  } catch (e: any) {
-    pushError(e?.message || "Failed to load cluster details");
+  } catch {
+    // Error already handled by debugSessionService (pushError with CID)
   } finally {
     loadingClusters.value = false;
   }
@@ -411,12 +411,16 @@ function goBackToStep1() {
 onMounted(async () => {
   fetchTemplates();
   // Get user groups from auth for variable visibility filtering
-  const currentUser = await auth.getUser();
-  if (currentUser?.profile) {
-    const groups = (currentUser.profile as Record<string, unknown>).groups;
-    if (Array.isArray(groups)) {
-      userGroups.value = groups as string[];
+  try {
+    const currentUser = await auth.getUser();
+    if (currentUser?.profile) {
+      const groups = (currentUser.profile as Record<string, unknown>).groups;
+      if (Array.isArray(groups)) {
+        userGroups.value = groups as string[];
+      }
     }
+  } catch {
+    // Auth errors are non-fatal — variable visibility filtering will fall back to showing all
   }
 });
 

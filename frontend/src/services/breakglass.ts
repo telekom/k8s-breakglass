@@ -51,40 +51,48 @@ export default class BreakglassService {
   // GET /api/breakglassEscalations -> []BreakglassEscalationSpec
   // GET /api/breakglassSessions -> []BreakglassSession
   private async fetchAvailableEscalations(): Promise<AvailableBreakglass[]> {
-    debug("BreakglassService.fetchAvailableEscalations", "Fetching available escalations");
-    const r = await this.client.get("/breakglassEscalations");
-    // Each escalation spec has: allowed (clusters, groups), approvers (users, groups), escalatedGroup, maxValidFor, retainFor, idleTimeout, clusterConfigRefs, denyPolicyRefs
-    // We explode multi-cluster escalations into individual entries per cluster so UI can show sessions per cluster.
-    const data = Array.isArray(r.data) ? r.data : [];
-    const output: AvailableBreakglass[] = [];
-    data.forEach((item: Record<string, any>) => {
-      const spec = item?.spec || {};
-      const allowed = spec.allowed || {};
-      const approvers = spec.approvers || {};
-      const clusters: string[] = Array.isArray(allowed.clusters) ? allowed.clusters : [];
-      const allowedGroups: string[] = Array.isArray(allowed.groups) ? allowed.groups : [];
-      const escalatedGroup: string = spec.escalatedGroup || spec.escalatedgroup || spec.escalated_group || "";
-      const basePartial = {
-        from: allowedGroups[0] || "",
-        to: escalatedGroup,
-        duration: parseDuration(spec.maxValidFor) || 3600,
-        selfApproval: !hasApprovers(approvers),
-        approvalGroups: Array.isArray(approvers.groups) ? approvers.groups : [],
-        requestReason: spec.requestReason
-          ? { mandatory: !!spec.requestReason.mandatory, description: spec.requestReason.description || "" }
-          : undefined,
-        approvalReason: spec.approvalReason
-          ? { mandatory: !!spec.approvalReason.mandatory, description: spec.approvalReason.description || "" }
-          : undefined,
-      };
-      if (clusters.length === 0) {
-        output.push({ ...basePartial, cluster: "" });
-      } else {
-        clusters.forEach((cl) => output.push({ ...basePartial, cluster: cl }));
-      }
-    });
-    debug("BreakglassService.fetchAvailableEscalations", "Built available escalations", { count: output.length });
-    return output;
+    try {
+      debug("BreakglassService.fetchAvailableEscalations", "Fetching available escalations");
+      const r = await this.client.get("/breakglassEscalations");
+      // Each escalation spec has: allowed (clusters, groups), approvers (users, groups), escalatedGroup, maxValidFor, retainFor, idleTimeout, clusterConfigRefs, denyPolicyRefs
+      // We explode multi-cluster escalations into individual entries per cluster so UI can show sessions per cluster.
+      const data = Array.isArray(r.data) ? r.data : [];
+      const output: AvailableBreakglass[] = [];
+      data.forEach((item: Record<string, any>) => {
+        const spec = item?.spec || {};
+        const allowed = spec.allowed || {};
+        const approvers = spec.approvers || {};
+        const clusters: string[] = Array.isArray(allowed.clusters) ? allowed.clusters : [];
+        const allowedGroups: string[] = Array.isArray(allowed.groups) ? allowed.groups : [];
+        const escalatedGroup: string = spec.escalatedGroup || spec.escalatedgroup || spec.escalated_group || "";
+        const basePartial = {
+          from: allowedGroups[0] || "",
+          to: escalatedGroup,
+          duration: parseDuration(spec.maxValidFor) || 3600,
+          selfApproval: !hasApprovers(approvers),
+          approvalGroups: Array.isArray(approvers.groups) ? approvers.groups : [],
+          requestReason: spec.requestReason
+            ? { mandatory: !!spec.requestReason.mandatory, description: spec.requestReason.description || "" }
+            : undefined,
+          approvalReason: spec.approvalReason
+            ? { mandatory: !!spec.approvalReason.mandatory, description: spec.approvalReason.description || "" }
+            : undefined,
+        };
+        if (clusters.length === 0) {
+          output.push({ ...basePartial, cluster: "" });
+        } else {
+          clusters.forEach((cl) => output.push({ ...basePartial, cluster: cl }));
+        }
+      });
+      debug("BreakglassService.fetchAvailableEscalations", "Built available escalations", { count: output.length });
+      return output;
+    } catch (e) {
+      handleAxiosError("BreakglassService.fetchAvailableEscalations", e, "Failed to fetch escalations");
+      debug("BreakglassService.fetchAvailableEscalations", "Request failed", {
+        errorMessage: (e as Error)?.message,
+      });
+      return [];
+    }
   }
 
   public async fetchActiveSessions(): Promise<ActiveBreakglass[]> {

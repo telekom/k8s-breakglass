@@ -6,6 +6,7 @@ export { default as EmptyState } from "./EmptyState.vue";
 export { default as PageHeader } from "./PageHeader.vue";
 export { default as LoadingState } from "./LoadingState.vue";
 export { default as ErrorBanner } from "./ErrorBanner.vue";
+export { default as ErrorBoundary } from "./ErrorBoundary.vue";
 export { default as StatusTag } from "./StatusTag.vue";
 export { default as ReasonPanel } from "./ReasonPanel.vue";
 export { default as TimelineGrid } from "./TimelineGrid.vue";
