@@ -41,7 +41,7 @@ vi.mock("@/services/logger", () => ({
 
 // Mock currentTime composable
 vi.mock("@/utils/currentTime", () => ({
-  default: () => ref(new Date()),
+  default: () => ref(Date.now()),
 }));
 
 describe("BreakglassView", () => {
