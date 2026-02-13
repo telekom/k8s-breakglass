@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, onUnmounted, ref } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
@@ -110,6 +110,13 @@ function stopPolling() {
 onMounted(() => {
   fetchSession().then(() => startPolling());
 });
+
+watch(
+  () => session.value?.status?.state,
+  () => {
+    startPolling();
+  },
+);
 
 onUnmounted(() => {
   stopPolling();
