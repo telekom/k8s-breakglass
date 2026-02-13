@@ -804,8 +804,9 @@ func TestBuildAllowedOrigins(t *testing.T) {
 			Frontend: config.Frontend{BaseURL: "https://ui.example.com/"},
 		}
 
-		origins := buildAllowedOrigins(cfg)
+		origins, usedDefaults := buildAllowedOrigins(cfg)
 		require.NotEmpty(t, origins)
+		require.False(t, usedDefaults, "should not use defaults when custom origins are provided")
 		seen := make(map[string]struct{}, len(origins))
 		for _, origin := range origins {
 			seen[origin] = struct{}{}
@@ -817,21 +818,22 @@ func TestBuildAllowedOrigins(t *testing.T) {
 	})
 
 	t.Run("defaults include frontend base URL when provided", func(t *testing.T) {
-		os.Setenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS", "true")
-		t.Cleanup(func() { os.Unsetenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS") })
+		t.Setenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS", "true")
 		cfg := config.Config{
 			Frontend: config.Frontend{BaseURL: "https://ui.example.com"},
 		}
-		origins := buildAllowedOrigins(cfg)
+		origins, usedDefaults := buildAllowedOrigins(cfg)
+		require.True(t, usedDefaults, "should use defaults when no custom origins and env var set")
 		expected := append([]string{}, defaultAllowedOrigins...)
 		expected = append(expected, "https://ui.example.com")
 		require.ElementsMatch(t, expected, origins)
 	})
 
 	t.Run("empty config yields empty allowlist unless defaults enabled", func(t *testing.T) {
-		os.Unsetenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS")
-		defaults := buildAllowedOrigins(config.Config{})
+		t.Setenv("BREAKGLASS_ALLOW_DEFAULT_ORIGINS", "")
+		defaults, usedDefaults := buildAllowedOrigins(config.Config{})
 		require.Empty(t, defaults)
+		require.False(t, usedDefaults, "should not use defaults when env var is empty")
 	})
 }
 

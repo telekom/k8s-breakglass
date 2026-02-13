@@ -98,7 +98,7 @@ Explicit list of browser origins allowed to make credentialed API requests (CORS
 | Property | Value |
 |----------|-------|
 | **Type** | `[]string` |
-| **Default** | Local development origins (e.g. `https://localhost:8443`) |
+| **Default** | Empty (no origins allowed). When `BREAKGLASS_ALLOW_DEFAULT_ORIGINS=true` is set **and** no custom origins are configured, falls back to local development origins: `https://localhost:8443`, `http://localhost:28081`, `http://localhost:28080`, `http://localhost:5173` |
 | **Example** | `https://breakglass.example.com`, `https://admin.example.net` |
 
 ```yaml
@@ -472,6 +472,7 @@ Some settings can be overridden via environment variables:
 |---------|----------------------|----------|
 | Config file path | `BREAKGLASS_CONFIG_PATH` | 1 (highest) |
 | Disable email | `BREAKGLASS_DISABLE_EMAIL` | 1 (highest) |
+| Enable default CORS origins | `BREAKGLASS_ALLOW_DEFAULT_ORIGINS` | 1 (highest) |
 
 ```bash
 # Use custom config file
@@ -480,6 +481,14 @@ breakglass-controller
 
 # Disable email notifications
 export BREAKGLASS_DISABLE_EMAIL=true
+breakglass-controller
+
+# Enable default localhost CORS origins (useful for local development)
+# When set to "true" and no custom origins are configured, falls back to
+# http://localhost:5173, http://localhost:28080, http://localhost:28081,
+# and https://localhost:8443 as the CORS allow-list.
+# Has no effect when custom origins are explicitly configured.
+export BREAKGLASS_ALLOW_DEFAULT_ORIGINS=true
 breakglass-controller
 ```
 
