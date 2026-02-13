@@ -16,6 +16,20 @@ type ClusterConfigManager struct {
 	log    *zap.SugaredLogger
 }
 
+// ClusterConfigManagerOption configures a ClusterConfigManager during construction.
+type ClusterConfigManagerOption func(*ClusterConfigManager)
+
+// WithClusterConfigLogger sets a custom logger for the ClusterConfigManager.
+// If not provided, the global zap.S() logger is used as fallback.
+// Passing nil is a no-op (the existing logger is retained).
+func WithClusterConfigLogger(log *zap.SugaredLogger) ClusterConfigManagerOption {
+	return func(ccm *ClusterConfigManager) {
+		if log != nil {
+			ccm.log = log
+		}
+	}
+}
+
 // getLogger returns the injected logger or falls back to the global logger.
 func (ccm *ClusterConfigManager) getLogger() *zap.SugaredLogger {
 	if ccm.log != nil {
@@ -25,13 +39,12 @@ func (ccm *ClusterConfigManager) getLogger() *zap.SugaredLogger {
 }
 
 // NewClusterConfigManager creates a ClusterConfigManager backed by the provided client.
-// Optional variadic arguments:
-//   - *zap.SugaredLogger: custom logger (falls back to global zap.S() if not provided)
-func NewClusterConfigManager(c client.Client, opts ...any) *ClusterConfigManager {
+// Configuration is applied via functional options (WithClusterConfigLogger).
+func NewClusterConfigManager(c client.Client, opts ...ClusterConfigManagerOption) *ClusterConfigManager {
 	ccm := &ClusterConfigManager{client: c}
 	for _, opt := range opts {
-		if l, ok := opt.(*zap.SugaredLogger); ok {
-			ccm.log = l
+		if opt != nil {
+			opt(ccm)
 		}
 	}
 	return ccm

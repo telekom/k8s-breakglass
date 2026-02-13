@@ -103,7 +103,7 @@ func TestClusterConfigManager_LoggerInjection(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = logger.Sync() })
 		sugar := logger.Sugar()
-		mgr := NewClusterConfigManager(cli, sugar)
+		mgr := NewClusterConfigManager(cli, WithClusterConfigLogger(sugar))
 
 		require.Same(t, sugar, mgr.getLogger())
 	})
@@ -116,9 +116,15 @@ func TestClusterConfigManager_LoggerInjection(t *testing.T) {
 		require.NotNil(t, mgr.getLogger())
 	})
 
-	t.Run("non-logger opts are ignored", func(t *testing.T) {
-		mgr := NewClusterConfigManager(cli, "not-a-logger", 42)
+	t.Run("nil option is safely skipped", func(t *testing.T) {
+		mgr := NewClusterConfigManager(cli, nil)
 
-		require.Nil(t, mgr.log, "non-logger opts should not set the log field")
+		require.Nil(t, mgr.log, "nil option should not set the log field")
+	})
+
+	t.Run("WithClusterConfigLogger with nil logger is no-op", func(t *testing.T) {
+		mgr := NewClusterConfigManager(cli, WithClusterConfigLogger(nil))
+
+		require.Nil(t, mgr.log, "WithClusterConfigLogger(nil) should not set the log field")
 	})
 }

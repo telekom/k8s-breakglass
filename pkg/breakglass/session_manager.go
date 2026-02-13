@@ -36,6 +36,20 @@ func (c SessionManager) getLogger() *zap.SugaredLogger {
 
 var ErrAccessNotFound = errors.New("access not found")
 
+// SessionManagerOption configures a SessionManager during construction.
+type SessionManagerOption func(*SessionManager)
+
+// WithSessionLogger sets a custom logger for the SessionManager.
+// If not provided, the global zap.S() logger is used as fallback.
+// Passing nil is a no-op (the existing logger is retained).
+func WithSessionLogger(log *zap.SugaredLogger) SessionManagerOption {
+	return func(sm *SessionManager) {
+		if log != nil {
+			sm.log = log
+		}
+	}
+}
+
 func NewSessionManager(contextName string) (SessionManager, error) {
 	cfg, err := config.GetConfigWithContext(contextName)
 	if err != nil {
@@ -59,24 +73,22 @@ func NewSessionManager(contextName string) (SessionManager, error) {
 // NewSessionManagerWithClient allows embedding an existing controller-runtime client (e.g., from a shared manager)
 // to avoid creating redundant rest.Config instances or duplicate caches. The provided client must already be
 // configured with the Breakglass scheme.
-// Optional variadic arguments:
-//   - *zap.SugaredLogger: custom logger (falls back to global zap.S() if not provided)
-func NewSessionManagerWithClient(c client.Client, opts ...any) SessionManager {
+// Configuration is applied via functional options (WithSessionLogger).
+func NewSessionManagerWithClient(c client.Client, opts ...SessionManagerOption) SessionManager {
 	return NewSessionManagerWithClientAndReader(c, c, opts...)
 }
 
 // NewSessionManagerWithClientAndReader allows using a cached client for writes and an optional reader
 // (e.g., APIReader) for consistent reads when required.
-// Optional variadic arguments:
-//   - *zap.SugaredLogger: custom logger (falls back to global zap.S() if not provided)
-func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...any) SessionManager {
+// Configuration is applied via functional options (WithSessionLogger).
+func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...SessionManagerOption) SessionManager {
 	if reader == nil {
 		reader = c
 	}
 	sm := SessionManager{Client: c, reader: reader}
 	for _, opt := range opts {
-		if l, ok := opt.(*zap.SugaredLogger); ok {
-			sm.log = l
+		if opt != nil {
+			opt(&sm)
 		}
 	}
 	return sm

@@ -235,7 +235,7 @@ func main() {
 	// This allows the backend to verify tokens from any configured IDP, not just the default one
 	auth.WithIdentityProviderLoader(idpLoader)
 
-	sessionManager := breakglass.NewSessionManagerWithClientAndReader(reconcilerMgr.GetClient(), reconcilerMgr.GetAPIReader(), log)
+	sessionManager := breakglass.NewSessionManagerWithClientAndReader(reconcilerMgr.GetClient(), reconcilerMgr.GetAPIReader(), breakglass.WithSessionLogger(log))
 
 	// Create authenticated rate limiter for API endpoints
 	// Authenticated users get 50 req/s (per user), unauthenticated get 10 req/s (per IP)

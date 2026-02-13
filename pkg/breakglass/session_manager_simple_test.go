@@ -311,14 +311,14 @@ func TestSessionManager_LoggerInjection(t *testing.T) {
 
 	t.Run("injected logger via opts is used", func(t *testing.T) {
 		logger := zap.NewNop().Sugar()
-		sm := NewSessionManagerWithClient(cli, logger)
+		sm := NewSessionManagerWithClient(cli, WithSessionLogger(logger))
 
 		require.Same(t, logger, sm.getLogger())
 	})
 
 	t.Run("injected logger via client and reader constructor", func(t *testing.T) {
 		logger := zap.NewNop().Sugar()
-		sm := NewSessionManagerWithClientAndReader(cli, cli, logger)
+		sm := NewSessionManagerWithClientAndReader(cli, cli, WithSessionLogger(logger))
 
 		require.Same(t, logger, sm.getLogger())
 	})
@@ -331,9 +331,15 @@ func TestSessionManager_LoggerInjection(t *testing.T) {
 		require.NotNil(t, sm.getLogger())
 	})
 
-	t.Run("non-logger opts are ignored", func(t *testing.T) {
-		sm := NewSessionManagerWithClient(cli, "not-a-logger", 42, true)
+	t.Run("nil option is safely skipped", func(t *testing.T) {
+		sm := NewSessionManagerWithClient(cli, nil)
 
-		require.Nil(t, sm.log, "non-logger opts should not set the log field")
+		require.Nil(t, sm.log, "nil option should not set the log field")
+	})
+
+	t.Run("WithSessionLogger with nil logger is no-op", func(t *testing.T) {
+		sm := NewSessionManagerWithClient(cli, WithSessionLogger(nil))
+
+		require.Nil(t, sm.log, "WithSessionLogger(nil) should not set the log field")
 	})
 }

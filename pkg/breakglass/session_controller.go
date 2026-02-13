@@ -3055,7 +3055,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 		configPath:           configPath,
 		configLoader:         config.NewCachedLoader(configPath, 5*time.Second), // Cache config, check file every 5s
 		ccProvider:           ccProvider,
-		clusterConfigManager: NewClusterConfigManager(clusterConfigClient, log),
+		clusterConfigManager: NewClusterConfigManager(clusterConfigClient, WithClusterConfigLogger(log)),
 		inFlightCreates:      &sync.Map{},
 	}
 
