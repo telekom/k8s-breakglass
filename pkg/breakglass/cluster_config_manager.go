@@ -23,10 +23,10 @@ func NewClusterConfigManager(c client.Client, log ...*zap.SugaredLogger) *Cluste
 // getLog returns the configured logger or falls back to the cached no-op logger
 // to prevent nil-pointer panics when the log field was not set via the constructor.
 func (ccm *ClusterConfigManager) getLog() *zap.SugaredLogger {
-	if ccm.log != nil {
-		return ccm.log
+	if ccm == nil || ccm.log == nil {
+		return nopLogger
 	}
-	return nopLogger
+	return ccm.log
 }
 
 // GetClusterConfigByName fetches the ClusterConfig CR by metadata.name (which is usually the cluster name/ID)

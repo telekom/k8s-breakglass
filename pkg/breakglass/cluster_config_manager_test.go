@@ -120,4 +120,12 @@ func TestNewClusterConfigManager_Logger(t *testing.T) {
 		assert.NotNil(t, got)
 		assert.Same(t, nopLogger, got)
 	})
+
+	t.Run("getLog returns nopLogger for nil receiver", func(t *testing.T) {
+		var mgr *ClusterConfigManager
+		got := mgr.getLog()
+
+		assert.NotNil(t, got)
+		assert.Same(t, nopLogger, got)
+	})
 }
