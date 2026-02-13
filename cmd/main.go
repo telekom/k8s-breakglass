@@ -497,7 +497,7 @@ func main() {
 	}
 
 	// Create shutdown context with timeout for graceful shutdown of all components
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Server.GetShutdownTimeout())
 	defer shutdownCancel()
 
 	// Gracefully shutdown HTTP server first to stop accepting new requests

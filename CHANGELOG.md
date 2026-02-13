@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Webhook Format Validation for templateString**: Admission webhooks now validate the first YAML document format in `templateString`, rejecting unsupported kinds and wrong apiVersions at create/update time
 - **Workload Type Mismatch Warning**: Admission webhook warns when a `templateString` produces a Deployment/DaemonSet that doesn't match the configured `workloadType`
 - **Dry-Run Template Rendering in Webhooks**: Admission webhooks now perform best-effort dry-run rendering of Go-templated `templateString` values, catching execution errors and invalid YAML output at admission time instead of only at reconciliation
+- **Configurable HTTP Server Timeouts**: HTTP server timeouts (`readTimeout`, `readHeaderTimeout`, `writeTimeout`, `idleTimeout`, `maxHeaderBytes`) are now configurable via `server.timeouts` in `config.yaml` with sensible production defaults
+- **Configurable Graceful Shutdown Timeout**: The `server.shutdownTimeout` setting allows operators to control how long the server waits for in-flight requests during graceful shutdown (default: 30s)
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
 - **ErrorBoundary Component**: New `<ErrorBoundary>` component using `onErrorCaptured` provides fallback UI when child components throw during render, preventing full-page crashes
 - **Global Vue Error Handler**: Added `app.config.errorHandler` and `window.onunhandledrejection` to catch and surface uncaught errors as toast notifications
