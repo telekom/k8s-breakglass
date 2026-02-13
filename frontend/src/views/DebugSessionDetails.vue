@@ -113,8 +113,12 @@ onMounted(() => {
 
 watch(
   () => session.value?.status?.state,
-  () => {
-    startPolling();
+  (newState) => {
+    if (newState === "Active" || newState === "PendingApproval" || newState === "Pending") {
+      startPolling();
+    } else {
+      stopPolling();
+    }
   },
 );
 

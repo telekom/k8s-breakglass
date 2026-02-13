@@ -90,5 +90,6 @@ describe("DebugSessionDetails", () => {
     vi.advanceTimersByTime(30000);
     await flushPromises();
     expect(mockGetSession).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
