@@ -100,9 +100,41 @@ describe("SessionApprovalView", () => {
 
     await flushPromises();
 
+    // Verify the 401 error path was triggered (session fetch attempted)
+    expect(mockGetSessionByName).toHaveBeenCalledTimes(1);
+
     wrapper.unmount();
     vi.advanceTimersByTime(3500);
 
     expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("redirects after 401 load failure when component remains mounted", async () => {
+    mockGetSessionByName.mockRejectedValue({ response: { status: 401 } });
+
+    mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: true,
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+
+    vi.advanceTimersByTime(3500);
+
+    expect(mockPush).toHaveBeenCalled();
   });
 });
