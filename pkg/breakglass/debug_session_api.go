@@ -317,19 +317,15 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	// Build response summaries
 	summaries := make([]DebugSessionSummary, 0, len(filtered))
 	for _, s := range filtered {
-		// Check if the current user is already a participant (to hide Join button)
+		// Compute isParticipant and activeParticipants in a single pass
 		isParticipant := false
-		for _, p := range s.Status.Participants {
-			if p.LeftAt == nil && (p.User == currentUserStr || p.Email == currentUserStr) {
-				isParticipant = true
-				break
-			}
-		}
-		// Count only active participants (those who haven't left)
 		activeParticipants := 0
 		for _, p := range s.Status.Participants {
 			if p.LeftAt == nil {
 				activeParticipants++
+				if !isParticipant && (p.User == currentUserStr || p.Email == currentUserStr) {
+					isParticipant = true
+				}
 			}
 		}
 		summaries = append(summaries, DebugSessionSummary{

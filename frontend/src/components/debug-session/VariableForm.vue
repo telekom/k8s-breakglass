@@ -110,8 +110,8 @@ function coerceValue(value: unknown, inputType: string): unknown {
     case "number": {
       if (typeof value === "number") return value;
       if (typeof value === "string" && value !== "") {
-        const num = parseFloat(value);
-        if (!isNaN(num)) return num;
+        const num = Number(value);
+        if (Number.isFinite(num)) return num;
       }
       return value;
     }

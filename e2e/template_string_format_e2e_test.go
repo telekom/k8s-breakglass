@@ -129,8 +129,10 @@ spec:
 
 	// Verify the workload was created as a DaemonSet
 	var ds appsv1.DaemonSet
+	// ds.Name already starts with "debug-" (e.g., "debug-user-cluster-123"),
+	// so we use it directly without adding another "debug-" prefix.
 	err = cli.Get(ctx, types.NamespacedName{
-		Name:      "debug-" + session.Name,
+		Name:      session.Name,
 		Namespace: "breakglass-debug",
 	}, &ds)
 	require.NoError(t, err, "Expected DaemonSet to be created from kind:Pod templateString")
@@ -224,14 +226,15 @@ spec:
 
 	// Verify Deployment was created
 	var deploy appsv1.Deployment
+	// session.Name already starts with "debug-" prefix, so use it directly.
 	err = cli.Get(ctx, types.NamespacedName{
-		Name:      "debug-" + session.Name,
+		Name:      session.Name,
 		Namespace: "breakglass-debug",
 	}, &deploy)
 	require.NoError(t, err, "Expected Deployment to be created from kind:Deployment templateString")
 
 	// Name should be overridden by breakglass (not "will-be-overridden")
-	assert.Equal(t, "debug-"+session.Name, deploy.Name)
+	assert.Equal(t, session.Name, deploy.Name)
 
 	// Replicas should come from session template override (1), not manifest (5)
 	require.NotNil(t, deploy.Spec.Replicas)
@@ -450,8 +453,9 @@ func TestTemplateStringFormat_E2E_BareSpecBackwardCompatible(t *testing.T) {
 
 	// Verify DaemonSet was created
 	var ds appsv1.DaemonSet
+	// session.Name already starts with "debug-" prefix, so use it directly.
 	err = cli.Get(ctx, types.NamespacedName{
-		Name:      "debug-" + session.Name,
+		Name:      session.Name,
 		Namespace: "breakglass-debug",
 	}, &ds)
 	require.NoError(t, err, "Expected DaemonSet to be created from bare PodSpec")
@@ -541,14 +545,15 @@ spec:
 
 	// Verify DaemonSet was created
 	var ds appsv1.DaemonSet
+	// session.Name already starts with "debug-" prefix, so use it directly.
 	err = cli.Get(ctx, types.NamespacedName{
-		Name:      "debug-" + session.Name,
+		Name:      session.Name,
 		Namespace: "breakglass-debug",
 	}, &ds)
 	require.NoError(t, err, "Expected DaemonSet to be created from kind:DaemonSet templateString")
 
 	// Name should be overridden by breakglass
-	assert.Equal(t, "debug-"+session.Name, ds.Name)
+	assert.Equal(t, session.Name, ds.Name)
 
 	// Container should be from the manifest
 	require.Len(t, ds.Spec.Template.Spec.Containers, 1)
@@ -656,8 +661,9 @@ spec:
 
 	// Verify the DaemonSet was created
 	var ds appsv1.DaemonSet
+	// session.Name already starts with "debug-" prefix, so use it directly.
 	err = cli.Get(ctx, types.NamespacedName{
-		Name:      "debug-" + session.Name,
+		Name:      session.Name,
 		Namespace: "breakglass-debug",
 	}, &ds)
 	require.NoError(t, err, "Expected DaemonSet to be created")
