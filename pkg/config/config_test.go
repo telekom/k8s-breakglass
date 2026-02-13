@@ -630,3 +630,26 @@ func TestGetUserIdentifierClaim(t *testing.T) {
 		})
 	}
 }
+
+func TestServerTimeouts_WhitespaceTrimming(t *testing.T) {
+	// parseDurationOrDefault should trim whitespace before parsing
+	timeoutsWithWhitespace := &config.ServerTimeouts{
+		ReadTimeout:  " 60s ",
+		WriteTimeout: "\t30s\n",
+	}
+
+	if got := timeoutsWithWhitespace.GetReadTimeout(); got != 60*time.Second {
+		t.Errorf("GetReadTimeout() with whitespace = %v, want 60s", got)
+	}
+	if got := timeoutsWithWhitespace.GetWriteTimeout(); got != 30*time.Second {
+		t.Errorf("GetWriteTimeout() with whitespace = %v, want 30s", got)
+	}
+
+	// Pure whitespace should fall back to default
+	emptyTimeouts := &config.ServerTimeouts{
+		ReadTimeout: "   ",
+	}
+	if got := emptyTimeouts.GetReadTimeout(); got != config.DefaultReadTimeout {
+		t.Errorf("GetReadTimeout() with only whitespace = %v, want default %v", got, config.DefaultReadTimeout)
+	}
+}

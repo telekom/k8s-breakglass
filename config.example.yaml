@@ -19,6 +19,19 @@ server:
   #   - 10.0.0.0/8        # Kubernetes pod network
   #   - 172.16.0.0/12     # Private networks
   #   - 192.168.0.0/16    # Private networks
+  #
+  # HTTP server timeouts (optional). All values are Go duration strings.
+  # When omitted, sensible production defaults are used.
+  # timeouts:
+  #   readTimeout: "30s"        # Max duration for reading request (default: 30s)
+  #   readHeaderTimeout: "10s"  # Max duration for reading headers (default: 10s)
+  #   writeTimeout: "60s"       # Max duration for writing response (default: 60s)
+  #   idleTimeout: "120s"       # Max idle keep-alive duration (default: 120s)
+  #   maxHeaderBytes: 1048576   # Max request header size in bytes (default: 1MB)
+  #
+  # Graceful shutdown timeout (optional). Go duration string.
+  # Controls how long the server waits for in-flight requests during shutdown.
+  # shutdownTimeout: "30s"
 frontend:
   baseURL: http://localhost:5173
   # Optional: brandingName controls the product name shown in the UI header and

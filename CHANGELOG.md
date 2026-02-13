@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Webhook Format Validation for templateString**: Admission webhooks now validate the first YAML document format in `templateString`, rejecting unsupported kinds and wrong apiVersions at create/update time
 - **Workload Type Mismatch Warning**: Admission webhook warns when a `templateString` produces a Deployment/DaemonSet that doesn't match the configured `workloadType`
 - **Dry-Run Template Rendering in Webhooks**: Admission webhooks now perform best-effort dry-run rendering of Go-templated `templateString` values, catching execution errors and invalid YAML output at admission time instead of only at reconciliation
+- **Configurable HTTP Server Timeouts**: HTTP server timeouts (`readTimeout`, `readHeaderTimeout`, `writeTimeout`, `idleTimeout`, `maxHeaderBytes`) are now configurable via `server.timeouts` in `config.yaml` with sensible production defaults
+- **Configurable Graceful Shutdown Timeout**: The `server.shutdownTimeout` setting allows operators to control how long the server waits for in-flight requests during graceful shutdown (default: 30s)
 - **Auto-Approve Preview in Debug Session API**: The `/templates/:name/clusters` endpoint now returns `canAutoApprove` and `approverUsers` fields in the approval info, allowing the UI to preview whether a session will be auto-approved before creation
 - **ErrorBoundary Component**: New `<ErrorBoundary>` component using `onErrorCaptured` provides fallback UI when child components throw during render, preventing full-page crashes
 - **Global Vue Error Handler**: Added `app.config.errorHandler` and `window.onunhandledrejection` to catch and surface uncaught errors as toast notifications
@@ -63,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Configuration Reference Stale References**: Removed stale `mail.host` required validation, `frontend.identityProviderName` error example, and `authorizationserver.url` troubleshooting reference — these are now managed via CRDs
 - **Debug Session DenyPolicy Bypass Note**: Added warning that debug sessions currently bypass DenyPolicy rules
 - **Sample Filename Typo**: Renamed `breakglass.t-cass.telekom.com_v1alpha1_breakglassescalation.yaml` to `breakglass.t-caas.telekom.com_v1alpha1_breakglassescalation.yaml`
+- **Thread-Safe Index Registration**: Replaced plain `map[string]bool` with `sync.Map` and `atomic.Int32` in `pkg/indexer` to eliminate a data race when `RegisterCommonFieldIndexes` is called concurrently from reconciler and webhook startup goroutines
 - **Auto-Approve in resolveApproval API**: The `resolveApproval()` handler now evaluates auto-approve eligibility using `evaluateAutoApprove()`, correctly populating `canAutoApprove` in API responses
 - **Frontend Log Spam**: Removed excessive console logging of full approval objects during debug session creation
 - **Frontend Error Handling**: Fixed multiple error handling gaps across frontend:

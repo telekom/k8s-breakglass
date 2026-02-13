@@ -64,7 +64,7 @@ func (m *mockFieldIndexer) IndexField(ctx context.Context, obj client.Object, fi
 }
 
 func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
-	ResetRegisteredIndexes()
+	resetRegisteredIndexes()
 	ctx := context.Background()
 	logger := zaptest.NewLogger(t).Sugar()
 	indexer := newMockFieldIndexer()
@@ -93,7 +93,7 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 }
 
 func TestRegisterCommonFieldIndexes_NilIndexer(t *testing.T) {
-	ResetRegisteredIndexes()
+	resetRegisteredIndexes()
 	ctx := context.Background()
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -102,7 +102,7 @@ func TestRegisterCommonFieldIndexes_NilIndexer(t *testing.T) {
 }
 
 func TestRegisterCommonFieldIndexes_TODOContext(t *testing.T) {
-	ResetRegisteredIndexes()
+	resetRegisteredIndexes()
 	logger := zaptest.NewLogger(t).Sugar()
 	indexer := newMockFieldIndexer()
 
@@ -486,7 +486,7 @@ func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 
 func TestRegisterCommonFieldIndexes_LoggerOutput(t *testing.T) {
 	ctx := context.Background()
-	ResetRegisteredIndexes() // Reset for clean test
+	resetRegisteredIndexes() // Reset for clean test
 
 	// Use a real zap logger to capture output
 	logger := zap.NewNop().Sugar()
@@ -501,7 +501,7 @@ func TestRegisterCommonFieldIndexes_LoggerOutput(t *testing.T) {
 
 func TestAssertIndexesRegistered_Success(t *testing.T) {
 	ctx := context.Background()
-	ResetRegisteredIndexes()
+	resetRegisteredIndexes()
 	logger := zap.NewNop().Sugar()
 	indexer := newMockFieldIndexer()
 
@@ -516,7 +516,7 @@ func TestAssertIndexesRegistered_Success(t *testing.T) {
 }
 
 func TestAssertIndexesRegistered_Failure(t *testing.T) {
-	ResetRegisteredIndexes()
+	resetRegisteredIndexes()
 	logger := zap.NewNop().Sugar()
 
 	// Don't register any indexes, assertion should fail
@@ -527,7 +527,7 @@ func TestAssertIndexesRegistered_Failure(t *testing.T) {
 
 func TestIsIndexRegistered(t *testing.T) {
 	ctx := context.Background()
-	ResetRegisteredIndexes()
+	resetRegisteredIndexes()
 	logger := zap.NewNop().Sugar()
 	indexer := newMockFieldIndexer()
 
@@ -546,7 +546,7 @@ func TestIsIndexRegistered(t *testing.T) {
 }
 
 func TestGetRegisteredIndexCount(t *testing.T) {
-	ResetRegisteredIndexes()
+	resetRegisteredIndexes()
 	assert.Equal(t, 0, GetRegisteredIndexCount())
 
 	ctx := context.Background()
@@ -559,7 +559,7 @@ func TestGetRegisteredIndexCount(t *testing.T) {
 	assert.Equal(t, ExpectedIndexCount, GetRegisteredIndexCount())
 }
 
-func TestResetRegisteredIndexes(t *testing.T) {
+func TestResetRegisteredIndexes_ClearsState(t *testing.T) {
 	ctx := context.Background()
 	logger := zap.NewNop().Sugar()
 	indexer := newMockFieldIndexer()
@@ -570,6 +570,54 @@ func TestResetRegisteredIndexes(t *testing.T) {
 	assert.Greater(t, GetRegisteredIndexCount(), 0)
 
 	// Reset
-	ResetRegisteredIndexes()
+	resetRegisteredIndexes()
 	assert.Equal(t, 0, GetRegisteredIndexCount())
+}
+
+func TestRegisterCommonFieldIndexes_ConcurrentCalls(t *testing.T) {
+	resetRegisteredIndexes()
+	ctx := context.Background()
+	logger := zap.NewNop().Sugar()
+
+	const goroutines = 4
+	errs := make(chan error, goroutines)
+
+	// Use a barrier so all goroutines start at the same time.
+	start := make(chan struct{})
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			idx := newMockFieldIndexer()
+			<-start
+			errs <- RegisterCommonFieldIndexes(ctx, idx, logger)
+		}()
+	}
+
+	// Release all goroutines simultaneously.
+	close(start)
+
+	for i := 0; i < goroutines; i++ {
+		require.NoError(t, <-errs)
+	}
+
+	// Despite concurrent registration, count must equal ExpectedIndexCount
+	// (not double/triple counted).
+	assert.Equal(t, ExpectedIndexCount, GetRegisteredIndexCount(),
+		"concurrent calls must not double-count registered indexes")
+}
+
+func TestRegisterCommonFieldIndexes_RepeatedCalls(t *testing.T) {
+	resetRegisteredIndexes()
+	ctx := context.Background()
+	logger := zap.NewNop().Sugar()
+	idx := newMockFieldIndexer()
+
+	// First call
+	require.NoError(t, RegisterCommonFieldIndexes(ctx, idx, logger))
+	assert.Equal(t, ExpectedIndexCount, GetRegisteredIndexCount())
+
+	// Second call on same process — count must stay the same
+	require.NoError(t, RegisterCommonFieldIndexes(ctx, idx, logger))
+	assert.Equal(t, ExpectedIndexCount, GetRegisteredIndexCount(),
+		"repeated calls must not increment the registered index count")
 }
