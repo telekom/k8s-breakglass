@@ -3,6 +3,8 @@ package indexer
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,7 +18,12 @@ import (
 const ExpectedIndexCount = 14
 
 // registeredIndexes tracks which indexes have been successfully registered.
-var registeredIndexes = make(map[string]bool)
+// Uses sync.Map because RegisterCommonFieldIndexes may be called concurrently
+// from reconciler.Setup and webhook.Setup goroutines in cmd/main.go.
+var registeredIndexes sync.Map
+
+// registeredIndexCount tracks the number of registered indexes atomically.
+var registeredIndexCount atomic.Int32
 
 // RegisterCommonFieldIndexes configures the field indices required by both the
 // reconcilers and validating webhooks. These indices allow cache-backed
@@ -36,9 +43,11 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 		if err := fn(); err != nil {
 			return fmt.Errorf("failed to register field index - field: %s, errorType: %s, error: %w", fullField, fmt.Sprintf("%T", err), err)
 		}
-		registeredIndexes[fullField] = true
-		metrics.IndexRegistrationTotal.WithLabelValues(resource).Inc()
-		log.Debugw("Registered field index", "field", fullField)
+		if _, loaded := registeredIndexes.LoadOrStore(fullField, true); !loaded {
+			registeredIndexCount.Add(1)
+			metrics.IndexRegistrationTotal.WithLabelValues(resource).Inc()
+			log.Debugw("Registered field index", "field", fullField)
+		}
 		return nil
 	}
 
@@ -217,10 +226,16 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 // Call this at startup after RegisterCommonFieldIndexes to catch configuration issues early.
 // Returns an error if the registered index count doesn't match ExpectedIndexCount.
 func AssertIndexesRegistered(log *zap.SugaredLogger) error {
-	count := len(registeredIndexes)
+	count := int(registeredIndexCount.Load())
 	if count != ExpectedIndexCount {
+		// Collect registered keys for diagnostics
+		var registered []string
+		registeredIndexes.Range(func(key, _ any) bool {
+			registered = append(registered, key.(string))
+			return true
+		})
 		return fmt.Errorf("index registration mismatch: expected %d indexes, got %d (registered: %v)",
-			ExpectedIndexCount, count, registeredIndexes)
+			ExpectedIndexCount, count, registered)
 	}
 	log.Infow("All field indexes registered successfully", "count", count)
 	return nil
@@ -229,15 +244,17 @@ func AssertIndexesRegistered(log *zap.SugaredLogger) error {
 // IsIndexRegistered checks if a specific field index has been registered.
 // Useful for conditional behavior when index may not be available.
 func IsIndexRegistered(resource, field string) bool {
-	return registeredIndexes[resource+"."+field]
+	_, ok := registeredIndexes.Load(resource + "." + field)
+	return ok
 }
 
 // GetRegisteredIndexCount returns the current count of registered indexes.
 func GetRegisteredIndexCount() int {
-	return len(registeredIndexes)
+	return int(registeredIndexCount.Load())
 }
 
-// ResetRegisteredIndexes clears the tracking map. Used for testing only.
-func ResetRegisteredIndexes() {
-	registeredIndexes = make(map[string]bool)
+// resetRegisteredIndexes clears the tracking state. Used for testing only.
+func resetRegisteredIndexes() {
+	registeredIndexes = sync.Map{}
+	registeredIndexCount.Store(0)
 }
