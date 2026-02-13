@@ -4,12 +4,20 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mount, VueWrapper } from "@vue/test-utils";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
 import { AuthKey } from "@/keys";
 
 describe("AutoLogoutWarning", () => {
+  let wrapper: VueWrapper | null = null;
+
+  afterEach(() => {
+    wrapper?.unmount();
+    wrapper = null;
+    vi.clearAllTimers();
+    vi.restoreAllMocks();
+  });
   const createMockAuth = () => ({
     logout: vi.fn(),
     userManager: {
@@ -36,7 +44,7 @@ describe("AutoLogoutWarning", () => {
   });
 
   it("mounts successfully when auth provider is present", () => {
-    const wrapper = mount(AutoLogoutWarning, {
+    wrapper = mount(AutoLogoutWarning, {
       global: {
         provide: {
           [AuthKey as symbol]: createMockAuth(),
