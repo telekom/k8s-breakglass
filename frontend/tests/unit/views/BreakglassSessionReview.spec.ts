@@ -17,7 +17,7 @@ const mockRejectReview = vi.fn();
 const mockDropSession = vi.fn();
 const mockCancelSession = vi.fn();
 
-const mockUser = ref<{ email: string; expired?: boolean } | null>({ email: "reviewer@example.com", expired: false });
+const mockUser = ref<{ email: string; expired?: boolean } | null>(null);
 
 vi.mock("@/services/auth", () => ({
   useUser: vi.fn(() => mockUser),
@@ -48,7 +48,7 @@ vi.mock("@/utils/currentTime", () => ({
 
 describe("BreakglassSessionReview", () => {
   const mockAuth = {
-    user: ref({ email: "reviewer@example.com" }),
+    user: mockUser,
     token: ref("token"),
     isAuthenticated: ref(true),
   };
