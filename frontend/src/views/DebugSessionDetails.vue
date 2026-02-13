@@ -2,6 +2,7 @@
 import { computed, inject, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
+import { useUser } from "@/services/auth";
 import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import { pushError, pushSuccess } from "@/services/toast";
@@ -18,6 +19,12 @@ if (!auth) {
 const debugSessionService = new DebugSessionService(auth);
 const route = useRoute();
 const router = useRouter();
+const user = useUser();
+
+const currentUserEmail = computed(() => {
+  const profile = (user.value as any)?.profile;
+  return profile?.email || profile?.preferred_username || (user.value as any)?.email || "";
+});
 
 const sessionName = computed(() => route.params.name as string);
 const session = ref<DebugSession | null>(null);
@@ -130,13 +137,25 @@ const participants = computed((): DebugSessionParticipant[] => {
   return session.value?.status?.participants || [];
 });
 
+const isCurrentUserParticipant = computed(() => {
+  const email = currentUserEmail.value;
+  if (!email) return false;
+  return participants.value.some((p) => !p.leftAt && (p.user === email || p.email === email));
+});
+
+const isCurrentUserOwner = computed(() => {
+  const email = currentUserEmail.value;
+  if (!email) return false;
+  return session.value?.spec?.requestedBy === email || session.value?.spec?.requestedByEmail === email;
+});
+
 const allowedPods = computed((): DebugPodInfo[] => {
   return session.value?.status?.allowedPods || [];
 });
 
-const canJoin = computed(() => session.value?.status?.state === "Active");
-const canTerminate = computed(() => session.value?.status?.state === "Active");
-const canRenew = computed(() => session.value?.status?.state === "Active");
+const canJoin = computed(() => session.value?.status?.state === "Active" && !isCurrentUserParticipant.value);
+const canTerminate = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
+const canRenew = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
 const canApprove = computed(() => session.value?.status?.state === "PendingApproval");
 const canReject = computed(() => session.value?.status?.state === "PendingApproval");
 

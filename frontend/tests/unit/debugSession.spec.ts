@@ -81,16 +81,19 @@ describe("Debug Session State Mapping", () => {
 });
 
 describe("Debug Session Actions", () => {
-  const canJoin = (state: string) => state === "Active";
+  const canJoin = (state: string, isOwner: boolean, isParticipant: boolean) =>
+    state === "Active" && !isOwner && !isParticipant;
   const canRenew = (state: string, isOwner: boolean) => state === "Active" && isOwner;
   const canTerminate = (state: string, isOwner: boolean) =>
     (state === "Active" || state === "Pending" || state === "PendingApproval") && isOwner;
   const canApprove = (state: string) => state === "PendingApproval";
 
-  it("allows joining only Active sessions", () => {
-    expect(canJoin("Active")).toBe(true);
-    expect(canJoin("Pending")).toBe(false);
-    expect(canJoin("Expired")).toBe(false);
+  it("allows joining only Active sessions when not owner and not participant", () => {
+    expect(canJoin("Active", false, false)).toBe(true);
+    expect(canJoin("Active", true, false)).toBe(false);
+    expect(canJoin("Active", false, true)).toBe(false);
+    expect(canJoin("Pending", false, false)).toBe(false);
+    expect(canJoin("Expired", false, false)).toBe(false);
   });
 
   it("allows renewing only Active sessions as owner", () => {

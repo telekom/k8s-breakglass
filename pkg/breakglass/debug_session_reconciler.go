@@ -1069,7 +1069,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *v
 //   - Full Pod manifest (kind: Pod): PodSpec extracted, wrapped into workloadType
 //   - Full workload manifest (kind: Deployment/DaemonSet): used directly with breakglass labels merged
 func (c *DebugSessionController) buildWorkload(ds *v1alpha1.DebugSession, template *v1alpha1.DebugSessionTemplate, binding *v1alpha1.DebugSessionClusterBinding, podTemplate *v1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
-	workloadName := fmt.Sprintf("debug-%s", ds.Name)
+	// ds.Name already starts with "debug-" (generated as "debug-{user}-{cluster}-{ts}"),
+	// so we use it directly to avoid a redundant "debug-debug-" prefix.
+	workloadName := ds.Name
 	renderResult, err := c.buildPodSpec(ds, template, podTemplate)
 	if err != nil {
 		return nil, nil, err
@@ -1476,7 +1478,7 @@ func (c *DebugSessionController) buildPodSpec(ds *v1alpha1.DebugSession, templat
 			provider = "tmux"
 		}
 
-		sessionName := fmt.Sprintf("debug-%s", ds.Name)
+		sessionName := ds.Name
 		if len(sessionName) > 32 {
 			sessionName = sessionName[:32]
 		}
@@ -2630,7 +2632,7 @@ func (c *DebugSessionController) setupTerminalSharing(ds *v1alpha1.DebugSession,
 	}
 
 	// Generate a unique session name
-	sessionName := fmt.Sprintf("debug-%s", ds.Name)
+	sessionName := ds.Name
 	if len(sessionName) > 32 {
 		sessionName = sessionName[:32]
 	}
