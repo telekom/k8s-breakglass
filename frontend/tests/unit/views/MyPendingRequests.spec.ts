@@ -133,6 +133,20 @@ describe("MyPendingRequests", () => {
     return wrapper;
   };
 
+  it("throws a clear error when auth provider is missing", async () => {
+    await router.push("/my-requests");
+    await router.isReady();
+
+    expect(() => {
+      mount(MyPendingRequests, {
+        global: {
+          plugins: [router],
+          stubs: commonStubs,
+        },
+      });
+    }).toThrow("MyPendingRequests view requires an Auth provider");
+  });
+
   describe("Component Structure", () => {
     it("renders the main page container", async () => {
       const wrapper = await createWrapper();
