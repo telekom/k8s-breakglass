@@ -1,0 +1,69 @@
+# Example: Webhook audit configuration
+# Sends audit events to an HTTP endpoint for integration with external SIEM/logging systems
+# NOTE: AuditConfig is cluster-scoped (no namespace in metadata)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-webhook
+spec:
+  enabled: true
+
+  queue:
+    size: 50000
+    workers: 3
+    dropOnFull: true
+
+  sinks:
+    # Send events to an external webhook endpoint
+    - name: siem-webhook
+      type: webhook
+      webhook:
+        url: "https://siem.example.com/api/v1/audit/breakglass"
+        headers:
+          X-Source: "breakglass"
+          X-Environment: "production"
+        # Reference a Secret for Bearer token authentication
+        # Secret must be in the controller namespace (breakglass-system)
+        # and must have a key named "token"
+        authSecretRef:
+          name: siem-webhook-auth
+          namespace: breakglass-system
+        timeoutSeconds: 10
+        tls:
+          # Custom CA for internal PKI
+          caSecretRef:
+            name: siem-ca-cert
+            namespace: breakglass-system
+          insecureSkipVerify: false  # Always verify in production
+        # Batch multiple events per request for efficiency
+        batchSize: 50
+      # Only send security-relevant events
+      eventTypes:
+        - session.created
+        - session.approved
+        - session.rejected
+        - session.expired
+        - webhook.authorized
+        - webhook.denied
+      minSeverity: info
+
+---
+# Example: Webhook sink with basic auth and no batching
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-webhook-simple
+spec:
+  enabled: true
+
+  sinks:
+    - name: logging-webhook
+      type: webhook
+      webhook:
+        url: "https://logging.internal.example.com/audit"
+        # Secret with "username" and "password" keys for Basic auth
+        authSecretRef:
+          name: logging-basic-auth
+          namespace: breakglass-system
+        timeoutSeconds: 5
+        batchSize: 1  # Send events individually

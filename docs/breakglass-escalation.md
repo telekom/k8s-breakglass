@@ -119,6 +119,31 @@ retainFor: "720h"    # Keep for 30 days (default: 720h)
 retainFor: "168h"    # Keep for 7 days
 ```
 
+### approvalTimeout
+
+Maximum time allowed for approvers to approve a pending session. If this duration elapses without approval, the session automatically transitions to the `ApprovalTimeout` terminal state.
+
+```yaml
+approvalTimeout: "30m"   # Timeout after 30 minutes
+# approvalTimeout: "1h"  # Timeout after 1 hour (default)
+# approvalTimeout: "15m" # Timeout after 15 minutes
+```
+
+If not set, a default timeout of `1h` is applied. To change this behavior, explicitly set `approvalTimeout` to the desired duration.
+
+**Example:** Require quick approvals for emergency escalations:
+
+```yaml
+spec:
+  escalatedGroup: "cluster-admin"
+  allowed:
+    clusters: ["prod-*"]
+    groups: ["sre-team"]
+  approvers:
+    groups: ["security-team"]
+  approvalTimeout: "15m"  # Approval must happen within 15 minutes
+```
+
 ### disableNotifications
 
 Disable email notifications for sessions created via this escalation. When set to `true`, approvers will **not** receive email notifications when:

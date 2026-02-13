@@ -1,0 +1,50 @@
+# Example: Kubernetes Events audit configuration
+# Creates native Kubernetes Events for audit trail, visible via kubectl get events
+# NOTE: AuditConfig is cluster-scoped (no namespace in metadata)
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-kubernetes-events
+spec:
+  enabled: true
+
+  sinks:
+    # Create Kubernetes Events for session lifecycle
+    - name: k8s-events
+      type: kubernetes
+      kubernetes:
+        # Limit to session-related events (empty = sensible defaults)
+        eventTypes:
+          - session.created
+          - session.approved
+          - session.rejected
+          - session.expired
+          - session.withdrawn
+
+---
+# Example: Combined Kubernetes Events + Log sink
+# Use Kubernetes Events for visibility and structured logs for persistence
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: AuditConfig
+metadata:
+  name: audit-kubernetes-and-logs
+spec:
+  enabled: true
+
+  queue:
+    size: 10000
+    workers: 2
+
+  sinks:
+    # Kubernetes Events for kubectl visibility
+    - name: k8s-events
+      type: kubernetes
+      kubernetes:
+        eventTypes: []  # Use sensible defaults (session/escalation events)
+
+    # Structured logs for all events
+    - name: structured-logs
+      type: log
+      log:
+        format: json
+        level: info

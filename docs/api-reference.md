@@ -153,7 +153,7 @@ The API provides endpoints for managing breakglass sessions.
 Query sessions with server-side filtering.
 
 ```http
-GET /api/breakglass/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>
+GET /api/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>
 Authorization: Bearer <token>
 ```
 
@@ -208,19 +208,19 @@ Authorization: Bearer <token>
 ```bash
 # Your pending sessions
 curl -H "Authorization: Bearer <token>" \
-  "https://breakglass.example.com/api/breakglass/breakglassSessions?cluster=prod&mine=true&state=pending"
+  "https://breakglass.example.com/api/breakglassSessions?cluster=prod&mine=true&state=pending"
 
 # All approved sessions for a group
 curl -H "Authorization: Bearer <token>" \
-  "https://breakglass.example.com/api/breakglass/breakglassSessions?group=cluster-admin&state=approved"
+  "https://breakglass.example.com/api/breakglassSessions?group=cluster-admin&state=approved"
 
 # Sessions you can approve
 curl -H "Authorization: Bearer <token>" \
-  "https://breakglass.example.com/api/breakglass/breakglassSessions?approver=true"
+  "https://breakglass.example.com/api/breakglassSessions?approver=true"
 
 # Sessions you have approved that are still active or timed out
 curl -H "Authorization: Bearer <token>" \
-  "https://breakglass.example.com/api/breakglass/breakglassSessions?approvedByMe=true&state=approved,timeout"
+  "https://breakglass.example.com/api/breakglassSessions?approvedByMe=true&state=approved,timeout"
 ```
 
 ### Request Session
@@ -228,7 +228,7 @@ curl -H "Authorization: Bearer <token>" \
 Create a session request.
 
 ```http
-POST /api/breakglass/breakglassSessions
+POST /api/breakglassSessions
 Content-Type: application/json
 Authorization: Bearer <token>
 
@@ -296,7 +296,7 @@ Authorization: Bearer <token>
 Approve a pending request.
 
 ```http
-POST /api/breakglass/breakglassSessions/{session-name}/approve
+POST /api/breakglassSessions/{session-name}/approve
 Content-Type: application/json
 Authorization: Bearer <token>
 
@@ -353,7 +353,7 @@ Authorization: Bearer <token>
 Reject a pending request.
 
 ```http
-POST /api/breakglass/breakglassSessions/{session-name}/reject
+POST /api/breakglassSessions/{session-name}/reject
 Content-Type: application/json
 Authorization: Bearer <token>
 
@@ -411,7 +411,7 @@ Authorization: Bearer <token>
 Retrieve a specific session by name.
 
 ```http
-GET /api/breakglass/breakglassSessions/{session-name}
+GET /api/breakglassSessions/{session-name}
 Authorization: Bearer <token>
 ```
 
@@ -461,7 +461,7 @@ Authorization: Bearer <token>
 Withdraw your own pending session request (before approval).
 
 ```http
-POST /api/breakglass/breakglassSessions/{session-name}/withdraw
+POST /api/breakglassSessions/{session-name}/withdraw
 Authorization: Bearer <token>
 ```
 
@@ -514,7 +514,7 @@ Authorization: Bearer <token>
 Drop your own session (either pending or active).
 
 ```http
-POST /api/breakglass/breakglassSessions/{session-name}/drop
+POST /api/breakglassSessions/{session-name}/drop
 Authorization: Bearer <token>
 ```
 
@@ -532,7 +532,7 @@ Authorization: Bearer <token>
 Approver cancels/terminates a running or approved session.
 
 ```http
-POST /api/breakglass/breakglassSessions/{session-name}/cancel
+POST /api/breakglassSessions/{session-name}/cancel
 Authorization: Bearer <token>
 ```
 
@@ -549,7 +549,7 @@ Authorization: Bearer <token>
 Retrieve available escalation policies matching the authenticated user's groups.
 
 ```http
-GET /api/breakglass/breakglassEscalations
+GET /api/breakglassEscalations
 Authorization: Bearer <token>
 ```
 
@@ -571,12 +571,16 @@ Authorization: Bearer <token>
     "spec": {
       "displayName": "Cluster Admin Access",
       "description": "Temporary cluster admin access for incident response",
-      "targetGroups": ["cluster-admin"],
+      "escalatedGroup": "cluster-admin",
       "maxValidFor": "2h",
-      // "idleTimeout": "30m",  // NOT YET IMPLEMENTED
-      "approvers": ["admin@example.com"],
-      "approverGroups": ["admins"],
-      "requestReason": "required",
+      "approvers": {
+        "users": ["admin@example.com"],
+        "groups": ["admins"]
+      },
+      "requestReason": {
+        "mandatory": true,
+        "description": "Please provide the incident ticket ID"
+      },
       "blockSelfApproval": true,
       "allowedApproverDomains": ["example.com"]
     }
@@ -628,22 +632,6 @@ Evaluates requests against:
 - `DenyPolicy` restrictions
 
 ## Utility Endpoints
-
-### Health Check
-
-Simple health check endpoint (no authentication required).
-
-```http
-GET /api/health
-```
-
-**Response:**
-
-```json
-{
-  "status": "ok"
-}
-```
 
 ### Get Configuration
 
@@ -766,25 +754,57 @@ GET /api/oidc/authority/protocol/openid-connect/certs
 
 Proxies requests to the configured OIDC authority, allowing the browser to fetch OIDC metadata through the breakglass server origin.
 
-### Prometheus Metrics
+### Metrics Discovery
 
-Prometheus-compatible metrics endpoint for monitoring.
+The `/api/metrics` endpoint is a discovery/helper endpoint that returns a JSON pointer to the actual Prometheus metrics endpoint, which is served by controller-runtime on a separate port. It does not serve Prometheus metrics directly.
 
 ```http
 GET /api/metrics
 ```
 
-Returns Prometheus metrics in standard format (text/plain).
+**Response (200 OK):**
 
-**Metrics include:**
+```json
+{
+  "message": "Metrics are served by controller-runtime on port 8081 at /metrics",
+  "endpoint": "http://localhost:8081/metrics",
+  "note": "Use the controller-runtime metrics endpoint for all breakglass and controller metrics"
+}
+```
 
-- Session request/approval rates
-- Authorization webhook latency and decisions
-- API endpoint performance
-- System resource usage
-- Mail delivery success/failure
+**Note:** Prometheus metrics (text/plain) are served at `/metrics` by controller-runtime, not on the API server. The default port is **8081**, but this is configurable via `--metrics-bind-address` / `METRICS_BIND_ADDRESS`. The `endpoint` URL shown in the response reflects the pod's internal perspective — use a Kubernetes Service or port-forward to access metrics externally. Health probes are served on port **8082** (`/healthz` and `/readyz`), also configurable.
 
 See [Metrics Documentation](./metrics.md) for complete metric reference, alerting recommendations, and dashboard setup.
+
+### Build Info
+
+Retrieve build metadata for the running controller. Useful for diagnostics and version tracking.
+
+```http
+GET /api/debug/buildinfo
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "version": "v0.1.0",
+  "gitCommit": "abc1234",
+  "buildDate": "2024-01-15T10:00:00Z",
+  "goVersion": "go1.23.0",
+  "platform": "linux/amd64",
+  "buildTime": "2024-01-15T10:00:00Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `version` | string | Release version (or `"dev"` for local builds) |
+| `gitCommit` | string | Git commit SHA at build time |
+| `buildDate` | string | Build date string |
+| `goVersion` | string | Go compiler version |
+| `platform` | string | Target OS/architecture |
+| `buildTime` | string (optional) | Build timestamp (RFC3339). Present only when `buildDate` is a valid RFC3339 timestamp; omitted otherwise. |
 
 ---
 

@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ErrorBoundary Component**: New `<ErrorBoundary>` component using `onErrorCaptured` provides fallback UI when child components throw during render, preventing full-page crashes
 - **Global Vue Error Handler**: Added `app.config.errorHandler` and `window.onunhandledrejection` to catch and surface uncaught errors as toast notifications
 - **CORS Origin Warnings**: Log WARN when default localhost origins are active via `BREAKGLASS_ALLOW_DEFAULT_ORIGINS=true` and when no origins are configured at all, to prevent accidental permissive CORS in production
+- **Audit Config Samples**: Added webhook (`audit_config_webhook.yaml`) and Kubernetes Events (`audit_config_kubernetes.yaml`) audit sink sample configurations
+- **Build Info Endpoint Documentation**: Documented `GET /api/debug/buildinfo` endpoint in API reference
+- **`approvalTimeout` Field Documentation**: Added documentation for the `approvalTimeout` escalation field in breakglass-escalation.md
+- **`BREAKGLASS_ALLOW_DEFAULT_ORIGINS` Documentation**: Documented the development-only environment variable for default CORS origins
+- **DebugSessionClusterBinding in README**: Added `DebugSessionClusterBinding` CRD to the main README CRD list
 
 ### Changed
 
@@ -52,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **templateString `kind: Pod` Manifests Silently Producing Empty PodSpec**: `renderPodTemplateStringMultiDoc` previously unmarshalled the first YAML document as bare `corev1.PodSpec`, silently dropping `apiVersion`/`kind`/`metadata`/`spec` keys from `kind: Pod` manifests, resulting in empty containers and deployment failures (`spec.template.spec.containers: Required value`). Now correctly detects and extracts PodSpec from Pod, Deployment, and DaemonSet manifests.
 - **Full Workload Manifests Losing PodSpec Overrides**: When `templateString` produced a full `kind: Deployment` or `kind: DaemonSet` manifest, `useTemplateWorkload` returned the original workload object without applying PodSpec overrides from `buildPodSpec`. This caused `schedulingConstraints`, `additionalTolerations`, `affinityOverrides`, `podOverrides` (hostNetwork/PID/IPC), session `NodeSelector`, `resourceQuota` enforcement, and `terminalSharing` command wrapping to be silently lost. Now copies the modified PodSpec back into the workload's `Spec.Template.Spec`.
 - **Webhook `---` Splitting Inconsistency**: `validateTemplateStringFormat` and `warnTemplateStringWorkloadMismatch` used `strings.SplitN` which splits on `---` anywhere in a string (including inside YAML values), while the reconciler uses a line-anchored regex `^---\s*$`. Now both use the same regex-based split.
+- **API Reference Endpoint Paths**: Corrected all session/escalation API endpoint paths from `/api/breakglass/breakglassSessions` to `/api/breakglassSessions` and `/api/breakglass/breakglassEscalations` to `/api/breakglassEscalations`
+- **API Reference Health Endpoint**: Removed non-existent `GET /api/health` endpoint; health probes are served on port 8082 (`/healthz`, `/readyz`)
+- **API Reference Metrics Endpoint**: Corrected `GET /api/metrics` documentation — returns JSON pointer to controller-runtime metrics on port 8081, not Prometheus text format
+- **API Reference Escalation Response**: Fixed escalation list response example — corrected `targetGroups` to `escalatedGroup` and `requestReason` from string to proper struct format
+- **Configuration Reference Health Probe Port**: Fixed health probe port from 8081 to 8082 in deployment example
+- **Configuration Reference Stale References**: Removed stale `mail.host` required validation, `frontend.identityProviderName` error example, and `authorizationserver.url` troubleshooting reference — these are now managed via CRDs
+- **Debug Session DenyPolicy Bypass Note**: Added warning that debug sessions currently bypass DenyPolicy rules
+- **Sample Filename Typo**: Renamed `breakglass.t-cass.telekom.com_v1alpha1_breakglassescalation.yaml` to `breakglass.t-caas.telekom.com_v1alpha1_breakglassescalation.yaml`
 - **Thread-Safe Index Registration**: Replaced plain `map[string]bool` with `sync.Map` and `atomic.Int32` in `pkg/indexer` to eliminate a data race when `RegisterCommonFieldIndexes` is called concurrently from reconciler and webhook startup goroutines
 - **Auto-Approve in resolveApproval API**: The `resolveApproval()` handler now evaluates auto-approve eligibility using `evaluateAutoApprove()`, correctly populating `canAutoApprove` in API responses
 - **Frontend Log Spam**: Removed excessive console logging of full approval objects during debug session creation
