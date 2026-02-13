@@ -102,12 +102,39 @@ const groupedAdvancedVariables = computed((): VariableGroup[] => {
   return groups;
 });
 
-// Initialize values from defaults
+// Coerce a value to the correct JavaScript type based on inputType.
+// API responses and YAML defaults can produce string-encoded numbers/booleans.
+function coerceValue(value: unknown, inputType: string): unknown {
+  if (value === undefined || value === null) return value;
+  switch (inputType) {
+    case "number": {
+      if (typeof value === "number") return value;
+      if (typeof value === "string" && value !== "") {
+        const num = parseFloat(value);
+        if (!isNaN(num)) return num;
+      }
+      return value;
+    }
+    case "boolean": {
+      if (typeof value === "boolean") return value;
+      if (value === "true") return true;
+      if (value === "false") return false;
+      return value;
+    }
+    default:
+      return value;
+  }
+}
+
+// Initialize values from defaults, coercing types to match inputType
 function initializeValues(): ExtraDeployValues {
   const values: ExtraDeployValues = { ...props.modelValue };
   for (const variable of props.variables) {
     if (!(variable.name in values) && variable.default !== undefined) {
-      values[variable.name] = variable.default;
+      values[variable.name] = coerceValue(variable.default, variable.inputType);
+    } else if (variable.name in values) {
+      // Also coerce existing values (e.g., from a previous form state)
+      values[variable.name] = coerceValue(values[variable.name], variable.inputType);
     }
   }
   return values;

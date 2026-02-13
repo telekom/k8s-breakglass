@@ -565,6 +565,14 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
+	// Coerce extraDeployValues types based on template variable definitions.
+	// HTML form inputs and YAML defaults can produce string-encoded numbers/booleans
+	// (e.g., "5" instead of 5). Normalize them before validation and storage so
+	// templates render correct YAML (e.g., `storage: 5Gi` not `storage: "5"Gi`).
+	if len(req.ExtraDeployValues) > 0 {
+		req.ExtraDeployValues = v1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, template.Spec.ExtraDeployVariables)
+	}
+
 	// Validate extraDeployValues against template's extraDeployVariables
 	// This includes checking allowedGroups on variables and options
 	if len(req.ExtraDeployValues) > 0 || len(template.Spec.ExtraDeployVariables) > 0 {

@@ -70,6 +70,16 @@ func TestValidateExtraDeployValues(t *testing.T) {
 			wantErrors: 0,
 		},
 		{
+			name: "valid string-encoded number value",
+			values: map[string]apiextensionsv1.JSON{
+				"replicas": {Raw: []byte(`"3"`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "replicas", InputType: InputTypeNumber},
+			},
+			wantErrors: 0,
+		},
+		{
 			name: "valid storageSize value",
 			values: map[string]apiextensionsv1.JSON{
 				"pvcSize": {Raw: []byte(`"50Gi"`)},
@@ -809,6 +819,195 @@ func TestGroupsIntersect(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := groupsIntersect(tt.userGroups, tt.allowedGroups)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestValidateNumberValue_StringCoercion(t *testing.T) {
+	tests := []struct {
+		name       string
+		value      apiextensionsv1.JSON
+		validation *VariableValidation
+		wantErr    bool
+	}{
+		{"JSON number", apiextensionsv1.JSON{Raw: []byte(`5`)}, nil, false},
+		{"JSON float", apiextensionsv1.JSON{Raw: []byte(`3.14`)}, nil, false},
+		{"string-encoded integer", apiextensionsv1.JSON{Raw: []byte(`"5"`)}, nil, false},
+		{"string-encoded float", apiextensionsv1.JSON{Raw: []byte(`"3.14"`)}, nil, false},
+		{"string-encoded negative", apiextensionsv1.JSON{Raw: []byte(`"-1"`)}, nil, false},
+		{"non-numeric string", apiextensionsv1.JSON{Raw: []byte(`"abc"`)}, nil, true},
+		{"empty string", apiextensionsv1.JSON{Raw: []byte(`""`)}, nil, true},
+		{"boolean", apiextensionsv1.JSON{Raw: []byte(`true`)}, nil, true},
+		{
+			"string-encoded with min validation",
+			apiextensionsv1.JSON{Raw: []byte(`"5"`)},
+			&VariableValidation{Min: "1", Max: "10"},
+			false,
+		},
+		{
+			"string-encoded below min",
+			apiextensionsv1.JSON{Raw: []byte(`"0"`)},
+			&VariableValidation{Min: "1"},
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateNumberValue(tt.value, tt.validation, field.NewPath("test"))
+			if tt.wantErr {
+				assert.NotEmpty(t, errs, "expected validation error")
+			} else {
+				assert.Empty(t, errs, "unexpected validation error: %v", errs)
+			}
+		})
+	}
+}
+
+func TestCoerceExtraDeployValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		values    map[string]apiextensionsv1.JSON
+		variables []ExtraDeployVariable
+		expected  map[string]apiextensionsv1.JSON
+	}{
+		{
+			name:      "nil values",
+			values:    nil,
+			variables: nil,
+			expected:  nil,
+		},
+		{
+			name: "number: string to JSON number",
+			values: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`"5"`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "count", InputType: InputTypeNumber},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`5`)},
+			},
+		},
+		{
+			name: "number: already a JSON number, no change",
+			values: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`5`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "count", InputType: InputTypeNumber},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`5`)},
+			},
+		},
+		{
+			name: "number: float string coerced",
+			values: map[string]apiextensionsv1.JSON{
+				"ratio": {Raw: []byte(`"3.14"`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "ratio", InputType: InputTypeNumber},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"ratio": {Raw: []byte(`3.14`)},
+			},
+		},
+		{
+			name: "boolean: string true to JSON boolean",
+			values: map[string]apiextensionsv1.JSON{
+				"verbose": {Raw: []byte(`"true"`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "verbose", InputType: InputTypeBoolean},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"verbose": {Raw: []byte(`true`)},
+			},
+		},
+		{
+			name: "boolean: already boolean, no change",
+			values: map[string]apiextensionsv1.JSON{
+				"verbose": {Raw: []byte(`false`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "verbose", InputType: InputTypeBoolean},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"verbose": {Raw: []byte(`false`)},
+			},
+		},
+		{
+			name: "text: no coercion",
+			values: map[string]apiextensionsv1.JSON{
+				"name": {Raw: []byte(`"hello"`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "name", InputType: InputTypeText},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"name": {Raw: []byte(`"hello"`)},
+			},
+		},
+		{
+			name: "unknown variable: no coercion",
+			values: map[string]apiextensionsv1.JSON{
+				"unknown": {Raw: []byte(`"5"`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "count", InputType: InputTypeNumber},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"unknown": {Raw: []byte(`"5"`)},
+			},
+		},
+		{
+			name: "number: non-numeric string not coerced",
+			values: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`"abc"`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "count", InputType: InputTypeNumber},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`"abc"`)}, // left unchanged, validation will catch it
+			},
+		},
+		{
+			name: "mixed types coerced correctly",
+			values: map[string]apiextensionsv1.JSON{
+				"count":   {Raw: []byte(`"5"`)},
+				"verbose": {Raw: []byte(`"true"`)},
+				"name":    {Raw: []byte(`"test"`)},
+				"size":    {Raw: []byte(`"10Gi"`)},
+			},
+			variables: []ExtraDeployVariable{
+				{Name: "count", InputType: InputTypeNumber},
+				{Name: "verbose", InputType: InputTypeBoolean},
+				{Name: "name", InputType: InputTypeText},
+				{Name: "size", InputType: InputTypeStorageSize},
+			},
+			expected: map[string]apiextensionsv1.JSON{
+				"count":   {Raw: []byte(`5`)},
+				"verbose": {Raw: []byte(`true`)},
+				"name":    {Raw: []byte(`"test"`)},
+				"size":    {Raw: []byte(`"10Gi"`)},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CoerceExtraDeployValues(tt.values, tt.variables)
+			if tt.expected == nil {
+				assert.Nil(t, result)
+			} else {
+				assert.Equal(t, len(tt.expected), len(result))
+				for k, v := range tt.expected {
+					assert.Equal(t, string(v.Raw), string(result[k].Raw),
+						"mismatch for key %q", k)
+				}
+			}
 		})
 	}
 }
