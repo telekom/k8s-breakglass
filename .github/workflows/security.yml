@@ -70,9 +70,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # security-events: write is needed for SARIF upload on push/schedule.
+      # security-events: write is needed for SARIF upload on push/schedule/workflow_dispatch.
       # On pull_request, the upload step is skipped via its 'if' condition,
-      # so the permission is unused but harmless (least-privilege enforced at step level).
+      # so the permission is unused but harmless.
       security-events: write
       # actions: read is required by codeql-action/upload-sarif to resolve
       # the workflow run context (ref, sha) for SARIF result correlation.
@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@f3a6ee42055dd5f618fb31d987aae7b94518f043 # v4.32.2
-        if: always() && (github.event_name == 'push' || github.event_name == 'schedule')
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         with:
           sarif_file: 'trivy-fs-results.sarif'
 
