@@ -39,7 +39,6 @@
 
 <script lang="ts">
 import { inject, onMounted, onUnmounted, ref } from "vue";
-import AuthService from "@/services/auth";
 import { AuthKey } from "@/keys";
 
 export default {
@@ -49,11 +48,18 @@ export default {
     const renewing = ref(false);
     const dismissed = ref(false);
     let timer: number | null = null;
-    const auth = inject(AuthKey) as AuthService;
+    const requireAuth = () => {
+      const injectedAuth = inject(AuthKey);
+      if (!injectedAuth) {
+        throw new Error("AutoLogoutWarning requires an Auth provider");
+      }
+      return injectedAuth;
+    };
+    const auth = requireAuth();
     const WARNING_THRESHOLD_MS = 30000; // 30 seconds
 
     function logout() {
-      auth?.logout();
+      auth.logout();
     }
 
     async function stayLoggedIn() {
@@ -77,7 +83,7 @@ export default {
 
     function checkExpiring() {
       const userStr = localStorage.getItem(
-        "oidc.user:" + auth?.userManager.settings.authority + ":" + auth?.userManager.settings.client_id,
+        "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id,
       );
       if (userStr) {
         try {

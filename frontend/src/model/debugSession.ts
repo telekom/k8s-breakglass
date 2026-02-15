@@ -93,6 +93,7 @@ export interface DebugSessionSummary {
   startsAt?: string;
   expiresAt?: string;
   participants: number;
+  isParticipant: boolean;
   allowedPods: number;
   allowedPodOperations?: AllowedPodOperations;
 }
