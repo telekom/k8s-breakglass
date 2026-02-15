@@ -1,12 +1,16 @@
 # golangci-lint configuration for breakglass controller
-# Pragmatic settings: catches real bugs while avoiding excessive noise
+# Aligned with t-caas team conventions
 
 version: "2"
 
 run:
-  timeout: 5m
+  go: "1.25"
+  timeout: 10m
+  allow-parallel-runners: true
   modules-download-mode: readonly
   relative-path-mode: gomod
+  build-tags:
+    - e2e
 
 output:
   formats:
@@ -18,87 +22,183 @@ issues:
   max-same-issues: 0
 
 linters:
-  default: standard
+  default: none
   enable:
-    # Core linters - catch real bugs
-    - govet
-    - staticcheck
-    - ineffassign
+    # Code Quality
+    - asasalint
+    - asciicheck
+    - copyloopvar
+    - dogsled
+    - dupl
+    - dupword
+    - durationcheck
     - errcheck
-    - unused
-    # Style and quality
+    - errchkjson
+    - goconst
     - gocritic
+    - gocyclo
+    - godot
+    - goprintffuncname
+    - govet
+    - importas
+    - ineffassign
+    - intrange
+    - loggercheck
+    - nakedret
+    - nolintlint
+    - nosprintfhostport
+    - prealloc
+    - predeclared
+    - thelper
+    - unconvert
+    - unparam
+    - unused
+
+    # Static Analysis
+    - staticcheck
+
+    # Error Handling
+    - errorlint
+    - nilerr
+    - nilnil
+
+    # Security
+    - gosec
+
+    # Performance
+    - bodyclose
+    - noctx
+
+    # Code Style
+    - lll
     - misspell
     - usestdlibvars
-    # Additional useful linters
-    - bodyclose
-    - unconvert
     - whitespace
 
-  # Disabled linters with rationale:
-  # - revive: Too noisy requiring comments on all exports; k8s-style code often omits these
-  # - noctx: Most violations are in tests where context isn't critical
-  # - testifylint: Style preferences for test assertions, not bugs
-  # - gosec: Many false positives for intentional TLS config (InsecureSkipVerify options)
-  # - errorlint: Would require significant refactoring for marginal benefit
-  # - unparam: Many false positives in interface implementations
+    # Testing
+    - tparallel
+
+    # Naming
+    - revive
 
   settings:
+    gocritic:
+      enable-all: true
+      disabled-checks:
+        - appendAssign
+        - commentedOutCode
+        - hugeParam
+        - rangeValCopy
+        - regexpMust
+    gocyclo:
+      min-complexity: 20
+    godot:
+      scope: toplevel
+      exclude:
+        - "SPDX-"
+        - "\\+kubebuilder"
+    importas:
+      no-unaliased: true
+      alias:
+        - pkg: k8s.io/api/core/v1
+          alias: corev1
+        - pkg: k8s.io/api/rbac/v1
+          alias: rbacv1
+        - pkg: k8s.io/apimachinery/pkg/api/errors
+          alias: apierrors
+        - pkg: k8s.io/apimachinery/pkg/apis/meta/v1
+          alias: metav1
+        - pkg: sigs.k8s.io/controller-runtime
+          alias: ctrl
+    lll:
+      line-length: 180
+    nolintlint:
+      allow-unused: false
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - checkPrivateReceivers
+            - disableStutteringCheck
+        - name: blank-imports
+        - name: bool-literal-in-expr
+        - name: constant-logical-expr
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: errorf
+        - name: if-return
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+          disabled: true
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+          disabled: true
+        - name: var-naming
+    gosec:
+      excludes:
+        - G104
+        - G304
+        - G402  # TLS InsecureSkipVerify (intentional in this project)
     staticcheck:
       checks:
         - "all"
-        # Disable quick-fix suggestions that are style preferences
-        - "-QF1001"   # Apply De Morgan's law
-        - "-QF1002"   # Convert untagged switch to tagged switch
-        - "-QF1003"   # Convert if/else-if chain to tagged switch
-        - "-QF1008"   # Omit embedded fields from selector expression
-        - "-QF1011"   # Omit redundant type from declaration
-        # Disable style checks
-        - "-ST1000"   # Package comment
-        - "-ST1003"   # Underscores in names
-        - "-ST1005"   # Error string capitalization
-        - "-ST1016"   # Method receiver names
-        - "-ST1019"   # Duplicate imports (sometimes needed for aliasing)
-        - "-ST1020"   # Function comment format
-        - "-ST1021"   # Type comment format
-        - "-ST1022"   # Variable comment format
-        - "-ST1023"   # Redundant type in declaration
-        # Disable some SA checks
-        - "-SA1012"   # nil context (often valid in tests)
-
-    gocritic:
-      enabled-checks:
-        - boolExprSimplify
-        - equalFold
-      disabled-checks:
-        - appendAssign
-        - assignOp
-        - captLocal
-        - commentFormatting
-        - deprecatedComment
-        - dupBranchBody
-        - elseif
-        - exitAfterDefer
-        - ifElseChain
-        - regexpMust
-        - sloppyLen
-        - typeSwitchVar
-        - underef
-        - unlambda
-        - unslice
+        - "-QF1001"
+        - "-QF1008"
+        - "-ST1000"
+        - "-ST1003"
 
   exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - lll
+        path: api/
+      - linters:
+          - dupl
+        path: _test\.go$
+      - linters:
+          - errcheck
+        path: _test\.go$
+      - linters:
+          - gosec
+        path: _test\.go$
+      - linters:
+          - revive
+        path: _test\.go$
+        text: "dot-imports"
+      - linters:
+          - gocritic
+        path: _test\.go$
+      - linters:
+          - godot
+        path: _test\.go$
+      - linters:
+          - noctx
+        path: _test\.go$
+      - linters:
+          - unparam
+        path: _test\.go$
     paths:
-      # Exclude generated files
       - "zz_generated.*\\.go$"
       - "_generated\\.go$"
       - ".*\\.pb\\.go$"
-
-    rules:
-      # Exclude some linters from test files
-      - path: _test\.go$
-        linters:
-          - errcheck
+      - third_party$
+      - builtin$
+      - examples$
 
 formatters:
   enable:
