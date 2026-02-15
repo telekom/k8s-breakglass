@@ -298,6 +298,63 @@ func TestHandleAuthorize(t *testing.T) {
 	}
 }
 
+func TestHandleAuthorize_MetricsSourceForRBACAllow(t *testing.T) {
+	controller := SetupController(nil)
+	controller.canDoFn = alwaysCanDo
+
+	metrics.WebhookSARDecisionsByAction.Reset()
+	defer metrics.WebhookSARDecisionsByAction.Reset()
+
+	engine := gin.New()
+	_ = controller.Register(engine.Group(""))
+
+	inBytes, _ := json.Marshal(sar)
+	req, _ := http.NewRequest(http.MethodPost, "/authorize/"+testGroupData.Clustername, bytes.NewReader(inBytes))
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Result().StatusCode)
+	}
+
+	out := SubjectAccessReviewResponse{}
+	if err := json.NewDecoder(w.Result().Body).Decode(&out); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if !out.Status.Allowed {
+		t.Fatalf("expected allowed response for RBAC path")
+	}
+
+	rbacCount := testutil.ToFloat64(metrics.WebhookSARDecisionsByAction.WithLabelValues(
+		testGroupData.Clustername,
+		sar.Spec.ResourceAttributes.Verb,
+		sar.Spec.ResourceAttributes.Group,
+		sar.Spec.ResourceAttributes.Resource,
+		sar.Spec.ResourceAttributes.Namespace,
+		sar.Spec.ResourceAttributes.Subresource,
+		"allowed",
+		"rbac",
+	))
+
+	sessionCount := testutil.ToFloat64(metrics.WebhookSARDecisionsByAction.WithLabelValues(
+		testGroupData.Clustername,
+		sar.Spec.ResourceAttributes.Verb,
+		sar.Spec.ResourceAttributes.Group,
+		sar.Spec.ResourceAttributes.Resource,
+		sar.Spec.ResourceAttributes.Namespace,
+		sar.Spec.ResourceAttributes.Subresource,
+		"allowed",
+		"session",
+	))
+
+	if rbacCount != 1 {
+		t.Fatalf("expected rbac decision metric to be 1, got %v", rbacCount)
+	}
+	if sessionCount != 0 {
+		t.Fatalf("expected session decision metric to be 0 for RBAC allow path, got %v", sessionCount)
+	}
+}
+
 // Test that processing a SAR emits an Info log with a structured `action` field
 func TestHandleAuthorize_LogsActionStructured(t *testing.T) {
 	// Build an observer to capture logs

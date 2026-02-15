@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Frontend Auth Provider Consistency**: Added explicit Auth provider guards and removed non-null assertion usage in `BreakglassView`, `BreakglassSessionReview`, and `PendingApprovalsView` to fail fast instead of crashing later on missing app providers
+- **Webhook Decision Source Metrics**: Fixed SubjectAccessReview action decision metrics to avoid labeling RBAC/debug-session allow decisions as `source=session`; session source is now recorded only for actual session-authorized allows
 - **Session Approval Redirect Cleanup**: `SessionApprovalView` now enforces Auth provider presence and clears pending 401 redirect timers on unmount to prevent stale navigations after component teardown
 - **Frontend Auth Guard Hardening**: Added an explicit Auth provider guard in `AutoLogoutWarning` and removed unsafe auth casting so missing app providers fail fast with a clear error
 - **Frontend Auth Guard Consistency**: Added an explicit Auth provider guard in `MyPendingRequests` and removed nullable service fallback to prevent deferred runtime errors when app providers are misconfigured
