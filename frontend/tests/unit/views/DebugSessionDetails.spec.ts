@@ -42,6 +42,8 @@ vi.mock("@/services/toast", () => ({
 }));
 
 describe("DebugSessionDetails", () => {
+  let wrapper: ReturnType<typeof shallowMount> | null = null;
+
   beforeEach(() => {
     vi.useFakeTimers();
     mockPush.mockReset();
@@ -49,6 +51,8 @@ describe("DebugSessionDetails", () => {
   });
 
   afterEach(() => {
+    wrapper?.unmount();
+    wrapper = null;
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
     vi.clearAllMocks();
@@ -67,7 +71,7 @@ describe("DebugSessionDetails", () => {
         spec: { cluster: "test-cluster" },
       });
 
-    shallowMount(DebugSessionDetails, {
+    wrapper = shallowMount(DebugSessionDetails, {
       global: {
         provide: {
           [AuthKey as symbol]: {
