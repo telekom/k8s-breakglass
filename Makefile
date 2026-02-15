@@ -69,7 +69,7 @@ lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friend
 .PHONY: vulncheck
 vulncheck: ## Run govulncheck to check for known vulnerabilities.
 	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
-	govulncheck ./...
+	$(shell go env GOPATH)/bin/govulncheck ./...
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
