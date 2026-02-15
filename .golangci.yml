@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: CC0-1.0
+
 # golangci-lint configuration for breakglass controller
 # Aligned with t-caas team conventions
 
@@ -9,8 +13,6 @@ run:
   allow-parallel-runners: true
   modules-download-mode: readonly
   relative-path-mode: gomod
-  build-tags:
-    - e2e
 
 output:
   formats:
@@ -199,6 +201,7 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      - e2e$
 
 formatters:
   enable:
