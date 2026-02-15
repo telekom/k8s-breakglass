@@ -1,66 +1,47 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Kubernetes Generated files - skip generated files, except for vendored files
+!vendor/**/zz_generated.*
+vendor/
+
+# Editor and IDE paraphernalia
+.idea
+.vscode/
+*.swp
+*.swo
+*~
+**/.DS_Store
+.DS_Store
+
 # ignore vite local env files
 frontend/*.local
 frontend/tsconfig.tsbuildinfo
-bin/
 
+# Project-specific
 breakglass.yaml
 ./config.yaml
 Session.vim
-e2e/port-forward-pids
-e2e/kind-setup-single-tdir/authentication-config.yaml
-e2e/kind-setup-single-tdir/authorization-config.yaml
-e2e/kind-setup-single-tdir/authorization-kubeconfig.yaml
-e2e/kind-setup-single-tdir/keycloak-ca.crt
-e2e/kind-setup-single-tdir/authentication-config.yaml
-e2e/kind-setup-single-tdir/authorization-config.yaml
-e2e/kind-setup-single-tdir/authorization-kubeconfig.yaml
-e2e/kind-setup-single-tdir/keycloak-ca.crt
-e2e/kind-setup-single-tls/ca.crt
-e2e/kind-setup-single-tls/ca.key
-e2e/kind-setup-single-tls/ca.srl
-e2e/kind-setup-single-tls/req.cnf
-e2e/kind-setup-single-tls/server.crt
-e2e/kind-setup-single-tls/server.csr
-e2e/kind-setup-single-tls/server.key
-e2e/kind-setup-single-tls/ca.crt
-e2e/kind-setup-single-tls/ca.key
-e2e/kind-setup-single-tls/ca.srl
-e2e/kind-setup-single-tls/req.cnf
-e2e/kind-setup-single-tls/server.crt
-e2e/kind-setup-single-tls/server.csr
-e2e/kind-setup-single-tls/server.key
-e2e/kind-setup-single-tls/webhook/
-e2e/kind-setup-single-hub-kubeconfig.yaml
-e2e/kind-setup-single-kind-cfg.yaml
-e2e/kind-setup-single-tdir/e2e-cluster-configs-rendered.yaml
-e2e/kind-setup-single-tdir/e2e-deny-policies-rendered.yaml
-e2e/kind-setup-single-tdir/kind-setup-single-mod-kubeconfig.yaml
-e2e/kind-setup-single-tdir/oidc-kube-fragment.yaml
-e2e/kind-setup-single-tdir/oidc-test-user.kubeconfig
-e2e/kind-setup-single-tdir/e2e-cluster-configs-rendered.yaml
-e2e/kind-setup-single-tdir/e2e-deny-policies-rendered.yaml
-e2e/kind-setup-single-tdir/kind-setup-single-mod-kubeconfig.yaml
-e2e/kind-setup-single-tdir/oidc-kube-fragment.yaml
-e2e/kind-setup-single-tdir/oidc-test-user.kubeconfig
-e2e/kind-setup-single-tdir/audit-policy.yaml
-e2e/kind-setup-single-tdir/audit.log
-e2e/kind-setup-single-tdir/selfsubjectreview-allow-all.yaml
-e2e/e2e-run.log
-e2e/kind-setup-single-tdir/keycloak-host/breakglass-e2e.json
-e2e/kind-setup-single-tdir/keycloak-host/tls.crt
-e2e/kind-setup-single-tdir/keycloak-host/tls.key
-manager.log
-e2e/kind-setup-single-tdir/rendered-config-dev/*
-e2e/kind-setup-single-tdir/tmp-config-with-ca.yaml
-apiserver.log
-.vscode/
 main
-cover.out
+
+manager.log
+apiserver.log
 config/dev/certs
 pkg/breakglass/testdata/fuzz/*
-**/.DS_Store
-.DS_Store
-coverage.out
 
 # E2E test temporary files and directories
 e2e/kind-setup-multi-tdir/
@@ -69,11 +50,17 @@ e2e/kind-setup-single-tdir/
 e2e/kind-setup-single-tls/
 e2e/*.log
 e2e/e2e-env.sh
+e2e/port-forward-pids
+e2e/kind-setup-single-hub-kubeconfig.yaml
+e2e/kind-setup-single-kind-cfg.yaml
 e2e-setup-failure-logs/
 e2e-diagnostics/
 logs/
 multi-cluster-e2e-diagnostics/
 multi-cluster-setup-failure-logs/
+
+# Frontend
 frontend/vite.log
 frontend/playwright-report/
 frontend/test-results/
+frontend/dist
