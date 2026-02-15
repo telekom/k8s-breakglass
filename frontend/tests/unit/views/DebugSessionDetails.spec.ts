@@ -4,6 +4,7 @@
  * @vitest-environment jsdom
  */
 
+import { ref } from "vue";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { shallowMount, flushPromises } from "@vue/test-utils";
 import DebugSessionDetails from "@/views/DebugSessionDetails.vue";
@@ -39,6 +40,17 @@ vi.mock("@/services/debugSession", () => ({
 vi.mock("@/services/toast", () => ({
   pushError: vi.fn(),
   pushSuccess: vi.fn(),
+}));
+
+vi.mock("@/services/auth", () => ({
+  useUser: vi.fn().mockReturnValue(
+    ref({
+      profile: {
+        email: "test@example.com",
+        preferred_username: "testuser",
+      },
+    }),
+  ),
 }));
 
 describe("DebugSessionDetails", () => {
