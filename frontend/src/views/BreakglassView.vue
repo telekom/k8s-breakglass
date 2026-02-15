@@ -282,7 +282,6 @@ async function onDrop(bg: any) {
           ></scale-text-field>
         </div>
         <div class="toolbar-refresh">
-          <span id="refresh-label" class="sr-only">Refresh list</span>
           <scale-loading-spinner v-if="state.refreshing"></scale-loading-spinner>
           <scale-button
             v-else
@@ -290,7 +289,7 @@ async function onDrop(bg: any) {
             icon-only="true"
             icon-position="before"
             variant="secondary"
-            aria-describedby="refresh-label"
+            aria-label="Refresh escalations"
             @click="refresh()"
           >
             <scale-icon-action-refresh></scale-icon-action-refresh>

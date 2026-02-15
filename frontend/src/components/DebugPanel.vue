@@ -158,6 +158,7 @@ const groupsDisplay = computed(() => {
       type="button"
       class="debug-toggle"
       title="Toggle debug panel"
+      aria-label="Toggle debug panel"
       data-testid="debug-toggle-button"
       @click="showDebug = !showDebug"
     >
@@ -168,7 +169,13 @@ const groupsDisplay = computed(() => {
       <scale-card class="debug-panel">
         <div class="debug-header">
           <h3>Debug Information</h3>
-          <scale-button variant="ghost" size="small" data-testid="debug-close-button" @click="showDebug = false">
+          <scale-button
+            variant="ghost"
+            size="small"
+            aria-label="Close debug panel"
+            data-testid="debug-close-button"
+            @click="showDebug = false"
+          >
             <scale-icon-action-circle-close size="16" decorative />
           </scale-button>
         </div>

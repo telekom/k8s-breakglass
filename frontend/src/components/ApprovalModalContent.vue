@@ -46,11 +46,14 @@
         data-testid="approval-reason-input"
         :value="approverNote"
         :placeholder="approvalReasonPlaceholder"
+        :aria-describedby="isNoteRequired && !approverNote.trim() ? noteErrorId : undefined"
         @scaleChange="handleNoteChange"
       />
     </div>
 
-    <p v-if="isNoteRequired && !approverNote.trim()" class="approval-note-required">This field is required.</p>
+    <p v-if="isNoteRequired && !approverNote.trim()" :id="noteErrorId" class="approval-note-required" role="alert">
+      This field is required.
+    </p>
 
     <div class="modal-actions">
       <scale-button data-testid="approve-button" :disabled="isApproving" @click="$emit('approve')">
@@ -70,9 +73,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, useId } from "vue";
 import { formatDateTime, formatDuration, formatEndTime } from "@/composables";
 import type { SessionCR } from "@/model/breakglass";
+
+const noteErrorId = `approval-note-error-${useId()}`;
 
 const props = defineProps<{
   session: SessionCR;

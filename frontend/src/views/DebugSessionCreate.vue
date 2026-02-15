@@ -494,6 +494,33 @@ function handleDurationChange(ev: Event) {
   const value = target?.value || "1h";
   form.requestedDuration = value;
 }
+
+// Roving tabindex helpers for radio group keyboard navigation
+function focusNextRadio(event: KeyboardEvent) {
+  const group = event.currentTarget as HTMLElement;
+  if (!group) return;
+  const items = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
+  const current = (event.target as HTMLElement)?.closest('[role="radio"]') as HTMLElement | null;
+  if (!current) return;
+  const idx = items.indexOf(current);
+  if (idx === -1) return;
+  const next = items[(idx + 1) % items.length];
+  next?.focus();
+  next?.click();
+}
+
+function focusPrevRadio(event: KeyboardEvent) {
+  const group = event.currentTarget as HTMLElement;
+  if (!group) return;
+  const items = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
+  const current = (event.target as HTMLElement)?.closest('[role="radio"]') as HTMLElement | null;
+  if (!current) return;
+  const idx = items.indexOf(current);
+  if (idx === -1) return;
+  const prev = items[(idx - 1 + items.length) % items.length];
+  prev?.focus();
+  prev?.click();
+}
 </script>
 
 <template>
@@ -508,17 +535,20 @@ function handleDurationChange(ev: Event) {
     />
 
     <!-- Stepper indicator -->
-    <div class="wizard-stepper">
-      <div :class="['step', { active: currentStep === 1, completed: currentStep > 1 }]">
+    <ol class="wizard-stepper" aria-label="Create debug session steps">
+      <li
+        :class="['step', { active: currentStep === 1, completed: currentStep > 1 }]"
+        :aria-current="currentStep === 1 ? 'step' : undefined"
+      >
         <span class="step-number">1</span>
         <span class="step-label">Template</span>
-      </div>
-      <div class="step-connector"></div>
-      <div :class="['step', { active: currentStep === 2 }]">
+      </li>
+      <li class="step-connector" aria-hidden="true"></li>
+      <li :class="['step', { active: currentStep === 2 }]" :aria-current="currentStep === 2 ? 'step' : undefined">
         <span class="step-number">2</span>
         <span class="step-label">Cluster & Configure</span>
-      </div>
-    </div>
+      </li>
+    </ol>
 
     <LoadingState v-if="loading" message="Loading templates..." />
 
@@ -644,18 +674,40 @@ function handleDurationChange(ev: Event) {
             No clusters match "{{ clusterFilter }}".
           </div>
 
-          <div v-else class="cluster-grid" data-testid="cluster-grid">
+          <div
+            v-else
+            class="cluster-grid"
+            role="radiogroup"
+            aria-label="Select target cluster"
+            data-testid="cluster-grid"
+            @keydown.arrow-right.prevent="focusNextRadio($event)"
+            @keydown.arrow-down.prevent="focusNextRadio($event)"
+            @keydown.arrow-left.prevent="focusPrevRadio($event)"
+            @keydown.arrow-up.prevent="focusPrevRadio($event)"
+          >
             <div
-              v-for="cluster in filteredClusterDetails"
+              v-for="(cluster, idx) in filteredClusterDetails"
               :key="cluster.name"
               :class="['cluster-card', { selected: form.cluster === cluster.name }]"
+              role="radio"
+              :aria-checked="form.cluster === cluster.name"
+              :aria-label="`Select cluster ${cluster.displayName || cluster.name}`"
+              :tabindex="form.cluster === cluster.name || (!form.cluster && idx === 0) ? 0 : -1"
               data-testid="cluster-card"
               @click="form.cluster = cluster.name"
+              @keydown.enter.prevent="form.cluster = cluster.name"
+              @keydown.space.prevent="form.cluster = cluster.name"
             >
               <div class="cluster-header">
                 <span class="cluster-name">{{ cluster.displayName || cluster.name }}</span>
-                <span v-if="cluster.status?.healthy !== false" class="health-badge healthy">●</span>
-                <span v-else class="health-badge unhealthy">●</span>
+                <span
+                  v-if="cluster.status?.healthy !== false"
+                  class="health-badge healthy"
+                  role="img"
+                  aria-label="Healthy"
+                  >●</span
+                >
+                <span v-else class="health-badge unhealthy" role="img" aria-label="Unhealthy">●</span>
               </div>
 
               <div class="cluster-meta">
@@ -739,13 +791,33 @@ function handleDurationChange(ev: Event) {
           approval requirements.
         </p>
 
-        <div class="binding-options-grid" data-testid="binding-options-grid">
+        <div
+          class="binding-options-grid"
+          role="radiogroup"
+          aria-label="Select access configuration"
+          data-testid="binding-options-grid"
+          @keydown.arrow-right.prevent="focusNextRadio($event)"
+          @keydown.arrow-down.prevent="focusNextRadio($event)"
+          @keydown.arrow-left.prevent="focusPrevRadio($event)"
+          @keydown.arrow-up.prevent="focusPrevRadio($event)"
+        >
           <div
             v-for="(option, index) in bindingOptions"
             :key="`${option.bindingRef.namespace}/${option.bindingRef.name}`"
             :class="['binding-option-card', { selected: form.selectedBindingIndex === index }]"
+            role="radio"
+            :aria-checked="form.selectedBindingIndex === index"
+            :aria-label="option.displayName || option.bindingRef.name"
+            :tabindex="
+              form.selectedBindingIndex === index ||
+              ((form.selectedBindingIndex == null || form.selectedBindingIndex >= bindingOptions.length) && index === 0)
+                ? 0
+                : -1
+            "
             data-testid="binding-option-card"
             @click="form.selectedBindingIndex = index"
+            @keydown.enter.prevent="form.selectedBindingIndex = index"
+            @keydown.space.prevent="form.selectedBindingIndex = index"
           >
             <div class="binding-header">
               <span class="binding-name">{{ option.displayName || option.bindingRef.name }}</span>
@@ -1073,10 +1145,11 @@ function handleDurationChange(ev: Event) {
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  margin-bottom: var(--space-xl);
+  margin: 0 0 var(--space-xl) 0;
   padding: var(--space-md);
   background: var(--telekom-color-background-surface);
   border-radius: var(--radius-md);
+  list-style: none;
 }
 
 .step {

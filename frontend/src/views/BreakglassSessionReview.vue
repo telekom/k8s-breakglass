@@ -339,8 +339,8 @@ async function onCancel(bg: SessionCR) {
       {{ state.getBreakglassesMsg }}
     </div>
 
-    <div v-if="state.loading" class="loading-state">Loading sessions…</div>
-    <div v-else-if="filteredBreakglasses.length === 0" class="empty-state">
+    <div v-if="state.loading" class="loading-state" role="status" aria-live="polite">Loading sessions…</div>
+    <div v-else-if="filteredBreakglasses.length === 0" class="empty-state" role="status" aria-live="polite">
       <p>No sessions match the current filters.</p>
       <p class="ui-muted">Try clearing the search or turning off "Active only".</p>
     </div>

@@ -89,6 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed double-toast errors in BreakglassSessionReview (approve/reject), DebugSessionCreate (fetchTemplates/fetchTemplateClusters)
   - `DebugSessionCreate.onMounted` now handles `auth.getUser()` failures gracefully
 - **Silent Log Loss**: Added `zap.ReplaceGlobals(zapLogger)` in startup so that standalone utility functions, webhook validators, and legacy code paths using `zap.S()` log through the configured logger instead of the default no-op
+- **Frontend Accessibility**: Improved accessibility across frontend components:
+  - Added `aria-label` to icon-only buttons (debug panel toggle/close, refresh escalations)
+  - Made cluster and binding selection cards keyboard-accessible with `role="radio"`, `tabindex`, and keyboard handlers
+  - Added `role="img"` and `aria-label` to cluster health status badges
+  - Linked form validation errors to inputs via `aria-describedby` (reason textarea, approver note, multi-select groups)
+  - Added `aria-live="polite"` regions for loading/error states (SessionBrowser, SessionApprovalView, BreakglassSessionReview)
+  - Added `role="alert"` to validation error messages for screen reader announcements
+  - Converted wizard stepper from `<div>` to `<ol>` with `aria-current="step"` semantic
 
 - **IDP-Based Session Limits**: Session limits are now configured at the IdentityProvider level with support for group-based overrides and escalation-level overrides
   - New `IdentityProvider.spec.sessionLimits` field with `maxActiveSessionsPerUser` default limit

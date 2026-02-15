@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, useId, watch } from "vue";
 import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
 import {
@@ -13,6 +13,9 @@ import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 
 const props = defineProps<{ breakglass: any; time: number }>();
 const emit = defineEmits(["request", "drop", "withdraw"]);
+
+// Unique id suffix for this card instance to avoid duplicate DOM ids in v-for
+const cardUid = useId();
 
 const requestReason = ref("");
 const selectedDuration = ref<number | null>(null);
@@ -646,20 +649,28 @@ function drop() {
 
     <div class="reason-field">
       <scale-textarea
-        id="reason-field-input"
+        :id="`reason-field-input-${cardUid}`"
         data-testid="reason-input"
         label="Reason"
         :value="requestReason"
         :max-length="reasonCharLimit"
+        :aria-describedby="requiresReason && !(requestReason || '').trim() ? `reason-error-msg-${cardUid}` : undefined"
         :placeholder="
           (breakglass.requestReason && breakglass.requestReason.description) || 'Optional reason (max 1024 characters)'
         "
         @scaleChange="handleReasonChange"
       ></scale-textarea>
-      <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning">
-        ⚠ Character limit approaching ({{ reasonCharLimit - reasonCharCount }} characters remaining)
+      <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning" aria-live="polite">
+        ⚠ Character limit approaching
+        <span aria-hidden="true"> ({{ reasonCharLimit - reasonCharCount }} characters remaining) </span>
       </p>
-      <p v-if="requiresReason && !(requestReason || '').trim()" class="helper error" data-testid="reason-error">
+      <p
+        v-if="requiresReason && !(requestReason || '').trim()"
+        :id="`reason-error-msg-${cardUid}`"
+        class="helper error"
+        role="alert"
+        data-testid="reason-error"
+      >
         This field is required.
       </p>
     </div>

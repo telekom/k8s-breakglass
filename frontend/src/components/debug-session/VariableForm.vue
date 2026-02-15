@@ -441,12 +441,18 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 
         <!-- Multi-Select Input -->
         <div v-else-if="variable.inputType === 'multiSelect'" class="multi-select-field">
-          <label class="multi-select-label">
+          <label :id="`multi-label-${variable.name}`" class="multi-select-label">
             {{ variable.displayName || variable.name }}
             <span v-if="variable.required" class="required-marker">*</span>
           </label>
           <p v-if="getHelperText(variable)" class="multi-select-description">{{ getHelperText(variable) }}</p>
-          <div class="multi-select-options" :data-testid="`input-${variable.name}`">
+          <div
+            class="multi-select-options"
+            role="group"
+            :aria-labelledby="`multi-label-${variable.name}`"
+            :aria-describedby="getError(variable.name) ? `multi-error-${variable.name}` : undefined"
+            :data-testid="`input-${variable.name}`"
+          >
             <scale-checkbox
               v-for="option in variable.options || []"
               :key="option.value"
@@ -458,7 +464,14 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             >
             </scale-checkbox>
           </div>
-          <p v-if="getError(variable.name)" class="multi-select-error">{{ getError(variable.name) }}</p>
+          <p
+            v-if="getError(variable.name)"
+            :id="`multi-error-${variable.name}`"
+            class="multi-select-error"
+            role="alert"
+          >
+            {{ getError(variable.name) }}
+          </p>
         </div>
       </div>
     </div>
@@ -568,12 +581,18 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
           </scale-dropdown-select>
 
           <div v-else-if="variable.inputType === 'multiSelect'" class="multi-select-field">
-            <label class="multi-select-label">
+            <label :id="`adv-multi-label-${variable.name}`" class="multi-select-label">
               {{ variable.displayName || variable.name }}
               <span v-if="variable.required" class="required-marker">*</span>
             </label>
             <p v-if="getHelperText(variable)" class="multi-select-description">{{ getHelperText(variable) }}</p>
-            <div class="multi-select-options" :data-testid="`input-${variable.name}`">
+            <div
+              class="multi-select-options"
+              role="group"
+              :aria-labelledby="`adv-multi-label-${variable.name}`"
+              :aria-describedby="getError(variable.name) ? `adv-multi-error-${variable.name}` : undefined"
+              :data-testid="`input-${variable.name}`"
+            >
               <scale-checkbox
                 v-for="option in variable.options || []"
                 :key="option.value"
@@ -585,7 +604,14 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
               >
               </scale-checkbox>
             </div>
-            <p v-if="getError(variable.name)" class="multi-select-error">{{ getError(variable.name) }}</p>
+            <p
+              v-if="getError(variable.name)"
+              :id="`adv-multi-error-${variable.name}`"
+              class="multi-select-error"
+              role="alert"
+            >
+              {{ getError(variable.name) }}
+            </p>
           </div>
         </div>
       </div>
