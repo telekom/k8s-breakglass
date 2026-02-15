@@ -34,8 +34,8 @@ COPY pkg/ pkg/
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -a \
-    -ldflags "-X github.com/telekom/k8s-breakglass/pkg/version.Version=${VERSION} \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -a -trimpath \
+    -ldflags "-s -w -X github.com/telekom/k8s-breakglass/pkg/version.Version=${VERSION} \
               -X github.com/telekom/k8s-breakglass/pkg/version.GitCommit=${GIT_COMMIT} \
               -X github.com/telekom/k8s-breakglass/pkg/version.BuildDate=${BUILD_DATE}" \
     -o breakglass cmd/main.go
