@@ -44,7 +44,6 @@ linters:
     - loggercheck
     - nakedret
     - nosprintfhostport
-    - predeclared
     - unconvert
     - unused
 
@@ -62,6 +61,7 @@ linters:
   # TODO: Enable these linters incrementally after fixing existing violations.
   # Listed with approximate issue counts for prioritization (lowest first):
   #   - dupword          ~1 issue
+  #   - predeclared      ~4 issues   (shadows predeclared identifiers)
   #   - importas         ~4 issues
   #   - dogsled          ~8 issues
   #   - noctx            ~11 issues   (most violations in tests)
@@ -174,10 +174,24 @@ linters:
     staticcheck:
       checks:
         - "all"
-        - "-QF1001"
-        - "-QF1008"
-        - "-ST1000"
-        - "-ST1003"
+        # Disable quick-fix suggestions that are style preferences
+        - "-QF1001"   # Apply De Morgan's law
+        - "-QF1002"   # Convert untagged switch to tagged switch
+        - "-QF1003"   # Convert if/else-if chain to tagged switch
+        - "-QF1008"   # Omit embedded fields from selector expression
+        - "-QF1011"   # Omit redundant type from declaration
+        # Disable style checks (too noisy for existing codebase)
+        - "-ST1000"   # Package comment
+        - "-ST1003"   # Underscores in names
+        - "-ST1005"   # Error string capitalization
+        - "-ST1016"   # Method receiver names
+        - "-ST1019"   # Duplicate imports
+        - "-ST1020"   # Function comment format
+        - "-ST1021"   # Type comment format
+        - "-ST1022"   # Variable comment format
+        - "-ST1023"   # Redundant type in declaration
+        # Disable SA checks
+        - "-SA1012"   # nil context (often valid in tests)
 
   exclusions:
     generated: lax
