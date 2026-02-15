@@ -49,7 +49,7 @@ COPY --from=builder /etc/ssl/certs/ /etc/ssl/certs/
 
 # Copy license files for compliance
 COPY LICENSES /licenses/
-COPY LICENCE /licenses/PROJECT_LICENCE
+COPY LICENSE /licenses/PROJECT_LICENSE
 
 # OCI Image Labels - Standard metadata for container images
 LABEL org.opencontainers.image.title="Kubernetes Breakglass"
