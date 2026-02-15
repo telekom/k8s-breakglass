@@ -1,1 +1,28 @@
-./frontend/dist
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: CC0-1.0
+
+.git
+.github
+bin/
+out/
+config/
+docs/
+hack/
+e2e/
+charts/
+logs/
+*.md
+CODEOWNERS
+PROJECT
+Makefile
+.golangci.yml
+.editorconfig
+.dockerignore
+.gitignore
+.vscode/
+REUSE.toml
+frontend/dist
+
+# Keep license files available for Dockerfile COPY
+# (LICENCE, LICENSE, NOTICE, LICENSES/ are needed in the image)
