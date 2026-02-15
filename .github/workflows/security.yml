@@ -19,8 +19,6 @@ jobs:
   govulncheck:
     name: Go Vulnerability Check
     runs-on: ubuntu-latest
-    # Informational only — stdlib vulns cannot be fixed in this repo
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -31,6 +29,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Run govulncheck
+        # Informational only — stdlib vulns cannot be fixed in this repo.
+        # Setup/tool failures will still fail the job.
+        continue-on-error: true
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           govulncheck ./...
@@ -69,6 +70,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # security-events: write is needed for SARIF upload on push/schedule.
+      # On pull_request, the upload step is skipped via its 'if' condition,
+      # so the permission is unused but harmless (least-privilege enforced at step level).
       security-events: write
       actions: read
     steps:
@@ -106,5 +110,9 @@ jobs:
 
       - name: Check dependency licenses
         run: |
+          # Allow-list for Go dependency licenses.
+          # Note: .github/workflows/dependency-review.yml enforces a deny-list
+          # for copyleft/restrictive licenses via GitHub's dependency review action.
+          # Keep both in sync when changing license policy.
           go-licenses check ./... \
             --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,CC0-1.0,Unlicense
