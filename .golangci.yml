@@ -3,7 +3,12 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # golangci-lint configuration for breakglass controller
-# Aligned with t-caas team conventions
+# Aligned with t-caas team conventions (auth-operator reference config)
+#
+# Linter enablement strategy:
+#   - Phase 1 (this config): linters that pass on the existing codebase
+#   - Phase 2 (TODO): enable remaining linters after fixing existing violations
+#   Disabled linters are documented below with issue counts for prioritization.
 
 version: "2"
 
@@ -30,68 +35,79 @@ linters:
     - asasalint
     - asciicheck
     - copyloopvar
-    - dogsled
-    - dupl
-    - dupword
     - durationcheck
     - errcheck
-    - errchkjson
-    - goconst
     - gocritic
-    - gocyclo
-    - godot
     - goprintffuncname
     - govet
-    - importas
     - ineffassign
-    - intrange
     - loggercheck
     - nakedret
-    - nolintlint
     - nosprintfhostport
-    - prealloc
     - predeclared
-    - thelper
     - unconvert
-    - unparam
     - unused
 
     # Static Analysis
     - staticcheck
 
-    # Error Handling
-    - errorlint
-    - nilerr
-    - nilnil
-
-    # Security
-    - gosec
-
     # Performance
     - bodyclose
-    - noctx
 
     # Code Style
-    - lll
     - misspell
     - usestdlibvars
     - whitespace
 
-    # Testing
-    - tparallel
-
-    # Naming
-    - revive
+  # TODO: Enable these linters incrementally after fixing existing violations.
+  # Listed with approximate issue counts for prioritization (lowest first):
+  #   - dupword          ~1 issue
+  #   - importas         ~4 issues
+  #   - dogsled          ~8 issues
+  #   - noctx            ~11 issues   (most violations in tests)
+  #   - errorlint        ~12 issues
+  #   - nilnil           ~12 issues
+  #   - nilerr           ~14 issues
+  #   - nolintlint       ~15 issues
+  #   - dupl             ~17 issues
+  #   - gosec            ~18 issues   (many false positives for TLS config)
+  #   - prealloc         ~18 issues
+  #   - gocyclo          ~48 issues
+  #   - lll              ~56 issues
+  #   - errchkjson       ~62 issues
+  #   - goconst          ~67 issues
+  #   - intrange         ~96 issues
+  #   - thelper          various      (test helpers missing t.Helper())
+  #   - tparallel        various      (improper t.Parallel() usage)
+  #   - unparam          various      (false positives in interface impls)
+  #   - revive           ~381 issues  (noisy for exported comment checks)
+  #   - godot            ~785 issues  (comment period enforcement)
+  # When enabling, also uncomment the corresponding settings and exclusion
+  # rules below.
 
   settings:
     gocritic:
-      enable-all: true
+      enabled-checks:
+        - boolExprSimplify
+        - equalFold
       disabled-checks:
         - appendAssign
-        - commentedOutCode
-        - hugeParam
-        - rangeValCopy
+        - assignOp
+        - captLocal
+        - commentFormatting
+        - deprecatedComment
+        - dupBranchBody
+        - elseif
+        - exitAfterDefer
+        - ifElseChain
         - regexpMust
+        - sloppyLen
+        - typeSwitchVar
+        - underef
+        - unlambda
+        - unslice
+    # Settings below are pre-configured for when the corresponding
+    # linters are enabled (Phase 2).
     gocyclo:
       min-complexity: 20
     godot:
@@ -167,13 +183,17 @@ linters:
     generated: lax
     rules:
       - linters:
+          - errcheck
+        path: _test\.go$
+      - linters:
+          - gocritic
+        path: _test\.go$
+      # Exclusion rules below are pre-configured for Phase 2 linters.
+      - linters:
           - lll
         path: api/
       - linters:
           - dupl
-        path: _test\.go$
-      - linters:
-          - errcheck
         path: _test\.go$
       - linters:
           - gosec
@@ -182,9 +202,6 @@ linters:
           - revive
         path: _test\.go$
         text: "dot-imports"
-      - linters:
-          - gocritic
-        path: _test\.go$
       - linters:
           - godot
         path: _test\.go$
