@@ -39,7 +39,7 @@ jobs:
       - name: Check for updates
         id: check
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           check_github_release() {
             local repo=$1
@@ -69,7 +69,7 @@ jobs:
       - name: Create or update issue
         if: steps.check.outputs.found == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ISSUE_TITLE="🔧 Tool Updates Available"
           EXISTING_ISSUE=$(gh issue list --label "dependencies" --label "automation" --state open --search "$ISSUE_TITLE" --json number --jq '.[0].number' || echo "")
@@ -86,7 +86,7 @@ jobs:
       - name: Summary
         run: |
           echo "### Tool Update Check Complete" >> $GITHUB_STEP_SUMMARY
-          if [ -f updates.md ]; then
+          if [ "${{ steps.check.outputs.found }}" = "true" ]; then
             cat updates.md >> $GITHUB_STEP_SUMMARY
           else
             echo "All tools are up to date!" >> $GITHUB_STEP_SUMMARY
