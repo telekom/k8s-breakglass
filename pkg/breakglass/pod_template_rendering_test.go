@@ -1754,7 +1754,7 @@ spec:
 	daemonSet, ok := workload.(*appsv1.DaemonSet)
 	require.True(t, ok, "expected DaemonSet")
 
-	assert.Equal(t, "debug-pod-to-ds", daemonSet.Name)
+	assert.Equal(t, "pod-to-ds", daemonSet.Name)
 	assert.Equal(t, "target-ns", daemonSet.Namespace)
 	assert.True(t, daemonSet.Spec.Template.Spec.HostNetwork)
 	require.Len(t, daemonSet.Spec.Template.Spec.Containers, 1)
@@ -1797,7 +1797,7 @@ spec:
 	deploy, ok := workload.(*appsv1.Deployment)
 	require.True(t, ok, "expected Deployment")
 	assert.Equal(t, int32(3), *deploy.Spec.Replicas)
-	assert.Equal(t, "debug-pod-to-deploy", deploy.Name)
+	assert.Equal(t, "pod-to-deploy", deploy.Name)
 	assert.Equal(t, corev1.RestartPolicyAlways, deploy.Spec.Template.Spec.RestartPolicy)
 }
 
@@ -1837,7 +1837,7 @@ spec:
 	require.True(t, ok, "expected Deployment")
 
 	// Name/namespace should be overridden by breakglass
-	assert.Equal(t, "debug-full-deploy", deploy.Name)
+	assert.Equal(t, "full-deploy", deploy.Name)
 	assert.Equal(t, "target-ns", deploy.Namespace)
 
 	// Selector should be overridden for breakglass tracking
@@ -1889,7 +1889,7 @@ spec:
 	daemonSet, ok := workload.(*appsv1.DaemonSet)
 	require.True(t, ok, "expected DaemonSet")
 
-	assert.Equal(t, "debug-full-ds", daemonSet.Name)
+	assert.Equal(t, "full-ds", daemonSet.Name)
 	assert.Equal(t, "target-ns", daemonSet.Namespace)
 	assert.Equal(t, ds.Name, daemonSet.Spec.Selector.MatchLabels[DebugSessionLabelKey])
 	assert.True(t, daemonSet.Spec.Template.Spec.HostNetwork)
@@ -2020,7 +2020,7 @@ func TestBuildWorkload_BareSpecBackwardCompatible(t *testing.T) {
 
 	daemonSet, ok := workload.(*appsv1.DaemonSet)
 	require.True(t, ok, "expected DaemonSet")
-	assert.Equal(t, "debug-bare-spec", daemonSet.Name)
+	assert.Equal(t, "bare-spec", daemonSet.Name)
 	require.Len(t, daemonSet.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t, "debug", daemonSet.Spec.Template.Spec.Containers[0].Name)
 }
@@ -4143,7 +4143,7 @@ func TestBuildWorkload_WorkloadNameFormat(t *testing.T) {
 
 	daemonSet, ok := workload.(*appsv1.DaemonSet)
 	require.True(t, ok)
-	assert.Equal(t, "debug-my-session", daemonSet.Name, "workload name should be debug-<session-name>")
+	assert.Equal(t, "my-session", daemonSet.Name, "workload name should be the session name")
 	assert.Equal(t, "target-ns", daemonSet.Namespace)
 }
 
@@ -4359,8 +4359,8 @@ spec:
 
 	deploy, ok := workload.(*appsv1.Deployment)
 	require.True(t, ok)
-	assert.Equal(t, "debug-override-name", deploy.Name,
-		"workload name should be overridden to debug-<session-name>")
+	assert.Equal(t, "override-name", deploy.Name,
+		"workload name should be overridden to the session name")
 	assert.Equal(t, "target-ns", deploy.Namespace,
 		"namespace should be overridden to targetNs")
 }
@@ -4398,7 +4398,7 @@ spec:
 
 	daemonSet, ok := workload.(*appsv1.DaemonSet)
 	require.True(t, ok)
-	assert.Equal(t, "debug-ds-override", daemonSet.Name)
+	assert.Equal(t, "ds-override", daemonSet.Name)
 	assert.Equal(t, "target-ns", daemonSet.Namespace)
 }
 

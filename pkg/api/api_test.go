@@ -741,7 +741,7 @@ func TestBuildCSP_WithoutOIDC(t *testing.T) {
 	assert.Contains(t, csp, "frame-src 'none'")
 	assert.Contains(t, csp, "default-src 'self'")
 	assert.Contains(t, csp, "connect-src 'self'")
-	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Contains(t, csp, "frame-ancestors 'self'")
 }
 
 func TestBuildCSP_WithOIDC(t *testing.T) {
@@ -764,8 +764,8 @@ func TestBuildCSP_WithOIDC(t *testing.T) {
 	// 'self' is needed because the silent renew callback (/auth/silent-renew) is on the same origin
 	assert.Contains(t, csp, "frame-src 'self' https://keycloak.example.com")
 	assert.Contains(t, csp, "connect-src 'self' https://keycloak.example.com")
-	// Should still have frame-ancestors 'none' to prevent us being embedded
-	assert.Contains(t, csp, "frame-ancestors 'none'")
+	// Should still have frame-ancestors 'self' to allow iframe-based silent token renewal
+	assert.Contains(t, csp, "frame-ancestors 'self'")
 }
 
 func TestNormalizeOrigin(t *testing.T) {
@@ -859,8 +859,8 @@ func TestSecurityHeaders(t *testing.T) {
 	// Verify security headers are set
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"),
 		"X-Content-Type-Options header should be set to 'nosniff'")
-	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"),
-		"X-Frame-Options header should be set to 'DENY'")
+	assert.Equal(t, "SAMEORIGIN", w.Header().Get("X-Frame-Options"),
+		"X-Frame-Options header should be set to 'SAMEORIGIN' to match CSP frame-ancestors 'self'")
 	assert.Equal(t, "1; mode=block", w.Header().Get("X-XSS-Protection"),
 		"X-XSS-Protection header should be set")
 	assert.Equal(t, "strict-origin-when-cross-origin", w.Header().Get("Referrer-Policy"),
@@ -873,7 +873,7 @@ func TestSecurityHeaders(t *testing.T) {
 	// Verify CSP contains expected directives
 	csp := w.Header().Get("Content-Security-Policy")
 	assert.Contains(t, csp, "default-src 'self'")
-	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Contains(t, csp, "frame-ancestors 'self'")
 	assert.Contains(t, csp, "frame-src")
 }
 

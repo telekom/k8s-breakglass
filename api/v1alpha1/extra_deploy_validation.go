@@ -27,6 +27,84 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+// CoerceExtraDeployValues normalizes user-provided values to match their declared inputType.
+// HTML form inputs typically produce strings for all values, and YAML defaults may use
+// quoted numbers (e.g., "5" instead of 5). This function converts string-encoded numbers
+// to actual JSON numbers and string-encoded booleans to JSON booleans, so that:
+// 1. Validation passes (validateNumberValue expects JSON numbers)
+// 2. Go template rendering produces correct YAML (e.g., `storage: 5Gi` not `storage: "5"Gi`)
+func CoerceExtraDeployValues(
+	values map[string]apiextensionsv1.JSON,
+	variables []ExtraDeployVariable,
+) map[string]apiextensionsv1.JSON {
+	if len(values) == 0 || len(variables) == 0 {
+		return values
+	}
+
+	// Build lookup for variable definitions
+	varDefs := make(map[string]ExtraDeployVariable, len(variables))
+	for _, v := range variables {
+		varDefs[v.Name] = v
+	}
+
+	result := make(map[string]apiextensionsv1.JSON, len(values))
+	for name, jsonVal := range values {
+		varDef, defined := varDefs[name]
+		if !defined {
+			result[name] = jsonVal
+			continue
+		}
+
+		coerced := coerceJSONValue(jsonVal, varDef.InputType)
+		result[name] = coerced
+	}
+
+	return result
+}
+
+// coerceJSONValue converts a JSON value to the correct type for the given inputType.
+func coerceJSONValue(value apiextensionsv1.JSON, inputType ExtraDeployInputType) apiextensionsv1.JSON {
+	if len(value.Raw) == 0 {
+		return value
+	}
+
+	switch inputType {
+	case InputTypeNumber:
+		// If it's already a JSON number, no coercion needed
+		var numVal float64
+		if json.Unmarshal(value.Raw, &numVal) == nil {
+			return value
+		}
+		// Try parsing as a string-encoded number
+		var strVal string
+		if json.Unmarshal(value.Raw, &strVal) == nil {
+			if num, err := strconv.ParseFloat(strVal, 64); err == nil {
+				if raw, err := json.Marshal(num); err == nil {
+					return apiextensionsv1.JSON{Raw: raw}
+				}
+			}
+		}
+
+	case InputTypeBoolean:
+		// If it's already a JSON boolean, no coercion needed
+		var boolVal bool
+		if json.Unmarshal(value.Raw, &boolVal) == nil {
+			return value
+		}
+		// Try parsing as a string-encoded boolean
+		var strVal string
+		if json.Unmarshal(value.Raw, &strVal) == nil {
+			if b, err := strconv.ParseBool(strVal); err == nil {
+				if raw, err := json.Marshal(b); err == nil {
+					return apiextensionsv1.JSON{Raw: raw}
+				}
+			}
+		}
+	}
+
+	return value
+}
+
 // ValidateExtraDeployValues validates user-provided values against variable definitions.
 // It validates:
 // - Required variables are provided (unless they have defaults)
@@ -220,14 +298,29 @@ func validateTextValue(value apiextensionsv1.JSON, validation *VariableValidatio
 }
 
 // validateNumberValue validates a number input value.
+// It accepts both JSON numbers (5) and string-encoded numbers ("5")
+// because HTML form inputs and YAML defaults often produce strings.
 func validateNumberValue(value apiextensionsv1.JSON, validation *VariableValidation, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	var numVal float64
 	if err := json.Unmarshal(value.Raw, &numVal); err != nil {
-		allErrs = append(allErrs, field.TypeInvalid(fldPath, string(value.Raw),
-			"must be a number"))
-		return allErrs
+		// Try parsing as a string-encoded number (e.g., "5" instead of 5).
+		// This handles YAML defaults like `default: "5"` and HTML form inputs.
+		var strVal string
+		if strErr := json.Unmarshal(value.Raw, &strVal); strErr == nil {
+			if parsed, parseErr := strconv.ParseFloat(strVal, 64); parseErr == nil {
+				numVal = parsed
+			} else {
+				allErrs = append(allErrs, field.TypeInvalid(fldPath, string(value.Raw),
+					"must be a number"))
+				return allErrs
+			}
+		} else {
+			allErrs = append(allErrs, field.TypeInvalid(fldPath, string(value.Raw),
+				"must be a number"))
+			return allErrs
+		}
 	}
 
 	if validation == nil {

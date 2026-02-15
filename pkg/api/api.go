@@ -134,8 +134,8 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	engine.Use(func(c *gin.Context) {
 		// Prevent MIME type sniffing
 		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-		// Prevent clickjacking attacks
-		c.Writer.Header().Set("X-Frame-Options", "DENY")
+		// Prevent clickjacking attacks (SAMEORIGIN matches CSP frame-ancestors 'self')
+		c.Writer.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		// Enable XSS filter in older browsers
 		c.Writer.Header().Set("X-XSS-Protection", "1; mode=block")
 		// Control referrer information
@@ -439,7 +439,7 @@ func (s *Server) buildCSP() string {
 	legacyScriptHashes := "'sha256-ZxAi3a7m9Mzbc+Z1LGuCCK5Xee6reDkEPRas66H9KSo=' 'sha256-+5XkZFazzJo8n0iOP4ti/cLCMUudTf//Mzkb7xNPXIc=' 'sha256-MS6/3FCg4WjP9gwgaBGwLpRCY6fZBgwmhVCdrPrNf3E=' 'sha256-tQjf8gvb2ROOMapIxFvFAYBeUJ0v1HCbOcSmDNXGtDo='"
 
 	return fmt.Sprintf(
-		"default-src 'self'; script-src 'self' %s; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src %s; frame-src %s; frame-ancestors 'none'",
+		"default-src 'self'; script-src 'self' %s; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src %s; frame-src %s; frame-ancestors 'self'",
 		legacyScriptHashes,
 		connectSrc,
 		frameSrc,

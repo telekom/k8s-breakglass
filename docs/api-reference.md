@@ -827,6 +827,13 @@ GET /api/debugSessions
 | `user` | string | Filter by requesting user |
 | `mine` | boolean | Show only sessions owned by current user |
 
+**Response fields (per session):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `participants` | integer | Number of **active** participants (excludes users who have left) |
+| `isParticipant` | boolean | Whether the current authenticated user is an active participant |
+
 **Response:**
 
 ```json
@@ -841,6 +848,7 @@ GET /api/debugSessions
       "startsAt": "2024-01-15T10:00:00Z",
       "expiresAt": "2024-01-15T12:00:00Z",
       "participants": 2,
+      "isParticipant": false,
       "allowedPods": 3
     }
   ],

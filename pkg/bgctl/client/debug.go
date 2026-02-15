@@ -35,6 +35,7 @@ type DebugSessionSummary struct {
 	StartsAt             *metav1.Time                   `json:"startsAt,omitempty"`
 	ExpiresAt            *metav1.Time                   `json:"expiresAt,omitempty"`
 	Participants         int                            `json:"participants"`
+	IsParticipant        bool                           `json:"isParticipant"`
 	AllowedPods          int                            `json:"allowedPods"`
 	AllowedPodOperations *v1alpha1.AllowedPodOperations `json:"allowedPodOperations,omitempty"`
 }
