@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, inject } from "vue";
+import { ref, computed, onMounted, onUnmounted, inject } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
@@ -45,8 +45,11 @@ const route = useRoute();
 const router = useRouter();
 const user = useUser();
 const auth = inject(AuthKey);
+if (!auth) {
+  throw new Error("SessionApprovalView requires an Auth provider");
+}
 const authenticated = computed(() => user.value && !user.value?.expired);
-const service = new BreakglassSessionService(auth!);
+const service = new BreakglassSessionService(auth);
 
 const sessionName = computed(() => route.params.sessionName as string);
 const session = ref<SessionCR | null>(null);
@@ -56,6 +59,7 @@ const error = ref<string | null>(null);
 const errorDetails = ref<string | null>(null);
 const approverNote = ref("");
 const isApproving = ref(false);
+let redirectTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Computed: categorize the denial reason for specialized UI treatment
 const denialCategory = computed<DenialCategory>(() => {
@@ -152,7 +156,10 @@ const loadSession = async () => {
     } else if (e.response?.status === 401) {
       error.value = "Authentication Required";
       errorDetails.value = "Please log in to continue. Redirecting...";
-      setTimeout(() => router.push("/"), 3000);
+      if (redirectTimer) {
+        clearTimeout(redirectTimer);
+      }
+      redirectTimer = setTimeout(() => router.push("/"), 3000);
     } else if (e.code === "ECONNABORTED" || e.code === "ERR_NETWORK") {
       error.value = "Network Error";
       errorDetails.value = "Unable to connect to the server. Please check your connection and try again.";
@@ -249,15 +256,9 @@ onMounted(async () => {
     console.log("[SessionApprovalView] User not authenticated, initiating login with redirect back");
     // Initiate login with the current approval path stored in state
     // After OIDC callback, user will be redirected back to this approval page
-    if (auth) {
-      const currentPath = route.fullPath;
-      console.log("[SessionApprovalView] Storing path for post-login redirect:", currentPath);
-      await auth.login({ path: currentPath });
-    } else {
-      // Fallback if auth is not available
-      error.value = "Authentication service not available";
-      loading.value = false;
-    }
+    const currentPath = route.fullPath;
+    console.log("[SessionApprovalView] Storing path for post-login redirect:", currentPath);
+    await auth.login({ path: currentPath });
     return;
   }
 
@@ -269,6 +270,13 @@ onMounted(async () => {
   }
 
   await loadSession();
+});
+
+onUnmounted(() => {
+  if (redirectTimer) {
+    clearTimeout(redirectTimer);
+    redirectTimer = null;
+  }
 });
 </script>
 

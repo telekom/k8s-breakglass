@@ -141,7 +141,10 @@ import type { SessionCR } from "@/model/breakglass";
 
 // Setup services
 const auth = inject(AuthKey);
-const breakglassService = auth ? new BreakglassService(auth) : null;
+if (!auth) {
+  throw new Error("MyPendingRequests view requires an Auth provider");
+}
+const breakglassService = new BreakglassService(auth);
 
 // Session list state
 const { requests, loading, error, loadRequests } = usePendingRequests(breakglassService);
@@ -149,7 +152,6 @@ const { requests, loading, error, loadRequests } = usePendingRequests(breakglass
 // Session actions
 const actionHandlers: ActionHandlers = {
   withdraw: async (session: SessionCR) => {
-    if (!breakglassService) throw new Error("Service not available");
     await breakglassService.withdrawMyRequest(session);
     // Remove from local list
     const idx = requests.value.findIndex((r) => getSessionKey(r) === getSessionKey(session));

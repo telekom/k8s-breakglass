@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Upgraded JWT dependencies**: Migrated from `keyfunc/v1` to `keyfunc/v3` and `jwt/v4` to `jwt/v5` for improved security and maintainability. keyfunc/v3 uses context-based lifecycle management instead of manual `EndBackground()` calls, and automatically refreshes on unknown kid
 - **Removed unused frontend devDependencies**: Removed `jest`, `jest-environment-jsdom`, `ts-jest`, `@types/jest`, `happy-dom`, and `@rushstack/eslint-patch` (project uses Vitest)
 
+### Fixed
+
+- **Debug Session Join button shown to owner/participants**: Join button was visible to the session creator and already-joined participants, resulting in 409 conflict errors. Added `isParticipant` field to `DebugSessionSummary` API response and updated both `DebugSessionCard` and `DebugSessionDetails` views to hide Join when the user is the owner or already a participant
+- **Debug pod name has redundant "debug-debug-" prefix**: Workload names for debug sessions had a double `debug-` prefix (e.g., `debug-debug-user-cluster-123`) because the session name already starts with `debug-` and the workload builder prepended another. Removed the extra prefix so workload names match the session name directly
+- **Silent token renewal blocked by CSP frame-ancestors**: The `frame-ancestors 'none'` Content Security Policy header prevented `oidc-client-ts` from performing iframe-based silent token renewal, forcing users to re-authenticate when tokens expired. Changed to `frame-ancestors 'self'` to allow same-origin iframe renewal while maintaining clickjacking protection
+- **extraDeployValues number/boolean type coercion**: String-encoded numbers (e.g., `"5"` instead of `5`) from HTML form inputs or YAML defaults caused `must be a number` validation errors and invalid template rendering. Added `CoerceExtraDeployValues` to normalize types before validation and storage, tolerant validation for string-encoded numbers, and frontend type coercion in `VariableForm`
+
 ### Added
 
 - **Debug Session / Deny Policy Bypass Documentation**: Documented that active debug sessions bypass deny policy evaluation for pod-level operations (`exec`, `attach`, `portforward`, `log`)
@@ -46,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Frontend Auth Provider Consistency**: Added explicit Auth provider guards and removed non-null assertion usage in `BreakglassView`, `BreakglassSessionReview`, and `PendingApprovalsView` to fail fast instead of crashing later on missing app providers
 - **Webhook Decision Source Metrics**: Fixed SubjectAccessReview action decision metrics to avoid labeling RBAC/debug-session allow decisions as `source=session`; session source is now recorded only for actual session-authorized allows
+- **Session Approval Redirect Cleanup**: `SessionApprovalView` now enforces Auth provider presence and clears pending 401 redirect timers on unmount to prevent stale navigations after component teardown
+- **Frontend Auth Guard Hardening**: Added an explicit Auth provider guard in `AutoLogoutWarning` and removed unsafe auth casting so missing app providers fail fast with a clear error
+- **Frontend Auth Guard Consistency**: Added an explicit Auth provider guard in `MyPendingRequests` and removed nullable service fallback to prevent deferred runtime errors when app providers are misconfigured
 - **Dockerfile Cross-Compilation**: Added `GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}` to the `go build` command in Dockerfile, ensuring correct binary architecture when building multi-platform images and falling back to the host architecture for non-BuildKit builds
 - **Helm Chart ClusterConfig Name**: Replaced no-op `default` (which defaulted a value to itself) with `required` in the ClusterConfig metadata name template, providing a clear error when `cluster.clusterID` is not set
 - **Best-Effort Cleanup on Session Failure**: `failSession()` now calls `cleanupResources()` before transitioning to Failed state, ensuring partially deployed resources (ResourceQuota, PDB, workloads) are cleaned up even on failure
