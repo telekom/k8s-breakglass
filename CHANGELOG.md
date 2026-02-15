@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Multi-arch release builds on native runners**: Release workflow now builds `linux/amd64` and `linux/arm64` images on separate native runners (no QEMU emulation), then assembles them into a single multi-arch manifest list using `docker buildx imagetools create`. ARM builds run on the GitHub-hosted `ubuntu-24.04-arm` runner. Artifactory push now preserves the full multi-arch manifest instead of re-tagging a single-platform pull.
+- **Multi-arch release builds on native runners**:
+  - Release workflow now builds `linux/amd64` and `linux/arm64` images on separate native runners (no QEMU emulation)
+  - Per-arch images assembled into a single multi-arch manifest via `docker buildx imagetools create`
+  - ARM builds run on the GitHub-hosted `ubuntu-24.04-arm` runner
+  - Artifactory push preserves the full multi-arch manifest instead of re-tagging a single-platform pull
 
 - **Upgraded JWT dependencies**: Migrated from `keyfunc/v1` to `keyfunc/v3` and `jwt/v4` to `jwt/v5` for improved security and maintainability. keyfunc/v3 uses context-based lifecycle management instead of manual `EndBackground()` calls, and automatically refreshes on unknown kid
 - **Removed unused frontend devDependencies**: Removed `jest`, `jest-environment-jsdom`, `ts-jest`, `@types/jest`, `happy-dom`, and `@rushstack/eslint-patch` (project uses Vitest)

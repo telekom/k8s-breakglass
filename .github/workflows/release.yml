@@ -114,12 +114,14 @@ jobs:
       contents: read
       packages: write
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
           - platform: linux/arm64
+            # NOTE: ubuntu-24.04-arm is a GitHub-hosted larger runner with different billing.
+            # See: https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
@@ -164,6 +166,8 @@ jobs:
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp || github.run_started_at }}
+          # BUILD_DATE: head_commit.timestamp is set for tag pushes; run_started_at
+          # (always available) serves as fallback for workflow_dispatch triggers.
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
       - name: Export digest
         id: set-digest
@@ -177,7 +181,7 @@ jobs:
           fi
           DIGEST="${{ steps.build.outputs.digest }}"
           if [ -z "${DIGEST}" ]; then
-            echo "Error: Build produced no digest for platform '${PLATFORM}'." >&2
+            echo "Error: Build produced no digest for platform '${PLATFORM}' (arch=${ARCH_SHORT})." >&2
             exit 1
           fi
           echo "digest-${ARCH_SHORT}=${DIGEST}" >> "$GITHUB_OUTPUT"
@@ -189,7 +193,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.set-digest.outputs.artifact-name }}
-          path: /tmp/digests/*
+          path: /tmp/digests/${{ matrix.platform == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }}
 
   # ---------------------------------------------------------------------------
   # Assemble per-arch images into a single multi-arch manifest and tag it
@@ -245,17 +249,24 @@ jobs:
             fi
           done
 
+          # Display discovered digest files for diagnostics
+          echo "Digest files found:"
+          ls -la /tmp/digests/
+
           # Collect per-arch digests into an array
           DIGESTS=()
           for f in /tmp/digests/*; do
             d=$(cat "$f")
+            echo "  $(basename "$f"): ${d}"
             DIGESTS+=("${REGISTRY}/${IMAGE_NAME}@${d}")
           done
-          echo "Assembling multi-arch manifest from: ${DIGESTS[*]}"
+          echo "Assembling multi-arch manifest from ${#DIGESTS[@]} platform(s): ${DIGESTS[*]}"
 
           # Build the --tag flags from metadata into an array
           TAGS=()
           while IFS= read -r tag; do
+            # Skip empty lines that can result from trailing newlines
+            [ -z "${tag}" ] && continue
             TAGS+=("--tag" "$tag")
           done <<< "${{ steps.meta.outputs.tags }}"
 
@@ -277,8 +288,9 @@ jobs:
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Multi-arch manifest digest: ${DIGEST}"
       - name: Attest provenance (skipped temporarily)
-        # Temporarily disabled because ACTIONS_ID_TOKEN_REQUEST_URL isn't available in some runners
-        # Re-enable by removing or changing the `if` condition when the environment supports id-token requests.
+        # TODO: Re-enable when id-token is available in all runners.
+        # When re-enabling, add `id-token: write` to the assemble job permissions
+        # and update docs/release-process.md to reflect provenance attestation status.
         if: ${{ false }}
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
@@ -334,23 +346,28 @@ jobs:
           # Use buildx imagetools to copy the full multi-arch manifest (all platforms)
           docker buildx imagetools create --tag "${DST}" "${SRC}"
 
-          # Small wait for Artifactory to index
-          sleep 3
-          # Check whether the pushed image path exists in Artifactory storage (best-effort)
+          # Verify the pushed image is indexed in Artifactory (retry with backoff)
           CHECK_PATH=$(echo "${ARTIFACTORY_REPO}/${IMAGE}" | sed 's@//*@/@g')
           echo "Checking storage for path: ${CHECK_PATH}"
-          HTTP_STATUS_AFTER=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${CHECK_PATH}?list" ) || true
-          echo "Artifactory storage API HTTP status for pushed path: ${HTTP_STATUS_AFTER}"
-          if [ "${HTTP_STATUS_AFTER}" = "200" ]; then
-            echo "Artifact path appears present in Artifactory."
-          else
-            echo "Artifact path not found or not accessible (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
+          for attempt in 1 2 3; do
+            sleep $((attempt * 2))
+            HTTP_STATUS_AFTER=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${CHECK_PATH}?list" ) || true
+            echo "Attempt ${attempt}: HTTP status ${HTTP_STATUS_AFTER}"
+            if [ "${HTTP_STATUS_AFTER}" = "200" ]; then
+              echo "Artifact path appears present in Artifactory."
+              break
+            fi
+          done
+          if [ "${HTTP_STATUS_AFTER}" != "200" ]; then
+            echo "Warning: Artifact path not confirmed after retries (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
           fi
 
   # ---------------------------------------------------------------------------
   # Create GitHub Release with manifests, bgctl binaries, and SBOM
   # ---------------------------------------------------------------------------
   release:
+    # NOTE: Does not depend on `artifactory` intentionally — Artifactory is a
+    # best-effort mirror and should not block GitHub Release creation.
     needs: [prepare, assemble]
     permissions:
       contents: write
