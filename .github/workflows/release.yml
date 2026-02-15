@@ -186,6 +186,7 @@ jobs:
           fi
           echo "digest-${ARCH_SHORT}=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "artifact-name=digest-${ARCH_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "arch-full=${ARCH_FULL}" >> "$GITHUB_OUTPUT"
           # Also persist to a file artifact so the assemble job can collect all digests
           mkdir -p /tmp/digests
           echo "${DIGEST}" > "/tmp/digests/${ARCH_FULL}"
@@ -193,7 +194,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.set-digest.outputs.artifact-name }}
-          path: /tmp/digests/${{ matrix.platform == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }}
+          path: /tmp/digests/${{ steps.set-digest.outputs.arch-full }}
 
   # ---------------------------------------------------------------------------
   # Assemble per-arch images into a single multi-arch manifest and tag it
@@ -289,8 +290,11 @@ jobs:
           echo "Multi-arch manifest digest: ${DIGEST}"
       - name: Attest provenance (skipped temporarily)
         # TODO: Re-enable when id-token is available in all runners.
-        # When re-enabling, add `id-token: write` to the assemble job permissions
-        # and update docs/release-process.md to reflect provenance attestation status.
+        # When re-enabling:
+        #   1. Add `id-token: write` to the assemble job permissions
+        #   2. Update docs/release-process.md to note provenance attestation is active
+        # Note: docs/release-process.md currently lists provenance as a goal;
+        # it is not yet enforced until this step is re-enabled.
         if: ${{ false }}
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
@@ -322,7 +326,7 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
-          set -e
+          set -euo pipefail
           # docker CLI login using environment secrets
           echo "Logging in to Artifactory OCI at ${ARTIFACTORY_URL}"
           echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
