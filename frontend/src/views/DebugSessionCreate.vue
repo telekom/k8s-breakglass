@@ -807,9 +807,12 @@ function focusPrevRadio(event: KeyboardEvent) {
             :class="['binding-option-card', { selected: form.selectedBindingIndex === index }]"
             role="radio"
             :aria-checked="form.selectedBindingIndex === index"
-            :aria-label="`Access configuration: ${option.displayName || option.bindingRef.name}`"
+            :aria-label="option.displayName || option.bindingRef.name"
             :tabindex="
-              form.selectedBindingIndex === index || (form.selectedBindingIndex == null && index === 0) ? 0 : -1
+              form.selectedBindingIndex === index ||
+              ((form.selectedBindingIndex == null || form.selectedBindingIndex >= bindingOptions.length) && index === 0)
+                ? 0
+                : -1
             "
             data-testid="binding-option-card"
             @click="form.selectedBindingIndex = index"
