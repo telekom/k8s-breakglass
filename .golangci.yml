@@ -9,7 +9,7 @@ version: "2"
 
 run:
   go: "1.25"
-  timeout: 10m
+  timeout: 5m
   allow-parallel-runners: true
   modules-download-mode: readonly
   relative-path-mode: gomod
