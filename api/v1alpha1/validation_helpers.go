@@ -132,7 +132,7 @@ func listObjectsByName(ctx context.Context, reader client.Reader, list client.Ob
 
 	if err := reader.List(ctx, list, client.MatchingFields{"metadata.name": name}); err != nil {
 		if fallbackErr := reader.List(ctx, list); fallbackErr != nil {
-			return fmt.Errorf("list by name for %T failed: %v; fallback list failed: %w", list, err, fallbackErr)
+			return fmt.Errorf("list by name for %T failed: %w; fallback list failed: %w", list, err, fallbackErr)
 		}
 	}
 
@@ -1344,7 +1344,7 @@ func parseResourceQuantity(q string) (int64, error) {
 			}
 			_, err := strconv.ParseFloat(numPart, 64)
 			if err != nil {
-				return 0, fmt.Errorf("invalid numeric value: %v", err)
+				return 0, fmt.Errorf("invalid numeric value: %w", err)
 			}
 			hasValidSuffix = true
 			break

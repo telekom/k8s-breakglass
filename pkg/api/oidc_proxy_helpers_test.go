@@ -71,6 +71,7 @@ func TestNormalizeProxyPath(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			require.Equal(t, tt.expected, normalizeProxyPath(tt.input))
 		})
 	}
@@ -90,6 +91,7 @@ func TestHasEncodedTraversal(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			require.Equal(t, tt.expected, hasEncodedTraversal(tt.input))
 		})
 	}

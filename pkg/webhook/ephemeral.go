@@ -94,13 +94,13 @@ func (w *EphemeralContainerWebhook) Handle(ctx context.Context, req admission.Re
 	return admission.Allowed("allowed by debug session")
 }
 
-func findNewEphemeralContainers(old, new []corev1.EphemeralContainer) []corev1.EphemeralContainer {
+func findNewEphemeralContainers(old, current []corev1.EphemeralContainer) []corev1.EphemeralContainer {
 	added := []corev1.EphemeralContainer{}
 	oldMap := make(map[string]bool)
 	for _, c := range old {
 		oldMap[c.Name] = true
 	}
-	for _, c := range new {
+	for _, c := range current {
 		if !oldMap[c.Name] {
 			added = append(added, c)
 		}

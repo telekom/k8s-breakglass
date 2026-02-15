@@ -325,12 +325,12 @@ func TestBreakglassEscalationValidateUpdate_WithValidationErrors(t *testing.T) {
 	}
 
 	// Update with missing required fields
-	new := &BreakglassEscalation{
+	updated := &BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc"},
 		Spec:       BreakglassEscalationSpec{}, // Empty spec, missing escalatedGroup
 	}
 
-	_, err := old.ValidateUpdate(context.Background(), old, new)
+	_, err := old.ValidateUpdate(context.Background(), old, updated)
 	if err == nil {
 		t.Fatal("expected error when updated object has validation errors")
 	}

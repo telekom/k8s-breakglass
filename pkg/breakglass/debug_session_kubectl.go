@@ -599,13 +599,13 @@ func (h *KubectlDebugHandler) hasImageDigest(image string) bool {
 	return strings.Contains(image, "@sha256:")
 }
 
-func (h *KubectlDebugHandler) isCapabilityAllowed(cap string, maxCaps []string) bool {
+func (h *KubectlDebugHandler) isCapabilityAllowed(capability string, maxCaps []string) bool {
 	if len(maxCaps) == 0 {
 		return true // No restrictions
 	}
 
 	for _, allowed := range maxCaps {
-		if strings.EqualFold(cap, allowed) {
+		if strings.EqualFold(capability, allowed) {
 			return true
 		}
 	}

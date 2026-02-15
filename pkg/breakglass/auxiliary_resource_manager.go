@@ -712,7 +712,7 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 				EnabledResources: []string{},
 			}
 			if err := renderer.ValidateTemplate(res.TemplateString, sampleCtx); err != nil {
-				errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: invalid templateString: %v", i, err))
+				errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: invalid templateString: %w", i, err))
 			}
 		}
 
@@ -728,13 +728,13 @@ func ValidateAuxiliaryResources(resources []v1alpha1.AuxiliaryResource) []error 
 				var err error
 				templateBytes, err = json.Marshal(res.Template.Object)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: failed to marshal template object: %v", i, err))
+					errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: failed to marshal template object: %w", i, err))
 					continue
 				}
 			}
 
 			if err := yaml.Unmarshal(templateBytes, &obj); err != nil {
-				errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: invalid YAML template: %v", i, err))
+				errs = append(errs, fmt.Errorf("auxiliaryResources[%d]: invalid YAML template: %w", i, err))
 			} else {
 				// Check for apiVersion and kind
 				if _, ok := obj["apiVersion"]; !ok {

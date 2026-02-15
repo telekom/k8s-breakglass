@@ -1120,7 +1120,7 @@ func buildOIDCProxyHTTPRequest(c *gin.Context, target string) (*http.Request, er
 		method = http.MethodPost
 		bodyBytes, err := io.ReadAll(c.Request.Body)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", errOIDCProxyReadBody, err)
+			return nil, fmt.Errorf("%w: %w", errOIDCProxyReadBody, err)
 		}
 		body = bytes.NewReader(bodyBytes)
 	}

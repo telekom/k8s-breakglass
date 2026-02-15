@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -259,7 +260,7 @@ func splitYAMLDocuments(t *testing.T, data []byte) [][]byte {
 
 	for {
 		doc, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

@@ -103,8 +103,8 @@ func TestClientDoError(t *testing.T) {
 	err = client.do(context.Background(), http.MethodGet, "/missing", nil, nil)
 	require.Error(t, err)
 
-	httpErr, ok := err.(*HTTPError)
-	require.True(t, ok)
+	var httpErr *HTTPError
+	require.ErrorAs(t, err, &httpErr)
 	require.Equal(t, http.StatusNotFound, httpErr.StatusCode)
 	require.Contains(t, httpErr.Message, "not found")
 }

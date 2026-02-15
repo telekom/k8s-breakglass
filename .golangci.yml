@@ -5,10 +5,8 @@
 # golangci-lint configuration for breakglass controller
 # Aligned with t-caas team conventions (auth-operator reference config)
 #
-# Linter enablement strategy:
-#   - Phase 1 (this config): linters that pass on the existing codebase
-#   - Phase 2 (TODO): enable remaining linters after fixing existing violations
-#   Disabled linters are documented below with issue counts for prioritization.
+# All feasible linters are enabled and enforced.
+# Remaining disabled linters are documented with issue counts and rationale.
 
 version: "2"
 
@@ -35,15 +33,20 @@ linters:
     - asasalint
     - asciicheck
     - copyloopvar
+    - dupword
     - durationcheck
     - errcheck
+    - errorlint
     - gocritic
     - goprintffuncname
     - govet
+    - importas
     - ineffassign
     - loggercheck
     - nakedret
     - nosprintfhostport
+    - predeclared
+    - tparallel
     - unconvert
     - unused
 
@@ -58,32 +61,30 @@ linters:
     - usestdlibvars
     - whitespace
 
-  # TODO: Enable these linters incrementally after fixing existing violations.
-  # Listed with approximate issue counts for prioritization (lowest first):
-  #   - dupword          ~1 issue
-  #   - predeclared      ~4 issues   (shadows predeclared identifiers)
-  #   - importas         ~4 issues
-  #   - dogsled          ~8 issues
-  #   - noctx            ~11 issues   (most violations in tests)
-  #   - errorlint        ~12 issues
-  #   - nilnil           ~12 issues
-  #   - nilerr           ~14 issues
-  #   - nolintlint       ~15 issues
-  #   - dupl             ~17 issues
-  #   - gosec            ~18 issues   (many false positives for TLS config)
-  #   - prealloc         ~18 issues
-  #   - gocyclo          ~48 issues
-  #   - lll              ~56 issues
-  #   - errchkjson       ~62 issues
-  #   - goconst          ~67 issues
-  #   - intrange         ~96 issues
-  #   - thelper          various      (test helpers missing t.Helper())
-  #   - tparallel        various      (improper t.Parallel() usage)
-  #   - unparam          various      (false positives in interface impls)
-  #   - revive           ~381 issues  (noisy for exported comment checks)
-  #   - godot            ~785 issues  (comment period enforcement)
-  # When enabling, also uncomment the corresponding settings and exclusion
-  # rules below.
+  # Disabled linters — documented with issue counts and rationale:
+  #
+  # Fixable but high-volume (best addressed in dedicated PRs):
+  #   - noctx          ~304 issues  (http.NewRequest → NewRequestWithContext; mostly in tests)
+  #   - intrange        ~96 issues  (for i := 0; i < n; i++ → for i := range n)
+  #   - errchkjson      ~62 issues  (unchecked json.Marshal/Unmarshal errors)
+  #   - goconst         ~67 issues  (repeated string literals → constants)
+  #   - thelper         ~158 issues (test helpers missing t.Helper())
+  #   - prealloc        ~18 issues  (slice preallocation suggestions)
+  #   - unparam         ~19 issues  (false positives in interface implementations)
+  #
+  # Too noisy / style-only (low value-to-noise ratio):
+  #   - godot          ~1726 issues (comment period enforcement)
+  #   - revive          ~747 issues (exported comment checks)
+  #   - lll            ~1468 issues (line length limits)
+  #   - dupl            ~104 issues (code duplication detection — many false positives in tests)
+  #   - gocyclo          ~17 issues (cyclomatic complexity)
+  #
+  # Intentional patterns in this codebase:
+  #   - nilnil          ~12 issues  (nil, nil returns are idiomatic for "not found, not an error")
+  #   - nilerr          ~14 issues  (mostly e2e wait helpers returning false, nil to retry)
+  #   - gosec          ~161 issues  (many false positives for TLS config in tests)
+  #   - dogsled           ~8 issues (multi-return test helpers are standard Go test patterns)
+  #   - nolintlint       ~15 issues (would require adding explanations to all nolint directives)
 
   settings:
     gocritic:
