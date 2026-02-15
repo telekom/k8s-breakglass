@@ -12,7 +12,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: security-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -85,8 +85,7 @@ jobs:
 
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@f3a6ee42055dd5f618fb31d987aae7b94518f043 # v4.32.2
-        if: always()
-        continue-on-error: true
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule')
         with:
           sarif_file: 'trivy-fs-results.sarif'
 
