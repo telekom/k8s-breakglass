@@ -1,3 +1,5 @@
+include versions.env
+
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/telekom/k8s-breakglass:latest
 
@@ -60,6 +62,15 @@ lint-verbose: golangci-lint ## Run golangci-lint with verbose output
 lint-new: golangci-lint ## Run golangci-lint only on new/changed code (requires git)
 	$(GOLANGCI_LINT) run --timeout=5m --new
 
+.PHONY: lint-strict
+lint-strict: golangci-lint ## Run golangci-lint with strict settings (as in CI).
+	$(GOLANGCI_LINT) run --timeout 10m --issues-exit-code 1
+
+.PHONY: vulncheck
+vulncheck: ## Run govulncheck to check for known vulnerabilities.
+	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...
@@ -79,10 +90,8 @@ validate-samples: manifests ## Validate all YAML samples in config/samples again
 	@echo "Sample validation passed"
 
 .PHONY: verify
-verify: fmt vet lint ## Run all verification checks (fmt, vet, lint) and build all packages including e2e.
-	@echo "Building all packages (including e2e)..."
-	go build ./...
-	@echo "✅ All verification checks passed"
+verify: fmt vet lint-strict test vulncheck ## Run all verification checks (fmt, vet, lint, test, vulncheck).
+	@echo "All verification checks passed!"
 
 .PHONY: e2e
 e2e: ## Create a single kind cluster with breakglass, keycloak and mailhog deployed (no tests).
@@ -212,12 +221,6 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 KUBECTL ?= kubectl
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
-
-## Tool Versions
-KUSTOMIZE_VERSION ?= v5.8.0
-CONTROLLER_TOOLS_VERSION ?= v0.20.0
-ENVTEST_VERSION ?= release-1.19
-GOLANGCI_LINT_VERSION ?= v2.8.0
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
