@@ -74,6 +74,8 @@ jobs:
       # On pull_request, the upload step is skipped via its 'if' condition,
       # so the permission is unused but harmless (least-privilege enforced at step level).
       security-events: write
+      # actions: read is required by codeql-action/upload-sarif to resolve
+      # the workflow run context (ref, sha) for SARIF result correlation.
       actions: read
     steps:
       - name: Checkout

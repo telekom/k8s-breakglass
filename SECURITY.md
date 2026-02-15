@@ -36,6 +36,9 @@ This project uses multiple security tools to maintain code quality:
 
 - **CodeQL** - Static analysis for security vulnerabilities
 - **Dependabot** - Dependency vulnerability tracking
+- **govulncheck** - Go vulnerability database scanning (stdlib and dependencies)
+- **Trivy** - Container image and filesystem vulnerability scanning with SARIF reporting
+- **go-licenses** - Dependency license compliance auditing
 - **npm audit** - Frontend dependency security scanning
 - **REUSE** - License compliance verification
 - **OpenSSF Scorecard** - Open source security best practices

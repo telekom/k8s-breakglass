@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Global Vue Error Handler**: Added `app.config.errorHandler` and `window.onunhandledrejection` to catch and surface uncaught errors as toast notifications
 - **CORS Origin Warnings**: Log WARN when default localhost origins are active via `BREAKGLASS_ALLOW_DEFAULT_ORIGINS=true` and when no origins are configured at all, to prevent accidental permissive CORS in production
 - **Audit Config Samples**: Added webhook (`audit_config_webhook.yaml`) and Kubernetes Events (`audit_config_kubernetes.yaml`) audit sink sample configurations
+- **Enhanced Security Workflow**: Added `govulncheck` for Go vulnerability checking, Trivy filesystem scanning with SARIF upload, and `go-licenses` for dependency license auditing to the CI security pipeline
 - **Build Info Endpoint Documentation**: Documented `GET /api/debug/buildinfo` endpoint in API reference
 - **`approvalTimeout` Field Documentation**: Added documentation for the `approvalTimeout` escalation field in breakglass-escalation.md
 - **`BREAKGLASS_ALLOW_DEFAULT_ORIGINS` Documentation**: Documented the development-only environment variable for default CORS origins
