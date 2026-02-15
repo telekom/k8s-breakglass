@@ -63,12 +63,12 @@ lint-new: golangci-lint ## Run golangci-lint only on new/changed code (requires 
 	$(GOLANGCI_LINT) run --timeout=5m --new
 
 .PHONY: lint-strict
-lint-strict: golangci-lint ## Run golangci-lint with strict settings (as in CI).
-	$(GOLANGCI_LINT) run --timeout 10m --issues-exit-code 1
+lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friendly).
+	$(GOLANGCI_LINT) run --timeout 10m
 
 .PHONY: vulncheck
 vulncheck: ## Run govulncheck to check for known vulnerabilities.
-	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
+	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	govulncheck ./...
 
 .PHONY: fmt
@@ -91,6 +91,7 @@ validate-samples: manifests ## Validate all YAML samples in config/samples again
 
 .PHONY: verify
 verify: fmt vet lint-strict test vulncheck ## Run all verification checks (fmt, vet, lint, test, vulncheck).
+	go build ./...
 	@echo "All verification checks passed!"
 
 .PHONY: e2e
